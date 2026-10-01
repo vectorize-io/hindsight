@@ -27,6 +27,7 @@ import { Constellation } from "./constellation";
 import { convertHindsightGraphData, GraphNode } from "./graph-data";
 import { TimelineView } from "./data-view";
 import { MemoryDetailModal } from "./memory-detail-modal";
+import { TagFilterInput } from "./tag-filter-input";
 
 type MemoryRow = Awaited<ReturnType<typeof client.listMemories>>["items"][number];
 
@@ -65,6 +66,21 @@ export function EntitiesView() {
   const [graphData, setGraphData] = useState<EntityGraphResponse | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
 
+  // Tag filter. Strict modes, like the documents page: picking a tag should not
+  // also pull in every untagged memory. The server recomputes mention counts,
+  // dates and graph edges from the matching memories only.
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagsMatch, setTagsMatch] = useState<"any" | "all">("any");
+  const tagFilter = useMemo(
+    () => ({
+      tags: selectedTags,
+      tags_match: (tagsMatch === "all" ? "all_strict" : "any_strict") as
+        | "all_strict"
+        | "any_strict",
+    }),
+    [selectedTags, tagsMatch]
+  );
+
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -82,6 +98,7 @@ export function EntitiesView() {
         bank_id: currentBank,
         limit: ITEMS_PER_PAGE,
         offset: pageOffset,
+        ...tagFilter,
       });
       setEntities(result.items || []);
       setTotal(result.total || 0);
@@ -99,7 +116,7 @@ export function EntitiesView() {
     setEntityMemories([]);
     setLoadingMemories(true);
     try {
-      const result: any = await client.getEntity(entityId, currentBank);
+      const result: any = await client.getEntity(entityId, currentBank, tagFilter);
       setSelectedEntity(result);
     } catch (error) {
       // Error toast is shown automatically by the API client interceptor
@@ -110,8 +127,11 @@ export function EntitiesView() {
     // Reverse lookup: every memory linked to this entity, rendered as a timeline.
     // Independent of the detail fetch above.
     try {
+      // Same tag filter as the entity, so the timeline matches its mention count.
       const memories = await client.listMemories(currentBank, {
         entityId,
+        tags: tagFilter.tags,
+        tagsMatch: tagFilter.tags_match,
         limit: 500,
       });
       setEntityMemories(memories.items || []);
@@ -137,6 +157,7 @@ export function EntitiesView() {
         bank_id: currentBank,
         limit: 2000,
         min_count: 1,
+        ...tagFilter,
       });
       setGraphData(result);
     } catch (error) {
@@ -144,8 +165,10 @@ export function EntitiesView() {
     } finally {
       setGraphLoading(false);
     }
-  }, [currentBank]);
+  }, [currentBank, tagFilter]);
 
+  // A new bank or a new tag filter starts over: the open entity may not be in
+  // the new scope, and the graph is refetched by the effect below.
   useEffect(() => {
     if (currentBank) {
       setCurrentPage(1);
@@ -153,7 +176,7 @@ export function EntitiesView() {
       setSelectedEntity(null);
       setGraphData(null);
     }
-  }, [currentBank]);
+  }, [currentBank, tagFilter]);
 
   useEffect(() => {
     if (viewMode === "relations" && currentBank && !graphData && !graphLoading) {
@@ -243,8 +266,16 @@ export function EntitiesView() {
 
   return (
     <div>
-      {/* View mode toggle — same segmented control as memories page */}
-      <div className="mb-4 flex items-center justify-end">
+      {/* Tag filter + view mode toggle (same segmented control as memories page) */}
+      <div className="mb-4 flex items-center justify-between gap-4">
+        <TagFilterInput
+          value={selectedTags}
+          onChange={setSelectedTags}
+          bankId={currentBank}
+          matchMode={tagsMatch}
+          onMatchModeChange={setTagsMatch}
+          className="flex-1 max-w-[480px]"
+        />
         <div className="flex items-center gap-2 bg-muted rounded-lg p-1">
           <button
             onClick={() => setViewMode("relations")}

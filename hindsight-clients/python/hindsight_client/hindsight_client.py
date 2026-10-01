@@ -798,6 +798,8 @@ class Hindsight:
         end_date: str | None = None,
         limit: int = 100,
         offset: int = 0,
+        tags: list[str] | None = None,
+        tags_match: str | None = None,
     ) -> ListMemoryUnitsResponse:
         """
         List memory units with pagination (sync wrapper — prefer :meth:`alist_memories` in async code).
@@ -815,6 +817,8 @@ class Hindsight:
                 end_date=end_date,
                 limit=limit,
                 offset=offset,
+                tags=tags,
+                tags_match=tags_match,
             )
         )
 
@@ -829,6 +833,8 @@ class Hindsight:
         end_date: str | None = None,
         limit: int = 100,
         offset: int = 0,
+        tags: list[str] | None = None,
+        tags_match: str | None = None,
     ) -> ListMemoryUnitsResponse:
         """List memory units with pagination (async — preferred over :meth:`list_memories`).
 
@@ -841,6 +847,9 @@ class Hindsight:
         ``[start_date, end_date)`` given as ISO-8601 strings. Memories carrying no
         value on that axis are excluded, so ``total`` counts the window rather than
         the bank.
+
+        tags / tags_match filter by the memories' tags ('any', 'all', 'any_strict',
+        'all_strict', 'exact'; the server defaults to 'any').
         """
         return await self._memory_api.list_memories(
             bank_id=bank_id,
@@ -852,6 +861,8 @@ class Hindsight:
             end_date=end_date,
             limit=limit,
             offset=offset,
+            tags=tags,
+            tags_match=tags_match,
             _request_timeout=self._timeout,
         )
 

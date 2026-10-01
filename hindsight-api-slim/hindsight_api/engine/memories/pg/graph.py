@@ -36,7 +36,7 @@ from typing import Any
 
 from ....config import get_config
 from ...db.base import DatabaseConnection
-from ...search.tags import TagsMatch
+from ...search.tags import TagsMatch, build_tag_filter_clause
 from ..base import EntityPrunePassResult, RelinkPassResult
 from .links import (
     MAX_TEMPORAL_LINKS_PER_UNIT,
@@ -332,8 +332,15 @@ async def entity_memory_counts(
     fq_table: Callable[[str], str],
     bank_id: str,
     entity_ids: list[str] | None = None,
+    tags: list[str] | None = None,
+    tags_match: TagsMatch = "any",
+    tag_groups: list | None = None,
 ) -> dict[str, int]:
     """Live memory count per entity id, for the entities in ``bank_id``.
+
+    ``tags``/``tags_match``/``tag_groups`` count only the matching memories. The clause runs in an
+    unaliased subquery because the Oracle rewriter needs a bare ``tags`` column
+    (see ``visible_entity_stats_sql``); with no filter the query is unchanged.
 
     The GROUP BY is what makes this an orphan test: an entity with no surviving
     `unit_entities` row produces no group, so it is simply absent from the
@@ -343,7 +350,11 @@ async def entity_memory_counts(
     and joining is what keeps the count to *live* memories (deleted units take
     their postings with them via ON DELETE CASCADE).
     """
-    params: list[Any] = [bank_id]
+    built = build_tag_filter_clause(tags, tags_match, tag_groups, param_offset=2)
+    params: list[Any] = [bank_id, *built.params]
+    tag_filter = ""
+    if built.sql:
+        tag_filter = f"AND mu.id IN (SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 {built.sql})"
     entity_filter = ""
     if entity_ids is not None:
         if not entity_ids:
@@ -357,6 +368,7 @@ async def entity_memory_counts(
         FROM {fq_table("unit_entities")} ue
         JOIN {fq_table("memory_units")} mu ON mu.id = ue.unit_id
         WHERE mu.bank_id = $1
+        {tag_filter}
         {entity_filter}
         GROUP BY ue.entity_id
         """,

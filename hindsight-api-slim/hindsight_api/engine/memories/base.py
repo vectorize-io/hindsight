@@ -50,7 +50,7 @@ from ...extensions.base import Extension
 # rather than `str` so a store implementing this seam is checked against the modes that
 # actually exist -- the SQL builders below take this exact type, and a bare `str` made
 # every hop between them unverifiable.
-from ..search.tags import TagsMatch
+from ..search.tags import TagsMatch, tag_filter_active
 from ..search.types import RetrievalResult
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -1439,11 +1439,27 @@ class MemoriesExtension(Extension, ABC):
         SQL ``documents`` table instead); the engine only calls it for a store that owns its docs."""
         raise NotImplementedError
 
-    async def get_entity_graph(self, *, bank_id: str, limit: int = 1000, min_count: int = 1) -> dict:
+    async def get_entity_graph(
+        self,
+        *,
+        bank_id: str,
+        limit: int = 1000,
+        min_count: int = 1,
+        tags: "list[str] | None" = None,
+        tags_match: TagsMatch = "any",
+        tag_groups: "list | None" = None,
+    ) -> dict:
         """The entity co-occurrence graph (``{nodes, edges, ...}``) from the store's OWN aggregate.
         Only a store that owns its entities overrides this (a Postgres store reads its
         ``entity_cooccurrences`` table); the engine calls it only for a store-owned bank, whose SQL
-        table is empty."""
+        table is empty.
+
+        ``tags``/``tags_match`` and ``tag_groups`` (AND-ed, fuzzy leaves already resolved)
+        restrict the graph to the memories that match (same modes as anywhere else): an edge
+        counts only matching memories naming both entities, and a node's ``mentionCount`` only
+        matching memories naming it. A store that cannot filter must raise,
+        never return the unfiltered graph — that would hand a scoped reader every other scope's
+        entities (#5031)."""
         raise NotImplementedError
 
     async def get_chunk_text(self, *, bank_id: str, document_id: str, chunk_index: int) -> "str | None":
@@ -1885,12 +1901,24 @@ class MemoriesExtension(Extension, ABC):
 
     @abstractmethod
     async def entity_memory_counts(
-        self, *, conn, fq_table, bank_id: str, entity_ids: list[str] | None = None
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        entity_ids: list[str] | None = None,
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
+        tag_groups: list | None = None,
     ) -> dict[str, int]:
         """Live memory count per entity id.
 
         Entities with no live memories are absent, so an id passed in and not
         returned is an orphan.
+
+        ``tags``/``tags_match``/``tag_groups`` count only the memories that match (same modes as
+        anywhere else), so an entity no matching memory mentions is absent too —
+        that is how a tag-scoped entity read hides it (#5031).
         """
 
     @abstractmethod
@@ -2296,13 +2324,24 @@ class MemoriesExtension(Extension, ABC):
         fq_table,
         bank_id: str,
         search: str | None = None,
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
+        tag_groups: list | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> dict[str, Any]:
         """Entities in a bank with their ``mention_count``, paged and ordered by it.
 
         ``search`` is an optional case-insensitive substring match on the canonical
-        name. Returns ``{items, total, limit, offset}``."""
+        name. Returns ``{items, total, limit, offset}``.
+
+        ``tags``/``tags_match`` and ``tag_groups`` (AND-ed, fuzzy leaves already
+        resolved) filter on the memories that mention each entity (same modes as
+        anywhere else). An entity is listed only when a matching memory
+        mentions it, and its ``mention_count``, ``first_seen``, ``last_seen`` and
+        ``total`` cover matching memories only — the stored totals would reveal how
+        much out-of-scope memories talk about it (#5031). A store that cannot filter
+        must raise rather than ignore the filter."""
 
     @abstractmethod
     async def graph_units(
@@ -3099,28 +3138,73 @@ class MemoriesExtension(Extension, ABC):
             conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(u) for u in unit_ids]
         )
 
-    async def entity_graph(self, *, conn, fq_table, bank_id: str, limit: int, min_count: int) -> dict:
+    async def entity_graph(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        limit: int,
+        min_count: int,
+        tags: "list[str] | None" = None,
+        tags_match: TagsMatch = "any",
+        tag_groups: "list | None" = None,
+    ) -> dict:
         """The entity co-occurrence graph (``{nodes, edges, ...}``). Delegates to
         :meth:`get_entity_graph`, the store's own aggregate; Postgres reads its
-        ``entity_cooccurrences`` table on the caller's connection."""
-        return await self.get_entity_graph(bank_id=bank_id, limit=limit, min_count=min_count)
+        ``entity_cooccurrences`` table on the caller's connection, or recomputes the
+        edges from the matching memories when a tag filter is given (see
+        :meth:`get_entity_graph` for the filter's contract)."""
+        return await self.get_entity_graph(
+            bank_id=bank_id,
+            limit=limit,
+            min_count=min_count,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
+        )
 
     async def count_bank_documents(self, *, conn, fq_table, bank_id: str) -> int:
         """This bank's document count, for the stats page. Delegates to :meth:`count_documents`;
         Postgres counts its ``documents`` table on the caller's connection."""
         return await self.count_documents(bank_id=bank_id)
 
-    async def get_entity_detail(self, *, conn, fq_table, bank_id: str, entity_id: uuid.UUID) -> dict[str, Any] | None:
+    async def get_entity_detail(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        entity_id: uuid.UUID,
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
+        tag_groups: list | None = None,
+    ) -> dict[str, Any] | None:
         """One entity rendered for the entity detail view, or ``None`` if the bank has no such entity.
 
         An addressed lookup against the store's registry, not a page-and-scan, so it stays O(1) in
         the registry size. First/last seen live on the registry record, which this lookup does not
-        carry (``list_entities`` surfaces them). Postgres reads its ``entities`` row."""
+        carry (``list_entities`` surfaces them). Postgres reads its ``entities`` row.
+
+        With a tag filter (``tags``/``tags_match``/``tag_groups``, fuzzy leaves already resolved)
+        the count covers the matching memories only, and an entity no matching memory mentions is
+        ``None`` — the same answer as an unknown id, so a scoped reader cannot tell it exists in
+        another scope (#5031)."""
         eid = str(entity_id)
         names = await self.resolve_entity_names(conn=conn, fq_table=fq_table, bank_id=bank_id, entity_ids=[eid])
         if eid not in names:
             return None
-        counts = await self.entity_memory_counts(conn=conn, fq_table=fq_table, bank_id=bank_id, entity_ids=[eid])
+        counts = await self.entity_memory_counts(
+            conn=conn,
+            fq_table=fq_table,
+            bank_id=bank_id,
+            entity_ids=[eid],
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
+        )
+        if tag_filter_active(tags, tags_match, tag_groups) and eid not in counts:
+            return None
         return {
             "id": eid,
             "canonical_name": names[eid],

@@ -213,6 +213,15 @@ export interface OperationProgress {
 
 export type TagsMatch = "any" | "all" | "any_strict" | "all_strict" | "exact";
 
+/** Append a tag filter; `tags_match` only travels with tags, like the dataplane expects. */
+function appendTagFilter(
+  queryParams: URLSearchParams,
+  filter: { tags?: string[]; tags_match?: TagsMatch }
+) {
+  for (const tag of filter.tags ?? []) queryParams.append("tags", tag);
+  if (filter.tags?.length && filter.tags_match) queryParams.append("tags_match", filter.tags_match);
+}
+
 // Time axes the two list endpoints can filter and order by. The chosen axis does
 // both, and rows with no value on it are excluded — see the dataplane's
 // engine/time_filter.py.
@@ -812,11 +821,19 @@ export class ControlPlaneClient {
   /**
    * List entities
    */
-  async listEntities(params: { bank_id: string; limit?: number; offset?: number }) {
+  async listEntities(params: {
+    bank_id: string;
+    limit?: number;
+    offset?: number;
+    /** Only count memories carrying these tags; entities no matching memory mentions are left out. */
+    tags?: string[];
+    tags_match?: TagsMatch;
+  }) {
     const queryParams = new URLSearchParams();
     queryParams.append("bank_id", params.bank_id);
     if (params.limit) queryParams.append("limit", params.limit.toString());
     if (params.offset) queryParams.append("offset", params.offset.toString());
+    appendTagFilter(queryParams, params);
     return this.fetchApi<{
       items: any[];
       total: number;
@@ -828,12 +845,20 @@ export class ControlPlaneClient {
   /**
    * Get entity co-occurrence graph
    */
-  async getEntityGraph(params: { bank_id: string; limit?: number; min_count?: number }) {
+  async getEntityGraph(params: {
+    bank_id: string;
+    limit?: number;
+    min_count?: number;
+    /** Build the graph from the memories carrying these tags only. */
+    tags?: string[];
+    tags_match?: TagsMatch;
+  }) {
     const queryParams = new URLSearchParams();
     queryParams.append("bank_id", params.bank_id);
     if (params.limit) queryParams.append("limit", params.limit.toString());
     if (params.min_count !== undefined)
       queryParams.append("min_count", params.min_count.toString());
+    appendTagFilter(queryParams, params);
     return this.fetchApi<{
       nodes: Array<{ data: { id: string; label: string; mentionCount: number; color: string } }>;
       edges: Array<{
@@ -987,10 +1012,15 @@ export class ControlPlaneClient {
   /**
    * Get entity details
    */
-  async getEntity(entityId: string, bankId: string) {
-    return this.fetchApi(
-      `/api/entities/${encodeURIComponent(entityId)}?bank_id=${encodeURIComponent(bankId)}`
-    );
+  async getEntity(
+    entityId: string,
+    bankId: string,
+    filter: { tags?: string[]; tags_match?: TagsMatch } = {}
+  ) {
+    const queryParams = new URLSearchParams();
+    queryParams.append("bank_id", bankId);
+    appendTagFilter(queryParams, filter);
+    return this.fetchApi(`/api/entities/${encodeURIComponent(entityId)}?${queryParams}`);
   }
 
   /**
@@ -1172,11 +1202,14 @@ export class ControlPlaneClient {
       startDate?: string;
       /** ISO-8601, exclusive. */
       endDate?: string;
+      tags?: string[];
+      tagsMatch?: TagsMatch;
       limit?: number;
       offset?: number;
     }
   ) {
     const params = new URLSearchParams({ bank_id: bankId });
+    appendTagFilter(params, { tags: options?.tags, tags_match: options?.tagsMatch });
     if (options?.type) params.set("type", options.type);
     if (options?.q) params.set("q", options.q);
     if (options?.consolidationState) params.set("consolidation_state", options.consolidationState);

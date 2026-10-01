@@ -16,8 +16,8 @@ from pydantic import validate_call, Field, StrictFloat, StrictStr, StrictInt
 from typing import Any, Dict, List, Optional, Tuple, Union
 from typing_extensions import Annotated
 
-from pydantic import Field, StrictInt, StrictStr
-from typing import Optional
+from pydantic import Field, StrictInt, StrictStr, field_validator
+from typing import List, Optional
 from typing_extensions import Annotated
 from hindsight_client_api.models.entity_detail_response import EntityDetailResponse
 from hindsight_client_api.models.entity_graph_response import EntityGraphResponse
@@ -46,6 +46,9 @@ class EntitiesApi:
         self,
         bank_id: StrictStr,
         entity_id: StrictStr,
+        tags: Annotated[Optional[List[StrictStr]], Field(description="Only count memories carrying these tags. The entity is a 404 when no matching memory mentions it; its mention count and dates cover the matching memories only.")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match (same modes as listing memories).")] = None,
+        tag_groups: Annotated[Optional[StrictStr], Field(description="Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -68,6 +71,12 @@ class EntitiesApi:
         :type bank_id: str
         :param entity_id: (required)
         :type entity_id: str
+        :param tags: Only count memories carrying these tags. The entity is a 404 when no matching memory mentions it; its mention count and dates cover the matching memories only.
+        :type tags: List[str]
+        :param tags_match: How `tags` match (same modes as listing memories).
+        :type tags_match: str
+        :param tag_groups: Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.
+        :type tag_groups: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -95,6 +104,9 @@ class EntitiesApi:
         _param = self._get_entity_serialize(
             bank_id=bank_id,
             entity_id=entity_id,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -122,6 +134,9 @@ class EntitiesApi:
         self,
         bank_id: StrictStr,
         entity_id: StrictStr,
+        tags: Annotated[Optional[List[StrictStr]], Field(description="Only count memories carrying these tags. The entity is a 404 when no matching memory mentions it; its mention count and dates cover the matching memories only.")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match (same modes as listing memories).")] = None,
+        tag_groups: Annotated[Optional[StrictStr], Field(description="Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -144,6 +159,12 @@ class EntitiesApi:
         :type bank_id: str
         :param entity_id: (required)
         :type entity_id: str
+        :param tags: Only count memories carrying these tags. The entity is a 404 when no matching memory mentions it; its mention count and dates cover the matching memories only.
+        :type tags: List[str]
+        :param tags_match: How `tags` match (same modes as listing memories).
+        :type tags_match: str
+        :param tag_groups: Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.
+        :type tag_groups: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -171,6 +192,9 @@ class EntitiesApi:
         _param = self._get_entity_serialize(
             bank_id=bank_id,
             entity_id=entity_id,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -198,6 +222,9 @@ class EntitiesApi:
         self,
         bank_id: StrictStr,
         entity_id: StrictStr,
+        tags: Annotated[Optional[List[StrictStr]], Field(description="Only count memories carrying these tags. The entity is a 404 when no matching memory mentions it; its mention count and dates cover the matching memories only.")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match (same modes as listing memories).")] = None,
+        tag_groups: Annotated[Optional[StrictStr], Field(description="Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -220,6 +247,12 @@ class EntitiesApi:
         :type bank_id: str
         :param entity_id: (required)
         :type entity_id: str
+        :param tags: Only count memories carrying these tags. The entity is a 404 when no matching memory mentions it; its mention count and dates cover the matching memories only.
+        :type tags: List[str]
+        :param tags_match: How `tags` match (same modes as listing memories).
+        :type tags_match: str
+        :param tag_groups: Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.
+        :type tag_groups: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -247,6 +280,9 @@ class EntitiesApi:
         _param = self._get_entity_serialize(
             bank_id=bank_id,
             entity_id=entity_id,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -269,6 +305,9 @@ class EntitiesApi:
         self,
         bank_id,
         entity_id,
+        tags,
+        tags_match,
+        tag_groups,
         authorization,
         _request_auth,
         _content_type,
@@ -279,6 +318,7 @@ class EntitiesApi:
         _host = None
 
         _collection_formats: Dict[str, str] = {
+            'tags': 'multi',
         }
 
         _path_params: Dict[str, str] = {}
@@ -296,6 +336,18 @@ class EntitiesApi:
         if entity_id is not None:
             _path_params['entity_id'] = entity_id
         # process the query parameters
+        if tags is not None:
+            
+            _query_params.append(('tags', tags))
+            
+        if tags_match is not None:
+            
+            _query_params.append(('tags_match', tags_match))
+            
+        if tag_groups is not None:
+            
+            _query_params.append(('tag_groups', tag_groups))
+            
         # process the header parameters
         if authorization is not None:
             _header_params['authorization'] = authorization
@@ -340,6 +392,9 @@ class EntitiesApi:
         bank_id: StrictStr,
         limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of co-occurrence edges to return")] = None,
         min_count: Annotated[Optional[StrictInt], Field(description="Minimum cooccurrence_count to include an edge")] = None,
+        tags: Annotated[Optional[List[StrictStr]], Field(description="Only count memories carrying these tags. Edges and node mention counts are computed from the matching memories only.")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match (same modes as listing memories).")] = None,
+        tag_groups: Annotated[Optional[StrictStr], Field(description="Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -364,6 +419,12 @@ class EntitiesApi:
         :type limit: int
         :param min_count: Minimum cooccurrence_count to include an edge
         :type min_count: int
+        :param tags: Only count memories carrying these tags. Edges and node mention counts are computed from the matching memories only.
+        :type tags: List[str]
+        :param tags_match: How `tags` match (same modes as listing memories).
+        :type tags_match: str
+        :param tag_groups: Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.
+        :type tag_groups: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -392,6 +453,9 @@ class EntitiesApi:
             bank_id=bank_id,
             limit=limit,
             min_count=min_count,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -421,6 +485,9 @@ class EntitiesApi:
         bank_id: StrictStr,
         limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of co-occurrence edges to return")] = None,
         min_count: Annotated[Optional[StrictInt], Field(description="Minimum cooccurrence_count to include an edge")] = None,
+        tags: Annotated[Optional[List[StrictStr]], Field(description="Only count memories carrying these tags. Edges and node mention counts are computed from the matching memories only.")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match (same modes as listing memories).")] = None,
+        tag_groups: Annotated[Optional[StrictStr], Field(description="Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -445,6 +512,12 @@ class EntitiesApi:
         :type limit: int
         :param min_count: Minimum cooccurrence_count to include an edge
         :type min_count: int
+        :param tags: Only count memories carrying these tags. Edges and node mention counts are computed from the matching memories only.
+        :type tags: List[str]
+        :param tags_match: How `tags` match (same modes as listing memories).
+        :type tags_match: str
+        :param tag_groups: Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.
+        :type tag_groups: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -473,6 +546,9 @@ class EntitiesApi:
             bank_id=bank_id,
             limit=limit,
             min_count=min_count,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -502,6 +578,9 @@ class EntitiesApi:
         bank_id: StrictStr,
         limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of co-occurrence edges to return")] = None,
         min_count: Annotated[Optional[StrictInt], Field(description="Minimum cooccurrence_count to include an edge")] = None,
+        tags: Annotated[Optional[List[StrictStr]], Field(description="Only count memories carrying these tags. Edges and node mention counts are computed from the matching memories only.")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match (same modes as listing memories).")] = None,
+        tag_groups: Annotated[Optional[StrictStr], Field(description="Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -526,6 +605,12 @@ class EntitiesApi:
         :type limit: int
         :param min_count: Minimum cooccurrence_count to include an edge
         :type min_count: int
+        :param tags: Only count memories carrying these tags. Edges and node mention counts are computed from the matching memories only.
+        :type tags: List[str]
+        :param tags_match: How `tags` match (same modes as listing memories).
+        :type tags_match: str
+        :param tag_groups: Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.
+        :type tag_groups: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -554,6 +639,9 @@ class EntitiesApi:
             bank_id=bank_id,
             limit=limit,
             min_count=min_count,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -578,6 +666,9 @@ class EntitiesApi:
         bank_id,
         limit,
         min_count,
+        tags,
+        tags_match,
+        tag_groups,
         authorization,
         _request_auth,
         _content_type,
@@ -588,6 +679,7 @@ class EntitiesApi:
         _host = None
 
         _collection_formats: Dict[str, str] = {
+            'tags': 'multi',
         }
 
         _path_params: Dict[str, str] = {}
@@ -610,6 +702,18 @@ class EntitiesApi:
         if min_count is not None:
             
             _query_params.append(('min_count', min_count))
+            
+        if tags is not None:
+            
+            _query_params.append(('tags', tags))
+            
+        if tags_match is not None:
+            
+            _query_params.append(('tags_match', tags_match))
+            
+        if tag_groups is not None:
+            
+            _query_params.append(('tag_groups', tag_groups))
             
         # process the header parameters
         if authorization is not None:
@@ -655,6 +759,9 @@ class EntitiesApi:
         bank_id: StrictStr,
         limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of entities to return")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
+        tags: Annotated[Optional[List[StrictStr]], Field(description="Only count memories carrying these tags. An entity is returned only when a matching memory mentions it, and its mention count and dates cover the matching memories only.")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match (same modes as listing memories).")] = None,
+        tag_groups: Annotated[Optional[StrictStr], Field(description="Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -679,6 +786,12 @@ class EntitiesApi:
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int
+        :param tags: Only count memories carrying these tags. An entity is returned only when a matching memory mentions it, and its mention count and dates cover the matching memories only.
+        :type tags: List[str]
+        :param tags_match: How `tags` match (same modes as listing memories).
+        :type tags_match: str
+        :param tag_groups: Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.
+        :type tag_groups: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -707,6 +820,9 @@ class EntitiesApi:
             bank_id=bank_id,
             limit=limit,
             offset=offset,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -736,6 +852,9 @@ class EntitiesApi:
         bank_id: StrictStr,
         limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of entities to return")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
+        tags: Annotated[Optional[List[StrictStr]], Field(description="Only count memories carrying these tags. An entity is returned only when a matching memory mentions it, and its mention count and dates cover the matching memories only.")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match (same modes as listing memories).")] = None,
+        tag_groups: Annotated[Optional[StrictStr], Field(description="Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -760,6 +879,12 @@ class EntitiesApi:
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int
+        :param tags: Only count memories carrying these tags. An entity is returned only when a matching memory mentions it, and its mention count and dates cover the matching memories only.
+        :type tags: List[str]
+        :param tags_match: How `tags` match (same modes as listing memories).
+        :type tags_match: str
+        :param tag_groups: Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.
+        :type tag_groups: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -788,6 +913,9 @@ class EntitiesApi:
             bank_id=bank_id,
             limit=limit,
             offset=offset,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -817,6 +945,9 @@ class EntitiesApi:
         bank_id: StrictStr,
         limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of entities to return")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
+        tags: Annotated[Optional[List[StrictStr]], Field(description="Only count memories carrying these tags. An entity is returned only when a matching memory mentions it, and its mention count and dates cover the matching memories only.")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match (same modes as listing memories).")] = None,
+        tag_groups: Annotated[Optional[StrictStr], Field(description="Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -841,6 +972,12 @@ class EntitiesApi:
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int
+        :param tags: Only count memories carrying these tags. An entity is returned only when a matching memory mentions it, and its mention count and dates cover the matching memories only.
+        :type tags: List[str]
+        :param tags_match: How `tags` match (same modes as listing memories).
+        :type tags_match: str
+        :param tag_groups: Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.
+        :type tag_groups: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -869,6 +1006,9 @@ class EntitiesApi:
             bank_id=bank_id,
             limit=limit,
             offset=offset,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -893,6 +1033,9 @@ class EntitiesApi:
         bank_id,
         limit,
         offset,
+        tags,
+        tags_match,
+        tag_groups,
         authorization,
         _request_auth,
         _content_type,
@@ -903,6 +1046,7 @@ class EntitiesApi:
         _host = None
 
         _collection_formats: Dict[str, str] = {
+            'tags': 'multi',
         }
 
         _path_params: Dict[str, str] = {}
@@ -925,6 +1069,18 @@ class EntitiesApi:
         if offset is not None:
             
             _query_params.append(('offset', offset))
+            
+        if tags is not None:
+            
+            _query_params.append(('tags', tags))
+            
+        if tags_match is not None:
+            
+            _query_params.append(('tags_match', tags_match))
+            
+        if tag_groups is not None:
+            
+            _query_params.append(('tag_groups', tag_groups))
             
         # process the header parameters
         if authorization is not None:

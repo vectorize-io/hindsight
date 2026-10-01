@@ -112,6 +112,16 @@ def tag_clause_is_index_only(tags: list[str] | None, match: TagsMatch) -> bool:
     return not _parse_tags_match(match).include_untagged
 
 
+def tag_filter_active(tags: list[str] | None, match: TagsMatch, tag_groups: list | None = None) -> bool:
+    """Whether ``tags``/``match``/``tag_groups`` filter anything at all.
+
+    Empty tags mean "no filter" in every mode but ``exact``, where they select the
+    untagged (global) scope — the rule :func:`build_tags_where_clause` applies. A read
+    with a cheaper unfiltered path asks this to pick it.
+    """
+    return bool(tags) or match == "exact" or bool(tag_groups)
+
+
 def build_tags_where_clause(
     tags: list[str] | None,
     param_offset: int = 1,
@@ -464,6 +474,25 @@ def build_tag_groups_where_clause(
 
     combined = " AND ".join(all_clauses)
     return TagClause(f"AND {combined}", all_params, offset)
+
+
+def build_tag_filter_clause(
+    tags: list[str] | None,
+    match: TagsMatch,
+    tag_groups: list | None,
+    param_offset: int,
+) -> TagClause:
+    """``tags``/``match`` and ``tag_groups`` as one clause, AND-ed, binds in placeholder order.
+
+    For reads that take both filters side by side. Built without a table alias: run it
+    on an unaliased ``memory_units`` so the Oracle rewriter, which matches a bare
+    ``tags`` column, can translate the array operators. Fuzzy leaves must already be
+    resolved — see ``MemoryEngine._resolve_fuzzy_tag_groups``.
+    """
+    plain = build_tags_where_clause(tags, param_offset, match=match)
+    groups = build_tag_groups_where_clause(tag_groups, plain.next_param_offset)
+    sql = " ".join(part for part in (plain.sql, groups.sql) if part)
+    return TagClause(sql, [*plain.params, *groups.params], groups.next_param_offset)
 
 
 # =============================================================================

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { sdk, lowLevelClient } from "@/lib/hindsight-client";
 import { respondWithSdk } from "@/lib/sdk-response";
+import { readTagFilter } from "@/lib/tag-filter-params";
 
 export async function GET(
   request: NextRequest,
@@ -30,6 +31,7 @@ export async function GET(
       bank_id: bankId,
       entity_id: decodedEntityId,
     },
+    query: readTagFilter(searchParams),
   });
   return respondWithSdk(response, "Failed to get entity", { request });
 }

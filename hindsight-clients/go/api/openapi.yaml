@@ -964,6 +964,48 @@ paths:
           title: Offset
           type: integer
         style: form
+      - description: "Only count memories carrying these tags. An entity is returned\
+          \ only when a matching memory mentions it, and its mention count and dates\
+          \ cover the matching memories only."
+        explode: true
+        in: query
+        name: tags
+        required: false
+        schema:
+          items:
+            type: string
+          nullable: true
+          type: array
+        style: form
+      - description: How `tags` match (same modes as listing memories).
+        explode: true
+        in: query
+        name: tags_match
+        required: false
+        schema:
+          default: any
+          description: How `tags` match (same modes as listing memories).
+          enum:
+          - any
+          - all
+          - any_strict
+          - all_strict
+          - exact
+          title: Tags Match
+          type: string
+        style: form
+      - description: "Compound tag filter as a JSON-encoded list of tag groups — the\
+          \ same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve}\
+          \ and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually\
+          \ exclusive with `tags`."
+        explode: true
+        in: query
+        name: tag_groups
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
       - explode: false
         in: header
         name: authorization
@@ -1027,6 +1069,47 @@ paths:
           title: Min Count
           type: integer
         style: form
+      - description: Only count memories carrying these tags. Edges and node mention
+          counts are computed from the matching memories only.
+        explode: true
+        in: query
+        name: tags
+        required: false
+        schema:
+          items:
+            type: string
+          nullable: true
+          type: array
+        style: form
+      - description: How `tags` match (same modes as listing memories).
+        explode: true
+        in: query
+        name: tags_match
+        required: false
+        schema:
+          default: any
+          description: How `tags` match (same modes as listing memories).
+          enum:
+          - any
+          - all
+          - any_strict
+          - all_strict
+          - exact
+          title: Tags Match
+          type: string
+        style: form
+      - description: "Compound tag filter as a JSON-encoded list of tag groups — the\
+          \ same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve}\
+          \ and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually\
+          \ exclusive with `tags`."
+        explode: true
+        in: query
+        name: tag_groups
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
       - explode: false
         in: header
         name: authorization
@@ -1075,6 +1158,48 @@ paths:
           title: Entity Id
           type: string
         style: simple
+      - description: Only count memories carrying these tags. The entity is a 404
+          when no matching memory mentions it; its mention count and dates cover the
+          matching memories only.
+        explode: true
+        in: query
+        name: tags
+        required: false
+        schema:
+          items:
+            type: string
+          nullable: true
+          type: array
+        style: form
+      - description: How `tags` match (same modes as listing memories).
+        explode: true
+        in: query
+        name: tags_match
+        required: false
+        schema:
+          default: any
+          description: How `tags` match (same modes as listing memories).
+          enum:
+          - any
+          - all
+          - any_strict
+          - all_strict
+          - exact
+          title: Tags Match
+          type: string
+        style: form
+      - description: "Compound tag filter as a JSON-encoded list of tag groups — the\
+          \ same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve}\
+          \ and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually\
+          \ exclusive with `tags`."
+        explode: true
+        in: query
+        name: tag_groups
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
       - explode: false
         in: header
         name: authorization

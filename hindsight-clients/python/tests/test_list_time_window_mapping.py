@@ -53,3 +53,13 @@ def test_list_memories_omits_the_window_by_default(captured):
     assert seen["time_field"] is None
     assert seen["start_date"] is None
     assert seen["end_date"] is None
+
+
+def test_list_memories_forwards_the_tag_filter(captured):
+    """Same rule, for the tag filter the control plane's entity panel sends (#5031)."""
+    client, seen = captured
+
+    client.list_memories("test-bank", tags=["user:dan"], tags_match="any_strict")
+
+    assert seen["tags"] == ["user:dan"]
+    assert seen["tags_match"] == "any_strict"

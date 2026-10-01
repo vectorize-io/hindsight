@@ -62,7 +62,7 @@ if TYPE_CHECKING:
     from opentelemetry.trace import Span
 
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator, model_validator
 
 from hindsight_api import MemoryEngine
 from hindsight_api.config import RETAIN_EXTRACTION_MODES
@@ -249,6 +249,36 @@ from hindsight_api.engine.retain.attachment_content import (
 from hindsight_api.engine.retain.attachment_store import StoredAttachment
 from hindsight_api.engine.search.tag_resolution import needs_resolution
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
+
+_TAG_GROUPS_ADAPTER: TypeAdapter[list[TagGroup]] = TypeAdapter(list[TagGroup])
+
+_TAG_GROUPS_QUERY_DESCRIPTION = (
+    "Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a "
+    "recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are "
+    "AND-ed). Mutually exclusive with `tags`."
+)
+
+
+def _parse_tag_groups_query(raw: str | None, tags: list[str] | None) -> list[TagGroup] | None:
+    """Parse a ``tag_groups`` query parameter.
+
+    A GET cannot carry a body, so the tree that recall takes as JSON arrives as a
+    JSON-encoded string. Invalid JSON or an invalid tree is a 400, and so is sending it
+    alongside ``tags`` — the same rule recall enforces on its body.
+    """
+    if raw is None:
+        return None
+    if tags:
+        raise HTTPException(
+            status_code=400,
+            detail="'tags' and 'tag_groups' are mutually exclusive. Use 'tag_groups' for compound filtering.",
+        )
+    try:
+        return _TAG_GROUPS_ADAPTER.validate_json(raw)
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid tag_groups: {e.errors(include_url=False)}")
+
+
 from hindsight_api.engine.structured_output import validate_response_schema
 from hindsight_api.engine.time_filter import DocumentTimeField, MemoryTimeField
 from hindsight_api.engine.token_encoding import count_tokens
@@ -6581,12 +6611,27 @@ def _register_routes(app: FastAPI):
         bank_id: str,
         limit: int = Query(default=100, ge=0, description="Maximum number of entities to return"),
         offset: int = Query(default=0, ge=0, description="Offset for pagination"),
+        tags: list[str] | None = Query(
+            default=None,
+            description=(
+                "Only count memories carrying these tags. An entity is returned only when a matching "
+                "memory mentions it, and its mention count and dates cover the matching memories only."
+            ),
+        ),
+        tags_match: TagsMatch = Query(default="any", description="How `tags` match (same modes as listing memories)."),
+        tag_groups: str | None = Query(default=None, description=_TAG_GROUPS_QUERY_DESCRIPTION),
         request_context: RequestContext = Depends(get_request_context),
     ):
         """List entities for a memory bank with pagination."""
         try:
             data = await app.state.memory.list_entities(
-                bank_id, limit=limit, offset=offset, request_context=request_context
+                bank_id,
+                tags=tags,
+                tags_match=tags_match,
+                tag_groups=_parse_tag_groups_query(tag_groups, tags),
+                limit=limit,
+                offset=offset,
+                request_context=request_context,
             )
             return EntityListResponse(
                 items=[EntityListItem(**e) for e in data["items"]],
@@ -6614,12 +6659,27 @@ def _register_routes(app: FastAPI):
         bank_id: str,
         limit: int = Query(default=1000, ge=0, description="Maximum number of co-occurrence edges to return"),
         min_count: int = Query(default=1, description="Minimum cooccurrence_count to include an edge"),
+        tags: list[str] | None = Query(
+            default=None,
+            description=(
+                "Only count memories carrying these tags. Edges and node mention counts are "
+                "computed from the matching memories only."
+            ),
+        ),
+        tags_match: TagsMatch = Query(default="any", description="How `tags` match (same modes as listing memories)."),
+        tag_groups: str | None = Query(default=None, description=_TAG_GROUPS_QUERY_DESCRIPTION),
         request_context: RequestContext = Depends(get_request_context),
     ):
         """Return entity co-occurrence graph for a bank."""
         try:
             return await app.state.memory.get_entity_graph(
-                bank_id, limit=limit, min_count=min_count, request_context=request_context
+                bank_id,
+                limit=limit,
+                min_count=min_count,
+                tags=tags,
+                tags_match=tags_match,
+                tag_groups=_parse_tag_groups_query(tag_groups, tags),
+                request_context=request_context,
             )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
@@ -6637,11 +6697,29 @@ def _register_routes(app: FastAPI):
         tags=["Entities"],
     )
     async def api_get_entity(
-        bank_id: str, entity_id: str, request_context: RequestContext = Depends(get_request_context)
+        bank_id: str,
+        entity_id: str,
+        tags: list[str] | None = Query(
+            default=None,
+            description=(
+                "Only count memories carrying these tags. The entity is a 404 when no matching memory "
+                "mentions it; its mention count and dates cover the matching memories only."
+            ),
+        ),
+        tags_match: TagsMatch = Query(default="any", description="How `tags` match (same modes as listing memories)."),
+        tag_groups: str | None = Query(default=None, description=_TAG_GROUPS_QUERY_DESCRIPTION),
+        request_context: RequestContext = Depends(get_request_context),
     ):
         """Get entity details with observations."""
         try:
-            entity = await app.state.memory.get_entity(bank_id, entity_id, request_context=request_context)
+            entity = await app.state.memory.get_entity(
+                bank_id,
+                entity_id,
+                tags=tags,
+                tags_match=tags_match,
+                tag_groups=_parse_tag_groups_query(tag_groups, tags),
+                request_context=request_context,
+            )
 
             if entity is None:
                 raise HTTPException(status_code=404, detail=f"Entity {entity_id} not found")

@@ -134,7 +134,7 @@ class InMemoryMemories(MemoriesExtension):
     async def count_documents(self, *, bank_id):
         return len(self.documents)
 
-    async def get_entity_graph(self, *, bank_id, limit=1000, min_count=1):
+    async def get_entity_graph(self, *, bank_id, limit=1000, min_count=1, tags=None, tags_match="any", tag_groups=None):
         return {"nodes": [], "edges": []}
 
     async def list_documents(
@@ -380,7 +380,9 @@ class InMemoryMemories(MemoriesExtension):
     async def find_failed_consolidation(self, *, conn, fq_table, bank_id):
         return [r for r in self.rows.values() if r.unit_id in self.failed and r.fact_type in ("experience", "world")]
 
-    async def entity_memory_counts(self, *, conn, fq_table, bank_id, entity_ids=None):
+    async def entity_memory_counts(
+        self, *, conn, fq_table, bank_id, entity_ids=None, tags=None, tags_match="any", tag_groups=None
+    ):
         counts: dict[str, int] = {}
         for row in self.rows.values():
             for entity_id in row.entity_ids:
@@ -518,7 +520,9 @@ class InMemoryMemories(MemoriesExtension):
         self.calls.append("set_memory_embedding")
         self.embeddings[str(unit_id)] = embedding
 
-    async def list_entities(self, *, conn, fq_table, bank_id, search=None, limit=100, offset=0):
+    async def list_entities(
+        self, *, conn, fq_table, bank_id, search=None, tags=None, tags_match="any", tag_groups=None, limit=100, offset=0
+    ):
         self.calls.append("list_entities")
         return {"items": [], "total": 0, "limit": limit, "offset": offset}
 

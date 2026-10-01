@@ -1398,6 +1398,64 @@
             "description": "Offset for pagination"
           },
           {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only count memories carrying these tags. An entity is returned only when a matching memory mentions it, and its mention count and dates cover the matching memories only.",
+              "title": "Tags"
+            },
+            "description": "Only count memories carrying these tags. An entity is returned only when a matching memory mentions it, and its mention count and dates cover the matching memories only."
+          },
+          {
+            "name": "tags_match",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "any",
+                "all",
+                "any_strict",
+                "all_strict",
+                "exact"
+              ],
+              "type": "string",
+              "description": "How `tags` match (same modes as listing memories).",
+              "default": "any",
+              "title": "Tags Match"
+            },
+            "description": "How `tags` match (same modes as listing memories)."
+          },
+          {
+            "name": "tag_groups",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Compound tag filter as a JSON-encoded list of tag groups \u2014 the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.",
+              "title": "Tag Groups"
+            },
+            "description": "Compound tag filter as a JSON-encoded list of tag groups \u2014 the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`."
+          },
+          {
             "name": "authorization",
             "in": "header",
             "required": false,
@@ -1485,6 +1543,64 @@
             "description": "Minimum cooccurrence_count to include an edge"
           },
           {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only count memories carrying these tags. Edges and node mention counts are computed from the matching memories only.",
+              "title": "Tags"
+            },
+            "description": "Only count memories carrying these tags. Edges and node mention counts are computed from the matching memories only."
+          },
+          {
+            "name": "tags_match",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "any",
+                "all",
+                "any_strict",
+                "all_strict",
+                "exact"
+              ],
+              "type": "string",
+              "description": "How `tags` match (same modes as listing memories).",
+              "default": "any",
+              "title": "Tags Match"
+            },
+            "description": "How `tags` match (same modes as listing memories)."
+          },
+          {
+            "name": "tag_groups",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Compound tag filter as a JSON-encoded list of tag groups \u2014 the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.",
+              "title": "Tag Groups"
+            },
+            "description": "Compound tag filter as a JSON-encoded list of tag groups \u2014 the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`."
+          },
+          {
             "name": "authorization",
             "in": "header",
             "required": false,
@@ -1554,6 +1670,64 @@
               "type": "string",
               "title": "Entity Id"
             }
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only count memories carrying these tags. The entity is a 404 when no matching memory mentions it; its mention count and dates cover the matching memories only.",
+              "title": "Tags"
+            },
+            "description": "Only count memories carrying these tags. The entity is a 404 when no matching memory mentions it; its mention count and dates cover the matching memories only."
+          },
+          {
+            "name": "tags_match",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "any",
+                "all",
+                "any_strict",
+                "all_strict",
+                "exact"
+              ],
+              "type": "string",
+              "description": "How `tags` match (same modes as listing memories).",
+              "default": "any",
+              "title": "Tags Match"
+            },
+            "description": "How `tags` match (same modes as listing memories)."
+          },
+          {
+            "name": "tag_groups",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Compound tag filter as a JSON-encoded list of tag groups \u2014 the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.",
+              "title": "Tag Groups"
+            },
+            "description": "Compound tag filter as a JSON-encoded list of tag groups \u2014 the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`."
           },
           {
             "name": "authorization",

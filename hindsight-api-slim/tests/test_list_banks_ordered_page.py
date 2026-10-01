@@ -90,7 +90,19 @@ class _OrderingStore:
     async def count_memories(self, *, conn, fq_table, bank_id: str) -> dict:
         return {}
 
-    async def list_entities(self, *, conn, fq_table, bank_id: str, search=None, limit=100, offset=0) -> dict:
+    async def list_entities(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        search=None,
+        tags=None,
+        tags_match="any",
+        tag_groups=None,
+        limit=100,
+        offset=0,
+    ) -> dict:
         return {"items": [], "total": 0, "limit": limit, "offset": offset}
 
     async def delete_observations(self, *, conn, fq_table, bank_id: str) -> None:

@@ -15,7 +15,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from ...search.tags import TagsMatch, build_tag_filter_clause, tag_filter_active
 from ..base import BankContentCounts, MemoryLocation, StoredMemory, TypedMemoryScope
+from .curation import visible_entity_stats_sql
 
 # Ids per DELETE in the bulk delete, so one statement's parameter array stays bounded.
 _DELETE_CHUNK_SIZE = 10_000
@@ -284,10 +286,108 @@ class _EntityNode:
     mention_count: int
 
 
+async def _tag_filtered_entity_graph_edges(
+    *,
+    conn,
+    fq_table: Callable[[str], str],
+    bank_id: str,
+    limit: int,
+    min_count: int,
+    tags: list[str] | None,
+    tags_match: TagsMatch,
+    tag_groups: list | None,
+) -> list[Any]:
+    """Co-occurrence edges over the tag-matching memories only, in the row shape of the materialized query.
+
+    ``entity_cooccurrences`` counts every memory in the bank and carries no tags,
+    so it is recomputed here: one pair per two entities named by the same matching
+    memory, the node counts from the same memories. Costs a self-join over the
+    bank's postings, which is why only a tag-filtered read pays it.
+
+    The tag clause filters an unaliased subquery for the reason given on
+    :func:`visible_entity_stats_sql` (the Oracle rewriter needs a bare column).
+    """
+    built = build_tag_filter_clause(tags, tags_match, tag_groups, param_offset=2)
+    params: list[Any] = [bank_id, *built.params, min_count, limit]
+    min_count_param = len(params) - 1
+    limit_param = len(params)
+    return await conn.fetch(
+        f"""
+        WITH ve AS (
+            SELECT ue.unit_id, ue.entity_id, vu.seen_at
+            FROM {fq_table("unit_entities")} ue
+            JOIN (
+                SELECT id, COALESCE(occurred_start, mentioned_at, event_date) AS seen_at
+                FROM {fq_table("memory_units")}
+                WHERE bank_id = $1 {built.sql}
+            ) vu ON vu.id = ue.unit_id
+        ),
+        pairs AS (
+            -- One row per unordered pair, smaller id first, like the materialized table.
+            SELECT a.entity_id AS entity_id_1,
+                   b.entity_id AS entity_id_2,
+                   COUNT(*) AS cooccurrence_count,
+                   MAX(a.seen_at) AS last_cooccurred
+            FROM ve a
+            JOIN ve b ON b.unit_id = a.unit_id AND a.entity_id < b.entity_id
+            GROUP BY a.entity_id, b.entity_id
+            HAVING COUNT(*) >= ${min_count_param}
+        ),
+        stats AS (
+            SELECT entity_id, COUNT(*) AS mention_count FROM ve GROUP BY entity_id
+        )
+        SELECT p.entity_id_1,
+               p.entity_id_2,
+               p.cooccurrence_count,
+               p.last_cooccurred,
+               e1.canonical_name AS name_1,
+               s1.mention_count  AS mention_count_1,
+               e2.canonical_name AS name_2,
+               s2.mention_count  AS mention_count_2
+        FROM pairs p
+        JOIN {fq_table("entities")} e1 ON e1.id = p.entity_id_1
+        JOIN {fq_table("entities")} e2 ON e2.id = p.entity_id_2
+        JOIN stats s1 ON s1.entity_id = p.entity_id_1
+        JOIN stats s2 ON s2.entity_id = p.entity_id_2
+        WHERE e1.bank_id = $1
+          AND e2.bank_id = $1
+        ORDER BY p.cooccurrence_count DESC, p.last_cooccurred DESC
+        LIMIT ${limit_param}
+        """,
+        *params,
+    )
+
+
 async def entity_graph(
-    *, conn, fq_table: Callable[[str], str], bank_id: str, limit: int, min_count: int
+    *,
+    conn,
+    fq_table: Callable[[str], str],
+    bank_id: str,
+    limit: int,
+    min_count: int,
+    tags: list[str] | None = None,
+    tags_match: TagsMatch = "any",
+    tag_groups: list | None = None,
 ) -> dict[str, Any]:
-    """The entity co-occurrence graph from ``entity_cooccurrences``, strongest edges first."""
+    """The entity co-occurrence graph from ``entity_cooccurrences``, strongest edges first.
+
+    With a tag filter the materialized table cannot be used — it has no tags — so
+    edges and node mention counts are recomputed from the matching memories.
+    Keeping the stored edges and only dropping hidden nodes would still leak how
+    often visible entities appear together out of scope (#5031).
+    """
+    if tag_filter_active(tags, tags_match, tag_groups):
+        edge_rows = await _tag_filtered_entity_graph_edges(
+            conn=conn,
+            fq_table=fq_table,
+            bank_id=bank_id,
+            limit=limit,
+            min_count=min_count,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
+        )
+        return _render_entity_graph(edge_rows, limit)
     edge_rows = await conn.fetch(
         f"""
         SELECT ec.entity_id_1,
@@ -311,7 +411,11 @@ async def entity_graph(
         min_count,
         limit,
     )
+    return _render_entity_graph(edge_rows, limit)
 
+
+def _render_entity_graph(edge_rows: list[Any], limit: int) -> dict[str, Any]:
+    """Nodes and edges for the graph view; the stored and the tag-filtered query share the row shape."""
     nodes_by_id: dict[str, _EntityNode] = {}
     edges: list[dict[str, Any]] = []
     for row in edge_rows:
@@ -372,18 +476,45 @@ async def count_bank_documents(*, conn, fq_table: Callable[[str], str], bank_id:
 
 
 async def get_entity_detail(
-    *, conn, fq_table: Callable[[str], str], bank_id: str, entity_id: uuid.UUID
+    *,
+    conn,
+    fq_table: Callable[[str], str],
+    bank_id: str,
+    entity_id: uuid.UUID,
+    tags: list[str] | None = None,
+    tags_match: TagsMatch = "any",
+    tag_groups: list | None = None,
 ) -> dict[str, Any] | None:
-    """One entity's registry row, rendered for the entity detail view; None if absent."""
-    entity_row = await conn.fetchrow(
-        f"""
-        SELECT id, canonical_name, mention_count, first_seen, last_seen, metadata
-        FROM {fq_table("entities")}
-        WHERE bank_id = $1 AND id = $2
-        """,
-        bank_id,
-        entity_id,
-    )
+    """One entity's registry row, rendered for the entity detail view; None if absent.
+
+    With a tag filter the counts and dates come from the matching memories, and an
+    entity no matching memory mentions is None — the same answer as an unknown id,
+    so a scoped reader cannot tell it exists elsewhere (#5031).
+    """
+    if tag_filter_active(tags, tags_match, tag_groups):
+        built = build_tag_filter_clause(tags, tags_match, tag_groups, param_offset=2)
+        # Inner join on the stats: no matching memory, no row.
+        entity_row = await conn.fetchrow(
+            f"""
+            SELECT e.id, e.canonical_name, s.mention_count, s.first_seen, s.last_seen, e.metadata
+            FROM {fq_table("entities")} e
+            JOIN ({visible_entity_stats_sql(fq_table, built.sql)}) s ON s.entity_id = e.id
+            WHERE e.bank_id = $1 AND e.id = ${len(built.params) + 2}
+            """,
+            bank_id,
+            *built.params,
+            entity_id,
+        )
+    else:
+        entity_row = await conn.fetchrow(
+            f"""
+            SELECT id, canonical_name, mention_count, first_seen, last_seen, metadata
+            FROM {fq_table("entities")}
+            WHERE bank_id = $1 AND id = $2
+            """,
+            bank_id,
+            entity_id,
+        )
     if not entity_row:
         return None
     return {

@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"reflect"
 )
 
 
@@ -28,7 +29,28 @@ type ApiGetEntityRequest struct {
 	ApiService *EntitiesAPIService
 	bankId string
 	entityId string
+	tags *[]string
+	tagsMatch *string
+	tagGroups *string
 	authorization *string
+}
+
+// Only count memories carrying these tags. The entity is a 404 when no matching memory mentions it; its mention count and dates cover the matching memories only.
+func (r ApiGetEntityRequest) Tags(tags []string) ApiGetEntityRequest {
+	r.tags = &tags
+	return r
+}
+
+// How &#x60;tags&#x60; match (same modes as listing memories).
+func (r ApiGetEntityRequest) TagsMatch(tagsMatch string) ApiGetEntityRequest {
+	r.tagsMatch = &tagsMatch
+	return r
+}
+
+// Compound tag filter as a JSON-encoded list of tag groups — the same shape &#x60;tag_groups&#x60; takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with &#x60;tags&#x60;.
+func (r ApiGetEntityRequest) TagGroups(tagGroups string) ApiGetEntityRequest {
+	r.tagGroups = &tagGroups
+	return r
 }
 
 func (r ApiGetEntityRequest) Authorization(authorization string) ApiGetEntityRequest {
@@ -82,6 +104,26 @@ func (a *EntitiesAPIService) GetEntityExecute(r ApiGetEntityRequest) (*EntityDet
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 
+	if r.tags != nil {
+		t := *r.tags
+		if reflect.TypeOf(t).Kind() == reflect.Slice {
+			s := reflect.ValueOf(t)
+			for i := 0; i < s.Len(); i++ {
+				parameterAddToHeaderOrQuery(localVarQueryParams, "tags", s.Index(i).Interface(), "form", "multi")
+			}
+		} else {
+			parameterAddToHeaderOrQuery(localVarQueryParams, "tags", t, "form", "multi")
+		}
+	}
+	if r.tagsMatch != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "tags_match", r.tagsMatch, "form", "")
+	} else {
+		var defaultValue string = "any"
+		r.tagsMatch = &defaultValue
+	}
+	if r.tagGroups != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "tag_groups", r.tagGroups, "form", "")
+	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
 
@@ -155,6 +197,9 @@ type ApiGetEntityGraphRequest struct {
 	bankId string
 	limit *int32
 	minCount *int32
+	tags *[]string
+	tagsMatch *string
+	tagGroups *string
 	authorization *string
 }
 
@@ -167,6 +212,24 @@ func (r ApiGetEntityGraphRequest) Limit(limit int32) ApiGetEntityGraphRequest {
 // Minimum cooccurrence_count to include an edge
 func (r ApiGetEntityGraphRequest) MinCount(minCount int32) ApiGetEntityGraphRequest {
 	r.minCount = &minCount
+	return r
+}
+
+// Only count memories carrying these tags. Edges and node mention counts are computed from the matching memories only.
+func (r ApiGetEntityGraphRequest) Tags(tags []string) ApiGetEntityGraphRequest {
+	r.tags = &tags
+	return r
+}
+
+// How &#x60;tags&#x60; match (same modes as listing memories).
+func (r ApiGetEntityGraphRequest) TagsMatch(tagsMatch string) ApiGetEntityGraphRequest {
+	r.tagsMatch = &tagsMatch
+	return r
+}
+
+// Compound tag filter as a JSON-encoded list of tag groups — the same shape &#x60;tag_groups&#x60; takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with &#x60;tags&#x60;.
+func (r ApiGetEntityGraphRequest) TagGroups(tagGroups string) ApiGetEntityGraphRequest {
+	r.tagGroups = &tagGroups
 	return r
 }
 
@@ -229,6 +292,26 @@ func (a *EntitiesAPIService) GetEntityGraphExecute(r ApiGetEntityGraphRequest) (
 	} else {
 		var defaultValue int32 = 1
 		r.minCount = &defaultValue
+	}
+	if r.tags != nil {
+		t := *r.tags
+		if reflect.TypeOf(t).Kind() == reflect.Slice {
+			s := reflect.ValueOf(t)
+			for i := 0; i < s.Len(); i++ {
+				parameterAddToHeaderOrQuery(localVarQueryParams, "tags", s.Index(i).Interface(), "form", "multi")
+			}
+		} else {
+			parameterAddToHeaderOrQuery(localVarQueryParams, "tags", t, "form", "multi")
+		}
+	}
+	if r.tagsMatch != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "tags_match", r.tagsMatch, "form", "")
+	} else {
+		var defaultValue string = "any"
+		r.tagsMatch = &defaultValue
+	}
+	if r.tagGroups != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "tag_groups", r.tagGroups, "form", "")
 	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
@@ -303,6 +386,9 @@ type ApiListEntitiesRequest struct {
 	bankId string
 	limit *int32
 	offset *int32
+	tags *[]string
+	tagsMatch *string
+	tagGroups *string
 	authorization *string
 }
 
@@ -315,6 +401,24 @@ func (r ApiListEntitiesRequest) Limit(limit int32) ApiListEntitiesRequest {
 // Offset for pagination
 func (r ApiListEntitiesRequest) Offset(offset int32) ApiListEntitiesRequest {
 	r.offset = &offset
+	return r
+}
+
+// Only count memories carrying these tags. An entity is returned only when a matching memory mentions it, and its mention count and dates cover the matching memories only.
+func (r ApiListEntitiesRequest) Tags(tags []string) ApiListEntitiesRequest {
+	r.tags = &tags
+	return r
+}
+
+// How &#x60;tags&#x60; match (same modes as listing memories).
+func (r ApiListEntitiesRequest) TagsMatch(tagsMatch string) ApiListEntitiesRequest {
+	r.tagsMatch = &tagsMatch
+	return r
+}
+
+// Compound tag filter as a JSON-encoded list of tag groups — the same shape &#x60;tag_groups&#x60; takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with &#x60;tags&#x60;.
+func (r ApiListEntitiesRequest) TagGroups(tagGroups string) ApiListEntitiesRequest {
+	r.tagGroups = &tagGroups
 	return r
 }
 
@@ -377,6 +481,26 @@ func (a *EntitiesAPIService) ListEntitiesExecute(r ApiListEntitiesRequest) (*Ent
 	} else {
 		var defaultValue int32 = 0
 		r.offset = &defaultValue
+	}
+	if r.tags != nil {
+		t := *r.tags
+		if reflect.TypeOf(t).Kind() == reflect.Slice {
+			s := reflect.ValueOf(t)
+			for i := 0; i < s.Len(); i++ {
+				parameterAddToHeaderOrQuery(localVarQueryParams, "tags", s.Index(i).Interface(), "form", "multi")
+			}
+		} else {
+			parameterAddToHeaderOrQuery(localVarQueryParams, "tags", t, "form", "multi")
+		}
+	}
+	if r.tagsMatch != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "tags_match", r.tagsMatch, "form", "")
+	} else {
+		var defaultValue string = "any"
+		r.tagsMatch = &defaultValue
+	}
+	if r.tagGroups != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "tag_groups", r.tagGroups, "form", "")
 	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}

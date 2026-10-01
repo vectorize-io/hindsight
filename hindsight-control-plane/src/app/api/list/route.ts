@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { hindsightClient } from "@/lib/hindsight-client";
+import { readTagFilter } from "@/lib/tag-filter-params";
 
 // Time axes accepted by the dataplane's list_memories endpoint.
 type TimeField = "created_at" | "updated_at" | "mentioned_at" | "occurred_start" | "occurred_end";
@@ -51,6 +52,7 @@ export async function GET(request: NextRequest) {
       : undefined;
     const startDate = searchParams.get("start_date") || undefined;
     const endDate = searchParams.get("end_date") || undefined;
+    const tagFilter = readTagFilter(searchParams);
 
     const response = await hindsightClient.listMemories(bankId, {
       limit,
@@ -64,6 +66,8 @@ export async function GET(request: NextRequest) {
       timeField,
       startDate,
       endDate,
+      tags: tagFilter.tags,
+      tagsMatch: tagFilter.tags_match,
     });
 
     return NextResponse.json(response, { status: 200 });
