@@ -9,6 +9,7 @@ from fastmcp import FastMCP
 
 from hindsight_api import MemoryEngine
 from hindsight_api import __version__ as HINDSIGHT_VERSION
+from hindsight_api.api.mcp_schema import dereference_refs
 from hindsight_api.api.passthrough_headers import collect_passthrough_headers
 from hindsight_api.config import (
     DEFAULT_MCP_RECALL_DESCRIPTION,
@@ -206,6 +207,9 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
     # Make all tools tolerant of extra arguments from LLMs (e.g., "explanation")
     _make_tools_tolerant(mcp)
 
+    # Hand out tool schemas every consumer can read (see dereference_refs).
+    _make_tool_schemas_portable(mcp)
+
     return mcp
 
 
@@ -223,6 +227,31 @@ def _get_mcp_tools(mcp: FastMCP) -> dict:
         }
     msg = "Cannot locate tools on FastMCP instance"
     raise AttributeError(msg)
+
+
+def _make_tool_schemas_portable(mcp: FastMCP) -> None:
+    """Rewrite every tool's input schema to be free of recursive ``$ref`` cycles.
+
+    Pydantic renders a recursive model as a ``$ref`` cycle, and a consumer that
+    rejects one rejects the whole discovery response — the Meta model API answers
+    ``400 Recursive JSON schemas are not currently supported``, which kills every
+    turn that loads an affected tool. The compound tag expression on the
+    mental-model and knowledge-page tools is the live case (see
+    ``hindsight_api.api.mcp_schema``). Dereferencing up to the cut keeps the
+    schema readable without touching the signature the engine validates against.
+
+    Runs after ``_make_tools_tolerant`` so the tolerance pass still reads the
+    schemas Pydantic emitted, exactly as it did before.
+    """
+    try:
+        for tool in _get_mcp_tools(mcp).values():
+            parameters = getattr(tool, "parameters", None)
+            if isinstance(parameters, dict):
+                # FunctionTool is a Pydantic model with extra='forbid'; set the
+                # field the same way _make_tools_tolerant replaces `run`.
+                object.__setattr__(tool, "parameters", dereference_refs(parameters))
+    except (AttributeError, KeyError) as e:
+        logger.warning(f"Could not dereference tool schemas: {e}")
 
 
 def _make_tools_tolerant(mcp: FastMCP) -> None:
