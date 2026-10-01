@@ -104,12 +104,15 @@ def _build_per_op_semaphores() -> dict[str, CrossLoopSemaphore]:
 
 _per_op_llm_semaphores: dict[str, CrossLoopSemaphore] = _build_per_op_semaphores()
 
-# Call scopes the automatic mental-model refresh makes: the reflect pass itself, its
-# dry run, and the structured delta/retraction ops that follow it.
+# Prefixes that put a call in the mental-model refresh bucket. They are matched against
+# the call scope (the delta/retraction ops pass their own) and against the operation
+# bound by ``with_config``: the refresh and its dry run drive the reflect agent, whose
+# calls carry ordinary reflect scopes, so only the operation identifies them.
 _MENTAL_MODEL_REFRESH_SCOPES = (
     "refresh_mental_model",
     "dry_run_refresh_mental_model",
     "mental_model_delta_ops",
+    "mental_model_retraction_ops",
 )
 
 
@@ -120,10 +123,18 @@ def _scope_to_operation(scope: str) -> str | None:
     (verification probes, bank_mission, memory_think), which then run under the
     global cap only.
     """
+    from .llm_trace import current_trace_context
+
     # The background mental-model refresh, its dry run and its delta ops form one
     # bucket, separate from interactive reflect: capping it is how an operator stops
     # the background job from starving the interactive path (issue #4463).
-    if scope.startswith(_MENTAL_MODEL_REFRESH_SCOPES):
+    # The refresh drives the reflect agent, whose calls carry ordinary reflect
+    # scopes; the operation bound by ``with_config`` is what identifies them.
+    trace = current_trace_context()
+    operation = trace.operation if trace is not None else None
+    if scope.startswith(_MENTAL_MODEL_REFRESH_SCOPES) or (
+        operation is not None and operation.startswith(_MENTAL_MODEL_REFRESH_SCOPES)
+    ):
         return "mental_model_refresh"
     if scope.startswith("retain"):
         return "retain"
