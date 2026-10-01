@@ -66,7 +66,14 @@ def derive_bank_id(hook_input: dict, config: dict) -> str:
 
 
 def ensure_bank_mission(client, bank_id: str, config: dict, debug_fn=None):
-    """Set bank mission on first use, skip if already set."""
+    """Set legacy bank mission on first use, unless a strategy owns the policy."""
+    # This helper also runs during recall. Explicit strategies belong to a
+    # preprovisioned bank, so none of the hooks may overwrite its bank-wide
+    # retain/reflect policy using the installer's legacy mission defaults.
+    strategy = config.get("retainStrategy")
+    if strategy is not None and (not isinstance(strategy, str) or strategy.strip()):
+        return
+
     mission = config.get("bankMission", "")
     if not mission or not mission.strip():
         return

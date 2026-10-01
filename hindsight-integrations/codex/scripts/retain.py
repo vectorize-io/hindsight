@@ -35,6 +35,25 @@ from lib.content import (
 from lib.daemon import get_api_url
 from lib.state import increment_turn_count
 
+# This is source interpretation context, not another bank mission definition.
+# Only explicit agent-session requests receive it. Other strategies and banks
+# retain their configured policy, including collector-specific source safeguards.
+AGENT_SESSION_CONTEXT = (
+    "This source is a Codex agent-session transcript, not a verified operational ledger. "
+    "Outer message roles identify the message sender, not necessarily the speaker in quoted or embedded material. "
+    "Preserve explicit speaker labels and unknown or ambiguous speakers. Never infer identity from bank ownership, "
+    "the surrounding message role, a recording owner, or first-person wording in a quotation. "
+    "Keep lead-agent and subagent actions distinct. "
+    "Assistant guidance is not the user's preference or accepted decision unless the user explicitly adopts it. "
+    "Distinguish proposed, requested, open, merged, installed and deployed states. Preserve the final status "
+    "supported by this source at its own time, including negations, uncertainty and rejected alternatives. "
+    "When an outcome is supported only by an agent's claim, preserve it as agent-reported, not independently "
+    "verified. A tool-call envelope, command name, filename, plan or generated summary do not prove success. "
+    "Do not infer that a requested or planned action happened. Retention time is not event time. "
+    "Use an event date only when the source supports it. Preserve the source language and legitimate quotations. "
+    "Ignore routine progress narration, tool metadata and one-off debugging chatter without durable knowledge."
+)
+
 
 def main():
     config = load_config()
@@ -42,6 +61,13 @@ def main():
     if not config.get("autoRetain"):
         debug_log(config, "Auto-retain disabled, exiting")
         return
+
+    retain_strategy = config.get("retainStrategy")
+    if retain_strategy is not None and not isinstance(retain_strategy, str):
+        print("[Hindsight] Invalid retainStrategy: expected a string or null, skipping retain", file=sys.stderr)
+        return
+    if retain_strategy is not None:
+        retain_strategy = retain_strategy.strip() or None
 
     # Read hook input from stdin
     try:
@@ -118,9 +144,13 @@ def main():
         print(f"[Hindsight] Invalid API URL: {e}", file=sys.stderr)
         return
 
-    # Derive bank ID and ensure mission
+    # Derive bank ID and ensure legacy mission only if no strategy is selected.
     bank_id = derive_bank_id(hook_input, config)
     ensure_bank_mission(client, bank_id, config, debug_fn=_dbg)
+
+    retain_context = config.get("retainContext", "codex")
+    if retain_strategy == "agent-session":
+        retain_context = f"{retain_context}\n\n{AGENT_SESSION_CONTEXT}" if retain_context else AGENT_SESSION_CONTEXT
 
     # Document ID: use session_id so the same session always upserts.
     # In chunked mode, append timestamp to create distinct documents per chunk.
@@ -164,10 +194,11 @@ def main():
             bank_id=bank_id,
             content=transcript,
             document_id=document_id,
-            context=config.get("retainContext", "codex"),
+            context=retain_context,
             metadata=metadata,
             tags=tags,
             timeout=15,
+            strategy=retain_strategy,
         )
         debug_log(config, f"Retain response: {json.dumps(response)[:200]}")
     except Exception as e:

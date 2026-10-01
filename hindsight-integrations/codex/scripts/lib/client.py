@@ -70,7 +70,6 @@ class HindsightClient:
                 pass
             raise RuntimeError(f"HTTP {e.code} from {url}: {body_text}") from e
 
-
     def recall(
         self,
         bank_id: str,
@@ -104,6 +103,7 @@ class HindsightClient:
         metadata: Optional[dict] = None,
         tags: Optional[list] = None,
         timeout: int = 15,
+        strategy: Optional[str] = None,
     ) -> dict:
         """Retain content into a bank's memory.
 
@@ -121,6 +121,8 @@ class HindsightClient:
             item["context"] = context
         if tags:
             item["tags"] = tags
+        if strategy:
+            item["strategy"] = strategy
         body = {
             "items": [item],
             "async": True,

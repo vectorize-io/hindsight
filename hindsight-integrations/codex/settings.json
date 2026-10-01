@@ -34,6 +34,7 @@
   ],
   "retainMetadata": {},
   "retainContext": "codex",
+  "retainStrategy": null,
   "hindsightApiToken": null,
   "apiPort": 9077,
   "daemonIdleTimeout": 0,

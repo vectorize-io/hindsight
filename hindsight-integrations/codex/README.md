@@ -83,6 +83,7 @@ export ANTHROPIC_API_KEY=your-key
 | `autoRecall` | `true` | Inject memories before each prompt |
 | `autoRetain` | `true` | Store conversations after each turn |
 | `retainMode` | `"full-session"` | `"full-session"` or `"chunked"` |
+| `retainStrategy` | `null` | Optional existing named strategy on the destination bank. `"agent-session"` also adds source-role and assertion-status safeguards to the item context. Explicit strategies skip legacy bank-wide mission writes. |
 | `retainEveryNTurns` | `10` | Retain every N turns (1 = every turn) |
 | `recallBudget` | `"mid"` | Recall depth: `"low"`, `"mid"`, `"high"` |
 | `recallMaxTokens` | `1024` | Positive integer cap for the complete injected memory context, including preamble, time, fact metadata and wrappers |
@@ -102,6 +103,7 @@ All settings can also be set via environment variables:
 export HINDSIGHT_API_URL=https://api.hindsight.vectorize.io
 export HINDSIGHT_API_TOKEN=your-api-key
 export HINDSIGHT_BANK_ID=my-project
+export HINDSIGHT_RETAIN_STRATEGY=agent-session
 export HINDSIGHT_RECALL_TIMEOUT=30
 export HINDSIGHT_DEBUG=true
 ```
@@ -111,6 +113,14 @@ export HINDSIGHT_DEBUG=true
 **Recall** — before each prompt, Hindsight searches your memory bank for facts relevant to what you're about to ask. Found memories are injected as context so Codex has continuity across sessions.
 
 **Retain** — after each turn, Codex's conversation is stored to Hindsight. The memory engine extracts facts, relationships, and experiences — so you don't need to re-explain your stack, preferences, or past decisions.
+
+### Explicit Agent-Session Retention
+
+Before selecting `agent-session`, provision and review that named strategy on the intended bank through its configuration owner, then read back the bank's strategy configuration. The hook does not create strategies or change a shared bank's default strategy. This preserves collectors' source-specific strategies and other clients' bank policy.
+
+Set `"retainStrategy": "agent-session"` in `~/.hindsight/codex.json`, or set `HINDSIGHT_RETAIN_STRATEGY=agent-session`. This adds instructions to the existing `retainContext` about quoted and unknown speakers, assistant guidance versus adopted preferences, proposed versus completed actions, and agent-reported versus independently verified outcomes. The source content and message roles remain intact. These instructions are model guidance, not a guarantee of extraction accuracy.
+
+When an explicit strategy is selected, all hooks skip the legacy `bankMission` and `retainMission` update, including the reflect mission, because the destination bank is already provisioned. Other named strategies receive their configured context without the agent-session safeguards. An absent strategy or empty string keeps the legacy route. A server rejection does not trigger a retry without the strategy. Selection, strategy provisioning, installation and live extraction verification are separate steps.
 
 ## Dynamic bank IDs
 
