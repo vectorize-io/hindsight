@@ -51,7 +51,10 @@ async def test_completion_counts_committed_document(
         steps.append("count")
         return visible_count
 
-    session = MagicMock(commit=AsyncMock(side_effect=commit))
+    async def abort() -> None:
+        steps.append("abort")
+
+    session = MagicMock(commit=AsyncMock(side_effect=commit), abort=AsyncMock(side_effect=abort))
     store = MagicMock(
         store_owned_for=MagicMock(return_value=True),
         begin_retain=AsyncMock(return_value=session),
@@ -109,8 +112,9 @@ async def test_completion_counts_committed_document(
     if failure:
         with pytest.raises(RuntimeError, match=f"{failure} failed"):
             await execution
-        # The partial-retain cleanup still commits, but no success event may escape.
-        assert steps == ["commit"]
+        # A failed single-sub-batch retain aborts the session instead of committing.
+        # No success event may escape either.
+        assert steps == (["abort"] if failure == "retain" else ["commit"])
         engine._webhook_manager.fire_event_with_conn.assert_not_awaited()
         return
 
@@ -122,3 +126,37 @@ async def test_completion_counts_committed_document(
     assert call.args[0].bank_id == "test-bank"
     assert call.args[0].operation_id == "test-operation"
     assert call.kwargs["schema"] == "test-schema"
+
+
+async def test_failed_abort_does_not_mask_retain_error(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    engine = MemoryEngine.__new__(MemoryEngine)
+    engine._resolve_retain_config = AsyncMock()
+    monkeypatch.setattr("hindsight_api.engine.memory_engine.count_tokens", lambda text: 1)
+    session = MagicMock(commit=AsyncMock(), abort=AsyncMock(side_effect=RuntimeError("abort failed")))
+    store = MagicMock(store_owned_for=MagicMock(return_value=True), begin_retain=AsyncMock(return_value=session))
+    monkeypatch.setattr("hindsight_api.engine.memories.get_memories", lambda: store)
+    engine._get_backend = AsyncMock()
+    engine._retain_batch_async_internal = AsyncMock(side_effect=RuntimeError("retain failed"))
+    contents: list[RetainContentDict] = [{"content": "Alice works at Google", "document_id": "test-document"}]
+
+    with caplog.at_level(logging.ERROR, logger="hindsight_api.engine.memory_engine"):
+        with pytest.raises(RuntimeError, match="retain failed"):
+            await engine._run_retain_execution(
+                bank_id="test-bank",
+                contents=contents,
+                request_context=RequestContext(),
+                document_id=None,
+                fact_type_override=None,
+                document_tags=None,
+                operation_id="test-operation",
+                strategy=None,
+                outbox_callback=None,
+                outbox_callback_factory=None,
+                start_time=time.time(),
+            )
+
+    session.abort.assert_awaited_once()
+    session.commit.assert_not_awaited()
+    assert "abort failed" in caplog.text

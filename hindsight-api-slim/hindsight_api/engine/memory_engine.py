@@ -6872,8 +6872,6 @@ class MemoryEngine(MemoryEngineInterface):
         else:
             # Small batch - use internal method directly (single sub-batch).
             set_stage("batch_retain.sub_batch.1")
-            # In a try/finally for the same reason the split path's commit is: a retain that fails
-            # part-way must not discard what its earlier parts already produced.
             try:
                 sub_batch_outcome = await self._retain_batch_async_internal(
                     bank_id=bank_id,
@@ -6889,10 +6887,18 @@ class MemoryEngine(MemoryEngineInterface):
                     outbox_callback_factory=outbox_callback_factory,
                     retain_session=retain_session,
                 )
-            finally:
+            except BaseException:
+                # Commit only on success, so a failed retain is not committed as if it had finished.
+                # An abort failure must not mask the original error.
                 if retain_session is not None:
-                    async with _retain_timing_mod.timed("store.commit"):
-                        await retain_session.commit()
+                    try:
+                        await retain_session.abort()
+                    except Exception:
+                        logger.exception("retain session abort failed; re-raising the original error")
+                raise
+            if retain_session is not None:
+                async with _retain_timing_mod.timed("store.commit"):
+                    await retain_session.commit()
             result = sub_batch_outcome.memory_ids
             total_usage = sub_batch_outcome.usage
             total_processed_content_tokens = sub_batch_outcome.processed_content_tokens
