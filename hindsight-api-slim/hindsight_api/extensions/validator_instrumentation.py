@@ -40,9 +40,17 @@ _INSTRUMENTED: "weakref.WeakSet[Any]" = weakref.WeakSet()
 
 #: Hooks are recognised by shape, not by a list: an async method whose name says it validates or
 #: reports completion. A list would be one more thing to update, which is the failure this module
-#: exists to prevent. `bank_list_scope` and `resolve_tag_scope` fit no verb prefix, so they are
+#: exists to prevent. `bank_list_scope` and the two `resolve_*tag_scope` hooks fit no verb prefix, so they are
 #: named whole, like `precheck`.
-_HOOK_PREFIXES = ("validate_", "on_", "precheck", "filter_", "bank_list_scope", "resolve_tag_scope")
+_HOOK_PREFIXES = (
+    "validate_",
+    "on_",
+    "precheck",
+    "filter_",
+    "bank_list_scope",
+    "resolve_tag_scope",
+    "resolve_write_tag_scope",
+)
 
 
 def _is_hook(name: str, attr: Any) -> bool:

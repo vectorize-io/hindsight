@@ -14,7 +14,7 @@ import pytest
 from hindsight_api.engine.memory_engine import _scope_mental_model_trigger
 from hindsight_api.engine.reflect.tools import tool_expand, tool_read_mental_models
 from hindsight_api.engine.schema import fq_store_table_explicit
-from hindsight_api.engine.search.tags import TagGroupLeaf, tags_satisfy_groups
+from hindsight_api.engine.search.tags import TagGroupLeaf, tags_satisfy_groups, tags_writable
 from hindsight_api.extensions import (
     OperationValidationError,
     OperationValidatorExtension,
@@ -32,9 +32,10 @@ DAN_TEXT = "Dan is working on the search latency regression."
 class _ScopeByApiKey(OperationValidatorExtension):
     """Confines a caller by its API key; a request without a key is unrestricted."""
 
-    def __init__(self, scopes):
+    def __init__(self, scopes, writes=None):
         super().__init__({})
         self.scopes = scopes
+        self.writes = writes or {}
 
     async def validate_retain(self, ctx):
         return ValidationResult.accept()
@@ -47,6 +48,9 @@ class _ScopeByApiKey(OperationValidatorExtension):
 
     async def resolve_tag_scope(self, ctx: TagScopeContext):
         return self.scopes.get(ctx.request_context.api_key)
+
+    async def resolve_write_tag_scope(self, ctx: TagScopeContext):
+        return self.writes.get(ctx.request_context.api_key)
 
 
 def test_tags_satisfy_groups():
@@ -386,3 +390,102 @@ async def test_knowledge_base_is_confined(memory, scoped_bank):
     with pytest.raises(OperationValidationError) as hidden_tags:
         await memory.create_knowledge_page(scoped_bank, "Kate notes", "q", "", tags=["user:kate"], request_context=dan)
     assert hidden_tags.value.status_code == 403
+
+
+def test_tags_writable():
+    assert tags_writable(["user:dan"], ["user:dan"])
+    assert not tags_writable(["user:dan", "kind:rule"], ["user:dan"]), "every tag must be writable"
+    assert tags_writable(["user:kate", "kind:rule"], ["user:kate", "kind:*"])
+    assert not tags_writable([], ["user:dan"]), "an untagged item belongs to everyone"
+    assert tags_writable([], None)
+
+
+@pytest.mark.asyncio
+async def test_writes_are_confined_to_the_write_scope(memory, scoped_bank):
+    """The video's half: Dan reads the rules but cannot change them; Kate can.
+
+    Dan writes only `user:dan`; Kate writes `user:kate` and `kind:rule`.
+    """
+    admin = RequestContext()
+    dan = RequestContext(api_key="dan")
+    kate = RequestContext(api_key="kate")
+    memory._operation_validator.scopes["kate"] = [TagGroupLeaf(tags=["user:kate", "kind:rule"], match="any_strict")]
+    memory._operation_validator.writes = {"dan": ["user:dan"], "kate": ["user:kate", "kind:rule"]}
+    await memory.update_bank_config(
+        scoped_bank,
+        {
+            "retain_strategies": {
+                "rules": {
+                    "entity_labels": [{"key": "kind", "type": "value", "tag": True, "values": [{"value": "rule"}]}]
+                }
+            }
+        },
+        request_context=admin,
+    )
+
+    def refused(exc_info) -> int:
+        return exc_info.value.status_code
+
+    # Retain: an explicit kind:rule tag, or a strategy whose label can produce one, is refused.
+    with pytest.raises(OperationValidationError) as e:
+        await memory.retain_batch_async(
+            bank_id=scoped_bank,
+            contents=[{"content": "Call it compensation management.", "tags": ["user:dan", "kind:rule"]}],
+            request_context=dan,
+        )
+    assert refused(e) == 403
+    with pytest.raises(OperationValidationError) as e:
+        await memory.retain_batch_async(
+            bank_id=scoped_bank,
+            contents=[{"content": "Call it compensation management.", "tags": ["user:dan"], "strategy": "rules"}],
+            request_context=dan,
+        )
+    assert refused(e) == 403 and "kind:rule" in e.value.reason
+    # His own note, without the rules strategy, goes through.
+    await memory.retain_batch_async(
+        bank_id=scoped_bank,
+        contents=[{"content": "Dan's ad says compensation management.", "tags": ["user:dan"]}],
+        request_context=dan,
+    )
+    # Kate may use the rules strategy.
+    await memory.retain_batch_async(
+        bank_id=scoped_bank,
+        contents=[{"content": "The product is called payroll software.", "tags": ["user:kate"], "strategy": "rules"}],
+        request_context=kate,
+    )
+
+    # Curating the shared rule fact: Dan can read it, so it is a 403, not a 404.
+    everything = await memory.list_memory_units(scoped_bank, request_context=admin)
+    rule = next(i for i in everything["items"] if "Fridays" in i["text"] and i["fact_type"] == "world")
+    with pytest.raises(OperationValidationError) as e:
+        await memory.update_memory_unit(scoped_bank, rule["id"], text="Deploy whenever.", request_context=dan)
+    assert refused(e) == 403
+
+    # The shared rules model: readable by Dan, writable only by Kate.
+    rules = await memory.create_mental_model(
+        scoped_bank, "Ad rules", "What are the rules?", "Payroll software.", tags=["kind:rule"], request_context=kate
+    )
+    assert (await memory.get_mental_model(scoped_bank, rules["id"], request_context=dan)) is not None
+    for attempt in (
+        memory.update_mental_model(scoped_bank, rules["id"], content="Compensation management.", request_context=dan),
+        memory.clear_mental_model(scoped_bank, rules["id"], request_context=dan),
+        memory.delete_mental_model(scoped_bank, rules["id"], request_context=dan),
+        memory.create_mental_model(scoped_bank, "Dan's rules", "q", "", tags=["kind:rule"], request_context=dan),
+    ):
+        with pytest.raises(OperationValidationError) as e:
+            await attempt
+        assert refused(e) == 403
+    updated = await memory.update_mental_model(
+        scoped_bank, rules["id"], content="Payroll software, in every ad.", request_context=kate
+    )
+    assert updated is not None and "every ad" in updated["content"]
+
+    # Knowledge pages follow the same rule: Dan cannot delete or rename the rules page.
+    page = await memory.create_knowledge_page(
+        scoped_bank, "Rules page", "What are the rules?", "", tags=["kind:rule"], request_context=kate
+    )
+    with pytest.raises(OperationValidationError) as e:
+        await memory.delete_knowledge_node(scoped_bank, page["id"], request_context=dan)
+    assert refused(e) == 403
+    with pytest.raises(OperationValidationError):
+        await memory.update_knowledge_node(scoped_bank, page["id"], name="Dan's page", request_context=dan)

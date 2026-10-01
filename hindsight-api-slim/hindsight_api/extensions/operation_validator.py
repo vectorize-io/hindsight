@@ -958,6 +958,29 @@ class OperationValidatorExtension(Extension, ABC):
         """
         return None
 
+    async def resolve_write_tag_scope(self, ctx: TagScopeContext) -> "list[str] | None":
+        """
+        The tags a caller may write in a bank, as shell-style patterns (``user:dan``, ``project:*``).
+
+        Reading and writing are separate permissions: a caller can read the shared
+        ``kind:rule`` scope without being allowed to change it. Return the tags the caller
+        may write; the engine then refuses (403) any write that would produce or touch a
+        tag outside them:
+
+        - a retain whose item or document tags fall outside them, or whose retain
+          strategy has an entity label with ``tag: true`` that could tag a fact outside
+          them (checked before extraction, so a refused retain costs no LLM call);
+        - editing, invalidating or clearing the observations of a memory, and updating,
+          reprocessing or deleting a document, whose tags fall outside them;
+        - creating, updating, clearing or deleting a mental model or knowledge page whose
+          tags fall outside them (including the tags it is given).
+
+        An untagged item counts as outside any scope: it belongs to everyone.
+
+        Return None (the default) to leave writes unrestricted.
+        """
+        return None
+
     # =========================================================================
     # Mental Model - Pre-operation validation hook (optional - override to implement)
     # =========================================================================

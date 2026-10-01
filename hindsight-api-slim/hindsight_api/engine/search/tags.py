@@ -25,6 +25,7 @@ EXACT matching: Memory matches only if its tag set EQUALS the request tag set (o
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from fnmatch import fnmatchcase
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -574,3 +575,14 @@ def tags_satisfy_groups(tags: list[str] | None, tag_groups: list[TagGroup] | Non
     use it to decide whether the item is inside a caller's tag scope.
     """
     return all(_match_group(tags, group) for group in tag_groups or [])
+
+
+def tags_writable(tags: list[str] | None, writable: list[str] | None) -> bool:
+    """Whether every one of ``tags`` matches a pattern in ``writable`` (no restriction = True).
+
+    ``writable`` holds shell-style patterns (``user:dan``, ``project:*``). An untagged item
+    belongs to everyone, so a restricted writer may not produce or change one.
+    """
+    if writable is None:
+        return True
+    return bool(tags) and all(any(fnmatchcase(t, p) for p in writable) for t in tags or [])

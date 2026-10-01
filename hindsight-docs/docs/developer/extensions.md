@@ -349,7 +349,37 @@ caller can narrow its view but never widen it:
   stored filter.
 
 Use a `_strict` match mode: the non-strict ones also admit untagged rows, and
-an untagged mental model is built from the whole bank. Operation status reads
+an untagged mental model is built from the whole bank.
+
+**Writing is a separate permission.** A caller can read a shared scope without
+being allowed to change it. `resolve_write_tag_scope` returns the tags a caller
+may write, as shell-style patterns (`user:dan`, `project:*`), or `None` for no
+restriction (the default):
+
+```python
+class TeamScopes(OperationValidatorExtension):
+    async def resolve_write_tag_scope(self, ctx: TagScopeContext):
+        user = ctx.request_context.api_key_id
+        # Everyone writes their own memories; only Kate writes the team rules.
+        return [f"user:{user}", "kind:rule"] if user == "kate" else [f"user:{user}"]
+```
+
+Every tag on anything the caller writes or changes must match one of the
+patterns, otherwise the write is refused with `403` (an item the caller cannot
+even read still answers `404`). An untagged item belongs to everyone, so a
+restricted writer cannot produce or change one. That covers:
+
+- **retain**: each item's tags and the batch's `document_tags`, plus every tag the
+  retain strategy's [entity labels](./api/memory-banks#entity-labels) with
+  `tag: true` could add (`key:value` for each allowed value, `key:*` for an open
+  vocabulary). They are checked before extraction, so a refused retain costs no
+  LLM call;
+- **memories and documents**: editing, invalidating or clearing the observations
+  of a memory; updating (including the new tags), reprocessing or deleting a
+  document;
+- **mental models and knowledge pages**: creating one (its tags), updating,
+  clearing or deleting one, and renaming, moving or deleting a knowledge node
+  (every page under it). Operation status reads
 never return the raw task payload to a scoped caller. Bank-level reads that are
 not tag-scoped (stats, config, directives, webhooks) still go through
 `validate_bank_read` / `validate_bank_write`, which can only allow or deny them.

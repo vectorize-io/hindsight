@@ -123,6 +123,9 @@ class _StubEngine:
     async def _authenticate_tenant(self, request_context) -> None:
         return None
 
+    async def _require_writable(self, bank_id, request_context, **kwargs) -> None:
+        return None
+
     async def get_document(self, document_id, bank_id, request_context=None):
         return self._doc
 

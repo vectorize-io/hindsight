@@ -235,6 +235,7 @@ async def test_extensions_see_the_canonical_id_not_the_alias(client, memory, ban
     validator.validate_bank_read = AsyncMock(return_value=ValidationResult(allowed=True))
     validator.precheck = AsyncMock(return_value=ValidationResult(allowed=True))
     validator.resolve_tag_scope = AsyncMock(return_value=None)
+    validator.resolve_write_tag_scope = AsyncMock(return_value=None)
     monkeypatch.setattr(memory, "_operation_validator", validator)
 
     assert (await client.get(f"/v1/default/banks/{alias}/memories/list")).status_code == 200

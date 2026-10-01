@@ -326,6 +326,31 @@ def label_tag_keys(labels_cfg: "EntityLabelsConfig | dict | list | None") -> set
     return {g.key.lower() for g in labels_cfg.attributes if g.tag and g.key}
 
 
+def label_tag_candidates(labels_cfg: "EntityLabelsConfig | dict | list | None") -> list[str]:
+    """Every tag the ``tag: true`` label groups could add to a fact, for a write-scope check.
+
+    A closed vocabulary yields one ``key:value`` per allowed value. An open one (text,
+    multi-text, map) can yield any value, so it is represented as ``key:*`` — which only a
+    caller allowed to write ``key:*`` (or ``*``) passes.
+    """
+    if labels_cfg is None:
+        return []
+    if not isinstance(labels_cfg, EntityLabelsConfig):
+        parsed = parse_entity_labels(labels_cfg)
+        if parsed is None:
+            return []
+        labels_cfg = parsed
+    out: list[str] = []
+    for group in labels_cfg.attributes:
+        if not (group.tag and group.key):
+            continue
+        if group.type in ("text", "multi-text", "map"):
+            out.append(f"{group.key}:*")
+        else:
+            out.extend(f"{group.key}:{v.value}" for v in group.values if v.value)
+    return out
+
+
 def split_label_tags(tags: "list[str] | None", keys: "set[str] | None") -> list[str]:
     """The label-derived subset of ``tags`` — the entries ``label_tag_keys`` claims."""
     if not tags or not keys:

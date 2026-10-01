@@ -708,6 +708,7 @@ from .search.tags import (
     strict_tag_group,
     strict_tags_match,
     tags_satisfy_groups,
+    tags_writable,
 )
 from .search.types import ScoredResult
 from .source_facts import select_source_facts_within_budget
@@ -3247,44 +3248,50 @@ class MemoryEngine(MemoryEngineInterface):
         )
         return current.found and tags_satisfy_groups(current.tags, tag_scope)
 
-    async def _require_in_tag_scope(
+    async def _write_tag_scope(self, bank_id: str, request_context: "RequestContext | None") -> list[str] | None:
+        """The tag patterns the operation validator lets this caller write, or None (unrestricted).
+
+        Reading and writing are separate: a caller may read a shared scope it cannot change
+        (see ``OperationValidatorExtension.resolve_write_tag_scope``). Internal background
+        work is never restricted, like :meth:`_tag_scope`.
+        """
+        if self._operation_validator is None or request_context is None or request_context.internal:
+            return None
+        from hindsight_api.extensions import TagScopeContext
+
+        return await self._operation_validator.resolve_write_tag_scope(
+            TagScopeContext(bank_id=bank_id, request_context=request_context)
+        )
+
+    @staticmethod
+    def _refuse_unwritable(tags: list[str] | None, write_scope: list[str] | None, what: str) -> None:
+        """403 when ``tags`` include one the caller may not write (no-op without a write scope)."""
+        if tags_writable(tags, write_scope):
+            return
+        from hindsight_api.extensions import OperationValidationError
+
+        outside = sorted(t for t in tags or [] if not tags_writable([t], write_scope)) or ["(untagged)"]
+        raise OperationValidationError(f"You can't write {what} tagged {', '.join(outside)}", status_code=403)
+
+    async def _require_writable(
         self,
         bank_id: str,
         request_context: "RequestContext",
         *,
         document_id: str | None = None,
         memory_id: str | None = None,
+        new_tags: list[str] | None = None,
     ) -> None:
-        """Refuse a by-id write on a document or memory outside the caller's tag scope.
+        """Refuse a by-id write on a document or memory the caller may not change.
 
-        Raises a 404 rather than a 403 so the answer does not confirm the item exists.
-        Without a scope this is a no-op and the operation keeps its own not-found handling.
+        Outside the caller's read scope it answers 404, so the answer does not confirm the
+        item exists; readable but outside the write scope it answers 403. ``new_tags`` are
+        tags the write would give the item, and must be writable too. Without either scope
+        this is a no-op and the operation keeps its own not-found handling.
         """
         tag_scope = await self._tag_scope(bank_id, request_context)
-        if not tag_scope:
-            return
-        from hindsight_api.extensions import OperationValidationError
-
-        async with acquire_with_retry(await self._get_backend()) as conn:
-            if document_id is not None and not await self._document_in_tag_scope(conn, bank_id, document_id, tag_scope):
-                raise OperationValidationError(f"Document '{document_id}' not found", status_code=404)
-            if memory_id is not None and not await self._memory_in_tag_scope(conn, bank_id, memory_id, tag_scope):
-                raise OperationValidationError(f"Memory '{memory_id}' not found", status_code=404)
-
-    async def _refuse_out_of_scope_documents(
-        self, bank_id: str, contents: "Sequence[Mapping[str, Any]]", request_context: "RequestContext"
-    ) -> None:
-        """Refuse a retain that would write into an existing document outside the caller's scope.
-
-        Replacing such a document would delete someone else's memories, and appending to it
-        would fold their text into a document the caller then reads back. A new document id
-        is always fine: what the caller writes carries the tags its validator gave it.
-        """
-        tag_scope = await self._tag_scope(bank_id, request_context)
-        if not tag_scope:
-            return
-        document_ids = sorted({str(c["document_id"]) for c in contents if c.get("document_id")})
-        if not document_ids:
+        write_scope = await self._write_tag_scope(bank_id, request_context)
+        if not tag_scope and write_scope is None:
             return
         from hindsight_api.extensions import OperationValidationError
 
@@ -3292,11 +3299,86 @@ class MemoryEngine(MemoryEngineInterface):
 
         store = get_memories()
         async with acquire_with_retry(await self._get_backend()) as conn:
+            if document_id is not None:
+                current = await store.current_document_tags(
+                    conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
+                )
+                if not current.found or not tags_satisfy_groups(current.tags, tag_scope):
+                    raise OperationValidationError(f"Document '{document_id}' not found", status_code=404)
+                self._refuse_unwritable(current.tags, write_scope, f"document '{document_id}'")
+            if memory_id is not None:
+                stored = await store.get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[memory_id])
+                memory = (
+                    stored[0]
+                    if stored
+                    else await store.get_archived_memory(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=memory_id
+                    )
+                )
+                if memory is None or not tags_satisfy_groups(memory.tags, tag_scope):
+                    raise OperationValidationError(f"Memory '{memory_id}' not found", status_code=404)
+                self._refuse_unwritable(memory.tags, write_scope, f"memory '{memory_id}'")
+        if new_tags is not None:
+            self._refuse_unwritable(new_tags, write_scope, "an item")
+
+    async def _check_retain_writes(
+        self,
+        bank_id: str,
+        contents: "Sequence[Mapping[str, Any]]",
+        request_context: "RequestContext",
+        *,
+        strategy: str | None,
+        document_tags: list[str] | None,
+    ) -> None:
+        """Refuse a retain that would write outside the caller's read or write scope.
+
+        - Writing into an existing document the caller cannot read, or cannot write, is
+          refused (403): replacing it would delete someone else's memories, and appending
+          would fold their text into a document the caller then reads back.
+        - Every item's tags (with the batch's ``document_tags``) must be writable.
+        - So must every tag the retain strategy's entity labels could add (``tag: true``):
+          those are attached after extraction, from what the model reads into the text, so
+          they are checked against everything the label could produce, up front.
+        """
+        tag_scope = await self._tag_scope(bank_id, request_context)
+        write_scope = await self._write_tag_scope(bank_id, request_context)
+        if not tag_scope and write_scope is None:
+            return
+        from hindsight_api.extensions import OperationValidationError
+
+        from .memories import get_memories
+        from .retain.entity_labels import label_tag_candidates
+
+        if write_scope is not None:
+            label_tags_by_strategy: dict[str | None, list[str]] = {}
+            for item in contents:
+                item_strategy = item.get("strategy") or strategy
+                if item_strategy not in label_tags_by_strategy:
+                    config = await self._resolve_retain_config(bank_id, request_context, item_strategy)
+                    label_tags_by_strategy[item_strategy] = label_tag_candidates(config.entity_labels)
+                item_tags = sorted({*(item.get("tags") or []), *(document_tags or [])})
+                self._refuse_unwritable(item_tags, write_scope, "memories")
+                label_tags = label_tags_by_strategy[item_strategy]
+                if label_tags and not tags_writable(label_tags, write_scope):
+                    outside = sorted(t for t in label_tags if not tags_writable([t], write_scope))
+                    raise OperationValidationError(
+                        f"Retain strategy '{item_strategy or 'default'}' can tag memories "
+                        f"{', '.join(outside)}, which you can't write",
+                        status_code=403,
+                    )
+
+        document_ids = sorted({str(c["document_id"]) for c in contents if c.get("document_id")})
+        if not document_ids:
+            return
+        store = get_memories()
+        async with acquire_with_retry(await self._get_backend()) as conn:
             for document_id in document_ids:
                 current = await store.current_document_tags(
                     conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
                 )
-                if current.found and not tags_satisfy_groups(current.tags, tag_scope):
+                if current.found and (
+                    not tags_satisfy_groups(current.tags, tag_scope) or not tags_writable(current.tags, write_scope)
+                ):
                     raise OperationValidationError(f"Cannot write to document '{document_id}'", status_code=403)
 
     async def _visible_knowledge_node_ids(self, conn: Any, bank_id: str, tag_scope: list[TagGroup]) -> set[str]:
@@ -3325,6 +3407,49 @@ class MemoryEngine(MemoryEngineInterface):
         for node_id in wanted:
             if node_id not in visible:
                 raise OperationValidationError(f"Knowledge node '{node_id}' not found", status_code=404)
+
+    async def _visible_knowledge_ids_or_all(self, bank_id: str, request_context: "RequestContext") -> set[str]:
+        """The knowledge node ids the caller can read: every id without a read scope."""
+        tag_scope = await self._tag_scope(bank_id, request_context)
+        async with acquire_with_retry(await self._get_backend()) as conn:
+            if tag_scope:
+                return await self._visible_knowledge_node_ids(conn, bank_id, tag_scope)
+            rows = await conn.fetch(f"SELECT id FROM {fq_table('knowledge_pages')} WHERE bank_id = $1", bank_id)
+        return {r["id"] for r in rows}
+
+    async def _require_knowledge_subtree_writable(
+        self, bank_id: str, request_context: "RequestContext", node_id: str
+    ) -> None:
+        """Refuse (403) changing a knowledge node unless the caller may write every page under it.
+
+        A page is its mental model, so it carries that model's tags; a folder has none of its
+        own and is as writable as the pages it holds. A no-op without a write scope.
+        """
+        write_scope = await self._write_tag_scope(bank_id, request_context)
+        if write_scope is None:
+            return
+        async with acquire_with_retry(await self._get_backend()) as conn:
+            rows = await conn.fetch(
+                f"SELECT {self._KP_PAGE_SELECT} FROM {self._kp_join()} WHERE kp.bank_id = $1",
+                bank_id,
+            )
+        children: dict[str | None, list[Any]] = {}
+        for r in rows:
+            children.setdefault(r["parent_id"], []).append(r)
+        stack, seen = [node_id], set()
+        own = next((r for r in rows if r["id"] == node_id), None)
+        pages = [own] if own is not None and own["kind"] == "page" else []
+        while stack:
+            current = stack.pop()
+            if current in seen:  # guards a corrupted, cyclic tree
+                continue
+            seen.add(current)
+            for child in children.get(current, []):
+                stack.append(child["id"])
+                if child["kind"] == "page":
+                    pages.append(child)
+        for page in pages:
+            self._refuse_unwritable(page["mm_tags"], write_scope, f"knowledge page '{page['name']}'")
 
     async def _authenticate_tenant(self, request_context: "RequestContext | None") -> str:
         """
@@ -6319,7 +6444,9 @@ class MemoryEngine(MemoryEngineInterface):
                 raise
             if result and result.contents is not None:
                 contents = cast(list[RetainContentDict], result.contents)
-        await self._refuse_out_of_scope_documents(bank_id, contents, request_context)
+        await self._check_retain_writes(
+            bank_id, contents, request_context, strategy=strategy, document_tags=document_tags
+        )
 
         await self._ensure_bank_exists(bank_id, request_context)
 
@@ -10411,7 +10538,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.DELETE_DOCUMENT, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
-        await self._require_in_tag_scope(bank_id, request_context, document_id=document_id)
+        await self._require_writable(bank_id, request_context, document_id=document_id)
         backend = await self._get_backend()
         invalidated_obs = 0
         async with acquire_with_retry(backend) as conn:
@@ -10569,7 +10696,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.UPDATE_DOCUMENT, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
-        await self._require_in_tag_scope(bank_id, request_context, document_id=document_id)
+        await self._require_writable(bank_id, request_context, document_id=document_id, new_tags=tags)
         backend = await self._get_backend()
         invalidated_obs = 0
         async with acquire_with_retry(backend) as conn:
@@ -11489,7 +11616,7 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
-        await self._require_in_tag_scope(bank_id, request_context, memory_id=memory_id)
+        await self._require_writable(bank_id, request_context, memory_id=memory_id)
         backend = await self._get_backend()
         deleted_count = 0
 
@@ -11667,7 +11794,7 @@ class MemoryEngine(MemoryEngineInterface):
                 edits_fields=doing_edit,
             )
             await self._validate_operation(self._operation_validator.validate_memory_update(update_ctx))
-        await self._require_in_tag_scope(bank_id, request_context, memory_id=memory_id)
+        await self._require_writable(bank_id, request_context, memory_id=memory_id)
 
         backend = await self._get_backend()
         from .graph_maintenance import enqueue_entity_prune_candidates, enqueue_relink_victims
@@ -13237,6 +13364,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.REPROCESS_DOCUMENT, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        await self._require_writable(bank_id, request_context, document_id=document_id)
 
         # Fetch the document. Outside the caller's tag scope this reads as missing (404).
         doc = await self.get_document(document_id, bank_id, request_context=request_context)
@@ -16692,6 +16820,7 @@ class MemoryEngine(MemoryEngineInterface):
                 await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         tag_scope = await self._tag_scope(bank_id, request_context)
         _refuse_tags_outside_scope(tags, tag_scope)
+        self._refuse_unwritable(tags, await self._write_tag_scope(bank_id, request_context), "a mental model")
         trigger = _scope_mental_model_trigger(tags, trigger, tag_scope)
         backend = await self._get_backend()
 
@@ -18114,8 +18243,10 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
 
         tag_scope = await self._tag_scope(bank_id, request_context)
-        if tag_scope:
-            # A model outside the caller's scope is not theirs to edit (404, like a read).
+        write_scope = await self._write_tag_scope(bank_id, request_context)
+        if tag_scope or write_scope is not None:
+            # A model outside the caller's read scope is not theirs to edit (404, like a read);
+            # one they can read but not write is refused outright (403).
             async with use_or_acquire(backend, conn) as scope_conn:
                 scope_row = await scope_conn.fetchrow(
                     f"SELECT tags FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
@@ -18124,11 +18255,13 @@ class MemoryEngine(MemoryEngineInterface):
                 )
             if scope_row is None or not tags_satisfy_groups(scope_row["tags"], tag_scope):
                 return None
+            self._refuse_unwritable(scope_row["tags"], write_scope, f"mental model '{mental_model_id}'")
             if tags is not None:
                 _refuse_tags_outside_scope(tags, tag_scope)
+                self._refuse_unwritable(tags, write_scope, "a mental model")
             # New tags change what the refresh reads, so the scope must be re-applied to the
             # stored filter: an empty patch routes the update through the trigger merge below.
-            if tags is not None and trigger is None:
+            if tag_scope and tags is not None and trigger is None:
                 trigger = {}
 
         # A caller that hands over markdown alone (an import, a hand-authored
@@ -18566,6 +18699,11 @@ class MemoryEngine(MemoryEngineInterface):
         # Outside the caller's tag scope reads like a missing model (404).
         if current_row is None or not tags_satisfy_groups(current_row["tags"], tag_scope):
             return None
+        self._refuse_unwritable(
+            current_row["tags"],
+            await self._write_tag_scope(bank_id, request_context),
+            f"mental model '{mental_model_id}'",
+        )
         embedding_str = await self._generate_mental_model_embedding(current_row["name"] or "", "")
 
         # Content is cleared to '', so re-tokenize search_vector from the name
@@ -18636,6 +18774,18 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
 
         tag_scope = await self._tag_scope(bank_id, request_context)
+        write_scope = await self._write_tag_scope(bank_id, request_context)
+        if write_scope is not None:
+            async with acquire_with_retry(backend) as conn:
+                row = await conn.fetchrow(
+                    f"SELECT tags FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                    bank_id,
+                    mental_model_id,
+                )
+            # Only a model the caller can read is worth refusing; an unreadable one falls
+            # through to the scoped DELETE below and reads as missing.
+            if row is not None and tags_satisfy_groups(row["tags"], tag_scope):
+                self._refuse_unwritable(row["tags"], write_scope, f"mental model '{mental_model_id}'")
         # A scoped caller deletes only a model inside its scope; one outside reads as missing.
         scope_clause = build_tag_groups_where_clause(tag_scope, 3)
         async with acquire_with_retry(backend) as conn:
@@ -18912,6 +19062,7 @@ class MemoryEngine(MemoryEngineInterface):
         # A page is a mental model: it can only ever be built from what its creator could read.
         page_scope = await self._tag_scope(bank_id, request_context)
         _refuse_tags_outside_scope(tags, page_scope)
+        self._refuse_unwritable(tags, await self._write_tag_scope(bank_id, request_context), "a knowledge page")
         effective_trigger = _scope_mental_model_trigger(tags, effective_trigger, page_scope)
         backend = await self._get_backend()
         page_id = f"kp-{uuid.uuid4().hex}"
@@ -19480,6 +19631,7 @@ class MemoryEngine(MemoryEngineInterface):
         await self._require_knowledge_nodes_in_tag_scope(
             bank_id, request_context, [node_id, new_parent if moving else None]
         )
+        await self._require_knowledge_subtree_writable(bank_id, request_context, node_id)
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
@@ -19598,6 +19750,12 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        # Readable-but-unwritable is refused before anything is touched; an unreadable node
+        # reads as missing below.
+        if await self._write_tag_scope(bank_id, request_context) is not None and node_id in (
+            await self._visible_knowledge_ids_or_all(bank_id, request_context)
+        ):
+            await self._require_knowledge_subtree_writable(bank_id, request_context, node_id)
         tag_scope = await self._tag_scope(bank_id, request_context)
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -21881,7 +22039,9 @@ class MemoryEngine(MemoryEngineInterface):
                 raise
             if result and result.contents is not None:
                 contents = result.contents
-        await self._refuse_out_of_scope_documents(bank_id, contents, request_context)
+        await self._check_retain_writes(
+            bank_id, contents, request_context, strategy=strategy, document_tags=document_tags
+        )
 
         # Sanitize at the same ingress point the synchronous path does, and for a
         # second reason on top of it: the whole item is serialized into
