@@ -91,16 +91,26 @@ async def test_a_retained_memory_comes_back_from_recall(client, llm, bank_id, se
     assert berlin.id != cello.id
 
     # --- scores -------------------------------------------------------------
-    # Every retrieval strategy contributed, and each component is reproducible to
-    # the bit: the embedder is a pure function of the text (see `lexical.py`), the
-    # reranker derives from the same model, and BM25 is deterministic.
-    assert berlin.scores.semantic == pytest.approx(0.43465916228227297, abs=1e-12)
-    assert berlin.scores.reranker == pytest.approx(0.37416573867739417, abs=1e-12)
-    assert berlin.scores.keyword == pytest.approx(0.30000001192092896, abs=1e-12)
+    # Every retrieval strategy contributed, and each component is reproducible
+    # from the same inputs: the embedder is a pure function of the text (see
+    # `lexical.py`), the reranker derives from the same model, and BM25 is
+    # deterministic.
+    #
+    # The tolerance is a float32 noise floor, not bit-exactness. The embedder and
+    # reranker work in float32, and a 384-dim cosine's last bits track whichever
+    # SIMD/FMA path the runner CPU took, so a bit-exact pin goes red on some
+    # runners and green on others for identical code (#5017). One float32 ULP over
+    # this range is ~3e-8; the drift actually observed was 1.3e-8, under half an
+    # ULP. `1e-6` absorbs that with ~17x headroom and still catches a retune: the
+    # smallest plausible weighting change, a 0.1% relative shift, moves the
+    # semantic score by 4.4e-4 - 400x the tolerance.
+    assert berlin.scores.semantic == pytest.approx(0.43465916228227297, abs=1e-6)
+    assert berlin.scores.reranker == pytest.approx(0.37416573867739417, abs=1e-6)
+    assert berlin.scores.keyword == pytest.approx(0.30000001192092896, abs=1e-6)
 
-    assert cello.scores.semantic == pytest.approx(0.4146140043322447, abs=1e-12)
-    assert cello.scores.reranker == pytest.approx(0.3333333333333333, abs=1e-12)
-    assert cello.scores.keyword == pytest.approx(0.30000001192092896, abs=1e-12)
+    assert cello.scores.semantic == pytest.approx(0.4146140043322447, abs=1e-6)
+    assert cello.scores.reranker == pytest.approx(0.3333333333333333, abs=1e-6)
+    assert cello.scores.keyword == pytest.approx(0.30000001192092896, abs=1e-6)
 
     # `final` folds in recency, measured against wall-clock now, so it drifts in the
     # ninth decimal between runs. Loose enough to absorb that, tight enough that a
