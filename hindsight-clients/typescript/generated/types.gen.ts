@@ -667,6 +667,12 @@ export type BankTemplateConfig = {
    */
   llm_gemini_safety_settings?: Array<unknown> | null;
   /**
+   * Llm Language Integrity
+   *
+   * Source-relative generated-language policy. Null inherits the parent policy.
+   */
+  llm_language_integrity?: "off" | "observe" | "retry" | "reject" | null;
+  /**
    * Recall Budget Function
    *
    * Recall budget mapping function: 'fixed' or 'adaptive'

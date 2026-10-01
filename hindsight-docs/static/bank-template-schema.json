@@ -440,6 +440,25 @@
           "description": "Per-bank Gemini/VertexAI safety filter settings",
           "title": "Llm Gemini Safety Settings"
         },
+        "llm_language_integrity": {
+          "anyOf": [
+            {
+              "enum": [
+                "off",
+                "observe",
+                "retry",
+                "reject"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Source-relative generated-language policy. Null inherits the parent policy.",
+          "title": "Llm Language Integrity"
+        },
         "recall_budget_function": {
           "anyOf": [
             {

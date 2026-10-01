@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional, Union
 from typing_extensions import Annotated
 from hindsight_client_api.models.label_group_output import LabelGroupOutput
@@ -60,6 +60,7 @@ class BankTemplateConfig(BaseModel):
     reflect_default_options: Optional[Dict[str, Any]] = None
     mental_model_min_refresh_interval_seconds: Optional[Annotated[int, Field(strict=True, ge=0)]] = None
     llm_gemini_safety_settings: Optional[List[Any]] = None
+    llm_language_integrity: Optional[StrictStr] = None
     recall_budget_function: Optional[StrictStr] = None
     recall_budget_fixed_low: Optional[StrictInt] = None
     recall_budget_fixed_mid: Optional[StrictInt] = None
@@ -81,7 +82,17 @@ class BankTemplateConfig(BaseModel):
     recall_max_tokens: Optional[StrictInt] = None
     recall_chunks_max_tokens: Optional[StrictInt] = None
     memory_defense: Optional[Dict[str, Any]] = None
-    __properties: ClassVar[List[str]] = ["reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission", "enable_text_search", "enable_temporal_retrieval", "enable_graph_retrieval", "enable_reranking", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "entity_labels", "entities_allow_free_form", "retain_default_strategy", "retain_strategies", "retain_chunk_batch_size", "retain_max_attachments_per_chunk", "mcp_enabled_tools", "consolidation_llm_batch_size", "consolidation_source_facts_max_tokens", "consolidation_source_facts_max_tokens_per_observation", "max_observations_per_scope", "observation_scope_limits", "reflect_source_facts_max_tokens", "knowledge_page_default_trigger", "reflect_default_options", "mental_model_min_refresh_interval_seconds", "llm_gemini_safety_settings", "recall_budget_function", "recall_budget_fixed_low", "recall_budget_fixed_mid", "recall_budget_fixed_high", "recall_budget_adaptive_low", "recall_budget_adaptive_mid", "recall_budget_adaptive_high", "recall_budget_min", "recall_budget_max", "audit_log_enabled", "store_document_text", "enable_auto_consolidation", "consolidation_max_memories_per_round", "consolidation_llm_parallelism", "consolidation_lane_llm_parallelism", "consolidation_fair_group_selection", "consolidation_max_context_tokens", "recall_include_chunks", "recall_max_tokens", "recall_chunks_max_tokens", "memory_defense"]
+    __properties: ClassVar[List[str]] = ["reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission", "enable_text_search", "enable_temporal_retrieval", "enable_graph_retrieval", "enable_reranking", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "entity_labels", "entities_allow_free_form", "retain_default_strategy", "retain_strategies", "retain_chunk_batch_size", "retain_max_attachments_per_chunk", "mcp_enabled_tools", "consolidation_llm_batch_size", "consolidation_source_facts_max_tokens", "consolidation_source_facts_max_tokens_per_observation", "max_observations_per_scope", "observation_scope_limits", "reflect_source_facts_max_tokens", "knowledge_page_default_trigger", "reflect_default_options", "mental_model_min_refresh_interval_seconds", "llm_gemini_safety_settings", "llm_language_integrity", "recall_budget_function", "recall_budget_fixed_low", "recall_budget_fixed_mid", "recall_budget_fixed_high", "recall_budget_adaptive_low", "recall_budget_adaptive_mid", "recall_budget_adaptive_high", "recall_budget_min", "recall_budget_max", "audit_log_enabled", "store_document_text", "enable_auto_consolidation", "consolidation_max_memories_per_round", "consolidation_llm_parallelism", "consolidation_lane_llm_parallelism", "consolidation_fair_group_selection", "consolidation_max_context_tokens", "recall_include_chunks", "recall_max_tokens", "recall_chunks_max_tokens", "memory_defense"]
+
+    @field_validator('llm_language_integrity')
+    def llm_language_integrity_validate_enum(cls, value):
+        """Validates the enum"""
+        if value is None:
+            return value
+
+        if value not in set(['off', 'observe', 'retry', 'reject']):
+            raise ValueError("must be one of enum values ('off', 'observe', 'retry', 'reject')")
+        return value
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -289,6 +300,11 @@ class BankTemplateConfig(BaseModel):
         if self.llm_gemini_safety_settings is None and "llm_gemini_safety_settings" in self.model_fields_set:
             _dict['llm_gemini_safety_settings'] = None
 
+        # set to None if llm_language_integrity (nullable) is None
+        # and model_fields_set contains the field
+        if self.llm_language_integrity is None and "llm_language_integrity" in self.model_fields_set:
+            _dict['llm_language_integrity'] = None
+
         # set to None if recall_budget_function (nullable) is None
         # and model_fields_set contains the field
         if self.recall_budget_function is None and "recall_budget_function" in self.model_fields_set:
@@ -438,6 +454,7 @@ class BankTemplateConfig(BaseModel):
             "reflect_default_options": obj.get("reflect_default_options"),
             "mental_model_min_refresh_interval_seconds": obj.get("mental_model_min_refresh_interval_seconds"),
             "llm_gemini_safety_settings": obj.get("llm_gemini_safety_settings"),
+            "llm_language_integrity": obj.get("llm_language_integrity"),
             "recall_budget_function": obj.get("recall_budget_function"),
             "recall_budget_fixed_low": obj.get("recall_budget_fixed_low"),
             "recall_budget_fixed_mid": obj.get("recall_budget_fixed_mid"),

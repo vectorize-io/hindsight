@@ -106,6 +106,7 @@ _SAMPLE_VALUES: dict[str, Any] = {
         "reflect_search_observations_include_entities": False,
     },
     "llm_gemini_safety_settings": [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"}],
+    "llm_language_integrity": "reject",
     "recall_budget_function": "adaptive",
     "recall_budget_fixed_low": 50,
     "recall_budget_fixed_mid": 250,

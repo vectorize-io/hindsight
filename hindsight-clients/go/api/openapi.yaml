@@ -5919,6 +5919,14 @@ components:
           items: {}
           nullable: true
           type: array
+        llm_language_integrity:
+          enum:
+          - "off"
+          - observe
+          - retry
+          - reject
+          nullable: true
+          type: string
         recall_budget_function:
           nullable: true
           type: string

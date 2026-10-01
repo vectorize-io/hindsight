@@ -3737,6 +3737,9 @@ class BankTemplateConfig(BaseModel):
     llm_gemini_safety_settings: list | None = Field(
         default=None, description="Per-bank Gemini/VertexAI safety filter settings"
     )
+    llm_language_integrity: Literal["off", "observe", "retry", "reject"] | None = Field(
+        default=None, description="Source-relative generated-language policy. Null inherits the parent policy."
+    )
     recall_budget_function: str | None = Field(
         default=None, description="Recall budget mapping function: 'fixed' or 'adaptive'"
     )
