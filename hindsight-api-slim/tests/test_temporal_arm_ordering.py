@@ -78,6 +78,7 @@ async def _run_recall(
     engine.embeddings = object()
     engine.query_analyzer = object()
     engine._cross_encoder_reranker = _Reranker()
+    engine._search_orchestrator = memory_engine.SearchOrchestrator(engine)
     engine._authenticate_tenant = AsyncMock()
     # Recall 404s for a bank that was never created (#4442); this engine has no
     # database behind it, so the existence check is stubbed along with auth.
@@ -112,6 +113,10 @@ async def _run_recall(
         retrieve_all_fact_types_parallel,
     )
     monkeypatch.setattr(fusion_module, "reciprocal_rank_fusion", spy_fusion)
+    monkeypatch.setattr(
+        "hindsight_api.engine.search.orchestrator.reciprocal_rank_fusion",
+        spy_fusion,
+    )
 
     await engine.recall_async(
         bank_id="test-bank",

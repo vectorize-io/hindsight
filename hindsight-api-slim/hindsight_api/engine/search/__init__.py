@@ -8,6 +8,19 @@ Provides modular search architecture:
 """
 
 from .graph_retrieval import GraphRetriever
+from .orchestrator import (
+    ChunkRow,
+    EntityReference,
+    HydratedChunks,
+    HydratedEntities,
+    HydratedSourceFacts,
+    ObservationSourceRef,
+    RecallReranking,
+    RetrievalTraceEntry,
+    SearchOrchestrator,
+    SearchRequest,
+    to_trace_entries,
+)
 from .reranking import CrossEncoderReranker
 from .retrieval import (
     ParallelRetrievalResult,
@@ -21,4 +34,15 @@ __all__ = [
     "ParallelRetrievalResult",
     "GraphRetriever",
     "CrossEncoderReranker",
+    "SearchOrchestrator",
+    "SearchRequest",
+    "RecallReranking",
+    "EntityReference",
+    "HydratedChunks",
+    "HydratedEntities",
+    "HydratedSourceFacts",
+    "ChunkRow",
+    "ObservationSourceRef",
+    "RetrievalTraceEntry",
+    "to_trace_entries",
 ]

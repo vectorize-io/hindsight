@@ -68,6 +68,7 @@ def recall_harness(monkeypatch: pytest.MonkeyPatch) -> _RecallHarness:
     monkeypatch.setattr(config, "reranker_max_candidates", 10)
     monkeypatch.setattr(config, "reranker_max_candidates_low", 0)
     monkeypatch.setattr(memory_engine, "get_config", lambda: config)
+    monkeypatch.setattr("hindsight_api.engine.search.orchestrator.get_config", lambda: config)
     engine = memory_engine.MemoryEngine.__new__(memory_engine.MemoryEngine)
     engine._operation_validator = None
     engine._config_resolver = _ConfigResolver()
@@ -77,6 +78,7 @@ def recall_harness(monkeypatch: pytest.MonkeyPatch) -> _RecallHarness:
     engine.embeddings = object()
     engine.query_analyzer = object()
     engine._cross_encoder_reranker = CrossEncoderReranker(cross_encoder=_Primary())
+    engine._search_orchestrator = memory_engine.SearchOrchestrator(engine)
     engine._authenticate_tenant = AsyncMock()
     engine._require_bank_exists = AsyncMock()
 

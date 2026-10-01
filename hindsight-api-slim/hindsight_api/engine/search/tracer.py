@@ -7,6 +7,7 @@ of the spreading activation search process for debugging and visualization.
 
 import logging
 import time
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -243,7 +244,7 @@ class SearchTracer:
     def add_retrieval_results(
         self,
         method_name: Literal["semantic", "bm25", "graph", "temporal"],
-        results: list[tuple],  # List of (doc_id, data) tuples
+        results: Sequence[Any],  # List of (doc_id, data) tuples or trace entries
         duration_seconds: float,
         score_field: str,  # e.g., "similarity", "bm25_score"
         metadata: dict[str, Any] | None = None,

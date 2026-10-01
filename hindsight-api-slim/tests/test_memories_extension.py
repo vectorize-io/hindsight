@@ -43,6 +43,7 @@ from hindsight_api.engine.memories.base import (
 )
 from hindsight_api.engine.memories.postgres import PostgresMemories
 from hindsight_api.engine.schema import fq_store_table
+from hindsight_api.engine.search.orchestrator import EntityReference, _entity_map_from_results
 
 
 class InMemoryMemories(MemoriesExtension):
@@ -1674,15 +1675,28 @@ async def test_recall_include_entities_omits_entityless_unit(
     "ids_by_unit, names, expected",
     [
         # entity-less unit is omitted, not mapped to []
-        ({"u1": ["e1"], "u2": []}, {"e1": "Alpha"}, {"u1": [{"entity_id": "e1", "canonical_name": "Alpha"}]}),
+        (
+            {"u1": ["e1"], "u2": []},
+            {"e1": "Alpha"},
+            {"u1": [EntityReference(entity_id="e1", canonical_name="Alpha")]},
+        ),
         # a repeated id yields one row, first-seen order preserved
         (
             {"u1": ["e1", "e2", "e1"]},
             {"e1": "Alpha", "e2": "Beta"},
-            {"u1": [{"entity_id": "e1", "canonical_name": "Alpha"}, {"entity_id": "e2", "canonical_name": "Beta"}]},
+            {
+                "u1": [
+                    EntityReference(entity_id="e1", canonical_name="Alpha"),
+                    EntityReference(entity_id="e2", canonical_name="Beta"),
+                ]
+            },
         ),
         # an id with no resolved name is dropped; a unit left with none is omitted
-        ({"u1": ["e1", "eX"], "u2": ["eX"]}, {"e1": "Alpha"}, {"u1": [{"entity_id": "e1", "canonical_name": "Alpha"}]}),
+        (
+            {"u1": ["e1", "eX"], "u2": ["eX"]},
+            {"e1": "Alpha"},
+            {"u1": [EntityReference(entity_id="e1", canonical_name="Alpha")]},
+        ),
         # nothing to resolve -> empty map
         ({"u1": []}, {}, {}),
     ],
@@ -1690,8 +1704,6 @@ async def test_recall_include_entities_omits_entityless_unit(
 def test_entity_map_from_results_shape(ids_by_unit, names, expected):
     """The pure fast-path helper mirrors entity_map_for_units: per-unit order-preserving dedupe,
     unresolved ids dropped, entity-less units omitted (never ``[]``). DB-free."""
-    from hindsight_api.engine.memory_engine import _entity_map_from_results
-
     assert _entity_map_from_results(ids_by_unit, names) == expected
 
 

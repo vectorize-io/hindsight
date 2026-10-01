@@ -7,6 +7,7 @@ import pytest
 
 from hindsight_api.engine import memory_engine
 from hindsight_api.engine.memory_engine import Budget
+from hindsight_api.engine.search.orchestrator import _recall_scoring_now
 from hindsight_api.engine.search.reranking import RerankResult
 from hindsight_api.engine.search.retrieval import MultiFactTypeRetrievalResult, ParallelRetrievalResult
 from hindsight_api.engine.search.types import RetrievalResult, ScoredResult
@@ -42,26 +43,26 @@ class _Reranker:
 def test_recall_scoring_now_uses_question_date():
     question_date = datetime(2023, 5, 30, 13, 53, tzinfo=UTC)
 
-    assert memory_engine._recall_scoring_now(question_date) == question_date
+    assert _recall_scoring_now(question_date) == question_date
 
 
 def test_recall_scoring_now_normalizes_naive_question_date_to_utc():
     question_date = datetime(2023, 5, 30, 13, 53)
 
-    assert memory_engine._recall_scoring_now(question_date) == datetime(2023, 5, 30, 13, 53, tzinfo=UTC)
+    assert _recall_scoring_now(question_date) == datetime(2023, 5, 30, 13, 53, tzinfo=UTC)
 
 
 def test_recall_scoring_now_converts_aware_question_date_to_utc():
     question_date = datetime(2023, 5, 30, 21, 53, tzinfo=timezone(timedelta(hours=8)))
 
-    assert memory_engine._recall_scoring_now(question_date) == datetime(2023, 5, 30, 13, 53, tzinfo=UTC)
+    assert _recall_scoring_now(question_date) == datetime(2023, 5, 30, 13, 53, tzinfo=UTC)
 
 
 def test_recall_scoring_now_falls_back_to_current_time(monkeypatch):
     now = datetime(2026, 5, 27, 12, 0, tzinfo=UTC)
-    monkeypatch.setattr(memory_engine, "utcnow", lambda: now)
+    monkeypatch.setattr("hindsight_api.engine.search.orchestrator.utcnow", lambda: now)
 
-    assert memory_engine._recall_scoring_now(None) == now
+    assert _recall_scoring_now(None) == now
 
 
 @pytest.mark.asyncio
@@ -78,6 +79,7 @@ async def test_recall_async_passes_question_date_to_combined_scoring(monkeypatch
     engine.embeddings = object()
     engine.query_analyzer = object()
     engine._cross_encoder_reranker = _Reranker()
+    engine._search_orchestrator = memory_engine.SearchOrchestrator(engine)
     engine._authenticate_tenant = AsyncMock()
     # This engine has no pool; recall's bank-existence check (#4442) is not what's under test.
     engine._require_bank_exists = AsyncMock()
@@ -124,7 +126,7 @@ async def test_recall_async_passes_question_date_to_combined_scoring(monkeypatch
         "hindsight_api.engine.search.retrieval.retrieve_all_fact_types_parallel",
         retrieve_all_fact_types_parallel,
     )
-    monkeypatch.setattr(memory_engine, "apply_combined_scoring", apply_combined_scoring)
+    monkeypatch.setattr("hindsight_api.engine.search.orchestrator.apply_combined_scoring", apply_combined_scoring)
 
     result = await engine.recall_async(
         bank_id="test-bank",

@@ -32,7 +32,7 @@ class OperationCancelledError(Exception):
     NOTE: this is a plain ``Exception`` on purpose, NOT ``BaseException``. The
     recall/reflect pipelines have broad ``except Exception`` handlers that would
     otherwise swallow it — those handlers re-raise ``OperationCancelledError``
-    explicitly (see ``_search_with_retries``) so cancellation propagates to the
+    explicitly (see ``SearchOrchestrator.search``) so cancellation propagates to the
     HTTP layer. A ``BaseException`` would dodge those handlers but also slip past
     legitimate ``isinstance(result, Exception)`` checks (e.g. the reflect agent's
     ``asyncio.gather(..., return_exceptions=True)`` tool-result handling), which

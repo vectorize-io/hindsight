@@ -27,7 +27,7 @@ from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Literal, NoReturn, ParamSpec, TypeVar, cast
+from typing import TYPE_CHECKING, Any, NoReturn, ParamSpec, TypeVar, cast
 
 import asyncpg
 from pydantic import ValidationError
@@ -66,7 +66,6 @@ from .db import DatabaseBackend, DatabaseConnection, ResultRow, create_database_
 from .db.ops_postgresql import pg_search_vector_expr
 from .db.postgresql import PostgreSQLBackend
 from .db.postgresql import apply_session_settings as _apply_session_settings
-from .db_budget import budgeted_operation
 from .llm_interface import ProviderContentPolicyError, ProviderRateLimitResetError
 from .llm_trace import (
     LLMRequestEntry,
@@ -604,7 +603,7 @@ if TYPE_CHECKING:
     from . import bank_aliases as bank_aliases_mod
     from .audit import AuditLogListResponse, AuditLogStatsResponse
     from .memories import MemoriesExtension, MemoryScopeWatermark
-    from .memories.base import AttachmentRef, EntityResolverHandle, StoredMemory
+    from .memories.base import AttachmentRef, EntityResolverHandle
     from .prompt_preview import PromptPreview
     from .retain.attachment_content import AttachmentOccurrence, LoadedAttachment, RetainAttachment
     from .retain.attachment_store import StoredAttachment
@@ -616,7 +615,6 @@ if TYPE_CHECKING:
 from enum import Enum
 
 from ..pg0 import EmbeddedPostgres, parse_pg0_url
-from .fact_budget import select_facts_within_budget
 from .llm_wrapper import (
     ConfiguredLLMProvider,
     LLMConfig,
@@ -674,7 +672,6 @@ from .response_models import (
     LLMCallTrace,
     MemoryFact,
     MinScores,
-    RecallScores,
     ReflectResult,
     TemporalWindow,
     TokenUsage,
@@ -682,6 +679,7 @@ from .response_models import (
 )
 from .response_models import RecallResult as RecallResultModel
 from .retain import bank_utils, embedding_utils
+from .retain import timing as _retain_timing_mod
 from .retain.attachment_content import (
     ContentBlockItem,
     LoadedAttachment,
@@ -694,7 +692,12 @@ from .retain.attachment_content import (
 from .retain.fact_storage import _normalize_scopes
 from .retain.fold import FoldMemberRef
 from .retain.types import RetainBatchResult, RetainContentDict, merge_processed_content_tokens
-from .search.reranking import CrossEncoderReranker, apply_combined_scoring
+from .search.orchestrator import (
+    RecallReranking,
+    SearchOrchestrator,
+    SearchRequest,
+)
+from .search.reranking import CrossEncoderReranker
 from .search.tag_resolution import MAX_VOCABULARY, TagResolutionError, needs_resolution, resolve_tag_groups
 from .search.tags import (
     TagClause,
@@ -707,21 +710,8 @@ from .search.tags import (
     strict_tag_group,
     strict_tags_match,
 )
-from .search.types import ScoredResult
-from .source_facts import select_source_facts_within_budget
-from .source_scope import tag_filter_is_active, visible_document_ids
 from .task_backend import TaskBackend
 from .time_filter import DOCUMENT_TIME_FIELDS, validate_time_window
-
-# Recall ranking strategy: how the per-arm (semantic/bm25/graph/temporal) results are
-# fused and reranked into the final order.
-#   "cross_encoder" — RRF fusion + cross-encoder rerank (default, user-facing recall).
-#   "rrf"           — RRF fusion, no cross-encoder (RRF score is the order).
-#   "interleave"    — round-robin interleave fusion, no cross-encoder. Guarantees each
-#                     arm's top hits a slot (used by consolidation dedup recall, where RRF
-#                     buried the near-identical twin below budget). See interleave_fusion.
-RecallReranking = Literal["cross_encoder", "rrf", "interleave"]
-from .retain import timing as _retain_timing_mod
 from .token_encoding import count_tokens as _token_encoding_count
 from .token_encoding import truncate_to_tokens
 
@@ -1508,33 +1498,6 @@ def _is_invalid_embedding_dimension_error(e: Exception) -> bool:
     )
 
 
-def _entity_map_from_results(
-    ids_by_unit: dict[str, list[str]], names: dict[str, str]
-) -> dict[str, list[dict[str, str]]]:
-    """Build the ``{unit_id: [{entity_id, canonical_name}]}`` recall shape from the
-    entity ids a store carried on its results, given a resolved id->name map.
-
-    Mirrors ``entity_map_for_units`` exactly, so both paths produce identical output:
-    an order-preserving per-unit dedupe (a unit can carry the same id twice), ids with
-    no resolved name dropped, and — crucially — a unit that resolves to no entity is
-    omitted entirely rather than mapped to ``[]``, so its fact keeps ``entities=None``
-    downstream instead of an empty list. Pure and connectionless, so it is unit-testable
-    without a store or a database.
-    """
-    out: dict[str, list[dict[str, str]]] = {}
-    for unit_id, ids in ids_by_unit.items():
-        rows: list[dict[str, str]] = []
-        seen: set[str] = set()
-        for entity_id in ids:
-            if entity_id in seen or entity_id not in names:
-                continue
-            seen.add(entity_id)
-            rows.append({"entity_id": entity_id, "canonical_name": names[entity_id]})
-        if rows:
-            out[unit_id] = rows
-    return out
-
-
 def _is_foreign_key_violation(e: Exception) -> bool:
     """Return True for a foreign-key violation on either dialect.
 
@@ -1649,20 +1612,6 @@ def _resolve_reranking(config_dict: dict, reranking: "RecallReranking") -> "Reca
     if reranking == "cross_encoder" and not config_dict.get("enable_reranking", True):
         return "rrf"
     return reranking
-
-
-def utcnow():
-    """Get current UTC time with timezone info."""
-    return datetime.now(UTC)
-
-
-def _recall_scoring_now(question_date: datetime | None) -> datetime:
-    """Return the reference time for recall scoring boosts."""
-    if question_date is None:
-        return utcnow()
-    if question_date.tzinfo is None or question_date.utcoffset() is None:
-        return question_date.replace(tzinfo=UTC)
-    return question_date.astimezone(UTC)
 
 
 # Logger for memory system
@@ -2955,6 +2904,9 @@ class MemoryEngine(MemoryEngineInterface):
         # Backpressure mechanism: limit concurrent searches to prevent overwhelming the database
         # Configurable via HINDSIGHT_API_RECALL_MAX_CONCURRENT (default: 50)
         self._search_semaphore = asyncio.Semaphore(get_config().recall_max_concurrent)
+
+        # Search orchestrator
+        self._search_orchestrator = SearchOrchestrator(self)
 
         # Backpressure for retain DB writes: limit concurrent transactions to prevent contention
         # on entity/link tables. Acquired in the orchestrator *after* LLM extraction completes,
@@ -8305,7 +8257,7 @@ class MemoryEngine(MemoryEngineInterface):
         # Cooperative cancellation checkpoint: if the client already disconnected
         # while this request waited to be scheduled, abort before doing any work
         # (issue #2122). Further checkpoints sit at each pipeline stage boundary
-        # inside _search_with_retries.
+        # inside SearchOrchestrator.search.
         request_context.raise_if_cancelled()
 
         # Sanitize the query at ingress: a client may serialize a half-emoji as a
@@ -8450,43 +8402,44 @@ class MemoryEngine(MemoryEngineInterface):
                 semaphore_wait = time.time() - semaphore_wait_start
                 get_metrics_collector().record_recall_phase("semaphore_acquire", semaphore_wait)
                 # Retry loop for connection errors
+                search_req = SearchRequest(
+                    bank_id=bank_id,
+                    query=query,
+                    fact_type=fact_type,
+                    thinking_budget=thinking_budget,
+                    max_tokens=max_tokens,
+                    enable_trace=enable_trace,
+                    question_date=question_date,
+                    include_entities=include_entities,
+                    include_chunks=include_chunks,
+                    max_chunk_tokens=max_chunk_tokens,
+                    request_context=request_context,
+                    semaphore_wait=semaphore_wait,
+                    prefer_observations=prefer_observations,
+                    tags=tags,
+                    tags_match=tags_match,
+                    tag_groups=tag_groups,
+                    created_after=created_after,
+                    created_before=created_before,
+                    min_scores=min_scores,
+                    temporal_window=temporal_window,
+                    connection_budget=_connection_budget,
+                    quiet=_quiet,
+                    include_source_facts=include_source_facts,
+                    max_source_facts_tokens=max_source_facts_tokens,
+                    max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
+                    reranking=reranking,
+                    reranker_max_candidates=reranker_max_candidates,
+                    enable_text_search=enable_text_search,
+                    enable_temporal_retrieval=enable_temporal_retrieval,
+                    enable_graph_retrieval=enable_graph_retrieval,
+                )
                 max_retries = 3
                 for attempt in range(max_retries + 1):
                     try:
                         _t0_swr2 = time.time()
-                        result = await self._search_with_retries(
-                            bank_id,
-                            query,
-                            fact_type,
-                            thinking_budget,
-                            max_tokens,
-                            enable_trace,
-                            question_date,
-                            include_entities,
-                            max_entity_tokens,
-                            include_chunks,
-                            max_chunk_tokens,
-                            request_context,
-                            semaphore_wait=semaphore_wait,
-                            prefer_observations=prefer_observations,
-                            tags=tags,
-                            tags_match=tags_match,
-                            tag_groups=tag_groups,
-                            created_after=created_after,
-                            created_before=created_before,
-                            min_scores=min_scores,
-                            temporal_window=temporal_window,
-                            connection_budget=_connection_budget,
-                            quiet=_quiet,
-                            include_source_facts=include_source_facts,
-                            max_source_facts_tokens=max_source_facts_tokens,
-                            max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
-                            reranking=reranking,
-                            reranker_max_candidates=reranker_max_candidates,
-                            enable_text_search=enable_text_search,
-                            enable_temporal_retrieval=enable_temporal_retrieval,
-                            enable_graph_retrieval=enable_graph_retrieval,
-                        )
+                        result = await self._search_orchestrator.search(search_req)
+
                         get_metrics_collector().record_recall_phase(
                             "search_with_retries", time.time() - _t0_swr2, diagnostic=True
                         )
@@ -8628,1460 +8581,35 @@ class MemoryEngine(MemoryEngineInterface):
         finally:
             recall_span_context.__exit__(None, None, None)
 
-    async def _search_with_retries(
+    def _observations_via_source_match_sql(
         self,
-        bank_id: str,
-        query: str,
-        fact_type: list[str],
-        thinking_budget: int,
-        max_tokens: int,
-        enable_trace: bool,
-        question_date: datetime | None = None,
-        include_entities: bool = False,
-        max_entity_tokens: int = 500,
-        include_chunks: bool = False,
-        max_chunk_tokens: int = 8192,
-        request_context: "RequestContext" = None,
-        semaphore_wait: float = 0.0,
-        prefer_observations: bool = False,
-        tags: list[str] | None = None,
-        tags_match: TagsMatch = "any",
-        tag_groups: list[TagGroup] | None = None,
-        created_after: datetime | None = None,
-        created_before: datetime | None = None,
-        min_scores: MinScores | None = None,
-        temporal_window: TemporalWindow | None = None,
-        connection_budget: int | None = None,
-        quiet: bool = False,
-        include_source_facts: bool = False,
-        max_source_facts_tokens: int = 4096,
-        max_source_facts_tokens_per_observation: int = -1,
-        reranking: RecallReranking = "cross_encoder",
-        reranker_max_candidates: int | None = None,
-        enable_text_search: bool = True,
-        enable_temporal_retrieval: bool = True,
-        enable_graph_retrieval: bool = True,
-    ) -> RecallResultModel:
+        source_column: str,
+        source_placeholder: int,
+        bank_placeholder: int | None,
+    ) -> str:
+        """SQL predicate matching `memory_units` rows that are observations
+        whose source memories satisfy ``<source_column> = $source_placeholder``.
+
+        Observations have no `document_id` / `chunk_id` of their own; the link
+        to a source row lives in `source_memory_ids` (PG) or the
+        `observation_sources` junction (Oracle).
         """
-        Search implementation with modular retrieval and reranking.
-
-        ``created_after`` / ``created_before`` bound ``updated_at``, not ``created_at`` —
-        see the note on :meth:`recall`.
-
-        Architecture:
-        1. Retrieval: 4-way parallel (semantic, keyword, graph, temporal graph)
-        2. Merge: RRF to combine ranked lists
-        3. Reranking: Pluggable strategy (heuristic or cross-encoder)
-        4. Diversity: MMR with λ=0.5
-        5. Chunks: Fetch chunks from top-scored results (BEFORE token filtering)
-        6. Token Filter: Limit facts to max_tokens budget
-
-        Args:
-            bank_id: bank IDentifier
-            query: Search query
-            fact_type: Type of facts to search
-            thinking_budget: Nodes to explore in graph traversal
-            max_tokens: Maximum tokens to return (counts only 'text' field)
-            enable_trace: Whether to return search trace (deprecated)
-            include_entities: Whether to include entity observations
-            max_entity_tokens: Maximum tokens for entity observations
-            include_chunks: Whether to include raw chunks (fetched before max_tokens filtering)
-            max_chunk_tokens: Maximum tokens for chunks
-
-        Returns:
-            RecallResultModel with results, trace, optional entities, and optional chunks
-        """
-        # Initialize tracer if requested
-        from .search.tracer import SearchTracer
-
-        # Always trace the PHASES; only capture the rest when asked. The phase metrics are a
-        # handful of floats and they are what makes a recall log account for its own duration --
-        # the numbered stages stop at token filtering, so hydration, assembly and entity building
-        # were measured and then thrown away unless someone happened to pass `trace=true`.
-        #
-        # The tracer therefore ALWAYS exists, and `if tracer:` is always true. Never guard on it:
-        # call `add_phase_metric` unguarded, and put anything that BUILDS a trace payload behind
-        # `enable_trace` -- under `phases_only` the tracer drops those payloads after the caller
-        # has paid to construct them. `test_recall_tracer_payload_gating.py` fails on a new
-        # `if tracer:`; this has been the same bug three times.
-        #
-        # The trace's timestamp is the anchor the ranking was computed against -- the caller's
-        # `question_date` when they supplied one -- not the moment the trace happened to be built.
-        # Reporting wall-clock here made an applied anchor look ignored (#4217).
-        tracer = SearchTracer(
-            query,
-            thinking_budget,
-            max_tokens,
-            tags=tags,
-            tags_match=tags_match,
-            query_timestamp=_recall_scoring_now(question_date),
+        if source_column not in ("document_id", "chunk_id"):
+            raise ValueError(f"Unsupported source_column: {source_column!r}")
+        if self._backend.ops.uses_observation_sources_table:
+            bank_clause = f" AND src.bank_id = ${bank_placeholder}" if bank_placeholder else ""
+            return (
+                f"id IN (SELECT os.observation_id "
+                f"FROM {fq_table('observation_sources')} os "
+                f"JOIN {fq_table('memory_units')} src ON src.id = os.source_id "
+                f"WHERE src.{source_column} = ${source_placeholder}{bank_clause})"
+            )
+        bank_clause = f" AND bank_id = ${bank_placeholder}" if bank_placeholder else ""
+        return (
+            f"source_memory_ids && (SELECT array_agg(id) "
+            f"FROM {fq_table('memory_units')} "
+            f"WHERE {source_column} = ${source_placeholder}{bank_clause})"
         )
-        tracer.phases_only = not enable_trace
-        tracer.start()
-
-        backend_acquire_start = time.time()
-        backend = await self._get_read_backend()
-        tracer.add_phase_metric("backend_acquisition", time.time() - backend_acquire_start)
-        recall_start = time.time()
-
-        # Buffer logs for clean output in concurrent scenarios.
-        # Include a uuid suffix so two recalls on the same bank within the
-        # same millisecond don't collide on the budgeted_operation key
-        # (`recall-{recall_id}`), which would raise "Operation ... already exists".
-        recall_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}-{uuid.uuid4().hex[:6]}"
-        log_buffer = []
-        tags_info = f", tags={tags}, tags_match={tags_match}" if tags else ""
-        log_buffer.append(
-            f"[RECALL {recall_id}] Query: '{query[:50]}...' (budget={thinking_budget}, max_tokens={max_tokens}{tags_info})"
-        )
-
-        # Import tracing utilities
-        from ..tracing import get_tracer
-
-        tracer_otel = get_tracer()
-
-        try:
-            # Step 1: Generate query embedding (for semantic search)
-            step_start = time.time()
-
-            embedding_span = tracer_otel.start_span("hindsight.recall_embedding")
-            embedding_span.set_attribute("hindsight.bank_id", bank_id)
-            embedding_span.set_attribute("hindsight.query", query[:100])
-
-            try:
-                get_metrics_collector().record_recall_phase("swr_prelude", time.time() - backend_acquire_start)
-                query_embeddings = await embedding_utils.generate_embeddings_batch(
-                    self.embeddings,
-                    [query],
-                    input_type="query",
-                )
-                query_embedding = query_embeddings[0]
-                step_duration = time.time() - step_start
-                log_buffer.append(f"  [1] Generate query embedding: {step_duration:.3f}s")
-            finally:
-                embedding_span.end()
-
-            tracer.record_query_embedding(query_embedding)
-            tracer.add_phase_metric("generate_query_embedding", step_duration)
-
-            # Cancellation checkpoint: bail before the DB-heavy retrieval stage
-            # if the client has gone away (issue #2122).
-            if request_context is not None:
-                request_context.raise_if_cancelled()
-
-            # Step 1.5: let the store answer the whole recall, if it can and the bank asked it to.
-            #
-            # Everything below — fusion, the reranker, the boosts, the token budget, the entity and
-            # chunk enrichment — is work done on candidates that have to be moved out of the store
-            # first. A store that owns its own index can do all of it where the data already is,
-            # and on a networked store that is the difference between four round-trips and one.
-            #
-            # The store DECLINES by returning None, and then this pipeline runs unchanged. That is
-            # the whole safety property: nothing has been read yet, so falling through costs a
-            # branch, and a request shape the store does not implement is answered by the path that
-            # has always answered it rather than approximated.
-            # The store is ALWAYS asked first. It answers what it implements and declines the
-            # rest, so the decline is the switch — not a flag an operator has to set per bank.
-            # Whether a store can answer a request is a property of the request, not an opinion
-            # about the bank, so there is deliberately nothing per-bank to configure.
-            #
-            # This pipeline remains for stores that cannot answer a recall themselves — it is
-            # reached by their decline, not by a switch. There is deliberately no way to force it
-            # for a store that CAN: equivalence is measured between stores, over the same corpus,
-            # which needs no override because a store that declines uses this path already.
-            from .memories import FullRecallRequest
-            from .memories import get_memories as _get_memories_for_full_recall
-
-            _full_start = time.time()
-            _store_result = await _get_memories_for_full_recall().full_recall(
-                FullRecallRequest(
-                    bank_id=bank_id,
-                    fact_types=list(fact_type),
-                    query_embedding=str(query_embedding),
-                    query_text=query,
-                    limit=thinking_budget,
-                    # The field is declared `tuple[datetime, datetime] | None`, and a store that
-                    # claims the recall reads it as one. `temporal_window` is a `TemporalWindow`
-                    # here, so it is unpacked at the boundary rather than handed over as the model
-                    # -- the same conversion the pipeline below does for `recall_unified`.
-                    # `FullRecallRequest` does not validate at construction, so passing the model
-                    # through surfaces only inside the store, as a TypeError on the first index.
-                    temporal_window=(
-                        (temporal_window.start, temporal_window.end) if temporal_window is not None else None
-                    ),
-                    tags=tags,
-                    tags_match=tags_match,
-                    tag_groups=tag_groups,
-                    created_after=created_after,
-                    created_before=created_before,
-                    min_semantic=min_scores.semantic if min_scores else None,
-                    min_keyword=min_scores.keyword if min_scores else None,
-                    enable_text_search=enable_text_search,
-                    enable_graph=enable_graph_retrieval,
-                    reranking=reranking,
-                    reranker_max_candidates=(
-                        reranker_max_candidates
-                        if reranker_max_candidates is not None
-                        else get_config().reranker_max_candidates
-                    ),
-                    per_source_cap=get_config().recall_max_candidates_per_source,
-                    strategy_boosts=get_config().recall_strategy_boosts,
-                    recency_decay_function=get_config().recency_decay_function,
-                    recency_decay_linear_window_days=get_config().recency_decay_linear_window_days,
-                    recency_decay_halflife_days=get_config().recency_decay_halflife_days,
-                    # Resolved here, not in the store: `question_date` overrides "now", and two
-                    # clocks would make an identical request score differently on the two paths.
-                    now=_recall_scoring_now(question_date),
-                    min_reranker=min_scores.reranker if min_scores else None,
-                    min_final=min_scores.final if min_scores else None,
-                    truncate_to=thinking_budget * 2,
-                    max_tokens=max_tokens,
-                    tokenizer_encoding=get_config().tokenizer_encoding,
-                    include_entities=include_entities,
-                    include_chunks=include_chunks,
-                    max_chunk_tokens=max_chunk_tokens,
-                    # An observation carries its source ids, so the store answers all three of
-                    # these itself: the dedup, the provenance, and the chunks an observation has
-                    # none of and inherits from its sources.
-                    prefer_observations=prefer_observations,
-                    include_source_facts=include_source_facts,
-                    max_source_facts_tokens=max_source_facts_tokens,
-                    max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
-                )
-            )
-            if _store_result is not None:
-                _full_elapsed = time.time() - _full_start
-                _t0_tail = time.time()
-                log_buffer.append(
-                    f"  [1.5] Store-answered recall: {len(_store_result.results)} results in {_full_elapsed:.3f}s"
-                )
-                if not quiet:
-                    logger.info("\n" + "\n".join(log_buffer))
-                    get_metrics_collector().record_recall_phase("store_branch_tail", time.time() - _t0_tail)
-                # The store's own per-stage timings become this recall's phase breakdown.
-                # Without this the trace goes dark exactly where the work moved to, and the
-                # only thing left to compare between the two paths is a total.
-                #
-                # Recorded unconditionally, like `backend_acquisition` and
-                # `generate_query_embedding` above. It used to sit behind `enable_trace`, which
-                # meant a store-answered recall reported those two phases and nothing else on
-                # ordinary traffic: the phase histogram covered ~7% of the request and the rest
-                # showed up as an unattributed remainder, on the one path where the work is not
-                # in this process to begin with. `store_*` are the store's own stages, `full_recall`
-                # is the whole hop including the Python either side of it.
-                _store_reported = 0.0
-                for _name, _micros in (_store_result.store_stages or {}).items():
-                    tracer.add_phase_metric(f"store_{_name}", _micros / 1_000_000)
-                    _store_reported += _micros / 1_000_000
-                # The hop minus what the store says it spent: our gRPC client, the
-                # serialization either side, and any time the request sat in the
-                # channel. Recorded per-request because p99s of the individual stages
-                # are not additive, so this gap cannot be derived after the fact.
-                tracer.add_phase_metric("store_hop_overhead", max(0.0, _full_elapsed - _store_reported))
-                tracer.add_phase_metric(
-                    "full_recall",
-                    _full_elapsed,
-                    {"results": len(_store_result.results)},
-                )
-                # Assembling the trace OBJECT stays behind the caller's flag: it dumps every
-                # result, which is the expensive half and the reason tracing is opt-in.
-                if enable_trace:
-                    _trace = tracer.finalize([r.model_dump() for r in _store_result.results])
-                    _store_result.trace = _trace.to_dict() if _trace else None
-                return _store_result
-
-            # Step 2: Optimized parallel retrieval using batched queries
-            # - Semantic + BM25 combined in 1 CTE query for ALL fact types
-            # - Graph runs per fact type (complex traversal)
-            # - Temporal runs per fact type (if constraint detected)
-            step_start = time.time()
-            query_embedding_str = str(query_embedding)
-
-            from .search.retrieval import (
-                get_default_graph_retriever,
-                retrieve_all_fact_types_parallel,
-            )
-
-            retrieval_span = tracer_otel.start_span("hindsight.recall_retrieval")
-            retrieval_span.set_attribute("hindsight.bank_id", bank_id)
-            retrieval_span.set_attribute("hindsight.fact_types", ",".join(fact_type))
-            retrieval_span.set_attribute("hindsight.thinking_budget", thinking_budget)
-
-            try:
-                # Run optimized retrieval with connection budget
-                config = get_config()
-                effective_connection_budget = (
-                    connection_budget if connection_budget is not None else config.recall_connection_budget
-                )
-                async with budgeted_operation(
-                    max_connections=effective_connection_budget,
-                    operation_id=f"recall-{recall_id}",
-                ) as op:
-                    budgeted_pool = op.wrap_pool(backend)
-                    parallel_start = time.time()
-                    multi_result = await retrieve_all_fact_types_parallel(
-                        budgeted_pool,
-                        query,
-                        query_embedding_str,
-                        bank_id,
-                        fact_type,  # Pass all fact types at once
-                        thinking_budget,
-                        question_date,
-                        self.query_analyzer,
-                        tags=tags,
-                        tags_match=tags_match,
-                        tag_groups=tag_groups,
-                        created_after=created_after,
-                        created_before=created_before,
-                        min_semantic=min_scores.semantic if min_scores else None,
-                        min_keyword=min_scores.keyword if min_scores else None,
-                        temporal_window=temporal_window,
-                        enable_text_search=enable_text_search,
-                        enable_temporal_retrieval=enable_temporal_retrieval,
-                        enable_graph_retrieval=enable_graph_retrieval,
-                    )
-                    parallel_duration = time.time() - parallel_start
-            finally:
-                retrieval_span.end()
-
-            # Combine all results from all fact types and aggregate timings
-            semantic_results = []
-            bm25_results = []
-            graph_results = []
-            temporal_results = []
-            aggregated_timings = {
-                "semantic": 0.0,
-                "bm25": 0.0,
-                "graph": 0.0,
-                "temporal": 0.0,
-                "temporal_extraction": 0.0,
-            }
-            all_graph_timings = []
-
-            detected_temporal_constraint = None
-            max_conn_wait = multi_result.max_conn_wait
-            for ft in fact_type:
-                retrieval_result = multi_result.results_by_fact_type.get(ft)
-                if not retrieval_result:
-                    continue
-
-                # Log fact types in this retrieval batch
-                logger.debug(
-                    f"[RECALL {recall_id}] Fact type '{ft}': semantic={len(retrieval_result.semantic)}, bm25={len(retrieval_result.bm25)}, graph={len(retrieval_result.graph)}, temporal={len(retrieval_result.temporal) if retrieval_result.temporal else 0}"
-                )
-
-                semantic_results.extend(retrieval_result.semantic)
-                bm25_results.extend(retrieval_result.bm25)
-                graph_results.extend(retrieval_result.graph)
-                if retrieval_result.temporal:
-                    temporal_results.extend(retrieval_result.temporal)
-                # Track max timing for each method (since they run in parallel across fact types)
-                for method, duration in retrieval_result.timings.items():
-                    aggregated_timings[method] = max(aggregated_timings.get(method, 0.0), duration)
-                # Capture temporal constraint (same across all fact types)
-                if retrieval_result.temporal_constraint:
-                    detected_temporal_constraint = retrieval_result.temporal_constraint
-
-            # If no temporal results from any fact type, set to None
-            if not temporal_results:
-                temporal_results = None
-
-            # Sort combined results by score (descending) so higher-scored results
-            # get better ranks in the trace, regardless of fact type
-            semantic_results.sort(key=lambda r: r.similarity if hasattr(r, "similarity") else 0, reverse=True)
-            bm25_results.sort(key=lambda r: r.bm25_score if hasattr(r, "bm25_score") else 0, reverse=True)
-            graph_results.sort(key=lambda r: r.activation if hasattr(r, "activation") else 0, reverse=True)
-            if temporal_results:
-                # temporal_score is the temporal arm's own ranking signal (float | None on
-                # RetrievalResult); combined_score only exists on ScoredResult, after fusion.
-                temporal_results.sort(key=lambda r: r.temporal_score or 0, reverse=True)
-
-            # Cap each source independently before fusion so a single
-            # over-expanding backend (e.g. VectorChord returning hundreds of
-            # weak candidates) cannot fill the reranker's global budget on its
-            # own and crowd the other arms out of the final candidate pool.
-            per_source_cap = get_config().recall_max_candidates_per_source
-            if per_source_cap > 0:
-                from .search.fusion import cap_per_source
-
-                pre_cap_counts = (len(semantic_results), len(bm25_results), len(graph_results))
-                semantic_results = cap_per_source(semantic_results, per_source_cap)
-                bm25_results = cap_per_source(bm25_results, per_source_cap)
-                graph_results = cap_per_source(graph_results, per_source_cap)
-                if temporal_results:
-                    temporal_results = cap_per_source(temporal_results, per_source_cap)
-                if pre_cap_counts != (len(semantic_results), len(bm25_results), len(graph_results)):
-                    logger.debug(
-                        f"[RECALL {recall_id}] Per-source cap ({per_source_cap}) applied: "
-                        f"semantic {pre_cap_counts[0]}->{len(semantic_results)}, "
-                        f"bm25 {pre_cap_counts[1]}->{len(bm25_results)}, "
-                        f"graph {pre_cap_counts[2]}->{len(graph_results)}"
-                    )
-
-            step_duration = time.time() - step_start
-            # The store call is the one term inside this block that IS measured. Showing it next to
-            # the block total is what separates "the store is slow" from "we are slow around it" --
-            # the per-arm numbers cannot, because a store-owned recall returns them all from one
-            # call and reports 0.0 for each.
-            _store_recall = aggregated_timings.get("store_recall", 0.0)
-            _store_recall_info = f" | store={_store_recall:.3f}s" if _store_recall else ""
-            if _store_recall:
-                # Diagnostic: it is a SUBSET of parallel_retrieval, not a sibling of it, so it must
-                # not be summed with the partitioning phases.
-                tracer.add_phase_metric(
-                    "store_recall",
-                    _store_recall,
-                    {"diagnostic": True, "note": "subset of parallel_retrieval"},
-                )
-
-            # Format per-method timings
-            timing_parts = [
-                f"semantic={len(semantic_results)}({aggregated_timings['semantic']:.3f}s)",
-                f"bm25={len(bm25_results)}({aggregated_timings['bm25']:.3f}s)",
-                f"graph={len(graph_results)}({aggregated_timings['graph']:.3f}s)",
-                f"temporal_extraction={aggregated_timings['temporal_extraction']:.3f}s",
-            ]
-            temporal_info = ""
-            if detected_temporal_constraint:
-                start_dt, end_dt = detected_temporal_constraint
-                temporal_count = len(temporal_results) if temporal_results else 0
-                timing_parts.append(f"temporal={temporal_count}({aggregated_timings['temporal']:.3f}s)")
-                temporal_info = f" | temporal_range={start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}"
-            log_buffer.append(
-                f"  [2] Parallel retrieval ({len(fact_type)} fact_types): {', '.join(timing_parts)}"
-                f"{_store_recall_info} in {parallel_duration:.3f}s{temporal_info}"
-            )
-
-            # Log graph retriever timing breakdown if available
-            if all_graph_timings:
-                try:
-                    retriever_name = get_default_graph_retriever().name.upper()
-                except RuntimeError:
-                    # A store that runs its own graph arm may supply no retriever; this is a log line.
-                    retriever_name = "STORE"
-                graph_total = all_graph_timings[0]  # Take first fact type's timing as representative
-                graph_parts = [
-                    f"db_queries={graph_total.db_queries}",
-                    f"edge_load={graph_total.edge_load_time:.3f}s",
-                    f"edges={graph_total.edge_count}",
-                    f"patterns={graph_total.pattern_count}",
-                ]
-                if graph_total.seeds_time > 0.01:
-                    graph_parts.append(f"seeds={graph_total.seeds_time:.3f}s")
-                if graph_total.fusion > 0.001:
-                    graph_parts.append(f"fusion={graph_total.fusion:.3f}s")
-                if graph_total.fetch > 0.001:
-                    graph_parts.append(f"fetch={graph_total.fetch:.3f}s")
-                log_buffer.append(f"      [{retriever_name}] {', '.join(graph_parts)}")
-                # Log detailed hop timing for debugging slow queries
-                if graph_total.hop_details:
-                    for hd in graph_total.hop_details:
-                        log_buffer.append(
-                            f"        hop{hd['hop']}: exec={hd.get('exec_time', 0) * 1000:.0f}ms, "
-                            f"uncached={hd.get('uncached_after_filter', 0)}, "
-                            f"load={hd.get('load_time', 0) * 1000:.0f}ms, "
-                            f"edges={hd.get('edges_loaded', 0)}"
-                        )
-
-            # Record temporal constraint in tracer if detected
-            if detected_temporal_constraint:
-                start_dt, end_dt = detected_temporal_constraint
-                tracer.record_temporal_constraint(start_dt, end_dt)
-
-            # Record retrieval results for tracer - per fact type.
-            # `enable_trace`, NOT `if tracer`: the tracer always exists so phase timings are
-            # always collected, but these payloads are built eagerly by the CALLER and then
-            # dropped inside the tracer when phases_only is set -- pure waste on every recall.
-            if enable_trace:
-                # Convert RetrievalResult to old tuple format for tracer
-                def to_tuple_format(results):
-                    return [(r.id, r.__dict__) for r in results]
-
-                # Add retrieval results per fact type (to show parallel execution in UI)
-                for ft_name in fact_type:
-                    rr = multi_result.results_by_fact_type.get(ft_name)
-                    if not rr:
-                        continue
-
-                    # Add semantic retrieval results for this fact type
-                    tracer.add_retrieval_results(
-                        method_name="semantic",
-                        results=to_tuple_format(rr.semantic),
-                        duration_seconds=rr.timings.get("semantic", 0.0),
-                        score_field="similarity",
-                        metadata={"limit": thinking_budget},
-                        fact_type=ft_name,
-                    )
-
-                    # Add BM25 retrieval results for this fact type, unless the bank has
-                    # text search off — then the arm was never in the SQL, and recording
-                    # an empty entry would read as "ran, matched nothing" rather than
-                    # "absent". Same reasoning as the graph guard below.
-                    if enable_text_search:
-                        tracer.add_retrieval_results(
-                            method_name="bm25",
-                            results=to_tuple_format(rr.bm25),
-                            duration_seconds=rr.timings.get("bm25", 0.0),
-                            score_field="bm25_score",
-                            metadata={"limit": thinking_budget},
-                            fact_type=ft_name,
-                        )
-
-                    # Add graph retrieval results for this fact type.
-                    # Skipped entirely when the arm is off: an empty graph entry is
-                    # indistinguishable from "ran and matched nothing", which would
-                    # read as the arm being free rather than absent — the opposite of
-                    # what someone comparing traces to tune latency needs to see.
-                    # Mirrors the temporal guard below.
-                    if enable_graph_retrieval:
-                        tracer.add_retrieval_results(
-                            method_name="graph",
-                            results=to_tuple_format(rr.graph),
-                            duration_seconds=rr.timings.get("graph", 0.0),
-                            score_field="activation",
-                            metadata={"budget": thinking_budget},
-                            fact_type=ft_name,
-                        )
-
-                    # Add temporal retrieval results for this fact type
-                    # Show temporal even with 0 results if constraint was detected
-                    if rr.temporal is not None or rr.temporal_constraint is not None:
-                        temporal_metadata = {"budget": thinking_budget}
-                        if rr.temporal_constraint:
-                            start_dt, end_dt = rr.temporal_constraint
-                            temporal_metadata["constraint"] = {
-                                "start": start_dt.isoformat() if start_dt else None,
-                                "end": end_dt.isoformat() if end_dt else None,
-                            }
-                        tracer.add_retrieval_results(
-                            method_name="temporal",
-                            results=to_tuple_format(rr.temporal or []),
-                            duration_seconds=rr.timings.get("temporal", 0.0),
-                            score_field="temporal_score",
-                            metadata=temporal_metadata,
-                            fact_type=ft_name,
-                        )
-
-                # Record entry points (from semantic results) for legacy graph view.
-                #
-                # These have to be hydrated first. The arms move ids and scores and the payload is
-                # fetched later, for only what survives the trim — so a store that does not return
-                # full results has no `text` on them yet, and the trace recorded every entry point
-                # with an empty string. Hydration happens here rather than by moving the recording
-                # after the trim, because an entry point is a top-10 SEMANTIC result and need not
-                # have survived fusion at all.
-                #
-                # This fetch costs a round trip per recall and exists only to fill in text for
-                # the graph view. It used to sit behind `if tracer:` and so ran on EVERY recall
-                # once the tracer started being built unconditionally (for the `[phases]`
-                # accounting); the enclosing guard is now `enable_trace`, which is the same
-                # condition `phases_only` encoded, so the check that used to be needed here is
-                # implied by getting this far.
-                _entry_points = semantic_results[:10]
-                if _entry_points:
-                    from .memories import get_memories as _get_memories_for_trace
-
-                    await _get_memories_for_trace().hydrate_results(bank_id=bank_id, results=_entry_points)
-                for rank, retrieval in enumerate(_entry_points, start=1):
-                    tracer.add_entry_point(retrieval.id, retrieval.text, retrieval.similarity or 0.0, rank)
-
-            tracer.add_phase_metric(
-                "parallel_retrieval",
-                step_duration,
-                {
-                    "semantic_count": len(semantic_results),
-                    "bm25_count": len(bm25_results),
-                    "graph_count": len(graph_results),
-                    "temporal_count": len(temporal_results) if temporal_results else 0,
-                },
-            )
-            # Also expose each retrieval method as its own phase so
-            # benchmarks can pinpoint which sub-query drives latency. These are
-            # children of parallel_retrieval (marked diagnostic so the phase-coverage
-            # check doesn't double-count them).
-            for _method, _dur in aggregated_timings.items():
-                if _dur > 0:
-                    tracer.add_phase_metric(f"retrieval_{_method}", _dur, {"diagnostic": True})
-
-            # Step 3: Merge ranked lists. RRF by default; interleave (round-robin) when
-            # requested by consolidation dedup recall — RRF averages a strong-in-one-arm
-            # result down and buried the near-identical "twin" observation below budget
-            # (semantic #1 -> outside the shown set), whereas interleave guarantees each
-            # arm's top hits a slot. See interleave_fusion docstring.
-            step_start = time.time()
-            from .search.fusion import interleave_fusion, reciprocal_rank_fusion
-
-            fusion_span = tracer_otel.start_span("hindsight.recall_fusion")
-            fusion_span.set_attribute("hindsight.bank_id", bank_id)
-            fusion_span.set_attribute("hindsight.semantic_count", len(semantic_results))
-            fusion_span.set_attribute("hindsight.bm25_count", len(bm25_results))
-            fusion_span.set_attribute("hindsight.graph_count", len(graph_results))
-            fusion_span.set_attribute("hindsight.temporal_count", len(temporal_results) if temporal_results else 0)
-
-            try:
-                # Merge 3 or 4 result lists depending on temporal constraint
-                result_lists = [semantic_results, bm25_results, graph_results]
-                if temporal_results:
-                    result_lists.append(temporal_results)
-                fuse = interleave_fusion if reranking == "interleave" else reciprocal_rank_fusion
-                merged_candidates = fuse(result_lists)
-
-                step_duration = time.time() - step_start
-                log_buffer.append(
-                    f"  [3] {'interleave' if reranking == 'interleave' else 'RRF'} merge: "
-                    f"{len(merged_candidates)} unique candidates in {step_duration:.3f}s"
-                )
-            finally:
-                fusion_span.set_attribute("hindsight.merged_count", len(merged_candidates))
-                fusion_span.end()
-
-            # The payload build is gated on `enable_trace`; the phase metric is not. The
-            # tracer always exists so timings are always collected -- but `tracer_merged`
-            # is built by the CALLER and then dropped inside the tracer when phases_only
-            # is set, so building it unconditionally is pure waste on every recall.
-            if enable_trace:
-                # Convert MergedCandidate to old tuple format for tracer
-                tracer_merged = [
-                    (mc.id, mc.retrieval.__dict__, {"rrf_score": mc.rrf_score, **mc.source_ranks})
-                    for mc in merged_candidates
-                ]
-                tracer.add_rrf_merged(tracer_merged)
-            tracer.add_phase_metric("rrf_merge", step_duration, {"candidates_merged": len(merged_candidates)})
-
-            # Step 4: Rerank using cross-encoder (MergedCandidate -> ScoredResult)
-            step_start = time.time()
-            reranker_instance = self._cross_encoder_reranker
-
-            rerank_span = tracer_otel.start_span("hindsight.recall_rerank")
-            rerank_span.set_attribute("hindsight.bank_id", bank_id)
-            rerank_span.set_attribute("hindsight.candidates_count", len(merged_candidates))
-
-            scored_results: list = []
-            # Provider that produced scored_results for THIS call. None until a
-            # cross-encoder rerank returns; rrf/interleave never consult it.
-            served_provider: str | None = None
-            pre_filtered_count = 0
-            rerank_kind = "cross-encoder"
-            try:
-                # Pre-filter candidates by RRF before the (optional) cross-encoder.
-                # RRF already provides good ranking; this caps cross-encoder cost.
-                # The cap comes from the caller's budget-resolved value when provided
-                # (recall), else the flat global default (internal callers).
-                max_candidates = (
-                    reranker_max_candidates
-                    if reranker_max_candidates is not None
-                    else get_config().reranker_max_candidates
-                )
-                # Sort by RRF score (boosted per-strategy if configured) and take top
-                # candidates only when the pool exceeds the cap. Under the cap the boost
-                # does not run and rrf_score is left as fusion wrote it (#3956, #4008).
-                from .search.recall_boost import trim_merged_candidates
-
-                strategy_boosts = get_config().recall_strategy_boosts
-                trimmed = trim_merged_candidates(merged_candidates, max_candidates, strategy_boosts)
-                merged_candidates = trimmed.kept
-                pre_filtered_count = trimmed.dropped
-                if pre_filtered_count > 0:
-                    # Surface the cut in the trace: which arms actually made it into
-                    # the reranker's budget, and whether a boost shaped that. Ranking
-                    # complaints land on the trace first, and without this the boost
-                    # is only visible in server logs (issue #3956). Cheap: source_ranks
-                    # is already in memory and payloads are not materialized until below.
-                    arm_composition: dict[str, int] = {}
-                    for mc in merged_candidates:
-                        for key in mc.source_ranks:
-                            arm = key.removesuffix("_rank")
-                            arm_composition[arm] = arm_composition.get(arm, 0) + 1
-                    tracer.add_phase_metric(
-                        "rerank_prefilter",
-                        0.0,
-                        {
-                            "kept": len(merged_candidates),
-                            "dropped": pre_filtered_count,
-                            "max_candidates": max_candidates,
-                            "strategy_boosts": dict(strategy_boosts) if strategy_boosts else None,
-                            "arm_composition": arm_composition,
-                        },
-                    )
-
-                # Materialize the payload for the candidates that survived fusion, for a store
-                # that returned scores rather than payloads. THIS is why ranking can be cheap: the
-                # wide arms move ids and scores, and only what got this far is fetched in full.
-                #
-                # Placed after the trim and before ANY reader of the payload — the reranker scores
-                # text, the boosts read timestamps, the response returns both. Nothing between
-                # retrieval and here touches it except the tracer's entry-point log.
-                # A store that already returns full results makes this a single `return`.
-                _hydrate_start = time.time()
-                from .memories import get_memories as _get_memories_for_hydrate
-
-                await _get_memories_for_hydrate().hydrate_results(
-                    bank_id=bank_id, results=[mc.retrieval for mc in merged_candidates]
-                )
-                tracer.add_phase_metric(
-                    "hydrate_results",
-                    time.time() - _hydrate_start,
-                    {"candidates": len(merged_candidates)},
-                )
-
-                if reranking == "cross_encoder":
-                    # Cancellation checkpoint: the cross-encoder rerank is the
-                    # single most CPU-expensive stage and runs in a worker thread
-                    # that cannot be interrupted once dispatched (issue #2122).
-                    # Skip it entirely if the client already disconnected during
-                    # retrieval, rather than burning ~2 CPUs producing a result
-                    # nobody will read.
-                    if request_context is not None:
-                        request_context.raise_if_cancelled()
-
-                    # Ensure reranker is initialized (for lazy initialization mode)
-                    await reranker_instance.ensure_initialized()
-                    reranked = await reranker_instance.rerank(query, merged_candidates)
-                    scored_results = reranked.results
-                    # Copied off the call that produced these scores. Do not read
-                    # cross_encoder.provider_name here: on a failover chain that
-                    # property follows a cursor other requests can move.
-                    served_provider = reranked.provider_name
-                else:
-                    # "rrf" / "interleave": skip the cross-encoder and keep the fusion order
-                    # (rrf_score is descending by fusion position for both). The cross-encoder
-                    # was observed to demote a near-identical existing observation (the dedup
-                    # "twin") far below the budget cutoff (semantic rank #1 -> reranked #37),
-                    # causing the LLM to never see it and create a duplicate.
-                    rerank_kind = f"{reranking}-passthrough"
-                    scored_results = [
-                        ScoredResult(
-                            candidate=mc,
-                            cross_encoder_score=0.0,
-                            cross_encoder_score_normalized=0.0,
-                            weight=0.0,
-                        )
-                        for mc in sorted(merged_candidates, key=lambda mc: mc.rrf_score, reverse=True)
-                    ]
-
-                step_duration = time.time() - step_start
-                pre_filter_note = f" (pre-filtered {pre_filtered_count})" if pre_filtered_count > 0 else ""
-                log_buffer.append(
-                    f"  [4] Reranking [{rerank_kind}]: {len(scored_results)} candidates "
-                    f"scored in {step_duration:.3f}s{pre_filter_note}"
-                )
-            finally:
-                rerank_span.set_attribute("hindsight.scored_count", len(scored_results))
-                if pre_filtered_count > 0:
-                    rerank_span.set_attribute("hindsight.pre_filtered_count", pre_filtered_count)
-                rerank_span.end()
-
-            # Step 4.5: Combine cross-encoder score with retrieval signals via multiplicative boosts.
-            # See apply_combined_scoring for the full rationale and formula.
-            # is_passthrough_reranker tells the scoring code to seed CE scores
-            # from RRF rank — only meaningful when the configured reranker is
-            # the slim/passthrough one that returns a constant score per pair.
-            #
-            # Timed separately from "reranking": the cross-encoder duration above
-            # (step_duration) is captured before this block runs, so the scoring
-            # math, additive boosts and final sort would otherwise be invisible in
-            # the phase metrics (issue #2361).
-            scoring_start = time.time()
-            if scored_results and reranking == "interleave":
-                # Interleave order is authoritative for dedup recall: do NOT re-sort by the
-                # recency/temporal boosts — that re-sort is precisely what buried the twin
-                # under RRF. Seed weight from the interleave-position rrf_score so the order
-                # survives Step 5 truncation and the Step 6 token-budget cut.
-                for sr in scored_results:
-                    sr.weight = sr.candidate.rrf_score
-                log_buffer.append("  [4.6] Interleave order preserved (combined scoring skipped)")
-            elif scored_results:
-                # "rrf" mode is passthrough by construction. A cross-encoder path is
-                # passthrough only when the member that served THIS rerank was rrf
-                # (a configured rrf provider, or the failover member that answered).
-                from .search.recall_boost import stage2_passthrough
-
-                is_passthrough = stage2_passthrough(reranking, served_provider)
-                scoring_config = get_config()
-                apply_combined_scoring(
-                    scored_results,
-                    now=_recall_scoring_now(question_date),
-                    is_passthrough_reranker=is_passthrough,
-                    recency_decay_function=scoring_config.recency_decay_function,
-                    recency_decay_linear_window_days=scoring_config.recency_decay_linear_window_days,
-                    recency_decay_halflife_days=scoring_config.recency_decay_halflife_days,
-                )
-                # Per-strategy bump after combined scoring. Passthrough recalls
-                # (explicit rrf, an rrf provider, or a chain that failed over to
-                # rrf) skip the add: there is no cross-encoder score to correct,
-                # and a flat add on the RRF-seeded weight reorders the list (#4008).
-                strategy_boosts = get_config().recall_strategy_boosts
-                stage2: str | None = None
-                if strategy_boosts:
-                    from .search.recall_boost import apply_post_rerank_boost
-
-                    stage2 = apply_post_rerank_boost(scored_results, strategy_boosts, passthrough=is_passthrough)
-                scored_results.sort(key=lambda x: x.weight, reverse=True)
-                log_buffer.append("  [4.6] Combined scoring: ce * recency_boost(0.2) * temporal_boost(0.2)")
-                if strategy_boosts:
-                    log_buffer.append(f"  [4.7] Strategy boosts applied: {strategy_boosts} {stage2}")
-
-            # Step 4.9: post-query min_scores filters (reranker + final). The
-            # semantic/text floors are applied earlier inside the SQL arms (see
-            # retrieve_semantic_bm25_combined_sql); here we apply the post-rank floors on
-            # the scored results, after the final sort and before truncation, so every
-            # downstream step (prefer_observations dedup, truncation, token filtering)
-            # operates on the filtered set. Inclusive (>=), AND-ed, opt-in: a None
-            # threshold is a no-op. There is deliberately no default — the
-            # cross-encoder's absolute scores are not calibrated for a fixed cutoff
-            # (a clearly-relevant match can score ~0.001 while its *ranking* is right).
-            min_reranker = min_scores.reranker if min_scores else None
-            min_final = min_scores.final if min_scores else None
-            if (min_reranker is not None or min_final is not None) and scored_results:
-                before_min_score = len(scored_results)
-                scored_results = [
-                    sr
-                    for sr in scored_results
-                    if (min_reranker is None or sr.cross_encoder_score_normalized >= min_reranker)
-                    and (min_final is None or sr.weight >= min_final)
-                ]
-                log_buffer.append(
-                    f"  [4.9] min_scores(reranker={min_reranker}, final={min_final}): "
-                    f"{before_min_score}->{len(scored_results)} results"
-                )
-
-            # Add reranked results to tracer AFTER combined scoring (so normalized values are included)
-            # `enable_trace`, NOT `if tracer`: see the retrieval-results guard above.
-            if enable_trace:
-                results_dict = [sr.to_dict() for sr in scored_results]
-                tracer_merged = [
-                    (mc.id, mc.retrieval.__dict__, {"rrf_score": mc.rrf_score, **mc.source_ranks})
-                    for mc in merged_candidates
-                ]
-                tracer.add_reranked(results_dict, tracer_merged)
-            tracer.add_phase_metric(
-                "reranking",
-                step_duration,
-                {"reranker_type": rerank_kind, "candidates_reranked": len(scored_results)},
-            )
-            # Combined scoring + additive boosts + final sort, plus -- when a trace was
-            # asked for -- the serialization of reranked entries done just above.
-            tracer.add_phase_metric(
-                "combined_scoring",
-                time.time() - scoring_start,
-                {"candidates_scored": len(scored_results)},
-            )
-
-            # Cancellation checkpoint: reranking is done; skip the remaining
-            # enrichment (chunk/entity/source-fact fetches, each its own DB work)
-            # if the client disconnected while we were reranking (issue #2122).
-            if request_context is not None:
-                request_context.raise_if_cancelled()
-
-            # Step 4.8: prefer-observations dedup. When the caller asked for observations
-            # alongside raw facts, an observation supersedes the raw facts it was
-            # consolidated from: drop those raw facts so the same content isn't returned
-            # twice. Runs BEFORE the Step 5 truncation so the freed slots backfill with
-            # the next-best results, keeping the result count at the budget. No-op unless
-            # 'observation' and at least one raw type were both requested.
-            raw_types_requested = {"world", "experience"} & set(fact_type)
-            if prefer_observations and "observation" in fact_type and raw_types_requested:
-                # "The observation list" = observations within the window we would return.
-                # Only those can supersede a raw fact; a far-down observation should not
-                # suppress a top raw fact it merely happens to reference.
-                observation_srs = [
-                    sr for sr in scored_results[: thinking_budget * 2] if sr.retrieval.fact_type == "observation"
-                ]
-                observation_ids = [uuid.UUID(sr.id) for sr in observation_srs]
-                if observation_ids:
-                    dedup_start = time.time()
-                    superseded_ids: set[str] = set()
-                    from .memories import get_memories
-
-                    # A backend that carries an observation's sources on the recalled result has
-                    # already paid for this record — hydration fetched it whole, so skip the read.
-                    # Same all-or-nothing shape as the entity fast path: one observation that did
-                    # not carry its sources means the read has to happen anyway, so it covers them
-                    # all. The resolved sources are written back onto sr.retrieval (previously they
-                    # were read into a local and discarded), so the store-owned chunk walk in Step
-                    # 5.5 and the source-facts step reuse them instead of reading them a second time.
-                    if not all(sr.retrieval.source_memory_ids is not None for sr in observation_srs):
-                        async with self._store_read_conn(bank_id) as dedup_conn:
-                            obs_by_id = {
-                                m.unit_id: [str(s) for s in (m.source_memory_ids or [])]
-                                for m in await get_memories().get_memories(
-                                    conn=dedup_conn,
-                                    fq_table=fq_table,
-                                    bank_id=bank_id,
-                                    unit_ids=[str(o) for o in observation_ids],
-                                )
-                                if m.fact_type == "observation"
-                            }
-                            for sr in observation_srs:
-                                if sr.id in obs_by_id:
-                                    sr.retrieval.source_memory_ids = obs_by_id[sr.id]
-                    tracer.add_phase_metric(
-                        "prefer_observations_dedup",
-                        time.time() - dedup_start,
-                        {"observations_considered": len(observation_ids)},
-                    )
-                    for sr in observation_srs:
-                        for sid in sr.retrieval.source_memory_ids or []:
-                            superseded_ids.add(str(sid))
-                    if superseded_ids:
-                        before_count = len(scored_results)
-                        scored_results = [
-                            sr
-                            for sr in scored_results
-                            if not (sr.retrieval.fact_type in ("world", "experience") and sr.id in superseded_ids)
-                        ]
-                        log_buffer.append(
-                            f"  [4.8] prefer_observations: dropped {before_count - len(scored_results)} "
-                            f"raw fact(s) superseded by {len(observation_ids)} observation(s)"
-                        )
-
-            # Step 5: Truncate to thinking_budget * 2 for token filtering
-            rerank_limit = thinking_budget * 2
-            top_scored = scored_results[:rerank_limit]
-            log_buffer.append(f"  [5] Truncated to top {len(top_scored)} results")
-
-            # Step 5.5: Fetch chunks from top-scored results (before token filtering)
-            # Chunks are fetched independently of max_tokens filtering
-            chunks_dict = None
-            total_chunk_tokens = 0
-            chunk_fetch_start = time.time()
-            if include_chunks and top_scored:
-                from .response_models import ChunkInfo
-
-                # Collect chunk_ids in order of fact relevance (preserving order from top_scored).
-                # Observations have no direct chunk_id — use a placeholder so their source
-                # chunks end up at the observation's rank position, not appended at the end.
-                # ordered_items: list of ('chunk', chunk_id) | ('obs', sr.id)
-                ordered_items: list[tuple[str, str]] = []
-                seen_chunk_ids: set[str] = set()
-                observation_ids_ordered: list[uuid.UUID] = []
-                # The sources each observation already carries on its result, if the backend
-                # resolved them inline; ``None`` for one that did not, which is what decides
-                # below whether the observations have to be re-fetched to find them.
-                carried_sources: dict[str, list[str] | None] = {}
-                for sr in top_scored:
-                    chunk_id = sr.retrieval.chunk_id
-                    if chunk_id and chunk_id not in seen_chunk_ids:
-                        ordered_items.append(("chunk", chunk_id))
-                        seen_chunk_ids.add(chunk_id)
-                    elif not chunk_id and sr.retrieval.fact_type == "observation":
-                        ordered_items.append(("obs", sr.id))
-                        observation_ids_ordered.append(uuid.UUID(sr.id))
-                        carried_sources[sr.id] = sr.retrieval.source_memory_ids
-
-                # Resolve source chunk_ids for all observations in a single query,
-                # ordered by observation rank so per-observation results stay grouped correctly.
-                obs_chunk_ids: dict[str, list[str]] = {}
-                from .memories import get_memories
-
-                _chunk_store = get_memories()
-                if observation_ids_ordered:
-                    _obs_chunks = await _chunk_store.recall_observation_chunk_ids(
-                        backend=backend,
-                        ops=self._backend.ops,
-                        fq_table=fq_table,
-                        bank_id=bank_id,
-                        observation_ids=observation_ids_ordered,
-                        carried_sources=carried_sources,
-                    )
-                    # Sources the store had to read to answer go back on the results, so the
-                    # source-facts step below does not read them a second time.
-                    _sources_read = _obs_chunks.sources_by_observation
-                    if _sources_read is not None:
-                        for sr in top_scored:
-                            if sr.retrieval.fact_type == "observation" and sr.id in _sources_read:
-                                sr.retrieval.source_memory_ids = _sources_read[sr.id]
-                    for obs_id, cids in _obs_chunks.chunk_ids_by_observation.items():
-                        for cid in cids:
-                            if cid not in seen_chunk_ids:
-                                obs_chunk_ids.setdefault(obs_id, []).append(cid)
-                                seen_chunk_ids.add(cid)
-
-                # Flatten ordered_items into chunk_ids_ordered, expanding obs placeholders
-                chunk_ids_ordered = []
-                for item_type, item_id in ordered_items:
-                    if item_type == "chunk":
-                        chunk_ids_ordered.append(item_id)
-                    else:
-                        chunk_ids_ordered.extend(obs_chunk_ids.get(item_id, []))
-
-                if chunk_ids_ordered:
-                    chunks_dict = {}
-
-                    # Fetch all candidate chunks in a single read. Token-budget accounting
-                    # happens in Python after the fetch — one round-trip is always faster
-                    # than multiple batched round-trips when the candidate set is large.
-                    chunks_lookup = await _chunk_store.recall_chunks(
-                        backend=backend, fq_table=fq_table, bank_id=bank_id, chunk_ids=chunk_ids_ordered
-                    )
-                    if chunks_lookup and tag_filter_is_active(tags, tags_match, tag_groups):
-                        # Source text follows its DOCUMENT's tags, not the fact's (#5030): a fact
-                        # shared through a tag like ``kind:rule`` must not carry the rest of a
-                        # document the reader's filter excludes. A chunk with no document fails
-                        # closed — ``None`` is never among the visible ids.
-                        async with self._store_read_conn(bank_id) as conn:
-                            _visible_docs = await visible_document_ids(
-                                conn,
-                                fq_table,
-                                bank_id,
-                                (row["document_id"] for row in chunks_lookup.values()),
-                                tags=tags,
-                                tags_match=tags_match,
-                                tag_groups=tag_groups,
-                            )
-                        chunks_lookup = {
-                            cid: row for cid, row in chunks_lookup.items() if row["document_id"] in _visible_docs
-                        }
-
-                    # Process chunks in relevance order, respecting token budget
-                    for chunk_id in chunk_ids_ordered:
-                        if chunk_id not in chunks_lookup:
-                            continue
-
-                        row = chunks_lookup[chunk_id]
-                        chunk_text = cast(str, row["chunk_text"])
-                        chunk_tokens = count_tokens(chunk_text)
-
-                        if total_chunk_tokens + chunk_tokens > max_chunk_tokens:
-                            remaining_tokens = max_chunk_tokens - total_chunk_tokens
-                            if remaining_tokens > 0:
-                                # Only now are the ids needed — the fits-in-budget path above never builds them.
-                                truncated_text = truncate_to_tokens(chunk_text, remaining_tokens).text
-                                chunks_dict[chunk_id] = ChunkInfo(
-                                    chunk_text=truncated_text, chunk_index=row["chunk_index"], truncated=True
-                                )
-                                total_chunk_tokens = max_chunk_tokens
-                            break
-                        else:
-                            chunks_dict[chunk_id] = ChunkInfo(
-                                chunk_text=chunk_text, chunk_index=row["chunk_index"], truncated=False
-                            )
-                            total_chunk_tokens += chunk_tokens
-
-            # Chunk fetch involves up to two SQL round-trips plus per-chunk token
-            # counting; record it only when chunks were actually requested (issue #2361).
-            if include_chunks:
-                tracer.add_phase_metric(
-                    "chunk_fetch",
-                    time.time() - chunk_fetch_start,
-                    {"chunks_returned": len(chunks_dict or {}), "chunk_tokens": total_chunk_tokens},
-                )
-
-            # Step 6: Token budget filtering
-            step_start = time.time()
-
-            selection = select_facts_within_budget(
-                fact_ids_ordered=[sr.id for sr in top_scored],
-                text_by_id={sr.id: sr.retrieval.text for sr in top_scored},
-                max_tokens=max_tokens,
-                count_tokens=count_tokens,
-            )
-            total_tokens = selection.total_tokens
-            selected_ids = set(selection.ids)
-            top_scored = [sr for sr in top_scored if sr.id in selected_ids]
-
-            step_duration = time.time() - step_start
-            truncated_note = " (truncated)" if selection.truncated else ""
-            log_buffer.append(
-                f"  [6] Token filtering: {len(top_scored)} results, {total_tokens}/{max_tokens} tokens"
-                f"{truncated_note} in {step_duration:.3f}s"
-            )
-
-            tracer.add_phase_metric(
-                "token_filtering",
-                step_duration,
-                {
-                    "results_selected": len(top_scored),
-                    "tokens_used": total_tokens,
-                    "max_tokens": max_tokens,
-                    "truncated": selection.truncated,
-                },
-            )
-
-            # Record visits + build the JSON-serializable result dicts. Timed as one
-            # phase: the visit loop alone walks every scored result (issue #2361).
-            assembly_start = time.time()
-
-            # Record visits for all retrieved nodes.
-            # `enable_trace`, NOT `if tracer`: see the retrieval-results guard above. `visit_node`
-            # drops everything it is handed under `phases_only`, and the counters it keeps are read
-            # by nothing but itself -- so on the ordinary path this loop walked every scored result
-            # to build records that were thrown away.
-            if enable_trace:
-                entry_point_ids = {ep.node_id for ep in tracer.entry_points}
-                for sr in scored_results:
-                    tracer.visit_node(
-                        node_id=sr.id,
-                        text=sr.retrieval.text,
-                        context=sr.retrieval.context or "",
-                        event_date=sr.retrieval.occurred_start,
-                        is_entry_point=sr.id in entry_point_ids,
-                        activation=sr.candidate.rrf_score,  # Use RRF score as activation
-                        semantic_similarity=sr.retrieval.similarity or 0.0,
-                        recency=sr.recency,
-                        frequency=0.0,
-                        final_weight=sr.weight,
-                    )
-
-            # Log fact_type distribution in results
-            fact_type_counts = {}
-            for sr in top_scored:
-                ft = sr.retrieval.fact_type
-                fact_type_counts[ft] = fact_type_counts.get(ft, 0) + 1
-
-            fact_type_summary = ", ".join([f"{ft}={count}" for ft, count in sorted(fact_type_counts.items())])
-
-            # Convert ScoredResult to dicts with ISO datetime strings
-            top_results_dicts = []
-            for sr in top_scored:
-                result_dict = sr.to_dict()
-                # Convert datetime objects to ISO strings for JSON serialization
-                if result_dict.get("occurred_start"):
-                    occurred_start = result_dict["occurred_start"]
-                    result_dict["occurred_start"] = (
-                        occurred_start.isoformat() if hasattr(occurred_start, "isoformat") else occurred_start
-                    )
-                if result_dict.get("occurred_end"):
-                    occurred_end = result_dict["occurred_end"]
-                    result_dict["occurred_end"] = (
-                        occurred_end.isoformat() if hasattr(occurred_end, "isoformat") else occurred_end
-                    )
-                if result_dict.get("mentioned_at"):
-                    mentioned_at = result_dict["mentioned_at"]
-                    result_dict["mentioned_at"] = (
-                        mentioned_at.isoformat() if hasattr(mentioned_at, "isoformat") else mentioned_at
-                    )
-                top_results_dicts.append(result_dict)
-
-            tracer.add_phase_metric(
-                "result_serialization",
-                time.time() - assembly_start,
-                {"results_serialized": len(top_results_dicts)},
-            )
-
-            # Fetch source facts for observation-type results (mirrors chunks pattern)
-            source_fact_start = time.time()
-            source_fact_ids_by_obs: dict[str, list[str]] = {}  # obs_id -> [source_id, ...]
-            source_facts_dict: dict[str, MemoryFact] | None = None
-            source_facts_truncated = False
-            if include_source_facts:
-                observation_srs = [sr for sr in top_scored if sr.retrieval.fact_type == "observation"]
-                observation_ids = [uuid.UUID(sr.id) for sr in observation_srs]
-                if observation_ids:
-                    from .memories import get_memories
-
-                    store = get_memories()
-
-                    async with acquire_with_retry(backend) as sf_conn:
-                        # Resolve each observation's sources, in observation-rank order: the token
-                        # budget below is filled in this order, so an unordered read would let a
-                        # low-ranked observation spend the budget the top-ranked one needs (#3221).
-                        if all(sr.retrieval.source_memory_ids is not None for sr in observation_srs):
-                            # Third place in this one recall that wants an observation's sources,
-                            # after the prefer-observations dedup and the chunk walk. A backend that
-                            # carried them on the result has already been read for these very
-                            # observations, so none of the three re-reads them; a backend that did
-                            # not asks the store below.
-                            obs_sources: Mapping[str, Any] = {
-                                sr.id: sr.retrieval.source_memory_ids for sr in observation_srs
-                            }
-                        else:
-                            obs_sources = await store.recall_observation_sources(
-                                conn=sf_conn, fq_table=fq_table, bank_id=bank_id, observation_ids=observation_ids
-                            )
-
-                        # Collect unique source IDs in order of first appearance
-                        seen_source_ids: set[str] = set()
-                        source_ids_ordered: list[str] = []
-                        for obs_id, obs_source_ids in obs_sources.items():
-                            sids = [str(s) for s in (obs_source_ids or [])]
-                            source_fact_ids_by_obs[str(obs_id)] = sids
-                            for sid in sids:
-                                if sid not in seen_source_ids:
-                                    source_ids_ordered.append(sid)
-                                    seen_source_ids.add(sid)
-
-                        # Fetch source fact content up to token budget — only the display fields.
-                        if source_ids_ordered:
-                            source_row_by_id = await store.recall_source_facts(
-                                conn=sf_conn, fq_table=fq_table, bank_id=bank_id, unit_ids=source_ids_ordered
-                            )
-
-                            def _make_source_fact(sid: str, r: "StoredMemory") -> MemoryFact:
-                                return MemoryFact(
-                                    id=sid,
-                                    text=r.text,
-                                    fact_type=r.fact_type,
-                                    context=r.context,
-                                    occurred_start=r.occurred_start.isoformat() if r.occurred_start else None,
-                                    occurred_end=r.occurred_end.isoformat() if r.occurred_end else None,
-                                    mentioned_at=r.mentioned_at.isoformat() if r.mentioned_at else None,
-                                    document_id=r.document_id,
-                                    metadata=r.metadata,
-                                    chunk_id=str(r.chunk_id) if r.chunk_id else None,
-                                    tags=r.tags or None,
-                                )
-
-                            selection = select_source_facts_within_budget(
-                                source_ids_ordered=source_ids_ordered,
-                                source_fact_ids_by_obs=source_fact_ids_by_obs,
-                                text_by_id={sid: r.text for sid, r in source_row_by_id.items()},
-                                max_total_tokens=max_source_facts_tokens,
-                                max_tokens_per_observation=max_source_facts_tokens_per_observation,
-                                count_tokens=count_tokens,
-                            )
-                            source_facts_truncated = selection.truncated
-                            source_facts_dict = {
-                                sid: _make_source_fact(sid, source_row_by_id[sid]) for sid in selection.ids
-                            }
-
-            # Source-fact enrichment is two SQL passes + token counting; record it
-            # only when requested (issue #2361).
-            if include_source_facts:
-                tracer.add_phase_metric(
-                    "source_fact_fetch",
-                    time.time() - source_fact_start,
-                    {"source_facts_returned": len(source_facts_dict or {})},
-                )
-
-            # entity fetch + MemoryFact construction + entity-state build, timed together.
-            entity_build_start = time.time()
-
-            # Get entities for each fact if include_entities is requested.
-            # The store resolves both a memory's direct entity postings and an
-            # observation's inherited-from-sources entities in one call.
-            fact_entity_map = {}  # unit_id -> list of {entity_id, canonical_name}
-            if include_entities and top_scored:
-                unit_ids = [sr.id for sr in top_scored]
-                if unit_ids:
-                    from .memories import get_memories
-
-                    # A backend that resolves the unit->entity posting inline carries
-                    # each result's entity ids on the RetrievalResult (a list, possibly
-                    # empty); Postgres leaves them None and resolves them here. When every
-                    # result carries its ids we avoid re-fetching the memories: build the
-                    # map from the results themselves and resolve names in one Postgres
-                    # lookup — and when no result carries any entity (chunks mode) skip all
-                    # work, acquiring no connection at all.
-                    if all(sr.retrieval.entity_ids is not None for sr in top_scored):
-                        # Normalise ids to str once, here at the boundary: a store may
-                        # hand back UUIDs, and everything downstream (the union, the
-                        # membership test, the map keys) then speaks one type.
-                        ids_by_unit = {sr.id: [str(e) for e in (sr.retrieval.entity_ids or [])] for sr in top_scored}
-                        union = {e for ids in ids_by_unit.values() for e in ids}
-                        names: dict[str, str] = {}
-                        # Acquire a connection only when there is actually a name to
-                        # resolve — when no result carries any entity (chunks mode) we
-                        # touch Postgres not at all.
-                        if union:
-                            async with acquire_with_retry(backend) as entity_conn:
-                                names = await get_memories().resolve_entity_names(
-                                    conn=entity_conn, fq_table=fq_table, bank_id=bank_id, entity_ids=list(union)
-                                )
-                        fact_entity_map = _entity_map_from_results(ids_by_unit, names)
-                    else:
-                        async with acquire_with_retry(backend) as entity_conn:
-                            # The memory carries its own entity ids; the store resolves
-                            # them to names (observations inherit their sources') against
-                            # its own entity registry.
-                            fact_entity_map = await get_memories().entity_map_for_units(
-                                conn=entity_conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids
-                            )
-
-            # Convert results to MemoryFact objects
-            # Build per-result scores (final/reranker/semantic/text) keyed by id.
-            # reranker is None when the configured reranker is a passthrough (rrf /
-            # interleave modes, or the RRFPassthroughCrossEncoder), since its
-            # cross_encoder_score_normalized is then a rank-derived placeholder, not a
-            # true relevance score.
-            reranker_passthrough = (reranking != "cross_encoder") or served_provider == "rrf"
-            scores_by_id: dict[str, RecallScores] = {
-                sr.id: RecallScores(
-                    final=sr.weight,
-                    reranker=None if reranker_passthrough else sr.cross_encoder_score_normalized,
-                    semantic=sr.candidate.arm_scores.semantic,
-                    keyword=sr.candidate.arm_scores.keyword,
-                )
-                for sr in top_scored
-            }
-
-            memory_facts = []
-            for result_dict in top_results_dicts:
-                result_id = str(result_dict.get("id"))
-                # Get entity names for this fact
-                entity_names = None
-                if include_entities and result_id in fact_entity_map:
-                    entity_names = [e["canonical_name"] for e in fact_entity_map[result_id]]
-
-                memory_facts.append(
-                    MemoryFact(
-                        id=result_id,
-                        text=cast(str, result_dict.get("text")),
-                        fact_type=result_dict.get("fact_type", "world"),
-                        entities=entity_names,
-                        context=result_dict.get("context"),
-                        occurred_start=result_dict.get("occurred_start"),
-                        occurred_end=result_dict.get("occurred_end"),
-                        mentioned_at=result_dict.get("mentioned_at"),
-                        document_id=result_dict.get("document_id"),
-                        metadata=result_dict.get("metadata"),
-                        chunk_id=result_dict.get("chunk_id"),
-                        tags=result_dict.get("tags"),
-                        source_fact_ids=source_fact_ids_by_obs.get(result_id) if include_source_facts else None,
-                        scores=scores_by_id.get(result_id),
-                        attachment_ids=result_dict.get("attachment_ids"),
-                    )
-                )
-
-            # Fetch entity observations if requested
-            entities_dict = None
-            total_entity_tokens = 0
-            if include_entities and fact_entity_map:
-                # Collect unique entities in order of fact relevance (preserving order from top_scored)
-                entities_ordered = []  # list of (entity_id, entity_name) tuples
-                seen_entity_ids = set()
-
-                for sr in top_scored:
-                    unit_id = sr.id
-                    if unit_id in fact_entity_map:
-                        for entity in fact_entity_map[unit_id]:
-                            entity_id = entity["entity_id"]
-                            entity_name = entity["canonical_name"]
-                            if entity_id not in seen_entity_ids:
-                                entities_ordered.append((entity_id, entity_name))
-                                seen_entity_ids.add(entity_id)
-
-                # Return entities with empty observations (summaries now live in mental models)
-                entities_dict = {}
-                for entity_id, entity_name in entities_ordered:
-                    entities_dict[entity_name] = EntityState(
-                        entity_id=entity_id,
-                        canonical_name=entity_name,
-                        observations=[],  # Mental models provide this now
-                    )
-
-            tracer.add_phase_metric(
-                "entity_build",
-                time.time() - entity_build_start,
-                {"entities_returned": len(entities_dict or {})},
-            )
-
-            # Diagnostic phases — these do NOT partition the timeline and are
-            # excluded from the phase-coverage check (see test_trace_phase_coverage):
-            # the pool waits overlap other phases (semaphore_wait precedes the
-            # tracer window; connection_wait is part of parallel_retrieval), and the
-            # per-method retrieval splits are children of parallel_retrieval.
-            if semaphore_wait > 0:
-                tracer.add_phase_metric("semaphore_wait", semaphore_wait, {"diagnostic": True})
-            if max_conn_wait > 0:
-                tracer.add_phase_metric("connection_wait", max_conn_wait, {"diagnostic": True})
-
-            # Finalize trace if enabled. finalize() snapshots total_duration_seconds at
-            # entry, so its own object construction + to_dict() serialization fall outside
-            # that total; we still surface the cost as a diagnostic phase (issue #2361).
-            trace_dict = None
-            # `enable_trace`, NOT `if tracer`: the tracer now always exists so the phase timings
-            # are always collected, but finalizing and returning the trace is still opt-in --
-            # `finalize()` builds the whole candidate/visit payload, which is the expensive part.
-            if enable_trace:
-                from .search.trace import SearchPhaseMetrics
-
-                finalize_start = time.time()
-                trace = tracer.finalize(top_results_dicts)
-                trace_dict = trace.to_dict() if trace else None
-                if trace_dict is not None:
-                    trace_dict["summary"]["phase_metrics"].append(
-                        SearchPhaseMetrics(
-                            phase_name="trace_finalize",
-                            duration_seconds=time.time() - finalize_start,
-                            details={"diagnostic": True},
-                        ).model_dump()
-                    )
-
-            # Log final recall stats
-            total_time = time.time() - recall_start
-            num_chunks = len(chunks_dict) if chunks_dict else 0
-            num_entities = len(entities_dict) if entities_dict else 0
-            # Include wait times in log if significant
-            wait_parts = []
-            if semaphore_wait > 0.01:
-                wait_parts.append(f"sem={semaphore_wait:.3f}s")
-            if max_conn_wait > 0.01:
-                wait_parts.append(f"conn={max_conn_wait:.3f}s")
-            wait_info = f" | waits: {', '.join(wait_parts)}" if wait_parts else ""
-
-            # Account for the WHOLE request, not the stages that happen to have a `[n]` line.
-            # The numbered stages above stop at token filtering, and everything after them --
-            # hydration, result assembly, entity building, serialization -- was measured but only
-            # ever reached the trace, which is off unless a caller asks for it. Measured on a plain
-            # recall, that silence hid 42% of the request: the stages summed to 155ms of 268ms.
-            # A waterfall that does not add up sends the reader looking for the missing time in the
-            # wrong layer, which is exactly what happened here.
-            # Diagnostics are SUBSETS of other phases (store_recall sits inside
-            # parallel_retrieval, the pool waits overlap it), so summing them double-counts --
-            # it read "accounted=549ms of 306ms", which is worse than printing no total.
-            phases = [
-                (m.phase_name, m.duration_seconds)
-                for m in tracer.phase_metrics
-                if not (m.details or {}).get("diagnostic")
-            ]
-            if phases:
-                accounted = sum(d for _, d in phases)
-                # EVERY phase, not the slowest four. The truncation made the line read as if
-                # the remainder were unmeasured: a recall whose four biggest phases summed to
-                # 134ms of 237ms looked like it had 103ms nobody had instrumented, and the
-                # obvious next move -- go add timers to hydration and entity build -- was
-                # wasted work, because `hydrate_results` and `entity_build` were already
-                # recording metrics that this line was throwing away. Descending, so the top of
-                # the list is still where to look first.
-                ordered = sorted(phases, key=lambda kv: -kv[1])
-                log_buffer.append(
-                    "  [phases] "
-                    + ", ".join(f"{n}={d * 1000:.0f}ms" for n, d in ordered)
-                    + f" | accounted={accounted * 1000:.0f}ms of {total_time * 1000:.0f}ms"
-                )
-                # Diagnostics are excluded from the sum above because they are subsets, but
-                # they are the most useful numbers in the line (store_recall is the store's
-                # share of parallel_retrieval), so print them on their own, clearly labelled.
-                diags = [
-                    (m.phase_name, m.duration_seconds)
-                    for m in tracer.phase_metrics
-                    if (m.details or {}).get("diagnostic")
-                ]
-                if diags:
-                    log_buffer.append(
-                        "  [phases:subsets] "
-                        + ", ".join(f"{n}={d * 1000:.0f}ms" for n, d in sorted(diags, key=lambda kv: -kv[1]))
-                    )
-            log_buffer.append(
-                f"[RECALL {recall_id}] Complete: {len(top_scored)} facts ({total_tokens} tok), {num_chunks} chunks ({total_chunk_tokens} tok), {num_entities} entities ({total_entity_tokens} tok) | {fact_type_summary} | {total_time:.3f}s{wait_info}"
-            )
-            if not quiet:
-                logger.info("\n" + "\n".join(log_buffer))
-
-            return RecallResultModel(
-                results=memory_facts,
-                trace=trace_dict,
-                entities=entities_dict,
-                chunks=chunks_dict,
-                source_facts=source_facts_dict,
-                source_facts_truncated=source_facts_truncated if include_source_facts else None,
-            )
-
-        except OperationCancelledError:
-            # Client disconnected mid-recall — propagate the cancellation so the
-            # HTTP layer can return 499. Must precede the broad handler below,
-            # which would otherwise bury it inside a RuntimeError (issue #2122).
-            raise
-        except Exception as e:
-            # Use repr(e) so exceptions with empty __str__ (e.g. raise SomeError())
-            # still emit a discriminating class+args string into operations.error_message.
-            log_buffer.append(
-                f"[RECALL {recall_id}] ERROR after {time.time() - recall_start:.3f}s: {type(e).__name__}: {e!r}"
-            )
-            if not quiet:
-                logger.error("\n" + "\n".join(log_buffer), exc_info=True)
-            raise RuntimeError(f"Failed to search memories ({type(e).__name__}): {e!r}") from e
 
     async def get_document(
         self,

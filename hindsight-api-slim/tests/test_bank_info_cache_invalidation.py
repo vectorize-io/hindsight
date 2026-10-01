@@ -202,7 +202,7 @@ async def test_a_recall_of_a_bank_deleted_by_another_process_404s(memory: Memory
     async def _storage_gone(*_a, **_kw):
         raise RuntimeError("the bank's storage no longer exists")
 
-    monkeypatch.setattr(memory, "_search_with_retries", _storage_gone)
+    monkeypatch.setattr(memory._search_orchestrator, "search", _storage_gone)
 
     with pytest.raises(OperationValidationError) as exc_info:
         await memory.recall_async(bank_id=bank_id, query="anything", request_context=request_context)
@@ -225,7 +225,7 @@ async def test_a_recall_failure_on_an_existing_bank_keeps_its_error(memory: Memo
     async def _fault(*_a, **_kw):
         raise RuntimeError("store unavailable")
 
-    monkeypatch.setattr(memory, "_search_with_retries", _fault)
+    monkeypatch.setattr(memory._search_orchestrator, "search", _fault)
 
     with pytest.raises(Exception) as exc_info:
         await memory.recall_async(bank_id=bank_id, query="anything", request_context=request_context)
