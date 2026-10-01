@@ -130,7 +130,14 @@ def daemonize():
     # Build child command: same Python, same module entry point, all args
     # except --daemon (replaced by the env var).
     child_args = [a for a in sys.argv[1:] if a != "--daemon"]
-    cmd = [sys.executable, "-m", "hindsight_api.main"] + child_args
+    # Re-exec via the GUI-subsystem pythonw.exe on Windows so the daemon never
+    # allocates a visible console (mirrors hindsight_embed #1885/#4466).
+    exe = sys.executable
+    if os.name == "nt":
+        pw = os.path.join(os.path.dirname(exe), "pythonw.exe")
+        if os.path.exists(pw):
+            exe = pw
+    cmd = [exe, "-m", "hindsight_api.main"] + child_args
 
     env = os.environ.copy()
     env[ENV_DAEMON_CHILD] = "1"

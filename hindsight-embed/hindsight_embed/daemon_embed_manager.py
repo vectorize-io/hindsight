@@ -453,6 +453,16 @@ class DaemonEmbedManager(EmbedManager):
             return True
         if find_spec("sentence_transformers") is not None:
             return True
+        # Isolated `-I` launchers (e.g. a desktop backend that adds the venv
+        # site-packages manually via PYTHONPATH) cannot import venv packages
+        # here (find_spec=None) even though the installed binary's venv carries
+        # the full local ML stack. Accept when this module's own site-packages
+        # has sentence_transformers, avoiding a needless uvx fallback.
+        try:
+            if (Path(__file__).parent.parent / "sentence_transformers").is_dir():
+                return True
+        except Exception:
+            pass
         logger.warning(
             "Installed hindsight-api binary is missing local ML dependencies; "
             "falling back to uvx hindsight-api for the local daemon. Set "
@@ -480,6 +490,16 @@ class DaemonEmbedManager(EmbedManager):
 
         scripts_dir = Path(sysconfig.get_path("scripts"))
         candidate = scripts_dir / binary_name
+        # A base-python launcher that adds the venv site-packages manually
+        # (isolated -I + PYTHONPATH) resolves sysconfig to the WRONG Scripts
+        # dir, so the installed binary is never found and the uvx fallback (a
+        # visible console window) fires. Locate it next to this module's venv
+        # instead (site-packages/../Scripts).
+        if not candidate.exists():
+            alt = Path(__file__).parents[3] / "Scripts" / binary_name
+            if alt.exists():
+                candidate = alt
+                scripts_dir = alt.parent
         if candidate.exists() and self._can_use_installed_api_binary(env):
             # The console exe lives in sys.executable's scripts dir, so
             # hindsight_api is importable by the GUI interpreter; prefer it on
