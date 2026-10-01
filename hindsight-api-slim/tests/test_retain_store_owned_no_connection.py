@@ -180,6 +180,45 @@ async def test_a_store_owned_retain_tells_the_store_which_names_to_take_literall
     assert "unit_exact_entity_names" not in await run(resolve=True)
 
 
+async def test_a_retain_session_part_carries_the_names_to_take_literally(monkeypatch):
+    """The session path hands the store the same opted-out names, on the part (#5050)."""
+    import hindsight_api.engine.memories.base as base
+
+    monkeypatch.setattr(orch.fact_storage, "insert_facts_batch", lambda *a, **k: _async(["u1"]))
+    monkeypatch.setattr(base, "build_fact_records", lambda *a, **k: [])
+    parts = []
+
+    class _Session:
+        async def add(self, part):
+            parts.append(part)
+
+    fact = _fact()
+    fact.entities = [SimpleNamespace(name="Paris")]
+    await orch._streaming_session_retain(
+        session=_Session(),
+        bank_id="b",
+        batch_contents=[SimpleNamespace(entities=[{"text": "Alice Smyth"}], resolve_entities=False)],
+        batch_extracted=[SimpleNamespace(chunk_index=None)],
+        batch_processed=[fact],
+        batch_chunk_meta=[],
+        chunk_index_offset=0,
+        effective_doc_id="d1",
+        combined_content="hello",
+        content_hash=None,
+        merged_tags=None,
+        retain_params=None,
+        is_first_batch=True,
+        doc_tracking_done=[False],
+        doc_replace_done=[False],
+        entity_resolver=None,
+        log_buffer=[],
+    )
+
+    (part,) = parts
+    assert part.entity_names == {"u1": ["Paris", "Alice Smyth"]}
+    assert part.exact_entity_names == {"u1": ["Alice Smyth"]}
+
+
 async def _async(value):
     return value
 
@@ -236,7 +275,8 @@ async def test_a_store_owned_delta_holds_no_connection_and_scopes_its_replace(mo
         log_buffer=[],
         entity_resolver=SimpleNamespace(flush_pending_stats=_noop_async),
         contents_dicts=[{"content": "hello"}],
-        delta_contents=[SimpleNamespace(entities=None, resolve_entities=True)],
+        # A caller name opted out of resolution, which the delta must pass on as literal (#5050).
+        delta_contents=[SimpleNamespace(entities=[{"text": "Alice Smyth"}], resolve_entities=False)],
         document_tags=[],
         full_document_body=None,
         extracted_facts=[SimpleNamespace(chunk_index=0)],
@@ -257,6 +297,7 @@ async def test_a_store_owned_delta_holds_no_connection_and_scopes_its_replace(mo
     # And the replace was SCOPED — the changed chunk named, not the whole document blown away.
     assert retained["replace_document_id"] == "d1"
     assert retained["replace_chunk_ids"] == ["b_d1_1"]
+    assert retained["unit_exact_entity_names"] == {"u1": ["Alice Smyth"]}
 
 
 async def test_a_store_owned_delta_falls_back_when_the_document_moved(monkeypatch):

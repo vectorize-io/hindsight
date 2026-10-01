@@ -619,8 +619,11 @@ class InMemoryMemories(MemoriesExtension):
         entity_names=None,
         embedding=None,
         current_fact_type=None,
+        exact_entity_names=False,
     ):
         self.calls.append("apply_edit")
+        self.edit_entity_names = entity_names
+        self.edit_exact_entity_names = exact_entity_names
         self.edit_embedding = embedding
         self.edit_current_fact_type = current_fact_type
         row = self.rows.get(str(unit_id))
@@ -1345,6 +1348,24 @@ async def test_apply_edit_is_told_the_pre_edit_fact_type(memory, request_context
     await memory.update_memory_unit("seam-bank", unit_ids[0], text="after the edit", request_context=request_context)
 
     assert store.edit_current_fact_type == "world"
+
+
+async def test_an_edit_that_opts_out_of_resolution_tells_the_store(memory, request_context, restore_default_store):
+    """`resolve_entities=False` on an edit reaches a store that resolves names itself (#5050).
+
+    It got the names alone and fuzzy-resolved them, so a caller correcting "Alice Smith" to
+    "Alice Smyth" could land right back on "Alice Smith"."""
+    store = InMemoryMemories({})
+    set_memories(store)
+    unit_ids = await _seed(store, "seam-bank", text="before the edit", fact_type="world")
+
+    await memory.update_memory_unit(
+        "seam-bank", unit_ids[0], entities=["Alice Smyth"], resolve_entities=False, request_context=request_context
+    )
+    assert (store.edit_entity_names, store.edit_exact_entity_names) == (["Alice Smyth"], True)
+
+    await memory.update_memory_unit("seam-bank", unit_ids[0], entities=["Alice Smyth"], request_context=request_context)
+    assert (store.edit_entity_names, store.edit_exact_entity_names) == (["Alice Smyth"], False)
 
 
 async def test_engine_list_entities_routes_through_store(memory, request_context, restore_default_store):
