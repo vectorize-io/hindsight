@@ -320,6 +320,9 @@ class StoredMemory:
     # written, which is the watermark a caller compares against to detect a change. Distinct
     # from `created_at`, which never moves after the first write.
     updated_at: datetime | None = None
+    # When a curation edit last changed the memory; ``None`` for one still exactly as extracted.
+    # The curation views report it, so a store has to hand it back for them to say so.
+    edited_at: datetime | None = None
     # Which observation scopes a memory is routed to. Consolidation reads it off
     # its candidates to decide which observation each one belongs in, so it has
     # to survive the round trip through the store.
