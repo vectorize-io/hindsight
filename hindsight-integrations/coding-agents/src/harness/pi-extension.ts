@@ -52,6 +52,9 @@ interface SessionManagerLike {
  *  carry is raised inside seedIfCold at extension load, before any handler has a `ctx` to notify
  *  through — so it is logged rather than toasted here, and the field is not declared. */
 interface ExtensionContext {
+  /** The session's working directory. A long-lived host (pi-web-ui) serves many workspaces from one
+   *  process, so this — not `process.cwd()` — says which repo a session belongs to. */
+  cwd: string;
   sessionManager: SessionManagerLike;
 }
 
@@ -65,11 +68,18 @@ interface ToolDefinition {
   parameters: JsonSchema;
   execute(
     toolCallId: string,
-    params: Record<string, unknown>
+    params: Record<string, unknown>,
+    signal?: unknown,
+    onUpdate?: unknown,
+    ctx?: { cwd?: string }
   ): Promise<{ content: { type: "text"; text: string }[]; details: unknown }>;
 }
 
 interface ExtensionAPI {
+  on(
+    event: "session_start",
+    handler: (event: { type: "session_start" }, ctx: ExtensionContext) => Promise<void> | void
+  ): void;
   on(
     event: "before_agent_start",
     handler: (
@@ -168,26 +178,67 @@ function createRuntime(harness: string, repoPath: string): RuntimeCore | undefin
  * by ("pi", "prime-agent"), used for config lookup, bank derivation and diagnostics scoping — it is
  * NOT config-chosen; the entrypoint the host loaded determines it.
  *
- * The returned factory is called once per session in the project directory; it resolves config and
- * bank from `process.cwd()`, registers the knowledge tools, kicks off the shared cold-seed, and
- * wires the recall/retain hooks.
+ * The returned factory is called once when the extension loads. It cannot know the project yet: a
+ * long-lived host such as pi-web-ui loads it once in a process whose `process.cwd()` is wherever
+ * the server was launched, then serves sessions for many workspaces. So the repo, config and bank
+ * are resolved per session from `ctx.cwd` (once per directory), and the knowledge tools and the
+ * cold-seed are set up the first time a session in an enabled directory starts.
  */
 export function createPiExtension(harness: string): ExtensionFactory {
   return (pi) => {
-    const repoPath = process.cwd();
-    const core = createRuntime(harness, repoPath);
-    if (!core) return;
+    interface Workspace {
+      core: RuntimeCore;
+      hooks: ReturnType<typeof createPiHooks>;
+    }
+    const workspaces = new Map<string, Workspace | undefined>();
+    let toolsRegistered = false;
 
-    for (const spec of core.toolSpecs()) pi.registerTool(toPiTool(spec));
+    const workspaceFor = (cwd: string): Workspace | undefined => {
+      if (workspaces.has(cwd)) return workspaces.get(cwd);
+      const core = createRuntime(harness, cwd);
+      if (!core) {
+        diag(harness, "disabled", { cwd });
+        workspaces.set(cwd, undefined);
+        return undefined;
+      }
+      // Fire-and-forget cold seed (bank check + background git seed); the first
+      // before_agent_start awaits it via createPiHooks.
+      const workspace = { core, hooks: createPiHooks(core, harness, core.seedIfCold(cwd)) };
+      workspaces.set(cwd, workspace);
+      return workspace;
+    };
 
-    // Fire-and-forget cold seed (bank check + background git seed); the first
-    // before_agent_start awaits it via createPiHooks.
-    const sessionStart = core.seedIfCold(repoPath);
-    const hooks = createPiHooks(core, harness, sessionStart);
+    const activate = (cwd: string): Workspace | undefined => {
+      const workspace = workspaceFor(cwd);
+      if (workspace && !toolsRegistered) {
+        toolsRegistered = true;
+        // Tool names are global to the host, so register them once; each call runs against the
+        // workspace of the session that made it.
+        for (const spec of workspace.core.toolSpecs()) {
+          const tool = toPiTool(spec);
+          pi.registerTool({
+            ...tool,
+            execute: async (toolCallId, params, _signal, _onUpdate, ctx) => {
+              const target = workspaceFor(ctx?.cwd || cwd)?.core.toolSpecs();
+              const targetSpec = target?.find((t) => t.name === spec.name);
+              return toPiTool(targetSpec ?? spec).execute(toolCallId, params);
+            },
+          });
+        }
+      }
+      return workspace;
+    };
 
+    const cwdOf = (ctx: ExtensionContext) => ctx.cwd || process.cwd();
+
+    pi.on("session_start", (_event, ctx) => {
+      activate(cwdOf(ctx));
+    });
     pi.on("before_agent_start", (event, ctx) =>
-      hooks.beforeAgentStart(event, ctx.sessionManager.getSessionId())
+      activate(cwdOf(ctx))?.hooks.beforeAgentStart(event, ctx.sessionManager.getSessionId())
     );
-    pi.on("agent_end", (event, ctx) => hooks.agentEnd(event, ctx.sessionManager.getSessionId()));
+    pi.on("agent_end", (event, ctx) =>
+      workspaceFor(cwdOf(ctx))?.hooks.agentEnd(event, ctx.sessionManager.getSessionId())
+    );
   };
 }
