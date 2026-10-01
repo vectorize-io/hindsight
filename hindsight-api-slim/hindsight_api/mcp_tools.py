@@ -1257,7 +1257,9 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             """
             Args:
                 query: Natural language search query (e.g., "user's food preferences", "what projects is user working on")
-                max_tokens: Maximum tokens to return in results (default: 4096)
+                max_tokens: Token budget for the facts' text (default: 4096). Only each result's
+                    'text' counts; the id, tags, scores and dates sent with every result do not,
+                    so the response is several times larger than this.
                 budget: Search budget - 'low', 'mid', or 'high' (default: 'high'). Higher budgets search more thoroughly.
                 types: Fact types to include (e.g., ['world', 'experience']). Default: all types.
                 prefer_observations: When recalling raw facts together with 'observation', drop any raw fact
@@ -1326,7 +1328,10 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
 
                 recall_result = await memory.recall_async(**recall_kwargs)
 
-                return recall_result.model_dump_json(indent=2)
+                # Compact, as FastMCP already sends the session-bank copy's dict. This
+                # used indent=2, which was about a fifth of a recall response that
+                # lands whole in the calling agent's context.
+                return recall_result.model_dump_json()
             except OperationValidationError as e:
                 logger.warning(f"Recall rejected: {e}")
                 return json.dumps({"error": str(e), "results": []})
@@ -1355,7 +1360,9 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             """
             Args:
                 query: Natural language search query (e.g., "user's food preferences", "what projects is user working on")
-                max_tokens: Maximum tokens to return in results (default: 4096)
+                max_tokens: Token budget for the facts' text (default: 4096). Only each result's
+                    'text' counts; the id, tags, scores and dates sent with every result do not,
+                    so the response is several times larger than this.
                 budget: Search budget - 'low', 'mid', or 'high' (default: 'high'). Higher budgets search more thoroughly.
                 types: Fact types to include (e.g., ['world', 'experience']). Default: all types.
                 prefer_observations: When recalling raw facts together with 'observation', drop any raw fact
