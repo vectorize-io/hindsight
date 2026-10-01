@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ToolSpec } from "../core/knowledge-tools";
 import { createPiExtension, createPiHooks, toPiTool } from "./pi-extension";
 
@@ -18,6 +18,8 @@ vi.mock("../core/host-client", () => ({
     };
   },
 }));
+const diagSpy = vi.hoisted(() => vi.fn());
+vi.mock("../core/diag", () => ({ diag: diagSpy }));
 vi.mock("../core/runtime", () => ({
   RuntimeCore: class {
     constructor(
@@ -58,6 +60,12 @@ function fakePi() {
 const ctxFor = (cwd: string) => ({ cwd, sessionManager: { getSessionId: () => `s:${cwd}` } });
 
 describe("pi extension adapter", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resolved.length = 0;
+    diagSpy.mockClear();
+  });
+
   it.each(["before", "after"])("preserves sections added %s memory injection", async (order) => {
     const core = {
       onPrompt: vi.fn(async () => {}),
@@ -212,7 +220,6 @@ describe("pi extension adapter", () => {
   });
 
   it("resolves the bank from the session cwd, not the process cwd the host was launched in", async () => {
-    resolved.length = 0;
     // pi-web-ui: one long-lived process, launched somewhere that is not the opted-in workspace.
     vi.spyOn(process, "cwd").mockReturnValue("/srv/pi-web-ui");
     const host = fakePi();
@@ -228,7 +235,6 @@ describe("pi extension adapter", () => {
     expect(resolved).not.toContain("/srv/pi-web-ui");
     expect(host.tools).toContain("hindsight_search_knowledge_pages");
     expect(result?.systemPrompt).toContain(`bank:${OPTED_IN}`);
-    vi.restoreAllMocks();
   });
 
   it("runs a tool against the bank of the session that called it", async () => {
@@ -258,5 +264,23 @@ describe("pi extension adapter", () => {
     );
     expect(host.tools).toEqual([]);
     expect(result).toBeUndefined();
+    expect(diagSpy).toHaveBeenCalledWith("pi", "disabled", { cwd: "/work/not-opted-in" });
+  });
+
+  it("does not run a tool call from a directory that is not opted in against another bank", async () => {
+    const host = fakePi();
+    const registered: { execute: (...a: unknown[]) => Promise<{ content: { text: string }[] }> }[] =
+      [];
+    host.pi.registerTool = ((def: (typeof registered)[number]) => registered.push(def)) as never;
+    createPiExtension("pi")(host.pi as never);
+
+    await host.handlers.session_start?.({} as never, ctxFor(OPTED_IN) as never);
+    await host.handlers.session_start?.({} as never, ctxFor("/work/not-opted-in") as never);
+
+    const result = await registered[0].execute("c", {}, undefined, undefined, {
+      cwd: "/work/not-opted-in",
+    });
+    expect(result.content[0].text).toBe("Hindsight memory is disabled for this workspace.");
+    expect(result.content[0].text).not.toContain(OPTED_IN);
   });
 });

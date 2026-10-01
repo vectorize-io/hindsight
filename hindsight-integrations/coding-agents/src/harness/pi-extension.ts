@@ -49,8 +49,9 @@ interface SessionManagerLike {
 }
 
 /** Only what this adapter reads. Both hosts also expose a UI notifier, but the seed banner it would
- *  carry is raised inside seedIfCold at extension load, before any handler has a `ctx` to notify
- *  through — so it is logged rather than toasted here, and the field is not declared. */
+ *  carry is raised inside seedIfCold, which runs in the background from session_start and is not
+ *  tied to a handler's `ctx` — so it is logged rather than toasted here, and the field is not
+ *  declared. */
 interface ExtensionContext {
   /** The session's working directory. A long-lived host (pi-web-ui) serves many workspaces from one
    *  process, so this — not `process.cwd()` — says which repo a session belongs to. */
@@ -167,6 +168,10 @@ export function createPiHooks(
   };
 }
 
+function textResult(text: string) {
+  return { content: [{ type: "text" as const, text }], details: null };
+}
+
 function createRuntime(harness: string, repoPath: string): RuntimeCore | undefined {
   const { cfg, bankId, client } = resolveHostMemory(harness, repoPath);
   if (cfg.disabled) return undefined; // global switch, per-bank opt-out or optInOnly
@@ -189,6 +194,8 @@ export function createPiExtension(harness: string): ExtensionFactory {
     interface Workspace {
       core: RuntimeCore;
       hooks: ReturnType<typeof createPiHooks>;
+      /** Built once per workspace; the specs close over that workspace's core. */
+      specs: ToolSpec[];
     }
     const workspaces = new Map<string, Workspace | undefined>();
     let toolsRegistered = false;
@@ -203,7 +210,11 @@ export function createPiExtension(harness: string): ExtensionFactory {
       }
       // Fire-and-forget cold seed (bank check + background git seed); the first
       // before_agent_start awaits it via createPiHooks.
-      const workspace = { core, hooks: createPiHooks(core, harness, core.seedIfCold(cwd)) };
+      const workspace = {
+        core,
+        hooks: createPiHooks(core, harness, core.seedIfCold(cwd)),
+        specs: core.toolSpecs(),
+      };
       workspaces.set(cwd, workspace);
       return workspace;
     };
@@ -214,14 +225,19 @@ export function createPiExtension(harness: string): ExtensionFactory {
         toolsRegistered = true;
         // Tool names are global to the host, so register them once; each call runs against the
         // workspace of the session that made it.
-        for (const spec of workspace.core.toolSpecs()) {
+        for (const spec of workspace.specs) {
           const tool = toPiTool(spec);
           pi.registerTool({
             ...tool,
             execute: async (toolCallId, params, _signal, _onUpdate, ctx) => {
-              const target = workspaceFor(ctx?.cwd || cwd)?.core.toolSpecs();
-              const targetSpec = target?.find((t) => t.name === spec.name);
-              return toPiTool(targetSpec ?? spec).execute(toolCallId, params);
+              // A call from a directory that is not opted in must never reach another workspace's
+              // bank, so there is no fallback to the registering session's spec. A host that passes
+              // no ctx is an older one that has only the process directory to go by.
+              const target = workspaceFor(ctx?.cwd || process.cwd());
+              if (!target) return textResult("Hindsight memory is disabled for this workspace.");
+              const targetSpec = target.specs.find((t) => t.name === spec.name);
+              if (!targetSpec) return textResult("This Hindsight tool is unavailable.");
+              return toPiTool(targetSpec).execute(toolCallId, params);
             },
           });
         }
