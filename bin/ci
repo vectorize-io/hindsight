@@ -86,6 +86,7 @@ PATCH_REGRESSIONS=(
   tests/test_db_abstraction.py
   tests/test_language_integrity.py
   tests/test_language_integrity_retain.py
+  tests/test_bank_language_integrity.py
   tests/test_consolidation_retry_budget.py
   tests/test_fact_extraction_retry.py
   tests/test_language_prevention.py

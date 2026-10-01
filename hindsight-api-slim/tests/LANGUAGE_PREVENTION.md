@@ -44,14 +44,14 @@ validates generated dimensions separately from deterministic formatting labels.
    offline fixtures plus isolated PostgreSQL tests below.
 2. Preserve the existing runtime, effective process config and queue/operation state
    for rollback. Deploy/restart only with explicit approval.
-3. `llm_language_integrity` and `llm_output_language` are process-scoped, not bank
-   overrides. With explicit rollout approval, set `HINDSIGHT_API_LLM_LANGUAGE_INTEGRITY=reject`
-   and leave `HINDSIGHT_API_LLM_OUTPUT_LANGUAGE` unset on every serving API/worker.
-   Inventory and approve **all banks served by those processes**; there is no
-   personal-bank-only toggle. A narrower rollout requires an already isolated
-   deployment or a separately approved configuration design. Read back effective
-   config in API and worker processes. Do not claim prevention while observe/retry
-   or an overriding output language remains effective.
+3. `llm_language_integrity` is a hierarchical BankConfig field. With authorized
+   rollout, update the target bank to `reject` and read back its effective config.
+   `llm_output_language` stays process-scoped and must be unset for this guard to
+   apply. Null bank modes inherit tenant or process defaults. Retain strategies
+   may explicitly override the mode, while a null mode inherits the bank policy.
+   Inventory those strategies before claiming prevention for every retain path.
+   Other banks retain their existing resolved policies. Do not claim prevention
+   while observe/retry or an overriding output language remains effective.
 4. Monitor per-output unchecked/mismatch/copied counters, failed operations and
    `consolidation_failed_at` facts / `memories_failed` job results. A consolidation
    job can complete successfully while reporting held facts; operation failure

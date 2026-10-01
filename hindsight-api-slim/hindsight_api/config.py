@@ -3679,6 +3679,8 @@ class HindsightConfig:
         # Audit logging on/off, per bank. The actions allowlist and retention
         # window remain server-level and are deliberately not configurable.
         "audit_log_enabled",
+        # Source-relative generated-language policy. Output language remains static.
+        "llm_language_integrity",
         # Persist raw source text (documents.original_text / chunks.chunk_text).
         # Per-bank so a data-minimizing bank can keep only derived facts while
         # others retain the raw source for expansion/re-extraction.

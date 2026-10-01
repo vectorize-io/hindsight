@@ -90,6 +90,30 @@ async def test_resetting_returns_the_bank_to_the_server_defaults(client, configu
     assert (await client.banks.get_bank_config(configured_bank)).config["enable_reranking"] is True
 
 
+async def test_language_policy_is_bank_local_and_reversible(client, configured_bank, bank_id):
+    """One bank can reject generated drift without changing its neighbour's policy."""
+    from hindsight_client_api.exceptions import ApiException
+
+    other = bank_id + "-language-neighbour"
+    await client.acreate_bank(bank_id=other)
+    try:
+        baseline = (await client.banks.get_bank_config(other)).config["llm_language_integrity"]
+        await client.banks.update_bank_config(configured_bank, {"updates": {"llm_language_integrity": "reject"}})
+        assert (await client.banks.get_bank_config(configured_bank)).config["llm_language_integrity"] == "reject"
+        assert (await client.banks.get_bank_config(other)).config["llm_language_integrity"] == baseline
+        with pytest.raises(ApiException) as invalid:
+            await client.banks.update_bank_config(configured_bank, {"updates": {"llm_language_integrity": "invalid"}})
+        assert invalid.value.status == 400
+        assert (await client.banks.get_bank_config(configured_bank)).config["llm_language_integrity"] == "reject"
+        await client.banks.update_bank_config(configured_bank, {"updates": {"llm_language_integrity": None}})
+        assert (await client.banks.get_bank_config(configured_bank)).config["llm_language_integrity"] == baseline
+        await client.banks.update_bank_config(configured_bank, {"updates": {"llm_language_integrity": "off"}})
+        await client.banks.reset_bank_config(configured_bank)
+        assert (await client.banks.get_bank_config(configured_bank)).config["llm_language_integrity"] == baseline
+    finally:
+        await client.banks.delete_bank(other)
+
+
 async def test_a_bank_that_does_not_exist_is_a_404_not_an_empty_answer(client):
     """An unknown bank has to be distinguishable from an empty one. Answering an
     empty result turns a typo'd bank id into "you have no memories", which is the

@@ -253,6 +253,8 @@ Retain Batch API requests continue to use the provider batch path in `off` and `
 
 Set `HINDSIGHT_API_LLM_LANGUAGE_INTEGRITY=reject` to fail a persistent mismatch after the corrective retry, leaving source facts eligible for an operator-controlled retry, or `off` to disable profiling. The detector abstains on short, ambiguous, and materially multilingual sources and exempts copied foreign-script quotations. Retain calls containing unprofiled binary attachments also abstain because those attachments may legitimately use a different language than the text chunk. When `HINDSIGHT_API_LLM_OUTPUT_LANGUAGE` is set, the source-language guard is disabled because translation is then intentional.
 
+The mode is also available as the `llm_language_integrity` BankConfig field, resolved through global, tenant, bank and retain-strategy overrides. A bank can select `reject` while other banks inherit the existing process mode. Null modes inherit at each override layer, including retain strategies. Invalid modes are rejected by the config API. `llm_output_language` remains server-scoped. Changing a bank's policy requires no database schema migration.
+
 Detector initialization or classification failures emit an `error` outcome. They fail open in `observe` and `retry` modes; `reject` mode fails the operation while preserving its source facts.
 
 ---
