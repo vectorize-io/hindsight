@@ -579,9 +579,9 @@ async def test_engine_teardown_unregisters_recorder_even_when_close_skipped():
     out to ALL registered recorders. The engine fixtures must remove their recorder
     on teardown even when ``close()`` is skipped (pool already closing/absent) or
     raises before the unregister step — otherwise a leaked, still-enabled recorder
-    from an earlier test records a later test's LLM calls into the shared DB, which
-    is what made ``test_disabled_writes_no_rows`` flaky. The teardown helper must
-    leave the registry exactly as it found it.
+    from an earlier test goes on recording every later test's LLM calls into the
+    shared DB under their bank ids. The teardown helper must leave the registry
+    exactly as it found it.
     """
     from hindsight_api import tracing
     from tests.conftest import _teardown_memory_engine
@@ -892,38 +892,40 @@ async def test_stats_endpoint_includes_tokens(trace_api_client, bank_id):
 
 
 @pytest.mark.asyncio
-async def test_disabled_writes_no_rows(memory):
-    # Recorders live in a process-global registry, and this test can only prove
-    # anything about the one it disables. A recorder leaked by an earlier test is
-    # still enabled and still writing to the shared table, so it records this
-    # bank's retain and the count below comes back non-zero — with nothing in the
-    # failure naming the real cause (#2229). Assert the registry is clean first,
-    # so a leak reports itself instead of arriving as `assert 4 == 0`.
-    from hindsight_api.engine.llm_trace import LLMTraceRecorder
-    from hindsight_api.tracing import get_span_recorder
+async def test_disabled_schedules_no_write(memory, monkeypatch):
+    """A disabled recorder schedules no write for a retain that drives real LLM calls.
 
-    registered = [r for r in get_span_recorder()._recorders if isinstance(r, LLMTraceRecorder)]
-    assert registered == [memory._llm_recorder], (
-        f"{len(registered)} LLM trace recorder(s) registered, expected only this engine's — "
-        "an earlier test leaked one into the global registry (#2229)"
-    )
+    Asserted on the recorder, not by counting rows. This used to retain and then
+    assert the read API reported 0 rows for the bank, which flaked for three rounds
+    of registry hardening (#2229): ``llm_requests`` is one table every test in the
+    xdist worker writes to (tracing is on by default), reached through a
+    process-global recorder registry that providers fan every LLM call out to. So
+    the count was a claim about the whole process, not about the one recorder the
+    test disabled, and any recorder outliving its own test turned it into a bare
+    ``assert 3 == 0`` naming nothing. Spying on the recorder's schedule point is
+    process-local: nothing else can pollute it, and
+    ``_record_fire_and_forget`` is the only path that creates a row
+    (``attach_memory_ids`` only patches ones already written).
 
-    memory._llm_recorder._enabled = False
+    The read API's empty case is covered by ``test_list_empty``.
+    """
+    scheduled: list[LLMRequestRecord] = []
+    monkeypatch.setattr(memory._llm_recorder, "_record_fire_and_forget", scheduled.append)
+    monkeypatch.setattr(memory._llm_recorder, "_enabled", False)
 
     app = create_app(memory, initialize_memory=False)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         bid = f"llm_trace_disabled_{datetime.now().timestamp()}"
         await client.put(f"/v1/default/banks/{bid}", json={"name": "No Trace"})
-        await client.post(
+        response = await client.post(
             f"/v1/default/banks/{bid}/memories",
             json={"items": [{"content": "nope", "context": "x"}]},
         )
-        await asyncio.sleep(0.5)
+        assert response.status_code == 200  # the retain really ran, so LLM calls really fanned out
 
-        response = await client.get(f"/v1/default/banks/{bid}/llm-requests")
-        assert response.status_code == 200
-        assert response.json()["total"] == 0
+    assert scheduled == []
+    assert memory._llm_recorder.is_enabled("retain_extract_facts") is False
 
 
 # ── real-LLM acceptance (provider matrix) ─────────────────────────────────────

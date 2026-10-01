@@ -69,10 +69,12 @@ async def _teardown_memory_engine(mem: MemoryEngine) -> None:
 
     LLM-trace recorders live in a process-global registry; ``MemoryEngine.close()`` is
     the only thing that removes the engine's recorder from it. If close() is skipped
-    (pool already closing) or raises before that step, the recorder leaks and a later
-    test's LLM calls get recorded into the shared DB — the flaky
-    test_llm_trace::test_disabled_writes_no_rows (#2229). Unregister unconditionally;
-    it's a no-op when close() already did it.
+    (pool already closing) or raises before that step, the recorder leaks and keeps
+    receiving every later test's LLM calls, writing rows for their banks through a
+    pool nobody owns. That used to flake a trace test that proved tracing-off by
+    counting rows in the shared table; that test now asserts on its own recorder
+    instead (#2229), but a recorder outliving its engine is still wrong. Unregister
+    unconditionally; it's a no-op when close() already did it.
     """
     try:
         if mem._pool and not mem._pool._closing:
@@ -131,12 +133,10 @@ def _cleanup_leaked_span_recorders():
 
     ``MemoryEngine.__init__`` registers its recorder in the shared registry, and
     only ``close()`` removes it. Tests that construct an engine directly (without
-    ``_teardown_memory_engine``/``close()``) leak an *enabled* recorder; a later
-    test's LLM calls then get recorded into the shared DB, flaking
-    ``test_llm_trace::test_disabled_writes_no_rows`` (it observes rows for its
-    bank even though its own recorder is disabled). ``_teardown_memory_engine``
-    guards the fixtures; this guards everything else by dropping any recorder a
-    test added to the registry.
+    ``_teardown_memory_engine``/``close()``) leak an *enabled* recorder, which then
+    records every later test's LLM calls into the shared ``llm_requests`` table under
+    their bank ids (#2229). ``_teardown_memory_engine`` guards the fixtures; this
+    guards everything else by dropping any recorder a test added to the registry.
     """
     from hindsight_api.tracing import get_span_recorder
 
