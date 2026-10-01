@@ -212,7 +212,7 @@ contributes three — so they are not bounded by the number of batches in the ru
 
 **Labels:**
 - `method`: HTTP method (`GET`, `POST`, `PUT`, `DELETE`)
-- `endpoint`: Request path (normalized to reduce cardinality - UUIDs replaced with `{id}`)
+- `endpoint`: Template of the route the request matched, with path parameters named rather than filled in (e.g. `/v1/default/banks/{bank_id}/documents/{document_id}`, `/v1/default/banks/{bank_id}/operations/{operation_id}`), so the label has one value per route however many banks, documents or ids are requested. The template does not include a `base_path` / root-path prefix. Requests that match no route (404s) are labelled `unmatched`; a request matched by a route that has no path template is labelled `unknown_route`.
 - `status_code`: HTTP status code (`200`, `400`, `500`, etc.)
 - `status_class`: Status code class (`2xx`, `4xx`, `5xx`)
 
