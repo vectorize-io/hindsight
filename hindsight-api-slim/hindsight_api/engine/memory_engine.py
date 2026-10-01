@@ -699,6 +699,7 @@ from .search.tag_resolution import MAX_VOCABULARY, TagResolutionError, needs_res
 from .search.tags import (
     TagClause,
     TagGroup,
+    TagGroupLeaf,
     TagsMatch,
     build_tag_groups_where_clause,
     build_tags_where_clause,
@@ -706,6 +707,7 @@ from .search.tags import (
     filter_results_by_tags,
     strict_tag_group,
     strict_tags_match,
+    tags_satisfy_groups,
 )
 from .search.types import ScoredResult
 from .source_facts import select_source_facts_within_budget
@@ -1830,6 +1832,85 @@ def _resolve_refresh_tag_filtering(
     trigger_tags_match = trigger_data.get("tags_match")
     tags_match: TagsMatch = trigger_tags_match if trigger_tags_match else ("all_strict" if model_tags else "any")
     return RefreshTagFiltering(tags=model_tags, tags_match=tags_match, tag_groups=None)
+
+
+def _scope_mental_model_trigger(
+    model_tags: list[str] | None,
+    trigger: dict[str, Any] | None,
+    tag_scope: list[TagGroup] | None,
+) -> dict[str, Any] | None:
+    """``trigger`` with a caller's forced tag scope AND-ed into its refresh filter.
+
+    A mental model's tags decide which memories its refresh reads, and the refresh runs
+    later as background work with no caller to scope. So the creator's scope has to be
+    written into the model itself: the resolved filter (``tag_groups``, or the flat tags
+    under their match mode) becomes ``tag_groups`` with the scope's groups appended.
+    Otherwise a caller confined to ``user:dan`` could create a model tagged ``user:kate``
+    and read a summary of Kate's memories once it refreshed.
+
+    The scope only narrows: groups already present are not repeated, so an update that
+    re-applies the same scope leaves the filter unchanged.
+    """
+    if not tag_scope:
+        return trigger
+    scoped = dict(trigger or {})
+    resolved = _resolve_refresh_tag_filtering(model_tags, scoped)
+    groups: list[TagGroup]
+    if resolved.tag_groups is not None:
+        groups = list(resolved.tag_groups)
+    elif resolved.tags or resolved.tags_match == "exact":
+        groups = [TagGroupLeaf(tags=list(resolved.tags or []), match=resolved.tags_match)]
+    else:
+        groups = []
+    groups.extend(g for g in tag_scope if g not in groups)
+    scoped["tag_groups"] = [g.model_dump(by_alias=True) for g in groups]
+    return scoped
+
+
+def _refuse_tags_outside_scope(tags: list[str] | None, tag_scope: list[TagGroup] | None) -> None:
+    """Refuse (403) to give a mental model or page tags its creator could not then see.
+
+    It would be written and then answer 404 to the very caller that made it — including the
+    refresh queued right after creation, which reads it back as that caller.
+    """
+    if tag_scope and not tags_satisfy_groups(tags, tag_scope):
+        from hindsight_api.extensions import OperationValidationError
+
+        raise OperationValidationError(f"Tags {sorted(tags or [])} are outside your tag scope", status_code=403)
+
+
+def _knowledge_rows_in_tag_scope(rows: list[Any], tag_scope: list[TagGroup]) -> list[Any]:
+    """The knowledge-tree rows a caller confined to ``tag_scope`` may see.
+
+    A page is visible when its mental model's tags satisfy the scope. A folder carries no
+    tags of its own, so it is hidden exactly when it holds pages and none of them are
+    visible: a folder full of someone else's pages is itself something they wrote, while
+    an empty folder is no one's yet (and must stay visible so its creator can fill it).
+    Every visible node keeps its ancestors, so the tree the caller builds stays connected.
+    """
+    by_id = {r["id"]: r for r in rows}
+    holds_pages: set[str] = set()
+    holds_visible: set[str] = set()
+    for r in rows:
+        if r["kind"] != "page":
+            continue
+        visible = tags_satisfy_groups(r["mm_tags"], tag_scope)
+        # Mark the page and every ancestor; `seen` guards a corrupted, cyclic tree.
+        node_id, seen = r["id"], set()
+        while node_id in by_id and node_id not in seen:
+            seen.add(node_id)
+            holds_pages.add(node_id)
+            if visible:
+                holds_visible.add(node_id)
+            node_id = by_id[node_id]["parent_id"]
+
+    keep = {r["id"] for r in rows if r["id"] in holds_visible or r["id"] not in holds_pages}
+    for node_id in list(keep):
+        ancestor = by_id[node_id]["parent_id"]
+        while ancestor in by_id and ancestor not in keep:
+            keep.add(ancestor)
+            ancestor = by_id[ancestor]["parent_id"]
+    return [r for r in rows if r["id"] in keep]
 
 
 def _prune_knowledge_rows(rows: list[Any], tag_filter: KnowledgeTagFilter) -> list[Any]:
@@ -3099,6 +3180,151 @@ class MemoryEngine(MemoryEngineInterface):
         if not result.allowed:
             raise OperationValidationError(result.reason or "Operation not allowed", result.status_code)
         return result
+
+    async def _tag_scope(self, bank_id: str, request_context: "RequestContext | None") -> list[TagGroup] | None:
+        """The tag groups the operation validator confines this caller to, or None.
+
+        Every tag-scoped operation AND-s these into its own filter (see
+        ``OperationValidatorExtension.resolve_tag_scope``). Internal background work is
+        never scoped: what it reads was already bounded when the user-facing request
+        that queued it was scoped (e.g. a mental model's stored refresh filter).
+        """
+        if self._operation_validator is None or request_context is None or request_context.internal:
+            return None
+        from hindsight_api.extensions import TagScopeContext
+
+        scope = await self._operation_validator.resolve_tag_scope(
+            TagScopeContext(bank_id=bank_id, request_context=request_context)
+        )
+        return scope or None
+
+    async def _authorize_bank_read(
+        self, bank_id: str, operation: "BankReadOperation", request_context: "RequestContext"
+    ) -> list[TagGroup] | None:
+        """``validate_bank_read`` for ``operation``, then the caller's tag scope (or None)."""
+        if self._operation_validator is None:
+            return None
+        from hindsight_api.extensions import BankReadContext
+
+        ctx = BankReadContext(bank_id=bank_id, operation=operation, request_context=request_context)
+        await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        return await self._tag_scope(bank_id, request_context)
+
+    async def _memory_in_tag_scope(
+        self, conn: Any, bank_id: str, unit_id: str, tag_scope: list[TagGroup] | None
+    ) -> bool:
+        """Whether a memory (live or invalidated) exists and its tags satisfy ``tag_scope``.
+
+        Always True without a scope, so unscoped callers keep their own not-found handling.
+        """
+        if not tag_scope:
+            return True
+        from .memories import get_memories
+
+        store = get_memories()
+        stored = await store.get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[unit_id])
+        memory = (
+            stored[0]
+            if stored
+            else await store.get_archived_memory(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id)
+        )
+        return memory is not None and tags_satisfy_groups(memory.tags, tag_scope)
+
+    async def _document_in_tag_scope(
+        self, conn: Any, bank_id: str, document_id: str, tag_scope: list[TagGroup] | None
+    ) -> bool:
+        """Whether a document exists and its tags satisfy ``tag_scope`` (always True unscoped).
+
+        A document's chunks are its text, so they follow the document's tags — never the
+        tags of a memory extracted from them.
+        """
+        if not tag_scope:
+            return True
+        from .memories import get_memories
+
+        current = await get_memories().current_document_tags(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
+        )
+        return current.found and tags_satisfy_groups(current.tags, tag_scope)
+
+    async def _require_in_tag_scope(
+        self,
+        bank_id: str,
+        request_context: "RequestContext",
+        *,
+        document_id: str | None = None,
+        memory_id: str | None = None,
+    ) -> None:
+        """Refuse a by-id write on a document or memory outside the caller's tag scope.
+
+        Raises a 404 rather than a 403 so the answer does not confirm the item exists.
+        Without a scope this is a no-op and the operation keeps its own not-found handling.
+        """
+        tag_scope = await self._tag_scope(bank_id, request_context)
+        if not tag_scope:
+            return
+        from hindsight_api.extensions import OperationValidationError
+
+        async with acquire_with_retry(await self._get_backend()) as conn:
+            if document_id is not None and not await self._document_in_tag_scope(conn, bank_id, document_id, tag_scope):
+                raise OperationValidationError(f"Document '{document_id}' not found", status_code=404)
+            if memory_id is not None and not await self._memory_in_tag_scope(conn, bank_id, memory_id, tag_scope):
+                raise OperationValidationError(f"Memory '{memory_id}' not found", status_code=404)
+
+    async def _refuse_out_of_scope_documents(
+        self, bank_id: str, contents: "Sequence[Mapping[str, Any]]", request_context: "RequestContext"
+    ) -> None:
+        """Refuse a retain that would write into an existing document outside the caller's scope.
+
+        Replacing such a document would delete someone else's memories, and appending to it
+        would fold their text into a document the caller then reads back. A new document id
+        is always fine: what the caller writes carries the tags its validator gave it.
+        """
+        tag_scope = await self._tag_scope(bank_id, request_context)
+        if not tag_scope:
+            return
+        document_ids = sorted({str(c["document_id"]) for c in contents if c.get("document_id")})
+        if not document_ids:
+            return
+        from hindsight_api.extensions import OperationValidationError
+
+        from .memories import get_memories
+
+        store = get_memories()
+        async with acquire_with_retry(await self._get_backend()) as conn:
+            for document_id in document_ids:
+                current = await store.current_document_tags(
+                    conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
+                )
+                if current.found and not tags_satisfy_groups(current.tags, tag_scope):
+                    raise OperationValidationError(f"Cannot write to document '{document_id}'", status_code=403)
+
+    async def _visible_knowledge_node_ids(self, conn: Any, bank_id: str, tag_scope: list[TagGroup]) -> set[str]:
+        """Ids of the knowledge-tree nodes a caller confined to ``tag_scope`` may see."""
+        rows = await conn.fetch(
+            f"SELECT {self._KP_PAGE_SELECT} FROM {self._kp_join()} WHERE kp.bank_id = $1",
+            bank_id,
+        )
+        return {r["id"] for r in _knowledge_rows_in_tag_scope(list(rows), tag_scope)}
+
+    async def _require_knowledge_nodes_in_tag_scope(
+        self, bank_id: str, request_context: "RequestContext", node_ids: list[str | None]
+    ) -> None:
+        """Refuse (404) a knowledge-tree write that names a node outside the caller's tag scope.
+
+        ``None`` entries (the tree root) are always allowed. A no-op without a scope.
+        """
+        tag_scope = await self._tag_scope(bank_id, request_context)
+        wanted = [n for n in node_ids if n]
+        if not tag_scope or not wanted:
+            return
+        from hindsight_api.extensions import OperationValidationError
+
+        async with acquire_with_retry(await self._get_backend()) as conn:
+            visible = await self._visible_knowledge_node_ids(conn, bank_id, tag_scope)
+        for node_id in wanted:
+            if node_id not in visible:
+                raise OperationValidationError(f"Knowledge node '{node_id}' not found", status_code=404)
 
     async def _authenticate_tenant(self, request_context: "RequestContext | None") -> str:
         """
@@ -6093,6 +6319,7 @@ class MemoryEngine(MemoryEngineInterface):
                 raise
             if result and result.contents is not None:
                 contents = cast(list[RetainContentDict], result.contents)
+        await self._refuse_out_of_scope_documents(bank_id, contents, request_context)
 
         await self._ensure_bank_exists(bank_id, request_context)
 
@@ -8384,6 +8611,12 @@ class MemoryEngine(MemoryEngineInterface):
                 if result.tag_groups is not None:
                     tag_groups = result.tag_groups
 
+        # The caller's tag scope is AND-ed on top of whatever filter survived the
+        # validator, so recall can narrow a scoped caller's view but never widen it.
+        forced_scope = await self._tag_scope(bank_id, request_context)
+        if forced_scope:
+            tag_groups = [*(tag_groups or []), *forced_scope]
+
         # 404 for a bank nobody created, like every other bank-scoped read (#4175, #4442).
         # Recall was the one that still answered 200 with empty results — indistinguishable from a
         # healthy empty bank — after paying the whole retrieval fan-out (dense + BM25 + temporal,
@@ -10102,13 +10335,9 @@ class MemoryEngine(MemoryEngineInterface):
             Dictionary with document info or None if not found
         """
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext, BankReadOperation
+        from hindsight_api.extensions import BankReadOperation
 
-            ctx = BankReadContext(
-                bank_id=bank_id, operation=BankReadOperation.GET_DOCUMENT, request_context=request_context
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.GET_DOCUMENT, request_context)
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             from .memories import get_memories
@@ -10117,7 +10346,8 @@ class MemoryEngine(MemoryEngineInterface):
                 conn=conn, ops=self._backend.ops, fq_table=fq_table, bank_id=bank_id, document_id=document_id
             )
 
-            if not doc:
+            # Outside the caller's tag scope reads like a missing document (404).
+            if not doc or not tags_satisfy_groups(doc["tags"], tag_scope):
                 return None
 
             retain_params_parsed = conn.parse_json(doc["retain_params"]) if doc["retain_params"] else None
@@ -10181,6 +10411,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.DELETE_DOCUMENT, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        await self._require_in_tag_scope(bank_id, request_context, document_id=document_id)
         backend = await self._get_backend()
         invalidated_obs = 0
         async with acquire_with_retry(backend) as conn:
@@ -10338,6 +10569,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.UPDATE_DOCUMENT, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        await self._require_in_tag_scope(bank_id, request_context, document_id=document_id)
         backend = await self._get_backend()
         invalidated_obs = 0
         async with acquire_with_retry(backend) as conn:
@@ -11174,19 +11406,15 @@ class MemoryEngine(MemoryEngineInterface):
             ``total`` (distinct scopes in the bank), ``limit`` and ``offset``.
         """
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext, BankReadOperation
+        from hindsight_api.extensions import BankReadOperation
 
-            ctx = BankReadContext(
-                bank_id=bank_id, operation=BankReadOperation.LIST_OBSERVATION_SCOPES, request_context=request_context
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.LIST_OBSERVATION_SCOPES, request_context)
         await self._require_bank_exists(bank_id)
         from .memories import get_memories
 
         async with self._store_read_conn(bank_id) as conn:
             return await get_memories().observation_scope_counts(
-                conn=conn, fq_table=fq_table, bank_id=bank_id, limit=limit, offset=offset
+                conn=conn, fq_table=fq_table, bank_id=bank_id, limit=limit, offset=offset, tag_groups=tag_scope
             )
 
     async def retry_failed_consolidation(
@@ -11261,6 +11489,7 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        await self._require_in_tag_scope(bank_id, request_context, memory_id=memory_id)
         backend = await self._get_backend()
         deleted_count = 0
 
@@ -11438,6 +11667,7 @@ class MemoryEngine(MemoryEngineInterface):
                 edits_fields=doing_edit,
             )
             await self._validate_operation(self._operation_validator.validate_memory_update(update_ctx))
+        await self._require_in_tag_scope(bank_id, request_context, memory_id=memory_id)
 
         backend = await self._get_backend()
         from .graph_maintenance import enqueue_entity_prune_candidates, enqueue_relink_victims
@@ -11956,13 +12186,9 @@ class MemoryEngine(MemoryEngineInterface):
         # route whose `bank_id` is a path parameter, so None does not arrive in practice.
         if bank_id is None:
             raise ValueError("bank_id is required to read graph data")
-        if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext, BankReadOperation
+        from hindsight_api.extensions import BankReadOperation
 
-            ctx = BankReadContext(
-                bank_id=bank_id, operation=BankReadOperation.GET_GRAPH_DATA, request_context=request_context
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.GET_GRAPH_DATA, request_context)
         await self._require_bank_exists(bank_id)
         from .memories import get_memories
 
@@ -11985,6 +12211,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # to "any". Narrowing the query parameter would turn that into a 400, which is a
                 # better answer but an API change; this states the gap without making it.
                 tags_match=cast(TagsMatch, tags_match),
+                tag_groups=tag_scope,
                 limit=limit,
             )
             units = page["units"]
@@ -12595,13 +12822,9 @@ class MemoryEngine(MemoryEngineInterface):
             Dict with items (list of memory units) and total count
         """
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext, BankReadOperation
+        from hindsight_api.extensions import BankReadOperation
 
-            ctx = BankReadContext(
-                bank_id=bank_id, operation=BankReadOperation.LIST_MEMORY_UNITS, request_context=request_context
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.LIST_MEMORY_UNITS, request_context)
         await self._require_bank_exists(bank_id)
         from .memories import get_memories
 
@@ -12623,6 +12846,7 @@ class MemoryEngine(MemoryEngineInterface):
                 entity_id=entity_id,
                 tags=tags,
                 tags_match=tags_match,
+                tag_groups=tag_scope,
                 created_before=created_before,
                 time_field=time_field,
                 start_date=start_date,
@@ -12656,26 +12880,27 @@ class MemoryEngine(MemoryEngineInterface):
         except ValueError:
             raise ValueError(f"Invalid memory_id: '{memory_id}' is not a valid UUID")
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext, BankReadOperation
+        from hindsight_api.extensions import BankReadOperation
 
-            ctx = BankReadContext(
-                bank_id=bank_id, operation=BankReadOperation.GET_MEMORY_UNIT, request_context=request_context
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.GET_MEMORY_UNIT, request_context)
         from .memories import get_memories
 
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             # The store renders the detail view — including the observation
             # history and source facts it folds in — for a normalized id.
-            return await get_memories().get_memory_unit(
+            unit = await get_memories().get_memory_unit(
                 conn=conn,
                 ops=self._backend.ops,
                 fq_table=fq_table,
                 bank_id=bank_id,
                 unit_id=str(memory_uuid),
             )
+        # Outside the caller's tag scope reads exactly like a missing memory (404), so the
+        # answer does not confirm that the id exists.
+        if tag_scope and unit is not None and not tags_satisfy_groups(unit.get("tags"), tag_scope):
+            return None
+        return unit
 
     async def list_documents(
         self,
@@ -12715,13 +12940,9 @@ class MemoryEngine(MemoryEngineInterface):
             Dict with items (list of documents without original_text) and total count
         """
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext, BankReadOperation
+        from hindsight_api.extensions import BankReadOperation
 
-            ctx = BankReadContext(
-                bank_id=bank_id, operation=BankReadOperation.LIST_DOCUMENTS, request_context=request_context
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.LIST_DOCUMENTS, request_context)
         await self._require_bank_exists(bank_id)
 
         # Validated here rather than inside the Postgres store's SQL builder, because a store that
@@ -12742,6 +12963,7 @@ class MemoryEngine(MemoryEngineInterface):
             search_query=search_query,
             tags=tags,
             tags_match=tags_match,
+            tag_groups=tag_scope,
             time_field=time_field,
             start_date=start_date,
             end_date=end_date,
@@ -12766,16 +12988,15 @@ class MemoryEngine(MemoryEngineInterface):
         except ValueError:
             raise ValueError(f"Invalid memory_id: '{memory_id}' is not a valid UUID")
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext, BankReadOperation
+        from hindsight_api.extensions import BankReadOperation
 
-            ctx = BankReadContext(
-                bank_id=bank_id, operation=BankReadOperation.GET_OBSERVATION_HISTORY, request_context=request_context
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.GET_OBSERVATION_HISTORY, request_context)
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             from .memories import get_memories
+
+            if not await self._memory_in_tag_scope(conn, bank_id, str(memory_uuid), tag_scope):
+                return None
 
             _hist_store = get_memories()
             # The existence + fact_type probe and the current source ids come from the store. The
@@ -12902,13 +13123,13 @@ class MemoryEngine(MemoryEngineInterface):
         if _parsed is not None:
             _cbank, _cdoc, _cidx = _parsed.bank_id, _parsed.document_id, _parsed.chunk_index
             if _chunk_store.store_owned_for(_cbank):
-                if self._operation_validator:
-                    from hindsight_api.extensions import BankReadContext, BankReadOperation
+                from hindsight_api.extensions import BankReadOperation
 
-                    ctx = BankReadContext(
-                        bank_id=_cbank, operation=BankReadOperation.GET_CHUNK, request_context=request_context
-                    )
-                    await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+                _scope = await self._authorize_bank_read(_cbank, BankReadOperation.GET_CHUNK, request_context)
+                if _scope:
+                    async with acquire_with_retry(await self._get_backend()) as _conn:
+                        if not await self._document_in_tag_scope(_conn, _cbank, _cdoc, _scope):
+                            return None
                 _text = await _chunk_store.get_chunk_text(bank_id=_cbank, document_id=_cdoc, chunk_index=_cidx)
                 if _text is None:
                     return None
@@ -12933,13 +13154,12 @@ class MemoryEngine(MemoryEngineInterface):
             if not chunk:
                 return None
 
-            if self._operation_validator:
-                from hindsight_api.extensions import BankReadContext, BankReadOperation
+            from hindsight_api.extensions import BankReadOperation
 
-                ctx = BankReadContext(
-                    bank_id=chunk["bank_id"], operation=BankReadOperation.GET_CHUNK, request_context=request_context
-                )
-                await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+            _scope = await self._authorize_bank_read(chunk["bank_id"], BankReadOperation.GET_CHUNK, request_context)
+            # A chunk is its document's text: it is visible only when the document is (404 otherwise).
+            if not await self._document_in_tag_scope(conn, chunk["bank_id"], chunk["document_id"], _scope):
+                return None
 
             return {
                 "chunk_id": chunk["chunk_id"],
@@ -12958,7 +13178,7 @@ class MemoryEngine(MemoryEngineInterface):
         limit: int = 100,
         offset: int = 0,
         request_context: "RequestContext",
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | None:
         """
         List all chunks for a given document, ordered by chunk_index.
 
@@ -12973,13 +13193,13 @@ class MemoryEngine(MemoryEngineInterface):
             Dict with items (list of chunks) and total count
         """
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext, BankReadOperation
+        from hindsight_api.extensions import BankReadOperation
 
-            ctx = BankReadContext(
-                bank_id=bank_id, operation=BankReadOperation.LIST_DOCUMENT_CHUNKS, request_context=request_context
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.LIST_DOCUMENT_CHUNKS, request_context)
+        if tag_scope:
+            async with acquire_with_retry(await self._get_backend()) as conn:
+                if not await self._document_in_tag_scope(conn, bank_id, document_id, tag_scope):
+                    return None
         from .memories import get_memories
 
         return await get_memories().list_document_chunks(
@@ -13018,7 +13238,7 @@ class MemoryEngine(MemoryEngineInterface):
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
 
-        # Fetch the document
+        # Fetch the document. Outside the caller's tag scope this reads as missing (404).
         doc = await self.get_document(document_id, bank_id, request_context=request_context)
         if not doc:
             return None
@@ -14675,6 +14895,12 @@ class MemoryEngine(MemoryEngineInterface):
             )
             await self._validate_operation(self._operation_validator.validate_reflect(ctx))
 
+        # The caller's tag scope joins the groups every tool below filters on, so the
+        # agentic loop can't reach past it through any of them.
+        forced_scope = await self._tag_scope(bank_id, request_context)
+        if forced_scope:
+            tag_groups = [*(tag_groups or []), *forced_scope]
+
         # Resolve fuzzy tag tokens once, here: every tool the agentic loop runs
         # (recall, mental-model search, source-fact reads) filters on these same groups,
         # and each must see the same resolved tags.
@@ -14753,7 +14979,9 @@ class MemoryEngine(MemoryEngineInterface):
             excluded = set(exclude_mental_model_ids or [])
             wanted = [pid for pid in page_ids if pid not in excluded]
             async with backend.acquire() as conn:
-                return await tool_read_mental_models(conn, bank_id, wanted, max_tokens=max_tokens)
+                return await tool_read_mental_models(
+                    conn, bank_id, wanted, max_tokens=max_tokens, tag_scope=forced_scope
+                )
 
         # Get reflect source facts config (hierarchical: env → tenant → bank)
         config_dict = await self._config_resolver.get_bank_config(bank_id, request_context)
@@ -15218,15 +15446,14 @@ class MemoryEngine(MemoryEngineInterface):
             Dict with items, total, limit, offset
         """
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext, BankReadOperation
+        from hindsight_api.extensions import BankReadOperation
 
-            ctx = BankReadContext(
-                bank_id=bank_id, operation=BankReadOperation.LIST_ENTITIES, request_context=request_context
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.LIST_ENTITIES, request_context)
         await self._require_bank_exists(bank_id)
         tag_groups = await self._resolve_fuzzy_tag_groups(bank_id, tag_groups)
+        # The caller's tag scope narrows the entity filter like any other read's.
+        if tag_scope:
+            tag_groups = [*(tag_groups or []), *tag_scope]
         from .memories import get_memories
 
         backend = await self._get_backend()
@@ -15268,15 +15495,13 @@ class MemoryEngine(MemoryEngineInterface):
         how often visible entities appear together out of scope (#5031).
         """
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext, BankReadOperation
+        from hindsight_api.extensions import BankReadOperation
 
-            ctx = BankReadContext(
-                bank_id=bank_id, operation=BankReadOperation.GET_ENTITY_GRAPH, request_context=request_context
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.GET_ENTITY_GRAPH, request_context)
         await self._require_bank_exists(bank_id)
         tag_groups = await self._resolve_fuzzy_tag_groups(bank_id, tag_groups)
+        if tag_scope:
+            tag_groups = [*(tag_groups or []), *tag_scope]
 
         # Asked of the store: one that owns its entities keeps no rows in the SQL
         # entity_cooccurrences/entities tables and answers from its own aggregate.
@@ -15362,13 +15587,9 @@ class MemoryEngine(MemoryEngineInterface):
             Dict with items (list of {tag, count}), total, limit, offset
         """
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext, BankReadOperation
+        from hindsight_api.extensions import BankReadOperation
 
-            ctx = BankReadContext(
-                bank_id=bank_id, operation=BankReadOperation.LIST_TAGS, request_context=request_context
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.LIST_TAGS, request_context)
         await self._require_bank_exists(bank_id)
         # Tags live with the memories, so the store owns the histogram and applies
         # the wildcard filter, ordering (count desc, tag asc) and paging — on the
@@ -15377,7 +15598,13 @@ class MemoryEngine(MemoryEngineInterface):
 
         async with self._store_read_conn(bank_id) as conn:
             return await get_memories().list_tags(
-                conn=conn, fq_table=fq_table, bank_id=bank_id, pattern=pattern, limit=limit, offset=offset
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                pattern=pattern,
+                limit=limit,
+                offset=offset,
+                tag_groups=tag_scope,
             )
 
     async def list_mental_model_tags(
@@ -15396,15 +15623,9 @@ class MemoryEngine(MemoryEngineInterface):
         for UIs filtering mental models by tag.
         """
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext, BankReadOperation
+        from hindsight_api.extensions import BankReadOperation
 
-            ctx = BankReadContext(
-                bank_id=bank_id,
-                operation=BankReadOperation.LIST_MENTAL_MODEL_TAGS,
-                request_context=request_context,
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.LIST_MENTAL_MODEL_TAGS, request_context)
         await self._require_bank_exists(bank_id)
         return await self._list_tags_from_table(
             table="mental_models",
@@ -15412,6 +15633,7 @@ class MemoryEngine(MemoryEngineInterface):
             pattern=pattern,
             limit=limit,
             offset=offset,
+            tag_groups=tag_scope,
         )
 
     async def _list_tags_from_table(
@@ -15422,6 +15644,7 @@ class MemoryEngine(MemoryEngineInterface):
         pattern: str | None,
         limit: int,
         offset: int,
+        tag_groups: list[TagGroup] | None,
     ) -> dict[str, Any]:
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -15441,6 +15664,9 @@ class MemoryEngine(MemoryEngineInterface):
             bank_prefix = tag_parts.bank_prefix
 
             tag_pattern_clause = pattern_clause.replace("tag", tag_col) if tag_col != "tag" else pattern_clause
+            # A caller's forced tag scope: only rows it admits contribute tags or counts.
+            groups = build_tag_groups_where_clause(tag_groups, len(params) + 1, table_alias=bank_prefix)
+            params.extend(groups.params)
 
             # Get total count of distinct tags matching pattern
             total_row = await conn.fetchrow(
@@ -15448,7 +15674,7 @@ class MemoryEngine(MemoryEngineInterface):
                 SELECT COUNT(DISTINCT {tag_col}) as total
                 FROM {tag_source}
                 WHERE {bank_prefix}bank_id = $1 {non_empty_check}
-                {tag_pattern_clause}
+                {tag_pattern_clause} {groups.sql}
                 """,
                 *params,
             )
@@ -15463,7 +15689,7 @@ class MemoryEngine(MemoryEngineInterface):
                 SELECT {tag_col} as tag, COUNT(*) as count
                 FROM {tag_source}
                 WHERE {bank_prefix}bank_id = $1 {non_empty_check}
-                {tag_pattern_clause}
+                {tag_pattern_clause} {groups.sql}
                 GROUP BY {tag_col}
                 ORDER BY count DESC, {tag_col} ASC
                 LIMIT ${limit_param} OFFSET ${offset_param}
@@ -15764,13 +15990,9 @@ class MemoryEngine(MemoryEngineInterface):
         timestamp still show up in the chart.
         """
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext, BankReadOperation
+        from hindsight_api.extensions import BankReadOperation
 
-            ctx = BankReadContext(
-                bank_id=bank_id, operation=BankReadOperation.GET_MEMORIES_TIMESERIES, request_context=request_context
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.GET_MEMORIES_TIMESERIES, request_context)
         await self._require_bank_exists(bank_id)
 
         cfg = _MEMORIES_TIMESERIES_PERIODS.get(period) or _MEMORIES_TIMESERIES_PERIODS["7d"]
@@ -15789,7 +16011,13 @@ class MemoryEngine(MemoryEngineInterface):
 
         async with self._store_read_conn(bank_id) as conn:
             rows = await get_memories().memories_timeseries(
-                conn=conn, fq_table=fq_table, bank_id=bank_id, time_field=time_field, trunc=cfg.trunc, since=since
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                time_field=time_field,
+                trunc=cfg.trunc,
+                since=since,
+                tag_groups=tag_scope,
             )
 
         # Build the canonical bucket list anchored on the most recent UTC boundary.
@@ -15870,10 +16098,14 @@ class MemoryEngine(MemoryEngineInterface):
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         tag_groups = await self._resolve_fuzzy_tag_groups(bank_id, tag_groups)
+        tag_scope = await self._tag_scope(bank_id, request_context)
+        if tag_scope:
+            tag_groups = [*(tag_groups or []), *tag_scope]
         from .memories import get_memories
 
         # Resolved against the store's registry: one that owns its entities writes no SQL
         # `entities` rows, and the caller 404'd an entity `list_entities` had just returned.
+        # Under a tag scope the entity exists only through the memories the caller can see.
         async with self._store_read_conn(bank_id) as conn:
             return await get_memories().get_entity_detail(
                 conn=conn,
@@ -15940,13 +16172,9 @@ class MemoryEngine(MemoryEngineInterface):
             The requested page and the total number of matching models
         """
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext, BankReadOperation
+        from hindsight_api.extensions import BankReadOperation
 
-            ctx = BankReadContext(
-                bank_id=bank_id, operation=BankReadOperation.LIST_MENTAL_MODELS, request_context=request_context
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.LIST_MENTAL_MODELS, request_context)
         await self._require_bank_exists(bank_id)
         backend = await self._get_backend()
 
@@ -15962,6 +16190,10 @@ class MemoryEngine(MemoryEngineInterface):
                 else:  # any
                     tag_filter = " AND tags && $2::varchar[]"
                 filter_params.append(tags)
+            # A mental model is visible to a scoped caller when its own tags satisfy the scope.
+            scope_clause = build_tag_groups_where_clause(tag_scope, len(filter_params) + 1)
+            tag_filter += f" {scope_clause.sql}"
+            filter_params.extend(scope_clause.params)
 
             total = await conn.fetchval(
                 f"""
@@ -16054,6 +16286,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Pre-operation validation (credit check / usage metering)
         await self._gate_mental_model_read(bank_id, mental_model_id, request_context=request_context)
+        tag_scope = await self._tag_scope(bank_id, request_context)
 
         backend = await self._get_backend()
 
@@ -16069,6 +16302,9 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id,
                 mental_model_id,
             )
+            # Outside the caller's tag scope reads like a missing model (404).
+            if row is not None and not tags_satisfy_groups(row["tags"], tag_scope):
+                row = None
 
             result = self._row_to_mental_model(row, detail=detail) if row else None
             if result is not None and detail == "full":
@@ -16112,14 +16348,15 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        tag_scope = await self._tag_scope(bank_id, request_context)
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             exists = await conn.fetchrow(
-                f"SELECT id FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                f"SELECT id, tags FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
                 bank_id,
                 mental_model_id,
             )
-            if exists is None:
+            if exists is None or not tags_satisfy_groups(exists["tags"], tag_scope):
                 return None
             # History now lives in the dedicated mental_model_history table (one
             # row per refresh), returned most-recent-first. The snapshot fields
@@ -16453,6 +16690,9 @@ class MemoryEngine(MemoryEngineInterface):
                     bank_id=bank_id, operation=BankWriteOperation.CREATE_MENTAL_MODEL, request_context=request_context
                 )
                 await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        tag_scope = await self._tag_scope(bank_id, request_context)
+        _refuse_tags_outside_scope(tags, tag_scope)
+        trigger = _scope_mental_model_trigger(tags, trigger, tag_scope)
         backend = await self._get_backend()
 
         embedding_vec = await self._mental_model_embedding_vector(name, content)
@@ -17873,6 +18113,24 @@ class MemoryEngine(MemoryEngineInterface):
                 await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
+        tag_scope = await self._tag_scope(bank_id, request_context)
+        if tag_scope:
+            # A model outside the caller's scope is not theirs to edit (404, like a read).
+            async with use_or_acquire(backend, conn) as scope_conn:
+                scope_row = await scope_conn.fetchrow(
+                    f"SELECT tags FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                    bank_id,
+                    mental_model_id,
+                )
+            if scope_row is None or not tags_satisfy_groups(scope_row["tags"], tag_scope):
+                return None
+            if tags is not None:
+                _refuse_tags_outside_scope(tags, tag_scope)
+            # New tags change what the refresh reads, so the scope must be re-applied to the
+            # stored filter: an empty patch routes the update through the trigger merge below.
+            if tags is not None and trigger is None:
+                trigger = {}
+
         # A caller that hands over markdown alone (an import, a hand-authored
         # document) gets its structure derived here, so the two columns can never
         # be written out of step — the divergence that let a degraded document
@@ -17945,13 +18203,16 @@ class MemoryEngine(MemoryEngineInterface):
             if trigger is not None:
                 await stack.enter_async_context(conn.transaction())
                 trigger_row = await conn.fetchrow(
-                    f"SELECT trigger FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2 FOR UPDATE",
+                    f"SELECT trigger, tags FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2 FOR UPDATE",
                     bank_id,
                     mental_model_id,
                 )
                 if trigger_row is None:
                     return None
                 trigger = self._merge_trigger(trigger, base=self._stored_trigger(trigger_row["trigger"]))
+                trigger = _scope_mental_model_trigger(
+                    tags if tags is not None else trigger_row["tags"], trigger, tag_scope
+                )
 
             # Build dynamic update
             updates = []
@@ -18295,13 +18556,15 @@ class MemoryEngine(MemoryEngineInterface):
         # one built from the discarded content behind kept a deliberately cleared
         # model ranking in semantic recall on a body it no longer has (#3926). Read
         # the name and embed it before touching a pooled connection for the write.
+        tag_scope = await self._tag_scope(bank_id, request_context)
         async with acquire_with_retry(backend) as conn:
             current_row = await conn.fetchrow(
-                f"SELECT name FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                f"SELECT name, tags FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
                 bank_id,
                 mental_model_id,
             )
-        if current_row is None:
+        # Outside the caller's tag scope reads like a missing model (404).
+        if current_row is None or not tags_satisfy_groups(current_row["tags"], tag_scope):
             return None
         embedding_str = await self._generate_mental_model_embedding(current_row["name"] or "", "")
 
@@ -18372,11 +18635,15 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
+        tag_scope = await self._tag_scope(bank_id, request_context)
+        # A scoped caller deletes only a model inside its scope; one outside reads as missing.
+        scope_clause = build_tag_groups_where_clause(tag_scope, 3)
         async with acquire_with_retry(backend) as conn:
             result = await conn.execute(
-                f"DELETE FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                f"DELETE FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2 {scope_clause.sql}",
                 bank_id,
                 mental_model_id,
+                *scope_clause.params,
             )
 
         deleted = result == "DELETE 1"
@@ -18574,6 +18841,7 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        await self._require_knowledge_nodes_in_tag_scope(bank_id, request_context, [parent_id])
         backend = await self._get_backend()
         folder_id = f"kf-{uuid.uuid4().hex}"
         async with acquire_with_retry(backend) as conn:
@@ -18632,6 +18900,7 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        await self._require_knowledge_nodes_in_tag_scope(bank_id, request_context, [parent_id])
         mental_model_id = mental_model_id or f"mm-{uuid.uuid4().hex}"
         embedding_vec = await self._mental_model_embedding_vector(name, content)
         embedding = str(embedding_vec) if embedding_vec else None
@@ -18640,6 +18909,10 @@ class MemoryEngine(MemoryEngineInterface):
         bank_config = await self._config_resolver.get_bank_config(bank_id, request_context)
         page_default = self._merge_trigger(bank_config.get("knowledge_page_default_trigger"))
         effective_trigger = self._merge_trigger(trigger, base=page_default)
+        # A page is a mental model: it can only ever be built from what its creator could read.
+        page_scope = await self._tag_scope(bank_id, request_context)
+        _refuse_tags_outside_scope(tags, page_scope)
+        effective_trigger = _scope_mental_model_trigger(tags, effective_trigger, page_scope)
         backend = await self._get_backend()
         page_id = f"kp-{uuid.uuid4().hex}"
         try:
@@ -18772,6 +19045,10 @@ class MemoryEngine(MemoryEngineInterface):
         tag_filter = await self._knowledge_read_filter(
             bank_id, BankReadOperation.GET_KNOWLEDGE_BASE_TREE, tag_filter or KnowledgeTagFilter(), request_context
         )
+        # The caller's tag scope is applied on its own rather than folded into ``tag_filter``:
+        # a filter hides folders it leaves empty, but a scoped caller must still see an empty
+        # folder (possibly one it just made) so it can put pages in it.
+        tag_scope = await self._tag_scope(bank_id, request_context)
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             rows = await conn.fetch(
@@ -18787,6 +19064,8 @@ class MemoryEngine(MemoryEngineInterface):
             rows = sorted(rows, key=_knowledge_tree_sort_key)
             if tag_filter.active:
                 rows = _prune_knowledge_rows(rows, tag_filter)
+            if tag_scope:
+                rows = _knowledge_rows_in_tag_scope(rows, tag_scope)
             nodes = [self._row_to_knowledge_node(r) for r in rows]
             if with_staleness:
                 by_id = {n["id"]: n for n in nodes}
@@ -18832,7 +19111,8 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id,
                 page_id,
             )
-        if row is None:
+        # A page is its mental model: outside the caller's tag scope it reads as missing (404).
+        if row is None or not tags_satisfy_groups(row["mm_tags"], await self._tag_scope(bank_id, request_context)):
             return None
 
         # A page read IS a mental model read: the join above returns
@@ -18907,10 +19187,13 @@ class MemoryEngine(MemoryEngineInterface):
         tag_filter = await self._knowledge_read_filter(
             bank_id, BankReadOperation.SEARCH_KNOWLEDGE_BASE, tag_filter or KnowledgeTagFilter(), request_context
         )
+        # Search returns pages only, so the caller's tag scope simply joins the filter.
+        tag_scope = await self._tag_scope(bank_id, request_context)
+        if tag_scope:
+            tag_filter = replace(tag_filter, tag_groups=[*(tag_filter.tag_groups or []), *tag_scope])
         query = (query or "").strip()
         if not query:
             return []
-        limit = max(1, min(limit, 50))
         # Over-fetch each arm so RRF has room to reorder before the final cut.
         fetch = min(max(limit * 4, 40), 200)
 
@@ -19194,6 +19477,9 @@ class MemoryEngine(MemoryEngineInterface):
                 await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         if moving and new_parent == node_id:
             raise ValueError("A node cannot be its own parent")
+        await self._require_knowledge_nodes_in_tag_scope(
+            bank_id, request_context, [node_id, new_parent if moving else None]
+        )
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
@@ -19312,6 +19598,7 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        tag_scope = await self._tag_scope(bank_id, request_context)
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
@@ -19344,6 +19631,19 @@ class MemoryEngine(MemoryEngineInterface):
                     node_row = next((r for r in all_rows if r["id"] == current), None)
                     if node_row and node_row["mental_model_id"]:
                         mm_ids.append(node_row["mental_model_id"])
+                if tag_scope:
+                    # A scoped caller deletes only what it can see. A folder that also holds
+                    # pages it cannot see is refused whole rather than half-deleted: taking
+                    # someone else's pages down with it is exactly what the scope prevents.
+                    visible = await self._visible_knowledge_node_ids(conn, bank_id, tag_scope)
+                    if node_id not in visible:
+                        return False
+                    if not visited <= visible:
+                        from hindsight_api.extensions import OperationValidationError
+
+                        raise OperationValidationError(
+                            f"Knowledge node '{node_id}' holds pages outside your tag scope", status_code=403
+                        )
                 # Delete each backing mental model individually (the subtree is
                 # small) to keep the SQL dialect-neutral — no PG array casts.
                 for mm_id in mm_ids:
@@ -20409,13 +20709,13 @@ class MemoryEngine(MemoryEngineInterface):
             - child_operations: (for parent operations) list of child operation statuses
         """
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext, BankReadOperation
+        from hindsight_api.extensions import BankReadOperation
 
-            ctx = BankReadContext(
-                bank_id=bank_id, operation=BankReadOperation.GET_OPERATION_STATUS, request_context=request_context
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.GET_OPERATION_STATUS, request_context)
+        # An operation row is not tagged, but its payload is the raw request — a retain's
+        # payload is the text someone else stored. A scoped caller never gets payloads.
+        if tag_scope:
+            include_payload = False
         backend = await self._get_backend()
 
         op_uuid = uuid.UUID(operation_id)
@@ -21581,6 +21881,7 @@ class MemoryEngine(MemoryEngineInterface):
                 raise
             if result and result.contents is not None:
                 contents = result.contents
+        await self._refuse_out_of_scope_documents(bank_id, contents, request_context)
 
         # Sanitize at the same ingress point the synchronous path does, and for a
         # second reason on top of it: the whole item is serialized into

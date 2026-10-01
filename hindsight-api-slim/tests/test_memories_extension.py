@@ -146,6 +146,7 @@ class InMemoryMemories(MemoriesExtension):
         search_query=None,
         tags=None,
         tags_match="any_strict",
+        tag_groups=None,
         time_field=None,
         start_date=None,
         end_date=None,
@@ -345,7 +346,7 @@ class InMemoryMemories(MemoriesExtension):
             counts[row.fact_type] = counts.get(row.fact_type, 0) + 1
         return counts
 
-    async def list_tags(self, *, conn, fq_table, bank_id, pattern=None, limit=100, offset=0):
+    async def list_tags(self, *, conn, fq_table, bank_id, pattern=None, limit=100, offset=0, tag_groups=None):
         self.calls.append("list_tags")
         counts: dict[str, int] = {}
         for row in self.rows.values():
@@ -527,6 +528,18 @@ class InMemoryMemories(MemoriesExtension):
     ):
         self.calls.append("list_entities")
         return {"items": [], "total": 0, "limit": limit, "offset": offset}
+
+    async def entity_graph(
+        self, *, conn, fq_table, bank_id, limit, min_count, tags=None, tags_match="any", tag_groups=None
+    ):
+        self.calls.append("entity_graph")
+        return {"nodes": [], "edges": [], "total_entities": 0, "total_edges": 0, "limit": limit}
+
+    async def get_entity_detail(
+        self, *, conn, fq_table, bank_id, entity_id, tags=None, tags_match="any", tag_groups=None
+    ):
+        self.calls.append("get_entity_detail")
+        return None
 
     async def graph_units(self, *, conn, fq_table, bank_id, limit=1000, **kwargs):
         rows = list(self.rows.values())[:limit]
@@ -729,11 +742,11 @@ class InMemoryMemories(MemoriesExtension):
         # A store that carries links inline has no join table to tally.
         return {"temporal": 0, "semantic": 0, "causal": 0}
 
-    async def memories_timeseries(self, *, conn, fq_table, bank_id, time_field, trunc, since):
+    async def memories_timeseries(self, *, conn, fq_table, bank_id, time_field, trunc, since, tag_groups=None):
         self.calls.append("memories_timeseries")
         return []
 
-    async def observation_scope_counts(self, *, conn, fq_table, bank_id, limit=100, offset=0):
+    async def observation_scope_counts(self, *, conn, fq_table, bank_id, limit=100, offset=0, tag_groups=None):
         self.calls.append("observation_scope_counts")
         # Same paged shape as list_tags above: the histogram is the store's to group,
         # order and page, so the stub does it over its own rows rather than shipping

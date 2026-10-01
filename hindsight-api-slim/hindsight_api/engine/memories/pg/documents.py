@@ -23,7 +23,7 @@ from datetime import datetime
 from typing import Any
 
 from ...db_utils import acquire_with_retry
-from ...search.tags import TagsMatch, build_tags_where_clause
+from ...search.tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause
 from ...time_filter import DOCUMENT_TIME_FIELDS, build_time_clause
 from ..base import (
     AttachmentRef,
@@ -554,6 +554,7 @@ async def list_documents(
     search_query: str | None,
     tags: list[str] | None,
     tags_match: TagsMatch,
+    tag_groups: list[TagGroup] | None,
     time_field: str | None,
     start_date: datetime | None,
     end_date: datetime | None,
@@ -583,6 +584,11 @@ async def list_documents(
         next_param = built.next_param_offset
         query_params.extend(tags_params)
         param_count = next_param - 1  # next_param is next available; convert to last used
+        if tag_groups:
+            groups = build_tag_groups_where_clause(tag_groups, param_count + 1)
+            query_conditions.append(groups.sql.removeprefix("AND "))
+            query_params.extend(groups.params)
+            param_count = groups.next_param_offset - 1
 
         window = build_time_clause(
             time_field=time_field,

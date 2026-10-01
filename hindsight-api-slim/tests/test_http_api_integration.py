@@ -54,6 +54,8 @@ def _make_operation_validator(
         return_value=ValidationResult.reject(reason) if reject_create_bank else ValidationResult.accept()
     )
     validator.on_mental_model_get_complete = AsyncMock()
+    # No tag scope: these tests are about which operations are validated, not what they see.
+    validator.resolve_tag_scope = AsyncMock(return_value=None)
     # A pass-through list filter: several tests assert a bank was not created by
     # looking it up through the bank list, which runs this hook.
     validator.filter_bank_list = AsyncMock(side_effect=lambda ctx: BankListResult(banks=ctx.banks))

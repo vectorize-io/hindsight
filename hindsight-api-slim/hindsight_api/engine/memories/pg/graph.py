@@ -180,6 +180,7 @@ async def graph_units(
     chunk_id: str | None = None,
     tags: list[str] | None = None,
     tags_match: TagsMatch = "all_strict",
+    tag_groups: list | None = None,
     limit: int = 1000,
 ) -> dict[str, Any]:
     """Memory nodes for the graph view, plus the total matching count.
@@ -190,7 +191,7 @@ async def graph_units(
     observation whose *sources* carry them, since observations have neither of
     their own.
     """
-    from ...search.tags import build_tags_where_clause_simple
+    from ...search.tags import build_tag_groups_where_clause, build_tags_where_clause_simple
 
     ops = _ops_for(conn)
     conditions: list[str] = []
@@ -229,6 +230,10 @@ async def graph_units(
         # Exact match with no tags is the "global" scope: rows carrying no tags at
         # all. (Other modes treat empty tags as "no filter".)
         conditions.append("(tags IS NULL OR tags = '{}')")
+    if tag_groups:
+        groups = build_tag_groups_where_clause(tag_groups, len(params) + 1)
+        conditions.append(groups.sql.removeprefix("AND "))
+        params.extend(groups.params)
 
     where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 

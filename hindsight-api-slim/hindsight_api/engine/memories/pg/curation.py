@@ -21,7 +21,14 @@ import json
 from datetime import datetime
 from typing import Any
 
-from ...search.tags import TagsMatch, build_tag_filter_clause, build_tags_where_clause, tag_filter_active
+from ...search.tags import (
+    TagGroup,
+    TagsMatch,
+    build_tag_filter_clause,
+    build_tag_groups_where_clause,
+    build_tags_where_clause,
+    tag_filter_active,
+)
 from ...time_filter import MEMORY_TIME_FIELDS, build_time_clause
 
 
@@ -93,6 +100,7 @@ async def list_memory_units(
     entity_id: str | None = None,
     tags: list[str] | None = None,
     tags_match: TagsMatch = "any",
+    tag_groups: list[TagGroup] | None = None,
     created_before: datetime | None = None,
     time_field: str | None = None,
     start_date: datetime | None = None,
@@ -224,6 +232,11 @@ async def list_memory_units(
         # Exact match with no tags is the "global" scope: rows that carry no
         # tags at all. (Other match modes treat empty tags as "no filter".)
         query_conditions.append("(tags IS NULL OR tags = '{}')")
+    if tag_groups:
+        built = build_tag_groups_where_clause(tag_groups, param_count + 1)
+        query_conditions.append(built.sql.removeprefix("AND "))
+        query_params.extend(built.params)
+        param_count = built.next_param_offset - 1
 
     if created_before is not None:
         param_count += 1

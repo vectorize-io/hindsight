@@ -305,6 +305,55 @@ edit, invalidate, or revert) has its own pair of hooks, in addition to the
   re-embeds the memory and re-consolidates the bank, so this is the figure to
   meter if curation should cost the same as ingesting that text.
 
+#### Confining a caller to a tag scope
+
+When several people share one bank and tags separate what each may see,
+`resolve_tag_scope` pins every operation of a caller to a tag filter. Return
+the tag groups the caller's reachable data must satisfy (they are AND-ed), or
+`None` for no restriction:
+
+```python
+from hindsight_api.engine.search.tags import TagGroupLeaf
+from hindsight_api.extensions import OperationValidatorExtension, TagScopeContext
+
+
+class TeamScopes(OperationValidatorExtension):
+    async def resolve_tag_scope(self, ctx: TagScopeContext):
+        user = ctx.request_context.api_key_id  # or whatever your tenant extension resolved
+        # Dan reads his own memories plus the shared team rules.
+        return [TagGroupLeaf(tags=[f"user:{user}", "kind:rule"], match="any_strict")]
+```
+
+The engine combines the scope with whatever filter the caller sends, so a
+caller can narrow its view but never widen it:
+
+- **Filtered reads** — recall, reflect (and every tool it runs), the memory,
+  document and mental-model lists, observation scopes, tag lists, the memory
+  graph, the timeseries, entities and the entity graph, and the knowledge-base
+  tree, search and export — only see rows inside the scope. Entity counts are
+  recounted over the visible memories.
+- **Reads and writes by id** — a memory, a document and its chunks, a mental
+  model or knowledge page — answer `404` when the item is outside the scope.
+  A retain that names an existing document outside the scope is refused (`403`),
+  since replacing or appending to it would touch someone else's text.
+- **Source text follows the document.** A memory can be visible through its own
+  tags (say, a `kind:rule` fact extracted from someone's private note) while the
+  note is not. Its chunk and document text are only returned when the
+  *document's* tags pass the filter. This applies to every tag-filtered recall
+  and reflect, with or without an extension.
+- **Mental models and knowledge pages** created or updated by a scoped caller
+  must carry tags inside the scope (`403` otherwise — the caller could not see
+  what it made), and store the scope in their refresh filter
+  (`trigger.tag_groups`), so they can never be built from memories their
+  creator could not read. Background refreshes run unscoped and rely on that
+  stored filter.
+
+Use a `_strict` match mode: the non-strict ones also admit untagged rows, and
+an untagged mental model is built from the whole bank. Operation status reads
+never return the raw task payload to a scoped caller. Bank-level reads that are
+not tag-scoped (stats, config, directives, webhooks) still go through
+`validate_bank_read` / `validate_bank_write`, which can only allow or deny them.
+
 #### Deferring an operation
 
 In addition to `accept` and `reject`, a `validate_*` hook can ask the

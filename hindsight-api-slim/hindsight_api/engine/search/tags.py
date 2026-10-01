@@ -500,19 +500,18 @@ def build_tag_filter_clause(
 # =============================================================================
 
 
-def _match_group(result: object, group: TagGroup) -> bool:
+def _match_group(result_tags: list[str] | None, group: TagGroup) -> bool:
     """
-    Recursively evaluate a TagGroup against a retrieval result.
+    Recursively evaluate a TagGroup against one row's tags.
 
     Args:
-        result: Any object with a 'tags' attribute (list[str] or None).
+        result_tags: The row's tags (None or empty for an untagged row).
         group: The TagGroup to evaluate.
 
     Returns:
-        True if the result matches the group, False otherwise.
+        True if the tags match the group, False otherwise.
     """
     if isinstance(group, TagGroupLeaf):
-        result_tags = getattr(result, "tags", None)
         is_untagged = result_tags is None or len(result_tags) == 0
         if group.match == "exact" and len(group.tags) == 0:
             # Empty scope = global/untagged: match only untagged results.
@@ -533,13 +532,13 @@ def _match_group(result: object, group: TagGroup) -> bool:
                 return tags_set <= result_tags_set
 
     elif isinstance(group, TagGroupAnd):
-        return all(_match_group(result, child) for child in group.filters)
+        return all(_match_group(result_tags, child) for child in group.filters)
 
     elif isinstance(group, TagGroupOr):
-        return any(_match_group(result, child) for child in group.filters)
+        return any(_match_group(result_tags, child) for child in group.filters)
 
     elif isinstance(group, TagGroupNot):
-        return not _match_group(result, group.filter)
+        return not _match_group(result_tags, group.filter)
 
     else:
         return True
@@ -565,4 +564,13 @@ def filter_results_by_tag_groups(
     if not tag_groups:
         return results
 
-    return [r for r in results if all(_match_group(r, group) for group in tag_groups)]
+    return [r for r in results if tags_satisfy_groups(getattr(r, "tags", None), tag_groups)]
+
+
+def tags_satisfy_groups(tags: list[str] | None, tag_groups: list[TagGroup] | None) -> bool:
+    """Whether a row carrying ``tags`` passes every top-level group (no groups = passes).
+
+    The single-row form of :func:`filter_results_by_tag_groups`: reads of one item by id
+    use it to decide whether the item is inside a caller's tag scope.
+    """
+    return all(_match_group(tags, group) for group in tag_groups or [])

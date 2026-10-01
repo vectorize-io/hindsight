@@ -329,6 +329,8 @@ When enabled, the response includes the raw source text chunks from which each f
 > **📝 Note**
 >
 When `include_chunks` is enabled, chunks are fetched based on the top-scored reranked results before token filtering. The last chunk is truncated (not dropped) to fit exactly within the budget, and each chunk carries a `truncated` flag indicating whether it was cut.
+
+With a tag filter (`tags`, `tags_match`, `tag_groups`), a chunk is returned only when its **document's** tags pass the filter too. A fact can match through its own tags — for example a `kind:rule` fact projected from an [entity label](./memory-banks.md#entity-labels) — while the document it came from does not, and that document's other text must not come back with it. Such a fact is still returned; its chunk is not.
 #### source_facts
 
 When enabled and `types` includes `observation`, each observation result is accompanied by the original contributing facts it was synthesized from. Source facts are returned in a top-level `source_facts` dict keyed by fact ID, and each observation result carries a `source_fact_ids` list for cross-referencing. Facts are deduplicated across observations. The `max_tokens` sub-option (default `4096`) limits the total token budget for source facts.

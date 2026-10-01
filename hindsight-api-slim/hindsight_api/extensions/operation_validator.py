@@ -455,6 +455,14 @@ class BankReadContext:
 
 
 @dataclass
+class TagScopeContext:
+    """Context for resolving the tag scope a caller is confined to in one bank."""
+
+    bank_id: str
+    request_context: "RequestContext"
+
+
+@dataclass
 class BankWriteContext:
     """Context for a bank write operation validation (pre-operation)."""
 
@@ -906,6 +914,49 @@ class OperationValidatorExtension(Extension, ABC):
                 - error: Error message (if failed)
         """
         pass
+
+    # =========================================================================
+    # Tag scope - which tagged data a caller may reach (optional - override to implement)
+    # =========================================================================
+
+    async def resolve_tag_scope(self, ctx: TagScopeContext) -> "list[TagGroup] | None":
+        """
+        Confine a caller to the memories whose tags satisfy these groups.
+
+        Override to isolate callers that share a bank by tag — e.g. a caller who may
+        read only ``user:dan`` and the shared ``kind:rule`` scope returns
+        ``[TagGroupLeaf(tags=["user:dan", "kind:rule"], match="any_strict")]``.
+
+        The engine AND-s the returned groups into every tag-scoped operation, on
+        top of whatever filter the caller asked for, so a caller can narrow its
+        scope but never widen it:
+
+        - filtered reads (recall, reflect and its tools, memory / document /
+          mental-model lists, observation scopes, tag lists, graph, timeseries)
+          only see rows inside the scope;
+        - reads and writes of one item by id (a memory, a document and its
+          chunks, a mental model) answer 404 when the item's tags fall outside it;
+        - a mental model created or updated by the caller stores the scope in its
+          refresh filter, so it can never be built from memories the caller could
+          not read itself.
+
+        A ``_strict`` match is almost always what you want: the non-strict modes
+        also admit untagged rows, and an untagged mental model is built from the
+        whole bank.
+
+        Called once per operation; background work running with
+        ``request_context.internal`` is never scoped.
+
+        Args:
+            ctx: Context containing:
+                - bank_id: Bank identifier
+                - request_context: Request context with auth info
+
+        Returns:
+            Tag groups every reachable row must satisfy (AND-ed), or None for no
+            restriction.
+        """
+        return None
 
     # =========================================================================
     # Mental Model - Pre-operation validation hook (optional - override to implement)

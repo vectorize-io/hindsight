@@ -156,6 +156,8 @@ When enabled, the response includes the raw source text chunks from which each f
 
 :::note
 When `include_chunks` is enabled, chunks are fetched based on the top-scored reranked results before token filtering. The last chunk is truncated (not dropped) to fit exactly within the budget, and each chunk carries a `truncated` flag indicating whether it was cut.
+
+With a tag filter (`tags`, `tags_match`, `tag_groups`), a chunk is returned only when its **document's** tags pass the filter too. A fact can match through its own tags — for example a `kind:rule` fact projected from an [entity label](./memory-banks#entity-labels) — while the document it came from does not, and that document's other text must not come back with it. Such a fact is still returned; its chunk is not.
 :::
 
 #### source_facts

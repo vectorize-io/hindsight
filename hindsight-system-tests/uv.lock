@@ -353,7 +353,7 @@ wheels = [
 
 [[package]]
 name = "hindsight-client"
-version = "0.10.1"
+version = "0.10.2"
 source = { editable = "../hindsight-clients/python" }
 dependencies = [
     { name = "aiohttp" },
@@ -362,6 +362,7 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "typing-extensions" },
     { name = "urllib3" },
+    { name = "yarl" },
 ]
 
 [package.metadata]
@@ -375,6 +376,7 @@ requires-dist = [
     { name = "requests", marker = "extra == 'test'", specifier = ">=2.33.0" },
     { name = "typing-extensions", specifier = ">=4.7.1" },
     { name = "urllib3", specifier = ">=2.1.0,<3.0.0" },
+    { name = "yarl", specifier = ">=1.9,<2.0" },
 ]
 provides-extras = ["test"]
 

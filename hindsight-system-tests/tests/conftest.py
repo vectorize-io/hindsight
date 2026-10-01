@@ -78,6 +78,26 @@ def typesafe_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> It
     server.stop()
 
 
+@pytest.fixture(scope="session")
+def scoped_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
+    """A server whose operation validator confines each API key to ``user:<key>`` + ``kind:rule``.
+
+    The validator (``server_extensions/tag_scope_validator.py``) is server-level, so it costs
+    a process of its own. Session-scoped and started lazily, like ``typesafe_server``.
+    """
+    log_path: Path = tmp_path_factory.mktemp("scoped-server") / "server.log"
+    server = start_hindsight_server(
+        stub_url=stub_server.url,
+        log_path=log_path,
+        extra_env={
+            "HINDSIGHT_API_OPERATION_VALIDATOR_EXTENSION": "tag_scope_validator:UserTagScope",
+            "PYTHONPATH": str(Path(__file__).resolve().parent.parent / "server_extensions"),
+        },
+    )
+    yield server
+    server.stop()
+
+
 @pytest.fixture
 async def typesafe_client(typesafe_server) -> AsyncIterator[Hindsight]:
     client = Hindsight(base_url=typesafe_server.url)

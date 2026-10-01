@@ -72,6 +72,7 @@ from hindsight_api.extensions.operation_validator import (
     RetainAttachmentInfo,
     RetainContext,
     RetainResult,
+    TagScopeContext,
     ValidationResult,
 )
 from hindsight_api.extensions.tenant import (
@@ -114,6 +115,7 @@ __all__ = [
     "BankListResult",
     "BankListScope",
     "BankReadContext",
+    "TagScopeContext",
     "BankReadOperation",
     "BankWriteContext",
     "BankWriteOperation",
