@@ -6,10 +6,10 @@ background half of the retain, and a later question that never repeats the
 original wording gets those facts back.
 
 The assertions are deliberately total. With the LLM, the embedder and the
-reranker all stubbed, a recall is a pure function of the input — so the *whole*
-response is pinned, not just the presence of a keyword: the ranking, the four
-scores behind it, how a fact is rendered back into text, which envelope fields
-stay empty. A test that only checks "Berlin appears somewhere" passes just as
+reranker all stubbed, a recall is a pure function of the input and the clock — so
+the *whole* response is pinned, not just the presence of a keyword: the ranking,
+the four scores behind it, how a fact is rendered back into text, which envelope
+fields stay empty. A test that only checks "Berlin appears somewhere" passes just as
 happily when fusion inverts, the reranker stops contributing, or the temporal
 fields quietly stop being parsed.
 
@@ -98,6 +98,8 @@ async def test_a_retained_memory_comes_back_from_recall(client, llm, bank_id, se
     # <Year>)" taken from the wall clock, and while the month token never changes
     # the true cosine, it moves which vector slots pgvector sums in float32, so the
     # last ~8 digits shift from month to month. Hence a float32-sized tolerance.
+    # It used to be pinned at abs=1e-12 to the September value, which failed every
+    # run from October 1 onward (#5043).
     assert berlin.scores.semantic == pytest.approx(0.434659155, abs=1e-7)
     assert berlin.scores.reranker == pytest.approx(0.37416573867739417, abs=1e-12)
     assert berlin.scores.keyword == pytest.approx(0.30000001192092896, abs=1e-12)
