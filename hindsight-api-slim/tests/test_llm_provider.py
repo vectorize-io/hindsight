@@ -83,13 +83,21 @@ async def test_llm_api_methods():
     await llm.verify_connection()
 
     # Test 2: call() with plain text
+    #
+    # The budget is deliberately generous for a one-word answer: a reasoning model
+    # spends its thinking tokens out of the same `max_completion_tokens`, so a tight
+    # cap is exhausted before any visible content and the call fails with
+    # OutputTooLongError rather than returning a short answer. That is what made this
+    # test fail on every run against groq/openai/gpt-oss-20b, the one reasoning model
+    # in the acceptance matrix. 500 matches the tool-calling case below, which never
+    # hit it.
     response = (
         await llm.call(
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": "What is 2+2? Answer in one word."},
             ],
-            max_completion_tokens=50,
+            max_completion_tokens=500,
         )
     ).content
     assert response is not None, "call() returned None"
@@ -109,7 +117,8 @@ async def test_llm_api_methods():
                 {"role": "user", "content": "What is the capital of France?"},
             ],
             response_format=TestResponse,
-            max_completion_tokens=100,
+            # Same reasoning-token budget as test 2 above.
+            max_completion_tokens=500,
         )
     ).content
     assert isinstance(structured, TestResponse), f"Expected TestResponse, got {type(structured)}"
