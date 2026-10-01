@@ -1594,6 +1594,7 @@ async def _run_consolidation_job(
         "observations_merged": 0,
         "observations_deleted": 0,
         "memories_failed": 0,
+        "skipped": 0,
     }
     while True:
         # Cap fetch size by remaining round budget
@@ -1720,6 +1721,14 @@ async def _run_consolidation_job(
                         # scope; the ``consolidated_at`` stamp belongs to the last of them, so
                         # an earlier scope's write and the stamp never commit apart (#3876).
                         is_final_pass = pass_index == len(obs_tags_list) - 1
+                        # What the earlier scope passes already folded into observations. The final
+                        # pass is the only one that marks declined facts, and it cannot see this on
+                        # its own: a fact consumed by an earlier pass and skipped by the last pass is NOT declined.
+                        consumed_by_earlier_passes = {
+                            str(m["id"])
+                            for m, earlier in zip(sub_batch, sub_results)
+                            if earlier.get("action") != "skipped"
+                        }
                         pass_results, pass_deleted, pass_failed = await _process_memory_batch(
                             # Optional on the caller only because the engine clears its backend on close.
                             pool=cast("DatabaseBackend", pool),
@@ -1732,6 +1741,7 @@ async def _run_consolidation_job(
                             config=config,
                             obs_tags_override=obs_tags,
                             mark_consolidated_ids=sub_ids if is_final_pass else None,
+                            already_consumed_ids=consumed_by_earlier_passes,
                         )
                         sub_deleted += pass_deleted
                         if pass_failed:
@@ -1880,6 +1890,7 @@ async def _run_consolidation_job(
             cumulative_progress["observations_merged"] += local_stats["observations_merged"]
             cumulative_progress["observations_deleted"] += local_stats["observations_deleted"]
             cumulative_progress["memories_failed"] += local_stats["memories_failed"]
+            cumulative_progress["skipped"] += local_stats["skipped"]
             cum_processed = cumulative_progress["processed"]
             cum_snapshot = dict(cumulative_progress)
 
@@ -1927,6 +1938,7 @@ async def _run_consolidation_job(
                     "observations_merged": cum_snapshot["observations_merged"],
                     "observations_deleted": cum_snapshot["observations_deleted"],
                     "memories_failed": cum_snapshot["memories_failed"],
+                    "skipped": cum_snapshot["skipped"],
                 },
             )
 
@@ -2270,6 +2282,7 @@ async def _process_memory_batch(
     config: Any = None,
     obs_tags_override: list[str] | None = None,
     mark_consolidated_ids: list[Any] | None = None,
+    already_consumed_ids: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], int, bool]:
     """
     Process a batch of memories in a single LLM call.
@@ -2294,6 +2307,10 @@ async def _process_memory_batch(
             batch's write transaction, so the stamps share the fate of the observations
             derived from the same LLM response (#3876). None on a pass that is not the
             final one for these memories — the caller stamps once, on the last pass.
+        already_consumed_ids: Source facts an EARLIER scope pass of the same sub-batch already folded
+            into an observation. Only the final pass stamps, so only it can mark a fact as declined
+            (#5054), and it must not mark one that an earlier pass consumed just because this pass
+            wrote nothing for it.
     """
     # Map the source memories this batch consumes onto the consolidation trace.
     record_source_memory_ids([str(m["id"]) for m in memories])
@@ -2566,6 +2583,7 @@ async def _process_memory_batch(
     # bisects and retries them, and a stamp would exclude them from pending consolidation
     # for good. With neither writes nor stamps there is nothing to open a transaction for.
     stamp_ids = list(mark_consolidated_ids or []) if not llm_result.failed else []
+    skipped_ids: list[str] = []
     if prepared_deletes or prepared_updates or prepared_creates or stamp_ids:
         async with acquire_with_retry(pool) as conn:
             async with conn.transaction():
@@ -2646,14 +2664,29 @@ async def _process_memory_batch(
                 # excludes a stamped fact, so nothing would ever rebuild what the batch failed to
                 # write (#3876).
                 if stamp_ids:
+                    stamp_time = datetime.now(timezone.utc)
                     await get_memories().mark_consolidated(
                         conn=conn,
                         fq_table=fq_table,
                         bank_id=bank_id,
                         unit_ids=[str(mem_id) for mem_id in stamp_ids],
-                        when=datetime.now(timezone.utc),
+                        when=stamp_time,
                         failed=False,
                     )
+                    # A fact stamped here that no pass turned into an observation was declined, or its
+                    # writes were skipped (sources deleted mid-batch). Without this it looks exactly like
+                    # a fact an observation carries: out of rebuild for good, with no signal (#5054).
+                    # Same transaction as the stamp, so the two never disagree. A batch that was
+                    # discarded (#4831) or failed has no ``stamp_ids`` and so marks nothing.
+                    consumed = per_memory_created | per_memory_updated | (already_consumed_ids or set())
+                    skipped_ids = [str(mem_id) for mem_id in stamp_ids if str(mem_id) not in consumed]
+                    await get_memories().mark_consolidation_skipped(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=skipped_ids, when=stamp_time
+                    )
+
+    # Counted once the transaction has committed, so a batch that rolled back never inflates it.
+    if skipped_ids:
+        get_metrics_collector().record_consolidation_skipped_facts(len(skipped_ids))
 
     # Build per-memory result dicts for the stats tracker in the outer loop
     results: list[dict[str, Any]] = []

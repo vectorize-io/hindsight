@@ -327,7 +327,7 @@ async def delete_stale_observations(
         await conn.execute(
             f"""
             UPDATE {fq_table("memory_units")}
-            SET consolidated_at = NULL
+            SET consolidated_at = NULL, consolidation_skipped_at = NULL
             WHERE id = ANY($1::uuid[])
               AND fact_type IN ('experience', 'world')
             """,
@@ -495,7 +495,7 @@ async def restore_memory(*, conn, fq_table, bank_id: str, unit_id: str) -> Store
         )
     # Re-consolidate from scratch; links are rebuilt by graph maintenance.
     await conn.execute(
-        f"UPDATE {mu} SET consolidated_at = NULL, consolidation_failed_at = NULL, updated_at = now() "
+        f"UPDATE {mu} SET consolidated_at = NULL, consolidation_failed_at = NULL, consolidation_skipped_at = NULL, updated_at = now() "
         f"WHERE id = $1 AND bank_id = $2",
         str(unit_id),
         bank_id,
@@ -595,7 +595,7 @@ async def apply_edit(
         f"""
         UPDATE {mu}
         SET text = $3, context = $4, fact_type = $5, occurred_start = $6, occurred_end = $7,
-            event_date = $8, consolidated_at = NULL, consolidation_failed_at = NULL,
+            event_date = $8, consolidated_at = NULL, consolidation_failed_at = NULL, consolidation_skipped_at = NULL,
             edited_at = now(), updated_at = now(){sv_clause}{embedding_clause}
         WHERE id = $1 AND bank_id = $2
         """,

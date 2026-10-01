@@ -340,6 +340,13 @@ class MetricsCollectorBase:
         predates it must not kill the probe.
         """
 
+    def record_consolidation_skipped_facts(self, count: int):
+        """Record facts a consolidation pass consumed but wrote no observation for (#5054).
+
+        A no-op here rather than abstract, like ``record_loop_lag``: a collector that predates it
+        must not break consolidation.
+        """
+
     def record_consolidation_batch_failure(self, failure_class: str, error_type: str):
         """Record one consolidation LLM batch call that failed.
 
@@ -616,6 +623,15 @@ class MetricsCollector(MetricsCollectorBase):
                 "including those whose facts adaptive bisection later rescued"
             ),
             unit="calls",
+        )
+        # Facts consolidation consumed and stamped but wrote no observation for. They leave the
+        # pending set like any consolidated fact, so neither `pending_consolidation` nor
+        # `failed_consolidation` shows them; a restrictive observations mission can make this most
+        # of a bank's facts without any other signal (#5054).
+        self.consolidation_skipped_facts = self.meter.create_counter(
+            name="hindsight.consolidation.skipped_facts",
+            description="Facts a consolidation pass consumed but wrote no observation for",
+            unit="facts",
         )
         self.event_loop_stalls = self.meter.create_counter(
             name="hindsight.event_loop.stalls",
@@ -937,6 +953,10 @@ class MetricsCollector(MetricsCollectorBase):
         self.consolidation_batch_failures.add(
             1, {"failure_class": failure_class, "error_type": error_type, **self._tenant_attrs()}
         )
+
+    def record_consolidation_skipped_facts(self, count: int):
+        """Record facts a consolidation pass consumed but wrote no observation for."""
+        self.consolidation_skipped_facts.add(count, self._tenant_attrs())
 
     def _setup_process_metrics(self):
         """Set up observable gauges for process metrics."""

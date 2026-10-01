@@ -1916,6 +1916,28 @@ class MemoriesExtension(Extension, ABC):
         ``updated_at`` alone (see :data:`META_UPDATED_AT`).
         """
 
+    async def mark_consolidation_skipped(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        unit_ids: list[str],
+        when: datetime,
+    ) -> None:
+        """Record that consolidation consumed these facts and left them without an observation (#5054).
+
+        Written beside the ``mark_consolidated`` stamp so a fact the model declined stays
+        distinguishable from one folded into an observation; it changes nothing about what is
+        pending. Scheduler state like :meth:`mark_consolidated`: leave ``updated_at`` alone.
+        Clearing the marker is part of ``mark_consolidated(when=None)``.
+
+        Gated like ``find_failed_consolidation``: the SQL store keeps the marker in a column, and
+        a store that keeps memories elsewhere and has no such marker can leave this as a no-op. The
+        ``hindsight.consolidation.skipped_facts`` counter is recorded by the consolidator regardless,
+        so for such a store it counts facts no marker was written for.
+        """
+
     @abstractmethod
     async def entity_memory_counts(
         self,

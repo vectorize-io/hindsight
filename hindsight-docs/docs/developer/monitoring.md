@@ -173,6 +173,7 @@ sum(rate(hindsight_retain_documents_total{outcome="no_facts"}[15m]))
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
 | `hindsight.consolidation.batch_failures` | Counter | failure_class, error_type | Consolidation LLM batch calls that failed, including those whose facts were later recovered |
+| `hindsight.consolidation.skipped_facts` | Counter | tenant attributes only | Facts a consolidation pass consumed but wrote no observation for |
 
 **Labels:**
 - `failure_class`: How the call was treated (`fail_fast` — the model returned something the response schema rejects, so a re-send of the same payload cannot help; `retry` — transport-shaped, an unchanged re-send may succeed; `propagate` — not a batch failure, re-raised to the task handler)
@@ -201,6 +202,21 @@ The same count is reported per run as `llm_batch_failures` in the consolidation
 operation's result, and the consolidation log summary prints a warning line
 whenever it is non-zero. Both count *attempts* — one batch call retried three times
 contributes three — so they are not bounded by the number of batches in the run.
+
+`hindsight.consolidation.skipped_facts` is a third, separate signal. A fact the model
+declines (no durable knowledge, or a restrictive `observations_mission`) is still marked
+consolidated, so it is neither pending nor failed and no other metric or bank stat shows
+it. The counter is incremented, once the batch that marked them has committed, by the number
+of facts that ended consolidation (across all of their scope passes) without an observation.
+Compare it with the facts you retain to see what share of them consolidation is dropping:
+
+```promql
+sum(rate(hindsight_consolidation_skipped_facts_total[1h]))
+```
+
+A share that is high for your data usually means the observations mission is too narrow.
+The per-fact record is `consolidation_skipped_at` on the memory unit, which is cleared when
+the fact is requeued for consolidation.
 
 ### HTTP Request Metrics
 

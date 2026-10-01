@@ -483,11 +483,49 @@ async def mark_consolidated(
         return
     column = "consolidation_failed_at" if failed else "consolidated_at"
     guard = "" if when is not None else " AND fact_type IN ('experience', 'world')"
+    # A requeued fact is up for consolidation again, so the verdict that it was declined last
+    # time (``consolidation_skipped_at``, #5054) no longer holds. Clearing it here covers every
+    # requeue that goes through this function. The sites that clear ``consolidated_at`` with their
+    # own SQL reset it themselves: ``writes.py`` (edit, revert, observation delete),
+    # ``documents.py`` (retag) and ``engine_curation.py`` (bank rebuild, retry, per-fact requeue).
+    # A new site that clears ``consolidated_at`` must clear the marker too.
+    clear_skipped = ", consolidation_skipped_at = NULL" if when is None and not failed else ""
     await conn.execute(
         f"""
         UPDATE {fq_table("memory_units")}
-        SET {column} = $1
+        SET {column} = $1{clear_skipped}
         WHERE bank_id = $2 AND id = ANY($3::uuid[]){guard}
+        """,
+        when,
+        bank_id,
+        ids,
+    )
+
+
+async def mark_consolidation_skipped(
+    *,
+    conn,
+    fq_table: Callable[[str], str],
+    bank_id: str,
+    unit_ids: list[str],
+    when: datetime,
+) -> None:
+    """Record that consolidation consumed these facts and left them without an observation (#5054).
+
+    Written beside the ``consolidated_at`` stamp, in the same transaction, so a fact the model
+    declined stays distinguishable from one folded into an observation. It changes nothing about
+    what is pending: the stamp alone still takes the fact out of the queue.
+
+    Scheduler state like :func:`mark_consolidated`: ``updated_at`` is left alone.
+    """
+    ids = _as_uuids(unit_ids)
+    if not ids:
+        return
+    await conn.execute(
+        f"""
+        UPDATE {fq_table("memory_units")}
+        SET consolidation_skipped_at = $1
+        WHERE bank_id = $2 AND id = ANY($3::uuid[])
         """,
         when,
         bank_id,
