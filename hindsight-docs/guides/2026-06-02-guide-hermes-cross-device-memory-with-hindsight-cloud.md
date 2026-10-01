@@ -37,7 +37,8 @@ Cross-device memory solves that by moving the bank behind the agent instead of i
 The easiest path is the Hermes memory setup wizard:
 
 ~~~bash
-hermes memory setup
+hermes plugins install hindsight
+hermes memory setup           # select "hindsight"
 ~~~
 
 Choose **Hindsight**, then choose **Cloud**.

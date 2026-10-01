@@ -133,7 +133,8 @@ That is why Hindsight is a better fit when Hermes is just one part of a larger a
 Hermes exposes provider setup through the memory wizard:
 
 ```bash
-hermes memory setup
+hermes plugins install hindsight
+hermes memory setup           # select "hindsight"
 ```
 
 Then select `holographic`.
@@ -152,7 +153,8 @@ That local-first setup is part of the provider's appeal.
 To use Hindsight instead:
 
 ```bash
-hermes memory setup
+hermes plugins install hindsight
+hermes memory setup           # select "hindsight"
 ```
 
 Then select `hindsight`.
