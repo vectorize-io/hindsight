@@ -12,7 +12,16 @@ from agent.secret_scope import get_secret
 from hermes_cli.secret_prompt import masked_secret_prompt
 
 from . import templates as _hs_templates
-from .embedded import _embedded_profile_env_path, _load_simple_env, _materialize_embedded_profile_env
+from .embedded import (
+    _TENANT_API_KEY_ENV,
+    _daemon_is_running,
+    _embedded_profile_env_path,
+    _load_simple_env,
+    _materialize_embedded_profile_env,
+    _restore_profile_env,
+    _stop_daemon,
+    _tenant_key_changed,
+)
 from .settings import (
     _DEFAULT_API_URL,
     _DEFAULT_IDLE_TIMEOUT,
@@ -108,6 +117,44 @@ def _check_mode_dependencies(mode: str) -> None:
     print(f" {_local_runtime_hint(status.reason).strip()}")
 
 
+def _apply_embedded_profile_env(provider_config: dict, hermes_home: str, hermes_env: Path, env_writes: dict) -> None:
+    """Write the local-embedded profile env, restarting a running daemon whose tenant auth changed."""
+    materialized_config = dict(provider_config)
+    with contextlib.suppress(Exception):
+        materialized_config = json.loads(
+            (Path(hermes_home) / "hindsight" / "config.json").read_text(encoding="utf-8-sig")
+        )
+    llm_api_key = (
+        env_writes.get("HINDSIGHT_LLM_API_KEY", "")
+        or _load_simple_env(hermes_env).get("HINDSIGHT_LLM_API_KEY", "")
+        or _load_simple_env(_embedded_profile_env_path(materialized_config)).get("HINDSIGHT_API_LLM_API_KEY", "")
+    )
+    # Same precedence as the runtime (config, then ~/.hermes/.env), so the wizard and the next start
+    # agree on the key. None falls through to the config/secret-scope/profile-file resolver, which
+    # keeps a rewrite from dropping a key the wizard cannot see.
+    has_config_key = bool(materialized_config.get("tenant_api_key") or materialized_config.get("tenantApiKey"))
+    tenant_api_key = None if has_config_key else _load_simple_env(hermes_env).get(_TENANT_API_KEY_ENV, "") or None
+    profile_env = _embedded_profile_env_path(materialized_config)
+    before_text = profile_env.read_text(encoding="utf-8") if profile_env.exists() else None
+    before = _load_simple_env(profile_env)
+    try:
+        _materialize_embedded_profile_env(
+            materialized_config, llm_api_key=llm_api_key or None, tenant_api_key=tenant_api_key
+        )
+    except ValueError as exc:
+        print(f"  ⚠ Embedded daemon profile not updated: {exc}")
+        return
+    # A running daemon keeps the auth it booted with, and the next start would find the file
+    # already matching and reuse it: restart it now so the new key (or its removal) takes effect.
+    profile = str(materialized_config.get("profile", "hermes") or "hermes")
+    if not (_tenant_key_changed(before, _load_simple_env(profile_env)) and _daemon_is_running(profile)):
+        return
+    if not _stop_daemon(profile) or _daemon_is_running(profile):
+        print("  ⚠ Could not restart the running Hindsight daemon; stop it, then re-run setup to apply the API key.")
+        # Put the old file back so the next start still sees the drift and retries the restart.
+        _restore_profile_env(profile_env, before_text)
+
+
 def run_setup(provider, hermes_home: str, config: dict) -> None:
     """Interactive wizard. Installs nothing: dependencies arrive through Hermes' package manager."""
     from hermes_cli.config import save_config
@@ -188,17 +235,7 @@ def run_setup(provider, hermes_home: str, config: dict) -> None:
         )
 
     if mode == "local_embedded":
-        materialized_config = dict(provider_config)
-        with contextlib.suppress(Exception):
-            materialized_config = json.loads(
-                (Path(hermes_home) / "hindsight" / "config.json").read_text(encoding="utf-8-sig")
-            )
-        llm_api_key = (
-            env_writes.get("HINDSIGHT_LLM_API_KEY", "")
-            or _load_simple_env(hermes_env).get("HINDSIGHT_LLM_API_KEY", "")
-            or _load_simple_env(_embedded_profile_env_path(materialized_config)).get("HINDSIGHT_API_LLM_API_KEY", "")
-        )
-        _materialize_embedded_profile_env(materialized_config, llm_api_key=llm_api_key or None)
+        _apply_embedded_profile_env(provider_config, hermes_home, hermes_env, env_writes)
 
     print(f"\n  ✓ Hindsight memory configured ({mode} mode)")
     if env_writes:
