@@ -6873,10 +6873,10 @@ class MemoryEngine(MemoryEngineInterface):
             # Small batch - use internal method directly (single sub-batch).
             set_stage("batch_retain.sub_batch.1")
             # One sub-batch has no finished siblings to keep, so a failure ABORTS rather than
-            # commits. Committing here would store the document with its full content hash and
-            # none of its facts, and a retry would then read the hash as unchanged and skip
-            # extraction — the retain could never succeed. Abort leaves no buffered document
-            # behind, so the retry does a full retain.
+            # commits. Committing here would store the document's chunks with none of their facts,
+            # and the retry's delta check would find every chunk hash unchanged and extract
+            # nothing — the retain could never succeed. Abort leaves no buffered document behind,
+            # so the retry does a full retain.
             try:
                 sub_batch_outcome = await self._retain_batch_async_internal(
                     bank_id=bank_id,

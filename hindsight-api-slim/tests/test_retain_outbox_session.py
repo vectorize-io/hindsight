@@ -113,7 +113,7 @@ async def test_completion_counts_committed_document(
         with pytest.raises(RuntimeError, match=f"{failure} failed"):
             await execution
         # A failed single-batch retain aborts instead of committing: committing would store the
-        # document's content hash with none of its facts, and the retry would skip it as unchanged.
+        # document's chunks with none of their facts, and the retry would skip them as unchanged.
         # A failed commit was already the commit. Either way no success event may escape.
         assert steps == (["abort"] if failure == "retain" else ["commit"])
         engine._webhook_manager.fire_event_with_conn.assert_not_awaited()
