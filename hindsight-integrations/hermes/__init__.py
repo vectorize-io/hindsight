@@ -1191,13 +1191,19 @@ class HindsightMemoryProvider(MemoryProvider):
 
             profile = self._config.get("profile", "hermes")
             # Profile .env out of sync with config -> rewrite and restart a running daemon.
+            # Compare only the keys this build OWNS: the standalone hindsight-embed
+            # manager appends its own keys to the file (HINDSIGHT_API_PORT at every
+            # daemon boot), so a whole-file comparison reads that as permanent drift
+            # and restarts a healthy daemon on every session start.
             # Fail-closed on key material: when this process holds no key (no secret
             # scope on this thread) but the file does, a rewrite would destroy the
             # only key copy the daemon subprocess can read. Skip the write AND the
             # stop: restarting the daemon now would boot it keyless, which is the
             # exact outage this guards against. _get_client() below sends the daemon
             # whatever key WAS available (config, secret scope, or the file itself).
-            if _load_simple_env(_embedded_profile_env_path(self._config)) != _build_embedded_profile_env(self._config):
+            managed_env = _build_embedded_profile_env(self._config)
+            on_disk_env = _load_simple_env(_embedded_profile_env_path(self._config))
+            if any(on_disk_env.get(key) != value for key, value in managed_env.items()):
                 if _may_rewrite_profile_env(self._config):
                     _materialize_embedded_profile_env(self._config)
                     if _daemon_is_running(profile):
