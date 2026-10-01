@@ -485,3 +485,34 @@ class TestOperationCleanupJob:
         await loop._run_operation_cleanup(self._cfg(batch=250))
 
         assert engine.purge_expired_export_archives.await_args.kwargs["batch_size"] == 250
+
+
+@pytest.mark.asyncio
+async def test_reconcile_finds_a_store_owned_banks_backlog(memory: MemoryEngine, request_context, monkeypatch):
+    """The discovery routine reads `memory_units`, which a store-owned bank leaves empty, so it
+    never names one. Its backlog has to come from the store, or a fact requeued by
+    `recover_consolidation` waits forever."""
+    from hindsight_api.engine.memories import set_memories
+    from tests.test_memories_extension import InMemoryMemories, _seed
+
+    store = InMemoryMemories({})
+    set_memories(store)
+    try:
+        bank = await _make_bank(
+            memory, request_context, "store", '{"enable_observations": true, "enable_auto_consolidation": true}'
+        )
+        await _seed(store, bank, text="waiting for consolidation", fact_type="world")
+
+        submitted: list[str] = []
+
+        async def _record(*, bank_id, request_context, observation_scopes=None):
+            submitted.append(bank_id)
+            return {"operation_id": str(uuid.uuid4())}
+
+        monkeypatch.setattr(memory, "submit_async_consolidation", _record)
+
+        await MaintenanceLoop(memory)._run_reconcile()
+    finally:
+        set_memories(None)
+
+    assert bank in submitted
