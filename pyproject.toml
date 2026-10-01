@@ -5,4 +5,8 @@ members = ["hindsight-all", "hindsight-api", "hindsight-api-slim", "hindsight-al
 # Allow uv to search all configured indexes for packages, not just the first one
 # This prevents dependency resolution failures when using pytorch index + PyPI
 index-strategy = "unsafe-best-match"
+# The workspace still supports Python 3.10 (hindsight-clients/python), and onnxruntime stopped
+# publishing 3.10 wheels after 1.20.1, which has no 3.14 wheels; without this fork the lock holds
+# 1.20.1 everywhere and the server cannot install on 3.14 (markitdown -> magika -> onnxruntime).
+constraint-dependencies = ["onnxruntime>=1.24.4; python_version >= '3.14'"]
 dev-dependencies = []
