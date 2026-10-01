@@ -9602,6 +9602,7 @@ def _register_routes(app: FastAPI):
                 bank_id=bank_id,
                 request_context=request_context,
                 observation_scopes=observation_scopes,
+                caller_requested=True,
             )
             return ConsolidationResponse(
                 operation_id=result["operation_id"],

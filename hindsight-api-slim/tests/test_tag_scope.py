@@ -11,7 +11,7 @@ import uuid
 
 import pytest
 
-from hindsight_api.engine.memory_engine import _scope_mental_model_trigger
+from hindsight_api.engine.memory_engine import _resolve_refresh_tag_filtering, _scope_mental_model_trigger
 from hindsight_api.engine.reflect.tools import tool_expand, tool_read_mental_models
 from hindsight_api.engine.schema import fq_store_table_explicit
 from hindsight_api.engine.search.tags import TagGroupLeaf, tags_satisfy_groups, tags_writable
@@ -62,23 +62,26 @@ def test_tags_satisfy_groups():
 
 
 def test_scope_mental_model_trigger_ands_the_scope_into_the_refresh_filter():
-    # Flat tags become a leaf under their resolved mode (all_strict by default), then the scope.
-    scoped = _scope_mental_model_trigger(["user:kate"], {"mode": "delta"}, DAN_SCOPE)
+    # The scope is recorded on its own, and the refresh AND-s it onto the model's own filter.
+    scoped = _scope_mental_model_trigger({"mode": "delta"}, DAN_SCOPE)
     assert scoped == {
         "mode": "delta",
-        "tag_groups": [
-            {"tags": ["user:kate"], "match": "all_strict", "resolve": "exact"},
-            {"tags": ["user:dan", "kind:rule"], "match": "any_strict", "resolve": "exact"},
-        ],
+        "scope_tag_groups": [{"tags": ["user:dan", "kind:rule"], "match": "any_strict", "resolve": "exact"}],
     }
     # Re-applying the same scope does not stack it.
-    assert _scope_mental_model_trigger(["user:kate"], scoped, DAN_SCOPE) == scoped
-    # An untagged model (the whole bank) is narrowed to the scope alone.
-    assert _scope_mental_model_trigger([], None, DAN_SCOPE) == {
-        "tag_groups": [{"tags": ["user:dan", "kind:rule"], "match": "any_strict", "resolve": "exact"}]
-    }
+    assert _scope_mental_model_trigger(scoped, DAN_SCOPE) == scoped
     # No scope: the trigger is left exactly as it was.
-    assert _scope_mental_model_trigger(["user:kate"], {"mode": "delta"}, None) == {"mode": "delta"}
+    assert _scope_mental_model_trigger({"mode": "delta"}, None) == {"mode": "delta"}
+
+    # Flat tags become a leaf under their resolved mode (all_strict by default), then the scope.
+    resolved = _resolve_refresh_tag_filtering(["kind:rule"], scoped)
+    assert resolved.tags is None
+    assert resolved.tag_groups == [TagGroupLeaf(tags=["kind:rule"], match="all_strict"), *DAN_SCOPE]
+    # Retagging the model changes what it reads: the scope did not freeze the old tags.
+    retagged = _resolve_refresh_tag_filtering(["user:dan"], scoped)
+    assert retagged.tag_groups == [TagGroupLeaf(tags=["user:dan"], match="all_strict"), *DAN_SCOPE]
+    # An untagged model (the whole bank) is narrowed to the scope alone.
+    assert _resolve_refresh_tag_filtering([], scoped).tag_groups == DAN_SCOPE
 
 
 @pytest.fixture
@@ -263,9 +266,9 @@ async def test_mental_models_are_confined(memory, scoped_bank):
         trigger={"tags_match": "any"},
         request_context=dan,
     )
-    assert shared["trigger"]["tag_groups"] == [
-        {"tags": ["kind:rule"], "match": "any", "resolve": "exact"},
-        {"tags": ["user:dan", "kind:rule"], "match": "any_strict", "resolve": "exact"},
+    assert _resolve_refresh_tag_filtering(shared["tags"], shared["trigger"]).tag_groups == [
+        TagGroupLeaf(tags=["kind:rule"], match="any"),
+        *DAN_SCOPE,
     ]
 
 
@@ -489,3 +492,160 @@ async def test_writes_are_confined_to_the_write_scope(memory, scoped_bank):
     assert refused(e) == 403
     with pytest.raises(OperationValidationError):
         await memory.update_knowledge_node(scoped_bank, page["id"], name="Dan's page", request_context=dan)
+
+
+@pytest.mark.asyncio
+async def test_every_other_surface_respects_both_scopes(memory, scoped_bank):
+    """The review's checklist: each remaining read and write a scoped caller can reach."""
+    admin = RequestContext()
+    dan = RequestContext(api_key="dan")
+    kate = RequestContext(api_key="kate")
+    memory._operation_validator.scopes["kate"] = [TagGroupLeaf(tags=["user:kate", "kind:rule"], match="any_strict")]
+    memory._operation_validator.writes = {"dan": ["user:dan", "topic:*"], "kate": ["user:kate", "kind:rule"]}
+    everything = await memory.list_memory_units(scoped_bank, request_context=admin)
+    rule = next(i for i in everything["items"] if "Fridays" in i["text"] and i["fact_type"] == "world")
+
+    # Graph and timeseries count only what Dan can read.
+    graph = await memory.get_graph_data(scoped_bank, request_context=dan)
+    graph_text = str(graph)
+    assert "interviewing" not in graph_text and "Fridays" in graph_text
+    timeseries = await memory.get_memories_timeseries(scoped_bank, period="7d", request_context=dan)
+    admin_series = await memory.get_memories_timeseries(scoped_bank, period="7d", request_context=admin)
+    assert str(timeseries) != str(admin_series), "Kate's private memories must not be counted for Dan"
+
+    # Documents: a document Dan can read but not write; new tags must be writable too.
+    with pytest.raises(OperationValidationError) as e:
+        await memory.update_document("dan-notes", scoped_bank, tags=["user:dan", "kind:rule"], request_context=dan)
+    assert e.value.status_code == 403
+    with pytest.raises(OperationValidationError) as e:
+        await memory.reprocess_document(scoped_bank, "kate-sync", request_context=dan)
+    assert e.value.status_code == 404
+    with pytest.raises(OperationValidationError) as e:
+        await memory.clear_observations_for_memory(scoped_bank, rule["id"], request_context=dan)
+    assert e.value.status_code == 403
+
+    # The async and file retain paths check before queueing: the worker runs unscoped.
+    with pytest.raises(OperationValidationError):
+        await memory.submit_async_retain(
+            bank_id=scoped_bank, contents=[{"content": "x", "tags": ["kind:rule"]}], request_context=dan
+        )
+    with pytest.raises(OperationValidationError):
+        await memory.submit_async_file_retain(
+            bank_id=scoped_bank,
+            file_items=[{"file": None, "document_id": "kate-sync", "tags": ["user:dan"]}],
+            document_tags=None,
+            request_context=dan,
+        )
+    # Explicit observation scopes are writes too; "shared" writes untagged observations.
+    for scopes in ("shared", [["user:kate"]]):
+        with pytest.raises(OperationValidationError):
+            await memory.retain_batch_async(
+                bank_id=scoped_bank,
+                contents=[{"content": "x", "tags": ["user:dan"], "observation_scopes": scopes}],
+                request_context=dan,
+            )
+
+    # The operation payload is the raw request: never shown to a scoped caller.
+    op = await memory.submit_async_retain(
+        bank_id=scoped_bank,
+        contents=[{"content": "Kate's private retain", "tags": ["user:kate"]}],
+        request_context=kate,
+    )
+    status = await memory.get_operation_status(
+        scoped_bank, op["operation_id"], request_context=dan, include_payload=True
+    )
+    assert not status.get("task_payload")
+
+    # Whole-bank operations cannot be narrowed to a scope.
+    for attempt in (
+        memory.submit_bank_export_async(scoped_bank, request_context=dan),
+        memory.delete_bank(scoped_bank, request_context=dan),
+        memory.update_bank_config(scoped_bank, {"retain_mission": "x"}, request_context=dan),
+        memory.update_bank(scoped_bank, mission="x", request_context=dan),
+        memory.update_bank_disposition(
+            scoped_bank, {"skepticism": 3, "literalism": 3, "empathy": 3}, request_context=dan
+        ),
+        memory.submit_async_consolidation(bank_id=scoped_bank, request_context=dan, caller_requested=True),
+        memory.retry_failed_consolidation(scoped_bank, request_context=dan),
+    ):
+        with pytest.raises(OperationValidationError) as e:
+            await attempt
+        assert e.value.status_code == 403
+
+    # Directives: bank-wide (untagged) ones apply to everyone; tagged ones follow the scopes.
+    await memory.create_directive(scoped_bank, "Be brief", "Answer briefly.", request_context=admin)
+    secret = await memory.create_directive(
+        scoped_bank, "Kate only", "Mention the interview.", tags=["user:kate"], request_context=admin
+    )
+    names = {d["name"] for d in (await memory.list_directives(scoped_bank, request_context=dan)).items}
+    assert names == {"Be brief"}
+    assert await memory.get_directive(scoped_bank, secret["id"], request_context=dan) is None
+    with pytest.raises(OperationValidationError):
+        await memory.create_directive(scoped_bank, "Everyone", "Say hi.", request_context=dan)
+    assert await memory.delete_directive(scoped_bank, secret["id"], request_context=dan) is False
+
+    # A shared model Dan can read: he cannot refresh it (a refresh rewrites it), nor retag it away.
+    rules = await memory.create_mental_model(
+        scoped_bank, "Ad rules", "What are the rules?", "", tags=["kind:rule"], request_context=kate
+    )
+    with pytest.raises(OperationValidationError) as e:
+        await memory.submit_async_refresh_mental_model(scoped_bank, rules["id"], request_context=dan)
+    assert e.value.status_code == 403
+    # His own model can be retagged, and the refresh then reads the new tags.
+    own = await memory.create_mental_model(
+        scoped_bank, "Mine", "What am I doing?", "", tags=["user:dan"], request_context=dan
+    )
+    retagged = await memory.update_mental_model(
+        scoped_bank, own["id"], tags=["user:dan", "topic:ads"], request_context=dan
+    )
+    assert retagged is not None
+    resolved = _resolve_refresh_tag_filtering(retagged["tags"], retagged["trigger"])
+    assert TagGroupLeaf(tags=["user:dan", "topic:ads"], match="all_strict") in resolved.tag_groups
+
+    # A folder holding a page Dan can only read: renaming or moving into it is refused.
+    folder = await memory.create_knowledge_folder(scoped_bank, "Shared", request_context=admin)
+    await memory.create_knowledge_page(
+        scoped_bank, "Rules page", "q", "", parent_id=folder["id"], tags=["kind:rule"], request_context=kate
+    )
+    my_page = await memory.create_knowledge_page(
+        scoped_bank, "My page", "q", "", tags=["user:dan"], request_context=dan
+    )
+    with pytest.raises(OperationValidationError) as e:
+        await memory.update_knowledge_node(scoped_bank, folder["id"], name="Dan's folder", request_context=dan)
+    assert e.value.status_code == 403
+    with pytest.raises(OperationValidationError) as e:
+        await memory.update_knowledge_node(scoped_bank, my_page["id"], parent_id=folder["id"], request_context=dan)
+    assert e.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_the_default_template_applies_whole_when_a_scoped_caller_creates_the_bank(memory, monkeypatch):
+    """The template is the server's, not the caller's: its untagged model and directive must not
+    be refused because the caller who happened to create the bank is scoped."""
+    from hindsight_api.config import _get_raw_config
+
+    monkeypatch.setattr(
+        _get_raw_config(),
+        "default_bank_template",
+        {
+            "version": "1",
+            "mental_models": [{"id": "team-overview", "name": "Team overview", "source_query": "What is the team?"}],
+            "directives": [{"name": "Be brief", "content": "Answer briefly."}],
+        },
+    )
+    bank_id = f"tag-scope-template-{uuid.uuid4().hex[:8]}"
+    original = memory._operation_validator
+    memory._operation_validator = _ScopeByApiKey({"dan": DAN_SCOPE}, writes={"dan": ["user:dan"]})
+    admin = RequestContext()
+    try:
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "Dan's first note.", "tags": ["user:dan"]}],
+            request_context=RequestContext(api_key="dan"),
+        )
+        assert await memory.get_mental_model(bank_id, "team-overview", request_context=admin) is not None
+        names = {d["name"] for d in (await memory.list_directives(bank_id, request_context=admin)).items}
+        assert names == {"Be brief"}
+    finally:
+        memory._operation_validator = original
+        await memory.delete_bank(bank_id, request_context=admin)

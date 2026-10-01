@@ -932,13 +932,17 @@ class OperationValidatorExtension(Extension, ABC):
         scope but never widen it:
 
         - filtered reads (recall, reflect and its tools, memory / document /
-          mental-model lists, observation scopes, tag lists, graph, timeseries)
-          only see rows inside the scope;
+          mental-model lists, observation scopes, tag lists, graph, timeseries,
+          entities, the knowledge-base tree, search and export) only see rows
+          inside the scope; directives keep applying when untagged;
         - reads and writes of one item by id (a memory, a document and its
-          chunks, a mental model) answer 404 when the item's tags fall outside it;
-        - a mental model created or updated by the caller stores the scope in its
-          refresh filter, so it can never be built from memories the caller could
-          not read itself.
+          chunks, a mental model or knowledge node, a directive) answer 404 when
+          the item's tags fall outside it;
+        - a mental model created or updated by the caller records the scope in its
+          trigger (``scope_tag_groups``), which every refresh AND-s in, so it can
+          never be built from memories the caller could not read itself;
+        - whole-bank operations (export, clone, import, bank-wide clears, deleting
+          the bank, changing its config) are refused (403): they cannot be narrowed.
 
         A ``_strict`` match is almost always what you want: the non-strict modes
         also admit untagged rows, and an untagged mental model is built from the
@@ -967,15 +971,19 @@ class OperationValidatorExtension(Extension, ABC):
         may write; the engine then refuses (403) any write that would produce or touch a
         tag outside them:
 
-        - a retain whose item or document tags fall outside them, or whose retain
-          strategy has an entity label with ``tag: true`` that could tag a fact outside
-          them (checked before extraction, so a refused retain costs no LLM call);
+        - a retain (text or files) whose item or document tags fall outside them, whose
+          explicit ``observation_scopes`` do, or whose retain strategy has an entity label
+          with ``tag: true`` that could tag a fact outside them (checked before
+          extraction, so a refused retain costs no LLM call);
         - editing, invalidating or clearing the observations of a memory, and updating,
           reprocessing or deleting a document, whose tags fall outside them;
-        - creating, updating, clearing or deleting a mental model or knowledge page whose
-          tags fall outside them (including the tags it is given).
+        - creating, updating, refreshing, clearing or deleting a mental model or
+          knowledge page whose tags fall outside them (including the tags it is
+          given), and moving a knowledge node into a folder that holds such pages;
+        - creating, updating or deleting a directive whose tags fall outside them.
 
-        An untagged item counts as outside any scope: it belongs to everyone.
+        An untagged item counts as outside any scope: it belongs to everyone. As with
+        the read scope, whole-bank operations are refused to a write-scoped caller.
 
         Return None (the default) to leave writes unrestricted.
         """

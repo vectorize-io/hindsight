@@ -48,6 +48,9 @@ class _Validator:
 
     def __getattr__(self, name):
         async def permissive(*a, **k):
+            # The tag-scope hooks answer with a scope, not a verdict: None means unrestricted.
+            if name.startswith("resolve_"):
+                return None
             return ValidationResult(allowed=True)
 
         return permissive

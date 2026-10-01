@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..retain.types import EmbeddingLike, EntityResolutionResult
 from ..schema import fq_store_table, fq_store_table_explicit
-from ..search.tags import TagsMatch
+from ..search.tags import TagGroup, TagsMatch
 from .base import (
     AttachmentRef,
     BankContentCounts,
@@ -397,7 +397,7 @@ class PostgresMemories(MemoriesExtension):
         pattern: str | None = None,
         limit: int = 100,
         offset: int = 0,
-        tag_groups: list | None = None,
+        tag_groups: list[TagGroup] | None = None,
     ) -> dict[str, Any]:
         return await reads.list_tags(
             conn=conn,
@@ -544,7 +544,7 @@ class PostgresMemories(MemoriesExtension):
         time_field: str,
         trunc: str,
         since: datetime,
-        tag_groups: list | None = None,
+        tag_groups: list[TagGroup] | None = None,
     ) -> list[dict[str, Any]]:
         return await counts.memories_timeseries(
             conn=conn,
@@ -557,7 +557,14 @@ class PostgresMemories(MemoriesExtension):
         )
 
     async def observation_scope_counts(
-        self, *, conn, fq_table, bank_id: str, limit: int = 100, offset: int = 0, tag_groups: list | None = None
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        limit: int = 100,
+        offset: int = 0,
+        tag_groups: list[TagGroup] | None = None,
     ) -> dict[str, Any]:
         return await counts.observation_scope_counts(
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, limit=limit, offset=offset, tag_groups=tag_groups
@@ -597,7 +604,7 @@ class PostgresMemories(MemoriesExtension):
         entity_id: str | None = None,
         tags: list[str] | None = None,
         tags_match: TagsMatch = "any",
-        tag_groups: list | None = None,
+        tag_groups: list[TagGroup] | None = None,
         created_before: datetime | None = None,
         time_field: str | None = None,
         start_date: datetime | None = None,
@@ -732,7 +739,7 @@ class PostgresMemories(MemoriesExtension):
         chunk_id: str | None = None,
         tags: list[str] | None = None,
         tags_match: TagsMatch = "all_strict",
-        tag_groups: list | None = None,
+        tag_groups: list[TagGroup] | None = None,
         limit: int = 1000,
     ) -> dict[str, Any]:
         return await graph.graph_units(
@@ -967,7 +974,7 @@ class PostgresMemories(MemoriesExtension):
         search_query: str | None,
         tags: list[str] | None,
         tags_match: TagsMatch,
-        tag_groups: list | None,
+        tag_groups: list[TagGroup] | None,
         time_field: str | None,
         start_date: datetime | None,
         end_date: datetime | None,

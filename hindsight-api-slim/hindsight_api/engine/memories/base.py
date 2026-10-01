@@ -50,7 +50,7 @@ from ...extensions.base import Extension
 # rather than `str` so a store implementing this seam is checked against the modes that
 # actually exist -- the SQL builders below take this exact type, and a bare `str` made
 # every hop between them unverifiable.
-from ..search.tags import TagsMatch, tag_filter_active
+from ..search.tags import TagGroup, TagsMatch, tag_filter_active
 from ..search.types import RetrievalResult
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -1415,7 +1415,7 @@ class MemoriesExtension(Extension, ABC):
         search_query: "str | None" = None,
         tags: "list[str] | None" = None,
         tags_match: TagsMatch = "any_strict",
-        tag_groups: "list | None" = None,
+        tag_groups: "list[TagGroup] | None" = None,
         time_field: str | None = None,
         start_date: "datetime | None" = None,
         end_date: "datetime | None" = None,
@@ -1820,7 +1820,7 @@ class MemoriesExtension(Extension, ABC):
         pattern: str | None = None,
         limit: int = 100,
         offset: int = 0,
-        tag_groups: "list | None" = None,
+        tag_groups: "list[TagGroup] | None" = None,
     ) -> dict[str, Any]:
         """One page of a bank's tag histogram, filtered/sorted/paged by the store.
 
@@ -2124,7 +2124,7 @@ class MemoriesExtension(Extension, ABC):
         time_field: str,
         trunc: str,
         since: datetime,
-        tag_groups: "list | None" = None,
+        tag_groups: "list[TagGroup] | None" = None,
     ) -> list[dict[str, Any]]:
         """``[{"bucket": datetime, "fact_type": str, "count": int}]`` since ``since``.
 
@@ -2136,7 +2136,14 @@ class MemoriesExtension(Extension, ABC):
         raise NotImplementedError
 
     async def observation_scope_counts(
-        self, *, conn, fq_table, bank_id: str, limit: int = 100, offset: int = 0, tag_groups: "list | None" = None
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        limit: int = 100,
+        offset: int = 0,
+        tag_groups: "list[TagGroup] | None" = None,
     ) -> dict[str, Any]:
         """One page of the observation scope histogram, paged by the store.
 
@@ -2172,7 +2179,7 @@ class MemoriesExtension(Extension, ABC):
         entity_id: str | None = None,
         tags: list[str] | None = None,
         tags_match: TagsMatch = "any",
-        tag_groups: "list | None" = None,
+        tag_groups: "list[TagGroup] | None" = None,
         created_before: "datetime | None" = None,
         time_field: str | None = None,
         start_date: "datetime | None" = None,
@@ -2374,7 +2381,7 @@ class MemoriesExtension(Extension, ABC):
         chunk_id: str | None = None,
         tags: list[str] | None = None,
         tags_match: TagsMatch = "all_strict",
-        tag_groups: "list | None" = None,
+        tag_groups: "list[TagGroup] | None" = None,
         limit: int = 1000,
     ) -> dict[str, Any]:
         """Memory nodes for the graph view, plus the total matching count.
@@ -2404,7 +2411,7 @@ class MemoriesExtension(Extension, ABC):
         chunk_id: str | None = None,
         tags: list[str] | None = None,
         tags_match: TagsMatch = "all_strict",
-        tag_groups: "list | None" = None,
+        tag_groups: "list[TagGroup] | None" = None,
         limit: int = 1000,
     ) -> dict[str, Any]:
         """Everything one graph render reads, in one pass:
@@ -2937,7 +2944,7 @@ class MemoriesExtension(Extension, ABC):
         search_query: str | None,
         tags: list[str] | None,
         tags_match: TagsMatch,
-        tag_groups: "list | None",
+        tag_groups: "list[TagGroup] | None",
         time_field: str | None,
         start_date: datetime | None,
         end_date: datetime | None,

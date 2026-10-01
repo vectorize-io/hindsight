@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ...search.tags import (
+    TagGroup,
     TagsMatch,
     build_tag_groups_where_clause,
     build_tags_where_clause,
@@ -299,7 +300,7 @@ async def list_tags(
     pattern: str | None = None,
     limit: int = 100,
     offset: int = 0,
-    tag_groups: list | None = None,
+    tag_groups: list[TagGroup] | None = None,
 ) -> dict[str, Any]:
     """One page of a bank's tag histogram: ``{"items": [{tag, count}], "total", "limit", "offset"}``.
 

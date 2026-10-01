@@ -36,7 +36,7 @@ from typing import Any
 
 from ....config import get_config
 from ...db.base import DatabaseConnection
-from ...search.tags import TagsMatch, build_tag_filter_clause
+from ...search.tags import TagGroup, TagsMatch, build_tag_filter_clause
 from ..base import EntityPrunePassResult, RelinkPassResult
 from .links import (
     MAX_TEMPORAL_LINKS_PER_UNIT,
@@ -180,7 +180,7 @@ async def graph_units(
     chunk_id: str | None = None,
     tags: list[str] | None = None,
     tags_match: TagsMatch = "all_strict",
-    tag_groups: list | None = None,
+    tag_groups: list[TagGroup] | None = None,
     limit: int = 1000,
 ) -> dict[str, Any]:
     """Memory nodes for the graph view, plus the total matching count.
