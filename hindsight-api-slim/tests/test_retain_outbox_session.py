@@ -51,7 +51,10 @@ async def test_completion_counts_committed_document(
         steps.append("count")
         return visible_count
 
-    session = MagicMock(commit=AsyncMock(side_effect=commit))
+    async def abort() -> None:
+        steps.append("abort")
+
+    session = MagicMock(commit=AsyncMock(side_effect=commit), abort=AsyncMock(side_effect=abort))
     store = MagicMock(
         store_owned_for=MagicMock(return_value=True),
         begin_retain=AsyncMock(return_value=session),
@@ -109,8 +112,10 @@ async def test_completion_counts_committed_document(
     if failure:
         with pytest.raises(RuntimeError, match=f"{failure} failed"):
             await execution
-        # The partial-retain cleanup still commits, but no success event may escape.
-        assert steps == ["commit"]
+        # A failed single-batch retain aborts instead of committing: committing would store the
+        # document's content hash with none of its facts, and the retry would skip it as unchanged.
+        # A failed commit was already the commit. Either way no success event may escape.
+        assert steps == (["abort"] if failure == "retain" else ["commit"])
         engine._webhook_manager.fire_event_with_conn.assert_not_awaited()
         return
 
