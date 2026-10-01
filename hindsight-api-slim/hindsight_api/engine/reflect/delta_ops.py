@@ -391,6 +391,35 @@ def _correction_prompt(error: Exception, rejected: list[RejectedOperation]) -> s
     return "\n".join(lines)
 
 
+def _as_reply_text(content: Any) -> str:
+    """Render a first reply as the assistant turn of the retry.
+
+    A ``skip_validation`` structured call hands back the provider's *parsed* JSON,
+    so ``LLMCallResult.content`` is the ``dict`` the model sent rather than the
+    text it was written in — which is exactly why ``parse_delta_operation_list``
+    accepts a dict. The retry replays that reply, and every chat-completions
+    endpoint requires ``messages[].content`` to be a string: a dict there is
+    refused outright (HTTP 400 "Expected 'content' to be a string or an array",
+    or 422 on DeepSeek-compatible servers), so the retry the whole ask-again path
+    exists to make never reached the model.
+
+    Re-serializing with ``json.dumps`` keeps the payload byte-equal to what the
+    model wrote — the correction quotes operations by value, and the model can
+    only act on the same ids it just produced. ``default=str`` covers a value the
+    JSON encoder has no rule for: this is the last chance to ask again, so an
+    unencodable reply is quoted as best it can be rather than raised, which would
+    be the same failure this helper exists to prevent.
+    """
+    if isinstance(content, str):
+        return content
+    if content is None:
+        return ""
+    try:
+        return json.dumps(content, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return str(content)
+
+
 def _is_bad_reference(entry: dict[str, Any]) -> bool:
     """A skip caused by an id the document does not have (a typo), not by the op's content.
 
@@ -505,7 +534,7 @@ async def request_delta_operations(
         correction = _unreachable_correction_prompt(unreachable, document, any_applied=bool(outcome.applied))
     retry_messages = [
         *messages,
-        {"role": "assistant", "content": first.content or ""},
+        {"role": "assistant", "content": _as_reply_text(first.content)},
         {"role": "user", "content": correction},
     ]
     second = await llm.call(messages=retry_messages, scope=scope, **call_kwargs)
