@@ -83,6 +83,8 @@ class InMemoryMemories(MemoriesExtension):
         # The unresolved entity names a retain session handed over per unit — what a store that
         # owns its entity registry resolves itself.
         self.retained_entity_names: dict[str, list[str]] = {}
+        # Every part a retain session was handed, in order — what a test asserts the session carried.
+        self.session_parts: list = []
         self.embeddings: dict[str, object] = {}
         # What `apply_edit` was handed, so a test can tell which door the vector came through and
         # whether the caller supplied the pre-edit fact type.
@@ -866,6 +868,7 @@ class _InMemoryRetainSession(RetainSession):
     async def add(self, part) -> None:
         self._store.calls.append("session.add")
         self._parts.append(part)
+        self._store.session_parts.append(part)
 
     async def commit(self) -> RetainResult:
         self._store.calls.append("session.commit")
@@ -2208,6 +2211,9 @@ async def test_import_writes_a_document_to_the_store_and_nothing_to_postgres(res
     assert sorted(store.retained_entity_names.get(cause, [])) == ["Ada", "Bob"]
     assert not store.retained_entity_names.get(effect)
     assert store.documents["doc-1"]["created_at"] == created
+    # The chunks travel in the session with the facts, as on retain — a store that writes facts
+    # only alongside their document's chunks would otherwise drop the whole import.
+    assert [p.chunk_texts for p in store.session_parts if p.chunk_texts] == [[text]]
 
 
 async def test_backlog_gauges_count_a_store_owned_banks_memories(restore_default_store):

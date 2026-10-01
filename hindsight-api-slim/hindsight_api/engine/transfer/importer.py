@@ -1306,24 +1306,6 @@ async def _import_one_document(
         for chunk in document.chunks
     ]
 
-    # Put the document itself where the store expects it. Retain does this via
-    # `_store_document_bodies`; the importer never did, so for a bank whose document store is
-    # external the import wrote the SQL metadata row and the chunk rows and NOTHING to the store —
-    # the restored bank listed no documents at all, because that listing reads the store. A no-op
-    # for Postgres, which keeps the body in the `documents` row written below.
-    #
-    # Before the connection is taken, like the retain path: this is the slow object-store write and
-    # it has no business inside the write transaction.
-    await orchestrator._store_document_bodies(
-        bank_id=bank_id,
-        document_id=target_id,
-        combined_content=document.original_text or "",
-        chunk_texts=[c.chunk_text for c in sorted(document.chunks, key=lambda c: c.chunk_index)],
-        merged_tags=list(document.tags or []),
-        config=config,
-        retain_params=document.retain_params,
-    )
-
     from ..memories import get_memories
 
     store = get_memories()
@@ -1507,9 +1489,27 @@ async def _write_document_to_store(
         if legacy:
             processed.causal_relations = [*processed.causal_relations, *legacy]
 
+    from ..memories.base import RetainDocumentPart, document_record_metadata
+
     text = document.original_text or ""
+    content_hash = hashlib.sha256((fact_extraction._sanitize_text(text) or "").encode()).hexdigest()
     session = await store.begin_retain(bank_id=bank_id, config=config)
     try:
+        # The document body rides the session, as it does on retain: a session owns the body and
+        # commits it in the same entry as the facts. A store may write facts only once it holds
+        # their document's chunks, so a session handed facts alone can drop them.
+        await session.add(
+            RetainDocumentPart(
+                document_id=target_id,
+                document_body=text,
+                content_hash=content_hash,
+                chunk_offset=0,
+                chunk_texts=[c.chunk_text for c in sorted(document.chunks, key=lambda c: c.chunk_index)],
+                facts=[],
+                tags=list(document.tags or []),
+                metadata=document_record_metadata(document.retain_params, None),
+            )
+        )
         result_unit_ids = await orchestrator._streaming_session_retain(
             session=session,
             bank_id=bank_id,
@@ -1520,7 +1520,7 @@ async def _write_document_to_store(
             chunk_index_offset=0,
             effective_doc_id=target_id,
             combined_content=text,
-            content_hash=hashlib.sha256((fact_extraction._sanitize_text(text) or "").encode()).hexdigest(),
+            content_hash=content_hash,
             merged_tags=list(document.tags or []),
             retain_params=document.retain_params,
             is_first_batch=True,
