@@ -137,6 +137,23 @@ def _prepare_facts_for_entity_processing(
     return PreparedFactEntities(fact_texts, fact_dates, entities_per_fact)
 
 
+def names_per_unit(
+    unit_ids: list[str], entities_per_fact: list[list[dict]], *, exact_only: bool = False
+) -> dict[str, list[str]]:
+    """Each unit's entity names, for a store that resolves them itself.
+
+    ``exact_only`` keeps just the names the caller opted out of resolution
+    (``resolve_entities=False``): the store must match those on the name alone and
+    never fuzzy-merge them (#5050). Units with no such names are left out.
+    """
+    out: dict[str, list[str]] = {}
+    for unit_id, entities in zip(unit_ids, entities_per_fact):
+        names = store_entity_names([e for e in entities if not (exact_only and e["resolve"])])
+        if names or not exact_only:
+            out[unit_id] = names
+    return out
+
+
 async def resolve_entities(
     entity_resolver,
     conn,

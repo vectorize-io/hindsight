@@ -683,6 +683,7 @@ class PostgresMemories(MemoriesExtension):
         entity_names: list[str] | None = None,  # noqa: ARG002 — this store's registry is SQL; the host already minted+linked, so entity_ids is authoritative.
         embedding=None,
         current_fact_type: str | None = None,  # noqa: ARG002 — one UPDATE writes every field, so a fact-type change needs no different path.
+        exact_entity_names: bool = False,  # noqa: ARG002 — the host already resolved with the caller's flag; entity_ids is authoritative.
     ) -> None:
         await writes.apply_edit(
             conn=conn,

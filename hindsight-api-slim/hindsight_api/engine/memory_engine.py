@@ -12162,6 +12162,13 @@ class MemoryEngine(MemoryEngineInterface):
                             mentioned_at=edit_plan.mentioned_at,
                             entity_ids=edit_plan.edit_entity_ids,
                             entity_names=edit_plan.entity_names_for_store,
+                            # Only when the caller opted out, so a store that predates the
+                            # argument keeps working for every other edit (#5050).
+                            **(
+                                {"exact_entity_names": True}
+                                if edit_plan.entity_names_for_store is not None and not resolve_entities
+                                else {}
+                            ),
                             # The vector describes the text being written by this same call, so
                             # it goes with it: a following set_memory_embedding would be a second
                             # write of the row apply_edit just wrote.

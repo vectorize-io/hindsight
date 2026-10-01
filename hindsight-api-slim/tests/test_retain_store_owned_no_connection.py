@@ -135,6 +135,55 @@ async def test_a_store_owned_batch_write_holds_no_connection(monkeypatch):
     assert doc_tracking_done == [True]
 
 
+async def test_a_store_owned_retain_tells_the_store_which_names_to_take_literally(monkeypatch):
+    """`resolve_entities=False` reaches a store that resolves names itself (#5050).
+
+    The store got only plain names, so it fuzzy-resolved the caller's "Alice Smyth" onto an
+    existing "Alice Smith". The opted-out names now travel as their own list; the extractor's
+    names stay resolvable, and a retain that opts nothing out sends no extra argument at all.
+    """
+    monkeypatch.setattr(orch.fact_storage, "insert_facts_batch", lambda *a, **k: _async(["u1"]))
+
+    async def run(resolve):
+        retained = {}
+
+        class _StoreOwned:
+            async def retain(self, bank_id, unit_ids, facts, **kw):
+                retained.update(kw)
+                return {"seq": 1, "unit_ids": list(unit_ids), "new_entities": 0}
+
+        fact = _fact()
+        fact.entities = [SimpleNamespace(name="Paris")]
+        await orch._streaming_store_owned_retain(
+            provider=_StoreOwned(),
+            pool=SimpleNamespace(ops=None),
+            bank_id="b",
+            batch_contents=[SimpleNamespace(entities=[{"text": "Alice Smyth"}], resolve_entities=resolve)],
+            batch_extracted=[SimpleNamespace(chunk_index=None)],
+            batch_processed=[fact],
+            batch_chunk_meta=[],
+            effective_doc_id="d1",
+            config=SimpleNamespace(entity_similarity_threshold=0.0),
+            log_buffer=[],
+            is_first_batch=True,
+            append_base_hash=None,
+            doc_tracking_done=[False],
+            doc_replace_done=[False],
+            p2_start=0.0,
+        )
+        return retained
+
+    opted_out = await run(resolve=False)
+    assert opted_out["unit_entity_names"] == {"u1": ["Paris", "Alice Smyth"]}
+    assert opted_out["unit_exact_entity_names"] == {"u1": ["Alice Smyth"]}
+
+    assert "unit_exact_entity_names" not in await run(resolve=True)
+
+
+async def _async(value):
+    return value
+
+
 # --------------------------------------------------------------------------------------------
 # Delta re-retain path
 # --------------------------------------------------------------------------------------------

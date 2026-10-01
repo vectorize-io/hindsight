@@ -865,11 +865,8 @@ async def _streaming_session_retain(
         if getattr(content, "entities", None)
     }
     prepared = entity_processing._prepare_facts_for_entity_processing(batch_processed, user_entities_per_content)
-    entities_per_fact = prepared.entities_per_fact
-    names = {
-        (unit_ids or [])[i]: entity_processing.store_entity_names(entities_per_fact[i])
-        for i in range(min(len(unit_ids or []), len(entities_per_fact)))
-    }
+    names = entity_processing.names_per_unit(unit_ids or [], prepared.entities_per_fact)
+    exact_names = entity_processing.names_per_unit(unit_ids or [], prepared.entities_per_fact, exact_only=True)
 
     # Only the FIRST batch of a document may replace: a later one would tombstone the siblings this
     # same retain just wrote. Latched here, where the replace is actually handed over.
@@ -892,6 +889,7 @@ async def _streaming_session_retain(
             # so this must be the WHOLE document's map, never just this batch's items' names.
             metadata=document_record_metadata(retain_params, attachment_filenames),
             entity_names=names,
+            exact_entity_names=exact_names,
             replace_chunk_ids=replace_chunk_ids,
         )
     )
@@ -984,11 +982,8 @@ async def _streaming_store_owned_retain(
             if getattr(content, "entities", None)
         }
         prepared = entity_processing._prepare_facts_for_entity_processing(batch_processed, user_entities_per_content)
-        entities_per_fact = prepared.entities_per_fact
-        unit_entity_names = {
-            unit_ids[i]: entity_processing.store_entity_names(entities_per_fact[i])
-            for i in range(min(len(unit_ids), len(entities_per_fact)))
-        }
+        unit_entity_names = entity_processing.names_per_unit(unit_ids, prepared.entities_per_fact)
+        exact_names = entity_processing.names_per_unit(unit_ids, prepared.entities_per_fact, exact_only=True)
         # Replace the document's prior version only on its FIRST batch — later batches append to
         # what batch 1 just wrote, and replacing again would tombstone those siblings.
         #
@@ -1017,6 +1012,9 @@ async def _streaming_store_owned_retain(
             batch_processed,
             document_id=effective_doc_id,
             unit_entity_names=unit_entity_names,
+            # Only when present, so a store that predates the argument keeps working for every
+            # retain that does not opt out — and fails loudly, not silently, for one that does.
+            **({"unit_exact_entity_names": exact_names} if exact_names else {}),
             replace_document_id=replace_id,
             resolve_threshold=threshold,
             # The bank's recall toggles, on the WRITE path: a store that owns its index has no
@@ -1155,6 +1153,7 @@ async def _delta_store_owned_write(
 
     if unit_ids or replace_chunk_ids:
         unit_entity_names: dict[str, list[str]] = {}
+        exact_names: dict[str, list[str]] = {}
         if unit_ids:
             # Raw entity NAMES, the same merge the Postgres resolver performs — the server
             # resolves and mints them, which is what owning the retain means.
@@ -1169,11 +1168,8 @@ async def _delta_store_owned_write(
             prepared = entity_processing._prepare_facts_for_entity_processing(
                 processed_facts, user_entities_per_content
             )
-            entities_per_fact = prepared.entities_per_fact
-            unit_entity_names = {
-                unit_ids[i]: entity_processing.store_entity_names(entities_per_fact[i])
-                for i in range(min(len(unit_ids), len(entities_per_fact)))
-            }
+            unit_entity_names = entity_processing.names_per_unit(unit_ids, prepared.entities_per_fact)
+            exact_names = entity_processing.names_per_unit(unit_ids, prepared.entities_per_fact, exact_only=True)
 
         threshold = float(getattr(config, "entity_similarity_threshold", 0.0) or 0.0)
         resp = await provider.retain(
@@ -1182,6 +1178,8 @@ async def _delta_store_owned_write(
             processed_facts if unit_ids else [],
             document_id=effective_doc_id,
             unit_entity_names=unit_entity_names,
+            # Only when present — see the streaming path above.
+            **({"unit_exact_entity_names": exact_names} if exact_names else {}),
             # Scoped: only the chunks named above are superseded. Empty `replace_chunk_ids`
             # would be a scope of NOTHING rather than of everything, so when nothing changed
             # this is a plain append and names no document to replace.
