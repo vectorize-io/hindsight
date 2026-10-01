@@ -461,24 +461,133 @@ def visible_token_usage(response: Any) -> TokenUsage:
     )
 
 
+def _inject_schema_into_messages(
+    messages: list[dict[str, Any]],
+    schema: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Soft structured-output path: append the JSON schema to the prompt.
+
+    - A leading ``system`` message gets the schema appended.
+    - Otherwise, prepended to the first message that carries string text or multimodal text parts.
+    - Supports both string content and multimodal content part lists.
+    - When no suitable text target exists, safely prepends a system message.
+    """
+    schema_msg = (
+        f"\n\nYou must respond with valid JSON matching this schema:\n"
+        f"{json.dumps(schema, indent=2, ensure_ascii=False)}"
+    )
+
+    items: list[dict[str, Any]] = []
+    for item in messages:
+        new_item = dict(item)
+        content = new_item.get("content")
+        if isinstance(content, list):
+            new_item["content"] = [dict(p) if isinstance(p, dict) else p for p in content]
+        items.append(new_item)
+
+    for item in items:
+        role = item.get("role")
+        content = item.get("content")
+
+        if role in ("system", "developer"):
+            if isinstance(content, str):
+                item["content"] = content + schema_msg if content else schema_msg.strip()
+                return items
+            if isinstance(content, list):
+                text_part = next(
+                    (p for p in content if isinstance(p, dict) and p.get("type") in ("text", "input_text")),
+                    None,
+                )
+                if text_part is not None:
+                    raw_text = str(text_part.get("text") or "")
+                    text_part["text"] = f"{raw_text}{schema_msg}" if raw_text else schema_msg.strip()
+                else:
+                    content.insert(0, {"type": "text", "text": schema_msg.strip()})
+                return items
+            if content is None:
+                item["content"] = schema_msg.strip()
+                return items
+
+        elif role == "user":
+            if isinstance(content, str):
+                item["content"] = f"{schema_msg}\n\n{content}" if content else schema_msg.strip()
+                return items
+
+            if isinstance(content, list):
+                text_part = next(
+                    (p for p in content if isinstance(p, dict) and p.get("type") in ("text", "input_text")),
+                    None,
+                )
+                if text_part is not None:
+                    raw_text = str(text_part.get("text") or "")
+                    text_part["text"] = f"{schema_msg}\n\n{raw_text}" if raw_text else schema_msg.strip()
+                else:
+                    content.insert(0, {"type": "text", "text": schema_msg.strip()})
+                return items
+
+            if content is None:
+                item["content"] = schema_msg.strip()
+                return items
+
+    # Fallback when messages is empty or all items had non-prompt roles (assistant, tool) or no text
+    items.insert(0, {"role": "system", "content": schema_msg.strip()})
+    return items
+
+
 def _ensure_json_word_in_user_message(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Some OpenAI-compatible gateways require 'json' in a user message for json_object mode."""
 
-    normalized = [dict(message) for message in messages]
-    user_indexes = [
-        index
-        for index, message in enumerate(normalized)
-        if message.get("role") == "user" and isinstance(message.get("content"), str)
-    ]
+    normalized: list[dict[str, Any]] = []
+    for message in messages:
+        new_msg = dict(message)
+        content = new_msg.get("content")
+        if isinstance(content, list):
+            new_msg["content"] = [dict(p) if isinstance(p, dict) else p for p in content]
+        normalized.append(new_msg)
+
+    user_indexes = [index for index, message in enumerate(normalized) if message.get("role") == "user"]
     if not user_indexes:
         normalized.append({"role": "user", "content": JSON_MODE_USER_HINT})
         return normalized
 
-    if any("json" in normalized[index]["content"] for index in user_indexes):
+    def _user_has_json(msg: dict[str, Any]) -> bool:
+        # Note: Must check for exact lowercase "json" (case-sensitive).
+        # Some strict gateways (e.g. vLLM / Ollama proxies) grep literally for
+        # b"json" in request payload. Soft schema prompt uses uppercase "JSON"
+        # ("valid JSON matching this schema:"), so checking case-sensitively
+        # ensures JSON_MODE_USER_HINT ("Return valid json only.") is prepended
+        # whenever explicit lowercase "json" is missing (see #1368 and
+        # test_json_object_call_adds_json_hint_to_user_message).
+        c = msg.get("content")
+        if isinstance(c, str):
+            return "json" in c
+        if isinstance(c, list):
+            for p in c:
+                if isinstance(p, dict) and p.get("type") in ("text", "input_text"):
+                    text_val = p.get("text")
+                    if text_val and "json" in str(text_val):
+                        return True
+        return False
+
+    if any(_user_has_json(normalized[idx]) for idx in user_indexes):
         return normalized
 
-    last_user = user_indexes[-1]
-    normalized[last_user]["content"] = f"{JSON_MODE_USER_HINT}\n\n{normalized[last_user]['content']}"
+    last_user = normalized[user_indexes[-1]]
+    content = last_user.get("content")
+    if isinstance(content, str):
+        last_user["content"] = f"{JSON_MODE_USER_HINT}\n\n{content}" if content else JSON_MODE_USER_HINT
+    elif isinstance(content, list):
+        text_part = next(
+            (p for p in content if isinstance(p, dict) and p.get("type") in ("text", "input_text")),
+            None,
+        )
+        if text_part is not None:
+            raw_text = str(text_part.get("text") or "")
+            text_part["text"] = f"{JSON_MODE_USER_HINT}\n\n{raw_text}" if raw_text else JSON_MODE_USER_HINT
+        else:
+            content.insert(0, {"type": "text", "text": JSON_MODE_USER_HINT})
+    else:
+        last_user["content"] = JSON_MODE_USER_HINT
     return normalized
 
 
@@ -1188,7 +1297,17 @@ class OpenAICompatibleLLM(LLMInterface):
         # Build call parameters
         call_params: dict[str, Any] = {
             "model": self.model,
-            "messages": [dict(message) for message in messages],
+            "messages": [
+                {
+                    **message,
+                    "content": (
+                        [dict(p) if isinstance(p, dict) else p for p in message["content"]]
+                        if isinstance(message.get("content"), list)
+                        else message.get("content")
+                    ),
+                }
+                for message in messages
+            ],
         }
 
         # Check if model supports reasoning parameter
@@ -1246,16 +1365,7 @@ class OpenAICompatibleLLM(LLMInterface):
             else:
                 # Soft enforcement: add schema to prompt and use json_object mode
                 if schema is not None:
-                    schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2, ensure_ascii=False)}"
-
-                    if call_params["messages"] and call_params["messages"][0].get("role") == "system":
-                        first_msg = call_params["messages"][0]
-                        if isinstance(first_msg, dict) and isinstance(first_msg.get("content"), str):
-                            first_msg["content"] += schema_msg
-                    elif call_params["messages"]:
-                        first_msg = call_params["messages"][0]
-                        if isinstance(first_msg, dict) and isinstance(first_msg.get("content"), str):
-                            first_msg["content"] = schema_msg + "\n\n" + first_msg["content"]
+                    call_params["messages"] = _inject_schema_into_messages(call_params["messages"], schema)
                 # Providers that skip json_object grammar enforcement
                 skip_grammar = self.provider in ("lmstudio", "ollama", "volcano")
                 if self.provider == "llamacpp":

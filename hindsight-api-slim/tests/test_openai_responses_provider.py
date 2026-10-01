@@ -226,6 +226,83 @@ async def test_call_soft_schema_injects_schema_and_uses_json_object():
 
 
 @pytest.mark.asyncio
+async def test_call_soft_schema_multimodal_user_message_injects_into_text_part():
+    llm = _make_llm()
+    create = _mock_create(llm, _fake_response(output_text=json.dumps({"answer": "x"})))
+    input_messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Describe this image."},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+            ],
+        }
+    ]
+    with patch("hindsight_api.engine.providers.openai_responses_llm.get_metrics_collector"):
+        await llm.call(
+            messages=input_messages,
+            response_format=_Answer,
+            strict_schema=False,
+        )
+
+    kwargs = create.call_args.kwargs
+    assert kwargs["text"]["format"] == {"type": "json_object"}
+    # Schema must be prepended to the user's text part
+    input_items = kwargs["input"]
+    assert len(input_items) == 1, "Must not append a redundant user message turn"
+    assert input_items[0]["role"] == "user"
+    content_parts = input_items[0]["content"]
+    assert isinstance(content_parts, list)
+    text_part = content_parts[0]
+    assert text_part["type"] == "text"
+    assert "valid JSON matching this schema" in text_part["text"]
+    assert text_part["text"].endswith("Describe this image.")
+    # Caller input must not be mutated in-place
+    assert "valid JSON matching this schema" not in input_messages[0]["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_call_soft_schema_multimodal_without_text_part_inserts_text():
+    llm = _make_llm()
+    create = _mock_create(llm, _fake_response(output_text=json.dumps({"answer": "x"})))
+    with patch("hindsight_api.engine.providers.openai_responses_llm.get_metrics_collector"):
+        await llm.call(
+            messages=[
+                {
+                    "role": "user",
+                    "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}],
+                }
+            ],
+            response_format=_Answer,
+            strict_schema=False,
+        )
+
+    kwargs = create.call_args.kwargs
+    input_items = kwargs["input"]
+    assert len(input_items) == 1
+    content_parts = input_items[0]["content"]
+    assert content_parts[0]["type"] == "text"
+    assert "valid JSON matching this schema" in content_parts[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_call_soft_schema_with_leading_none_content_recovers_schema():
+    llm = _make_llm()
+    create = _mock_create(llm, _fake_response(output_text=json.dumps({"answer": "x"})))
+    with patch("hindsight_api.engine.providers.openai_responses_llm.get_metrics_collector"):
+        await llm.call(
+            messages=[{"role": "system", "content": None}, {"role": "user", "content": "q"}],
+            response_format=_Answer,
+            strict_schema=False,
+        )
+
+    kwargs = create.call_args.kwargs
+    assert kwargs["text"]["format"] == {"type": "json_object"}
+    system_item = next(item for item in kwargs["input"] if item.get("role") == "system")
+    assert "valid JSON matching this schema" in system_item["content"]
+
+
+@pytest.mark.asyncio
 async def test_call_raises_output_too_long_on_truncation():
     llm = _make_llm()
     truncated = _fake_response(output_text="", status="incomplete")

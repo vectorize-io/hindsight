@@ -18,6 +18,8 @@ from hindsight_api.engine.providers.openai_compatible_llm import (
     OpenAICompatibleLLM,
     OutputTooLongError,
     ProviderResponseError,
+    _ensure_json_word_in_user_message,
+    _inject_schema_into_messages,
     _rate_limit_retry_at,
 )
 from hindsight_api.worker.stage import StageHolder, bind_holder, set_stage
@@ -110,6 +112,190 @@ async def test_json_object_call_adds_json_hint_to_user_message():
     assert result.ok is True
     sent_messages = create.call_args.kwargs["messages"]
     assert sent_messages[0]["content"].startswith("Return valid json only.")
+
+
+@pytest.mark.asyncio
+async def test_json_object_call_multimodal_user_message_retains_single_turn_and_adds_hint():
+    llm = _llm()
+    create = AsyncMock(return_value=_response())
+    llm._client.chat.completions.create = create
+    input_messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Return whether this worked."},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+            ],
+        }
+    ]
+
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        result = (
+            await llm.call(
+                messages=input_messages,
+                response_format=SimpleJsonResponse,
+                max_retries=0,
+            )
+        ).content
+
+    assert result.ok is True
+    sent_messages = create.call_args.kwargs["messages"]
+    assert len(sent_messages) == 1, "Must not append a redundant user message turn"
+    parts = sent_messages[0]["content"]
+    assert isinstance(parts, list)
+    text_part = parts[0]
+    assert text_part["type"] == "text"
+    assert "Return valid json only." in text_part["text"]
+    assert "valid JSON matching this schema" in text_part["text"]
+    assert "Return whether this worked." in text_part["text"]
+    # Caller input must not be mutated
+    assert "Return valid json only." not in input_messages[0]["content"][0]["text"]
+    assert "valid JSON matching this schema" not in input_messages[0]["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_json_object_call_with_leading_none_content_recovers_schema():
+    llm = _llm()
+    create = AsyncMock(return_value=_response())
+    llm._client.chat.completions.create = create
+    messages = [
+        {"role": "system", "content": None},
+        {"role": "user", "content": "Return whether this worked."},
+    ]
+
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        result = (
+            await llm.call(
+                messages=messages,
+                response_format=SimpleJsonResponse,
+                max_retries=0,
+            )
+        ).content
+
+    assert result.ok is True
+    sent_messages = create.call_args.kwargs["messages"]
+    system_msg = next(m for m in sent_messages if m.get("role") == "system")
+    assert "valid JSON matching this schema" in system_msg["content"]
+
+
+def test_inject_schema_edge_cases():
+    schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}}
+
+    # Case 1: empty messages list falls back to leading system message
+    res = _inject_schema_into_messages([], schema)
+    assert len(res) == 1
+    assert res[0]["role"] == "system"
+    assert "valid JSON matching this schema" in res[0]["content"]
+
+    # Case 2: multimodal with text=None does not produce "None" string
+    orig_parts = [{"type": "text", "text": None}, {"type": "image_url", "url": "data:..."}]
+    msgs = [{"role": "user", "content": orig_parts}]
+    res = _inject_schema_into_messages(msgs, schema)
+    assert "None" not in res[0]["content"][0]["text"]
+    assert "valid JSON matching this schema" in res[0]["content"][0]["text"]
+    # Caller input must not be mutated
+    assert msgs[0]["content"][0]["text"] is None
+
+    # Case 3: multimodal with missing "text" key populates text field
+    msgs = [{"role": "system", "content": [{"type": "text"}]}]
+    res = _inject_schema_into_messages(msgs, schema)
+    assert "text" in res[0]["content"][0]
+    assert "valid JSON matching this schema" in res[0]["content"][0]["text"]
+    assert "text" not in msgs[0]["content"][0]
+
+    # Case 4: multimodal without any text parts inserts a text block at index 0
+    msgs = [{"role": "user", "content": [{"type": "image_url", "url": "data:..."}]}]
+    res = _inject_schema_into_messages(msgs, schema)
+    assert len(res[0]["content"]) == 2
+    assert res[0]["content"][0]["type"] == "text"
+    assert "valid JSON matching this schema" in res[0]["content"][0]["text"]
+
+    # Case 5: system message with content=None gets the schema populated
+    msgs = [{"role": "system", "content": None}, {"role": "user", "content": None}]
+    res = _inject_schema_into_messages(msgs, schema)
+    assert len(res) == 2
+    assert res[0]["role"] == "system"
+    assert "valid JSON matching this schema" in res[0]["content"]
+
+    # Case 6: messages without text targets fall back to prepending system message
+    msgs = [{"role": "assistant", "content": None}]
+    res = _inject_schema_into_messages(msgs, schema)
+    assert len(res) == 2
+    assert res[0]["role"] == "system"
+    assert "valid JSON matching this schema" in res[0]["content"]
+
+    # Case 7: developer role receives schema appended
+    msgs = [{"role": "developer", "content": "system rules"}]
+    res = _inject_schema_into_messages(msgs, schema)
+    assert len(res) == 1
+    assert res[0]["role"] == "developer"
+    assert res[0]["content"].startswith("system rules")
+    assert "valid JSON matching this schema" in res[0]["content"]
+
+    # Case 8: tool and assistant messages are skipped; schema is routed to user message
+    tool_content = '{"status": "ok"}'
+    msgs = [
+        {"role": "assistant", "content": "calling tool", "tool_calls": []},
+        {"role": "tool", "content": tool_content, "tool_call_id": "call_1"},
+        {"role": "user", "content": "Process this"},
+    ]
+    res = _inject_schema_into_messages(msgs, schema)
+    assert len(res) == 3
+    assert res[0]["content"] == "calling tool"
+    assert res[1]["content"] == tool_content
+    assert res[2]["role"] == "user"
+    assert "valid JSON matching this schema" in res[2]["content"]
+    assert res[2]["content"].endswith("Process this")
+
+    # Case 9: only tool messages present falls back to prepending system message
+    tool_content = '{"status": "ok"}'
+    msgs = [{"role": "tool", "content": tool_content, "tool_call_id": "call_1"}]
+    res = _inject_schema_into_messages(msgs, schema)
+    assert len(res) == 2
+    assert res[0]["role"] == "system"
+    assert "valid JSON matching this schema" in res[0]["content"]
+    assert res[1]["role"] == "tool"
+    assert res[1]["content"] == tool_content
+
+
+def test_ensure_json_word_in_user_message_edge_cases():
+    # Case 1: no user message appends a user turn with the hint
+    res = _ensure_json_word_in_user_message([{"role": "system", "content": "hi"}])
+    assert len(res) == 2
+    assert res[1]["role"] == "user"
+    assert "Return valid json only." in res[1]["content"]
+
+    # Case 2: multimodal user message with text=None does not produce "None"
+    orig = [{"role": "user", "content": [{"type": "text", "text": None}]}]
+    res = _ensure_json_word_in_user_message(orig)
+    assert len(res) == 1
+    assert "None" not in res[0]["content"][0]["text"]
+    assert "Return valid json only." in res[0]["content"][0]["text"]
+    assert orig[0]["content"][0]["text"] is None
+
+    # Case 3: multimodal user message missing "text" key
+    orig = [{"role": "user", "content": [{"type": "text"}]}]
+    res = _ensure_json_word_in_user_message(orig)
+    assert len(res) == 1
+    assert res[0]["content"][0]["text"] == "Return valid json only."
+
+    # Case 4: multimodal user message already containing "json" is unchanged
+    orig = [{"role": "user", "content": [{"type": "text", "text": "format as json"}]}]
+    res = _ensure_json_word_in_user_message(orig)
+    assert len(res) == 1
+    assert res[0]["content"][0]["text"] == "format as json"
+
+    # Case 5: user message with content=None sets string content
+    orig = [{"role": "user", "content": None}]
+    res = _ensure_json_word_in_user_message(orig)
+    assert len(res) == 1
+    assert res[0]["content"] == "Return valid json only."
+
+    # Case 6: user message with empty string content assigns hint without trailing newlines
+    orig = [{"role": "user", "content": ""}]
+    res = _ensure_json_word_in_user_message(orig)
+    assert len(res) == 1
+    assert res[0]["content"] == "Return valid json only."
 
 
 @pytest.mark.asyncio

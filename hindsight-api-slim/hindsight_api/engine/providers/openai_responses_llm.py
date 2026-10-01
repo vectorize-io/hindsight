@@ -60,6 +60,7 @@ from hindsight_api.engine.providers.openai_compatible_headers import with_openai
 # hint). These are module-level utilities, not chat/completions behavior.
 from hindsight_api.engine.providers.openai_compatible_llm import (
     _ensure_json_word_in_user_message,
+    _inject_schema_into_messages,
     _raise_provider_quota_defer,
     _strip_code_fences,
     _strip_reasoning_tags,
@@ -145,26 +146,9 @@ def _messages_to_responses_input(messages: list[dict[str, Any]]) -> list[dict[st
     return items
 
 
-def _inject_schema_into_input(input_items: list[dict[str, Any]], schema: dict[str, Any]) -> list[dict[str, Any]]:
-    """Soft structured-output path: append the JSON schema to the first message.
-
-    A leading ``system`` message gets the schema appended, otherwise it is
-    prepended to the first message. Only string-content message items are touched.
-    """
-    schema_msg = (
-        f"\n\nYou must respond with valid JSON matching this schema:\n"
-        f"{json.dumps(schema, indent=2, ensure_ascii=False)}"
-    )
-    items = [dict(item) for item in input_items]
-    for item in items:
-        if not isinstance(item.get("content"), str):
-            continue
-        if item.get("role") == "system":
-            item["content"] += schema_msg
-        else:
-            item["content"] = schema_msg + "\n\n" + item["content"]
-        return items
-    return items
+# Soft structured-output schema injection is shared with OpenAICompatibleLLM
+# to maintain sibling parity across providers (CLAUDE.md Step 9a).
+_inject_schema_into_input = _inject_schema_into_messages
 
 
 class OpenAIResponsesLLM(LLMInterface):
