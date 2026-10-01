@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+import time
 
 # fcntl is Unix-only; import conditionally so the module loads on Windows
 if sys.platform != "win32":
@@ -68,6 +69,22 @@ def write_state(name: str, data):
             os.unlink(tmp_path)
         except OSError:
             pass
+
+
+def log_hook_error(hook_name: str, error: str) -> None:
+    """Append a timestamped hook failure to hook-errors.log.
+
+    Hooks exit 0 by design (graceful degradation), so without this,
+    unexpected failures are invisible unless stderr is captured.
+    Best-effort; never raises.
+    """
+    try:
+        path = _state_file("hook-errors.log")
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+        with open(path, "a", encoding="utf-8", errors="replace") as f:
+            f.write(f"{stamp} [{hook_name}] {error}\n")
+    except OSError:
+        pass
 
 
 def increment_turn_count(session_id: str) -> int:

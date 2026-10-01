@@ -15,6 +15,7 @@ Flow:
 
 Exit codes:
   0 — always (graceful degradation on any error)
+Unexpected errors are also appended to ~/.hindsight/codex/state/hook-errors.log
 """
 
 import json
@@ -33,7 +34,7 @@ from lib.content import (
     slice_last_turns_by_user_boundary,
 )
 from lib.daemon import get_api_url
-from lib.state import increment_turn_count
+from lib.state import increment_turn_count, log_hook_error
 
 
 def main():
@@ -179,6 +180,10 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         print(f"[Hindsight] Unexpected error in retain: {e}", file=sys.stderr)
+        try:
+            log_hook_error("retain", repr(e))
+        except Exception:
+            pass
         try:
             from lib.config import load_config
 
