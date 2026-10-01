@@ -669,6 +669,16 @@
       "category": "tool",
       "link": "https://github.com/Nyrest/notion-to-hindsight-sync",
       "icon": "/img/icons/notion.svg"
+    },
+    {
+      "id": "screenpipe",
+      "name": "Screenpipe",
+      "description": "Use recorded desktop context alongside Hindsight through a reviewed, manual MCP memory workflow.",
+      "type": "community",
+      "by": "screenpipe",
+      "category": "tool",
+      "link": "/sdks/integrations/screenpipe",
+      "icon": "/img/icons/mcp.png"
     }
   ]
 }
