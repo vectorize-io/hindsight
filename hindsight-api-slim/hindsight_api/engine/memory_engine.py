@@ -6836,12 +6836,8 @@ class MemoryEngine(MemoryEngineInterface):
                 # chunk texts, which is worse than the per-sub-batch writes this replaces.
                 from .retain.orchestrator import flush_document_bodies
 
-                # The session commits whatever it still holds. In a `finally` for the same reason
-                # the body flush is: a retain that failed part-way must not discard what its
-                # earlier parts produced.
-                if retain_session is not None:
-                    async with _retain_timing_mod.timed("store.commit"):
-                        await retain_session.commit()
+                # No session to commit here: this path is gated on `retain_session is None` above,
+                # because a store that owns persistence does not sub-batch at all.
                 await flush_document_bodies(body_accum)
 
             # Merge in sub-batch order, not completion order, so `per_input_results` is identical
@@ -6877,6 +6873,10 @@ class MemoryEngine(MemoryEngineInterface):
             # and the retry's delta check would find every chunk hash unchanged and extract
             # nothing — the retain could never succeed. Abort leaves no buffered document behind,
             # so the retry does a full retain.
+            #
+            # The commit is inside the same `try`, so a commit that fails aborts too: it releases
+            # whatever the session still buffers instead of leaving it to the garbage collector.
+            # This is the shape `transfer/importer.py` already uses around its session.
             try:
                 sub_batch_outcome = await self._retain_batch_async_internal(
                     bank_id=bank_id,
@@ -6892,13 +6892,13 @@ class MemoryEngine(MemoryEngineInterface):
                     outbox_callback_factory=outbox_callback_factory,
                     retain_session=retain_session,
                 )
+                if retain_session is not None:
+                    async with _retain_timing_mod.timed("store.commit"):
+                        await retain_session.commit()
             except BaseException:
                 if retain_session is not None:
                     await retain_session.abort()
                 raise
-            if retain_session is not None:
-                async with _retain_timing_mod.timed("store.commit"):
-                    await retain_session.commit()
             result = sub_batch_outcome.memory_ids
             total_usage = sub_batch_outcome.usage
             total_processed_content_tokens = sub_batch_outcome.processed_content_tokens

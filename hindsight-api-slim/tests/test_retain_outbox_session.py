@@ -114,8 +114,9 @@ async def test_completion_counts_committed_document(
             await execution
         # A failed single-batch retain aborts instead of committing: committing would store the
         # document's chunks with none of their facts, and the retry would skip them as unchanged.
-        # A failed commit was already the commit. Either way no success event may escape.
-        assert steps == (["abort"] if failure == "retain" else ["commit"])
+        # A failed commit aborts too — it releases what the session still buffers. Either way no
+        # success event may escape.
+        assert steps == (["abort"] if failure == "retain" else ["commit", "abort"])
         engine._webhook_manager.fire_event_with_conn.assert_not_awaited()
         return
 
