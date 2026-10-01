@@ -19,9 +19,11 @@ number could not mean the same thing in both. The level maps to a tuned
 
 2. **After a cross-encoder rerank** — :func:`additive_strategy_boost` adds a
    bump that is the level's full ``additive`` at rank 1 and shrinks as the
-   candidate's rank in that arm gets worse. A passthrough reranker skips this
-   bump (:func:`apply_post_rerank_boost`). The bump is still an absolute add, so
-   it does not fix cross-encoder score calibration and does not guarantee that a
+   candidate's rank in that arm gets worse. The temporal arm is the exception
+   and keeps the full ``additive`` at every rank (see
+   :data:`_FLAT_STAGE2_STRATEGIES`). A passthrough reranker skips this bump
+   (:func:`apply_post_rerank_boost`). The bump is still an absolute add, so it
+   does not fix cross-encoder score calibration and does not guarantee that a
    strong direct match stays ahead.
 
 Both functions are no-ops when ``boosts`` is empty, preserving current behaviour.
@@ -89,10 +91,12 @@ class BoostWeights:
 # everything else — including graph hits the CE undervalues — collapses near 0.
 # ``additive`` is what rank 1 receives. A worse rank gets
 # ``additive * rank_divisor / (rank_divisor + rank - 1)``, so ``high`` is half
-# by rank 9. Reusing ``rank_divisor`` here is an initial parameter choice: in
-# stage 1 that number is a rank divisor (``r < divisor * s``), and here it is
-# only the decay scale. The two do not have to stay equal; a later change can
-# split them with an internal field and no new user setting.
+# by rank 9 (except for the temporal arm, which does not decay: see
+# ``_FLAT_STAGE2_STRATEGIES``). Reusing ``rank_divisor`` here is an initial
+# parameter choice: in stage 1 that number is a rank divisor
+# (``r < divisor * s``), and here it is only the decay scale. The two do not
+# have to stay equal; a later change can split them with an internal field and
+# no new user setting.
 #
 # This is still an absolute add. It does not fix cross-encoder calibration
 # (a clearly relevant match can score ~0.001), it does not cap how far the
@@ -110,6 +114,32 @@ BOOST_LEVELS: dict[str, BoostWeights] = {
     "medium": BoostWeights(rank_divisor=4.0, additive=0.2),
     "high": BoostWeights(rank_divisor=8.0, additive=0.5),
 }
+
+# Arms whose stage-2 bump does NOT decay with the candidate's rank in the arm.
+#
+# The decay exists for ``graph`` (#4008): a flat ``+0.5`` at ``graph:high``
+# reordered nearly the whole result set (recall@20 0.907 -> 0.637), and a graph
+# hit's rank is a real strength signal, so decaying by it is right.
+#
+# The temporal arm is different. Its entry points are memories with a date, or a
+# date range, touching the query's date window, picked by similarity and spread
+# across it (``recall.py``). They are ranked by ``temporal_score`` (ordered that
+# way since #4494): the distance of the memory's date from the middle of the
+# window. Every entry point satisfies the date constraint, so that rank says
+# nothing about relevance. Decaying by it (#4653) gave nearly the whole bump to
+# the few memories nearest the window midpoint instead of the ones the
+# cross-encoder found relevant: dated-query recall@10 with ``temporal:medium``
+# fell from 0.807 (0.10.0) to 0.501 (0.10.2, which also has #4494).
+#
+# The arm also holds neighbours reached over temporal and causal links, and
+# those are not limited to the window. They sit in the same list, scored
+# ``max(own date proximity, a score propagated from the linking memory)``, so
+# they can rank above or below an entry point (a causal link can even push one
+# past 1.0). They now get the full bump too. Before #4653 the bump was flat for
+# every arm, neighbours included, so this is the behaviour #4939 measured as
+# good for stage 2 (the 0.807 build also predates #4494, so it says nothing
+# about which candidates survive stage 1).
+_FLAT_STAGE2_STRATEGIES = frozenset({"temporal"})
 
 
 def boosted_rrf_score(candidate: MergedCandidate, boosts: dict[str, str], k: int = 60) -> float:
@@ -144,9 +174,11 @@ def additive_strategy_boost(source_ranks: dict[str, int], boosts: dict[str, str]
 
     Each boosted arm that surfaced the candidate contributes
     ``additive * rank_divisor / (rank_divisor + rank - 1)``: rank 1 keeps the
-    level's full ``additive``, and deeper ranks decay toward zero. Arms the
-    candidate did not appear in contribute nothing. Matched arms are summed, so
-    two rank-1 ``high`` hits add to ``1.0`` — there is no combined cap.
+    level's full ``additive``, and deeper ranks decay toward zero. The arms in
+    :data:`_FLAT_STAGE2_STRATEGIES` (the temporal arm) contribute the full
+    ``additive`` at every rank. Arms the candidate did not appear in contribute
+    nothing. Matched arms are summed, so two rank-1 ``high`` hits add to ``1.0``
+    — there is no combined cap.
 
     Args:
         source_ranks: ``{"graph_rank": 3, "semantic_rank": 50, ...}`` from RRF.
@@ -163,7 +195,10 @@ def additive_strategy_boost(source_ranks: dict[str, int], boosts: dict[str, str]
         if rank is None:
             continue
         weights = BOOST_LEVELS[level]
-        total += weights.additive * weights.rank_divisor / (weights.rank_divisor + rank - 1)
+        if strategy in _FLAT_STAGE2_STRATEGIES:
+            total += weights.additive
+        else:
+            total += weights.additive * weights.rank_divisor / (weights.rank_divisor + rank - 1)
     return total
 
 
@@ -215,7 +250,9 @@ def apply_post_rerank_boost(
     """Add the stage-2 bump in place, unless this recall is a passthrough.
 
     Does not sort. Returns the ``stage2=...`` token for the ``[4.7]`` log, or
-    ``None`` when ``boosts`` is empty so the caller skips that log.
+    ``None`` when ``boosts`` is empty so the caller skips that log. The token
+    says ``rank_decay`` whenever the bump ran, including when only the temporal
+    arm is boosted and nothing actually decays.
     """
     if not boosts:
         return None
