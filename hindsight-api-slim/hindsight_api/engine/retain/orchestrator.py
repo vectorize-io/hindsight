@@ -867,7 +867,7 @@ async def _streaming_session_retain(
     prepared = entity_processing._prepare_facts_for_entity_processing(batch_processed, user_entities_per_content)
     entities_per_fact = prepared.entities_per_fact
     names = {
-        (unit_ids or [])[i]: [e["text"] for e in entities_per_fact[i]]
+        (unit_ids or [])[i]: entity_processing.store_entity_names(entities_per_fact[i])
         for i in range(min(len(unit_ids or []), len(entities_per_fact)))
     }
 
@@ -986,7 +986,7 @@ async def _streaming_store_owned_retain(
         prepared = entity_processing._prepare_facts_for_entity_processing(batch_processed, user_entities_per_content)
         entities_per_fact = prepared.entities_per_fact
         unit_entity_names = {
-            unit_ids[i]: [e["text"] for e in entities_per_fact[i]]
+            unit_ids[i]: entity_processing.store_entity_names(entities_per_fact[i])
             for i in range(min(len(unit_ids), len(entities_per_fact)))
         }
         # Replace the document's prior version only on its FIRST batch — later batches append to
@@ -1171,7 +1171,7 @@ async def _delta_store_owned_write(
             )
             entities_per_fact = prepared.entities_per_fact
             unit_entity_names = {
-                unit_ids[i]: [e["text"] for e in entities_per_fact[i]]
+                unit_ids[i]: entity_processing.store_entity_names(entities_per_fact[i])
                 for i in range(min(len(unit_ids), len(entities_per_fact)))
             }
 

@@ -2216,6 +2216,50 @@ async def test_import_writes_a_document_to_the_store_and_nothing_to_postgres(res
     assert [p.chunk_texts for p in store.session_parts if p.chunk_texts] == [[text]]
 
 
+async def test_a_store_gets_the_same_entity_names_the_sql_resolver_would_keep(restore_default_store):
+    """The SQL resolver drops a blank or oversized name and collapses whitespace before it writes
+    (#3275); a store that resolves names itself was handed the raw extraction, so an encoded blob
+    became a registry entity there."""
+    from hindsight_api.engine.transfer.importer import _import_one_document
+    from hindsight_api.engine.transfer.schema import TransferChunk, TransferDocument, TransferFact
+
+    store = InMemoryMemories({})
+    set_memories(store)
+    text = "Acme signed the contract."
+    document = TransferDocument(
+        id="doc-1",
+        original_text=text,
+        chunks=[TransferChunk(chunk_index=0, chunk_text=text)],
+        facts=[
+            TransferFact(
+                text="Acme signed", fact_type="world", entities=["Acme", "Acme\n", "x" * 600, "  "], chunk_index=0
+            )
+        ],
+    )
+
+    class _Embedder:
+        async def embed_documents_async(self, texts):
+            return [[0.1, 0.2] for _ in texts]
+
+    class _Config:
+        store_document_text = True
+
+    batch = await _import_one_document(
+        backend=None,
+        embeddings_model=_Embedder(),
+        entity_resolver=None,
+        config=_Config(),
+        format_date_fn=str,
+        bank_id="bank-x",
+        document=document,
+        target_id="doc-1",
+        ops=None,
+    )
+
+    [unit] = batch.unit_ids
+    assert store.retained_entity_names[unit] == ["Acme"]
+
+
 async def test_backlog_gauges_count_a_store_owned_banks_memories(restore_default_store):
     """The gauges counted `memory_units` only, so a store-owned bank's backlog always read 0."""
     from hindsight_api.metrics import _BacklogKey

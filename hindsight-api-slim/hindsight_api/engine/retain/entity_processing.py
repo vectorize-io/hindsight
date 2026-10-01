@@ -29,6 +29,27 @@ class PreparedFactEntities:
     entities_per_fact: list[list[dict]]
 
 
+def store_entity_names(entities: list[dict]) -> list[str]:
+    """The names a store that resolves entities itself is handed for one fact.
+
+    The same intake the SQL resolver applies before it writes (``pg.links``): whitespace runs
+    collapsed, blank names and names past ``_MAX_ENTITY_NAME_CHARS`` dropped, case-insensitive
+    duplicates collapsed. Without it the store received the raw extraction, so an oversized
+    artifact — base64, SVG path data — became a registry entity there (#3275).
+    """
+    from ..memories.pg.links import _MAX_ENTITY_NAME_CHARS, _normalize_entity_name
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for entity in entities:
+        name = _normalize_entity_name(entity["text"])
+        if not name or len(name) > _MAX_ENTITY_NAME_CHARS or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        names.append(name)
+    return names
+
+
 def _prepare_facts_for_entity_processing(
     facts: list[ProcessedFact],
     user_entities_per_content: dict[int, UserEntities] | None = None,
