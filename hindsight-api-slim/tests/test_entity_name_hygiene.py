@@ -22,11 +22,8 @@ import random
 import asyncpg
 import pytest
 
-from hindsight_api.engine.memories.pg.links import (
-    _MAX_ENTITY_NAME_CHARS,
-    _normalize_entity_name,
-    _prepare_entities_for_resolution,
-)
+from hindsight_api.engine.memories.pg.links import _prepare_entities_for_resolution
+from hindsight_api.engine.retain.entity_processing import _MAX_ENTITY_NAME_CHARS, _normalize_entity_name
 
 
 class _FakeEntity:

@@ -5,6 +5,7 @@ Handles entity extraction and resolution for stored facts.
 """
 
 import logging
+import re
 from dataclasses import dataclass
 
 from .types import EntityResolutionResult, ProcessedFact, UserEntities
@@ -29,6 +30,43 @@ class PreparedFactEntities:
     entities_per_fact: list[list[dict]]
 
 
+# Entity-name intake, shared by the SQL resolver (`memories/pg/links.py`) and `store_entity_names`.
+# It used to live in pg.links; it moved here so a store-owned retain can apply the same intake
+# without importing the Postgres store's SQL modules (test_store_table_boundary forbids that).
+
+# Any run of whitespace, including the \n / \r / \t that extraction sometimes
+# leaves inside a candidate entity name.
+_WHITESPACE_RUN_RE = re.compile(r"\s+")
+
+# Longest candidate entity name intake will accept. `entities.canonical_name` is
+# unbounded TEXT, but `idx_entities_bank_name` is a btree on (bank_id,
+# canonical_name) and a btree tuple cannot exceed ~2704 bytes, so a longer name
+# fails the INSERT with ProgramLimitExceededError — and takes the whole retain
+# with it, not just the one entity. 512 characters stays under that limit even at
+# 4 bytes per character plus a long bank_id. Real names never get close: on a
+# production bank set of ~11M entities the median was 13 characters and p99.9 was
+# 96; everything past a few hundred was an extraction artifact — SVG path data,
+# base64, a fragment of serialized JSON.
+# This cap counts characters, which is what the PostgreSQL btree needs. Oracle
+# declares canonical_name as VARCHAR2(512) — byte-counted — so a multibyte name
+# under this cap can still be rejected there; that is a narrower, pre-existing
+# limit of the Oracle schema, not something this cap is sized for.
+_MAX_ENTITY_NAME_CHARS = 512
+
+
+def _normalize_entity_name(name: str) -> str:
+    """Collapse internal whitespace runs to a single space and strip the ends.
+
+    Extraction can hand back names carrying embedded newlines/tabs, which then
+    become ``entities.canonical_name`` values that shear every line-oriented
+    consumer (``psql -A`` output, log lines, exports) — issue #3275. Case is
+    deliberately untouched: the entity registry already matches on
+    ``LOWER(canonical_name)``, so lowercasing here would only lose the display
+    form.
+    """
+    return _WHITESPACE_RUN_RE.sub(" ", name).strip()
+
+
 def store_entity_names(entities: list[dict]) -> list[str]:
     """The names a store that resolves entities itself is handed for one fact.
 
@@ -37,8 +75,6 @@ def store_entity_names(entities: list[dict]) -> list[str]:
     duplicates collapsed. Without it the store received the raw extraction, so an oversized
     artifact — base64, SVG path data — became a registry entity there (#3275).
     """
-    from ..memories.pg.links import _MAX_ENTITY_NAME_CHARS, _normalize_entity_name
-
     names: list[str] = []
     seen: set[str] = set()
     for entity in entities:
