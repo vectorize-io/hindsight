@@ -1,0 +1,70 @@
+.sticky {
+  position: sticky;
+  top: calc(var(--ifm-navbar-height) + 1.5rem);
+  max-height: calc(100vh - var(--ifm-navbar-height) - 3rem);
+  overflow-y: auto;
+}
+
+.railTitle {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ifm-color-emphasis-600);
+  margin-bottom: 0.5rem;
+}
+
+/* The rail itself is the sticky, scrolling box; flatten the TOC's own one
+   (theme-classic's TOC wrapper, the only .thin-scrollbar in the rail). */
+.sticky > :global(.thin-scrollbar) {
+  position: static;
+  max-height: none;
+  overflow: visible;
+  top: auto;
+}
+
+.cta {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border: 1px solid var(--ifm-toc-border-color);
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+.cta p {
+  margin: 0.4rem 0 0.75rem;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.ctaTitle {
+  font-weight: 600;
+}
+
+/* Right rail: stretch the column so the button can stick to the bottom. */
+.stickyBottom {
+  position: sticky;
+  top: calc(100vh - 4rem);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.backToTop {
+  background: none;
+  border: 1px solid var(--ifm-toc-border-color);
+  border-radius: 999px;
+  padding: 0.35rem 0.9rem;
+  font-size: 0.8rem;
+  color: var(--ifm-color-emphasis-700);
+  cursor: pointer;
+}
+
+.backToTop:hover {
+  color: var(--ifm-color-primary);
+  border-color: var(--ifm-color-primary);
+}
+
+@media (max-width: 996px) {
+  .rail {
+    display: none;
+  }
+}
