@@ -10022,141 +10022,179 @@ def _register_routes(app: FastAPI):
             ingress_attachments = await app.state.memory.store_retain_attachments(
                 bank_id, attachments_by_document, request_context
             )
+            pending_attachments = {doc_id: list(short_ids) for doc_id, short_ids in ingress_attachments.items()}
 
-            # Group items by strategy
-            strategy_groups: dict[str | None, list[dict]] = {}
-            for item, canonical, item_document_id in zip(
-                request.items, canonical_contents, item_document_ids, strict=True
-            ):
-                effective = item.strategy
-                if effective not in strategy_groups:
-                    strategy_groups[effective] = []
-                content_dict: dict = {"content": canonical.text}
-                # The names this item gave its attachments, recorded against the
-                # document rather than the blob — the same bytes can be attached
-                # under a different name elsewhere, and the blob row is written
-                # once, for whichever document got there first.
-                item_filenames = {
-                    short_attachment_id(attachment.attachment_hash): attachment.filename
-                    for attachment in canonical.attachments
-                    if attachment.filename
-                }
-                kept_names = names_by_document.get(item.document_id or "")
-                if kept_names:
-                    referenced = set(iter_placeholder_ids(canonical.text))
+            try:
+                # Group items by strategy
+                strategy_groups: dict[str | None, list[dict]] = {}
+                for item, canonical, item_document_id in zip(
+                    request.items, canonical_contents, item_document_ids, strict=True
+                ):
+                    effective = item.strategy
+                    if effective not in strategy_groups:
+                        strategy_groups[effective] = []
+                    content_dict: dict = {"content": canonical.text}
+                    # The names this item gave its attachments, recorded against the
+                    # document rather than the blob — the same bytes can be attached
+                    # under a different name elsewhere, and the blob row is written
+                    # once, for whichever document got there first.
                     item_filenames = {
-                        **{short_id: name for short_id, name in kept_names.items() if short_id in referenced},
-                        **item_filenames,
+                        short_attachment_id(attachment.attachment_hash): attachment.filename
+                        for attachment in canonical.attachments
+                        if attachment.filename
                     }
-                if item_filenames:
-                    content_dict["attachment_filenames"] = item_filenames
-                if item.timestamp == "unset":
-                    content_dict["event_date"] = None
-                elif item.timestamp:
-                    content_dict["event_date"] = item.timestamp
-                if item.context:
-                    content_dict["context"] = item.context
-                if item.metadata:
-                    content_dict["metadata"] = item.metadata
-                if item_document_id:
-                    content_dict["document_id"] = item_document_id
-                if item.entities:
-                    content_dict["entities"] = [{"text": e.text, "type": e.type or "CONCEPT"} for e in item.entities]
-                    content_dict["resolve_entities"] = item.resolve_entities
-                if item.tags:
-                    content_dict["tags"] = item.tags
-                if item.observation_scopes is not None:
-                    content_dict["observation_scopes"] = item.observation_scopes
-                if item.update_mode is not None:
-                    content_dict["update_mode"] = item.update_mode
-                # Carried on the item, not just used as the grouping key: reprocess
-                # rebuilds its retain call from retain_params, so a strategy that
-                # never reaches the content dict never reaches retain_params either
-                # — and the reprocess silently re-extracts under the bank default.
-                if item.strategy:
-                    content_dict["strategy"] = item.strategy
-                strategy_groups[effective].append(content_dict)
+                    kept_names = names_by_document.get(item.document_id or "")
+                    if kept_names:
+                        referenced = set(iter_placeholder_ids(canonical.text))
+                        item_filenames = {
+                            **{short_id: name for short_id, name in kept_names.items() if short_id in referenced},
+                            **item_filenames,
+                        }
+                    if item_filenames:
+                        content_dict["attachment_filenames"] = item_filenames
+                    if item.timestamp == "unset":
+                        content_dict["event_date"] = None
+                    elif item.timestamp:
+                        content_dict["event_date"] = item.timestamp
+                    if item.context:
+                        content_dict["context"] = item.context
+                    if item.metadata:
+                        content_dict["metadata"] = item.metadata
+                    if item_document_id:
+                        content_dict["document_id"] = item_document_id
+                    if item.entities:
+                        content_dict["entities"] = [
+                            {"text": e.text, "type": e.type or "CONCEPT"} for e in item.entities
+                        ]
+                        content_dict["resolve_entities"] = item.resolve_entities
+                    if item.tags:
+                        content_dict["tags"] = item.tags
+                    if item.observation_scopes is not None:
+                        content_dict["observation_scopes"] = item.observation_scopes
+                    if item.update_mode is not None:
+                        content_dict["update_mode"] = item.update_mode
+                    # Carried on the item, not just used as the grouping key: reprocess
+                    # rebuilds its retain call from retain_params, so a strategy that
+                    # never reaches the content dict never reaches retain_params either
+                    # — and the reprocess silently re-extracts under the bank default.
+                    if item.strategy:
+                        content_dict["strategy"] = item.strategy
+                    strategy_groups[effective].append(content_dict)
 
-            if request.async_:
-                if request.operation_id is not None and len(strategy_groups) != 1:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="operation_id requires all retain items to resolve to a single strategy",
-                    )
-                # Async processing: one submit per strategy group
-                all_operation_ids = []
-                total_items_count = 0
-                for group_strategy, contents in strategy_groups.items():
-                    result = await app.state.memory.submit_async_retain(
-                        bank_id,
-                        contents,
-                        document_tags=request.document_tags,
-                        strategy=group_strategy,
-                        request_context=request_context,
-                        operation_id=request.operation_id,
-                        ingress_attachments=ingress_attachments,
-                    )
-                    all_operation_ids.append(result["operation_id"])
-                    total_items_count += result["items_count"]
-                return RetainResponse.model_validate(
-                    {
-                        "success": True,
-                        "bank_id": bank_id,
-                        "items_count": total_items_count,
-                        "async": True,
-                        "operation_id": all_operation_ids[0] if all_operation_ids else None,
-                        "operation_ids": all_operation_ids if len(all_operation_ids) > 1 else None,
-                    }
-                )
-            else:
-                # Check if batch API is enabled - if so, require async mode
-                if config.retain_batch_enabled:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            "Batch API is enabled (HINDSIGHT_API_RETAIN_BATCH_ENABLED=true) but async=false. "
-                            "Batch operations can take several minutes to hours and will timeout in synchronous mode. "
-                            "Please set async=true in your request to use background processing, or disable batch API "
-                            "by setting HINDSIGHT_API_RETAIN_BATCH_ENABLED=false in your environment."
-                        ),
-                    )
-
-                # Synchronous processing: one batch per strategy group, aggregate results
-                total_items_count = 0
-                total_usage = TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0)
-                with metrics.record_operation("retain", bank_id=bank_id, source="api"):
+                if request.async_:
+                    if request.operation_id is not None and len(strategy_groups) != 1:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="operation_id requires all retain items to resolve to a single strategy",
+                        )
+                    # Async processing: one submit per strategy group
+                    all_operation_ids = []
+                    total_items_count = 0
                     for group_strategy, contents in strategy_groups.items():
-                        result, usage = await app.state.memory.retain_batch_async(
-                            bank_id=bank_id,
-                            contents=contents,
+                        group_doc_ids = {c["document_id"] for c in contents if c.get("document_id")}
+                        group_ingress = (
+                            {
+                                doc_id: pending_attachments.pop(doc_id)
+                                for doc_id in group_doc_ids
+                                if doc_id in pending_attachments
+                            }
+                            if pending_attachments
+                            else None
+                        )
+                        result = await app.state.memory.submit_async_retain(
+                            bank_id,
+                            contents,
                             document_tags=request.document_tags,
                             strategy=group_strategy,
                             request_context=request_context,
-                            return_usage=True,
-                            ingress_attachments=ingress_attachments,
-                            outbox_callback_factory=app.state.memory._build_retain_outbox_callback_factory(
-                                bank_id=bank_id,
-                                operation_id=None,
-                                schema=_current_schema.get(),
+                            operation_id=request.operation_id,
+                            ingress_attachments=group_ingress,
+                        )
+                        all_operation_ids.append(result["operation_id"])
+                        total_items_count += result["items_count"]
+                    return RetainResponse.model_validate(
+                        {
+                            "success": True,
+                            "bank_id": bank_id,
+                            "items_count": total_items_count,
+                            "async": True,
+                            "operation_id": all_operation_ids[0] if all_operation_ids else None,
+                            "operation_ids": all_operation_ids if len(all_operation_ids) > 1 else None,
+                        }
+                    )
+                else:
+                    # Check if batch API is enabled - if so, require async mode
+                    if config.retain_batch_enabled:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                "Batch API is enabled (HINDSIGHT_API_RETAIN_BATCH_ENABLED=true) but async=false. "
+                                "Batch operations can take several minutes to hours and will timeout in synchronous mode. "
+                                "Please set async=true in your request to use background processing, or disable batch API "
+                                "by setting HINDSIGHT_API_RETAIN_BATCH_ENABLED=false in your environment."
                             ),
                         )
-                        total_items_count += len(contents)
-                        if usage:
-                            total_usage = TokenUsage(
-                                input_tokens=total_usage.input_tokens + usage.input_tokens,
-                                output_tokens=total_usage.output_tokens + usage.output_tokens,
-                                total_tokens=total_usage.total_tokens + usage.total_tokens,
-                            )
 
-                return RetainResponse.model_validate(
-                    {
-                        "success": True,
-                        "bank_id": bank_id,
-                        "items_count": total_items_count,
-                        "async": False,
-                        "usage": total_usage,
-                    }
-                )
+                    # Synchronous processing: one batch per strategy group, aggregate results
+                    total_items_count = 0
+                    total_usage = TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0)
+                    with metrics.record_operation("retain", bank_id=bank_id, source="api"):
+                        for group_strategy, contents in strategy_groups.items():
+                            group_doc_ids = {c["document_id"] for c in contents if c.get("document_id")}
+                            group_ingress = (
+                                {
+                                    doc_id: pending_attachments.pop(doc_id)
+                                    for doc_id in group_doc_ids
+                                    if doc_id in pending_attachments
+                                }
+                                if pending_attachments
+                                else None
+                            )
+                            result, usage = await app.state.memory.retain_batch_async(
+                                bank_id=bank_id,
+                                contents=contents,
+                                document_tags=request.document_tags,
+                                strategy=group_strategy,
+                                request_context=request_context,
+                                return_usage=True,
+                                ingress_attachments=group_ingress,
+                                outbox_callback_factory=app.state.memory._build_retain_outbox_callback_factory(
+                                    bank_id=bank_id,
+                                    operation_id=None,
+                                    schema=_current_schema.get(),
+                                ),
+                            )
+                            total_items_count += len(contents)
+                            if usage:
+                                total_usage = TokenUsage(
+                                    input_tokens=total_usage.input_tokens + usage.input_tokens,
+                                    output_tokens=total_usage.output_tokens + usage.output_tokens,
+                                    total_tokens=total_usage.total_tokens + usage.total_tokens,
+                                )
+
+                    return RetainResponse.model_validate(
+                        {
+                            "success": True,
+                            "bank_id": bank_id,
+                            "items_count": total_items_count,
+                            "async": False,
+                            "usage": total_usage,
+                        }
+                    )
+            except BaseException:
+                if pending_attachments:
+                    try:
+                        await asyncio.shield(
+                            app.state.memory.discard_unreferenced_attachments(
+                                bank_id, pending_attachments, request_context
+                            )
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to discard unreferenced attachments after retain failure",
+                            exc_info=True,
+                        )
+                raise
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except RetainOperationConflictError as e:

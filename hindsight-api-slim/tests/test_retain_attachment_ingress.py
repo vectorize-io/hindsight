@@ -14,10 +14,14 @@ What the vision model then *makes* of an image is a separate, non-deterministic
 question -- see the judge test in test_retain_multimodal_extraction.py.
 """
 
+import asyncio
 import base64
+import json
 import uuid
 
 import pytest
+
+from hindsight_api.worker.exceptions import RetryTaskAt
 
 from hindsight_api.engine.retain.attachment_content import (
     attachment_placeholder,
@@ -371,3 +375,390 @@ async def test_the_exemption_is_scoped_to_the_document_that_owns_it(api_client, 
 
     assert response.status_code == 200, response.text
     assert not list(iter_placeholder_ids(await _document_text(api_client, bank_id, "thief")))
+
+
+@pytest.mark.asyncio
+async def test_retain_failure_discards_ingress_attachments(api_client, memory, monkeypatch):
+    """When a retain fails (e.g. LLM failure, timeout, unhandled error),
+    attachments written at ingress must not leak into attachments table or storage.
+    """
+    bank_id = f"fail-{uuid.uuid4().hex[:8]}"
+
+    async def _failing_retain(*args, **kwargs):
+        raise RuntimeError("LLM extraction crashed")
+
+    monkeypatch.setattr(memory, "_run_retain_execution", _failing_retain)
+
+    response = await _retain(api_client, bank_id, [_image_block()], document_id="failed_doc")
+    assert response.status_code == 500
+
+    # Verify attachment was discarded and not leaked
+    rows = await _bank_attachment_rows(memory, bank_id)
+    assert rows == [], f"Attachments leaked after retain failure: {rows}"
+
+    storage_key = attachment_storage_key(bank_id, "failed_doc", compute_attachment_hash(PNG_BYTES))
+    assert not await memory._file_storage.exists(storage_key)
+    with pytest.raises(FileNotFoundError):
+        await memory._file_storage.retrieve(storage_key)
+
+
+@pytest.mark.asyncio
+async def test_retain_failure_before_execution_discards_attachments(api_client, memory):
+    """When a retain request fails before retain_batch_async starts (e.g. 400 bad request),
+    attachments written at ingress must be discarded.
+    """
+    bank_id = f"fail-pre-{uuid.uuid4().hex[:8]}"
+
+    # Sending operation_id with multiple strategies triggers 400 in http.py after attachments are stored
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={
+            "items": [
+                {"content": [_image_block()], "strategy": "s1", "document_id": "doc1"},
+                {"content": [_image_block()], "strategy": "s2", "document_id": "doc2"},
+            ],
+            "operation_id": str(uuid.uuid4()),
+            "async": True,
+        },
+    )
+    assert response.status_code == 400
+    assert "operation_id requires all retain items to resolve to a single strategy" in response.text
+
+    # Verify attachments were not left behind
+    rows = await _bank_attachment_rows(memory, bank_id)
+    assert rows == [], f"Attachments leaked after pre-execution failure: {rows}"
+
+
+@pytest.mark.asyncio
+async def test_direct_retain_batch_async_failure_discards_ingress_attachments(memory, monkeypatch):
+    """A direct call to retain_batch_async with ingress_attachments must clean up on failure."""
+    from hindsight_api.engine.retain.attachment_content import RetainAttachment
+    from hindsight_api.models import RequestContext
+
+    bank_id = f"fail-direct-{uuid.uuid4().hex[:8]}"
+    ctx = RequestContext(tenant_id="public")
+
+    # Store attachment through memory engine
+    att = RetainAttachment(
+        attachment_hash=compute_attachment_hash(PNG_BYTES),
+        media_type="image/png",
+        data=PNG_BYTES,
+        block_index=0,
+        kind="image",
+    )
+    ingress = await memory.store_retain_attachments(
+        bank_id=bank_id,
+        images_by_document={"doc_direct": [att]},
+        request_context=ctx,
+    )
+    assert ingress
+
+    rows_before = await _bank_attachment_rows(memory, bank_id)
+    assert len(rows_before) == 1
+
+    # Simulate retain_batch_async failure during execution
+    async def _failing_retain(*args, **kwargs):
+        raise RuntimeError("Direct execution crashed")
+
+    monkeypatch.setattr(memory, "_run_retain_execution", _failing_retain)
+
+    with pytest.raises(RuntimeError, match="Direct execution crashed"):
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "placeholder text", "document_id": "doc_direct"}],
+            request_context=ctx,
+            ingress_attachments=ingress,
+        )
+
+    # Attachments must be cleaned up
+    rows_after = await _bank_attachment_rows(memory, bank_id)
+    assert rows_after == [], f"Attachments leaked after direct retain failure: {rows_after}"
+
+    storage_key = attachment_storage_key(bank_id, "doc_direct", compute_attachment_hash(PNG_BYTES))
+    assert not await memory._file_storage.exists(storage_key)
+    with pytest.raises(FileNotFoundError):
+        await memory._file_storage.retrieve(storage_key)
+
+
+@pytest.mark.asyncio
+async def test_multigroup_retain_partial_failure_preserves_successful_attachments(api_client, memory, monkeypatch):
+    """When a multi-strategy retain partially succeeds, the successful group's attachments
+    are kept, while the failing group's attachments are discarded.
+    """
+    bank_id = f"fail-multi-{uuid.uuid4().hex[:8]}"
+    real_run = memory._run_retain_execution
+
+    async def _conditional_retain(*args, **kwargs):
+        contents = kwargs.get("contents") or (args[1] if len(args) > 1 else [])
+        for item in contents:
+            if item.get("document_id") == "doc2":
+                raise RuntimeError("doc2 crashed")
+        return await real_run(*args, **kwargs)
+
+    monkeypatch.setattr(memory, "_run_retain_execution", _conditional_retain)
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={
+            "items": [
+                {"content": [_image_block(PNG_BYTES)], "strategy": "s1", "document_id": "doc1"},
+                {"content": [_image_block(OTHER_PNG_BYTES)], "strategy": "s2", "document_id": "doc2"},
+            ],
+            "async": False,
+        },
+    )
+    assert response.status_code == 500
+
+    # doc1 succeeded and must keep its attachment; doc2 failed and its attachment must be discarded
+    rows = await _bank_attachment_rows(memory, bank_id)
+    doc_ids = {r["document_id"] for r in rows}
+    assert doc_ids == {"doc1"}, f"Expected only doc1 attachments to survive, got: {rows}"
+
+    doc1_key = attachment_storage_key(bank_id, "doc1", compute_attachment_hash(PNG_BYTES))
+    doc2_key = attachment_storage_key(bank_id, "doc2", compute_attachment_hash(OTHER_PNG_BYTES))
+    assert await memory._file_storage.exists(doc1_key)
+    assert not await memory._file_storage.exists(doc2_key)
+
+
+@pytest.mark.asyncio
+async def test_single_batch_multi_document_partial_failure_preserves_successful_attachments(
+    api_client, memory, monkeypatch
+):
+    """When a single retain batch containing multiple documents partially fails,
+    the successful document's attachments are kept, while the failing document's
+    attachments are discarded.
+    """
+    bank_id = f"fail-single-multi-{uuid.uuid4().hex[:8]}"
+    real_internal = memory._retain_batch_async_internal
+
+    async def _conditional_internal(*args, **kwargs):
+        doc_id = kwargs.get("document_id")
+        if doc_id == "doc2":
+            raise RuntimeError("doc2 failed in retain internal")
+        return await real_internal(*args, **kwargs)
+
+    monkeypatch.setattr(memory, "_retain_batch_async_internal", _conditional_internal)
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={
+            "items": [
+                {"content": [_image_block(PNG_BYTES)], "document_id": "doc1"},
+                {"content": [_image_block(OTHER_PNG_BYTES)], "document_id": "doc2"},
+                # Include a second item for doc1 so has_shared_document is True and groups loop runs
+                {"content": "second turn for doc1", "document_id": "doc1"},
+            ],
+            "async": False,
+        },
+    )
+    assert response.status_code == 500
+
+    # doc1 succeeded and must keep its attachment; doc2 failed and its attachment must be discarded
+    rows = await _bank_attachment_rows(memory, bank_id)
+    doc_ids = {r["document_id"] for r in rows}
+    assert doc_ids == {"doc1"}, f"Expected only doc1 attachments to survive, got: {rows}"
+
+    doc1_key = attachment_storage_key(bank_id, "doc1", compute_attachment_hash(PNG_BYTES))
+    doc2_key = attachment_storage_key(bank_id, "doc2", compute_attachment_hash(OTHER_PNG_BYTES))
+    assert await memory._file_storage.exists(doc1_key)
+    assert not await memory._file_storage.exists(doc2_key)
+
+
+@pytest.mark.asyncio
+async def test_async_retain_worker_failure_discards_attachments(api_client, memory, monkeypatch):
+    """When an async retain operation permanently fails in the worker,
+    the ingress attachments are discarded and not leaked.
+    """
+    bank_id = f"fail-async-worker-{uuid.uuid4().hex[:8]}"
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={
+            "items": [{"content": [_image_block(PNG_BYTES)], "document_id": "doc_async"}],
+            "async": True,
+        },
+    )
+    assert response.status_code == 200
+
+    # Verify attachment was written at ingress
+    rows_before = await _bank_attachment_rows(memory, bank_id)
+    assert len(rows_before) == 1
+
+    # Simulate worker task execution failure with a permanent error
+    async def _failing_retain(*args, **kwargs):
+        raise RuntimeError("Worker permanent failure")
+
+    monkeypatch.setattr(memory, "_run_retain_execution", _failing_retain)
+
+    # Fetch child operation from async_operations
+    backend = await memory._get_backend()
+    async with backend.acquire() as conn:
+        child_row = await conn.fetchrow(
+            "SELECT operation_id, task_payload FROM async_operations WHERE bank_id = $1 AND operation_type = 'retain'",
+            bank_id,
+        )
+    assert child_row is not None
+    task_payload = child_row["task_payload"]
+    if isinstance(task_payload, str):
+        task_payload = json.loads(task_payload)
+
+    # Assert ingress_attachments is present in task_payload
+    assert "ingress_attachments" in task_payload
+    assert "doc_async" in task_payload["ingress_attachments"]
+
+    # Execute task with retry_count equal to worker_max_retries (permanent failure)
+    task_payload["_retry_count"] = 3
+    with pytest.raises(RuntimeError, match="Worker permanent failure"):
+        await memory.execute_task(task_payload)
+
+    # Attachments must be cleaned up after permanent failure
+    rows_after = await _bank_attachment_rows(memory, bank_id)
+    assert rows_after == [], f"Attachments leaked after worker failure: {rows_after}"
+
+    doc_key = attachment_storage_key(bank_id, "doc_async", compute_attachment_hash(PNG_BYTES))
+    assert not await memory._file_storage.exists(doc_key)
+
+
+@pytest.mark.asyncio
+async def test_async_retain_worker_transient_failure_preserves_attachments_for_retry(api_client, memory, monkeypatch):
+    """When an async retain operation hits a transient failure under the retry limit,
+    ingress attachments are preserved so subsequent retry attempts can load them.
+    """
+    bank_id = f"retry-async-worker-{uuid.uuid4().hex[:8]}"
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={
+            "items": [{"content": [_image_block(PNG_BYTES)], "document_id": "doc_retry"}],
+            "async": True,
+        },
+    )
+    assert response.status_code == 200
+
+    backend = await memory._get_backend()
+    async with backend.acquire() as conn:
+        child_row = await conn.fetchrow(
+            "SELECT operation_id, task_payload FROM async_operations WHERE bank_id = $1 AND operation_type = 'retain'",
+            bank_id,
+        )
+    assert child_row is not None
+    task_payload = child_row["task_payload"]
+    if isinstance(task_payload, str):
+        task_payload = json.loads(task_payload)
+
+    # Simulate transient failure on retry_count = 0
+    async def _failing_retain(*args, **kwargs):
+        raise RuntimeError("Transient LLM error")
+
+    monkeypatch.setattr(memory, "_run_retain_execution", _failing_retain)
+
+    task_payload["_retry_count"] = 0
+    with pytest.raises(RetryTaskAt):
+        await memory.execute_task(task_payload)
+
+    # Attachments must still exist for the upcoming retry
+    rows_retry = await _bank_attachment_rows(memory, bank_id)
+    assert len(rows_retry) == 1, "Attachments were prematurely discarded on transient failure"
+    doc_key = attachment_storage_key(bank_id, "doc_retry", compute_attachment_hash(PNG_BYTES))
+    assert await memory._file_storage.exists(doc_key)
+
+
+@pytest.mark.asyncio
+async def test_subbatch_distinct_documents_partial_failure_preserves_successful_attachments(
+    api_client, memory, monkeypatch
+):
+    """When distinct documents (has_shared_document == False) are split across
+    sub-batches and an intermediate sub-batch fails, documents committed by
+    earlier sub-batches preserve their attachments, while failing documents have
+    their attachments discarded.
+    """
+    from hindsight_api.config import get_config
+
+    bank_id = f"subbatch-distinct-{uuid.uuid4().hex[:8]}"
+    # Force each item into its own sub-batch by setting a tiny token limit
+    monkeypatch.setattr(get_config()._config, "retain_batch_tokens", 10)
+
+    real_internal = memory._retain_batch_async_internal
+
+    async def _conditional_internal(*args, **kwargs):
+        contents = kwargs.get("contents") or (args[1] if len(args) > 1 else [])
+        if any(c.get("document_id") == "doc2" for c in contents):
+            raise RuntimeError("doc2 sub-batch failure")
+        return await real_internal(*args, **kwargs)
+
+    monkeypatch.setattr(memory, "_retain_batch_async_internal", _conditional_internal)
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={
+            "items": [
+                {
+                    "content": [_image_block(PNG_BYTES), _text_block("doc1 long text with enough tokens")],
+                    "document_id": "doc1",
+                },
+                {
+                    "content": [_image_block(OTHER_PNG_BYTES), _text_block("doc2 long text with enough tokens")],
+                    "document_id": "doc2",
+                },
+            ],
+            "async": False,
+        },
+    )
+    assert response.status_code == 500
+
+    # doc1 committed in sub-batch 1 and must keep its attachment; doc2 failed in sub-batch 2
+    rows = await _bank_attachment_rows(memory, bank_id)
+    doc_ids = {r["document_id"] for r in rows}
+    assert doc_ids == {"doc1"}, f"Expected only doc1 attachments to survive, got: {rows}"
+
+    doc1_key = attachment_storage_key(bank_id, "doc1", compute_attachment_hash(PNG_BYTES))
+    doc2_key = attachment_storage_key(bank_id, "doc2", compute_attachment_hash(OTHER_PNG_BYTES))
+    assert await memory._file_storage.exists(doc1_key)
+    assert not await memory._file_storage.exists(doc2_key)
+
+
+@pytest.mark.asyncio
+async def test_submit_async_retain_cancellation_discards_attachments(memory, monkeypatch):
+    """Cancellation during submit_async_retain must clean up ingress attachments."""
+    from hindsight_api.engine.retain.attachment_content import RetainAttachment
+    from hindsight_api.models import RequestContext
+
+    bank_id = f"cancel-async-{uuid.uuid4().hex[:8]}"
+    ctx = RequestContext(tenant_id="public")
+
+    att = RetainAttachment(
+        attachment_hash=compute_attachment_hash(PNG_BYTES),
+        media_type="image/png",
+        data=PNG_BYTES,
+        block_index=0,
+        kind="image",
+    )
+    ingress = await memory.store_retain_attachments(
+        bank_id=bank_id,
+        images_by_document={"doc_cancel": [att]},
+        request_context=ctx,
+    )
+    assert ingress
+
+    rows_before = await _bank_attachment_rows(memory, bank_id)
+    assert len(rows_before) == 1
+
+    # Simulate cancellation during bank creation in submit_async_retain
+    async def _cancelled_ensure(*args, **kwargs):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(memory, "_ensure_bank_exists", _cancelled_ensure)
+
+    with pytest.raises(asyncio.CancelledError):
+        await memory.submit_async_retain(
+            bank_id=bank_id,
+            contents=[{"content": "placeholder text", "document_id": "doc_cancel"}],
+            request_context=ctx,
+            ingress_attachments=ingress,
+        )
+
+    # Attachments must be cleaned up despite cancellation
+    rows_after = await _bank_attachment_rows(memory, bank_id)
+    assert rows_after == [], f"Attachments leaked after cancellation: {rows_after}"
+    doc_key = attachment_storage_key(bank_id, "doc_cancel", compute_attachment_hash(PNG_BYTES))
+    assert not await memory._file_storage.exists(doc_key)

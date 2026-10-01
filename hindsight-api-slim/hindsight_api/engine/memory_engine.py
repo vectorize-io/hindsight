@@ -3608,6 +3608,7 @@ class MemoryEngine(MemoryEngineInterface):
             # Present when the claim folded other queued retains for this
             # document into this task; drives one post-retain hook per member.
             fold_members=FoldMemberRef.list_from_payload(task_dict.get("_fold_members")),
+            ingress_attachments=task_dict.get("ingress_attachments"),
             outbox_callback_factory=self._build_retain_outbox_callback_factory(
                 bank_id=bank_id,
                 operation_id=operation_id,
@@ -6065,244 +6066,278 @@ class MemoryEngine(MemoryEngineInterface):
         # Authenticate tenant and set schema in context (for fq_table())
         await self._authenticate_tenant(request_context)
 
-        # Validate operation if validator is configured
-        contents_copy = [dict(c) for c in contents]  # Convert TypedDict to regular dict for extension
-        if self._operation_validator:
-            from hindsight_api.extensions import RetainContext
+        remaining_attachments: dict[str, list[str]] = (
+            {doc_id: list(short_ids) for doc_id, short_ids in ingress_attachments.items()}
+            if ingress_attachments
+            else {}
+        )
 
-            attachment_info = await self._retain_attachment_info(bank_id, contents_copy, request_context)
-            ctx = RetainContext(
-                bank_id=bank_id,
-                contents=contents_copy,
-                request_context=request_context,
-                document_id=document_id or _shared_document_id(contents_copy),
-                fact_type_override=fact_type_override,
-                attachments=attachment_info,
-            )
-            try:
-                result = await self._validate_operation(self._operation_validator.validate_retain(ctx))
-            except Exception:
-                # A refused retain must not leave its bytes behind. They are
-                # written at the API ingress, before this hook can run — the
-                # async path cannot carry megabytes of base64 through its
-                # operation row — so the only way a content policy can actually
-                # keep them out of the bank is to take them back out here.
-                # Nothing else would: reclaim is otherwise driven by document
-                # deletion, and a rejected retain never creates a document.
-                await self._discard_unreferenced_attachments(bank_id, ingress_attachments, request_context)
-                raise
-            if result and result.contents is not None:
-                contents = cast(list[RetainContentDict], result.contents)
+        try:
+            # Validate operation if validator is configured
+            contents_copy = [dict(c) for c in contents]  # Convert TypedDict to regular dict for extension
+            if self._operation_validator:
+                from hindsight_api.extensions import RetainContext
 
-        await self._ensure_bank_exists(bank_id, request_context)
-
-        # Engine-owned copy: the orchestrator clears per-item "content" strings
-        # after building the document's combined text (memory pressure
-        # optimization, see retain/orchestrator.py). Without an internal copy
-        # those mutations leak back to the caller's dicts.
-        contents = cast(list[RetainContentDict], [dict(c) for c in contents])
-
-        # Sanitize the whole item at ingress. A lone UTF-16 surrogate (e.g. a
-        # half-emoji a client serialized as a `\udXXX` escape) crashes the
-        # embedder, cross-encoder or logging with an HTTP 500 (#1875), and U+0000
-        # is storable in neither `text` nor `jsonb`, so a NUL aborts the INSERT
-        # outright. Neither character is confined to `content`: `sanitize_value`
-        # walks the item — context, document_id, tags, entities and nested
-        # metadata, keys included — so no field can be forgotten one at a time.
-        contents = cast(list[RetainContentDict], sanitize_value(contents))
-        for item in contents:
-            # Downstream expects a string here even when the item sanitized empty.
-            if "content" in item:
-                item["content"] = item["content"] or ""
-            # Client-supplied entity names reach the same places the fact text does:
-            # they are appended to the embedded string and joined into `text_signals`
-            # for BM25, so an unpaired surrogate here crashes identically (#3729).
-            # Shape is ``[{"text": ..., "type": ...}]``; an entry whose text sanitized
-            # away entirely is dropped rather than carried as a nameless entity.
-            if item.get("entities"):
-                item["entities"] = [
-                    # `RetainContent.entities` is `list[dict[str, str]]`; an omitted
-                    # `type` arrives as None and must not survive as one.
-                    {key: value or "" for key, value in entity.items()}
-                    for entity in item["entities"]
-                    if (entity.get("text") or "").strip()
-                ]
-
-        # Apply batch-level document_id to contents that don't have their own (backwards compatibility)
-        if document_id:
-            for item in contents:
-                if "document_id" not in item:
-                    item["document_id"] = document_id
-
-        # NOTE: items sharing a document_id are ALLOWED here and folded into one
-        # document (see the grouping dispatch below). The synchronous in-process
-        # path processes sub-batches sequentially, so same-document items cannot
-        # race each other — unlike the queued path, which still rejects
-        # duplicates (see submit_async_retain).
-
-        # Validate update_mode=append requires document_id
-        for item in contents:
-            if item.get("update_mode") == "append" and not item.get("document_id"):
-                raise ValueError("update_mode='append' requires a document_id")
-
-        # Append mode rebuilds the full document by reading back the previously
-        # stored original_text and prepending it. With store_document_text
-        # disabled there is no stored text to read, so the append would silently
-        # drop all prior content — reject it explicitly instead. Resolve the
-        # per-bank setting only when an append is actually requested.
-        if any(item.get("update_mode") == "append" for item in contents):
-            bank_cfg = await self._config_resolver.get_bank_config(bank_id, request_context)
-            if not bank_cfg.get("store_document_text", DEFAULT_STORE_DOCUMENT_TEXT):
-                raise ValueError(
-                    "update_mode='append' is not supported when document text storage "
-                    "(store_document_text / HINDSIGHT_API_STORE_DOCUMENT_TEXT) is disabled: the prior "
-                    "document text is not stored and cannot be appended to. Use update_mode='replace' instead."
-                )
-
-        # Fold items that share an explicit document_id into one document. On the
-        # synchronous in-process path this is safe — sub-batches run sequentially,
-        # so same-document items cannot race (unlike the queued path, which still
-        # rejects duplicates; see submit_async_retain). Each shared-document group
-        # is processed in ONE orchestrator pass rather than being token-split:
-        # splitting one document across sub-batches that carry different bodies
-        # trips the streaming pipeline's content-hash ownership check and silently
-        # drops the later sub-batches (that path is safe only for an oversized
-        # SINGLE item, whose slices all replay the same full body). The
-        # orchestrator streams a large document chunk-batch by chunk-batch on its
-        # own, so a single pass stays memory-bounded.
-        # Walrus so the value TESTED is the value kept; reading `document_id` twice left the list
-        # typed `list[str | None]` even though the filter had just excluded None.
-        explicit_doc_ids = [doc_id for item in contents if (doc_id := item.get("document_id"))]
-        has_shared_document = len(explicit_doc_ids) != len(set(explicit_doc_ids))
-
-        # Where these documents' attachments are stored, before this retain rewrites
-        # them. One the new text drops loses its row on the rewrite, and unless the
-        # bytes are reclaimed afterwards they outlive every reference to them.
-        previous_attachments = await self._document_attachment_keys(bank_id, explicit_doc_ids)
-
-        if not has_shared_document:
-            # No document is shared, so distinct-document items may be packed and
-            # token-split across sub-batches as before (the orchestrator keeps
-            # genuinely distinct per-item document_ids separate within a pass).
-            execution = await self._run_retain_execution(
-                bank_id=bank_id,
-                contents=contents,
-                request_context=request_context,
-                document_id=document_id,
-                fact_type_override=fact_type_override,
-                document_tags=document_tags,
-                operation_id=operation_id,
-                strategy=strategy,
-                outbox_callback=outbox_callback,
-                outbox_callback_factory=outbox_callback_factory,
-                start_time=start_time,
-            )
-            result = execution.unit_ids
-            total_usage = execution.usage
-            total_processed_content_tokens = execution.processed_content_tokens
-            cancelled = execution.cancelled
-        else:
-            # Group in first-appearance order: each shared document_id becomes one
-            # group, and each item without an explicit document_id becomes its own
-            # group (its own document).
-            groups: list[_RetainGroup] = []
-            groups_by_doc_id: dict[str, _RetainGroup] = {}
-            for idx, item in enumerate(contents):
-                item_doc_id = item.get("document_id")
-                existing = groups_by_doc_id.get(item_doc_id) if item_doc_id is not None else None
-                if existing is not None:
-                    existing.origins.append(idx)
-                    existing.contents.append(item)
-                    continue
-                group = _RetainGroup(document_id=item_doc_id, origins=[idx], contents=[item])
-                groups.append(group)
-                if item_doc_id is not None:
-                    groups_by_doc_id[item_doc_id] = group
-
-            result = [[] for _ in contents]
-            total_usage = TokenUsage()
-            total_processed_content_tokens = 0
-            cancelled = False
-            for group_idx, group in enumerate(groups):
-                # Checkpoint: abort if the operation was cancelled or deleted (bank
-                # deleted) between documents, mirroring the sub-batch loop's checkpoint.
-                if operation_id and not await self._check_op_alive(operation_id):
-                    logger.info(
-                        f"[BATCH_RETAIN] bank={bank_id} operation {operation_id} cancelled, "
-                        f"stopping after {group_idx}/{len(groups)} documents"
-                    )
-                    cancelled = True
-                    break
-
-                set_stage(f"batch_retain.document.{group_idx + 1}")
-
-                # Per-document webhook rows come from the factory, rebuilt for each
-                # group's contents. A raw pre-built callback (no factory) covers the
-                # whole operation, so fire it once, on the last group.
-                is_last_group = group_idx == len(groups) - 1
-                if outbox_callback_factory is not None:
-                    group_outbox_callback = outbox_callback_factory(group.contents)
-                else:
-                    group_outbox_callback = outbox_callback if is_last_group else None
-
-                group_outcome = await self._retain_batch_async_internal(
+                attachment_info = await self._retain_attachment_info(bank_id, contents_copy, request_context)
+                ctx = RetainContext(
                     bank_id=bank_id,
-                    contents=group.contents,
+                    contents=contents_copy,
                     request_context=request_context,
-                    document_id=group.document_id,
-                    is_first_batch=True,
+                    document_id=document_id or _shared_document_id(contents_copy),
+                    fact_type_override=fact_type_override,
+                    attachments=attachment_info,
+                )
+                result = await self._validate_operation(self._operation_validator.validate_retain(ctx))
+                if result and result.contents is not None:
+                    contents = cast(list[RetainContentDict], result.contents)
+
+            await self._ensure_bank_exists(bank_id, request_context)
+
+            # Engine-owned copy: the orchestrator clears per-item "content" strings
+            # after building the document's combined text (memory pressure
+            # optimization, see retain/orchestrator.py). Without an internal copy
+            # those mutations leak back to the caller's dicts.
+            contents = cast(list[RetainContentDict], [dict(c) for c in contents])
+
+            # Sanitize the whole item at ingress. A lone UTF-16 surrogate (e.g. a
+            # half-emoji a client serialized as a `\udXXX` escape) crashes the
+            # embedder, cross-encoder or logging with an HTTP 500 (#1875), and U+0000
+            # is storable in neither `text` nor `jsonb`, so a NUL aborts the INSERT
+            # outright. Neither character is confined to `content`: `sanitize_value`
+            # walks the item — context, document_id, tags, entities and nested
+            # metadata, keys included — so no field can be forgotten one at a time.
+            contents = cast(list[RetainContentDict], sanitize_value(contents))
+            for item in contents:
+                # Downstream expects a string here even when the item sanitized empty.
+                if "content" in item:
+                    item["content"] = item["content"] or ""
+                # Client-supplied entity names reach the same places the fact text does:
+                # they are appended to the embedded string and joined into `text_signals`
+                # for BM25, so an unpaired surrogate here crashes identically (#3729).
+                # Shape is ``[{"text": ..., "type": ...}]``; an entry whose text sanitized
+                # away entirely is dropped rather than carried as a nameless entity.
+                if item.get("entities"):
+                    item["entities"] = [
+                        # `RetainContent.entities` is `list[dict[str, str]]`; an omitted
+                        # `type` arrives as None and must not survive as one.
+                        {key: value or "" for key, value in entity.items()}
+                        for entity in item["entities"]
+                        if (entity.get("text") or "").strip()
+                    ]
+
+            # Apply batch-level document_id to contents that don't have their own (backwards compatibility)
+            if document_id:
+                for item in contents:
+                    if "document_id" not in item:
+                        item["document_id"] = document_id
+
+            # NOTE: items sharing a document_id are ALLOWED here and folded into one
+            # document (see the grouping dispatch below). The synchronous in-process
+            # path processes sub-batches sequentially, so same-document items cannot
+            # race each other — unlike the queued path, which still rejects
+            # duplicates (see submit_async_retain).
+
+            # Validate update_mode=append requires document_id
+            for item in contents:
+                if item.get("update_mode") == "append" and not item.get("document_id"):
+                    raise ValueError("update_mode='append' requires a document_id")
+
+            # Append mode rebuilds the full document by reading back the previously
+            # stored original_text and prepending it. With store_document_text
+            # disabled there is no stored text to read, so the append would silently
+            # drop all prior content — reject it explicitly instead. Resolve the
+            # per-bank setting only when an append is actually requested.
+            if any(item.get("update_mode") == "append" for item in contents):
+                bank_cfg = await self._config_resolver.get_bank_config(bank_id, request_context)
+                if not bank_cfg.get("store_document_text", DEFAULT_STORE_DOCUMENT_TEXT):
+                    raise ValueError(
+                        "update_mode='append' is not supported when document text storage "
+                        "(store_document_text / HINDSIGHT_API_STORE_DOCUMENT_TEXT) is disabled: the prior "
+                        "document text is not stored and cannot be appended to. Use update_mode='replace' instead."
+                    )
+
+            # Fold items that share an explicit document_id into one document. On the
+            # synchronous in-process path this is safe — sub-batches run sequentially,
+            # so same-document items cannot race (unlike the queued path, which still
+            # rejects duplicates; see submit_async_retain). Each shared-document group
+            # is processed in ONE orchestrator pass rather than being token-split:
+            # splitting one document across sub-batches that carry different bodies
+            # trips the streaming pipeline's content-hash ownership check and silently
+            # drops the later sub-batches (that path is safe only for an oversized
+            # SINGLE item, whose slices all replay the same full body). The
+            # orchestrator streams a large document chunk-batch by chunk-batch on its
+            # own, so a single pass stays memory-bounded.
+            # Walrus so the value TESTED is the value kept; reading `document_id` twice left the list
+            # typed `list[str | None]` even though the filter had just excluded None.
+            explicit_doc_ids = [doc_id for item in contents if (doc_id := item.get("document_id"))]
+            has_shared_document = len(explicit_doc_ids) != len(set(explicit_doc_ids))
+
+            # Where these documents' attachments are stored, before this retain rewrites
+            # them. One the new text drops loses its row on the rewrite, and unless the
+            # bytes are reclaimed afterwards they outlive every reference to them.
+            previous_attachments = await self._document_attachment_keys(bank_id, explicit_doc_ids)
+
+            if not has_shared_document:
+                # No document is shared, so distinct-document items may be packed and
+                # token-split across sub-batches as before (the orchestrator keeps
+                # genuinely distinct per-item document_ids separate within a pass).
+                execution = await self._run_retain_execution(
+                    bank_id=bank_id,
+                    contents=contents,
+                    request_context=request_context,
+                    document_id=document_id,
                     fact_type_override=fact_type_override,
                     document_tags=document_tags,
                     operation_id=operation_id,
                     strategy=strategy,
-                    outbox_callback=group_outbox_callback,
+                    outbox_callback=outbox_callback,
+                    outbox_callback_factory=outbox_callback_factory,
+                    start_time=start_time,
+                    remaining_attachments=remaining_attachments,
                 )
-                for local_idx, origin_idx in enumerate(group.origins):
-                    if local_idx < len(group_outcome.memory_ids):
-                        result[origin_idx] = group_outcome.memory_ids[local_idx]
-                total_usage = total_usage + group_outcome.usage
-                total_processed_content_tokens = merge_processed_content_tokens(
-                    total_processed_content_tokens, group_outcome.processed_content_tokens
-                )
+                result = execution.unit_ids
+                total_usage = execution.usage
+                total_processed_content_tokens = execution.processed_content_tokens
+                cancelled = execution.cancelled
+            else:
+                # Group in first-appearance order: each shared document_id becomes one
+                # group, and each item without an explicit document_id becomes its own
+                # group (its own document).
+                groups: list[_RetainGroup] = []
+                groups_by_doc_id: dict[str, _RetainGroup] = {}
+                for idx, item in enumerate(contents):
+                    item_doc_id = item.get("document_id")
+                    existing = groups_by_doc_id.get(item_doc_id) if item_doc_id is not None else None
+                    if existing is not None:
+                        existing.origins.append(idx)
+                        existing.contents.append(item)
+                        continue
+                    group = _RetainGroup(document_id=item_doc_id, origins=[idx], contents=[item])
+                    groups.append(group)
+                    if item_doc_id is not None:
+                        groups_by_doc_id[item_doc_id] = group
 
-        # A cancelled run (bank deleted mid-flight) skips the completion side
-        # effects, mirroring the pre-grouping early return from the sub-batch loop.
-        if cancelled:
+                result = [[] for _ in contents]
+                total_usage = TokenUsage()
+                total_processed_content_tokens = 0
+                cancelled = False
+                for group_idx, group in enumerate(groups):
+                    # Checkpoint: abort if the operation was cancelled or deleted (bank
+                    # deleted) between documents, mirroring the sub-batch loop's checkpoint.
+                    if operation_id and not await self._check_op_alive(operation_id):
+                        logger.info(
+                            f"[BATCH_RETAIN] bank={bank_id} operation {operation_id} cancelled, "
+                            f"stopping after {group_idx}/{len(groups)} documents"
+                        )
+                        cancelled = True
+                        break
+
+                    set_stage(f"batch_retain.document.{group_idx + 1}")
+
+                    # Per-document webhook rows come from the factory, rebuilt for each
+                    # group's contents. A raw pre-built callback (no factory) covers the
+                    # whole operation, so fire it once, on the last group.
+                    is_last_group = group_idx == len(groups) - 1
+                    if outbox_callback_factory is not None:
+                        group_outbox_callback = outbox_callback_factory(group.contents)
+                    else:
+                        group_outbox_callback = outbox_callback if is_last_group else None
+
+                    group_outcome = await self._retain_batch_async_internal(
+                        bank_id=bank_id,
+                        contents=group.contents,
+                        request_context=request_context,
+                        document_id=group.document_id,
+                        is_first_batch=True,
+                        fact_type_override=fact_type_override,
+                        document_tags=document_tags,
+                        operation_id=operation_id,
+                        strategy=strategy,
+                        outbox_callback=group_outbox_callback,
+                    )
+                    if group.document_id:
+                        remaining_attachments.pop(group.document_id, None)
+                    for local_idx, origin_idx in enumerate(group.origins):
+                        if local_idx < len(group_outcome.memory_ids):
+                            result[origin_idx] = group_outcome.memory_ids[local_idx]
+                    total_usage = total_usage + group_outcome.usage
+                    total_processed_content_tokens = merge_processed_content_tokens(
+                        total_processed_content_tokens, group_outcome.processed_content_tokens
+                    )
+
+            # A cancelled run (bank deleted mid-flight) skips the completion side
+            # effects, mirroring the pre-grouping early return from the sub-batch loop.
+            if cancelled:
+                if return_usage:
+                    return result, total_usage
+                return result
+
+            await self._write_retain_outcome_metadata(operation_id, result)
+
+            if previous_attachments:
+                async with (await self._get_backend()).acquire() as conn:
+                    await self._sync_store_owned_document_attachments(conn, bank_id, explicit_doc_ids)
+                    await self._reclaim_orphaned_attachments(conn, bank_id, previous_attachments)
+
+            # Call post-operation hook if validator is configured
+            if self._operation_validator:
+                for result_ctx in self._build_retain_hook_results(
+                    bank_id=bank_id,
+                    contents_copy=contents_copy,
+                    request_context=request_context,
+                    document_id=document_id or _shared_document_id(contents_copy),
+                    fact_type_override=fact_type_override,
+                    unit_ids=result,
+                    total_usage=total_usage,
+                    total_processed_content_tokens=total_processed_content_tokens,
+                    fold_members=fold_members,
+                ):
+                    try:
+                        await self._operation_validator.on_retain_complete(result_ctx)
+                    except Exception as e:
+                        logger.warning(f"Post-retain hook error (non-fatal): {e}")
+
+            # Same async side effects every fact insert triggers (retain or import).
+            await self._submit_post_insert_maintenance(bank_id, request_context)
+
+            # Successfully completed — clear remaining_attachments so no discard happens
+            remaining_attachments.clear()
+
             if return_usage:
                 return result, total_usage
             return result
-
-        await self._write_retain_outcome_metadata(operation_id, result)
-
-        if previous_attachments:
-            async with (await self._get_backend()).acquire() as conn:
-                await self._sync_store_owned_document_attachments(conn, bank_id, explicit_doc_ids)
-                await self._reclaim_orphaned_attachments(conn, bank_id, previous_attachments)
-
-        # Call post-operation hook if validator is configured
-        if self._operation_validator:
-            for result_ctx in self._build_retain_hook_results(
-                bank_id=bank_id,
-                contents_copy=contents_copy,
-                request_context=request_context,
-                document_id=document_id or _shared_document_id(contents_copy),
-                fact_type_override=fact_type_override,
-                unit_ids=result,
-                total_usage=total_usage,
-                total_processed_content_tokens=total_processed_content_tokens,
-                fold_members=fold_members,
-            ):
+        except BaseException as exc:
+            # A refused or failed retain must not leave its bytes behind. They are
+            # written at the API ingress, before processing starts — so the only
+            # way to prevent orphaned attachment records and storage blobs is to
+            # take them back out here on any failure. Reclaim is otherwise driven
+            # by document deletion, and a failed retain never creates a document.
+            #
+            # However, when running as a background worker task that will be retried
+            # on a transient failure (e.g. rate limit, temporary network error),
+            # the ingress attachments must be kept intact so subsequent retry attempts
+            # can still load them. They are discarded only on non-retryable failures,
+            # when retries are exhausted, or on cancellation/abort.
+            config = get_config()
+            will_retry = (
+                request_context.internal
+                and request_context.user_initiated
+                and isinstance(exc, Exception)
+                and not _is_non_retryable_task_error(exc)
+                and request_context.retry_count < config.worker_max_retries
+            )
+            if remaining_attachments and not will_retry:
                 try:
-                    await self._operation_validator.on_retain_complete(result_ctx)
-                except Exception as e:
-                    logger.warning(f"Post-retain hook error (non-fatal): {e}")
-
-        # Same async side effects every fact insert triggers (retain or import).
-        await self._submit_post_insert_maintenance(bank_id, request_context)
-
-        if return_usage:
-            return result, total_usage
-        return result
+                    await asyncio.shield(
+                        self.discard_unreferenced_attachments(bank_id, remaining_attachments, request_context)
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to discard unreferenced attachments after retain failure for bank %s",
+                        bank_id,
+                        exc_info=True,
+                    )
+            raise
 
     def _build_retain_hook_results(
         self,
@@ -6499,6 +6534,7 @@ class MemoryEngine(MemoryEngineInterface):
         outbox_callback: RetainOutboxCallback | None,
         outbox_callback_factory: RetainOutboxCallbackFactory | None,
         start_time: float,
+        remaining_attachments: dict[str, list[str]] | None = None,
     ) -> _RetainExecutionResult:
         """Run a batch with no shared document_id through the token splitter and
         the sequential sub-batch loop (or a single pass for a small batch).
@@ -6715,6 +6751,11 @@ class MemoryEngine(MemoryEngineInterface):
                     body_accum=body_accum,
                     retain_session=retain_session,
                 )
+                if remaining_attachments:
+                    for c in contents_:
+                        doc_id = c.get("document_id")
+                        if doc_id:
+                            remaining_attachments.pop(doc_id, None)
                 return _SubBatchOutcome(
                     index=idx,
                     origins=origins_,
@@ -6893,6 +6934,8 @@ class MemoryEngine(MemoryEngineInterface):
                 if retain_session is not None:
                     async with _retain_timing_mod.timed("store.commit"):
                         await retain_session.commit()
+            if remaining_attachments:
+                remaining_attachments.clear()
             result = sub_batch_outcome.memory_ids
             total_usage = sub_batch_outcome.usage
             total_processed_content_tokens = sub_batch_outcome.processed_content_tokens
@@ -6923,6 +6966,9 @@ class MemoryEngine(MemoryEngineInterface):
                     operation_id,
                     exc_info=True,
                 )
+
+        if remaining_attachments:
+            remaining_attachments.clear()
 
         return _RetainExecutionResult(
             unit_ids=result,
@@ -7447,7 +7493,7 @@ class MemoryEngine(MemoryEngineInterface):
             if short_id in records
         ]
 
-    async def _discard_unreferenced_attachments(
+    async def discard_unreferenced_attachments(
         self,
         bank_id: str,
         ingress_attachments: "Mapping[str, Sequence[str]] | None",
@@ -7466,28 +7512,33 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
         reclaimable: list[str] = []
         async with backend.acquire() as conn:
-            for document_id, short_ids in ingress_attachments.items():
-                wanted = list(dict.fromkeys(short_ids))
-                if not wanted:
-                    continue
-                rows = await conn.fetch(
-                    f"SELECT storage_key FROM {fq_table('attachments')} "
-                    f"WHERE bank_id = $1 AND document_id = $2 AND short_id = ANY($3::text[])",
-                    bank_id,
-                    document_id,
-                    wanted,
-                )
-                if not rows:
-                    continue
-                await conn.execute(
-                    f"DELETE FROM {fq_table('attachments')} "
-                    f"WHERE bank_id = $1 AND document_id = $2 AND short_id = ANY($3::text[])",
-                    bank_id,
-                    document_id,
-                    wanted,
-                )
-                reclaimable.extend(row["storage_key"] for row in rows)
-            await self._reclaim_orphaned_attachments(conn, bank_id, reclaimable)
+            try:
+                for document_id, short_ids in ingress_attachments.items():
+                    wanted = list(dict.fromkeys(short_ids))
+                    if not wanted:
+                        continue
+                    rows = await conn.fetch(
+                        f"SELECT storage_key FROM {fq_table('attachments')} "
+                        f"WHERE bank_id = $1 AND document_id = $2 AND short_id = ANY($3::text[])",
+                        bank_id,
+                        document_id,
+                        wanted,
+                    )
+                    if not rows:
+                        continue
+                    await conn.execute(
+                        f"DELETE FROM {fq_table('attachments')} "
+                        f"WHERE bank_id = $1 AND document_id = $2 AND short_id = ANY($3::text[])",
+                        bank_id,
+                        document_id,
+                        wanted,
+                    )
+                    reclaimable.extend(row["storage_key"] for row in rows)
+            finally:
+                if reclaimable:
+                    await self._reclaim_orphaned_attachments(conn, bank_id, reclaimable)
+
+    _discard_unreferenced_attachments = discard_unreferenced_attachments
 
     async def resolve_attachments(
         self,
@@ -21574,10 +21625,12 @@ class MemoryEngine(MemoryEngineInterface):
             )
             try:
                 result = await self._validate_operation(self._operation_validator.validate_retain(ctx))
-            except Exception:
+            except BaseException:
                 # Same reclaim as the synchronous path: the bytes were stored at
                 # ingress, so a refusal here is the only chance to take them back.
-                await self._discard_unreferenced_attachments(bank_id, ingress_attachments, request_context)
+                await asyncio.shield(
+                    self.discard_unreferenced_attachments(bank_id, ingress_attachments, request_context)
+                )
                 raise
             if result and result.contents is not None:
                 contents = result.contents
@@ -21627,6 +21680,10 @@ class MemoryEngine(MemoryEngineInterface):
             from collections import Counter
 
             duplicates = [doc_id for doc_id, count in Counter(doc_ids).items() if count > 1]
+            if ingress_attachments:
+                await asyncio.shield(
+                    self.discard_unreferenced_attachments(bank_id, ingress_attachments, request_context)
+                )
             raise ValueError(
                 f"Batch contains duplicate document_ids: {duplicates}. Each content item in an "
                 f"async batch must have a unique document_id to avoid races between the parallel "
@@ -21667,7 +21724,6 @@ class MemoryEngine(MemoryEngineInterface):
         # Always create parent operation (even for single batch - simpler, more reliable code path).
         # A caller-supplied id becomes the parent id so retries are idempotent.
         parent_operation_id = client_operation_id if client_operation_id is not None else uuid.uuid4()
-        backend = await self._get_backend()
 
         # Create typed metadata for parent operation. `doc_ids` was validated
         # above to be duplicate-free, so a length of 1 means the batch targets a
@@ -21706,6 +21762,7 @@ class MemoryEngine(MemoryEngineInterface):
         deferred_child_payloads: list[dict[str, Any]] = []
 
         try:
+            backend = await self._get_backend()
             async with acquire_with_retry(backend) as conn:
                 async with conn.transaction():
                     # async_operations.bank_id has a FK to banks. Create the bank
@@ -21740,6 +21797,15 @@ class MemoryEngine(MemoryEngineInterface):
                             task_payload["document_tags"] = document_tags
                         if strategy:
                             task_payload["strategy"] = strategy
+                        sub_doc_ids = {item.get("document_id") for item in sub_batch if item.get("document_id")}
+                        if ingress_attachments:
+                            sub_ingress = {
+                                doc_id: list(short_ids)
+                                for doc_id, short_ids in ingress_attachments.items()
+                                if doc_id in sub_doc_ids
+                            }
+                            if sub_ingress:
+                                task_payload["ingress_attachments"] = sub_ingress
                         # Pass tenant_id and api_key_id through task payload
                         if request_context.tenant_id:
                             task_payload["_tenant_id"] = request_context.tenant_id
@@ -21773,8 +21839,8 @@ class MemoryEngine(MemoryEngineInterface):
                         await conn.execute(
                             f"""
                             INSERT INTO {fq_table("async_operations")}
-                                (operation_id, bank_id, operation_type, result_metadata, status,
-                                 task_payload, serialization_key)
+                                 (operation_id, bank_id, operation_type, result_metadata, status,
+                                  task_payload, serialization_key)
                             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
                             """,
                             child_operation_id,
@@ -21790,19 +21856,27 @@ class MemoryEngine(MemoryEngineInterface):
                             child_metadata.document_id,
                         )
                         deferred_child_payloads.append(full_payload)
-        except Exception as e:
+        except BaseException as e:
             # Concurrency backstop: a caller-supplied id that lost the parent
             # primary-key race against a simultaneous first submission of the
             # same id must resolve to the winner's operation, not a 500. Only
             # a unique violation on our id qualifies; anything else propagates.
-            is_unique_violation = isinstance(
-                e, asyncpg.exceptions.UniqueViolationError
-            ) or _is_oracledb_integrity_error(e)
+            is_unique_violation = isinstance(e, asyncpg.exceptions.UniqueViolationError) or (
+                isinstance(e, Exception) and _is_oracledb_integrity_error(e)
+            )
             if client_operation_id is None or not is_unique_violation:
+                if ingress_attachments:
+                    await asyncio.shield(
+                        self.discard_unreferenced_attachments(bank_id, ingress_attachments, request_context)
+                    )
                 raise
             replay = await self._resolve_retain_replay(client_operation_id, bank_id)
             if replay is not None:
                 return replay
+            if ingress_attachments:
+                await asyncio.shield(
+                    self.discard_unreferenced_attachments(bank_id, ingress_attachments, request_context)
+                )
             raise
 
         # Best-effort default-template hook runs after the bank-create commits.

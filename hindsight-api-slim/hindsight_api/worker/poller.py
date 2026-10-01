@@ -816,6 +816,21 @@ class WorkerPoller:
             )
             task_dict["contents"] = merged_contents
             task_dict["_fold_members"] = fold_members
+            merged_ingress: dict[str, list[str]] = {}
+            for p_row in [row, *[p for p in peer_rows if str(p["operation_id"]) in folded_ids]]:
+                p_payload = p_row["task_payload"]
+                if isinstance(p_payload, str):
+                    try:
+                        p_payload = json.loads(p_payload)
+                    except Exception:
+                        p_payload = {}
+                if isinstance(p_payload, dict):
+                    p_ingress = p_payload.get("ingress_attachments")
+                    if p_ingress:
+                        for doc, shorts in p_ingress.items():
+                            merged_ingress.setdefault(doc, []).extend(shorts)
+            if merged_ingress:
+                task_dict["ingress_attachments"] = merged_ingress
             logger.info(
                 f"Folded {len(plan.peer_ids)} queued retain(s) for document "
                 f"{serialization_key} into operation {row['operation_id']}"
