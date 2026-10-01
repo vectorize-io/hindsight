@@ -1197,6 +1197,7 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | `HINDSIGHT_API_RERANKER_TEI_BATCH_SIZE` | Batch size for TEI reranking | `128` |
 | `HINDSIGHT_API_RERANKER_TEI_MAX_CONCURRENT` | Max concurrent TEI reranking requests | `8` |
 | `HINDSIGHT_API_RERANKER_TEI_HTTP_TIMEOUT` | HTTP request timeout for TEI reranker (seconds). Increase when using a slower CPU-based reranker under load. | `30.0` |
+| `HINDSIGHT_API_RERANKER_TEI_MAX_TOKENS_PER_DOC` | Truncate each document to this many tokens (using the shared tiktoken `cl100k_base` encoder) before sending to the TEI reranker. Use for models with small context windows, or to bound request size when documents can be very long (prevents OOM on CPU-only rerank servers). Unset by default (no truncation). | - |
 | `HINDSIGHT_API_RERANKER_OPENROUTER_API_KEY` | OpenRouter API key for reranking (falls back to `HINDSIGHT_API_OPENROUTER_API_KEY`, then `HINDSIGHT_API_LLM_API_KEY`) | - |
 | `HINDSIGHT_API_RERANKER_OPENROUTER_MODEL` | OpenRouter rerank model | `cohere/rerank-v3.5` |
 | `HINDSIGHT_API_RERANKER_OPENROUTER_TIMEOUT` | HTTP request timeout for OpenRouter reranker (seconds). | `60.0` |
