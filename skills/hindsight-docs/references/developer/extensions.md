@@ -390,8 +390,10 @@ everyone, tagged ones only inside the caller's read scope.
 
 Whole-bank operations reach every memory regardless of tags, so a caller with a
 read or write scope cannot run them at all (`403`): export, clone and import,
-clearing the bank's memories or observations, deleting the bank, and changing or
-resetting its config. Operation status never returns the raw task payload to a
+clearing the bank's memories or observations, deleting the bank, changing or
+resetting its config, mission or disposition, and running (or retrying failed)
+consolidation on request. The consolidation the engine queues after a scoped
+caller's own writes still runs. Operation status never returns the raw task payload to a
 scoped caller. Reads that are not tag-scoped (stats, webhooks) still go through
 `validate_bank_read` / `validate_bank_write`, which can only allow or deny them.
 

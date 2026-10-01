@@ -942,7 +942,8 @@ class OperationValidatorExtension(Extension, ABC):
           trigger (``scope_tag_groups``), which every refresh AND-s in, so it can
           never be built from memories the caller could not read itself;
         - whole-bank operations (export, clone, import, bank-wide clears, deleting
-          the bank, changing its config) are refused (403): they cannot be narrowed.
+          the bank, changing its config, mission or disposition, running or retrying
+          consolidation on request) are refused (403): they cannot be narrowed.
 
         A ``_strict`` match is almost always what you want: the non-strict modes
         also admit untagged rows, and an untagged mental model is built from the
