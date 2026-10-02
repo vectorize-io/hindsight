@@ -383,9 +383,10 @@ OUTPUT:"""
             response_format=DynamicModel,
             scope="reflect_structured",
             strict_schema=get_config().llm_strict_schema_reflect,
-            # Schema extraction should be deterministic. The configured reflect
-            # temperature applies to answer generation, not this parsing pass.
-            temperature=0.0,
+            # Schema extraction is deterministic when temperature is supported,
+            # but must honor an omitted reflect temperature for models that
+            # reject the parameter entirely.
+            temperature=None if get_config().llm_temperature_reflect is None else 0.0,
             max_completion_tokens=max_tokens,
             max_retries=1,
             initial_backoff=0.25,
