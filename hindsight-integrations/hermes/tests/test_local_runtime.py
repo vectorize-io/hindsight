@@ -140,7 +140,7 @@ def test_the_plugin_never_depends_on_hindsight_all_again():
                     assert not banned(alias.name), f"{name}:{node.lineno} imports {alias.name}"
 
 
-def test_the_start_worker_reconciles_the_profile_env_before_the_daemon_boots(monkeypatch, tmp_path):
+def test_the_start_worker_reconciles_the_profile_env_before_the_daemon_boots(monkeypatch):
     """Ordering is load-bearing: the daemon reads the profile .env at boot, so a drifted file must
     be rewritten (and a running daemon stopped) BEFORE the client is built — building it is what
     starts the daemon now. Booting first would pin the stale values for the life of the process.
@@ -151,10 +151,10 @@ def test_the_start_worker_reconciles_the_profile_env_before_the_daemon_boots(mon
     provider = HindsightMemoryProvider()
     provider._config = {"profile": "orderingtest", "llm_provider": "ollama"}
 
-    monkeypatch.setattr("hindsight_hermes._load_simple_env", lambda path: {"STALE": "1"})
-    monkeypatch.setattr("hindsight_hermes._build_embedded_profile_env", lambda cfg: {"FRESH": "1"})
+    # The decision is a single governed-key comparison now, so the drift verdict is what this test
+    # injects; `test_profile_env_sync.py` covers how `_profile_env_out_of_sync` reaches it.
+    monkeypatch.setattr("hindsight_hermes._profile_env_out_of_sync", lambda cfg: True)
     monkeypatch.setattr("hindsight_hermes._may_rewrite_profile_env", lambda cfg: True)
-    monkeypatch.setattr("hindsight_hermes._embedded_profile_env_path", lambda cfg: tmp_path / "p.env")
     monkeypatch.setattr("hindsight_hermes._materialize_embedded_profile_env", lambda cfg: order.append("rewrote env"))
     monkeypatch.setattr("hindsight_hermes._daemon_is_running", lambda profile: True)
     monkeypatch.setattr("hindsight_hermes._stop_daemon", lambda profile: order.append("stopped daemon"))

@@ -38,13 +38,12 @@ from .embedded import (
     _check_local_runtime,
     _daemon_is_running,
     _embedded_llm_api_key,
-    _embedded_profile_env_path,
     _export_port_health_grace_timeout,
     _installed_api_binary_exists,
-    _load_simple_env,
     _local_runtime_hint,
     _materialize_embedded_profile_env,
     _may_rewrite_profile_env,
+    _profile_env_out_of_sync,
     _start_daemon,
     _stop_daemon,
 )
@@ -1197,7 +1196,7 @@ class HindsightMemoryProvider(MemoryProvider):
             # stop: restarting the daemon now would boot it keyless, which is the
             # exact outage this guards against. _get_client() below sends the daemon
             # whatever key WAS available (config, secret scope, or the file itself).
-            if _load_simple_env(_embedded_profile_env_path(self._config)) != _build_embedded_profile_env(self._config):
+            if _profile_env_out_of_sync(self._config):
                 if _may_rewrite_profile_env(self._config):
                     _materialize_embedded_profile_env(self._config)
                     if _daemon_is_running(profile):
