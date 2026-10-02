@@ -439,6 +439,32 @@ def _unreachable_correction_prompt(
     return "\n".join(lines)
 
 
+def _as_message_text(content: Any) -> str:
+    """A reply as chat-message text, for quoting it back on the retry.
+
+    A structured call does not always hand back the raw string: with
+    ``skip_validation`` the provider returns the parsed JSON (a dict), and
+    without it a validated Pydantic model. Neither is valid message content --
+    the OpenAI chat format requires a string or a list of typed parts, and
+    OpenAI-compatible servers (and the Gemini client) reject the request
+    outright, so the retry would fail before the model ever sees the correction.
+
+    Serialising must itself never fail: this runs on the path that exists to
+    recover a bad reply, so an unserialisable value falls back to ``str()``
+    rather than raising.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, BaseModel):
+        return content.model_dump_json()
+    try:
+        return json.dumps(content, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(content)
+
+
 async def request_delta_operations(
     llm: ConfiguredLLMProvider,
     *,
@@ -505,7 +531,7 @@ async def request_delta_operations(
         correction = _unreachable_correction_prompt(unreachable, document, any_applied=bool(outcome.applied))
     retry_messages = [
         *messages,
-        {"role": "assistant", "content": first.content or ""},
+        {"role": "assistant", "content": _as_message_text(first.content)},
         {"role": "user", "content": correction},
     ]
     second = await llm.call(messages=retry_messages, scope=scope, **call_kwargs)

@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from hindsight_api.engine.reflect.delta_ops import (
     AddSectionOp,
     AppendBlockOp,
-    DeltaOperationsInvalidError,
     DeltaOperationList,
+    DeltaOperationsInvalidError,
     ReplaceSectionBlocksOp,
     apply_operations,
     parse_delta_operation_list,
     request_delta_operations,
 )
-from hindsight_api.engine.response_models import LLMCallResult
 from hindsight_api.engine.reflect.structured_doc import Block, Section, StructuredDocument
+from hindsight_api.engine.response_models import LLMCallResult
 
 
 def test_parse_delta_operation_list_trailing_brackets():
@@ -248,7 +250,7 @@ def test_parse_delta_operation_list_top_level_array_all_invalid_raises():
 class _ScriptedLLM:
     """An LLM that returns canned replies in order and records what it was sent."""
 
-    def __init__(self, *replies: str) -> None:
+    def __init__(self, *replies: str | dict | DeltaOperationList) -> None:
         self._replies = list(replies)
         self.calls: list[list[dict]] = []
 
@@ -289,6 +291,37 @@ async def test_request_delta_operations_asks_again_with_the_errors():
     correction = retry[3]["content"]
     assert "index 0" in correction
     assert "block_id" in correction
+
+
+async def test_the_retry_quotes_a_parsed_reply_back_as_text():
+    """With skip_validation the provider returns parsed JSON, not a string.
+
+    The retry quotes that reply back as the assistant turn, and message content
+    must be a string: a dict makes an OpenAI-compatible server reject the whole
+    request, so the correction never reaches the model.
+    """
+    llm = _ScriptedLLM(json.loads(_STRAY), _GOOD)
+    op_list = await request_delta_operations(llm, system_prompt="sys", user_prompt="usr", scope="test")
+    assert len(op_list.operations) == 1
+
+    assistant_turn = llm.calls[1][2]
+    assert assistant_turn["role"] == "assistant"
+    assert isinstance(assistant_turn["content"], str)
+    assert json.loads(assistant_turn["content"]) == json.loads(_STRAY)
+
+
+async def test_the_retry_quotes_a_validated_model_reply_back_as_text():
+    """Without skip_validation the provider returns a validated Pydantic model."""
+    # Parses fine but names a section the document does not have, so it is refused.
+    unreachable = DeltaOperationList.model_validate(
+        {"operations": [{"op": "append_block", "section_id": "nowhere", "text": "x"}]}
+    )
+    llm = _ScriptedLLM(unreachable, _GOOD)
+    await request_delta_operations(llm, system_prompt="sys", user_prompt="usr", scope="test", document=_DOC)
+
+    assistant_turn = llm.calls[1][2]
+    assert isinstance(assistant_turn["content"], str)
+    assert json.loads(assistant_turn["content"])["operations"][0]["section_id"] == "nowhere"
 
 
 async def test_request_delta_operations_gives_up_after_one_retry():
