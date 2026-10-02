@@ -5,6 +5,7 @@ import {
   SURVEY_AGENT,
   SURVEY_AGENT_CONFIG,
   SURVEY_PROMPT,
+  type SurveyHarness,
 } from "./survey";
 import { releaseLease, SURVEY_SPEC_ENV, type SurveySupervisorSpec } from "./survey-lease";
 
@@ -250,6 +251,24 @@ describe("startCodebaseSurvey", () => {
     const [bin, argv] = launched(spawn);
     expect(bin).toBe("codex");
     expect(argv[0]).toBe("exec");
+  });
+
+  it("opencode2 never falls back to the opencode recipe, whose survey agent only v1 defines", async () => {
+    const spawn = fakeSpawn();
+    await startCodebaseSurvey("/repo", {
+      harness: "opencode2" as SurveyHarness,
+      spawn,
+      exists: (b) => b === "opencode",
+    });
+    expect(spawn).not.toHaveBeenCalled();
+
+    await startCodebaseSurvey("/repo", {
+      harness: "opencode2" as SurveyHarness,
+      mcpServerPath: "/x/mcp-server.js",
+      spawn,
+      exists: (b) => b === "opencode" || b === "codex",
+    });
+    expect(launched(spawn)[0]).toBe("codex");
   });
 
   it("no capable agent found → no spawn (fail open; the git-log seed still ran)", async () => {
