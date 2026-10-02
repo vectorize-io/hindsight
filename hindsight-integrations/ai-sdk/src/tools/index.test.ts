@@ -351,7 +351,9 @@ describe("createHindsightTools", () => {
 
       const result = await tools.getMentalModel.execute({ mentalModelId: "mm-123" });
 
-      expect(mockClient.getMentalModel).toHaveBeenCalledWith("test-bank", "mm-123");
+      expect(mockClient.getMentalModel).toHaveBeenCalledWith("test-bank", "mm-123", {
+        detail: "content",
+      });
       expect(result.content).toBe("Likes functional programming");
       expect(result.name).toBe("User Preferences");
       expect(result.updatedAt).toBe("2024-01-02T00:00:00Z");

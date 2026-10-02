@@ -177,7 +177,11 @@ export interface HindsightClient {
     }
   ): Promise<ReflectResponse>;
 
-  getMentalModel(bankId: string, mentalModelId: string): Promise<MentalModelResponse>;
+  getMentalModel(
+    bankId: string,
+    mentalModelId: string,
+    options?: { detail?: "metadata" | "content" | "full" }
+  ): Promise<MentalModelResponse>;
 
   getDocument(bankId: string, documentId: string): Promise<DocumentResponse | null>;
 }
@@ -397,7 +401,11 @@ export function createHindsightTools({
         `Retrieve a mental model to get consolidated knowledge synthesized from memories. Mental models provide synthesized insights that are faster and more efficient to retrieve than searching through raw memories.`,
       inputSchema: getMentalModelParams,
       execute: async (input) => {
-        const result = await client.getMentalModel(bankId, input.mentalModelId);
+        // The endpoint now defaults to metadata. This tool promises the
+        // synthesized content, so opt in without requesting full provenance.
+        const result = await client.getMentalModel(bankId, input.mentalModelId, {
+          detail: "content",
+        });
         return {
           content: result.content ?? "No content available yet.",
           name: result.name,
