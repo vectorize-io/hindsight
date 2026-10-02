@@ -471,6 +471,8 @@ class Hindsight:
         update_mode: str | None = None,
         retain_async: bool = False,
         operation_id: str | None = None,
+        observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = None,
+        strategy: str | None = None,
     ) -> RetainResponse:
         """
         Store a single memory (sync wrapper — prefer :meth:`aretain` in async code).
@@ -492,6 +494,8 @@ class Hindsight:
             update_mode: How to handle existing documents ('replace' or 'append')
             retain_async: If True, process asynchronously in background (default: False)
             operation_id: Optional caller-supplied UUID for idempotent async retries; ignored by sync retain
+            observation_scopes: Observation grouping mode or explicit tag scopes, as in retain_batch items
+            strategy: Named extraction strategy configured on the bank
 
         Returns:
             RetainResponse with success status
@@ -508,6 +512,10 @@ class Hindsight:
             item["resolve_entities"] = resolve_entities
         if update_mode is not None:
             item["update_mode"] = update_mode
+        if observation_scopes is not None:
+            item["observation_scopes"] = observation_scopes
+        if strategy is not None:
+            item["strategy"] = strategy
         batch_kwargs: dict[str, Any] = {
             "bank_id": bank_id,
             "items": [item],
@@ -1221,6 +1229,8 @@ class Hindsight:
         update_mode: str | None = None,
         retain_async: bool = False,
         operation_id: str | None = None,
+        observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = None,
+        strategy: str | None = None,
     ) -> RetainResponse:
         """
         Store a single memory (async — preferred over :meth:`retain`).
@@ -1242,6 +1252,8 @@ class Hindsight:
             update_mode: How to handle existing documents ('replace' or 'append')
             retain_async: If True, process asynchronously in background (default: False)
             operation_id: Optional caller-supplied UUID for idempotent async retries; ignored by sync retain
+            observation_scopes: Observation grouping mode or explicit tag scopes, as in retain_batch items
+            strategy: Named extraction strategy configured on the bank
 
         Returns:
             RetainResponse with success status
@@ -1258,6 +1270,10 @@ class Hindsight:
             item["resolve_entities"] = resolve_entities
         if update_mode is not None:
             item["update_mode"] = update_mode
+        if observation_scopes is not None:
+            item["observation_scopes"] = observation_scopes
+        if strategy is not None:
+            item["strategy"] = strategy
         batch_kwargs: dict[str, Any] = {
             "bank_id": bank_id,
             "items": [item],
