@@ -330,6 +330,8 @@ export async function startCodebaseSurvey(
     for (const harness of order) {
       if (seen.has(harness)) continue;
       seen.add(harness);
+      // Under opencode2, `opencode` on PATH is usually v2 itself, which can't define SURVEY_AGENT (#5084).
+      if (harness === "opencode" && (opts.harness as string | undefined) === "opencode2") continue;
       const bin = resolveAgentBin(harness, opts.claudeBin);
       if (!exists(bin)) continue;
 
