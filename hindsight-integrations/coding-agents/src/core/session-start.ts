@@ -14,9 +14,10 @@
  * into the same outcome, which is wrong here — a transient outage must not get treated the same
  * as "already seeded" and silently suppress seeding forever. So `buildSessionStartContext` calls
  * `client.listDocumentIds` directly so it can tell the three cases apart:
- *   - throws (server unreachable)      -> no seed, no state written  (try again next session)
- *   - non-empty set (warm/pre-seeded)  -> no seed, seededAt written  (remember, skip enumerating)
- *   - empty set (cold)                 -> start the background seed, seededAt written, note added
+ *   - git-doc read throws              -> no seed or survey (try again next session)
+ *   - git docs or survey baseline      -> deepen the warm bank; apply the survey refresh rule
+ *   - neither exists                   -> deepen the cold bank and launch its first survey
+ * A failed baseline read on a git-empty bank leaves coldness unknown and skips the survey.
  */
 import { readFileSync } from "node:fs";
 import { gitHeadSha, gitLogIsCurrent, hasGitHistory, commitsSince } from "./git";
@@ -228,7 +229,18 @@ export async function buildSessionStartContext(args: {
           docIds = undefined; // server unreachable: transient — do nothing, try again next session
         }
 
-        cold = docIds !== undefined ? docIds.size === 0 : undefined;
+        // gitIngest="none" never produces source:git docs. An existing survey baseline also
+        // proves the live bank was initialized; otherwise every session launches a cold survey.
+        // Keep a failed baseline read distinct from an empty bank, just like the git-doc read.
+        let surveyMarkers: Set<string> | undefined;
+        if (docIds?.size === 0) {
+          surveyMarkers = await client
+            .listDocumentIds(SURVEY_BASELINE_TAG, "all_strict")
+            .catch(() => undefined);
+          cold = surveyMarkers === undefined ? undefined : surveyMarkers.size === 0;
+        } else {
+          cold = docIds !== undefined ? false : undefined;
+        }
         gitDocIds = docIds;
         if (docIds !== undefined) {
           // ALWAYS fire the background deepen engine when the server is reachable — it is
@@ -239,9 +251,9 @@ export async function buildSessionStartContext(args: {
           // loader's harness default and misfiles this session's survey + git history into the
           // wrong bank (e.g. `opencode::<project>` for a claude-code session). See #3247.
           startSeed(cwd, { limit: cfg.seedLimit, harness });
-          // Cold iff the bank has zero source:git docs (an undefined result — server error — is
-          // NOT treated as cold; we never surveyed/noted on an unconfirmed-empty bank).
-          if (docIds.size === 0) {
+          // Cold iff neither git docs nor a survey baseline exist in the reachable bank.
+          // An undefined result is NOT treated as cold: never spend on unconfirmed emptiness.
+          if (cold === true) {
             if (cfg.codebaseSurvey !== false) {
               // Run the survey under the current harness's own CLI (falls back to any available agent).
               const started = await startSurvey(cwd, {
@@ -253,7 +265,11 @@ export async function buildSessionStartContext(args: {
               if (started && sha) recordSurveyBaseline(sha);
             }
             diag(harness, "seed_started", { bank: bankId });
-          } else if (cfg.codebaseSurvey !== false && cfg.surveyRefreshCommits > 0) {
+          } else if (
+            cold === false &&
+            cfg.codebaseSurvey !== false &&
+            cfg.surveyRefreshCommits > 0
+          ) {
             // WARM bank: re-run the survey once enough commits have accrued since the last one, so
             // structural pages track an evolving architecture. Branch-robust: read the
             // survey-baseline:<sha> markers and take the MIN reachable `sha..HEAD` count (= the most
@@ -262,9 +278,11 @@ export async function buildSessionStartContext(args: {
             // HEAD as the baseline WITHOUT surveying (no surprise spend).
             const sha = resolveHeadSha(cwd);
             if (sha) {
-              const markers = await client
-                .listDocumentIds(SURVEY_BASELINE_TAG, "all_strict")
-                .catch(() => new Set<string>());
+              const markers =
+                surveyMarkers ??
+                (await client
+                  .listDocumentIds(SURVEY_BASELINE_TAG, "all_strict")
+                  .catch(() => new Set<string>()));
               const counts: number[] = [];
               for (const id of markers) {
                 if (!id.startsWith(SURVEY_BASELINE_PREFIX)) continue;

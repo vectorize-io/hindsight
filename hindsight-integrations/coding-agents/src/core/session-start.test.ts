@@ -685,3 +685,113 @@ describe("survey launch admission", () => {
     }
   );
 });
+
+describe("survey cadence without git ingestion", () => {
+  const setup = (surveyRefreshCommits = 20) => {
+    const markers = new Set<string>();
+    const uploads = new Set<string>();
+    let distance = 0;
+    const startSurvey = vi.fn().mockResolvedValue(true);
+    const retain = vi.fn(async (_content: string, _context: string, id: string) => {
+      markers.add(id);
+    });
+    const listDocumentIds = vi.fn(async (tag: string) =>
+      tag === "source:survey-baseline"
+        ? new Set(markers)
+        : tag === "source:upload"
+          ? new Set(uploads)
+          : new Set<string>()
+    );
+    const session = () =>
+      buildSessionStartContext({
+        cwd: "/repo",
+        bankId: "bank-1",
+        cfg: resolveConfig({ gitIngest: "none", surveyRefreshCommits }),
+        client: { listDocumentIds, listPages: listPagesOk, retain },
+        hasGit: () => true,
+        startSeed: vi.fn(),
+        startSurvey,
+        headSha: () => "head",
+        commitsSince: () => distance,
+      });
+    return {
+      session,
+      markers,
+      uploads,
+      startSurvey,
+      retain,
+      listDocumentIds,
+      setDistance: (n: number) => {
+        distance = n;
+      },
+    };
+  };
+
+  it("surveys the first session, then waits for the commit threshold across sessions", async () => {
+    const bank = setup();
+    const first = await bank.session();
+    expect(first.deferInitialReflect).toBe(true);
+    expect(bank.startSurvey).toHaveBeenCalledOnce();
+    expect(bank.markers.has("survey-baseline:head")).toBe(true);
+    bank.uploads.add("repository-component-map");
+    const second = await bank.session();
+    expect(bank.startSurvey).toHaveBeenCalledOnce();
+    expect(second.systemMessage).toContain("is tracking");
+    expect(second.deferInitialReflect).toBe(false);
+    bank.setDistance(19);
+    await bank.session();
+    expect(bank.startSurvey).toHaveBeenCalledOnce();
+    bank.setDistance(20);
+    await bank.session();
+    expect(bank.startSurvey).toHaveBeenCalledTimes(2);
+  });
+
+  it("a deleted bank is cold again, with no client-side survey latch", async () => {
+    const bank = setup();
+    await bank.session();
+    bank.uploads.add("repository-component-map");
+    await bank.session();
+    bank.markers.clear();
+    bank.uploads.clear();
+    await bank.session();
+    expect(bank.startSurvey).toHaveBeenCalledTimes(2);
+  });
+
+  it("surveyRefreshCommits=0 allows the first survey but disables subsequent surveys", async () => {
+    const bank = setup(0);
+    await bank.session();
+    bank.uploads.add("repository-component-map");
+    bank.setDistance(1000);
+    await bank.session();
+    expect(bank.startSurvey).toHaveBeenCalledOnce();
+  });
+
+  it("still retries a survey that recorded a baseline but never uploaded findings", async () => {
+    const bank = setup();
+    await bank.session();
+    await bank.session();
+    expect(bank.startSurvey).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not treat a failed baseline read as proof of a cold bank", async () => {
+    const bank = setup();
+    bank.listDocumentIds.mockImplementation(async (tag) => {
+      if (tag === "source:survey-baseline") throw new Error("unreachable");
+      return new Set<string>();
+    });
+    await bank.session();
+    expect(bank.startSurvey).not.toHaveBeenCalled();
+    expect(bank.retain).not.toHaveBeenCalled();
+  });
+
+  it("does not advance the baseline after a rejected first launch", async () => {
+    const bank = setup();
+    bank.startSurvey.mockResolvedValue(false);
+    await bank.session();
+    expect(bank.markers.size).toBe(0);
+    bank.startSurvey.mockResolvedValue(true);
+    await bank.session();
+    expect(bank.startSurvey).toHaveBeenCalledTimes(2);
+    expect(bank.markers.has("survey-baseline:head")).toBe(true);
+  });
+});
