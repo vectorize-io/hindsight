@@ -9,6 +9,13 @@ from plugins.memory.config_schema import (
     ProviderFieldOption,
 )
 
+try:
+    from plugins.memory.config_schema import KIND_JSON as _KIND_JSON
+except ImportError:  # Hermes hosts predating the JSON field kind
+    _KIND_JSON = KIND_TEXT
+
+_BANK_ID_BY_USER_DEFAULT = {} if _KIND_JSON != KIND_TEXT else "{}"
+
 CONFIG_SCHEMA = ProviderConfigSchema(
     name="hindsight",
     label="Hindsight",
@@ -45,6 +52,15 @@ CONFIG_SCHEMA = ProviderConfigSchema(
         ),
         ProviderField(
             key="bank_id", label="Bank ID", kind=KIND_TEXT, default="hermes", aliases=("bankId",), inline=True
+        ),
+        ProviderField(
+            key="bank_id_by_user",
+            label="Per-user bank routing",
+            kind=_KIND_JSON,
+            default=_BANK_ID_BY_USER_DEFAULT,
+            description="Platform-scoped <platform>:<user_id> to bank_id mapping for hard gateway-user memory isolation.",
+            info="Use exact gateway keys such as dingtalk:<user_id>. Keep identifiers in private profile config.",
+            group="Advanced",
         ),
         ProviderField(
             key="recall_budget",

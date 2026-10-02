@@ -51,6 +51,41 @@ def test_auto_retain_off_stores_nothing(provider):
     assert fake.retains == []
 
 
+def test_provider_applies_platform_scoped_user_bank_override(provider):
+    instance, fake = provider(
+        {
+            "bank_id": "education_v2_bge_m3",
+            "bank_id_by_user": {"dingtalk:jiayin-user": "jiayin_learning_v2_bge_m3"},
+        },
+        platform="dingtalk",
+        user_id="jiayin-user",
+    )
+    assert instance._bank_id == "jiayin_learning_v2_bge_m3"
+    instance.handle_tool_call("hindsight_recall", {"query": "who am I?"})
+    assert fake.recalls[0]["bank_id"] == "jiayin_learning_v2_bge_m3"
+    instance.shutdown()
+
+
+def test_provider_user_override_is_platform_scoped(provider):
+    instance, _ = provider(
+        {
+            "bank_id": "education_v2_bge_m3",
+            "bank_id_by_user": {"dingtalk:jiayin-user": "jiayin_learning_v2_bge_m3"},
+        },
+        platform="slack",
+        user_id="jiayin-user",
+    )
+    assert instance._bank_id == "education_v2_bge_m3"
+    instance.shutdown()
+
+
+def test_setup_config_schema_exposes_per_user_bank_mapping(provider):
+    instance, _ = provider({})
+    field = next(f for f in instance.get_config_schema() if f.get("key") == "bank_id_by_user")
+    assert field["default"] == {}
+    instance.shutdown()
+
+
 def test_recall_tool_queries_the_bank_and_formats_results(provider):
     instance, fake = provider(
         {"bank_id": "team", "recall_budget": "high"}, client=FakeClient(recall_texts=["fact one", "fact two"])
