@@ -8,6 +8,9 @@ describes is the contract, so the cases are unchanged and only the app under tes
 is now the real one.
 """
 
+import logging
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 from fastapi import Depends, FastAPI, Query
 from fastapi.testclient import TestClient
@@ -15,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from hindsight_api.api.observability import HttpObservabilityMiddleware
 from hindsight_api.api.unknown_params import UnknownParamsRoute
+from hindsight_api.extensions import AuthenticationError
 
 
 class ItemRequest(BaseModel):
@@ -188,7 +192,7 @@ class TestBankAliasRewrite:
         assert client.get("/unscoped").status_code == 200
         assert calls == []
 
-    def test_a_failing_resolver_leaves_the_id_alone_rather_than_500ing(self):
+    def test_a_failing_resolver_leaves_the_id_alone_rather_than_500ing(self, caplog):
         """A lookup that cannot run must not turn a request for a real bank into an
         error: the id it was given is exactly what it meant before aliases existed."""
 
@@ -199,6 +203,29 @@ class TestBankAliasRewrite:
         resp = client.get("/v1/default/banks/real-bank/thing")
         assert resp.status_code == 200
         assert resp.json()["bank_id"] == "real-bank"
+        record = next(record for record in caplog.records if "Bank alias resolution failed" in record.message)
+        assert record.levelno == logging.WARNING
+        assert record.exc_info is not None
+
+    def test_authentication_failure_remains_401_without_alias_warning(self, caplog):
+        from hindsight_api.api import create_app
+
+        error = AuthenticationError("API key required")
+        memory = MagicMock()
+        memory.resolve_bank_alias = AsyncMock(side_effect=error)
+        memory.list_memory_units = AsyncMock(side_effect=error)
+        app = create_app(memory, initialize_memory=False)
+
+        with caplog.at_level(logging.DEBUG, logger="hindsight_api.api.unknown_params"):
+            response = TestClient(app).get("/v1/default/banks/real-bank/memories/list")
+
+        assert response.status_code == 401
+        assert response.json() == {"detail": "Authentication failed: API key required"}
+        memory.list_memory_units.assert_awaited_once()
+        records = [record for record in caplog.records if record.name == "hindsight_api.api.unknown_params"]
+        assert len(records) == 1
+        assert records[0].levelno == logging.DEBUG
+        assert records[0].exc_info is None
 
     def test_no_resolver_configured_is_not_an_error(self):
         app = FastAPI()
