@@ -304,16 +304,29 @@ export class HindsightServer {
       attempt++;
       try {
         const res = await fetch(`${this.baseUrl}/health`, {
-          signal: AbortSignal.timeout(this.readyPollIntervalMs),
+          // A full poll interval used to overrun a shorter readiness budget.
+          // Bound both the request and the pause by the remaining deadline.
+          signal: AbortSignal.timeout(
+            Math.max(0, Math.floor(Math.min(this.readyPollIntervalMs, deadline - Date.now())))
+          ),
         });
-        if (res.ok) {
+        // Readiness only needs the status. Start best-effort cleanup without
+        // waiting: a slow or rejected cancel must not replace known healthy
+        // headers or extend the readiness budget.
+        void res.body?.cancel().catch(() => {});
+        if (res.ok && Date.now() < deadline) {
           this.logger.debug(`[hindsight] health check passed (attempt ${attempt})`);
           return;
         }
       } catch {
         // expected while the daemon is still booting
       }
-      await new Promise((resolve) => setTimeout(resolve, this.readyPollIntervalMs));
+      const remaining = deadline - Date.now();
+      if (remaining > 0) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.min(this.readyPollIntervalMs, remaining))
+        );
+      }
     }
     throw new Error(
       `Hindsight daemon did not become ready within ${this.readyTimeoutMs}ms at ${this.baseUrl}`
