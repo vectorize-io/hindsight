@@ -1,9 +1,9 @@
 """Import documents from a transfer archive by replaying the deterministic retain pipeline.
 
-For each document the importer rebuilds the extracted facts, re-embeds them with
-the *target* bank's embedding model, then runs entity resolution (Phase 1) and
-the fact/link insert (Phase 2) — exactly the steps retain runs after LLM
-extraction. No LLM is called. Temporal/semantic/causal links and entity merges
+For each batch of documents the importer rebuilds the extracted facts, re-embeds
+them with the *target* bank's embedding model, then runs entity resolution
+(Phase 1) and the fact/link insert (Phase 2) — exactly the steps a multi-item
+retain runs after LLM extraction. No LLM is called. Temporal/semantic/causal links and entity merges
 are therefore computed relative to the target bank's existing memories.
 """
 

@@ -275,13 +275,11 @@ async def test_documents_written_in_one_batch_keep_their_own_facts_chunks_and_ca
         assert result["documents_imported"] == 3
         assert result["facts_imported"] == 6
 
+        units = await memory.list_memory_units(dst, fact_type="world", limit=100, request_context=request_context)
         backend = await memory._get_backend()
         async with acquire_with_retry(backend) as conn:
-            units = await conn.fetch(
-                f"SELECT text, document_id, chunk_id FROM {fq_store_table('memory_units')} "
-                f"WHERE bank_id = $1 AND fact_type = 'world'",
-                dst,
-            )
+            # Raw memory_links: the link's direction and type are the assertion, and the
+            # graph read path dedupes bidirectional edges.
             causal_links = await conn.fetch(
                 f"SELECT source.text AS source_text, target.text AS target_text "
                 f"FROM {fq_store_table('memory_links')} ml "
@@ -291,7 +289,7 @@ async def test_documents_written_in_one_batch_keep_their_own_facts_chunks_and_ca
                 dst,
             )
 
-        assert {(u["text"], u["document_id"], u["chunk_id"]) for u in units} == {
+        assert {(u["text"], u["document_id"], u["chunk_id"]) for u in units["items"]} == {
             (f"Batched doc {d} {kind} event", f"doc-{d}", build_chunk_id(dst, f"doc-{d}", 0))
             for d in range(3)
             for kind in ("cause", "effect")
@@ -1143,7 +1141,7 @@ async def test_import_bank_retried_after_a_crash_starts_over(memory, request_con
         real_batch = importer._import_document_batch
         calls = 0
 
-        async def crash_on_second_batch(**kwargs):
+        async def crash_on_second_batch(**kwargs: Any) -> list[importer._ImportedFactBatch]:
             nonlocal calls
             calls += 1
             if calls == 2:

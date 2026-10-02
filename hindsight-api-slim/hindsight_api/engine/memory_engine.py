@@ -8447,7 +8447,11 @@ class MemoryEngine(MemoryEngineInterface):
                         f"SELECT result_metadata FROM {operations} WHERE operation_id = $1", uuid.UUID(operation_id)
                     )
                 )
-            if (metadata or {}).get("restored_bank_id") == bank_id:
+            # Only a bank this operation created, and only if it is still there (someone
+            # may have deleted the leftovers by hand before the retry ran).
+            if (metadata or {}).get("restored_bank_id") == bank_id and (
+                await bank_utils.get_bank_profile_if_exists(backend, bank_id) is not None
+            ):
                 logger.info("[transfer] Retrying operation %s: discarding partial restore of %s", operation_id, bank_id)
                 await self.delete_bank(bank_id, request_context=request_context)
 
