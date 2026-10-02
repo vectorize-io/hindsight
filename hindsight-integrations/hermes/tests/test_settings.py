@@ -31,7 +31,12 @@ def test_bank_id_template_sanitizes_and_collapses_empty_placeholders():
 
 
 def test_observation_scopes_normalization():
+    assert _normalize_observation_scopes("shared") == "shared"
+    assert _normalize_observation_scopes(" shared ") == "shared"
     assert _normalize_observation_scopes("per_tag") == "per_tag"
+    assert _normalize_observation_scopes("combined") == "combined"
+    assert _normalize_observation_scopes("all_combinations") == "all_combinations"
+    assert _normalize_observation_scopes(["shared"]) == [["shared"]]
     assert _normalize_observation_scopes(["a", "b"]) == [["a", "b"]]
     assert _normalize_observation_scopes([["a"], ["b"]]) == [["a"], ["b"]]
     assert _normalize_observation_scopes("garbage") is None

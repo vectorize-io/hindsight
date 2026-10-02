@@ -3,8 +3,10 @@ sends to Hindsight (a recording fake client stands in for the real SDK)."""
 
 import json
 
+import pytest
+
 import hindsight_hermes as plugin
-from conftest import FakeClient
+from conftest import SECRETS, FakeClient
 
 
 def _retain_item(fake: FakeClient, index: int = 0) -> dict:
@@ -79,6 +81,28 @@ def test_retain_tool_stores_content_with_per_call_tags(provider):
     assert item["content"] == "Ada likes tea"
     assert item["tags"] == ["base", "drink"]
     instance.shutdown()
+
+
+@pytest.mark.parametrize("scope_source", ["config", "profile_secret"])
+@pytest.mark.parametrize("retain_path", ["auto", "tool"])
+def test_shared_observation_scope_reaches_retain(provider, monkeypatch, scope_source, retain_path):
+    if scope_source == "profile_secret":
+        monkeypatch.setitem(SECRETS, "HINDSIGHT_RETAIN_OBSERVATION_SCOPES", "shared")
+    instance, fake = provider(
+        {"retain_tags": "base", **({"observation_scopes": "shared"} if scope_source == "config" else {})}
+    )
+    try:
+        if retain_path == "auto":
+            instance.sync_turn("I like tea", "I will remember that.")
+        else:
+            instance.handle_tool_call("hindsight_retain", {"content": "Ada likes tea"})
+    finally:
+        instance.shutdown()
+
+    assert len(fake.retains) == 1
+    item = _retain_item(fake)
+    assert item["observation_scopes"] == "shared"
+    assert item["tags"] == (["base", "session:session-1"] if retain_path == "auto" else ["base"])
 
 
 def test_tool_call_errors_are_reported_not_raised(provider):

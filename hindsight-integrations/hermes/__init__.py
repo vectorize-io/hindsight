@@ -598,7 +598,7 @@ class HindsightMemoryProvider(MemoryProvider):
             },
             {
                 "key": "observation_scopes",
-                "description": "How observations are scoped during consolidation: 'combined' (default — one pass over all tags), 'per_tag' (one isolated observation per tag), 'all_combinations' (every tag subset — expensive), or a JSON list of tag-lists for explicit custom scopes. Empty uses Hindsight's 'combined' default.",
+                "description": "How observations are scoped during consolidation: 'combined' (default — one pass over all tags), 'per_tag' (one isolated observation per tag), 'all_combinations' (every tag subset — expensive), 'shared' (one untagged scope across all tags), or a JSON list of tag-lists for explicit custom scopes. Empty uses Hindsight's 'combined' default.",
                 "default": "",
             },
             {
