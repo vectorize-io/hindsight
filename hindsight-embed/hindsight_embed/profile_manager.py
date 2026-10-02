@@ -11,6 +11,8 @@ import math
 import os
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -396,37 +398,39 @@ class ProfileManager:
         # Ensure profile directory exists
         self._ensure_directories()
 
-        # Load metadata to check if profile already exists
-        metadata = self._load_metadata()
+        # Serialize the read/modify/write, including port allocation and config.
+        with self._metadata_transaction():
+            # Load metadata to check if profile already exists
+            metadata = self._load_metadata()
 
-        config_path = self._get_profiles_dir() / f"{name}.env"
+            config_path = self._get_profiles_dir() / f"{name}.env"
 
-        # The API port lives in the .env (source of truth), not metadata. Use the
-        # explicit port if given; otherwise keep whatever the caller already
-        # carries in the config, else resolve from the existing .env / legacy
-        # metadata / a fresh allocation (so legacy profiles migrate without
-        # changing port).
-        config = dict(config)
-        if port is None and ENV_API_PORT not in config:
-            port = self._resolve_ports(name, config_path, None).api
-        if port is not None:
-            config[ENV_API_PORT] = str(port)
+            # The API port lives in the .env (source of truth), not metadata. Use the
+            # explicit port if given; otherwise keep whatever the caller already
+            # carries in the config, else resolve from the existing .env / legacy
+            # metadata / a fresh allocation (so legacy profiles migrate without
+            # changing port).
+            config = dict(config)
+            if port is None and ENV_API_PORT not in config:
+                port = self._resolve_ports(name, config_path, None).api
+            if port is not None:
+                config[ENV_API_PORT] = str(port)
 
-        # Write config file, seeded from the bundled .env.example template so
-        # the profile carries the full documented option set as comments.
-        from .env_template import render_config
+            # Write config file, seeded from the bundled .env.example template so
+            # the profile carries the full documented option set as comments.
+            from .env_template import render_config
 
-        config_path.write_text(render_config(config), encoding="utf-8")
+            config_path.write_text(render_config(config), encoding="utf-8")
 
-        # Metadata now only tracks discovery + timestamps; the port moved to .env.
-        now_iso = datetime.now(timezone.utc).isoformat()
-        if name in metadata.profiles:
-            metadata.profiles[name]["last_used"] = now_iso
-            metadata.profiles[name].pop("port", None)  # migrate away from metadata port
-        else:
-            metadata.profiles[name] = {"created_at": now_iso, "last_used": now_iso}
+            # Metadata now only tracks discovery + timestamps; the port moved to .env.
+            now_iso = datetime.now(timezone.utc).isoformat()
+            if name in metadata.profiles:
+                metadata.profiles[name]["last_used"] = now_iso
+                metadata.profiles[name].pop("port", None)  # migrate away from metadata port
+            else:
+                metadata.profiles[name] = {"created_at": now_iso, "last_used": now_iso}
 
-        self._save_metadata(metadata)
+            self._save_metadata(metadata)
 
     def delete_profile(self, name: str):
         """Delete a profile.
@@ -440,39 +444,40 @@ class ProfileManager:
         if not name:
             raise ValueError("Cannot delete default profile")
 
-        if not self.profile_exists(name):
-            raise ValueError(f"Profile '{name}' does not exist")
+        with self._metadata_transaction():
+            if not self.profile_exists(name):
+                raise ValueError(f"Profile '{name}' does not exist")
 
-        # Remove config file
-        config_path = self._get_profiles_dir() / f"{name}.env"
-        if config_path.exists():
-            config_path.unlink()
+            # Remove config file
+            config_path = self._get_profiles_dir() / f"{name}.env"
+            if config_path.exists():
+                config_path.unlink()
 
-        # Remove the lock file and the sidecar recording its holder (a crash
-        # while holding the lock leaves the sidecar behind).
-        lock_path = self._get_profiles_dir() / f"{name}.lock"
-        lock_path.unlink(missing_ok=True)
-        lock_path.with_name(f"{lock_path.name}.owner").unlink(missing_ok=True)
+            # Remove the lock file and the sidecar recording its holder (a crash
+            # while holding the lock leaves the sidecar behind).
+            lock_path = self._get_profiles_dir() / f"{name}.lock"
+            lock_path.unlink(missing_ok=True)
+            lock_path.with_name(f"{lock_path.name}.owner").unlink(missing_ok=True)
 
-        # Remove the active log and any retained rotation backups. A log that
-        # cannot be removed (still held open on Windows, say) must not abort the
-        # delete and leave the profile half-registered in metadata below.
-        log_path = self._get_profiles_dir() / f"{name}.log"
-        for stale_log in [log_path, *log_path.parent.glob(f"{log_path.name}.*")]:
-            try:
-                stale_log.unlink(missing_ok=True)
-            except OSError as exc:
-                logger.warning("Could not remove log %s while deleting profile '%s': %s", stale_log, name, exc)
+            # Remove the active log and any retained rotation backups. A log that
+            # cannot be removed (still held open on Windows, say) must not abort the
+            # delete and leave the profile half-registered in metadata below.
+            log_path = self._get_profiles_dir() / f"{name}.log"
+            for stale_log in [log_path, *log_path.parent.glob(f"{log_path.name}.*")]:
+                try:
+                    stale_log.unlink(missing_ok=True)
+                except OSError as exc:
+                    logger.warning("Could not remove log %s while deleting profile '%s': %s", stale_log, name, exc)
 
-        # Update metadata
-        metadata = self._load_metadata()
-        if name in metadata.profiles:
-            del metadata.profiles[name]
-            self._save_metadata(metadata)
+            # Update metadata
+            metadata = self._load_metadata()
+            if name in metadata.profiles:
+                del metadata.profiles[name]
+                self._save_metadata(metadata)
 
-        # Clear active profile if it was deleted
-        if self.get_active_profile() == name:
-            self.set_active_profile(None)
+            # Clear active profile if it was deleted
+            if self.get_active_profile() == name:
+                self.set_active_profile(None)
 
     def set_active_profile(self, name: Optional[str]):
         """Set the active profile.
@@ -707,35 +712,35 @@ class ProfileManager:
                 metadata_file.rename(backup_path)
             return ProfileMetadata()
 
-    def _save_metadata(self, metadata: ProfileMetadata):
-        """Save profile metadata to disk with file locking.
-
-        Args:
-            metadata: ProfileMetadata to save.
-        """
+    @contextmanager
+    def _metadata_transaction(self) -> Iterator[None]:
+        """Keep one stable lock across a profile metadata read/modify/write."""
         self._ensure_directories()
+        # A hidden name cannot collide with any valid profile's daemon lock.
+        # Do not lock metadata.json or its temp file: replacement changes the
+        # inode, leaving a waiter holding a different file from a newer writer.
+        lock_path = self._get_profiles_dir() / ".metadata.json.lock"
+        with lock_path.open("a", encoding="utf-8") as lock:
+            lock_file(lock)
+            try:
+                yield
+            finally:
+                unlock_file(lock)
 
-        # Use atomic write with temp file
+    def _save_metadata(self, metadata: ProfileMetadata) -> None:
+        """Publish metadata atomically while the caller owns its transaction lock."""
         metadata_file = self._get_metadata_file()
         temp_file = metadata_file.with_suffix(".json.tmp")
+        with temp_file.open("w", encoding="utf-8") as f:
+            json.dump(
+                {"version": metadata.version, "profiles": metadata.profiles},
+                f,
+                indent=2,
+            )
+            f.flush()
+            os.fsync(f.fileno())
 
-        with open(temp_file, "w") as f:
-            # Acquire exclusive lock (cross-platform)
-            lock_file(f)
-            try:
-                json.dump(
-                    {"version": metadata.version, "profiles": metadata.profiles},
-                    f,
-                    indent=2,
-                )
-                f.flush()
-                os.fsync(f.fileno())
-            finally:
-                unlock_file(f)
-
-        # Atomic replace. `.rename()` fails on Windows when the destination
-        # exists (WinError 183); `.replace()` is the cross-platform atomic
-        # rename added in Python 3.3 exactly for this pattern.
+        # The stable transaction lock remains held through publication.
         temp_file.replace(metadata_file)
 
 
