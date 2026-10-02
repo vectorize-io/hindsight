@@ -297,4 +297,108 @@ def test_building_the_embedded_client_announces_before_it_waits(provider, monkey
     instance._new_embedded_client()
 
     assert order == ["announced", "started"], order
+
+
+def test_reflect_is_unfiltered_by_default(provider):
+    """``reflect_tags`` is opt-in: with it unset the request carries no tag arguments at all,
+    so an existing bank-wide reflect is byte-identical after this change."""
+    instance, fake = provider({"recall_tags": "recall-scope"}, client=FakeClient(reflect_text="You are Ada."))
+    instance.handle_tool_call("hindsight_reflect", {"query": "who am I?"})
+
+    assert fake.reflects[0]["query"] == "who am I?"
+    assert "tags" not in fake.reflects[0] and "tags_match" not in fake.reflects[0]
+    instance.shutdown()
+
+
+def test_reflect_tags_are_forwarded_to_areflect(provider):
+    instance, fake = provider(
+        {"reflect_tags": "scope-a, scope-b", "reflect_tags_match": "all_strict"},
+        client=FakeClient(reflect_text="ada"),
+    )
+    instance.handle_tool_call("hindsight_reflect", {"query": "q"})
+
+    assert fake.reflects[0]["tags"] == ["scope-a", "scope-b"]
+    assert fake.reflects[0]["tags_match"] == "all_strict"
+    instance.shutdown()
+
+
+def test_reflect_scope_is_independent_of_the_recall_scope(provider):
+    """Two scopes, two knobs: reflect normalizes like retain_tags (CSV, trimmed, deduped)
+    while recall keeps its own value, and narrowing one never touches the other."""
+    instance, fake = provider(
+        {
+            "recall_tags": "recall-scope",
+            "recall_tags_match": "any_strict",
+            "reflect_tags": " scope-a , scope-b ,scope-a",
+            "reflect_tags_match": "all",
+        },
+        client=FakeClient(reflect_text="ada"),
+    )
+
+    assert instance._recall_tags == "recall-scope"
+    assert instance._reflect_tags == ["scope-a", "scope-b"]
+
+    instance.handle_tool_call("hindsight_reflect", {"query": "q"})
+    assert fake.reflects[0]["tags"] == ["scope-a", "scope-b"]
+    assert fake.reflects[0]["tags_match"] == "all"
+    instance.shutdown()
+
+
+def test_an_empty_reflect_tags_stays_unfiltered(provider):
+    """A blank string is 'not configured', not 'match nothing' — an accidental empty value
+    must not silently narrow every reflect to zero memories."""
+    instance, fake = provider({"reflect_tags": "  "}, client=FakeClient(reflect_text="ada"))
+    assert instance._reflect_tags is None
+
+    instance.handle_tool_call("hindsight_reflect", {"query": "q"})
+    assert "tags" not in fake.reflects[0]
+    instance.shutdown()
+
+
+def test_the_prefetch_reflect_path_is_scoped_too(provider):
+    """``recall_prefetch_method=reflect`` shares ``_reflect()``, so it is scoped by the same
+    knobs (asserted on the shared call path, which is the only areflect call site)."""
+    instance, fake = provider(
+        {"recall_prefetch_method": "reflect", "reflect_tags": "prefetch-scope"},
+        client=FakeClient(reflect_text="synthesized"),
+    )
+
+    text, count = instance._do_recall("what changed?")
+
+    assert text == "synthesized" and count == 0  # reflect synthesis reports no memory count
+    assert fake.reflects[0]["tags"] == ["prefetch-scope"]
+    assert fake.reflects[0]["tags_match"] == "any"
+    instance.shutdown()
+
+
+def test_prefetch_reflect_injects_the_scoped_synthesis(provider):
+    """End to end through prefetch(): the scoped reflect is what lands in the turn block."""
+    instance, fake = provider(
+        {"recall_prefetch_method": "reflect", "recall_sync": True, "reflect_tags": "prefetch-scope"},
+        client=FakeClient(reflect_text="synthesized"),
+    )
+
+    block = instance.prefetch("what changed?")
+
+    assert "synthesized" in block
+    assert fake.reflects[0]["tags"] == ["prefetch-scope"]
+    instance.shutdown()
+
+
+def test_reflect_honours_the_configured_response_limit(provider):
+    """``recall_max_tokens`` limits the reflect response too: reflect used to fall back to the
+    server default, silently ignoring the configured value."""
+    instance, fake = provider({"recall_max_tokens": 1234}, client=FakeClient(reflect_text="ada"))
+
+    instance.handle_tool_call("hindsight_reflect", {"query": "q"})
+
+    assert fake.reflects[0]["max_tokens"] == 1234
+    instance.shutdown()
+
+
+def test_the_schema_declares_the_reflect_scope_keys(provider):
+    instance, _ = provider({})
+    keys = {field["key"] for field in instance.get_config_schema()}
+
+    assert {"reflect_tags", "reflect_tags_match"} <= keys
     instance.shutdown()

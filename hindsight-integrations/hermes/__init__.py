@@ -628,6 +628,17 @@ class HindsightMemoryProvider(MemoryProvider):
                 "choices": ["any", "all", "any_strict", "all_strict"],
             },
             {
+                "key": "reflect_tags",
+                "description": "Tags to filter when reflecting — applies to both the hindsight_reflect tool and recall_prefetch_method=reflect (comma-separated). Empty (default) reflects over the whole bank.",
+                "default": "",
+            },
+            {
+                "key": "reflect_tags_match",
+                "description": "Tag matching mode for reflect (only sent when reflect_tags is set)",
+                "default": "any",
+                "choices": ["any", "all", "any_strict", "all_strict"],
+            },
+            {
                 "key": "recall_types",
                 "description": "Fact types to surface on recall — applies to both auto-recall and the hindsight_recall tool (comma-separated or list). Defaults to observation-only — observations are Hindsight's consolidated, deduplicated, evidence-grounded knowledge layer; raw world/experience facts are the supporting evidence observations already summarize. Set to e.g. 'observation,world,experience' to also include raw facts.",
                 "default": "observation",
@@ -1042,7 +1053,7 @@ class HindsightMemoryProvider(MemoryProvider):
             )
         logger.debug(
             "Hindsight config: auto_retain=%s, auto_recall=%s, retain_every_n=%d, "
-            "retain_async=%s, retain_context=%s, recall_max_tokens=%d, recall_max_input_chars=%d, tags=%s, recall_tags=%s",
+            "retain_async=%s, retain_context=%s, recall_max_tokens=%d, recall_max_input_chars=%d, tags=%s, recall_tags=%s, reflect_tags=%s",
             self._auto_retain,
             self._auto_recall,
             self._retain_every_n_turns,
@@ -1052,6 +1063,7 @@ class HindsightMemoryProvider(MemoryProvider):
             self._recall_max_input_chars,
             self._tags,
             self._recall_tags,
+            self._reflect_tags,
         )
 
         if self._mode == "local_embedded":
@@ -1125,6 +1137,14 @@ class HindsightMemoryProvider(MemoryProvider):
         """Recall knobs are pure config too (``{}`` yields the defaults)."""
         self._recall_tags = cfg.get("recall_tags") or None
         self._recall_tags_match = cfg.get("recall_tags_match", "any")
+        # Reflect scope is OPT-IN and empty by default = bank-wide reflect, which is exactly
+        # the behavior so far. A reflect pulls far more of the bank than a recall — past the
+        # engine's reflect context ceiling it degrades into split synthesis and can time out —
+        # so narrowing its evidence is a deliberate choice, never an implicit one. Kept
+        # separate from recall_tags so the two scopes are chosen independently, and normalized
+        # like retain_tags so a comma-separated string works too.
+        self._reflect_tags = _normalize_retain_tags(cfg.get("reflect_tags")) or None
+        self._reflect_tags_match = cfg.get("reflect_tags_match", "any")
         self._auto_recall = cfg.get("auto_recall", True)
         self._recall_sync = bool(cfg.get("recall_sync", False))
         self._recall_max_tokens = int(cfg.get("recall_max_tokens", 4096))
@@ -1255,9 +1275,23 @@ class HindsightMemoryProvider(MemoryProvider):
         return resp.results or []
 
     def _reflect(self, query: str) -> str | None:
-        resp = self._run_hindsight_operation(
-            lambda client: client.areflect(bank_id=self._bank_id, query=query, budget=self._budget)
-        )
+        """One reflect for *query* — both the ``hindsight_reflect`` tool and
+        ``recall_prefetch_method=reflect`` come through here, so scoping it here scopes both.
+
+        Tag filtering is opt-in: with ``reflect_tags`` unset the request carries no tag
+        arguments at all, so an existing bank-wide reflect stays byte-identical. The response
+        limit, by contrast, follows ``recall_max_tokens`` — reflect used to leave it to the
+        server default and silently ignore the configured value.
+        """
+        kwargs: dict = {
+            "bank_id": self._bank_id,
+            "query": query,
+            "budget": self._budget,
+            "max_tokens": self._recall_max_tokens,
+        }
+        if self._reflect_tags:
+            kwargs.update(tags=self._reflect_tags, tags_match=self._reflect_tags_match)
+        resp = self._run_hindsight_operation(lambda client: client.areflect(**kwargs))
         return resp.text
 
     def _do_recall(self, query: str) -> tuple[str, int]:

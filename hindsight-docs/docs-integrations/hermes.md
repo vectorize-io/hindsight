@@ -236,11 +236,13 @@ Config file: `~/.hermes/hindsight/config.json`
 |-----|---------|-------------|
 | `recall_budget` | `mid` | Recall thoroughness: `low` / `mid` / `high` |
 | `recall_prefetch_method` | `recall` | Auto-recall method: `recall` (raw facts) or `reflect` (LLM synthesis) |
-| `recall_max_tokens` | `4096` | Maximum tokens for recall results |
+| `recall_max_tokens` | `4096` | Maximum tokens for recall **and reflect** results |
 | `recall_max_input_chars` | `800` | Maximum input query length for auto-recall |
 | `recall_prompt_preamble` | — | Custom preamble for recalled memories in context |
 | `recall_tags` | — | Tags to filter when searching memories |
 | `recall_tags_match` | `any` | Tag matching mode: `any` / `all` / `any_strict` / `all_strict` |
+| `reflect_tags` | — | Tags to filter when reflecting. Applies to **both** the `hindsight_reflect` tool and `recall_prefetch_method=reflect` (they share one call path). Opt-in: empty (default) reflects over the whole bank. |
+| `reflect_tags_match` | `any` | Tag matching mode for reflect: `any` / `all` / `any_strict` / `all_strict`. Only sent when `reflect_tags` is set. |
 | `recall_types` | `observation` | Fact types surfaced by recall (both auto-recall and the `hindsight_recall` tool). Comma-separated string or JSON list. **Default narrowed to `observation` only** (see "Behavior change" below). Set to `observation,world,experience` to also include raw facts. |
 | `auto_recall` | `true` | Automatically recall memories before each turn |
 | `recall_sync` | `false` | Recall synchronously against the *current* message each turn (higher relevance, adds recall latency). Default off: recall runs in the background and is injected on the next turn. |
