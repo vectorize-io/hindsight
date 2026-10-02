@@ -38,9 +38,12 @@ import asyncio
 import hashlib
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any
+
+from hindsight_api.engine.aiohttp_session import LoopLocal
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +78,10 @@ class _CacheEntry:
 class GeminiCacheManager:
     """Per-process map of (prefix fingerprint) → CachedContent name.
 
-    Thread-safe across asyncio tasks via a single ``asyncio.Lock``. The
-    create/refresh calls are serialised; this is fine because cache
-    creation is a one-shot warm-up per fingerprint (subsequent reads are
-    pure dict lookups outside the lock).
+    Create/refresh calls are serialised within each event loop. Cache names
+    are shared across loops, but their locks cannot be: an ``asyncio.Lock``
+    binds to its first contended loop. A threading lock protects the shared
+    maps only during await-free accesses.
 
     Not shared across pods — each worker / api replica builds its own
     cache. The cost of cold-starting one extra full-price call per pod
@@ -99,7 +102,11 @@ class GeminiCacheManager:
         self._refresh_margin_seconds = refresh_margin_seconds
         self._create_timeout_seconds = create_timeout_seconds
         self._entries: dict[str, _CacheEntry] = {}
-        self._lock = asyncio.Lock()
+        # A provider survives temporary asyncio.run loops used by tooling. Reusing
+        # one contended asyncio.Lock there makes the next loop fail before the
+        # cache-create soft fallback can run. Keep only the async lock loop-local.
+        self._locks = LoopLocal(asyncio.Lock)
+        self._entries_lock = threading.Lock()
         # session_id -> CachedContent names created via ``create_incremental``.
         # A reflect creates a fresh rolling cache per step under one session id;
         # ``delete_session`` tears them all down when the reflect finishes.
@@ -182,14 +189,15 @@ class GeminiCacheManager:
         """
         key = self.fingerprint(model, system_instruction, response_schema, tools)
 
-        async with self._lock:
-            entry = self._entries.get(key)
-            if entry is not None and self._is_fresh(entry):
-                return entry.name
+        async with self._locks.get():
+            with self._entries_lock:
+                entry = self._entries.get(key)
+                if entry is not None and self._is_fresh(entry):
+                    return entry.name
 
-            # Need to (re)create. Pop the stale entry first so a failed
-            # create doesn't leave a name we'd return on the next call.
-            self._entries.pop(key, None)
+                # Need to (re)create. Pop the stale entry first so a failed
+                # create doesn't leave a name we'd return on the next call.
+                self._entries.pop(key, None)
 
             try:
                 cache_name = await self._create_cache(
@@ -215,11 +223,12 @@ class GeminiCacheManager:
             if cache_name is None:
                 return None
 
-            self._entries[key] = _CacheEntry(
-                name=cache_name,
-                created_at=time.monotonic(),
-                ttl_seconds=self._ttl_seconds,
-            )
+            with self._entries_lock:
+                self._entries[key] = _CacheEntry(
+                    name=cache_name,
+                    created_at=time.monotonic(),
+                    ttl_seconds=self._ttl_seconds,
+                )
             return cache_name
 
     def _is_fresh(self, entry: _CacheEntry) -> bool:
@@ -237,9 +246,10 @@ class GeminiCacheManager:
         the in-process map; the orphaned server-side cache (if any) ages out on
         its own TTL.
         """
-        for key, entry in list(self._entries.items()):
-            if entry.name == name:
-                self._entries.pop(key, None)
+        with self._entries_lock:
+            for key, entry in list(self._entries.items()):
+                if entry.name == name:
+                    self._entries.pop(key, None)
 
     async def create_incremental(
         self,
@@ -287,7 +297,8 @@ class GeminiCacheManager:
             )
             return None
         if name is not None:
-            self._sessions.setdefault(session_id, []).append(name)
+            with self._entries_lock:
+                self._sessions.setdefault(session_id, []).append(name)
         return name
 
     async def delete(self, name: str) -> None:
@@ -308,7 +319,8 @@ class GeminiCacheManager:
         Deletes concurrently and best-effort — a reflect must never fail because
         a cache couldn't be torn down; the short TTL is the backstop.
         """
-        names = self._sessions.pop(session_id, [])
+        with self._entries_lock:
+            names = self._sessions.pop(session_id, [])
         if not names:
             return
         await asyncio.gather(*(self.delete(n) for n in names), return_exceptions=True)
