@@ -64,6 +64,65 @@ def test_recall_tool_queries_the_bank_and_formats_results(provider):
     instance.shutdown()
 
 
+def test_recall_sends_no_score_floor_by_default(provider):
+    instance, fake = provider({}, client=FakeClient(recall_texts=["fact one"]))
+    instance.handle_tool_call("hindsight_recall", {"query": "who am I?"})
+    assert "min_scores" not in fake.recalls[0]
+    instance.shutdown()
+
+
+def test_recall_min_scores_reaches_the_tool_and_the_prefetch(provider):
+    instance, fake = provider(
+        {"recall_sync": True, "recall_min_scores": {"reranker": 0.25}}, client=FakeClient(recall_texts=["fact one"])
+    )
+    instance.handle_tool_call("hindsight_recall", {"query": "who am I?"})
+    instance.prefetch("what do you know?")
+    assert [call["min_scores"] for call in fake.recalls] == [{"reranker": 0.25}] * 2
+    instance.shutdown()
+
+
+def test_recall_min_scores_accepts_the_json_string_the_setup_wizard_writes(provider):
+    instance, fake = provider({"recall_min_scores": '{"reranker": 0.25}'}, client=FakeClient(recall_texts=["x"]))
+    instance.handle_tool_call("hindsight_recall", {"query": "q"})
+    assert fake.recalls[0]["min_scores"] == {"reranker": 0.25}
+    instance.shutdown()
+
+
+def test_recall_with_an_empty_answer_stays_an_empty_block(provider):
+    # The server drops what falls under a reranker/final floor; an empty answer must stay empty.
+    instance, fake = provider({"recall_sync": True, "recall_min_scores": {"reranker": 0.9}}, client=FakeClient())
+    assert instance.prefetch("something off topic") == ""
+    assert fake.recalls[0]["min_scores"] == {"reranker": 0.9}
+    assert json.loads(instance.handle_tool_call("hindsight_recall", {"query": "q"}))["result"] == (
+        "No relevant memories found."
+    )
+    instance.shutdown()
+
+
+def test_recall_min_scores_is_enforced_on_each_result_the_server_returns(provider):
+    # The server prunes only the retrieval arm a `semantic` floor names, so weak results (and ones
+    # another arm found, with no semantic score) can still come back; the plugin drops them so the
+    # floor really abstains.
+    results = [("kept", {"semantic": 0.7}), ("weak", {"semantic": 0.3}), ("other arm", {"semantic": None})]
+    instance, fake = provider({"recall_min_scores": {"semantic": 0.5}}, client=FakeClient(recall_texts=results))
+    result = json.loads(instance.handle_tool_call("hindsight_recall", {"query": "q"}))
+    assert result["result"] == "1. kept"
+    assert fake.recalls[0]["min_scores"] == {"semantic": 0.5}
+    instance.shutdown()
+
+
+def test_recall_min_scores_drops_the_whole_block_when_nothing_clears_it(provider):
+    results = [("weak", {"semantic": 0.3}), ("other arm", {"semantic": None})]
+    instance, _ = provider(
+        {"recall_sync": True, "recall_min_scores": {"semantic": 0.5}}, client=FakeClient(recall_texts=results)
+    )
+    assert instance.prefetch("something off topic") == ""
+    assert json.loads(instance.handle_tool_call("hindsight_recall", {"query": "q"}))["result"] == (
+        "No relevant memories found."
+    )
+    instance.shutdown()
+
+
 def test_reflect_tool_uses_reflect(provider):
     instance, fake = provider({}, client=FakeClient(reflect_text="You are Ada."))
     result = json.loads(instance.handle_tool_call("hindsight_reflect", {"query": "who am I?"}))

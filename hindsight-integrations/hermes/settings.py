@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import math
 import re
 from typing import Any, List
 
@@ -79,6 +80,48 @@ def _normalize_retain_tags(value: Any) -> List[str]:
         if tag and tag not in normalized:
             normalized.append(tag)
     return normalized
+
+
+def _normalize_min_scores(value: Any) -> dict[str, float] | None:
+    """Normalize ``recall_min_scores`` to ``{score_name: floor}``, or ``None`` for no floor.
+
+    Accepts a mapping or a JSON object string. The score names are Hindsight's own
+    (``reranker``, ``semantic``, ...), so they are not validated here: the server decides
+    which exist. A floor that is not a finite number is dropped with a warning instead of
+    being sent, so a typo can never turn into an invalid recall request."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            logger.warning("Invalid recall_min_scores %r (not valid JSON); no score floor applied", value)
+            return None
+    if not isinstance(value, dict):
+        logger.warning("Invalid recall_min_scores %r (expected an object); no score floor applied", value)
+        return None
+    floors: dict[str, float] = {}
+    for name, floor in value.items():
+        if isinstance(floor, bool) or not isinstance(floor, (int, float)) or not math.isfinite(floor):
+            logger.warning("Ignoring recall_min_scores[%r]=%r: a floor must be a finite number", name, floor)
+            continue
+        floors[str(name)] = float(floor)
+    return floors or None
+
+
+def _clears_min_scores(result: Any, floors: dict[str, float]) -> bool:
+    """Whether a recall result reports every score named in *floors* and clears each (``>=``).
+
+    Recall fuses four retrieval arms and returns a result surfaced by any of them, so the
+    ``semantic`` and ``keyword`` scores are ``None`` on a result the other arms found. The
+    server only guarantees ``reranker`` and ``final`` floors (a ``semantic`` floor prunes just
+    its own arm), so a result that does not report a stage named in a floor is rejected here:
+    that is what lets a ``semantic`` floor abstain on an off-topic query. A result carrying no
+    ``scores`` at all (a server that does not report them) is kept, there being nothing to judge it by."""
+    scores = getattr(result, "scores", None)
+    if scores is None:
+        return True
+    return all((value := getattr(scores, name, None)) is not None and value >= floor for name, floor in floors.items())
 
 
 def _normalize_observation_scopes(value: Any) -> Any:

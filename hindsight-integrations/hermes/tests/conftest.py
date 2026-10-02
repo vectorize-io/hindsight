@@ -156,13 +156,16 @@ _spec.loader.exec_module(plugin)
 
 
 class FakeResult:
-    def __init__(self, text: str):
+    def __init__(self, text: str, scores: dict[str, float | None] | None = None):
         self.text = text
+        # Like the SDK's ``RecallResult``: an object with one attribute per stage, or ``None``.
+        self.scores = types.SimpleNamespace(**scores) if scores is not None else None
 
 
 class FakeRecallResponse:
     def __init__(self, texts):
-        self.results = [FakeResult(t) for t in texts]
+        """*texts* items are a text, or a ``(text, scores)`` pair when scores matter."""
+        self.results = [FakeResult(*(t if isinstance(t, tuple) else (t,))) for t in texts]
 
 
 class FakeReflectResponse:

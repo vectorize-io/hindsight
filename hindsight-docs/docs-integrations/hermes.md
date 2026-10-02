@@ -242,6 +242,7 @@ Config file: `~/.hermes/hindsight/config.json`
 | `recall_tags` | — | Tags to filter when searching memories |
 | `recall_tags_match` | `any` | Tag matching mode: `any` / `all` / `any_strict` / `all_strict` |
 | `recall_types` | `observation` | Fact types surfaced by recall (both auto-recall and the `hindsight_recall` tool). Comma-separated string or JSON list. **Default narrowed to `observation` only** (see "Behavior change" below). Set to `observation,world,experience` to also include raw facts. |
+| `recall_min_scores` | — | Minimum relevance per score field, as a JSON object (e.g. `{"reranker": 0.25}` or `{"semantic": 0.5}`). Applies to both auto-recall and the `hindsight_recall` tool. See the tip below. |
 | `auto_recall` | `true` | Automatically recall memories before each turn |
 | `recall_sync` | `false` | Recall synchronously against the *current* message each turn (higher relevance, adds recall latency). Default off: recall runs in the background and is injected on the next turn. |
 | `recall_indicator` | `true` | Show a `👁️ Hindsight — recalled N memories` status line when auto-recall injects memory. Turn off for customer-facing agents. |
@@ -253,6 +254,17 @@ Config file: `~/.hermes/hindsight/config.json`
 > Per [Hindsight's docs](/developer/observations), observations are the **consolidated** knowledge layer Hindsight builds on top of raw facts: deduplicated beliefs grounded in evidence, refined as new facts arrive, with proof counts and freshness signals. Raw `world` / `experience` facts are the individual supporting evidence that feeds them. For per-turn context injection, observations are denser per token and avoid feeding the model multiple raw facts that one observation already summarizes.
 >
 > Restore the broad recall with `"recall_types": "observation,world,experience"` (string or JSON list) in `~/.hermes/hindsight/config.json`. This applies to **both** auto-recall and the `hindsight_recall` tool — both read the same `recall_types` setting (the tool schema has no per-call `types` argument), so narrowing the default narrows both paths.
+
+> **Tip — `recall_min_scores` against off-topic recall.** Recall ranks, it does not judge relevance: a question
+> unrelated to anything stored still comes back with up to `recall_max_tokens` of the least-bad memories. The
+> `reranker` score separates the two cleanly — on a small bank relevant hits scored 0.7-0.97 and unrelated ones
+> 0.0-0.1 — so `"recall_min_scores": {"reranker": 0.25}` in `~/.hermes/hindsight/config.json` turns that noise
+> into an empty recall. The server only guarantees `reranker` and `final` floors; a `semantic` or `keyword` floor
+> prunes just its own retrieval arm there, and a result found by another arm still comes back with a `null` score
+> for that stage. The plugin therefore also checks every floor against the scores each result reports, and rejects
+> a result that does not report the floored stage. Check the scores on your own bank before tuning a floor: with a
+> multilingual embedding model, `{"semantic": 0.5}` separated relevant from unrelated queries better than the
+> reranker did. Unset by default, so nothing changes unless you opt in.
 
 ### Retain
 
