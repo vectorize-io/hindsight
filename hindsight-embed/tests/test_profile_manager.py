@@ -327,6 +327,32 @@ class TestProfileManager:
         # Ports should be different
         assert paths1.port != paths2.port
 
+    @pytest.mark.parametrize(
+        "occupied", ["default-api", "default-ui", "named-ui", "new-ui-meets-api", "new-ui-meets-ui"]
+    )
+    def test_auto_allocation_avoids_other_profile_services(self, profile_manager, temp_hindsight_dir, occupied):
+        """An available API slot cannot collide with another profile's daemon or UI."""
+        import hashlib
+
+        from hindsight_embed.profile_manager import PROFILE_PORT_BASE, PROFILE_PORT_RANGE
+
+        name = "new-builder"
+        candidate = PROFILE_PORT_BASE + int(hashlib.sha256(name.encode()).hexdigest(), 16) % PROFILE_PORT_RANGE
+        if occupied == "default-api":
+            (temp_hindsight_dir / "embed").write_text(f"HINDSIGHT_API_PORT={candidate}\n")
+        elif occupied == "default-ui":
+            (temp_hindsight_dir / "embed").write_text(f"HINDSIGHT_EMBED_CP_PORT={candidate}\n")
+        elif occupied == "named-ui":
+            profile_manager.create_profile("existing", 12000, {"HINDSIGHT_EMBED_CP_PORT": str(candidate)})
+        elif occupied == "new-ui-meets-api":
+            profile_manager.create_profile("existing", candidate + 10000, {"KEY": "value"})
+        else:
+            profile_manager.create_profile("existing", 12000, {"HINDSIGHT_EMBED_CP_PORT": str(candidate + 10000)})
+
+        profile_manager.create_profile(name, {"KEY": "value"})
+
+        assert profile_manager.resolve_profile_paths(name).port != candidate
+
     def test_api_port_persisted_to_env(self, profile_manager, temp_hindsight_dir):
         """The allocated API port is written into the profile's .env, not metadata."""
         profile_manager.create_profile("p", {"KEY": "v"})

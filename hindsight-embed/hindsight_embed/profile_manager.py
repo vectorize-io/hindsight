@@ -639,35 +639,50 @@ class ProfileManager:
 
         # Ports now live in the .env files, so scan those (plus legacy metadata)
         # to find what's already taken.
-        allocated_ports = self._allocated_api_ports()
+        allocated_ports = self._allocated_profile_ports()
 
         # If collision, find next available port
         attempt = 0
-        while port in allocated_ports and attempt < PROFILE_PORT_RANGE:
+        while (port in allocated_ports or port + UI_PORT_OFFSET in allocated_ports) and attempt < PROFILE_PORT_RANGE:
             port = PROFILE_PORT_BASE + ((hash_val + attempt) % PROFILE_PORT_RANGE)
             attempt += 1
 
         if attempt >= PROFILE_PORT_RANGE:
             # Fallback: find first available port
             for p in range(PROFILE_PORT_BASE, PROFILE_PORT_BASE + PROFILE_PORT_RANGE):
-                if p not in allocated_ports:
+                if p not in allocated_ports and p + UI_PORT_OFFSET not in allocated_ports:
                     return p
             raise RuntimeError("No available ports for profile")
 
         return port
 
-    def _allocated_api_ports(self) -> set[int]:
-        """API ports already taken by other profiles (from their .env files,
-        plus any legacy metadata ports not yet migrated)."""
+    def _allocated_profile_ports(self) -> set[int]:
+        """Ports reserved by existing profiles' API and control plane services."""
         ports: set[int] = set()
+        metadata = self._load_metadata()
+        # A customized default daemon/UI can sit inside the named-profile range.
+        # Previously neither it nor any profile's UI was reserved during allocation.
+        default_config = self._get_config_dir() / "embed"
+        if default_config.exists():
+            overrides = self._read_port_overrides(default_config)
+            api = overrides.api if overrides.api is not None else DEFAULT_PORT
+            ports.add(api)
+            ports.add(overrides.ui if overrides.ui is not None else api + UI_PORT_OFFSET)
         for env_path in self._get_profiles_dir().glob("*.env"):
-            api = self._read_port_overrides(env_path).api
+            overrides = self._read_port_overrides(env_path)
+            api = overrides.api
+            if api is None:
+                api = metadata.profiles.get(env_path.stem, {}).get("port")
             if api is not None:
                 ports.add(api)
-        # Legacy: profiles whose port still lives in metadata (pre-migration).
-        for info in self._load_metadata().profiles.values():
+                ports.add(overrides.ui if overrides.ui is not None else api + UI_PORT_OFFSET)
+            elif overrides.ui is not None:
+                ports.add(overrides.ui)
+        # Legacy metadata can still reserve a port before its .env is migrated.
+        for info in metadata.profiles.values():
             if info.get("port"):
                 ports.add(info["port"])
+                ports.add(info["port"] + UI_PORT_OFFSET)
         return ports
 
     def _check_daemon_running(self, port: int) -> bool:
