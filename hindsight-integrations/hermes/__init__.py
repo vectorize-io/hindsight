@@ -1347,6 +1347,7 @@ class HindsightMemoryProvider(MemoryProvider):
                 ("user", self._retain_user_prefix, user_content),
                 ("assistant", self._retain_assistant_prefix, assistant_content),
             )
+            if content.strip()
         ]
 
     def _build_metadata(self, *, message_count: int, turn_index: int) -> Dict[str, str]:
@@ -1405,7 +1406,9 @@ class HindsightMemoryProvider(MemoryProvider):
         """Writer job shipping *turns* as one document. Inputs are snapshotted NOW: the
         writer runs after later sync_turn() calls mutate _session_turns/_turn_index/_session_id."""
         content = "[" + ",".join(turns) + "]"
-        metadata = self._build_metadata(message_count=len(turns) * 2, turn_index=self._turn_index)
+        metadata = self._build_metadata(
+            message_count=sum(len(json.loads(turn)) for turn in turns), turn_index=self._turn_index
+        )
         lineage = (("session", self._session_id), ("parent", self._parent_session_id))
         tags = [f"{kind}:{sid}" for kind, sid in lineage if sid] or None
         bank_id, retain_async, retain_context = self._bank_id, self._retain_async, self._retain_context
@@ -1446,12 +1449,14 @@ class HindsightMemoryProvider(MemoryProvider):
         if why:
             logger.debug("sync_turn: skipped (%s)", why)
             return
+        turn_messages = self._build_turn_messages(user_content, assistant_content)
+        if not turn_messages:
+            logger.debug("sync_turn: skipped empty turn")
+            return
         if session_id:
             self._session_id = str(session_id).strip()
 
-        self._session_turns.append(
-            json.dumps(self._build_turn_messages(user_content, assistant_content), ensure_ascii=False)
-        )
+        self._session_turns.append(json.dumps(turn_messages, ensure_ascii=False))
         self._turn_counter = self._turn_index = self._turn_counter + 1
         if remainder := self._turn_counter % self._retain_every_n_turns:
             logger.debug(
