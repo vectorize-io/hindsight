@@ -49,6 +49,34 @@ describe("HindsightClient", () => {
     );
   });
 
+  it("deleteDocument succeeds idempotently when document is already absent (404 Document not found, #5067)", async () => {
+    mock.mockResolvedValue({
+      status: 404,
+      text: '{"detail":"Document not found"}',
+      json: { detail: "Document not found" },
+    });
+    const client = new HindsightClient("https://api.example.com", undefined, mock);
+    await expect(client.deleteDocument("b", "Folder/Note.md")).resolves.toBeUndefined();
+  });
+
+  it("deleteDocument still throws on unrelated 404 (e.g. Bank not found)", async () => {
+    mock.mockResolvedValue({
+      status: 404,
+      text: '{"detail":"Bank \'b\' not found"}',
+      json: { detail: "Bank 'b' not found" },
+    });
+    const client = new HindsightClient("https://api.example.com", undefined, mock);
+    await expect(client.deleteDocument("b", "Folder/Note.md")).rejects.toThrow(
+      /Bank 'b' not found/
+    );
+  });
+
+  it("deleteDocument still throws on 401/403/500", async () => {
+    mock.mockResolvedValue({ status: 401, text: "Unauthorized", json: {} });
+    const client = new HindsightClient("https://api.example.com", undefined, mock);
+    await expect(client.deleteDocument("b", "Folder/Note.md")).rejects.toThrow(/HTTP 401/);
+  });
+
   it("reflect requests citations + trace when asked", async () => {
     mock.mockResolvedValue(ok({ text: "answer", based_on: { memories: [] } }));
     const client = new HindsightClient("https://api.example.com", undefined, mock);

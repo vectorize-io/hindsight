@@ -77,9 +77,27 @@ export class HindsightClient {
     await this.send("POST", this.bankUrl(bankId, "/memories"), { items: [item], async: true });
   }
 
-  /** Delete a document and cascade to its memory units. */
+  /** Delete a document and cascade to its memory units.
+   *
+   * Idempotent: if the server responds 404 with "Document not found", the
+   * document is already gone, so this resolves successfully (#5067).
+   */
   async deleteDocument(bankId: string, documentId: string): Promise<void> {
-    await this.send("DELETE", this.bankUrl(bankId, `/documents/${encodeDocPath(documentId)}`));
+    const url = this.bankUrl(bankId, `/documents/${encodeDocPath(documentId)}`);
+    const resp = await this.transport({
+      url,
+      method: "DELETE",
+      headers: this.headers(),
+    });
+    if (resp.status >= 200 && resp.status < 300) return;
+    if (resp.status === 404) {
+      const detail = (resp.json as { detail?: string } | undefined)?.detail ?? resp.text ?? "";
+      if (detail.toLowerCase().includes("document not found")) {
+        return;
+      }
+    }
+    const detail = (resp.text ?? "").slice(0, 500);
+    throw new Error(`Hindsight DELETE ${url} → HTTP ${resp.status}: ${detail}`);
   }
 
   async reflect(
