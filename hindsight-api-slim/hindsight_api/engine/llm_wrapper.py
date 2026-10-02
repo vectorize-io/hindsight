@@ -8,7 +8,7 @@ import re
 import time
 import uuid
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any, Callable, Union
 
 from json_repair import repair_json
 from pydantic import BaseModel
@@ -165,15 +165,26 @@ async def _acquire_permits(stack: AsyncExitStack, scope: str) -> None:
 
 
 @asynccontextmanager
-async def _attempt_permits(scope: str):
+async def _attempt_permits(scope: str, cancel_check: Callable[[], None] | None = None):
     """Hold configured LLM concurrency permits for one upstream attempt."""
     from ..worker.stage import get_stage, set_stage
 
+    if cancel_check is not None:
+        cancel_check()
     async with AsyncExitStack() as stack:
         await _acquire_permits(stack, scope)
+        # A disconnect can happen while queued; release both permits without
+        # issuing a request when the caller finally gets its turn.
+        if cancel_check is not None:
+            cancel_check()
         try:
             yield
-        except BaseException:
+        except BaseException as exc:
+            # A wire failure may finish after disconnect. Surface cancellation
+            # before the provider classifies it and enters retry backoff.
+            # Preserve task cancellation and process-level BaseExceptions.
+            if isinstance(exc, Exception) and cancel_check is not None:
+                cancel_check()
             # A failed attempt exits here with its permits released while the
             # provider classifies the error and sleeps out its backoff. Suffix
             # the stage so `attempt=N` always means "permits held, request in
@@ -1205,6 +1216,7 @@ class LLMProvider:
         skip_validation: bool = False,
         strict_schema: bool | None = None,
         cached_prefix: str | None = None,
+        cancel_check: Callable[[], None] | None = None,
     ) -> LLMCallResult:
         """
         Make an LLM API call with retry logic.
@@ -1215,6 +1227,8 @@ class LLMProvider:
             max_completion_tokens: Maximum tokens in response.
             temperature: Sampling temperature (0.0-2.0).
             scope: Scope identifier for tracking.
+            cancel_check: Optional cooperative checkpoint before each provider
+                attempt and after completion. Does not interrupt an in-flight request.
             max_retries: Maximum retry attempts. ``None`` uses the provider's configured
                 default (per-operation/global ``llm_max_retries``), else 10.
             initial_backoff: Initial backoff time in seconds. ``None`` uses the provider's
@@ -1309,7 +1323,7 @@ class LLMProvider:
             attempt_gated = self._provider_impl.supports_attempt_scoped_concurrency()
             async with AsyncExitStack() as stack:
                 if not attempt_gated:
-                    await _acquire_permits(stack, scope)
+                    await stack.enter_async_context(_attempt_permits(scope, cancel_check))
                     # Permits in hand — only now leave `.queued`. Attempt-gated
                     # providers acquire permits per attempt instead, so they keep
                     # `.queued` until their first `attempt=N` stamp lands after
@@ -1323,7 +1337,9 @@ class LLMProvider:
                 cache_kwarg = {"cached_prefix": cached_prefix} if cached_prefix is not None else {}
                 try:
                     # Delegate to provider implementation
-                    attempt_kwarg = {"attempt_context": lambda: _attempt_permits(scope)} if attempt_gated else {}
+                    attempt_kwarg = (
+                        {"attempt_context": lambda: _attempt_permits(scope, cancel_check)} if attempt_gated else {}
+                    )
                     result = await self._provider_impl.call(
                         messages=messages,
                         response_format=response_format,
@@ -1370,6 +1386,9 @@ class LLMProvider:
             reset_request_context(request_token)
             reset_response_usage(usage_token)
 
+        if cancel_check is not None:
+            cancel_check()
+
         # Single scrub point for every structured/text LLM response in the engine:
         # a model can emit a lone `\udXXX` escape that JSON decoding turns into an
         # un-encodable surrogate, and the field it lands in is not knowable here
@@ -1389,6 +1408,7 @@ class LLMProvider:
         tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
         cached_prefix: str | None = None,
         cached_prefix_message_count: int = 0,
+        cancel_check: Callable[[], None] | None = None,
     ) -> "LLMToolCallResult":
         """
         Make an LLM API call with tool/function calling support.
@@ -1399,6 +1419,8 @@ class LLMProvider:
             max_completion_tokens: Maximum tokens in response.
             temperature: Sampling temperature (0.0-2.0).
             scope: Scope identifier for tracking.
+            cancel_check: Optional cooperative checkpoint before each provider
+                attempt and after completion. Does not interrupt an in-flight request.
             max_retries: Maximum retry attempts. ``None`` uses the provider's configured
                 default (per-operation/global ``llm_max_retries``), else 5.
             initial_backoff: Initial backoff time in seconds. ``None`` uses the provider's
@@ -1456,7 +1478,7 @@ class LLMProvider:
             attempt_gated = self._provider_impl.supports_attempt_scoped_concurrency()
             async with AsyncExitStack() as stack:
                 if not attempt_gated:
-                    await _acquire_permits(stack, scope)
+                    await stack.enter_async_context(_attempt_permits(scope, cancel_check))
                     # Permits in hand — only now leave `.queued`; attempt-gated
                     # providers stay `.queued` until their first post-acquire
                     # `attempt=N` stamp (see call() above, #3002).
@@ -1473,7 +1495,9 @@ class LLMProvider:
                 )
                 try:
                     # Delegate to provider implementation
-                    attempt_kwarg = {"attempt_context": lambda: _attempt_permits(scope)} if attempt_gated else {}
+                    attempt_kwarg = (
+                        {"attempt_context": lambda: _attempt_permits(scope, cancel_check)} if attempt_gated else {}
+                    )
                     result = await self._provider_impl.call_with_tools(
                         messages=messages,
                         tools=tools,
@@ -1518,6 +1542,9 @@ class LLMProvider:
         finally:
             reset_request_context(request_token)
             reset_response_usage(usage_token)
+
+        if cancel_check is not None:
+            cancel_check()
 
         # Same scrub for the tool-calling path: the agent's text content and every
         # tool-call argument are model-authored and flow on to storage and reranking.

@@ -20,6 +20,7 @@ from contextlib import AbstractAsyncContextManager, nullcontext
 from functools import lru_cache
 from typing import Any, Callable
 
+from hindsight_api.cancellation import OperationCancelledError
 from hindsight_api.config import get_config
 from hindsight_api.engine.llm_interface import (
     LLM_TOOL_CHOICE_AUTO,
@@ -478,6 +479,9 @@ class LiteLLMLLM(LLMInterface):
                 )
                 raise
 
+            except OperationCancelledError:
+                raise
+
             except Exception as e:
                 error_str = str(e).lower()
                 # Fast fail on auth errors
@@ -643,6 +647,9 @@ class LiteLLMLLM(LLMInterface):
                     f"LiteLLM tool call timed out after {self.timeout}s on {attempt + 1} attempts "
                     f"({exc_name}, scope={scope})"
                 )
+                raise
+
+            except OperationCancelledError:
                 raise
 
             except Exception as e:

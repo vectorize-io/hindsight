@@ -123,6 +123,23 @@ async def test_cancellation_propagates_without_failover():
     assert b.calls == 0
 
 
+@pytest.mark.parametrize("method", ["call", "call_with_tools"])
+async def test_cooperative_cancellation_propagates_without_failover(method):
+    from hindsight_api.cancellation import OperationCancelledError
+
+    error = OperationCancelledError("request timeout")
+    a = FakeMember("a", error)
+    b = FakeMember("b", "RB")
+    kwargs = {"messages": []}
+    if method == "call_with_tools":
+        kwargs["tools"] = []
+    with pytest.raises(OperationCancelledError) as raised:
+        await getattr(_failover(a, b), method)(**kwargs)
+    assert raised.value is error
+    assert a.calls == 1
+    assert b.calls == 0
+
+
 def test_should_failover_classification():
     assert _should_failover(RuntimeError()) is True
     assert _should_failover(ValueError()) is True

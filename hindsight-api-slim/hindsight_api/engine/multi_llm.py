@@ -33,6 +33,7 @@ import threading
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from ..cancellation import OperationCancelledError
 from ..config import LLM_STRATEGY_FAILOVER, LLM_STRATEGY_METADATA, LLMStrategyConfig
 from .llm_wrapper import LLMProvider, OutputTooLongError
 
@@ -47,12 +48,13 @@ def _should_failover(exc: BaseException) -> bool:
     """Whether ``exc`` from one member should trigger a try on the next member.
 
     Generic ``Exception`` instances (network errors, provider 5xx, timeouts after
-    a member's own retries) fail over. ``OutputTooLongError`` is propagated — a
-    different provider won't fit an over-length output either. ``CancelledError``,
+    a member's own retries) fail over. ``OutputTooLongError`` and cooperative
+    ``OperationCancelledError`` propagate: neither should start a new provider
+    request. ``CancelledError``,
     ``KeyboardInterrupt`` and ``SystemExit`` are ``BaseException`` (not
     ``Exception``) and therefore propagate unchanged.
     """
-    if isinstance(exc, OutputTooLongError):
+    if isinstance(exc, (OutputTooLongError, OperationCancelledError)):
         return False
     return isinstance(exc, Exception)
 

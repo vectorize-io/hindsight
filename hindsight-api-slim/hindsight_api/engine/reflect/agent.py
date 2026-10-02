@@ -254,6 +254,7 @@ async def _generate_structured_output(
     llm_config: "AnyLLMProvider",
     reflect_id: str,
     max_tokens: int | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> StructuredOutputResult:
     """Generate structured output from an answer using the provided JSON schema.
 
@@ -363,6 +364,8 @@ INSTRUCTIONS:
 
 OUTPUT:"""
 
+        if cancel_check is not None:
+            cancel_check()
         call_result = await llm_config.call(
             messages=[
                 {
@@ -382,7 +385,10 @@ OUTPUT:"""
             initial_backoff=0.25,
             max_backoff=1.0,
             skip_validation=True,  # We'll handle the dict ourselves
+            **({"cancel_check": cancel_check} if cancel_check is not None else {}),
         )
+        if cancel_check is not None:
+            cancel_check()
         structured_result = call_result.content
         usage = call_result.usage
 
@@ -410,7 +416,11 @@ OUTPUT:"""
             thoughts_tokens=usage.thoughts_tokens,
         )
 
+    except OperationCancelledError:
+        raise
     except Exception as e:
+        if cancel_check is not None:
+            cancel_check()
         logger.warning(f"[REFLECT {reflect_id}] Failed to generate structured output: {e}")
         return StructuredOutputResult(error=f"{type(e).__name__}: {e}")
 
@@ -836,6 +846,10 @@ async def _run_reflect_agent_inner(
             f"total={elapsed_ms}ms"
         )
 
+    def _check_cancelled() -> None:
+        if cancel_check is not None:
+            cancel_check()
+
     async def _tracked_llm_call(
         prompt: str,
         trace_scope: str,
@@ -849,16 +863,24 @@ async def _run_reflect_agent_inner(
         writing an answer; callers that extract rather than write override it.
         """
         nonlocal total_input_tokens, total_output_tokens, total_cached_tokens, total_thoughts_tokens
+        _check_cancelled()
         llm_start = time.time()
-        call_result = await llm_config.call(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            scope="reflect",
-            temperature=get_config().llm_temperature_reflect if temperature is None else temperature,
-            max_completion_tokens=completion_cap,
-        )
+        try:
+            call_result = await llm_config.call(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                scope="reflect",
+                temperature=get_config().llm_temperature_reflect if temperature is None else temperature,
+                max_completion_tokens=completion_cap,
+                **({"cancel_check": cancel_check} if cancel_check is not None else {}),
+            )
+        except Exception:
+            _check_cancelled()
+            raise
+
+        _check_cancelled()
         response = call_result.content
         usage = call_result.usage
         llm_duration = int((time.time() - llm_start) * 1000)
@@ -906,10 +928,12 @@ async def _run_reflect_agent_inner(
                 tool_choice=LLMToolChoice.named("done"),
                 temperature=get_config().llm_temperature_reflect,
                 max_completion_tokens=synthesis_max_completion_tokens,
+                **({"cancel_check": cancel_check} if cancel_check is not None else {}),
             )
         except OperationCancelledError:
             raise
         except Exception as e:
+            _check_cancelled()
             logger.warning(f"[REFLECT {reflect_id}] closing done call failed, using the standalone prompt: {e}")
             return None
         total_input_tokens += result.input_tokens
@@ -937,7 +961,11 @@ async def _run_reflect_agent_inner(
         prefix the provider already holds), otherwise through the standalone
         synthesis prompt.
         """
+        # Disconnect can arrive while closing is in flight. Recheck before
+        # spending another call on fallback synthesis or answer post-processing.
+        _check_cancelled()
         closing = await _ask_for_done()
+        _check_cancelled()
         if closing is None:
             return await _forced_final_synthesis(iterations_completed)
         return await _process_done_tool(
@@ -956,6 +984,7 @@ async def _run_reflect_agent_inner(
             llm_config=llm_config,
             response_schema=response_schema,
             max_tokens=max_tokens,
+            cancel_check=cancel_check,
         )
 
     async def _forced_final_synthesis(iterations_completed: int) -> ReflectAgentResult:
@@ -970,6 +999,7 @@ async def _run_reflect_agent_inner(
         hundreds of citations the synthesis model never saw (#3122).
         """
         nonlocal total_input_tokens, total_output_tokens, total_cached_tokens, total_thoughts_tokens
+        _check_cancelled()
         final_system = build_final_system_prompt(bank_profile.get("mission"), llm_output_language, directives)
         chunks = split_context_history(context_history, max_context_tokens)
         # Every call below uses the transport-level cap, never the caller's
@@ -1030,7 +1060,7 @@ async def _run_reflect_agent_inner(
         # Enforce the visible-length budget before anything derives from the answer,
         # so structured output is built from the capped text — same order as the
         # done path.
-        rewrite = await _rewrite_to_length_budget(answer, None, max_tokens, llm_config)
+        rewrite = await _rewrite_to_length_budget(answer, None, max_tokens, llm_config, cancel_check)
         if rewrite.applied:
             answer = rewrite.markdown
             total_input_tokens += rewrite.input_tokens
@@ -1050,7 +1080,9 @@ async def _run_reflect_agent_inner(
         structured_output_error = None
         # ``answer`` is non-empty past the guard above, so only the schema gates this.
         if response_schema:
-            struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
+            struct = await _generate_structured_output(
+                answer, response_schema, llm_config, reflect_id, max_tokens, cancel_check
+            )
             structured_output = struct.structured_output
             structured_output_error = struct.error
             total_input_tokens += struct.input_tokens
@@ -1089,8 +1121,7 @@ async def _run_reflect_agent_inner(
         # iterations if the caller (e.g. an HTTP client) has gone away, rather
         # than spending another LLM round-trip on a result nobody will read
         # (issue #2122). Raises OperationCancelledError when fired.
-        if cancel_check is not None:
-            cancel_check()
+        _check_cancelled()
 
         is_last = iteration == max_iterations - 1
 
@@ -1178,7 +1209,10 @@ async def _run_reflect_agent_inner(
             if incremental_caching and iter_tool_choice is LLM_TOOL_CHOICE_AUTO and rolling_cache_name is not None:
                 ct_kwargs["cached_prefix"] = rolling_cache_name
                 ct_kwargs["cached_prefix_message_count"] = rolling_cache_boundary
+            if cancel_check is not None:
+                ct_kwargs["cancel_check"] = cancel_check
             result = await llm_config.call_with_tools(**ct_kwargs)
+            _check_cancelled()
             llm_duration = int((time.time() - llm_start) * 1000)
             queued_ms = int(queue_wait.seconds * 1000)
             consecutive_errors = 0
@@ -1330,6 +1364,7 @@ async def _run_reflect_agent_inner(
                     llm_config=llm_config,
                     response_schema=response_schema,
                     max_tokens=max_tokens,
+                    cancel_check=cancel_check,
                 )
 
         # Execute other tools in parallel (exclude done tool in all its format variants)
@@ -1640,6 +1675,7 @@ async def _rewrite_to_length_budget(
     document: StructuredDocument | None,
     max_tokens: int | None,
     llm_config: "AnyLLMProvider | None",
+    cancel_check: Callable[[], None] | None = None,
 ) -> LengthRewrite:
     """Shorten ``answer`` to the caller's visible-length budget, if it overruns.
 
@@ -1679,15 +1715,26 @@ async def _rewrite_to_length_budget(
         )
         rewrite_user = f"Target budget: {max_tokens} tokens.\n\nText to rewrite:\n{answer}"
 
-    call_result = await llm_config.call(
-        messages=[
-            {"role": "system", "content": rewrite_system},
-            {"role": "user", "content": rewrite_user},
-        ],
-        scope="reflect",
-        temperature=get_config().llm_temperature_reflect,
-        max_completion_tokens=get_config().reflect_max_completion_tokens,
-    )
+    if cancel_check is not None:
+        cancel_check()
+    try:
+        call_result = await llm_config.call(
+            messages=[
+                {"role": "system", "content": rewrite_system},
+                {"role": "user", "content": rewrite_user},
+            ],
+            scope="reflect",
+            temperature=get_config().llm_temperature_reflect,
+            max_completion_tokens=get_config().reflect_max_completion_tokens,
+            **({"cancel_check": cancel_check} if cancel_check is not None else {}),
+        )
+    except Exception:
+        if cancel_check is not None:
+            cancel_check()
+        raise
+
+    if cancel_check is not None:
+        cancel_check()
     rewritten = call_result.content
     rewrite_usage = call_result.usage
     if document is not None:
@@ -1733,8 +1780,11 @@ async def _process_done_tool(
     llm_config: "AnyLLMProvider | None" = None,
     response_schema: dict | None = None,
     max_tokens: int | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> ReflectAgentResult:
     """Process the done tool call and return the result."""
+    if cancel_check is not None:
+        cancel_check()
     args = done_call.arguments
 
     # ``done`` is a structured tool call: trust its ``answer`` field verbatim.
@@ -1780,7 +1830,7 @@ async def _process_done_tool(
         )
 
     final_usage = usage
-    rewrite = await _rewrite_to_length_budget(answer, document, max_tokens, llm_config)
+    rewrite = await _rewrite_to_length_budget(answer, document, max_tokens, llm_config, cancel_check)
     if rewrite.applied:
         document, answer = rewrite.structure, rewrite.markdown
         final_usage = TokenUsageSummary(
@@ -1808,7 +1858,9 @@ async def _process_done_tool(
     structured_output = None
     structured_output_error = None
     if response_schema and llm_config and answer:
-        struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
+        struct = await _generate_structured_output(
+            answer, response_schema, llm_config, reflect_id, max_tokens, cancel_check
+        )
         structured_output = struct.structured_output
         structured_output_error = struct.error
         # Add structured output tokens to usage
