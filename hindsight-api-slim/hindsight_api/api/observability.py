@@ -47,13 +47,13 @@ SCOPE_IGNORED_PARAMS = "hindsight.ignored_params"
 #: which is the whole question during a phased migration off an old one.
 SCOPE_RESOLVED_ALIAS = "hindsight.resolved_alias"
 
-#: ``endpoint`` label of a request no route matches: scanner 404s, trailing-slash
-#: redirects. One constant rather than the path, which the client fully controls.
+# ``endpoint`` label of a request no route matches: scanner 404s, trailing-slash
+# redirects. One constant rather than the path, which the client fully controls.
 UNMATCHED_ENDPOINT = "unmatched"
 
-#: ``endpoint`` label of a request a route matched that has no path template to show
-#: (a ``Host`` route, a wrapper type). Bounded like ``unmatched``, but kept apart from it
-#: so ``unmatched`` keeps meaning "nothing matched".
+# ``endpoint`` label of a request a route matched that has no path template to show
+# (a ``Host`` route, a wrapper type). Bounded like ``unmatched``, but kept apart from it
+# so ``unmatched`` keeps meaning "nothing matched".
 UNKNOWN_ROUTE_ENDPOINT = "unknown_route"
 
 # FastAPI >= 0.137 no longer copies an included router's routes into the app's route

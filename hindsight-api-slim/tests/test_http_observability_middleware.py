@@ -12,9 +12,13 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from starlette.routing import Host
 
-from hindsight_api.api.http import create_app
+from hindsight_api import metrics
 from hindsight_api.api import observability
+from hindsight_api.api.http import create_app
 from hindsight_api.api.observability import (
     UNKNOWN_ROUTE_ENDPOINT,
     UNMATCHED_ENDPOINT,
@@ -22,6 +26,7 @@ from hindsight_api.api.observability import (
 )
 from hindsight_api.api.unknown_params import UnknownParamsRoute, use_unknown_params_routes
 from hindsight_api.extensions import HttpExtension
+from hindsight_api.metrics import get_metrics_collector
 
 
 def _app() -> FastAPI:
@@ -63,8 +68,6 @@ def test_header_survives_an_error_response():
 
 
 def test_metrics_are_recorded_for_each_request():
-    from hindsight_api.metrics import get_metrics_collector
-
     client = TestClient(_app())
     collector = get_metrics_collector()
     # The collector is a process singleton; assert it is exercised rather than
@@ -144,7 +147,6 @@ class _ExtensionRoutes(HttpExtension):
 
 def _recorded_endpoints(app: FastAPI, method: str, paths: list[str]) -> list[str]:
     """Send each request through ``app`` and return the endpoint label it was recorded under."""
-    from hindsight_api.metrics import get_metrics_collector
 
     collector = get_metrics_collector()
     endpoints: list[str] = []
@@ -213,10 +215,6 @@ def test_endpoint_label_is_the_route_template(real_app: FastAPI, method: str, pa
 
 def test_in_progress_returns_to_zero_under_the_route_template(real_app: FastAPI, monkeypatch):
     """In-progress is +1 at the start and -1 at the end; both must land on the same series."""
-    from opentelemetry.sdk.metrics import MeterProvider
-    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
-
-    from hindsight_api import metrics
 
     reader = InMemoryMetricReader()
     monkeypatch.setattr(metrics, "get_meter", lambda: MeterProvider(metric_readers=[reader]).get_meter("test"))
@@ -243,7 +241,6 @@ def test_in_progress_returns_to_zero_under_the_route_template(real_app: FastAPI,
 
 def test_a_matched_route_without_a_template_is_not_unmatched():
     """A Host route matches but has no path; it must not read as a 404."""
-    from starlette.routing import Host
 
     app = FastAPI()
     app.add_middleware(HttpObservabilityMiddleware)
