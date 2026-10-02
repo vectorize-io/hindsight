@@ -31,6 +31,9 @@ def _mock_download(client):
     """Stub the low-level download path to return ARCHIVE_BYTES."""
     client._api_client.param_serialize = MagicMock(return_value=("GET", DOWNLOAD_URL, {}, None, []))
     response = MagicMock()
+    response.status = 200
+    response.data = ARCHIVE_BYTES
+    response.getheaders.return_value = {}
     response.read = AsyncMock(return_value=ARCHIVE_BYTES)
     client._api_client.call_api = AsyncMock(return_value=response)
 

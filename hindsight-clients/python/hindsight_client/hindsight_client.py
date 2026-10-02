@@ -7,6 +7,7 @@ easy-to-use interface on top of the auto-generated OpenAPI client.
 
 import asyncio
 import json
+import math
 import random
 import warnings
 from collections.abc import Awaitable, Callable, Iterator
@@ -16,6 +17,7 @@ from datetime import datetime
 from importlib import metadata
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import quote
 
 import aiohttp
 from yarl import URL
@@ -185,7 +187,8 @@ def _retry_after_seconds(e: "ApiException") -> float | None:
     if raw is None:
         return None
     try:
-        return max(0.0, float(raw))
+        seconds = float(raw)
+        return max(0.0, seconds) if math.isfinite(seconds) else None
     except (TypeError, ValueError):
         # HTTP-date form; the fallback backoff is a better answer than parsing dates.
         return None
@@ -605,7 +608,7 @@ class Hindsight:
         file_data = []
         for file_path in files:
             path = Path(file_path)
-            file_data.append((path.name, path.read_bytes()))
+            file_data.append((path.name, await asyncio.to_thread(path.read_bytes)))
 
         meta = files_metadata or [{"context": context} if context else {} for _ in files]
 
@@ -1019,9 +1022,9 @@ class Hindsight:
         if enable_reranking is not None:
             body["enable_reranking"] = enable_reranking
 
-        url = f"{self._base_url}/v1/default/banks/{bank_id}"
+        url = f"{self._base_url}/v1/default/banks/{quote(bank_id, safe='')}"
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             async with session.put(
                 url, json=body, headers=headers, timeout=aiohttp.ClientTimeout(total=self._timeout)
             ) as resp:
@@ -2565,7 +2568,11 @@ class Hindsight:
             auth_settings=[],
         )
         response = await self._api_client.call_api(*request, _request_timeout=self._timeout)
-        return bytes(await response.read())
+        archive = await response.read()
+        # Called only for its status check: it raises ApiException on a non-2XX download, which
+        # would otherwise hand the error body back as the archive.
+        self._api_client.response_deserialize(response, response_types_map={"2XX": "bytearray"})
+        return bytes(archive)
 
     # Directives methods
 
@@ -2799,9 +2806,9 @@ class Hindsight:
         return await self._aget_bank_config(bank_id)
 
     async def _aget_bank_config(self, bank_id: str) -> dict[str, Any]:
-        url = f"{self._base_url}/v1/default/banks/{bank_id}/config"
+        url = f"{self._base_url}/v1/default/banks/{quote(bank_id, safe='')}/config"
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=self._timeout)) as resp:
                 resp.raise_for_status()
                 return await resp.json()
@@ -3138,9 +3145,9 @@ class Hindsight:
         return await self._aupdate_bank_config(bank_id, updates)
 
     async def _aupdate_bank_config(self, bank_id: str, updates: dict[str, Any]) -> dict[str, Any]:
-        url = f"{self._base_url}/v1/default/banks/{bank_id}/config"
+        url = f"{self._base_url}/v1/default/banks/{quote(bank_id, safe='')}/config"
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             async with session.patch(
                 url, json={"updates": updates}, headers=headers, timeout=aiohttp.ClientTimeout(total=self._timeout)
             ) as resp:
@@ -3170,9 +3177,9 @@ class Hindsight:
         return await self._areset_bank_config(bank_id)
 
     async def _areset_bank_config(self, bank_id: str) -> dict[str, Any]:
-        url = f"{self._base_url}/v1/default/banks/{bank_id}/config"
+        url = f"{self._base_url}/v1/default/banks/{quote(bank_id, safe='')}/config"
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             async with session.delete(url, headers=headers, timeout=aiohttp.ClientTimeout(total=self._timeout)) as resp:
                 resp.raise_for_status()
                 return await resp.json()
