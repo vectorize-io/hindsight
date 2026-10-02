@@ -25,7 +25,7 @@ The same plugin works in Cursor: install it from the Cursor Marketplace.
 | `grok-bot::shared` | What every Bot should know, handoffs between Bots, and the "About the user" profile. | Any Bot |
 | Your other banks | Memory from your other AI tools. | Those tools only; Bots read them |
 
-The plugin connects to the root MCP server, `https://api.hindsight.vectorize.io/mcp`, which reaches every bank in the organization you authorize.
+The plugin connects to the root [MCP server](../../developer/mcp-server.md), `https://api.hindsight.vectorize.io/mcp`, which reaches every bank in the organization you authorize.
 
 ## How It Works
 
