@@ -30,6 +30,7 @@ class PluginManifest(BaseModel):
     name: str
     description: str
     version: str
+    homepage: str
     logo: str
     skills: str
     mcp_servers: str = Field(alias="mcpServers")
@@ -132,3 +133,12 @@ def test_readme_documents_configuration() -> None:
     readme = (PLUGIN_DIR / "README.md").read_text()
     assert "grok-bot::shared" in readme
     assert "OAuth" in readme
+
+
+def test_homepage_is_the_live_docs_page() -> None:
+    # The OSS docs deploy to hindsight.vectorize.io (docusaurus.config `url`).
+    # docs.hindsight.vectorize.io is the separate Hindsight Cloud docs site, where this route
+    # is a 404. The marketplace listing's Website link is this field, pinned to the reviewed
+    # commit, so a wrong domain survives until the next review.
+    assert _plugin().homepage == f"https://hindsight.vectorize.io/sdks/integrations/{PLUGIN_DIR.name}"
+    assert (REPO_ROOT / "hindsight-docs" / "docs-integrations" / f"{PLUGIN_DIR.name}.md").exists()

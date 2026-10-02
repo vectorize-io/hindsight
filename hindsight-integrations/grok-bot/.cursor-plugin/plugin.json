@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Long-term memory for Grok Bot and Cursor, shared across your Bots and your other AI tools. Bots recall what earlier runs and other Bots learned, keep their own memory bank plus a shared one, and reason over history with reflect.",
   "author": { "name": "Vectorize", "email": "support@vectorize.io" },
-  "homepage": "https://docs.hindsight.vectorize.io/sdks/integrations/grok-bot",
+  "homepage": "https://hindsight.vectorize.io/sdks/integrations/grok-bot",
   "repository": "https://github.com/vectorize-io/hindsight",
   "license": "MIT",
   "keywords": ["memory", "long-term-memory", "hindsight", "mcp", "grok-bot", "agents"],

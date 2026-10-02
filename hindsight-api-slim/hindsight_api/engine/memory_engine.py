@@ -3784,6 +3784,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_config=task_dict.get("include_bank_config", True),
                 history=task_dict.get("include_history", False),
             ),
+            operation_id=operation_id,
         )
 
         if operation_id:
@@ -3880,6 +3881,7 @@ class MemoryEngine(MemoryEngineInterface):
             context,
             target_bank_id=target_bank_id,
             scope=scope,
+            operation_id=operation_id,
         )
 
         if operation_id:
@@ -8414,6 +8416,7 @@ class MemoryEngine(MemoryEngineInterface):
         *,
         target_bank_id: str | None = None,
         scope: "TransferScope | None" = None,
+        operation_id: str | None = None,
     ) -> "BankImportResult":
         """Restore a whole bank from an :func:`transfer.export_bank` archive.
 
@@ -8422,6 +8425,12 @@ class MemoryEngine(MemoryEngineInterface):
         exported (no consolidation/webhooks — a migration restores exact state). The
         target bank must not already exist (import restores a whole bank, not a merge).
         ``scope`` narrows what is restored to a subset of what the archive carries.
+
+        ``operation_id`` makes a retried operation safe: the restore records on that
+        operation the bank it created, so a retry after a crash (a worker restart
+        mid-import) deletes the half-restored bank and starts again, rather than
+        failing on a target that "already exists". A bank the operation did not
+        create is never touched.
         """
         from .transfer import import_bank
         from .transfer.importer import parse_bank_archive
@@ -8432,6 +8441,33 @@ class MemoryEngine(MemoryEngineInterface):
         # target bank's config before the restore.
         parsed = parse_bank_archive(archive_bytes)
         bank_id = target_bank_id or parsed.manifest.source_bank_id
+
+        on_bank_created = None
+        if operation_id:
+            operations = fq_table("async_operations")
+            async with acquire_with_retry(backend) as conn:
+                metadata = conn.parse_json(
+                    await conn.fetchval(
+                        f"SELECT result_metadata FROM {operations} WHERE operation_id = $1", uuid.UUID(operation_id)
+                    )
+                )
+            # Only a bank this operation created, and only if it is still there (someone
+            # may have deleted the leftovers by hand before the retry ran).
+            if (metadata or {}).get("restored_bank_id") == bank_id and (
+                await bank_utils.get_bank_profile_if_exists(backend, bank_id) is not None
+            ):
+                logger.info("[transfer] Retrying operation %s: discarding partial restore of %s", operation_id, bank_id)
+                await self.delete_bank(bank_id, request_context=request_context)
+
+            async def on_bank_created(conn: Any) -> None:
+                await conn.execute(
+                    f"UPDATE {operations} "
+                    f"SET result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $1::jsonb "
+                    f"WHERE operation_id = $2",
+                    json.dumps({"restored_bank_id": bank_id}),
+                    uuid.UUID(operation_id),
+                )
+
         if self._operation_validator and await bank_utils.get_bank_profile_if_exists(backend, bank_id) is None:
             from hindsight_api.extensions import CreateBankContext
 
@@ -8462,6 +8498,7 @@ class MemoryEngine(MemoryEngineInterface):
             # Attachment bytes ride in the archive; the target writes them to its
             # own storage under its own keys (see transfer._restore_attachments).
             file_storage=self._file_storage,
+            on_bank_created=on_bank_created,
         )
 
     async def import_documents_async(

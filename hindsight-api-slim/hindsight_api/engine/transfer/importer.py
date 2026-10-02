@@ -1,9 +1,9 @@
 """Import documents from a transfer archive by replaying the deterministic retain pipeline.
 
-For each document the importer rebuilds the extracted facts, re-embeds them with
-the *target* bank's embedding model, then runs entity resolution (Phase 1) and
-the fact/link insert (Phase 2) — exactly the steps retain runs after LLM
-extraction. No LLM is called. Temporal/semantic/causal links and entity merges
+For each batch of documents the importer rebuilds the extracted facts, re-embeds
+them with the *target* bank's embedding model, then runs entity resolution
+(Phase 1) and the fact/link insert (Phase 2) — exactly the steps a multi-item
+retain runs after LLM extraction. No LLM is called. Temporal/semantic/causal links and entity merges
 are therefore computed relative to the target bank's existing memories.
 """
 
@@ -71,6 +71,11 @@ _VALID_CONFLICT_MODES: tuple[OnConflict, ...] = ("skip", "replace", "new-id")
 #: provider — including in-process ones with nothing downstream to slice for them
 #: (issue #3891). Retain bounds itself the same way (#3763).
 _EMBED_BATCH_SIZE = 128
+
+#: Documents written per transaction. One document per transaction made an import a
+#: long run of tiny round trips (an embedding call, an entity-resolution pass and a
+#: commit per document); a batch shares all three, the way a multi-item retain does.
+_DOCUMENT_BATCH_SIZE = 50
 
 
 @dataclass
@@ -270,6 +275,7 @@ async def import_documents(
     # resolve observation source references after all facts exist.
     ref_map: dict[tuple[str, int], str] = {}
 
+    to_import: list[tuple[TransferDocument, str]] = []
     for document in parsed.documents:
         target_id = await _resolve_target_id(backend, bank_id, document.id, on_conflict)
         if target_id is None:
@@ -278,35 +284,35 @@ async def import_documents(
             continue
         if target_id != document.id:
             result.remapped_document_ids[document.id] = target_id
+        to_import.append((document, target_id))
 
-        imported_facts = await _import_one_document(
+    for start in range(0, len(to_import), _DOCUMENT_BATCH_SIZE):
+        batch = to_import[start : start + _DOCUMENT_BATCH_SIZE]
+        imported_batch = await _import_document_batch(
             backend=backend,
-            embeddings_model=embeddings_model,
             entity_resolver=entity_resolver,
             config=config,
-            format_date_fn=format_date_fn,
             bank_id=bank_id,
-            document=document,
-            target_id=target_id,
+            prepared=await _prepare_documents(embeddings_model, format_date_fn, batch),
             ops=ops,
             outbox_callback_factory=outbox_callback_factory,
         )
-        result.documents_imported += 1
-        result.facts_imported += len(imported_facts.unit_ids)
-        result.imported_documents.append(
-            ImportedDocument(
-                document_id=target_id,
-                unit_ids=imported_facts.unit_ids,
-                content=document.original_text or "",
-                tags=list(document.tags),
+        for (document, target_id), imported_facts in zip(batch, imported_batch, strict=True):
+            result.documents_imported += 1
+            result.facts_imported += len(imported_facts.unit_ids)
+            result.imported_documents.append(
+                ImportedDocument(
+                    document_id=target_id,
+                    unit_ids=imported_facts.unit_ids,
+                    content=document.original_text or "",
+                    tags=list(document.tags),
+                )
             )
-        )
-        for ordinal, unit_id in zip(imported_facts.original_ordinals, imported_facts.unit_ids, strict=True):
-            ref_map[(document.id, ordinal)] = unit_id
-        for ordinal, unit_id in zip(imported_facts.original_ordinals, imported_facts.unit_ids, strict=True):
-            source_id = document.facts[ordinal].source_id
-            if source_id is not None:
-                result.remapped_unit_ids[source_id] = unit_id
+            for ordinal, unit_id in zip(imported_facts.original_ordinals, imported_facts.unit_ids, strict=True):
+                ref_map[(document.id, ordinal)] = unit_id
+                source_id = document.facts[ordinal].source_id
+                if source_id is not None:
+                    result.remapped_unit_ids[source_id] = unit_id
 
     if parsed.observations:
         outcome = await _import_observations(
@@ -964,6 +970,7 @@ async def import_bank(
     scope: TransferScope | None = None,
     file_storage: Any = None,
     ops: Any = None,
+    on_bank_created: Callable[[Any], Awaitable[None]] | None = None,
 ) -> BankImportResult:
     """Restore a whole bank from a ``export_bank`` archive into the target instance.
 
@@ -987,6 +994,11 @@ async def import_bank(
     lands. Before that the target bank does not exist (import refuses to write into
     an existing one), so any config a caller resolved carries global + tenant values
     and none of the bank's own — which is exactly the bug in #3236.
+
+    ``on_bank_created`` runs on the connection that creates the bank row, in the same
+    transaction, so whatever it records is committed exactly when the bank exists. The
+    engine uses it to mark the bank as this operation's own, which is what lets a retry
+    after a crash discard the half-restored bank instead of refusing it.
     """
     if ops is None:
         ops = backend.ops
@@ -1037,44 +1049,49 @@ async def import_bank(
             row["name"] = bank_id
 
     async with acquire_with_retry(backend) as conn:
-        # Refuse to import into an existing bank — this restores a whole bank, it
-        # does not merge. Merging would silently mix the archive's config/mental
-        # models/webhooks with whatever is already there (and global-unique ids
-        # like webhooks/directives would collide).
-        if await conn.fetchval(f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1", bank_id):
-            raise ValueError(
-                f"Target bank '{bank_id}' already exists; import-bank restores into a fresh bank "
-                f"(it is not a merge). Delete the bank first, or pass a different target bank id."
+        async with conn.transaction():
+            # Refuse to import into an existing bank — this restores a whole bank, it
+            # does not merge. Merging would silently mix the archive's config/mental
+            # models/webhooks with whatever is already there (and global-unique ids
+            # like webhooks/directives would collide).
+            if await conn.fetchval(f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1", bank_id):
+                raise ValueError(
+                    f"Target bank '{bank_id}' already exists; import-bank restores into a fresh bank "
+                    f"(it is not a merge). Delete the bank first, or pass a different target bank id."
+                )
+            # Bank row first — children (documents, mental_models, …) FK to it. Without
+            # the config component there is no row to restore, so the bank is created
+            # with this instance's defaults and the data lands inside it.
+            if restoring.bank_config:
+                await _restore_rows(
+                    conn,
+                    "banks",
+                    parsed.bank_rows.get("banks", []),
+                    bank_rows_json_encoding=bank_rows_json_encoding,
+                )
+            else:
+                await bank_utils.create_bank_row_on_conn(conn, bank_id, ops=ops)
+            if on_bank_created is not None:
+                await on_bank_created(conn)
+            # The restored banks row bypasses the fresh-INSERT gate that normally
+            # creates per-bank vector indexes, so create them explicitly here while
+            # the bank is still empty (facts are imported below, so the build is
+            # instant). get_or_create_bank_profile would NOT do this: the row now
+            # exists, so it takes the SELECT branch and skips index creation —
+            # leaving the restored bank falling back to the global index +
+            # post-filter (slower, under-returning recall). See #2645.
+            #
+            # A no-op when a size threshold is set: entitlement is by size then, and
+            # the restored rows land through the normal import path, where the
+            # maintenance operation picks them up (#3485). Also a no-op when a custom
+            # store owns this bank's memories — the restored facts go to the store, so
+            # there is nothing here to index (#4615). Both are decided inside
+            # create_bank_vector_indexes, so this call stays unconditional.
+            internal_id = await conn.fetchval(
+                f"SELECT internal_id FROM {fq_table('banks')} WHERE bank_id = $1", bank_id
             )
-        # Bank row first — children (documents, mental_models, …) FK to it. Without
-        # the config component there is no row to restore, so the bank is created
-        # with this instance's defaults and the data lands inside it.
-        if restoring.bank_config:
-            await _restore_rows(
-                conn,
-                "banks",
-                parsed.bank_rows.get("banks", []),
-                bank_rows_json_encoding=bank_rows_json_encoding,
-            )
-        else:
-            await bank_utils.create_bank_row_on_conn(conn, bank_id, ops=ops)
-        # The restored banks row bypasses the fresh-INSERT gate that normally
-        # creates per-bank vector indexes, so create them explicitly here while
-        # the bank is still empty (facts are imported below, so the build is
-        # instant). get_or_create_bank_profile would NOT do this: the row now
-        # exists, so it takes the SELECT branch and skips index creation —
-        # leaving the restored bank falling back to the global index +
-        # post-filter (slower, under-returning recall). See #2645.
-        #
-        # A no-op when a size threshold is set: entitlement is by size then, and
-        # the restored rows land through the normal import path, where the
-        # maintenance operation picks them up (#3485). Also a no-op when a custom
-        # store owns this bank's memories — the restored facts go to the store, so
-        # there is nothing here to index (#4615). Both are decided inside
-        # create_bank_vector_indexes, so this call stays unconditional.
-        internal_id = await conn.fetchval(f"SELECT internal_id FROM {fq_table('banks')} WHERE bank_id = $1", bank_id)
-        if internal_id is not None:
-            await bank_utils.create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)
+            if internal_id is not None:
+                await bank_utils.create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)
 
     # The bank row above bypasses the engine's create path, which is what gives a bank its storage
     # in a store that owns one. Without it a bank restored with no documents has none, and the
@@ -1259,82 +1276,131 @@ async def _resolve_target_id(backend: Any, bank_id: str, document_id: str, on_co
     return document_id  # replace
 
 
-async def _import_one_document(
+@dataclass
+class _PreparedDocument:
+    """One archive document with its facts rebuilt and re-embedded, ready to write."""
+
+    document: TransferDocument
+    target_id: str
+    extracted_facts: list[ExtractedFact]
+    processed_facts: list[ProcessedFact]
+    retained_index_by_original: list[int | None]
+    legacy_causal_relations: list[list[CausalRelation]]
+    chunk_meta: list[ChunkMetadata]
+
+
+async def _prepare_documents(
+    embeddings_model: Any, format_date_fn: Any, batch: list[tuple[TransferDocument, str]]
+) -> list[_PreparedDocument]:
+    """Rebuild every document's facts and re-embed them all in one pass."""
+    extracted_per_doc = [[_to_extracted_fact(fact) for fact in document.facts] for document, _ in batch]
+    texts = [
+        text
+        for extracted in extracted_per_doc
+        for text in embedding_processing.augment_texts_with_dates(extracted, format_date_fn)
+    ]
+    embeddings = await _embed_in_batches(embeddings_model, texts)
+
+    prepared: list[_PreparedDocument] = []
+    offset = 0
+    for (document, target_id), extracted in zip(batch, extracted_per_doc, strict=True):
+        fact_batch = orchestrator._process_extracted_facts(extracted, embeddings[offset : offset + len(extracted)])
+        offset += len(extracted)
+        prepared.append(
+            _PreparedDocument(
+                document=document,
+                target_id=target_id,
+                extracted_facts=fact_batch.extracted_facts,
+                processed_facts=fact_batch.processed_facts,
+                retained_index_by_original=fact_batch.retained_index_by_original,
+                legacy_causal_relations=orchestrator._remap_causal_relations(
+                    _legacy_causal_relations(document), fact_batch.retained_index_by_original
+                ),
+                chunk_meta=[
+                    ChunkMetadata(
+                        chunk_text=chunk.chunk_text, fact_count=0, content_index=0, chunk_index=chunk.chunk_index
+                    )
+                    for chunk in document.chunks
+                ],
+            )
+        )
+    return prepared
+
+
+async def _import_document_batch(
     *,
     backend: Any,
-    embeddings_model: Any,
     entity_resolver: Any,
     config: Any,
-    format_date_fn: Any,
     bank_id: str,
-    document: TransferDocument,
-    target_id: str,
+    prepared: list[_PreparedDocument],
     ops: Any,
     outbox_callback_factory: Any = None,
-) -> _ImportedFactBatch:
-    """Re-embed and insert a document; map original fact ordinals to new unit ids."""
+) -> list[_ImportedFactBatch]:
+    """Insert a batch of prepared documents; map each one's fact ordinals to new unit ids.
+
+    On Postgres the whole batch is one retain write: one entity-resolution pass and one
+    transaction, each document a content item of its own (``content_index``), exactly as a
+    multi-item retain writes several documents at once.
+    """
     log_buffer: list[str] = []
-
-    # Fire the same retain.completed webhook retain emits, transactionally inside
-    # this document's insert. Factory returns None when no webhook manager exists.
-    outbox_callback = (
-        outbox_callback_factory([{"document_id": target_id, "tags": list(document.tags)}])
-        if outbox_callback_factory
-        else None
-    )
-
-    extracted_facts = [_to_extracted_fact(fact) for fact in document.facts]
-    legacy_causal_relations = _legacy_causal_relations(document)
-
-    processed_facts: list[ProcessedFact] = []
-    retained_index_by_original: list[int | None] = []
-    if extracted_facts:
-        augmented = embedding_processing.augment_texts_with_dates(extracted_facts, format_date_fn)
-        embeddings = await embedding_processing.generate_embeddings_batch(embeddings_model, augmented)
-        fact_batch = orchestrator._process_extracted_facts(extracted_facts, embeddings)
-        extracted_facts = fact_batch.extracted_facts
-        processed_facts = fact_batch.processed_facts
-        retained_index_by_original = fact_batch.retained_index_by_original
-        legacy_causal_relations = orchestrator._remap_causal_relations(
-            legacy_causal_relations,
-            retained_index_by_original,
-        )
-
-    contents = [RetainContent(content=document.original_text or "")]
-    chunk_meta = [
-        ChunkMetadata(chunk_text=chunk.chunk_text, fact_count=0, content_index=0, chunk_index=chunk.chunk_index)
-        for chunk in document.chunks
-    ]
 
     from ..memories import get_memories
 
     store = get_memories()
     if store.store_owned_for(bank_id):
-        result_unit_ids = await _write_document_to_store(
-            store=store,
-            backend=backend,
-            entity_resolver=entity_resolver,
-            config=config,
-            bank_id=bank_id,
-            document=document,
-            target_id=target_id,
-            contents=contents,
-            extracted_facts=extracted_facts,
-            processed_facts=processed_facts,
-            chunk_meta=chunk_meta,
-            legacy_causal_relations=legacy_causal_relations,
-            log_buffer=log_buffer,
-            outbox_callback=outbox_callback,
-        )
-        if result_unit_ids:
-            await store.restore_fact_lifecycle(
-                conn=None,
-                fq_table=fq_table,
-                bank_id=bank_id,
-                rows=_fact_lifecycle_rows(document.facts, retained_index_by_original, result_unit_ids[0]),
+        # A store's retain session is per document, so a store-owned bank keeps one write each.
+        imported: list[_ImportedFactBatch] = []
+        for doc in prepared:
+            # Fire the same retain.completed webhook retain emits. Factory returns None when no
+            # webhook manager exists.
+            outbox_callback = (
+                outbox_callback_factory([{"document_id": doc.target_id, "tags": list(doc.document.tags)}])
+                if outbox_callback_factory
+                else None
             )
-        logger.debug("[transfer] Imported document %s:\n%s", target_id, "\n".join(log_buffer))
-        return _imported_fact_batch(result_unit_ids, retained_index_by_original)
+            result_unit_ids = await _write_document_to_store(
+                store=store,
+                backend=backend,
+                entity_resolver=entity_resolver,
+                config=config,
+                bank_id=bank_id,
+                document=doc.document,
+                target_id=doc.target_id,
+                contents=[RetainContent(content=doc.document.original_text or "")],
+                extracted_facts=doc.extracted_facts,
+                processed_facts=doc.processed_facts,
+                chunk_meta=doc.chunk_meta,
+                legacy_causal_relations=doc.legacy_causal_relations,
+                log_buffer=log_buffer,
+                outbox_callback=outbox_callback,
+            )
+            if result_unit_ids:
+                await store.restore_fact_lifecycle(
+                    conn=None,
+                    fq_table=fq_table,
+                    bank_id=bank_id,
+                    rows=_fact_lifecycle_rows(doc.document.facts, doc.retained_index_by_original, result_unit_ids[0]),
+                )
+            imported.append(_imported_fact_batch(result_unit_ids, doc.retained_index_by_original))
+        logger.debug("[transfer] Imported %d document(s):\n%s", len(prepared), "\n".join(log_buffer))
+        return imported
+
+    # One content item per document. Each fact is tagged with its document's position, and its
+    # causal targets — ordinals within its own document — are shifted to positions in the batch.
+    contents = [RetainContent(content=doc.document.original_text or "") for doc in prepared]
+    extracted_facts: list[ExtractedFact] = []
+    processed_facts: list[ProcessedFact] = []
+    for content_index, doc in enumerate(prepared):
+        offset = len(processed_facts)
+        for extracted, processed in zip(doc.extracted_facts, doc.processed_facts, strict=True):
+            extracted.content_index = processed.content_index = content_index
+            processed.causal_relations = [
+                CausalRelation(relation_type=r.relation_type, target_fact_index=r.target_fact_index + offset)
+                for r in processed.causal_relations
+            ]
+        extracted_facts.extend(doc.extracted_facts)
+        processed_facts.extend(doc.processed_facts)
 
     # Phase 1 (entity resolution + semantic ANN) on its own connection, outside
     # the write transaction — mirrors the retain pipeline.
@@ -1350,41 +1416,53 @@ async def _import_one_document(
         skip_semantic_ann=False,
     )
 
+    # Fire the same retain.completed webhook retain emits, transactionally inside
+    # this batch's insert. Factory returns None when no webhook manager exists.
+    outbox_callback = (
+        outbox_callback_factory([{"document_id": doc.target_id, "tags": list(doc.document.tags)} for doc in prepared])
+        if outbox_callback_factory
+        else None
+    )
+
     async with acquire_with_retry(backend) as conn:
         async with conn.transaction():
-            # is_first_batch=True: cascade-delete any existing data for this id
-            # (the "replace" path) and (re)insert the document row.
-            await fact_storage.handle_document_tracking(
-                conn,
-                bank_id,
-                target_id,
-                document.original_text or "",
-                True,
-                document.retain_params,
-                document.tags,
-                ops=ops,
-            )
-            if document.created_at is not None:
-                # Transfer archives carry source provenance. Apply it here,
-                # without changing normal retain/upsert timestamp semantics.
-                await store.restore_document_created_at(
-                    conn=conn,
-                    fq_table=fq_table,
-                    bank_id=bank_id,
-                    document_id=target_id,
-                    created_at=document.created_at,
+            for doc in prepared:
+                document = doc.document
+                # is_first_batch=True: cascade-delete any existing data for this id
+                # (the "replace" path) and (re)insert the document row.
+                await fact_storage.handle_document_tracking(
+                    conn,
+                    bank_id,
+                    doc.target_id,
+                    document.original_text or "",
+                    True,
+                    document.retain_params,
+                    document.tags,
+                    ops=ops,
                 )
+                if document.created_at is not None:
+                    # Transfer archives carry source provenance. Apply it here,
+                    # without changing normal retain/upsert timestamp semantics.
+                    await store.restore_document_created_at(
+                        conn=conn,
+                        fq_table=fq_table,
+                        bank_id=bank_id,
+                        document_id=doc.target_id,
+                        created_at=document.created_at,
+                    )
 
-            chunk_id_map: dict[int, str] = {}
-            if chunk_meta:
-                chunk_id_map = await chunk_storage.store_chunks_batch(conn, bank_id, target_id, chunk_meta, ops=ops)
+                chunk_id_map: dict[int, str] = {}
+                if doc.chunk_meta:
+                    chunk_id_map = await chunk_storage.store_chunks_batch(
+                        conn, bank_id, doc.target_id, doc.chunk_meta, ops=ops
+                    )
 
-            for extracted, processed in zip(extracted_facts, processed_facts):
-                processed.document_id = target_id
-                if chunk_id_map and extracted.chunk_index is not None:
-                    chunk_id = chunk_id_map.get(extracted.chunk_index)
-                    if chunk_id:
-                        processed.chunk_id = chunk_id
+                for extracted, processed in zip(doc.extracted_facts, doc.processed_facts):
+                    processed.document_id = doc.target_id
+                    if chunk_id_map and extracted.chunk_index is not None:
+                        chunk_id = chunk_id_map.get(extracted.chunk_index)
+                        if chunk_id:
+                            processed.chunk_id = chunk_id
 
             result_unit_ids = await orchestrator._insert_facts_and_links(
                 conn,
@@ -1404,17 +1482,20 @@ async def _import_one_document(
                 ops=ops,
             )
 
-            # Retain writes only ``caused_by``. Restore legacy archive edges
-            # separately so their distinct direction and semantics survive a
-            # transfer without broadening the normal retain write contract.
-            if result_unit_ids and legacy_causal_relations:
-                await store.restore_legacy_causal_links(
-                    conn=conn,
-                    ops=ops,
-                    bank_id=bank_id,
-                    unit_ids=result_unit_ids[0],
-                    causal_relations_per_fact=legacy_causal_relations,
-                )
+            lifecycle: list[FactLifecycle] = []
+            for doc, unit_ids in zip(prepared, result_unit_ids, strict=True):
+                # Retain writes only ``caused_by``. Restore legacy archive edges
+                # separately so their distinct direction and semantics survive a
+                # transfer without broadening the normal retain write contract.
+                if unit_ids and doc.legacy_causal_relations:
+                    await store.restore_legacy_causal_links(
+                        conn=conn,
+                        ops=ops,
+                        bank_id=bank_id,
+                        unit_ids=unit_ids,
+                        causal_relations_per_fact=doc.legacy_causal_relations,
+                    )
+                lifecycle.extend(_fact_lifecycle_rows(doc.document.facts, doc.retained_index_by_original, unit_ids))
 
             # Restore the source consolidation lifecycle. A whole-bank transfer
             # preserves exact eligibility: a fact that was consolidated (or that
@@ -1424,10 +1505,8 @@ async def _import_one_document(
             # carry None for all three -> skipped here, leaving the
             # observation-driven marking in _import_observations as the only
             # (lossy) signal, exactly as before.
-            if result_unit_ids:
-                lifecycle = _fact_lifecycle_rows(document.facts, retained_index_by_original, result_unit_ids[0])
-                if lifecycle:
-                    await store.restore_fact_lifecycle(conn=conn, fq_table=fq_table, bank_id=bank_id, rows=lifecycle)
+            if lifecycle:
+                await store.restore_fact_lifecycle(conn=conn, fq_table=fq_table, bank_id=bank_id, rows=lifecycle)
 
     # Best-effort, and only after the acquire() block above has exited: this
     # takes its own connection, and on Oracle the write above is not committed
@@ -1436,10 +1515,13 @@ async def _import_one_document(
     try:
         await entity_resolver.flush_pending_stats()
     except Exception:
-        logger.warning("[transfer] Entity stats flush failed for document %s", target_id, exc_info=True)
+        logger.warning("[transfer] Entity stats flush failed for %d imported document(s)", len(prepared), exc_info=True)
 
-    logger.debug("[transfer] Imported document %s:\n%s", target_id, "\n".join(log_buffer))
-    return _imported_fact_batch(result_unit_ids, retained_index_by_original)
+    logger.debug("[transfer] Imported %d document(s):\n%s", len(prepared), "\n".join(log_buffer))
+    return [
+        _imported_fact_batch([unit_ids], doc.retained_index_by_original)
+        for doc, unit_ids in zip(prepared, result_unit_ids, strict=True)
+    ]
 
 
 def _imported_fact_batch(

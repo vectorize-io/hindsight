@@ -2191,7 +2191,7 @@ async def test_import_writes_a_document_to_the_store_and_nothing_to_postgres(res
     carried `created_at` on the stray document row, and the legacy edges into `memory_links`.
     ``backend=None`` makes any of those fail.
     """
-    from hindsight_api.engine.transfer.importer import _import_one_document
+    from hindsight_api.engine.transfer.importer import _import_document_batch, _prepare_documents
     from hindsight_api.engine.transfer.schema import (
         TransferCausalRelation,
         TransferChunk,
@@ -2227,15 +2227,12 @@ async def test_import_writes_a_document_to_the_store_and_nothing_to_postgres(res
     class _Config:
         store_document_text = True
 
-    batch = await _import_one_document(
+    [batch] = await _import_document_batch(
         backend=None,
-        embeddings_model=_Embedder(),
         entity_resolver=None,
         config=_Config(),
-        format_date_fn=str,
         bank_id="bank-x",
-        document=document,
-        target_id="doc-1",
+        prepared=await _prepare_documents(_Embedder(), str, [(document, "doc-1")]),
         ops=None,
     )
 
@@ -2255,7 +2252,7 @@ async def test_a_store_gets_the_same_entity_names_the_sql_resolver_would_keep(re
     """The SQL resolver drops a blank or oversized name and collapses whitespace before it writes
     (#3275); a store that resolves names itself was handed the raw extraction, so an encoded blob
     became a registry entity there."""
-    from hindsight_api.engine.transfer.importer import _import_one_document
+    from hindsight_api.engine.transfer.importer import _import_document_batch, _prepare_documents
     from hindsight_api.engine.transfer.schema import TransferChunk, TransferDocument, TransferFact
 
     store = InMemoryMemories({})
@@ -2279,15 +2276,12 @@ async def test_a_store_gets_the_same_entity_names_the_sql_resolver_would_keep(re
     class _Config:
         store_document_text = True
 
-    batch = await _import_one_document(
+    [batch] = await _import_document_batch(
         backend=None,
-        embeddings_model=_Embedder(),
         entity_resolver=None,
         config=_Config(),
-        format_date_fn=str,
         bank_id="bank-x",
-        document=document,
-        target_id="doc-1",
+        prepared=await _prepare_documents(_Embedder(), str, [(document, "doc-1")]),
         ops=None,
     )
 

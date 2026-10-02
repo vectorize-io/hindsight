@@ -237,6 +237,70 @@ async def test_import_filters_degenerate_fact_without_shifting_archive_ordinals(
         await memory.delete_bank(dst, request_context=request_context)
 
 
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_documents_written_in_one_batch_keep_their_own_facts_chunks_and_causal_links(memory, request_context):
+    """Several documents share one write; each fact must still land on its own document.
+
+    A causal target is an ordinal within its document, so in a shared write it has to be shifted
+    to the batch position — unshifted, the second document's effect would point at the first
+    document's cause.
+    """
+    dst = _unique_bank("transfer_batched_docs")
+    documents = [
+        TransferDocument(
+            id=f"doc-{d}",
+            original_text=f"Batched document {d}.",
+            chunks=[TransferChunk(chunk_index=0, chunk_text=f"chunk of doc {d}")],
+            facts=[
+                TransferFact(text=f"Batched doc {d} cause event", fact_type="world", chunk_index=0),
+                TransferFact(
+                    text=f"Batched doc {d} effect event",
+                    fact_type="world",
+                    chunk_index=0,
+                    causal_relations=[TransferCausalRelation(relation_type="caused_by", target_fact_index=0)],
+                ),
+            ],
+        )
+        for d in range(3)
+    ]
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr("manifest.json", TransferManifest(source_bank_id="source", document_count=3).model_dump_json())
+        for d, document in enumerate(documents):
+            archive.writestr(f"documents/{d:06d}.json", document.model_dump_json())
+
+    try:
+        result = await _import(memory, dst, archive_buffer.getvalue(), request_context)
+        assert result["documents_imported"] == 3
+        assert result["facts_imported"] == 6
+
+        units = await memory.list_memory_units(dst, fact_type="world", limit=100, request_context=request_context)
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            # Raw memory_links: the link's direction and type are the assertion, and the
+            # graph read path dedupes bidirectional edges.
+            causal_links = await conn.fetch(
+                f"SELECT source.text AS source_text, target.text AS target_text "
+                f"FROM {fq_store_table('memory_links')} ml "
+                f"JOIN {fq_store_table('memory_units')} source ON source.id = ml.from_unit_id "
+                f"JOIN {fq_store_table('memory_units')} target ON target.id = ml.to_unit_id "
+                f"WHERE ml.bank_id = $1 AND ml.link_type = 'caused_by'",
+                dst,
+            )
+
+        assert {(u["text"], u["document_id"], u["chunk_id"]) for u in units["items"]} == {
+            (f"Batched doc {d} {kind} event", f"doc-{d}", build_chunk_id(dst, f"doc-{d}", 0))
+            for d in range(3)
+            for kind in ("cause", "effect")
+        }
+        assert {(row["source_text"], row["target_text"]) for row in causal_links} == {
+            (f"Batched doc {d} effect event", f"Batched doc {d} cause event") for d in range(3)
+        }
+    finally:
+        await memory.delete_bank(dst, request_context=request_context)
+
+
 def test_export_bank_covers_schema():
     """Every bank-scoped table must be classified by export_bank — logical, carried,
     history, or explicitly skipped — so a future migration can't silently drop one."""
@@ -771,15 +835,18 @@ async def test_bank_export_import_exact_roundtrip(memory, request_context):
         assert result.mental_models_imported == 1
 
         after = await _bank_content_snapshot(memory, bank)
-        # Semantic links are an ANN-approximate retrieval index regenerated from the
-        # (re-embedded) facts; their count depends on whether ANN runs incrementally
-        # per document (import) or as a final whole-bank pass (original retain), so
-        # compare them loosely. Everything else — source data and deterministic
-        # temporal links — must match exactly.
+        # Semantic and temporal links are retrieval indexes regenerated from the facts,
+        # and both depend on which facts are written together: import writes many
+        # documents per batch, linking them to each other both ways, where the original
+        # retains linked each document only to the ones before it. So compare them
+        # loosely. Everything else — the source data — must match exactly.
         after_semantic = after["links"].pop("semantic", 0)
+        after_temporal = after["links"].pop("temporal", 0)
         before["links"].pop("semantic", None)
+        before["links"].pop("temporal", None)
         assert after == before
         assert after_semantic > 0, "semantic links should be regenerated on import"
+        assert after_temporal > 0, "temporal links should be regenerated on import"
         # Facts were re-embedded on import (no NULL vectors).
         assert after["null_embeddings"] == 0
     finally:
@@ -1051,6 +1118,62 @@ async def test_import_bank_refuses_existing_bank(memory, request_context):
 
 @pytest.mark.asyncio
 @pytest.mark.memory_backend_incompatible
+async def test_import_bank_retried_after_a_crash_starts_over(memory, request_context, monkeypatch):
+    """A worker that dies mid-import leaves a half-restored bank; the retry must finish the job.
+
+    It used to fail on its own leftovers ("target bank already exists"). The retry now
+    recognises the bank as the one its operation created, deletes it and restores again.
+    """
+    from hindsight_api.engine.transfer import export_bank, importer
+    from hindsight_api.worker.exceptions import RetryTaskAt
+
+    src = _unique_bank("bank_crash_src")
+    dst = _unique_bank("bank_crash_dst")
+    try:
+        await _retain(memory, src, "Alice works at Google.", request_context, "doc-1")
+        await _retain(memory, src, "Carol lives in Paris.", request_context, "doc-2")
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            archive = await export_bank(conn, src)
+
+        # One document per batch, and the second batch "crashes" after the first committed.
+        monkeypatch.setattr(importer, "_DOCUMENT_BATCH_SIZE", 1)
+        real_batch = importer._import_document_batch
+        calls = 0
+
+        async def crash_on_second_batch(**kwargs: Any) -> list[importer._ImportedFactBatch]:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise RuntimeError("worker died")
+            return await real_batch(**kwargs)
+
+        monkeypatch.setattr(importer, "_import_document_batch", crash_on_second_batch)
+        # The task layer turns the failure into a scheduled retry — the retry this test runs below.
+        with pytest.raises(RetryTaskAt, match="worker died"):
+            await memory.submit_bank_import_async(src, archive, request_context, target_bank_id=dst)
+        operations = await memory.list_operations(src, request_context=request_context)
+        [operation_id] = [op["id"] for op in operations["operations"] if op["task_type"] == "import_bank"]
+        # The crash left a partial bank behind.
+        assert (await memory.list_documents(dst, request_context=request_context))["total"] == 1
+
+        # The retry, as the worker runs it after a restart.
+        monkeypatch.setattr(importer, "_import_document_batch", real_batch)
+        result = await memory.import_bank_async(archive, request_context, target_bank_id=dst, operation_id=operation_id)
+        assert result.documents_imported == 2
+        assert (await memory.list_documents(dst, request_context=request_context))["total"] == 2
+
+        # A bank the operation did not create is still refused, never deleted.
+        with pytest.raises(ValueError, match="already exists"):
+            await memory.import_bank_async(archive, request_context, operation_id=operation_id)
+        assert (await memory.list_documents(src, request_context=request_context))["total"] == 2
+    finally:
+        await memory.delete_bank(src, request_context=request_context)
+        await memory.delete_bank(dst, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_export_import_roundtrip_without_llm(memory, request_context, monkeypatch):
     """Export from one bank and import into another without re-running the LLM."""
     src = _unique_bank("transfer_src")
@@ -1211,14 +1334,14 @@ async def test_full_roundtrip_integrity(memory, request_context):
         # Entities + entity links re-resolved to the same counts.
         assert after["entities"] == before["entities"]
         assert after["unit_entities"] == before["unit_entities"]
-        # Links are regenerated against the target bank; for the same facts/embeddings
-        # the deterministic temporal + causal links must match exactly.
-        for link_type in ("temporal", "caused_by"):
-            assert after["links_by_type"].get(link_type, 0) == before["links_by_type"].get(link_type, 0), (
-                link_type,
-                before["links_by_type"],
-                after["links_by_type"],
-            )
+        # Links are regenerated against the target bank. Causal links are carried by the
+        # facts and must match exactly; temporal links depend on which documents are
+        # written together (import batches them, retain wrote one at a time).
+        assert after["links_by_type"].get("caused_by", 0) == before["links_by_type"].get("caused_by", 0), (
+            before["links_by_type"],
+            after["links_by_type"],
+        )
+        assert after["links_by_type"].get("temporal", 0) > 0
         # And links overall must be present (semantic counts can vary slightly with
         # ANN ordering, so we don't assert exact equality on the total).
         assert after["links_total"] > 0
