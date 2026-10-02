@@ -240,3 +240,44 @@ def test_the_binary_probe_checks_the_scripts_dir_the_manager_uses(monkeypatch):
         embedded.shutil, "which", lambda name, path=None: "/s/hindsight-api" if path == scripts else None
     )
     assert embedded._installed_api_binary_exists() is True
+
+
+def _drive_start_worker(monkeypatch, tmp_path, on_disk, managed, order):
+    """Run _daemon_start_worker with the profile-env compare wired to the given dicts."""
+    from hindsight_hermes import HindsightMemoryProvider
+
+    provider = HindsightMemoryProvider()
+    provider._config = {"profile": "drifttest", "llm_provider": "ollama"}
+    monkeypatch.setattr("hindsight_hermes._load_simple_env", lambda path: on_disk)
+    monkeypatch.setattr("hindsight_hermes._build_embedded_profile_env", lambda cfg: managed)
+    monkeypatch.setattr("hindsight_hermes._may_rewrite_profile_env", lambda cfg: True)
+    monkeypatch.setattr("hindsight_hermes._embedded_profile_env_path", lambda cfg: tmp_path / "p.env")
+    monkeypatch.setattr("hindsight_hermes._materialize_embedded_profile_env", lambda cfg: order.append("rewrote env"))
+    monkeypatch.setattr("hindsight_hermes._daemon_is_running", lambda profile: True)
+    monkeypatch.setattr("hindsight_hermes._stop_daemon", lambda profile: order.append("stopped daemon"))
+    monkeypatch.setattr(type(provider), "_get_client", lambda self: order.append("built client"))
+    provider._daemon_start_worker()
+
+
+def test_a_manager_appended_key_does_not_restart_a_healthy_daemon(monkeypatch, tmp_path):
+    """hindsight-embed appends HINDSIGHT_API_PORT to the profile .env at every daemon boot, so the
+    reconcile must compare only the keys the build owns — a whole-file compare reads that extra key
+    as permanent drift and stops+cold-starts a healthy daemon on every session start."""
+    managed = {"HINDSIGHT_API_LLM_PROVIDER": "ollama", "HINDSIGHT_API_LLM_MODEL": "x"}
+    on_disk = dict(managed, HINDSIGHT_API_PORT="9177")  # manager-appended, not build-owned
+    order: list[str] = []
+
+    _drive_start_worker(monkeypatch, tmp_path, on_disk, managed, order)
+
+    assert order == ["built client"]  # no rewrite, no restart
+
+
+def test_a_build_owned_key_drift_still_restarts_the_daemon(monkeypatch, tmp_path):
+    """The narrowed compare must not go blind: a changed build-owned value is real drift."""
+    managed = {"HINDSIGHT_API_LLM_MODEL": "new"}
+    on_disk = {"HINDSIGHT_API_LLM_MODEL": "old", "HINDSIGHT_API_PORT": "9177"}
+    order: list[str] = []
+
+    _drive_start_worker(monkeypatch, tmp_path, on_disk, managed, order)
+
+    assert order == ["rewrote env", "stopped daemon", "built client"]
