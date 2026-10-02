@@ -27,7 +27,7 @@
     "directory": "hindsight-agent-sdk"
   },
   "dependencies": {
-    "@vectorize-io/hindsight-client": "^0.6.2"
+    "@vectorize-io/hindsight-client": "^0.8.6"
   },
   "devDependencies": {
     "typescript": "^5.4",

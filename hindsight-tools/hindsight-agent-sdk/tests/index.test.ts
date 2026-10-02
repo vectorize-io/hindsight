@@ -154,7 +154,60 @@ describe("createKnowledgeTools", () => {
     expect(opts.method).toBe("POST");
     const body = await getBody(mockFetch.mock.calls[0]);
     expect(body.query).toBe("what happened?");
+    // Observations are included. The old default (world + experience) never
+    // searched consolidated memories unless the caller passed fact_types. (#5057)
+    expect(body.types).toEqual(["world", "experience", "observation"]);
+    expect(body.prefer_observations).toBeUndefined();
+    expect(body.min_scores).toBeUndefined();
+    expect(body.budget).toBe("mid");
+  });
+
+  it("recall inherits host recall defaults when the caller omits them", async () => {
+    mockFetch.mockReturnValueOnce(mockResponse({ results: [] }));
+
+    const configured = createKnowledgeTools({
+      apiUrl: "http://localhost:9077",
+      bankId: "test-bank",
+      recallFactTypes: ["observation"],
+      preferObservations: true,
+      minScores: { reranker: 0.3, semantic: null },
+      recallBudget: "high",
+    });
+    const tool = configured.find((t) => t.name === "agent_knowledge_recall")!;
+    await tool.execute({ query: "what did I decide?" });
+
+    const body = await getBody(mockFetch.mock.calls[0]);
+    expect(body.types).toEqual(["observation"]);
+    expect(body.prefer_observations).toBe(true);
+    expect(body.min_scores).toEqual({ reranker: 0.3, semantic: null });
+    expect(body.budget).toBe("high");
+  });
+
+  it("recall tool arguments override host recall defaults", async () => {
+    mockFetch.mockReturnValueOnce(mockResponse({ results: [] }));
+
+    const configured = createKnowledgeTools({
+      apiUrl: "http://localhost:9077",
+      bankId: "test-bank",
+      recallFactTypes: ["observation"],
+      preferObservations: true,
+      minScores: { reranker: 0.3 },
+      recallBudget: "high",
+    });
+    const tool = configured.find((t) => t.name === "agent_knowledge_recall")!;
+    await tool.execute({
+      query: "raw facts",
+      fact_types: ["world", "experience"],
+      prefer_observations: false,
+      min_scores: { final: 0.5 },
+      budget: "low",
+    });
+
+    const body = await getBody(mockFetch.mock.calls[0]);
     expect(body.types).toEqual(["world", "experience"]);
+    expect(body.prefer_observations).toBe(false);
+    expect(body.min_scores).toEqual({ final: 0.5 });
+    expect(body.budget).toBe("low");
   });
 
   it("recall can explicitly include observation fact types", async () => {
