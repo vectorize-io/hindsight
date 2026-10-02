@@ -50,6 +50,7 @@ from ..llm_trace import (
 from ..llm_wrapper import sanitize_llm_output
 from ..memories import StoredMemory, get_memories
 from ..memory_engine import Budget, fq_table
+from ..prompt_utils import truncate_context_for_prompt
 from ..retain import embedding_utils
 from .prompts import (
     build_consolidation_input,
@@ -3054,7 +3055,7 @@ def _build_observations_for_llm(
                 continue
             sf_data: dict[str, Any] = {"text": sf.text}
             if sf.context:
-                sf_data["context"] = sf.context
+                sf_data["context"] = truncate_context_for_prompt(sf.context)
             if sf.occurred_start:
                 sf_data["occurred_start"] = sf.occurred_start
             if sf.occurred_end:

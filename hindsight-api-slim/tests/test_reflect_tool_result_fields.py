@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import unittest
 
+from hindsight_api.engine.prompt_utils import PROMPT_CONTEXT_MAX_CHARS
 from hindsight_api.engine.reflect.tools import _UNREAD_RESULT_FIELDS, _drop_unread_fields
 from hindsight_api.engine.response_models import ChunkInfo
 
@@ -95,3 +96,12 @@ class ChunkEnvelopeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class ContextTruncationTests(unittest.TestCase):
+    def test_long_context_is_cut_with_ellipsis(self):
+        trimmed = _drop_unread_fields({"id": "f1", "context": "x" * (PROMPT_CONTEXT_MAX_CHARS + 50)})
+        self.assertEqual(trimmed["context"], "x" * PROMPT_CONTEXT_MAX_CHARS + "...")
+
+    def test_short_context_is_unchanged(self):
+        self.assertEqual(_drop_unread_fields({"id": "f1", "context": "chat"})["context"], "chat")

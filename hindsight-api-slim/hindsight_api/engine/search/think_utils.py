@@ -6,6 +6,7 @@ import logging
 from datetime import datetime
 
 from ...config import get_config
+from ..prompt_utils import truncate_context_for_prompt
 from ..response_models import DispositionTraits, MemoryFact
 
 logger = logging.getLogger(__name__)
@@ -61,7 +62,7 @@ def format_facts_for_prompt(facts: list[MemoryFact]) -> str:
 
         # Add context if available
         if fact.context:
-            fact_obj["context"] = fact.context
+            fact_obj["context"] = truncate_context_for_prompt(fact.context)
 
         # Add temporal fields if available
         for field_name in ("occurred_start", "occurred_end", "mentioned_at"):

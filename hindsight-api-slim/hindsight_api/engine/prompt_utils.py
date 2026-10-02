@@ -5,6 +5,11 @@ import re
 _LONE_OPEN_BRACE = re.compile(r"(?<!\{)\{(?!\{)")
 _LONE_CLOSE_BRACE = re.compile(r"(?<!\})\}(?!\})")
 
+#: Max characters of a memory's ``context`` shown in internal prompts
+#: (consolidation, reflect tool results, think). A caller can store a huge
+#: context on every fact; repeated per memory it would bloat the prompt.
+PROMPT_CONTEXT_MAX_CHARS = 200
+
 
 def escape_for_prompt(text: str) -> str:
     """Double any lone ``{`` / ``}`` so the text survives ``str.format`` untouched.
@@ -21,6 +26,13 @@ def escape_for_prompt(text: str) -> str:
     text = _LONE_OPEN_BRACE.sub("{{", text)
     text = _LONE_CLOSE_BRACE.sub("}}", text)
     return text
+
+
+def truncate_context_for_prompt(context: str | None) -> str | None:
+    """Cut a memory's context to ``PROMPT_CONTEXT_MAX_CHARS``, adding ``...`` when cut."""
+    if context and len(context) > PROMPT_CONTEXT_MAX_CHARS:
+        return context[:PROMPT_CONTEXT_MAX_CHARS] + "..."
+    return context
 
 
 def output_language_directive(language: str | None) -> str:

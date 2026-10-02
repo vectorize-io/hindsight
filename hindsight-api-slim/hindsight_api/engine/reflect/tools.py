@@ -14,6 +14,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, cast
 
+from ..prompt_utils import truncate_context_for_prompt
 from ..search.tags import TagGroup, TagsMatch, tags_satisfy_groups
 from ..source_scope import ids_passing, tag_filter_is_active, visible_document_ids
 from .tokenization import count_prompt_tokens
@@ -69,13 +70,15 @@ _UNREAD_RESULT_FIELDS = ("scores", "chunk_id", "document_id")
 
 
 def _drop_unread_fields(d: dict[str, Any]) -> dict[str, Any]:
-    """Strip retrieval plumbing from one serialized tool result.
+    """Strip retrieval plumbing from one serialized tool result and cap its ``context``.
 
     Mutates and returns ``d``, which is always a fresh ``model_dump()`` by the
     time it gets here -- never a caller's dict.
     """
     for k in _UNREAD_RESULT_FIELDS:
         d.pop(k, None)
+    if "context" in d:
+        d["context"] = truncate_context_for_prompt(d["context"])
     return d
 
 
@@ -669,7 +672,7 @@ async def tool_expand(
                 "id": str(memory["id"]),
                 "text": memory["text"],
                 "type": memory["fact_type"],
-                "context": memory["context"],
+                "context": truncate_context_for_prompt(memory["context"]),
             },
         }
 
