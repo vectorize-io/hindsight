@@ -153,7 +153,9 @@ class HindsightMemoryService(BaseMemoryService):
             await self._client.acreate_bank(bank_id=bank_id, mission=self._mission)
         except Exception as exc:  # noqa: BLE001 — never raise to caller
             logger.error("hindsight create_bank failed for %s: %s", bank_id, exc)
-        finally:
+        else:
+            # A failed setup did not apply the mission. Keep best-effort retention
+            # working, but let the next write retry rather than caching failure forever.
             self._banks_with_mission_set.add(bank_id)
 
     # ---- BaseMemoryService implementation ----------------------------------
