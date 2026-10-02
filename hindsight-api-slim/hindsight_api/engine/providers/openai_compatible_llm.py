@@ -221,9 +221,16 @@ def _strip_reasoning_tags(text: str) -> str:
     (e.g. a mental-model markdown blob from MiniMax-M3) leaks the raw
     ``<think>...</think>`` verbatim into stored memories.
 
-    Handles two cases:
-    1. Closed blocks: ``<think>...</think>`` removed wherever they appear.
-    2. Unclosed blocks: a dangling ``<think>`` with no closing tag (model output
+    Handles three cases:
+    1. Orphan close tag: ``reasoning</think>answer`` with no open tag. Chat
+       templates that prefill ``<think>`` into the generation prompt (Qwen3
+       thinking models, DeepSeek-R1-0528, Spark-X2.5) produce this whenever the
+       server runs without a reasoning parser, since the open tag was part of
+       the prompt rather than the completion. Everything up to the first close
+       tag is dropped, unless the response already opened as JSON or a code
+       fence -- then the close tag is a quoted literal, not a reasoning boundary.
+    2. Closed blocks: ``<think>...</think>`` removed wherever they appear.
+    3. Unclosed blocks: a dangling ``<think>`` with no closing tag (model output
        truncated mid-thought) is removed to end-of-string, but only when it starts
        its own line (line-start, possibly indented). Inline occurrences (e.g. a
        JSON value quoting ``<think>`` verbatim) are real content and must be kept
@@ -238,7 +245,13 @@ def _strip_reasoning_tags(text: str) -> str:
     for open_tag, close_tag in _REASONING_TAG_PAIRS:
         open_re = re.escape(open_tag)
         close_re = re.escape(close_tag)
-        # Closed blocks first.
+        # Orphan close tag from a prefilled open tag (see case 1 above).
+        close_at = text.find(close_tag)
+        if close_at != -1:
+            head = text[:close_at]
+            if open_tag not in head and not head.lstrip().startswith(("{", "[", "```")):
+                text = text[close_at + len(close_tag) :]
+        # Closed blocks.
         text = re.sub(rf"{open_re}.*?{close_re}", "", text, flags=re.DOTALL)
         # Unclosed (truncated) blocks: strip only when the open tag starts its own
         # line, from there to end-of-string. The line-start anchor preserves inline

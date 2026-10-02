@@ -124,3 +124,59 @@ class TestStripReasoningTags:
         result = _strip_reasoning_tags(content)
         assert result == ("# Mental Model: Coding Preferences\nThe user prefers functional programming.")
         assert "leaked reasoning" not in result
+
+    def test_orphan_close_tag_from_prefilled_template_stripped(self):
+        """Reasoning before an orphan </think> is removed (open tag was in the prompt).
+
+        Qwen3 thinking models, DeepSeek-R1-0528 and Spark-X2.5 put ``<think>`` in
+        the generation prompt, so a server without a reasoning parser returns the
+        completion as ``reasoning</think>answer`` -- no open tag to match on.
+        """
+        content = "The user asked about the capital of Anhui. It is Hefei.</think>Hefei is the capital of Anhui."
+        assert _strip_reasoning_tags(content) == "Hefei is the capital of Anhui."
+
+    def test_orphan_close_tag_multiline_mental_model_stripped(self):
+        """Free-form output: the leaked reasoning must not be stored with the mental model."""
+        content = (
+            "Okay, the user keeps asking about FP.\n"
+            "I should consolidate this into a mental model.\n"
+            "</think>\n\n"
+            "# Mental Model: Coding Preferences\n\n"
+            "The user prefers functional programming patterns."
+        )
+        result = _strip_reasoning_tags(content)
+        assert result.startswith("# Mental Model: Coding Preferences")
+        assert "consolidate" not in result
+        assert "</think>" not in result
+
+    def test_orphan_close_tag_before_json_with_braces_in_reasoning(self):
+        """Reasoning that drafts JSON before the orphan close tag does not survive.
+
+        ``_strip_code_fences`` recovers the outermost ``{...}`` span, which starts
+        inside the reasoning when the model drafted braces there -- so the
+        structured path relies on the strip to cut at the close tag.
+        """
+        content = 'Draft: {"what": "?"}. Refine the fact.</think>{"facts": [{"what": "test"}]}'
+        assert _strip_reasoning_tags(content) == '{"facts": [{"what": "test"}]}'
+
+    def test_orphan_close_tag_empty_reasoning_stripped(self):
+        """A bare leading </think> (thinking disabled in a prefilled template) is removed."""
+        assert _strip_reasoning_tags("\n\n</think>\n\nResult") == "Result"
+
+    def test_orphan_close_tag_variants_stripped(self):
+        assert _strip_reasoning_tags("hmm</thinking>Result") == "Result"
+        assert _strip_reasoning_tags("internal monologue|endthink|Final output") == "Final output"
+
+    def test_close_tag_literal_in_json_kept(self):
+        """A </think> literal quoted inside a JSON answer is content, not a boundary."""
+        content = '{"facts": [{"what": "the model ends reasoning with </think>"}]}'
+        assert _strip_reasoning_tags(content) == content
+
+    def test_close_tag_literal_in_fenced_json_kept(self):
+        content = '```json\n{"facts": [{"what": "ends with </think>"}]}\n```'
+        assert _strip_reasoning_tags(content) == content
+
+    def test_orphan_close_tag_then_closed_block_both_stripped(self):
+        """The orphan head and any later closed block are both removed."""
+        content = "prefilled reasoning</think>Hello <think>more</think>World"
+        assert _strip_reasoning_tags(content) == "Hello World"
