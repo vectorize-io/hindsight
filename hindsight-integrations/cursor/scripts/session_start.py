@@ -32,6 +32,7 @@ from lib.client import HindsightClient
 from lib.config import debug_log, load_config
 from lib.content import format_current_time, format_memories
 from lib.daemon import get_api_url
+from lib.hook_input import normalize_path, read_hook_input
 from lib.rules_file import (
     ensure_gitignored,
     format_rule_content,
@@ -100,7 +101,7 @@ def main():
 
     # Read hook input from stdin
     try:
-        hook_input = json.load(sys.stdin)
+        hook_input = read_hook_input()
     except (json.JSONDecodeError, EOFError):
         print("[Hindsight] Failed to read hook input", file=sys.stderr)
         _write_recall_status("error", reason="bad_stdin")
@@ -113,7 +114,7 @@ def main():
     # stale memories from a previous session. See lib/rules_file.py for the
     # upstream Cursor bug this works around.
     workspace_roots = hook_input.get("workspace_roots") or []
-    workspace_root = workspace_roots[0] if workspace_roots else ""
+    workspace_root = normalize_path(workspace_roots[0]) if workspace_roots else ""
     if workspace_root and config.get("useRulesFileFallback", True):
         rotate_session_rules(workspace_root, debug_fn=lambda m: debug_log(config, m))
 

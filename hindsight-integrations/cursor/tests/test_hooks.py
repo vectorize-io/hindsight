@@ -57,6 +57,67 @@ class TestSessionStartHook:
         assert "User prefers TypeScript" in result["additionalContext"]
         assert "hindsight_memories" in result["additionalContext"]
 
+    def test_accepts_bom_prefixed_stdin(self, monkeypatch, capsys):
+        """Cursor on Windows prefixes hook stdin with a UTF-8 BOM."""
+        monkeypatch.setenv("CURSOR_PLUGIN_ROOT", "/nonexistent")
+
+        mock_client = MagicMock()
+        mock_client.recall.return_value = {
+            "results": [{"text": "User prefers TypeScript", "type": "world", "mentioned_at": "2026-01-01"}]
+        }
+
+        raw = b"\xef\xbb\xbf" + json.dumps({"workspace_roots": ["/tmp/test-project"]}).encode()
+        monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(raw), encoding="cp1252"))
+
+        import session_start
+
+        importlib.reload(session_start)
+
+        with (
+            patch.object(session_start, "get_api_url", return_value="http://localhost:8888"),
+            patch.object(session_start, "HindsightClient", return_value=mock_client),
+            patch.object(session_start, "ensure_bank_mission"),
+            patch.object(session_start, "write_state"),
+            patch.object(session_start, "rotate_session_rules"),
+            patch.object(session_start, "write_session_rules"),
+        ):
+            session_start.main()
+
+        output = capsys.readouterr()
+        assert "Failed to read hook input" not in output.err
+        assert "User prefers TypeScript" in json.loads(output.out)["additionalContext"]
+
+    def test_rules_file_uses_normalized_windows_workspace_root(self, monkeypatch):
+        """Cursor on Windows sends roots as /C:/...; the rules file must land on a real path."""
+        monkeypatch.setenv("CURSOR_PLUGIN_ROOT", "/nonexistent")
+
+        mock_client = MagicMock()
+        mock_client.recall.return_value = {
+            "results": [{"text": "User prefers TypeScript", "type": "world", "mentioned_at": "2026-01-01"}]
+        }
+
+        hook_input = {"workspace_roots": ["/C:/Users/me/research"]}
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
+
+        import session_start
+
+        importlib.reload(session_start)
+
+        with (
+            patch.object(session_start, "get_api_url", return_value="http://localhost:8888"),
+            patch.object(session_start, "HindsightClient", return_value=mock_client),
+            patch.object(session_start, "ensure_bank_mission"),
+            patch.object(session_start, "write_state"),
+            patch.object(session_start, "rotate_session_rules") as rotate,
+            patch.object(session_start, "write_session_rules", return_value=True) as write,
+            patch.object(session_start, "ensure_gitignored") as gitignore,
+        ):
+            session_start.main()
+
+        assert rotate.call_args.args[0] == "C:/Users/me/research"
+        assert write.call_args.args[0] == "C:/Users/me/research"
+        assert gitignore.call_args.args[0] == "C:/Users/me/research"
+
     def test_no_output_on_empty_results(self, monkeypatch, capsys):
         monkeypatch.setenv("CURSOR_PLUGIN_ROOT", "/nonexistent")
 

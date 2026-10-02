@@ -43,6 +43,7 @@ from lib.content import (
     slice_last_turns_by_user_boundary,
 )
 from lib.daemon import get_api_url
+from lib.hook_input import read_hook_input
 from lib.state import (
     get_retained_message_count,
     increment_turn_count,
@@ -165,7 +166,7 @@ def main():
 
     # Read hook input from stdin
     try:
-        hook_input = json.load(sys.stdin)
+        hook_input = read_hook_input()
     except (json.JSONDecodeError, EOFError):
         print("[Hindsight] Failed to read hook input", file=sys.stderr)
         return

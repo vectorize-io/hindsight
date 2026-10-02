@@ -18,6 +18,7 @@ _PLUGIN_FILES = [
     "scripts/lib/config.py",
     "scripts/lib/content.py",
     "scripts/lib/daemon.py",
+    "scripts/lib/hook_input.py",
     "scripts/lib/llm.py",
     "scripts/lib/rules_file.py",
     "scripts/lib/state.py",

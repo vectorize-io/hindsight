@@ -35,6 +35,42 @@ class TestDeriveBankId:
         result = derive_bank_id(hook_input, config)
         assert result == "my-project"
 
+    def test_dynamic_mode_project_falls_back_to_workspace_roots(self):
+        """Cursor's sessionStart payload carries workspace_roots and no cwd."""
+        config = {
+            "dynamicBankId": True,
+            "dynamicBankGranularity": ["project"],
+            "bankIdPrefix": "",
+            "agentName": "cursor",
+        }
+        hook_input = {"workspace_roots": ["/C:/Users/me/research"]}
+        result = derive_bank_id(hook_input, config)
+        assert result == "research"
+
+    def test_recall_and_retain_payloads_resolve_the_same_bank(self):
+        """Cursor sends workspace_roots, never cwd, on sessionStart, stop and sessionEnd."""
+        config = {
+            "dynamicBankId": True,
+            "dynamicBankGranularity": ["project"],
+            "bankIdPrefix": "",
+            "agentName": "cursor",
+        }
+        roots = ["/home/user/my-project"]
+        session_start = {"hook_event_name": "sessionStart", "conversation_id": "c1", "workspace_roots": roots}
+        stop = {"hook_event_name": "stop", "conversation_id": "c1", "workspace_roots": roots, "status": "completed"}
+        assert derive_bank_id(session_start, config) == derive_bank_id(stop, config) == "my-project"
+
+    def test_dynamic_mode_project_prefers_cwd_over_workspace_roots(self):
+        config = {
+            "dynamicBankId": True,
+            "dynamicBankGranularity": ["project"],
+            "bankIdPrefix": "",
+            "agentName": "cursor",
+        }
+        hook_input = {"cwd": "/home/user/my-project", "workspace_roots": ["/home/user/other"]}
+        result = derive_bank_id(hook_input, config)
+        assert result == "my-project"
+
     def test_dynamic_mode_agent_project(self):
         config = {
             "dynamicBankId": True,

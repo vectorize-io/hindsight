@@ -8,6 +8,7 @@ import os
 import sys
 import urllib.parse
 
+from .hook_input import normalize_path
 from .state import read_state, write_state
 
 DEFAULT_BANK_NAME = "cursor"
@@ -39,7 +40,8 @@ def derive_bank_id(hook_input: dict, config: dict) -> str:
                 file=sys.stderr,
             )
 
-    cwd = hook_input.get("cwd", "")
+    workspace_roots = hook_input.get("workspace_roots") or []
+    cwd = normalize_path(hook_input.get("cwd") or (workspace_roots[0] if workspace_roots else ""))
     session_id = hook_input.get("conversation_id") or hook_input.get("session_id", "")
     agent_name = config.get("agentName", "cursor")
     channel_id = os.environ.get("HINDSIGHT_CHANNEL_ID", "")
