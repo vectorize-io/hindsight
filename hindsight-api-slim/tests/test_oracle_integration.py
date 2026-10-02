@@ -9,6 +9,7 @@ produces identical behavior through the database abstraction layer.
 """
 
 import asyncio
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -727,6 +728,65 @@ class TestOracleRetainSql:
                 for table in ("chunks", "memory_units", "memory_links"):
                     count = await conn.fetchval(f"SELECT COUNT(*) FROM {table} WHERE bank_id = $1", bank_id)
                     assert count == 0, f"{table} still has rows for the deleted chunk"
+        finally:
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
+
+    @pytest.mark.asyncio
+    async def test_batch_parent_siblings_lookup_and_rollup(
+        self, oracle_memory: MemoryEngine, request_context: RequestContext
+    ):
+        """result_metadata @> is the parent/sibling lookup: on Oracle it must
+        filter on the bound key, not match every row in the bank. The generic
+        JSON_EXISTS(..., '$' PASSING :N) rewrite is always true, which left
+        batch_retain parents pending forever — the rollup saw the whole bank
+        as siblings and bailed (LIN-94)."""
+        bank_id = _bank_id("batchparent")
+        parent_id, child_a, child_b, stray = (uuid.uuid4() for _ in range(4))
+        try:
+            await oracle_memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+            backend = await oracle_memory._get_backend()
+            async with backend.transaction() as conn:
+                await conn.execute(
+                    "INSERT INTO async_operations (operation_id, bank_id, operation_type, status) "
+                    "VALUES ($1, $2, 'batch_retain', 'pending')",
+                    parent_id,
+                    bank_id,
+                )
+                for child_id in (child_a, child_b):
+                    await conn.execute(
+                        "INSERT INTO async_operations (operation_id, bank_id, operation_type, status, "
+                        "result_metadata, completed_at) VALUES ($1, $2, 'retain', 'completed', $3, now())",
+                        child_id,
+                        bank_id,
+                        json.dumps({"parent_operation_id": str(parent_id)}),
+                    )
+                # Unrelated op in the same bank: containment must not match it.
+                await conn.execute(
+                    "INSERT INTO async_operations (operation_id, bank_id, operation_type, status, result_metadata) "
+                    "VALUES ($1, $2, 'retain', 'pending', $3)",
+                    stray,
+                    bank_id,
+                    json.dumps({"other": True}),
+                )
+
+            # The rollup's own query shape: only the two children are siblings.
+            async with backend.acquire() as conn:
+                siblings = await conn.fetch(
+                    "SELECT status FROM async_operations WHERE bank_id = $1 AND result_metadata::jsonb @> $2::jsonb",
+                    bank_id,
+                    json.dumps({"parent_operation_id": str(parent_id)}),
+                )
+                assert len(siblings) == 2
+
+            async with backend.transaction() as conn:
+                await oracle_memory._maybe_update_parent_operation(str(child_a), conn)
+
+            async with backend.acquire() as conn:
+                status = await conn.fetchval(
+                    "SELECT status FROM async_operations WHERE operation_id = $1",
+                    parent_id,
+                )
+                assert status == "completed"
         finally:
             await _safe_cleanup(oracle_memory, bank_id, request_context)
 
