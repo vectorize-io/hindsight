@@ -7,6 +7,8 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
+import aiohttp
+
 # Ceiling for a single backoff sleep, independent of the client's request
 # timeout. The reranker holds its concurrency semaphore across the sleep, so a
 # large server-supplied Retry-After would stall every queued rerank behind it;
@@ -98,6 +100,12 @@ def is_retryable_tei_transport_error(exc: BaseException) -> bool:
     This keeps stale pooled sockets from bubbling up as hard failures when the
     underlying descriptor died while idle.
     """
+
+    # A peer can close before the headers or midway through a declared body
+    # without an OSError cause: aiohttp wraps its HTTP parser error instead.
+    # These interruptions are transient, unlike a complete but invalid JSON body.
+    if isinstance(exc, (aiohttp.ServerDisconnectedError, aiohttp.ClientPayloadError)):
+        return True
 
     if isinstance(exc, OSError):
         return exc.errno in RETRYABLE_OS_ERRNOS or exc.errno is None
