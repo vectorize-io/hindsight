@@ -503,7 +503,7 @@ const DEFAULT_RECALL_PROMPT_PREAMBLE =
   "Relevant memories from past conversations (prioritize recent when conflicting). Only use memories that are directly useful to continue this conversation; ignore the rest:";
 
 /**
- * The messages a retain should work from, for a `session_end` event that carries none.
+ * The legacy messages source for a `session_end` event that carries none.
  *
  * OpenClaw's `buildSessionEndHookPayload()` sends `sessionId`, `sessionKey`,
  * `messageCount`, `durationMs`, `reason`, `sessionFile` and the next session's ids -
@@ -511,10 +511,10 @@ const DEFAULT_RECALL_PROMPT_PREAMBLE =
  * #1726 therefore ended at its own "no messages" guard on every session close, and the
  * turns after the last cadence boundary were never retained (#4341).
  *
- * The transcript the event points at is the source: one synchronous read, which is what
- * the shutdown drain's shared 2s budget allows, and extraction still happens
- * asynchronously in the bank's operation queue. `undefined` when there is no readable
- * transcript, which leaves the caller's existing guard to skip the flush as before.
+ * Older OpenClaw hosts have no ended-transcript capability, so the transcript file the
+ * event points at remains the compatibility source. Current hosts provide a bounded
+ * reader through the hook context; the caller uses this helper only when that capability
+ * is absent.
  *
  * `/new` matters here: OpenClaw emits the previous session's `session_end` lazily, on
  * the first turn of its successor, so the old messages are gone from the live session
@@ -3098,16 +3098,45 @@ ${memoriesFormatted}
           return;
         }
 
-        // Resolved once: `session_end` carries no transcript, so the forced flush
-        // reads it from the file the event points at (#4341). Without this the guard
-        // below ended every session-close flush before it began.
+        // `session_end` carries no transcript. Current hosts provide a bounded reader
+        // through the hook context; only older hosts without that capability use the
+        // legacy JSONL fallback (#4341).
         let eventMessages = event.context?.sessionEntry?.messages ?? event.messages;
         if (force && (!Array.isArray(eventMessages) || eventMessages.length === 0)) {
-          eventMessages = sessionEndMessagesFromTranscript(event);
-          if (Array.isArray(eventMessages)) {
-            debug(
-              `[Hindsight Hook] session_end: read ${eventMessages.length} messages from ${event.sessionFile}`
+          const endedTranscript = effectiveCtx?.endedTranscript;
+          if (endedTranscript === undefined) {
+            eventMessages = sessionEndMessagesFromTranscript(event);
+            if (Array.isArray(eventMessages)) {
+              debug(
+                `[Hindsight Hook] session_end: read ${eventMessages.length} messages from ${event.sessionFile}`
+              );
+            }
+          } else if (!endedTranscript.available) {
+            log.warn(
+              `[Hindsight Hook] session_end: ended transcript unavailable (${endedTranscript.reason}), skipping flush`
             );
+          } else {
+            try {
+              // The host reader is deliberately bounded: OpenClaw owns transcript
+              // storage and can return tool-heavy tails that do not map cleanly to
+              // user-turn counts. The existing cadence/overlap slicing below still
+              // bounds the submitted window and keeps LLM work unchanged.
+              const result = await endedTranscript.readTail({
+                maxMessages: 10_000,
+                maxBytes: 8_388_608,
+              });
+              if (!retainLifecycleIsCurrent()) return;
+              const logReaderResult = result.truncated ? log.warn : log.info;
+              logReaderResult(
+                `[Hindsight Hook] session_end: ended transcript reader returned ${result.messages.length} messages (total=${result.totalMessages}, truncated=${result.truncated})`
+              );
+              eventMessages = result.messages;
+            } catch {
+              if (!retainLifecycleIsCurrent()) return;
+              log.warn(
+                "[Hindsight Hook] session_end: ended transcript reader failed (read-failed), skipping flush"
+              );
+            }
           }
         }
 

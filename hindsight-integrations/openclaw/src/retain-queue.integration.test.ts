@@ -24,6 +24,7 @@ function makeApi(
   service: () => ServiceConfig;
   agentEnd: () => (event: unknown, ctx?: PluginHookAgentContext) => Promise<void>;
   sessionEnd: () => (event: unknown, ctx?: PluginHookAgentContext) => Promise<void>;
+  logs: { info: string[]; warn: string[]; error: string[] };
 } {
   let registeredService: ServiceConfig | undefined;
   let agentEndHandler:
@@ -32,6 +33,7 @@ function makeApi(
   let sessionEndHandler:
     | ((event: unknown, ctx?: PluginHookAgentContext) => void | Promise<void>)
     | undefined;
+  const logs = { info: [] as string[], warn: [] as string[], error: [] as string[] };
   const api: MoltbotPluginAPI = {
     config: {
       plugins: {
@@ -60,9 +62,9 @@ function makeApi(
       if (event === "session_end") sessionEndHandler = handler;
     },
     logger: {
-      info: () => undefined,
-      warn: () => undefined,
-      error: () => undefined,
+      info: (message) => logs.info.push(message),
+      warn: (message) => logs.warn.push(message),
+      error: (message) => logs.error.push(message),
     },
   };
   registerPlugin(api);
@@ -84,6 +86,7 @@ function makeApi(
         await sessionEndHandler?.(event, ctx);
       };
     },
+    logs,
   };
 }
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -478,6 +481,335 @@ describe("session_end flushes the un-retained tail (#4341)", () => {
 
     expect(server.retainBodies).toHaveLength(0);
     await service.stop();
+  });
+
+  const parityCases = [
+    { name: "short", turnCount: 2, retainEveryN: 3, overlap: 0, tailTurns: 2, expectedPosts: 1 },
+    {
+      name: "long without overlap",
+      turnCount: 4,
+      retainEveryN: 3,
+      overlap: 0,
+      tailTurns: 1,
+      expectedPosts: 2,
+    },
+    {
+      name: "long with overlap and tools",
+      turnCount: 4,
+      retainEveryN: 3,
+      overlap: 1,
+      tailTurns: 2,
+      expectedPosts: 2,
+    },
+    {
+      name: "exact cadence boundary",
+      turnCount: 3,
+      retainEveryN: 3,
+      overlap: 1,
+      tailTurns: 0,
+      expectedPosts: 1,
+    },
+    {
+      name: "default every turn",
+      turnCount: 3,
+      retainEveryN: 1,
+      overlap: 0,
+      tailTurns: 0,
+      expectedPosts: 3,
+    },
+  ] as const;
+
+  it.each(parityCases)(
+    "keeps reader and legacy JSONL payloads equivalent: $name",
+    async (scenario) => {
+      const turns = Array.from({ length: scenario.turnCount }, (_, index) => ({
+        user: `User turn ${index + 1}.`,
+        assistant: `Assistant turn ${index + 1}.`,
+        ...(scenario.name === "long with overlap and tools" && index === 3
+          ? { tool: "Tool output for the tail." }
+          : {}),
+      }));
+      const fullMessages = turns.flatMap((turn) => [
+        { role: "user", content: turn.user },
+        { role: "assistant", content: turn.assistant },
+        ...(turn.tool ? [{ role: "tool", content: turn.tool }] : []),
+      ]);
+      const run = async (mode: "reader" | "jsonl") => {
+        const queuePath = makeQueuePath();
+        const server = installFakeServer("supported");
+        const api = makeApi(queuePath, 1_000, {
+          retainEveryNTurns: scenario.retainEveryN,
+          retainOverlapTurns: scenario.overlap,
+          retainRoles: ["user", "assistant", "tool"],
+          ...(mode === "reader" ? { logLevel: "warning" } : {}),
+        });
+        const service = api.service();
+        await service.start();
+        const sessionKey = `agent:main:discord:direct:parity-${scenario.name}-${mode}`;
+        const tailMessages = turns
+          .slice(-scenario.tailTurns)
+          .flatMap((turn) => [
+            { role: "user", content: turn.user },
+            { role: "assistant", content: turn.assistant },
+            ...(turn.tool ? [{ role: "tool", content: turn.tool }] : []),
+          ]);
+        const ctx = {
+          agentId: "main",
+          sessionKey,
+          messageProvider: "discord",
+          channelId: `direct:parity-${mode}`,
+          senderId: "user:integration",
+          ...(mode === "reader"
+            ? {
+                endedTranscript: {
+                  available: true as const,
+                  readTail: vi.fn(async (options: { maxMessages: number; maxBytes: number }) => {
+                    expect(options).toEqual({ maxMessages: 10_000, maxBytes: 8_388_608 });
+                    return {
+                      messages: tailMessages,
+                      totalMessages: fullMessages.length,
+                      truncated: tailMessages.length < fullMessages.length,
+                    };
+                  }),
+                },
+              }
+            : {}),
+        } as PluginHookAgentContext;
+
+        const observedMessages: Array<{ role: string; content: string }> = [];
+        for (const turn of turns) {
+          observedMessages.push(
+            { role: "user", content: turn.user },
+            { role: "assistant", content: turn.assistant },
+            ...(turn.tool ? [{ role: "tool", content: turn.tool }] : [])
+          );
+          await api.agentEnd()(
+            {
+              success: true,
+              messages: observedMessages,
+            },
+            ctx
+          );
+        }
+
+        let sessionFile: string | undefined;
+        if (mode === "jsonl") {
+          const dir = mkdtempSync(join(tmpdir(), "hindsight-session-parity-"));
+          tempDirs.push(dir);
+          sessionFile = join(dir, "parity.jsonl");
+          writeFileSync(
+            sessionFile,
+            [
+              { type: "session", id: "parity" },
+              ...fullMessages.map((message) => ({ type: "message", message })),
+            ]
+              .map((line) => JSON.stringify(line))
+              .join("\n") + "\n",
+            "utf8"
+          );
+        }
+        let sessionFileReads = 0;
+        const sessionEndEvent = {
+          sessionId: "parity",
+          sessionKey,
+          messageCount: fullMessages.length,
+          reason: "reset",
+          ...(sessionFile ? { sessionFile } : {}),
+        };
+        if (mode === "reader") {
+          Object.defineProperty(sessionEndEvent, "sessionFile", {
+            configurable: true,
+            get: () => {
+              sessionFileReads++;
+              return join(tmpdir(), "reader-success-must-not-read.jsonl");
+            },
+          });
+        }
+        await api.sessionEnd()(sessionEndEvent, ctx);
+        await api.sessionEnd()(sessionEndEvent, ctx);
+        await service.stop();
+        return {
+          bodies: server.retainBodies.map((body) => {
+            const request = ((body.items as Array<Record<string, unknown>> | undefined)?.[0] ??
+              body) as Record<string, unknown>;
+            const metadata = request.metadata as Record<string, unknown> | undefined;
+            const routingFields = new Set([
+              "retained_at",
+              "turn_index",
+              "session_key",
+              "agent_id",
+              "provider",
+              "channel_type",
+              "channel_id",
+              "thread_id",
+              "sender_id",
+            ]);
+            return {
+              content: request.content,
+              context: request.context,
+              tags: request.tags,
+              updateMode: request.update_mode,
+              metadata: Object.fromEntries(
+                Object.entries(metadata ?? {}).filter(([key]) => !routingFields.has(key))
+              ),
+            };
+          }),
+          sessionFileReads,
+          warnings: api.logs.warn,
+        };
+      };
+
+      const readerResult = await run("reader");
+      const jsonlResult = await run("jsonl");
+      expect(readerResult.bodies).toEqual(jsonlResult.bodies);
+      expect(readerResult.bodies).toHaveLength(scenario.expectedPosts);
+      expect(readerResult.sessionFileReads).toBe(0);
+      if (scenario.tailTurns > 0 && scenario.tailTurns < scenario.turnCount) {
+        expect(readerResult.warnings).toEqual(
+          expect.arrayContaining([expect.stringContaining("truncated=true")])
+        );
+      }
+      if (scenario.name === "long with overlap and tools") {
+        expect(readerResult.bodies.at(-1)?.content).toContain("Tool output for the tail.");
+      }
+      if (scenario.name === "long without overlap") {
+        expect(readerResult.bodies[0]?.content).toContain("User turn 1.");
+        expect(readerResult.bodies[0]?.content).toContain("User turn 3.");
+        expect(readerResult.bodies.at(-1)?.content).toContain("User turn 4.");
+        expect(readerResult.bodies.at(-1)?.content).not.toContain("User turn 3.");
+      }
+      if (scenario.name === "long with overlap and tools") {
+        expect(readerResult.bodies[0]?.content).toContain("User turn 1.");
+        expect(readerResult.bodies[0]?.content).toContain("User turn 3.");
+        expect(readerResult.bodies.at(-1)?.content).toContain("User turn 3.");
+        expect(readerResult.bodies.at(-1)?.content).not.toContain("User turn 1.");
+        expect(readerResult.bodies.at(-1)?.content).not.toContain("User turn 2.");
+      }
+      if (scenario.name === "exact cadence boundary") {
+        expect(readerResult.bodies[0]?.content).toContain("User turn 1.");
+        expect(readerResult.bodies[0]?.content).toContain("User turn 3.");
+      }
+    }
+  );
+
+  it.each([
+    ["denied", { available: false as const, reason: "conversation-access-required" as const }],
+    [
+      "rejected",
+      {
+        available: true as const,
+        readTail: vi.fn(async () => {
+          throw new Error("reader failed");
+        }),
+      },
+    ],
+    [
+      "empty truncated",
+      {
+        available: true as const,
+        readTail: vi.fn(async () => ({ messages: [], totalMessages: 4, truncated: true })),
+      },
+    ],
+  ])(
+    "does not read disk after the ended transcript capability is %s",
+    async (_label, endedTranscript) => {
+      const queuePath = makeQueuePath();
+      const server = installFakeServer("supported");
+      const api = makeApi(queuePath, 1_000, { retainEveryNTurns: 3 });
+      const service = api.service();
+      await service.start();
+      const baseEvent = {
+        sessionId: "denied-session",
+        sessionKey: `agent:main:discord:direct:denied-session-${_label}`,
+        messageCount: 2,
+        reason: "reset",
+      };
+      let sessionFileReads = 0;
+      const event = Object.defineProperty(baseEvent, "sessionFile", {
+        configurable: true,
+        get: () => {
+          sessionFileReads++;
+          return join(tmpdir(), "should-not-be-read.jsonl");
+        },
+      });
+      const ctx = {
+        agentId: "main",
+        sessionKey: baseEvent.sessionKey,
+        messageProvider: "discord",
+        channelId: "direct:denied-session",
+        senderId: "user:integration",
+        endedTranscript,
+      } as PluginHookAgentContext;
+      await api.agentEnd()(
+        {
+          success: true,
+          messages: [
+            { role: "user", content: "One turn." },
+            { role: "assistant", content: "Noted." },
+          ],
+        },
+        ctx
+      );
+      await api.sessionEnd()(event, ctx);
+      expect(server.retainBodies).toHaveLength(0);
+      expect(sessionFileReads).toBe(0);
+      await service.stop();
+    }
+  );
+
+  it("stops without retaining when the ended transcript reader resolves after service stop", async () => {
+    const queuePath = makeQueuePath();
+    const server = installFakeServer("supported");
+    const api = makeApi(queuePath, 1_000, { retainEveryNTurns: 3 });
+    const service = api.service();
+    await service.start();
+    let resolveRead:
+      | ((result: {
+          messages: readonly unknown[];
+          totalMessages: number;
+          truncated: boolean;
+        }) => void)
+      | undefined;
+    let readerStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      readerStarted = resolve;
+    });
+    const ctx = {
+      agentId: "main",
+      sessionKey: "agent:main:discord:direct:pending-reader",
+      messageProvider: "discord",
+      channelId: "direct:pending-reader",
+      senderId: "user:integration",
+      endedTranscript: {
+        available: true as const,
+        readTail: () => {
+          readerStarted();
+          return new Promise((resolve) => {
+            resolveRead = resolve;
+          });
+        },
+      },
+    } as PluginHookAgentContext;
+    await api.agentEnd()(
+      {
+        success: true,
+        messages: [
+          { role: "user", content: "Pending turn." },
+          { role: "assistant", content: "Noted." },
+        ],
+      },
+      ctx
+    );
+    const pending = api.sessionEnd()({ sessionId: "pending-reader", reason: "shutdown" }, ctx);
+    await started;
+    await service.stop();
+    resolveRead?.({
+      messages: [{ role: "user", content: "Should be ignored." }],
+      totalMessages: 1,
+      truncated: false,
+    });
+    await pending;
+    expect(server.retainBodies).toHaveLength(0);
   });
 });
 

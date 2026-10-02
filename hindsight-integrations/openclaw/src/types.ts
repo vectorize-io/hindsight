@@ -63,7 +63,39 @@ export interface PluginHookAgentContext {
   messageProvider?: string;
   channelId?: string;
   senderId?: string;
+  /** Current OpenClaw hosts expose the ended session tail through this capability. */
+  endedTranscript?: PluginHookEndedTranscript;
 }
+
+export type PluginHookEndedTranscriptUnavailableReason =
+  | "conversation-access-required"
+  | "no-stable-cutoff"
+  | "incognito-deleted"
+  | "archive-unavailable"
+  | "unsupported-source";
+
+export interface PluginHookEndedTranscriptReadOptions {
+  maxMessages: number;
+  maxBytes: number;
+}
+
+export interface PluginHookEndedTranscriptReadResult {
+  messages: readonly unknown[];
+  totalMessages: number;
+  truncated: boolean;
+}
+
+export type PluginHookEndedTranscript =
+  | {
+      available: false;
+      reason: PluginHookEndedTranscriptUnavailableReason;
+    }
+  | {
+      available: true;
+      readTail(
+        options: PluginHookEndedTranscriptReadOptions
+      ): Promise<PluginHookEndedTranscriptReadResult>;
+    };
 
 export interface PluginConfig {
   /**
