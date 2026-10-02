@@ -183,8 +183,15 @@ class OracleOps(DataAccessOps):
         chunk_size: int = 5000,
     ) -> None:
         # The backend rewrites ON CONFLICT DO NOTHING for duplicate suppression.
-        # WHERE EXISTS checks are intentionally skipped: executemany does not support
-        # correlated subqueries in this form, and callers guarantee unit validity.
+        # executemany cannot carry PostgreSQL's correlated WHERE EXISTS, so when the
+        # caller asks for it (exists_clause) the links whose units are gone are dropped
+        # here, inside the caller's transaction: ANN neighbours found before the write
+        # phase can point at units deleted since (observations dropped when a document
+        # is re-retained), and inserting them fails with ORA-02291 on FK_ML_FROM/FK_ML_TO.
+        if exists_clause:
+            sorted_links = await self._links_with_live_units(conn, sorted_links)
+            if not sorted_links:
+                return
         from_ids = [lnk[0] for lnk in sorted_links]
         to_ids = [lnk[1] for lnk in sorted_links]
         types = [lnk[2] for lnk in sorted_links]
@@ -202,6 +209,23 @@ class OracleOps(DataAccessOps):
             """,
             [(from_ids[i], to_ids[i], types[i], weights[i], entity_ids[i], bank_id) for i in range(len(sorted_links))],
         )
+
+    @staticmethod
+    async def _links_with_live_units(conn: DatabaseConnection, links: list[tuple]) -> list[tuple]:
+        """Keep the links whose from/to units still exist (Oracle's stand-in for WHERE EXISTS)."""
+        from ..schema import fq_store_table
+
+        ids = list({str(i).lower() for lnk in links for i in (lnk[0], lnk[1])})
+        live: set[str] = set()
+        # ANY() expands to an IN list, which Oracle caps at 1000 entries (ORA-01795).
+        for start in range(0, len(ids), 500):
+            chunk = [uuid_mod.UUID(i) for i in ids[start : start + 500]]
+            rows = await conn.fetch(
+                f"SELECT id FROM {fq_store_table('memory_units')} WHERE id = ANY($1::uuid[])",
+                chunk,
+            )
+            live.update(str(r["id"]).lower() for r in rows)
+        return [lnk for lnk in links if str(lnk[0]).lower() in live and str(lnk[1]).lower() in live]
 
     async def bulk_insert_entities(
         self,
