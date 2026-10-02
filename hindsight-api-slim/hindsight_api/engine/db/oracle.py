@@ -141,6 +141,24 @@ def _needs_clob_bind(val: Any) -> bool:
     return val[0] in ("{", "[") or (len(val) > 1000 and len(val.encode()) > 4000)
 
 
+def _needs_clob_lob(val: Any) -> bool:
+    """Text past 32 767 bytes: bind as a real CLOB.
+
+    A CLOB input size covers 4 000-32 767 bytes, but past that the thin driver still
+    sends the string as LONG and ``MERGE ... USING (SELECT :N AS col FROM DUAL)``
+    fails with ORA-01461 (a long ``documents.original_text``).
+    """
+    return isinstance(val, str) and len(val) > 8191 and len(val.encode()) > 32767
+
+
+def _needs_blob_bind(val: Any) -> bool:
+    """Bytes past RAW's 2000-byte SQL limit (a file in ``file_storage``): bind as BLOB.
+
+    UUIDs (16 bytes, RAW(16)) stay RAW.
+    """
+    return isinstance(val, (bytes, bytearray)) and len(val) > 2000
+
+
 def _convert_args_list(args_list: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
     """Convert a list of tuples for executemany."""
     return [_convert_args(row) for row in args_list]
@@ -797,6 +815,27 @@ class OracleConnection(DatabaseConnection):
 
         return params
 
+    async def _bind_large_values_as_lobs(self, params: dict[str, Any] | None) -> None:
+        """Bind bytes past RAW's 2000-byte limit as a BLOB and text past 32 767 bytes as a CLOB.
+
+        The thin driver binds bytes as RAW and does not honour a DB_TYPE_BLOB input size
+        for them, so storing a file past that size fails with ORA-01461 ("exceeded the
+        maximum VARCHAR2 length"); the same happens to text past 32 767 bytes despite a
+        DB_TYPE_CLOB input size. A temporary LOB holding the value binds as a real LOB.
+        """
+        if not params:
+            return
+        oracledb = _import_oracledb()
+        for key, val in params.items():
+            if _needs_blob_bind(val):
+                lob = await self._conn.createlob(oracledb.DB_TYPE_BLOB)
+                await lob.write(bytes(val))
+                params[key] = lob
+            elif _needs_clob_lob(val):
+                lob = await self._conn.createlob(oracledb.DB_TYPE_CLOB)
+                await lob.write(val)
+                params[key] = lob
+
     @staticmethod
     def _apply_clob_input_sizes(cursor: Any, query: str, params: dict[str, Any] | None) -> None:
         """Tell oracledb to bind typed input sizes for ambiguous parameters.
@@ -1058,6 +1097,7 @@ class OracleConnection(DatabaseConnection):
         try:
             params = self._make_bind_params(cursor, args, ret_cols)
             query, params = self._expand_any_lists(query, params)
+            await self._bind_large_values_as_lobs(params)
             self._apply_clob_input_sizes(cursor, query, params)
             if ignore_dup:
                 try:
@@ -1097,6 +1137,7 @@ class OracleConnection(DatabaseConnection):
                 # Row-by-row with individual dup suppression
                 for row in converted:
                     params = {str(i + 1): v for i, v in enumerate(row)}
+                    await self._bind_large_values_as_lobs(params)
                     self._apply_clob_input_sizes(cursor, query, params)
                     try:
                         await cursor.execute(query, params)
@@ -1160,6 +1201,7 @@ class OracleConnection(DatabaseConnection):
         try:
             params = self._make_bind_params(cursor, args, ret_cols)
             query, params = self._expand_any_lists(query, params)
+            await self._bind_large_values_as_lobs(params)
             self._apply_clob_input_sizes(cursor, query, params)
             if ignore_dup:
                 try:
@@ -1201,6 +1243,7 @@ class OracleConnection(DatabaseConnection):
         try:
             params = self._make_bind_params(cursor, args, ret_cols)
             query, params = self._expand_any_lists(query, params)
+            await self._bind_large_values_as_lobs(params)
             self._apply_clob_input_sizes(cursor, query, params)
             if ignore_dup:
                 try:
@@ -1242,6 +1285,7 @@ class OracleConnection(DatabaseConnection):
         try:
             params = self._make_bind_params(cursor, args, ret_cols)
             query, params = self._expand_any_lists(query, params)
+            await self._bind_large_values_as_lobs(params)
             self._apply_clob_input_sizes(cursor, query, params)
             if ignore_dup:
                 try:
