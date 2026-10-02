@@ -122,6 +122,7 @@ _PARENT_INTERPRETER_ENV = frozenset({"PYTHONPATH", "PYTHONHOME", "PYTHONSAFEPATH
 # API key never appears in the process list.
 _DAEMON_START_SNIPPET = (
     "import json, sys\n"
+    "sys.path[:0] = sys.argv[2:]\n"
     "from hindsight_embed import get_embed_manager\n"
     "sys.exit(0 if get_embed_manager().ensure_running(json.load(sys.stdin), sys.argv[1]) else 1)\n"
 )
@@ -145,7 +146,7 @@ def _embed_scrubs_parent_env() -> bool:
 
 
 def _start_daemon_in_clean_child(config: dict[str, str], profile: str) -> bool:
-    """Start the daemon from a short-lived child that never had our interpreter's PYTHONPATH.
+    """Start the daemon from a short-lived child with clean interpreter environment variables.
 
     Workaround for hindsight-embed <= 0.10.2, which copies ``os.environ`` into the daemon process.
     Hermes' package-manager install exports ``PYTHONPATH=<repo>:<its 3.14 generation>``
@@ -159,9 +160,11 @@ def _start_daemon_in_clean_child(config: dict[str, str], profile: str) -> bool:
     a first run — and Hermes' own children rely on that PYTHONPATH. A child process confines it.
     """
     env = {key: value for key, value in os.environ.items() if key not in _PARENT_INTERPRETER_ENV}
+    # The helper needs the host's packages; sys.path additions do not reach its daemon child.
+    import_roots = os.environ.get("PYTHONPATH", "").split(os.pathsep)
     try:
         result = subprocess.run(
-            [sys.executable, "-c", _DAEMON_START_SNIPPET, profile],
+            [sys.executable, "-c", _DAEMON_START_SNIPPET, profile, *import_roots],
             input=json.dumps(config),
             env=env,
             capture_output=True,

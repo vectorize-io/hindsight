@@ -11,7 +11,6 @@ import sys
 from types import SimpleNamespace
 
 import pytest
-
 from hindsight_hermes import embedded
 
 
@@ -168,7 +167,7 @@ def test_the_start_worker_reconciles_the_profile_env_before_the_daemon_boots(mon
 def test_an_old_embed_starts_the_daemon_from_a_child_without_our_pythonpath(monkeypatch):
     """hindsight-embed <= 0.10.2 copies os.environ into the daemon, so Hermes' PYTHONPATH (its own
     3.14 generation) reaches a server that uvx may run on another Python — which then imports
-    Hermes' pydantic and dies. Start it from a child that never had those variables."""
+    Hermes' pydantic and dies. Keep the daemon child free of those variables."""
     calls = _fake_embed_module(monkeypatch, running=False, scrubs=False)
     monkeypatch.setenv("PYTHONPATH", "/hermes/venv/lib/python3.14/site-packages")
     monkeypatch.setenv("VIRTUAL_ENV", "/hermes/venv")
@@ -240,3 +239,52 @@ def test_the_binary_probe_checks_the_scripts_dir_the_manager_uses(monkeypatch):
         embedded.shutil, "which", lambda name, path=None: "/s/hindsight-api" if path == scripts else None
     )
     assert embedded._installed_api_binary_exists() is True
+
+
+def test_clean_helper_imports_pythonpath_packages_without_forwarding_env(tmp_path, monkeypatch):
+    import json
+    import os
+    import venv
+
+    # Model a store interpreter with no plugin packages of its own.
+    interpreter_home = tmp_path / "store-python"
+    venv.EnvBuilder(with_pip=False).create(interpreter_home)
+    python = interpreter_home / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    plugin_root = tmp_path / "plugin packages"
+    dependency_root = tmp_path / "dependency packages"
+    package = plugin_root / "hindsight_embed"
+    package.mkdir(parents=True)
+    dependency_root.mkdir()
+    (dependency_root / "helper_dependency_5006.py").write_text("VALUE = 'dependency imported'\n")
+    (package / "__init__.py").write_text(
+        "import json, subprocess, sys\n"
+        "from pathlib import Path\n"
+        "from helper_dependency_5006 import VALUE\n"
+        "class Manager:\n"
+        "    def ensure_running(self, config, profile):\n"
+        "        keys = subprocess.check_output([sys.executable, '-c', "
+        '"import json, os; print(json.dumps([k for k in '
+        "('PYTHONPATH', 'PYTHONHOME', 'PYTHONSAFEPATH', 'VIRTUAL_ENV') if k in os.environ]))\"], text=True)\n"
+        "        Path(config['OUTPUT']).write_text(json.dumps({"
+        "'config': config, 'profile': profile, 'child_keys': json.loads(keys), 'dependency': VALUE}))\n"
+        "        return True\n"
+        "def get_embed_manager():\n"
+        "    return Manager()\n"
+    )
+    output = tmp_path / "started.json"
+    config = {"OUTPUT": str(output), "HINDSIGHT_API_LLM_API_KEY": "synthetic-key"}
+    monkeypatch.setattr(embedded.sys, "executable", str(python))
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([str(plugin_root), str(dependency_root)]))
+    monkeypatch.setenv("PYTHONHOME", str(tmp_path / "foreign-python"))
+    monkeypatch.setenv("PYTHONSAFEPATH", "1")
+    monkeypatch.setenv("VIRTUAL_ENV", str(tmp_path / "host-venv"))
+
+    assert embedded._start_daemon_in_clean_child(config, "hermes") is True
+    assert json.loads(output.read_text()) == {
+        "config": config,
+        "profile": "hermes",
+        "child_keys": [],
+        "dependency": "dependency imported",
+    }
+    # The host still needs these variables for its own subprocesses.
+    assert os.environ["PYTHONPATH"] == os.pathsep.join([str(plugin_root), str(dependency_root)])
