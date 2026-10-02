@@ -91,7 +91,7 @@ describe("buildSessionStartContext", () => {
     expect(out.additionalContext).not.toContain("agent_knowledge_list_pages");
     // The banner must NOT be duplicated into model context. (The tool guide legitimately
     // contains a "🧠 From Hindsight memory" attribution example, so match on banner text.)
-    expect(out.additionalContext).not.toContain("memory bank");
+    expect(out.additionalContext).not.toContain("↳ memory bank");
     expect(out.additionalContext).not.toContain("is learning this repo");
     expect(out.deferInitialReflect).toBe(true);
   });
@@ -205,7 +205,11 @@ describe("buildSessionStartContext", () => {
   it("warm bank (non-empty doc set) -> deepen engine fires, but no survey/note", async () => {
     const startSeed = vi.fn();
     const startSurvey = vi.fn().mockResolvedValue(true);
-    const client = { listDocumentIds: async () => new Set(["git:abc"]), listPages: listPagesOk };
+    const client = {
+      project: "sample-repo",
+      listDocumentIds: async () => new Set(["git:abc"]),
+      listPages: listPagesOk,
+    };
     const out = await buildSessionStartContext({
       cwd: "/repo/dir",
       bankId: "bank-1",
@@ -220,6 +224,7 @@ describe("buildSessionStartContext", () => {
     // The cold-only extras stay off: no survey, no user-facing learning note.
     expect(startSurvey).not.toHaveBeenCalled();
     expect(out.additionalContext).toContain("deliberately NOT listed here");
+    expect(out.additionalContext).not.toContain("bank may span multiple repositories");
     // banner shows on EVERY session now; non-cold paths use the "remembering" wording
     expect(out.systemMessage).toContain("is tracking the decisions");
   });

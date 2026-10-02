@@ -131,7 +131,7 @@ async function main() {
       // outlive the session, so a bank several repos share must not be told it is whichever one
       // ran last (#4146). `bankProjectName` answers only when the bank IS this repo's; the
       // `banks.<id>.bank` rename below it can point many repos at one destination, so a renamed
-      // bank is not this repo's either. Undefined leaves the client to fall back to the bank id.
+      // bank is not this repo's either. Undefined scopes pages by topic across relevant projects.
       project: PAGE_PROJECT,
       maxParallelRetains: cfg.maxParallelRetains,
       observationScopes: cfg.observationScopes,

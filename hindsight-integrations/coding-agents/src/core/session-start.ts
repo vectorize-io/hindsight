@@ -28,7 +28,7 @@ import { SURVEY_DOC_IDS, startCodebaseSurvey, type SurveyHarness } from "./surve
 import { applyBankConfig, loadConfig } from "./config";
 import { DAEMON_WAIT_SESSION_START_MS, ensureDaemon } from "./daemon";
 import type { Config } from "./config";
-import { deriveBankIdOrSkip } from "./bank";
+import { bankProjectName, deriveBankIdOrSkip } from "./bank";
 import { brandWord } from "./brand";
 import { diag } from "./diag";
 import { setLogLevel } from "./log";
@@ -41,6 +41,7 @@ import { sessionCacheFile, sessionRootDir, writeSessionCache } from "./session-c
 
 /** Minimal client shape `buildSessionStartContext` needs. */
 interface SeedContextClient {
+  readonly project?: string;
   listDocumentIds(tag: string, tagsMatch?: "all" | "all_strict"): Promise<Set<string>>;
   // Optional: lets the git note see a git-log document written at a commit HEAD is behind
   // (gitLogIsCurrent). The minimal test clients omit it and keep the exact-HEAD check.
@@ -317,6 +318,7 @@ export async function buildSessionStartContext(args: {
     /* fail-open preamble; preserve first-prompt reflect eligibility on a transient outage */
   }
   const additionalContext = buildKnowledgePreamble(pages, {
+    project: client.project,
     reflectOnNewGoals: cfg.autoInject !== "reflect",
     extra: cfg.toolGuideExtra,
   });
@@ -408,6 +410,7 @@ export async function runSessionStartHook(
       apiUrl: cfg.apiUrl,
       apiToken: cfg.apiToken,
       bank: bankId,
+      project: bankId === derived ? bankProjectName(cfg, cwd, sessionRoot) : undefined,
       maxParallelRetains: cfg.maxParallelRetains,
       observationScopes: cfg.observationScopes,
     });

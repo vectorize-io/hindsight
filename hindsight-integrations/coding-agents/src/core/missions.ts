@@ -207,9 +207,9 @@ export interface KnowledgePage {
  * The subject-scoping clause every page this plugin creates carries, naming the subject it is
  * about — the seeded taxonomy (through `pagesFor`) and each captured initiative alike.
  *
- * `project` is the repository when the bank is one repository's, and the BANK otherwise — a bank
- * several repos share has no repo to name, and naming whichever one seeded last made the sentence
- * flip on every session start (#4146). Either way it must be stable for the bank, because the
+ * `project` names the repository when the bank is one repository's. Otherwise scope by page topic,
+ * preserving project attribution: the bank id is not a repository (#4490). Naming whichever repo
+ * seeded last made the sentence flip on every session start (#4146). It must be stable because the
  * clause is PATCHed onto pages that outlive the session.
  *
  * A bank collects everything said IN a repository, which is NOT the same as everything said ABOUT
@@ -228,7 +228,19 @@ export interface KnowledgePage {
  * (`codingBankManifest`, #2492) — a mission-only fix would never reach an existing bank, while a
  * reworded query re-syncs through `seedPages()`'s drift PATCH on the next run.
  */
-export function pageScopeRule(project: string): string {
+export function pageScopeRule(project?: string): string {
+  // A static or mapped bank can hold several repositories (#4490). Its id names storage,
+  // not a codebase: applying the repository-only rule to it discards the real projects.
+  if (!project) {
+    return (
+      " This is a shared memory bank, not a repository. Scope this page to its stated topic " +
+      "or initiative across the relevant projects in the bank. Preserve each fact's project " +
+      "and source attribution; group unrelated repositories separately. References to 'this " +
+      "project' in the query mean the relevant projects, never the bank id. Include relevant " +
+      "project records even when their repository differs from the bank name. Distinguish " +
+      "dated reports and plans from verified current state."
+    );
+  }
   return (
     ` Scope this page to ${project} ITSELF: the bank also holds facts about external tools, ` +
     `libraries and services that ${project} merely uses, configures, deploys or discusses, and ` +
@@ -324,7 +336,7 @@ export type CustomPagesConfig = Record<string, CustomPage>;
  * failure mode someone rewording or adding a question is not thereby choosing to take on.
  */
 export function pagesFor(
-  project: string,
+  project: string | undefined,
   pages: PagesConfig = {},
   customPages: CustomPagesConfig = {}
 ): KnowledgePage[] {

@@ -100,16 +100,18 @@ describe("bankProjectName", () => {
 
   it("keeps the seeded page queries identical across repos on a shared bank (#4146 repro)", () => {
     const cfg = { bankId: "shared_bank_id" };
-    const BANK = "shared_bank_id";
 
     mockProbe.mockReturnValue(inRepo("/work/one-repo/.git"));
-    const fromRepoA = pagesFor(bankProjectName(cfg, "/work/.worktrees/one-repo-233") ?? BANK);
+    const fromRepoA = pagesFor(bankProjectName(cfg, "/work/.worktrees/one-repo-233"));
 
     mockProbe.mockReturnValue({ status: "absent" });
-    const fromWorkspaceRoot = pagesFor(bankProjectName(cfg, "/work") ?? BANK);
+    const fromWorkspaceRoot = pagesFor(bankProjectName(cfg, "/work"));
 
     // Same text => `seedPages()` sees no source drift => no PATCH, no page regeneration.
     expect(fromWorkspaceRoot).toEqual(fromRepoA);
-    for (const page of fromRepoA) expect(page.source_query).toContain("shared_bank_id");
+    for (const page of fromRepoA) {
+      expect(page.source_query).toContain("shared memory bank, not a repository");
+      expect(page.source_query).not.toContain("shared_bank_id ITSELF");
+    }
   });
 });

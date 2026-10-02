@@ -109,7 +109,7 @@ describe("HindsightClient knowledge-page reads", () => {
         json: async () => ({ detail: "not found" }),
       })) as any
     );
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await expect(c.listPages()).rejects.toMatchObject({ code: "knowledge_pages_unavailable" });
     expect(c.knowledgePagesSupported).toBe(false);
     await expect(c.searchKnowledgePages("architecture")).rejects.toMatchObject({
@@ -134,7 +134,7 @@ describe("HindsightClient knowledge-page reads", () => {
             }
       ) as any
     );
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     expect(await c.listPages()).toEqual({ items: [] });
     expect(c.knowledgePagesSupported).toBeUndefined();
 
@@ -167,7 +167,7 @@ describe("HindsightClient knowledge-page reads", () => {
         json: async () => ({ detail: "Not Found" }),
       })) as any
     );
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await expect(c.searchKnowledgePages("architecture")).rejects.toMatchObject({
       code: "knowledge_pages_unavailable",
     });
@@ -185,7 +185,7 @@ describe("HindsightClient knowledge-page reads", () => {
         },
       })) as any
     );
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await expect(c.listPages()).rejects.toMatchObject({ code: "knowledge_pages_unavailable" });
     expect(c.knowledgePagesSupported).toBe(false);
   });
@@ -202,7 +202,7 @@ describe("HindsightClient knowledge-page reads", () => {
           : ({ ok: true, status: 200, json: async () => ({}) } as any);
       }) as any
     );
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await expect(c.seedPages()).resolves.toBeUndefined();
     expect(c.knowledgePagesSupported).toBeUndefined();
     // It stops at the first create rather than 404ing once per page.
@@ -234,7 +234,7 @@ describe("HindsightClient knowledge-page reads", () => {
         return { ok: true, status: 200, json: async () => ({}) } as any;
       }) as any
     );
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await c.seedPages();
     expect(patched.length).toBe(PAGES.length);
     expect(c.knowledgePagesSupported).toBe(true);
@@ -243,7 +243,7 @@ describe("HindsightClient knowledge-page reads", () => {
   it("listPages reads the knowledge-base tree — never /mental-models", async () => {
     const calls: any[] = [];
     stubFetch(calls, async () => ({ roots: [] }));
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await c.listPages();
     expect(calls).toHaveLength(1);
     expect(calls[0].method).toBe("GET");
@@ -264,7 +264,7 @@ describe("HindsightClient knowledge-page reads", () => {
         },
       ],
     }));
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     expect(await c.listPages()).toEqual({
       items: [
         { id: "kp-1", name: "Component map", description: "what are the parts?" },
@@ -284,14 +284,14 @@ describe("HindsightClient knowledge-page reads", () => {
         },
       })) as any
     );
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     expect(await c.listPages()).toEqual({ items: [] });
   });
 
   it("getPage GETs knowledge-base/pages/{id}", async () => {
     const calls: any[] = [];
     stubFetch(calls, async () => ({ id: "kp-1" }));
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     const result = await c.getPage("kp-1");
     expect(result).toEqual({ id: "kp-1" });
     expect(calls[0].method).toBe("GET");
@@ -357,7 +357,7 @@ describe("HindsightClient knowledge-page reads", () => {
         json: { id: "kp-abc" },
       },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     const [hit] = await c.searchKnowledgePages("components");
     await c.getPage(hit.id);
     // The read must land on the page endpoint for the very id search returned — the old
@@ -368,7 +368,7 @@ describe("HindsightClient knowledge-page reads", () => {
   it("URL-encodes pageId in the getPage suffix", async () => {
     const calls: any[] = [];
     stubFetch(calls, async () => ({ ok: true }));
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await c.getPage("p 1/x");
     expect(calls[0].url).toContain(`/knowledge-base/pages/${encodeURIComponent("p 1/x")}`);
   });
@@ -380,7 +380,7 @@ describe("HindsightClient knowledge-page reads", () => {
         async () => ({ ok: false, status: 404, json: async () => ({ detail: "not found" }) }) as any
       )
     );
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await expect(c.getPage("missing")).rejects.toThrow("knowledge page not found: missing");
   });
 });
@@ -391,7 +391,7 @@ describe("HindsightClient.seedPages", () => {
     stubFetchRouted(calls, [
       { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await c.seedPages(
       buildPageTrigger(),
       {},
@@ -423,7 +423,7 @@ describe("HindsightClient.seedPages", () => {
     stubFetchRouted(calls, [
       { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await c.seedPages(buildPageTrigger(), {
       "Component map": false,
       "Key decisions and rationale": { source_query: "what did we decide and why?" },
@@ -456,7 +456,7 @@ describe("HindsightClient.seedPages", () => {
         return { ok: true, status: 200, json: async () => ({}) } as any;
       }) as any
     );
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await expect(c.configureBank()).resolves.toBeUndefined();
     expect(c.knowledgePagesSupported).toBe(false);
     expect(calls.some((x) => x.url.endsWith("/import"))).toBe(true);
@@ -468,7 +468,7 @@ describe("HindsightClient.seedPages", () => {
     stubFetchRouted(calls, [
       { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await c.seedPages();
 
     const posts = calls.filter(
@@ -501,7 +501,7 @@ describe("HindsightClient.seedPages", () => {
     stubFetchRouted(calls, [
       { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await c.configureBank({
       pageTrigger: buildPageTrigger(
         resolveConfig({ pageTriggerType: "cron", pageTriggerCron: "0 3 * * *" })
@@ -536,7 +536,7 @@ describe("HindsightClient.seedPages", () => {
         },
       },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await c.seedPages();
     expect(calls).toHaveLength(1); // the tree GET only
     expect(calls.every((k) => k.method === "GET")).toBe(true);
@@ -557,7 +557,7 @@ describe("HindsightClient.seedPages", () => {
         } as any;
       })
     );
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     // A losing race must not fail the deepen run — the page exists either way.
     await expect(c.seedPages()).resolves.toBeUndefined();
     expect(
@@ -582,7 +582,7 @@ describe("HindsightClient.seedPages", () => {
         },
       },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await c.seedPages();
 
     // Case difference alone must NOT look like a missing page.
@@ -615,7 +615,7 @@ describe("HindsightClient.seedPages", () => {
         },
       },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await c.seedPages();
 
     const patches = calls.filter((k) => k.method === "PATCH");
@@ -652,7 +652,7 @@ describe("HindsightClient.seedPages", () => {
         },
       },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await c.seedPages();
 
     const patches = calls.filter((k) => k.method === "PATCH");
@@ -713,7 +713,7 @@ describe("HindsightClient.seedPages", () => {
         },
       },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await c.seedPages();
 
     const patches = calls.filter((k) => k.method === "PATCH");
@@ -770,7 +770,7 @@ describe("HindsightClient.seedPages", () => {
         return { ok: true, status: 200, json: async () => ({}) } as any;
       }) as any
     );
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await c.seedPages();
     expect(patched).toHaveLength(2);
     expect(patched[1]).toContain("kp-init-2");
@@ -795,7 +795,7 @@ describe("HindsightClient.seedPages", () => {
         },
       },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await c.seedPages(buildPageTrigger(resolveConfig({ pageTriggerType: "manual" })));
 
     const patches = calls.filter((k) => k.method === "PATCH");
@@ -823,7 +823,7 @@ describe("HindsightClient.seedPages", () => {
         },
       },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await c.seedPages();
 
     expect(calls).toHaveLength(1); // the tree GET only
@@ -846,7 +846,7 @@ describe("HindsightClient.seedPages", () => {
         },
       },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await c.seedPages();
 
     const patches = calls.filter((k) => k.method === "PATCH");
@@ -918,7 +918,7 @@ describe("HindsightClient.seedPages", () => {
     stubFetchRouted(calls, [
       { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await c.seedPages(
       buildPageTrigger(resolveConfig({ pageTriggerType: "cron", pageTriggerCron: "0 3 * * *" }))
     );
@@ -927,7 +927,7 @@ describe("HindsightClient.seedPages", () => {
     }
   });
 
-  it("falls back to the bank id when no project is supplied, never an unscoped query", async () => {
+  it("uses shared topic scope when no repository owns the bank (#4490)", async () => {
     const calls: any[] = [];
     stubFetchRouted(calls, [
       { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
@@ -936,7 +936,8 @@ describe("HindsightClient.seedPages", () => {
     await c.seedPages();
 
     for (const post of calls.filter((k) => k.method === "POST")) {
-      expect(post.body.source_query).toContain("coding-agent::dotfiles");
+      expect(post.body.source_query).toContain("shared memory bank, not a repository");
+      expect(post.body.source_query).not.toContain("coding-agent::dotfiles ITSELF");
     }
   });
 });
@@ -1000,7 +1001,7 @@ describe("HindsightClient.ensureFolder", () => {
         json: { roots: [{ id: "existing-1", kind: "folder", name: "initiatives" }] },
       },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     const id = await c.ensureFolder("Initiatives");
     expect(id).toBe("existing-1");
     expect(
@@ -1017,7 +1018,7 @@ describe("HindsightClient.ensureFolder", () => {
         json: { id: "new-folder" },
       },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     const id = await c.ensureFolder("Initiatives");
     expect(id).toBe("new-folder");
     const post = calls.find(
@@ -1028,34 +1029,39 @@ describe("HindsightClient.ensureFolder", () => {
 });
 
 describe("HindsightClient.captureInitiative", () => {
-  // The subject is a property of the BANK (`project` when it is one repo's, the bank id otherwise
-  // — #4146), exactly as it is for the seeded pages.
-  it("names the repository, not the bank, when the client knows one", async () => {
-    const calls: any[] = [];
-    stubFetchRouted(calls, [
-      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
-      {
-        match: (m, u) => m === "POST" && u.endsWith("/knowledge-base/folders"),
-        json: { id: "folder-abc" },
-      },
-      {
-        match: (m, u) => m === "POST" && u.endsWith("/knowledge-base/pages"),
-        json: { page_id: "pg" },
-      },
-      { match: (m, u) => m === "POST" && u.endsWith("/memories"), json: { operation_id: "op-1" } },
-    ]);
-    const c = new HindsightClient({
-      apiUrl: "http://x",
-      bank: "coding-agent::dotfiles",
-      project: "dotfiles",
-    });
-    await c.captureInitiative({ title: "Retry backoff", summary: "..." });
+  // Scope is a property of the bank: its single repository, or the shared page topic (#4146, #4490).
+  it.each(["dotfiles", undefined])(
+    "uses bank-owned scope with project %s (#4490)",
+    async (project) => {
+      const calls: any[] = [];
+      stubFetchRouted(calls, [
+        { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
+        {
+          match: (m, u) => m === "POST" && u.endsWith("/knowledge-base/folders"),
+          json: { id: "folder-abc" },
+        },
+        {
+          match: (m, u) => m === "POST" && u.endsWith("/knowledge-base/pages"),
+          json: { page_id: "pg" },
+        },
+        {
+          match: (m, u) => m === "POST" && u.endsWith("/memories"),
+          json: { operation_id: "op-1" },
+        },
+      ]);
+      const c = new HindsightClient({
+        apiUrl: "http://x",
+        bank: "coding-agent::dotfiles",
+        project,
+      });
+      await c.captureInitiative({ title: "Retry backoff", summary: "..." });
 
-    const pagePost = calls.find(
-      (k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages")
-    );
-    expect(pagePost.body.source_query).toContain(pageScopeRule("dotfiles"));
-  });
+      const pagePost = calls.find(
+        (k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages")
+      );
+      expect(pagePost.body.source_query).toContain(pageScopeRule(project));
+    }
+  );
 
   it("new initiative: POSTs a per-initiative page + a marker retain naming the same page id", async () => {
     const calls: any[] = [];
@@ -1074,7 +1080,7 @@ describe("HindsightClient.captureInitiative", () => {
         json: { operation_id: "op-1" },
       },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     const result = await c.captureInitiative({
       title: "Retry backoff for the uploader",
       summary: "Add exponential backoff so transient upload failures retry.",
@@ -1095,7 +1101,7 @@ describe("HindsightClient.captureInitiative", () => {
     expect(pagePost.body.tags).toEqual(["knowledge:feature-work"]);
     // Same subject scoping and budget as a seeded page: the bank also holds facts about the
     // dependencies this repo merely uses, and "the project's memory" never said which project
-    // (#3476). No `project` was given, so the subject is the bank — as in `seedPages`.
+    // (#3476). Here the client knows the repository that owns the bank.
     expect(pagePost.body.source_query).toContain('Summarize the "Retry backoff for the uploader"');
     expect(pagePost.body.source_query).toContain(pageScopeRule("repo-a"));
     expect(pagePost.body.max_tokens).toBe(PAGE_MAX_TOKENS);
@@ -1144,7 +1150,7 @@ describe("HindsightClient.captureInitiative", () => {
           json: { operation_id: "op-1" },
         },
       ]);
-      const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+      const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
       await c.captureInitiative({
         title,
         summary: "…",
@@ -1170,7 +1176,7 @@ describe("HindsightClient.captureInitiative", () => {
         json: { operation_id: "op-1" },
       },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     const result = await c.captureInitiative({
       title: "More backoff tuning",
       summary: "Tweak the jitter window.",
@@ -1205,7 +1211,7 @@ describe("HindsightClient.captureInitiative", () => {
         json: { operation_id: "op-1" },
       },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await c.captureInitiative({
       title: "Attributed initiative",
       summary: "Keep its project provenance.",
@@ -1233,7 +1239,7 @@ describe("HindsightClient.configureBank template import", () => {
     stubFetchRouted(calls, [
       { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await c.configureBank();
 
     const importPosts = calls.filter((k) => k.method === "POST" && k.url.endsWith("/import"));
@@ -1271,7 +1277,7 @@ describe("HindsightClient.configureBank template import", () => {
     stubFetchRouted(calls, [
       { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
     ]);
-    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
     await c.configureBank({ reset: true });
 
     expect(calls[0].method).toBe("DELETE");

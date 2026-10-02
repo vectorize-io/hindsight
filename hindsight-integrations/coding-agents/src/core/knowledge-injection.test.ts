@@ -22,11 +22,21 @@ describe("parsePageList", () => {
 });
 
 describe("buildKnowledgePreamble", () => {
+  it("limits cross-repository guidance to shared banks (#4490)", () => {
+    for (const build of [buildKnowledgePreamble, buildRosterRefresh]) {
+      expect(build([], { project: "sample-repo" })).not.toContain(
+        "bank may span multiple repositories"
+      );
+      expect(build([], { project: undefined })).toContain("bank may span multiple repositories");
+    }
+  });
   it("names how many pages exist, withholds the index, and gives the FULL tool guide", () => {
     const out = buildKnowledgePreamble([{ id: "p1", title: "Component map" }]);
     expect(out).toContain("<hindsight_knowledge>");
-    expect(out).toContain("1 knowledge page covers this repository");
+    expect(out).toContain("1 knowledge page covers this memory bank");
     expect(out).toContain("deliberately NOT listed here");
+    expect(out).toContain("bank may span multiple repositories");
+    expect(out).not.toContain("This repository has a Hindsight");
     // Crediting is stated as an obligation triggered by the CALL. Measured on a real session: the
     // agent searched, built its answer from ten on-topic pages and credited nothing, because
     // "credit what you use" reads as a rule about quoting and a paraphrase feels like neither.
@@ -81,8 +91,10 @@ describe("buildKnowledgePreamble", () => {
 describe("buildRosterRefresh", () => {
   it("re-states the page count and the full tool guide, still without the index", () => {
     const out = buildRosterRefresh([{ id: "p1", title: "Component map" }]);
-    expect(out).toContain("1 knowledge page covers this repository");
+    expect(out).toContain("1 knowledge page covers this memory bank");
     expect(out).toContain("deliberately NOT listed here");
+    expect(out).toContain("bank may span multiple repositories");
+    expect(out).not.toContain("This repository has a Hindsight");
     // Titles and ids stay OUT: handed the index, the agent reads by id and never
     // searches — 0 searches over 40 measured turns, at 3 pages and at 12.
     expect(out).not.toContain("Component map");

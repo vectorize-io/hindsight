@@ -19,7 +19,7 @@ export function parsePageList(raw: unknown): PageRef[] {
 }
 
 const EMPTY_STATE =
-  "No knowledge pages yet — Hindsight is still learning this repo; they'll appear as it processes.";
+  "No knowledge pages yet — Hindsight is still learning this memory bank; they'll appear as it processes.";
 
 /**
  * What the agent is told EXISTS, without listing it.
@@ -39,7 +39,7 @@ function indexLine(pages: PageRef[]): string {
   const count =
     pages.length === 1 ? "1 knowledge page covers" : `${pages.length} knowledge pages cover`;
   return (
-    `${count} this repository — architecture, conventions, past decisions and ` +
+    `${count} this memory bank — architecture, conventions, past decisions and ` +
     "in-flight initiatives. They are deliberately NOT listed here: call " +
     "hindsight_search_knowledge_pages(query) to find the ones that bear on the current turn, then " +
     "hindsight_read_knowledge_page(<id>) on anything the results show is worth reading in full."
@@ -100,6 +100,8 @@ const PAGES_FIRST_ON_GOALS =
   "call hindsight_reflect only when those pages are too shallow and deeper reasoning is needed.\n";
 
 export interface ToolGuideOpts {
+  /** The bank's single repository, if it has one; shared banks leave it unset. */
+  project?: string;
   /** Add the new-goal pull trigger (no automatic synthesis: cfg.autoInject !== "reflect"). It used to send
    *  the agent straight to hindsight_reflect; it now goes to the knowledge pages first and keeps
    *  reflect for what they don't cover. The field name is unchanged so call sites stay stable. */
@@ -115,13 +117,19 @@ function toolGuide(opts?: ToolGuideOpts): string {
   );
 }
 
+const SHARED_BANK_GUIDANCE =
+  "The bank may span multiple repositories. Match retrieved records to the current task " +
+  "and preserve their project attribution. Missing coverage in these summary pages does not " +
+  "mean the underlying dialogue memory is empty; use hindsight_reflect when needed.\n";
+
 /** SessionStart: teach the whole tool suite + when to use each, and list what pages exist. Empty-state aware. */
 export function buildKnowledgePreamble(pages: PageRef[], opts?: ToolGuideOpts): string {
   const body = pages.length ? indexLine(pages) : EMPTY_STATE;
   return (
     "<hindsight_knowledge>\n" +
-    "This repository has a Hindsight memory + knowledge base (curated, continuously-updated pages plus the raw " +
+    "This session has access to a Hindsight memory bank + knowledge base (curated, continuously-updated pages plus the raw " +
     "memory behind them). The tools below are registered, but you must actually CALL them at the right moments:\n" +
+    (opts?.project ? "" : SHARED_BANK_GUIDANCE) +
     `${toolGuide(opts)}\n` +
     "ALSO your correction tool: when you verify a Hindsight memory is wrong or stale, ingest a " +
     '"Correction: <topic>" doc stating what memory claimed, what is true now, and the evidence — ' +
@@ -143,7 +151,8 @@ export function buildRosterRefresh(pages: PageRef[], opts?: ToolGuideOpts): stri
   return (
     "<hindsight_knowledge_refresh>\n" +
     rosterBlock +
-    "Reminder — this repo's Hindsight tools are available; call them at the right moments:\n" +
+    "Reminder — this session's Hindsight tools are available; call them at the right moments:\n" +
+    (opts?.project ? "" : SHARED_BANK_GUIDANCE) +
     `${toolGuide(opts)}\n` +
     "</hindsight_knowledge_refresh>"
   );

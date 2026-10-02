@@ -677,7 +677,7 @@ describe("buildHookOutput", () => {
 
   it("injects the page-roster refresh only on cadence turns", async () => {
     const cfg = resolveConfig({ pageRefreshEveryTurns: 2 });
-    const client = makeClient();
+    const client = { ...makeClient(), project: "sample-repo" };
     // turn 1: not a multiple of 2 -> no refresh
     const t1 = await buildHookOutput({
       harness: "claude-code",
@@ -697,6 +697,7 @@ describe("buildHookOutput", () => {
     });
     expect(t2.context).toContain("<hindsight_knowledge_refresh>");
     expect(t2.context).toContain("deliberately NOT listed here");
+    expect(t2.context).not.toContain("bank may span multiple repositories");
     // reflect block is NOT re-injected on cadence turns (injected once, on the reflect turn)
     expect(t2.context).not.toContain("REFLECT_ANSWER");
   });

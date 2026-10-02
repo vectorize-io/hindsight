@@ -38,6 +38,7 @@ describe("RuntimeCore", () => {
     // pages by id — the agent was told both, and believed the stale half (#4607).
     let pages: { id: string; name: string }[] = [];
     const client = {
+      project: "sample-repo",
       listDocumentIds: vi.fn(async () => new Set(["git:existing"])),
       listPages: vi.fn(async () => ({ items: pages })),
       reflect: vi.fn(async () => ""),
@@ -56,6 +57,7 @@ describe("RuntimeCore", () => {
     const warm = runtime.getInjection("session-warm") ?? "";
     expect(warm).toContain("2 knowledge pages cover");
     expect(warm).not.toContain("No knowledge pages yet");
+    expect(warm).not.toContain("bank may span multiple repositories");
   });
 });
 

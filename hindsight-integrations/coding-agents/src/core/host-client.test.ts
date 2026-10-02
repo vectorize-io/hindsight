@@ -33,6 +33,21 @@ afterEach(() => {
 });
 
 describe("resolveHostMemory", () => {
+  it("distinguishes repo-owned, static, and renamed banks for page scope (#4490)", async () => {
+    writeConfig({});
+    const { resolveHostMemory } = await loadFactory();
+    const own = resolveHostMemory("codex", root);
+    expect(own.client.project).toBe(root.split("/").pop());
+
+    writeConfig({ bankId: "team-memory", dynamicBankId: false });
+    expect(resolveHostMemory("codex", root).client.project).toBeUndefined();
+
+    writeConfig({ banks: { [own.bankId]: { bank: "team-memory" } } });
+    const renamed = resolveHostMemory("codex", root);
+    expect(renamed.bankId).toBe("team-memory");
+    expect(renamed.client.project).toBeUndefined();
+  });
+
   it("forwards every client setting the hosts used to pass by hand", async () => {
     // dsh and Prime Agent each hand-built their ClientOpts and both omitted maxParallelRetains, so
     // those two hosts silently ignored the setting. One builder is what stops that recurring.

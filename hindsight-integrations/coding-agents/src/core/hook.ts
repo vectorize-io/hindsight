@@ -21,7 +21,7 @@
  * without stdin/stdout; `runHook` is thin plumbing around it, with a `makeClient` seam for tests.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { deriveBankIdOrSkip } from "./bank";
+import { bankProjectName, deriveBankIdOrSkip } from "./bank";
 import type { Config } from "./config";
 import { applyBankConfig, loadConfig } from "./config";
 import { diag, diagFilePath } from "./diag";
@@ -77,6 +77,7 @@ export interface HookSpec {
 
 /** Minimal client shape `buildHookOutput` needs — `HindsightClient` satisfies it structurally. */
 interface HookClient {
+  readonly project?: string;
   reflect(query: string, opts: { budget?: string; timeoutMs: number }): Promise<string>;
   listPages(): Promise<unknown>;
   searchKnowledgePages(
@@ -348,6 +349,7 @@ export async function buildHookOutput(args: {
   if (cadence > 0 && turns % cadence === 0) {
     blocks.push(
       buildRosterRefresh(pages, {
+        project: client.project,
         reflectOnNewGoals: cfg.autoInject !== "reflect",
         extra: cfg.toolGuideExtra,
       })
@@ -438,6 +440,7 @@ export async function runHook(
     apiUrl: cfg.apiUrl,
     apiToken: cfg.apiToken,
     bank: bankId,
+    project: bankId === derived ? bankProjectName(cfg, cwd, sessionRoot) : undefined,
     maxParallelRetains: cfg.maxParallelRetains,
     observationScopes: cfg.observationScopes,
     pageSearchLimit: cfg.pageSearchLimit,

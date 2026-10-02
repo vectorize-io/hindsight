@@ -190,6 +190,7 @@ export class RuntimeCore {
     if (turns === 1) {
       blocks.push(
         buildKnowledgePreamble(output.pages, {
+          project: this.client.project,
           reflectOnNewGoals: this.cfg.autoInject !== "reflect",
           extra: this.cfg.toolGuideExtra,
         })
