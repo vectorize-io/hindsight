@@ -286,6 +286,9 @@ class Hindsight:
                 retrying. Waits honour ``Retry-After`` and are jittered; writes are
                 never retried here.
         """
+        # Generated routes already start with a slash, like the handwritten bank
+        # routes. Normalize once so a URL copied with a trailing slash works for both.
+        base_url = base_url.rstrip("/")
         config = hindsight_client_api.Configuration(host=base_url, access_token=api_key)
         self._api_client = hindsight_client_api.ApiClient(config)
         self._api_client.user_agent = user_agent or DEFAULT_USER_AGENT
@@ -294,7 +297,7 @@ class Hindsight:
         # Per-client RNG so jitter is injectable in tests and independent of any
         # seeding the calling application does to the global `random` module.
         self._retry_rng = random.Random()
-        self._base_url = base_url.rstrip("/")
+        self._base_url = base_url
         self._api_key = api_key
         self._retain_suspended: ContextVar[bool] = ContextVar("retain_suspended", default=False)
         if api_key:
