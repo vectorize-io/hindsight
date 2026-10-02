@@ -1148,8 +1148,9 @@ class CohereEmbeddings(Embeddings):
             output_dimensions: Optional output embedding dimensions (for Matryoshka-capable models)
             batch_size: Maximum batch size for embedding requests (default: 96, Cohere's limit)
             timeout: Request timeout in seconds (default: 60.0)
-            input_type: Input type for embeddings (default: search_document).
-                       Options: search_document, search_query, classification, clustering
+            input_type: Input type for direct encode() calls (default: search_document).
+                       Options: search_document, search_query, classification, clustering.
+                       Retrieval helpers select search_query/search_document per request.
             retry_policy: Bounded retry policy for transient upstream failures
                 (default: RetryPolicy() built-in defaults)
         """
@@ -1221,6 +1222,18 @@ class CohereEmbeddings(Embeddings):
         logger.info(f"Embeddings: Cohere provider initialized (model: {self.model}, dim: {self._dimension})")
 
     async def encode(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings with the explicitly configured input type."""
+        return await self._encode_with_input_type(texts, self.input_type)
+
+    async def encode_query(self, texts: list[str]) -> list[list[float]]:
+        """Use Cohere's query-side task for recall without changing shared client state."""
+        return await self._encode_with_input_type(texts, "search_query")
+
+    async def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        """Use Cohere's document-side task for retained text."""
+        return await self._encode_with_input_type(texts, "search_document")
+
+    async def _encode_with_input_type(self, texts: list[str], input_type: str) -> list[list[float]]:
         """
         Generate embeddings using the Cohere API.
 
@@ -1241,9 +1254,9 @@ class CohereEmbeddings(Embeddings):
         # batches too.
         budget = self.retry_policy.new_budget()
 
-        return await self._encode_batched(texts, lambda batch: self._embed_batch(batch, budget))
+        return await self._encode_batched(texts, lambda batch: self._embed_batch(batch, input_type, budget))
 
-    async def _embed_batch(self, batch: list[str], budget: "RetryBudget") -> list[list[float]]:
+    async def _embed_batch(self, batch: list[str], input_type: str, budget: "RetryBudget") -> list[list[float]]:
         """Embed one batch-sized slice."""
         assert self._clients is not None
         client = self._clients.get()
@@ -1255,7 +1268,7 @@ class CohereEmbeddings(Embeddings):
                 lambda: client.v2.embed(
                     texts=batch,
                     model=self.model,
-                    input_type=self.input_type,
+                    input_type=input_type,
                     output_dimension=self.output_dimensions,
                     embedding_types=["float"],
                 ),
@@ -1268,7 +1281,7 @@ class CohereEmbeddings(Embeddings):
             lambda: client.embed(
                 texts=batch,
                 model=self.model,
-                input_type=self.input_type,
+                input_type=input_type,
             ),
             policy=self.retry_policy,
             budget=budget,
