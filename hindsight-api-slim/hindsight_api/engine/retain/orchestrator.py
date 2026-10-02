@@ -50,6 +50,84 @@ class MemoryDefenseAllBlockedError(Exception):
         super().__init__(f"all {len(violations)} items blocked by Memory Defense policy")
 
 
+async def _oracle_append_operation_metadata(
+    conn: Any,
+    table: str,
+    operation_uuid: uuid.UUID,
+    list_key: str,
+    value: str,
+    merge: dict[str, Any] | None = None,
+) -> None:
+    """Append ``value`` to ``result_metadata[list_key]`` (if absent) on Oracle.
+
+    PostgreSQL does this append-if-absent atomically with jsonb_set / -> / @>,
+    which the Oracle compatibility rewriter cannot translate (ORA-00936). Lock the
+    operation row, merge the JSON document in Python and write it back in the same
+    transaction instead. ``merge`` holds top-level keys to set first, mirroring the
+    PostgreSQL ``result_metadata || $1::jsonb``.
+    """
+    async with conn.transaction():
+        row = await conn.fetchrow(
+            f"SELECT result_metadata FROM {table} WHERE operation_id = $1 FOR UPDATE",
+            operation_uuid,
+        )
+        metadata = conn.parse_json(row["result_metadata"]) if row else {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        if merge:
+            metadata.update(merge)
+        values = metadata.get(list_key)
+        if not isinstance(values, list):
+            values = []
+        if value not in values:
+            values.append(value)
+        metadata[list_key] = values
+        await conn.execute(
+            f"UPDATE {table} SET result_metadata = $1, updated_at = CURRENT_TIMESTAMP WHERE operation_id = $2",
+            json.dumps(metadata),
+            operation_uuid,
+        )
+
+
+async def _persist_facts_committed_checkpoint(
+    conn: Any, table: str, operation_id: str, document_id: str, unit_ids_count: int
+) -> None:
+    """Record the streaming-retain crash-recovery checkpoint on an async operation.
+
+    Sets ``facts_committed`` / ``unit_ids_count`` and appends the document to
+    ``facts_committed_document_ids`` so multi-doc batches track each document
+    independently. Oracle takes the lock-and-merge path, as for ``document_ids``.
+    """
+    operation_uuid = uuid.UUID(operation_id)
+    checkpoint = {"facts_committed": True, "unit_ids_count": unit_ids_count}
+    if conn.backend_type == "oracle":
+        await _oracle_append_operation_metadata(
+            conn, table, operation_uuid, "facts_committed_document_ids", document_id, merge=checkpoint
+        )
+        return
+
+    await conn.execute(
+        f"""
+        UPDATE {table}
+        SET result_metadata = jsonb_set(
+            result_metadata || $1::jsonb,
+            '{{facts_committed_document_ids}}',
+            CASE
+                WHEN COALESCE(result_metadata->'facts_committed_document_ids', '[]'::jsonb) @> $2::jsonb
+                    THEN result_metadata->'facts_committed_document_ids'
+                ELSE COALESCE(result_metadata->'facts_committed_document_ids', '[]'::jsonb) || $2::jsonb
+            END,
+            true
+        ),
+        updated_at = now()
+        WHERE operation_id = $3
+        """,
+        json.dumps(checkpoint),
+        json.dumps([document_id]),
+        operation_uuid,
+    )
+
+
 async def _persist_operation_document_id(conn: Any, table: str, operation_id: str, document_id: str) -> None:
     """Record a document id on an async operation for retry-safe retention.
 
@@ -59,25 +137,7 @@ async def _persist_operation_document_id(conn: Any, table: str, operation_id: st
     """
     operation_uuid = uuid.UUID(operation_id)
     if conn.backend_type == "oracle":
-        async with conn.transaction():
-            row = await conn.fetchrow(
-                f"SELECT result_metadata FROM {table} WHERE operation_id = $1 FOR UPDATE",
-                operation_uuid,
-            )
-            metadata = conn.parse_json(row["result_metadata"]) if row else {}
-            if not isinstance(metadata, dict):
-                metadata = {}
-            document_ids = metadata.get("document_ids")
-            if not isinstance(document_ids, list):
-                document_ids = []
-            if document_id not in document_ids:
-                document_ids.append(document_id)
-            metadata["document_ids"] = document_ids
-            await conn.execute(
-                f"UPDATE {table} SET result_metadata = $1, updated_at = CURRENT_TIMESTAMP WHERE operation_id = $2",
-                json.dumps(metadata),
-                operation_uuid,
-            )
+        await _oracle_append_operation_metadata(conn, table, operation_uuid, "document_ids", document_id)
         return
 
     await conn.execute(
@@ -3450,28 +3510,8 @@ async def _streaming_retain_batch(
         if operation_id and all_unit_ids:
             try:
                 async with acquire_with_retry(pool) as conn:
-                    # Append effective_doc_id to the committed document set if not
-                    # already present, so multi-doc batches track each document
-                    # independently for crash recovery.
-                    await conn.execute(
-                        f"""
-                        UPDATE {fq_table("async_operations")}
-                        SET result_metadata = jsonb_set(
-                            result_metadata || $1::jsonb,
-                            '{{facts_committed_document_ids}}',
-                            CASE
-                                WHEN COALESCE(result_metadata->'facts_committed_document_ids', '[]'::jsonb) @> $2::jsonb
-                                    THEN result_metadata->'facts_committed_document_ids'
-                                ELSE COALESCE(result_metadata->'facts_committed_document_ids', '[]'::jsonb) || $2::jsonb
-                            END,
-                            true
-                        ),
-                        updated_at = now()
-                        WHERE operation_id = $3
-                        """,
-                        json.dumps({"facts_committed": True, "unit_ids_count": len(all_unit_ids)}),
-                        json.dumps([effective_doc_id]),
-                        uuid.UUID(operation_id),
+                    await _persist_facts_committed_checkpoint(
+                        conn, fq_table("async_operations"), operation_id, effective_doc_id, len(all_unit_ids)
                     )
                 log_buffer.append(f"[streaming] Checkpoint: {len(all_unit_ids)} facts committed, ANN pass next")
             except Exception:
