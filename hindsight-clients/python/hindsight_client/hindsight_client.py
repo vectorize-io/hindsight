@@ -803,6 +803,9 @@ class Hindsight:
         offset: int = 0,
         tags: list[str] | None = None,
         tags_match: str | None = None,
+        document_id: str | None = None,
+        state: Literal["valid", "invalidated"] | None = None,
+        consolidation_state: Literal["failed", "pending", "done"] | None = None,
     ) -> ListMemoryUnitsResponse:
         """
         List memory units with pagination (sync wrapper — prefer :meth:`alist_memories` in async code).
@@ -822,6 +825,9 @@ class Hindsight:
                 offset=offset,
                 tags=tags,
                 tags_match=tags_match,
+                document_id=document_id,
+                state=state,
+                consolidation_state=consolidation_state,
             )
         )
 
@@ -838,6 +844,9 @@ class Hindsight:
         offset: int = 0,
         tags: list[str] | None = None,
         tags_match: str | None = None,
+        document_id: str | None = None,
+        state: Literal["valid", "invalidated"] | None = None,
+        consolidation_state: Literal["failed", "pending", "done"] | None = None,
     ) -> ListMemoryUnitsResponse:
         """List memory units with pagination (async — preferred over :meth:`list_memories`).
 
@@ -853,6 +862,10 @@ class Hindsight:
 
         tags / tags_match filter by the memories' tags ('any', 'all', 'any_strict',
         'all_strict', 'exact'; the server defaults to 'any').
+
+        document_id restricts results to one retained document. state selects
+        valid or invalidated facts; consolidation_state selects failed, pending,
+        or done consolidation. Omitted filters preserve the server defaults.
         """
         return await self._memory_api.list_memories(
             bank_id=bank_id,
@@ -866,6 +879,9 @@ class Hindsight:
             offset=offset,
             tags=tags,
             tags_match=tags_match,
+            document_id=document_id,
+            state=state,
+            consolidation_state=consolidation_state,
             _request_timeout=self._timeout,
         )
 
