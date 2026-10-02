@@ -310,6 +310,10 @@ Available in `hybrid` and `tools` memory modes:
 | `HINDSIGHT_BANK_ID` | Override bank name |
 | `HINDSIGHT_BUDGET` | Override recall budget |
 | `HINDSIGHT_MODE` | Override mode (`cloud`, `local_embedded`, `local_external`) |
+| `HINDSIGHT_RETAIN_CONTEXT` | Label stored with each retained conversation (`retain_context`) |
+| `HINDSIGHT_RETAIN_INDICATOR` | `false` hides the "saving to memory" status line (`retain_indicator`) |
+| `HINDSIGHT_RECALL_INDICATOR` | `false` hides the "recalled N memories" status line (`recall_indicator`) |
+| `HINDSIGHT_RECALL_SYNC` | `true` recalls against the current message before answering (`recall_sync`) |
 
 ## Client Version
 

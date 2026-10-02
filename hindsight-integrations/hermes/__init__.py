@@ -96,6 +96,13 @@ def _scoped_setting(name: str, default: str = "") -> str:
     return default if value is None else value
 
 
+def _scoped_flag(name: str, default: bool) -> bool:
+    """A boolean ``_scoped_setting``: ``true``/``1``/``yes``/``on`` (any case) are on; anything else
+    set is off; unset keeps *default*."""
+    value = str(_scoped_setting(name, "") or "").strip().lower()
+    return default if not value else value in {"true", "1", "yes", "on"}
+
+
 def _cloud_api_key(config: dict) -> str:
     return config.get("apiKey") or config.get("api_key") or get_secret("HINDSIGHT_API_KEY", "")
 
@@ -308,6 +315,10 @@ def _load_config() -> dict:
         "retain_source": _scoped_setting("HINDSIGHT_RETAIN_SOURCE", _DEFAULT_RETAIN_SOURCE),
         "retain_user_prefix": _scoped_setting("HINDSIGHT_RETAIN_USER_PREFIX", "User"),
         "retain_assistant_prefix": _scoped_setting("HINDSIGHT_RETAIN_ASSISTANT_PREFIX", "Assistant"),
+        "retain_context": _scoped_setting("HINDSIGHT_RETAIN_CONTEXT", _RETAIN_CONTEXT_DEFAULT),
+        "retain_indicator": _scoped_flag("HINDSIGHT_RETAIN_INDICATOR", True),
+        "recall_indicator": _scoped_flag("HINDSIGHT_RECALL_INDICATOR", True),
+        "recall_sync": _scoped_flag("HINDSIGHT_RECALL_SYNC", False),
         "banks": {
             "hermes": {
                 "bankId": get_secret("HINDSIGHT_BANK_ID", "") or "hermes",
