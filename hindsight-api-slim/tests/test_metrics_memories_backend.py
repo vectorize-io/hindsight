@@ -11,7 +11,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from hindsight_api.engine.memories.base import MemoriesExtension
 from hindsight_api.engine.memories.postgres import PostgresMemories
 from hindsight_api.metrics import MetricsCollector, memories_backend_for
 
@@ -51,7 +50,7 @@ def test_default_is_no_label_so_existing_series_are_untouched(collector):
     """A store that does not override backend_name_for names nothing: no label, so no new series
     and no break in the history of the ones a deployment already has."""
     store = PostgresMemories({})
-    assert MemoriesExtension.backend_name_for(store, "any-bank") == ""
+    assert store.backend_name_for("any-bank") == ""
     with patch("hindsight_api.engine.memories.get_memories", return_value=store):
         with collector.record_operation("recall", bank_id="bank"):
             collector.record_recall_phase("engine_call", 0.01)

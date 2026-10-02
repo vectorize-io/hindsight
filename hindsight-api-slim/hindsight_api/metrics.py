@@ -711,8 +711,9 @@ class MetricsCollector(MetricsCollectorBase):
         start_time = time.time()
         success = True
         cancelled = False
-        # Resolved once, and published for the length of the operation so the phase metrics
-        # recorded inside it (recall phases, retain phases) carry the same backend label.
+        # Resolved once, and published for the length of the operation so the recall phases
+        # recorded inside it carry the same backend label. (Retain phases label their store
+        # themselves, in timed_retain.)
         backend = memories_backend_for(bank_id)
         backend_token = _current_memories_backend.set(backend)
         try:

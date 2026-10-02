@@ -111,8 +111,8 @@ only on deployments with few banks or tenants. The backlog gauges always carry `
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `hindsight.operation.duration` | Histogram | operation, bank_id, source, budget, max_tokens, success | Duration of operations in seconds |
-| `hindsight.operation.total` | Counter | operation, bank_id, source, budget, max_tokens, success | Total number of operations executed |
+| `hindsight.operation.duration` | Histogram | operation, bank_id, source, budget, max_tokens, success, memories_backend | Duration of operations in seconds |
+| `hindsight.operation.total` | Counter | operation, bank_id, source, budget, max_tokens, success, memories_backend | Total number of operations executed |
 
 **Labels:**
 - `operation`: Operation type (`retain`, `recall`, `reflect`, plus async worker task types such as `consolidation`)
@@ -121,6 +121,10 @@ only on deployments with few banks or tenants. The backlog gauges always carry `
 - `budget`: Budget level if specified (`low`, `mid`, `high`)
 - `max_tokens`: Max tokens if specified
 - `success`: Whether the operation succeeded (`true`, `false`)
+- `memories_backend`: The store serving the bank, when the memories extension names one
+  (`MemoriesExtension.backend_name_for`). Absent by default, so existing series are unchanged; a
+  deployment whose banks live in different stores uses it to compare their latency without
+  turning on `tenant`. Recall phase metrics recorded inside the operation carry it too.
 
 The `source` label allows distinguishing between:
 - `api`: Direct API calls from clients
