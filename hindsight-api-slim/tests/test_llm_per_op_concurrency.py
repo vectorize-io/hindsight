@@ -16,8 +16,9 @@ import httpx
 import pytest
 from openai import APIConnectionError
 
-from hindsight_api.config import clear_config_cache
+from hindsight_api.config import _get_raw_config
 from hindsight_api.engine import llm_wrapper
+from hindsight_api.engine.llm_trace import LLMTraceContext, reset_trace_context, set_trace_context
 from hindsight_api.engine.llm_wrapper import (
     LLMProvider,
     _scope_to_operation,
@@ -42,6 +43,7 @@ class TestScopeToOperation:
             ("refresh_mental_model", "mental_model_refresh"),
             ("dry_run_refresh_mental_model", "mental_model_refresh"),
             ("mental_model_delta_ops", "mental_model_refresh"),
+            ("mental_model_retraction_ops", "mental_model_refresh"),
             # Out-of-bucket scopes — only the global cap applies.
             ("memory_think", None),
             ("bank_mission", None),
@@ -51,6 +53,72 @@ class TestScopeToOperation:
     )
     def test_scope_dispatch(self, scope, expected):
         assert _scope_to_operation(scope) == expected
+
+
+class TestScopeToOperationUnderRefresh:
+    """The refresh drives the reflect agent, whose calls carry plain reflect scopes.
+
+    The operation bound by ``with_config`` is what tells them apart: without it,
+    MENTAL_MODEL_REFRESH_LLM_MAX_CONCURRENT never sees the refresh's agent turns
+    and they queue on the interactive reflect cap instead (#4463).
+    """
+
+    @pytest.mark.parametrize("operation", ["refresh_mental_model", "dry_run_refresh_mental_model"])
+    @pytest.mark.parametrize("scope", ["reflect", "reflect_tool_call", "reflect_structured", "final_rewrite"])
+    def test_refresh_agent_calls_use_the_refresh_bucket(self, operation, scope):
+        token = set_trace_context(LLMTraceContext(operation=operation))
+        try:
+            assert _scope_to_operation(scope) == "mental_model_refresh"
+        finally:
+            reset_trace_context(token)
+
+    @pytest.mark.parametrize("scope, expected", [("reflect", "reflect"), ("reflect_tool_call", "reflect")])
+    def test_interactive_reflect_keeps_the_reflect_bucket(self, scope, expected):
+        token = set_trace_context(LLMTraceContext(operation="reflect"))
+        try:
+            assert _scope_to_operation(scope) == expected
+        finally:
+            reset_trace_context(token)
+
+    def test_refresh_agent_call_takes_the_refresh_semaphore(self):
+        refresh_sem = asyncio.Semaphore(1)
+        reflect_sem = asyncio.Semaphore(1)
+        token = set_trace_context(LLMTraceContext(operation="refresh_mental_model"))
+        try:
+            with patch.object(
+                llm_wrapper,
+                "_per_op_llm_semaphores",
+                {"mental_model_refresh": refresh_sem, "reflect": reflect_sem},
+            ):
+                assert _semaphores_for_scope("reflect_tool_call") == [refresh_sem, llm_wrapper._global_llm_semaphore]
+        finally:
+            reset_trace_context(token)
+
+    @pytest.mark.asyncio
+    async def test_attempt_gated_refresh_attempt_holds_the_refresh_permit(self):
+        """Attempt-gated providers (openai-compatible, xai-oauth, codex, ...) take
+        permits inside their own retry loop; the refresh's operation must still be
+        visible there, or the cap would not bite on the providers used in practice."""
+        provider = LLMProvider(provider="openai", api_key="test", base_url="", model="test-model")
+        refresh_sem = asyncio.Semaphore(1)
+        reflect_sem = asyncio.Semaphore(1)
+        held: list[tuple[bool, bool]] = []
+
+        async def gated_call(**kwargs):
+            async with kwargs["attempt_context"]():
+                held.append((refresh_sem.locked(), reflect_sem.locked()))
+            return "ok"
+
+        provider._provider_impl.call = gated_call  # type: ignore[assignment]
+        configured = provider.with_config(_get_raw_config(), operation="refresh_mental_model")
+        with patch.object(
+            llm_wrapper,
+            "_per_op_llm_semaphores",
+            {"mental_model_refresh": refresh_sem, "reflect": reflect_sem},
+        ):
+            await configured.call(messages=[{"role": "user", "content": "x"}], scope="reflect")
+
+        assert held == [(True, False)], "a refresh attempt must hold the refresh permit, not reflect's"
 
 
 class TestSemaphoresForScope:
