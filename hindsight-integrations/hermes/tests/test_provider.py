@@ -5,6 +5,7 @@ import json
 
 import hindsight_hermes as plugin
 from conftest import FakeClient
+from hindsight_client_api.exceptions import NotFoundException
 
 
 def _retain_item(fake: FakeClient, index: int = 0) -> dict:
@@ -85,6 +86,22 @@ def test_tool_call_errors_are_reported_not_raised(provider):
     instance, _ = provider({})
     assert instance.handle_tool_call("hindsight_recall", {}).startswith("ERROR:")
     assert instance.handle_tool_call("nope", {"query": "x"}).startswith("ERROR:")
+    instance.shutdown()
+
+
+class _EmptyServerClient(FakeClient):
+    async def arecall(self, **kwargs):
+        raise NotFoundException(status=404, reason="Not Found")
+
+    async def areflect(self, **kwargs):
+        raise NotFoundException(status=404, reason="Not Found")
+
+
+def test_searching_a_bank_nothing_was_saved_to_finds_nothing(provider):
+    instance, _ = provider({}, client=_EmptyServerClient())
+    for tool in ("hindsight_recall", "hindsight_reflect"):
+        result = json.loads(instance.handle_tool_call(tool, {"query": "who am I?"}))
+        assert result == {"result": "No relevant memories found."}
     instance.shutdown()
 
 

@@ -288,6 +288,13 @@ REFLECT_SCHEMA = {
 }
 
 
+def _bank_not_written_yet(exc: Exception) -> bool:
+    """Hindsight answers 404 for a bank nothing has been retained to yet. Read off the status rather
+    than importing the client's exception class here: that import, run from the prefetch thread while
+    the writer thread first imports the client, deadlocks on the package's import lock."""
+    return getattr(exc, "status", None) == 404
+
+
 def _load_config() -> dict:
     """$HERMES_HOME/hindsight/config.json (profile-scoped), else ~/.hindsight/config.json
     (legacy, shared), else environment variables."""
@@ -1251,13 +1258,23 @@ class HindsightMemoryProvider(MemoryProvider):
             kwargs.update(tags=self._recall_tags, tags_match=self._recall_tags_match)
         if self._recall_types:
             kwargs["types"] = self._recall_types
-        resp = self._run_hindsight_operation(lambda client: client.arecall(**kwargs))
+        try:
+            resp = self._run_hindsight_operation(lambda client: client.arecall(**kwargs))
+        except Exception as exc:
+            if _bank_not_written_yet(exc):
+                return []
+            raise
         return resp.results or []
 
     def _reflect(self, query: str) -> str | None:
-        resp = self._run_hindsight_operation(
-            lambda client: client.areflect(bank_id=self._bank_id, query=query, budget=self._budget)
-        )
+        try:
+            resp = self._run_hindsight_operation(
+                lambda client: client.areflect(bank_id=self._bank_id, query=query, budget=self._budget)
+            )
+        except Exception as exc:
+            if _bank_not_written_yet(exc):
+                return None
+            raise
         return resp.text
 
     def _do_recall(self, query: str) -> tuple[str, int]:
