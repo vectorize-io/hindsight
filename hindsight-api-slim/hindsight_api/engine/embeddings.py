@@ -223,12 +223,6 @@ class Embeddings(ABC):
         if not batches:
             return []
 
-        concurrency = min(max(self.max_concurrent_requests, 1), len(batches))
-        if concurrency == 1:
-            # The common case (a single batch, e.g. a recall query) runs inline: no
-            # tasks, no semaphore, byte-identical to the old loop.
-            return [vector for batch in batches for vector in await encode_batch(batch)]
-
         slots = self._get_request_slots()
 
         async def run(batch: list[str]) -> list[list[float]]:
@@ -236,6 +230,12 @@ class Embeddings(ABC):
             # doing its job rather than a reason to widen it.
             async with slots:
                 return await encode_batch(batch)
+
+        concurrency = min(max(self.max_concurrent_requests, 1), len(batches))
+        if concurrency == 1:
+            # Keep single batches and single-slot callers inline, but enforce the
+            # same backend-wide bound used by fan-out across concurrent callers.
+            return [vector for batch in batches for vector in await run(batch)]
 
         # create_task copies the caller's contextvars into each task, so the per-bank
         # cost attribution they carry (see apply_bank_attribution) reaches every batch.
