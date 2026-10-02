@@ -20,6 +20,7 @@ import queue
 import sys
 import threading
 import time
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -331,6 +332,34 @@ def _mint_document_id(session_id: str) -> str:
     """Per-process document id: reusing session_id alone overwrote the document on
     /resume (the reloaded session's first retain replaced the stored content)."""
     return f"{session_id}-{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+
+
+def _notification_content_text(content: Any) -> str | None:
+    """Text projection of one inbound user row, or None when it cannot be projected.
+
+    Hermes flattens the current user message before ``sync_turn`` (``run_agent``
+    joins the text parts) while the ``messages`` rows keep their original
+    structured content, so the receipt-identity check has to compare that
+    projection instead of the raw value. Non-text parts (images) are not
+    reconstructed here: an undecidable projection returns None so the caller keeps
+    the user row (fail open).
+    """
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, (list, tuple)):
+        return None
+    parts: List[str] = []
+    for part in content:
+        if isinstance(part, str):
+            parts.append(part)
+        elif isinstance(part, Mapping):
+            text = part.get("text")
+            if not isinstance(text, str):
+                return None
+            parts.append(text)
+        else:
+            return None
+    return "\n".join(part for part in parts if part.strip()).strip()
 
 
 # initialize() kwargs copied verbatim (str, stripped) onto ``self._<name>``.
@@ -1405,7 +1434,9 @@ class HindsightMemoryProvider(MemoryProvider):
         """Writer job shipping *turns* as one document. Inputs are snapshotted NOW: the
         writer runs after later sync_turn() calls mutate _session_turns/_turn_index/_session_id."""
         content = "[" + ",".join(turns) + "]"
-        metadata = self._build_metadata(message_count=len(turns) * 2, turn_index=self._turn_index)
+        metadata = self._build_metadata(
+            message_count=sum(len(json.loads(turn)) for turn in turns), turn_index=self._turn_index
+        )
         lineage = (("session", self._session_id), ("parent", self._parent_session_id))
         tags = [f"{kind}:{sid}" for kind, sid in lineage if sid] or None
         bank_id, retain_async, retain_context = self._bank_id, self._retain_async, self._retain_context
@@ -1433,7 +1464,14 @@ class HindsightMemoryProvider(MemoryProvider):
 
         return _job
 
-    def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "") -> None:
+    def sync_turn(
+        self,
+        user_content: str,
+        assistant_content: str,
+        *,
+        session_id: str = "",
+        messages: Sequence[Mapping[str, Any]] | None = None,
+    ) -> None:
         """Enqueue a retain for the current turn (non-blocking; writer thread). Dropped
         once shutdown() fired so post-exit retains never reach aiohttp during teardown."""
         why = (
@@ -1449,9 +1487,23 @@ class HindsightMemoryProvider(MemoryProvider):
         if session_id:
             self._session_id = str(session_id).strip()
 
-        self._session_turns.append(
-            json.dumps(self._build_turn_messages(user_content, assistant_content), ensure_ascii=False)
-        )
+        turn_messages = self._build_turn_messages(user_content, assistant_content)
+        # Completion receipts arrive as user-role input even in primary sessions.
+        # Match the current input, not old history or marker-looking human prose;
+        # compare the text projection because the host flattened the input before
+        # calling us while the messages row still carries structured content.
+        # Keep the assistant's findings rather than dropping the entire turn.
+        last_user = next((message for message in reversed(messages or []) if message.get("role") == "user"), None)
+        last_user_text = _notification_content_text(last_user.get("content")) if last_user else None
+        if (
+            last_user is not None
+            and last_user_text == user_content.strip()
+            and last_user.get("display_kind") in {"async_delegation_complete", "process_complete"}
+        ):
+            if not assistant_content.strip():
+                return
+            turn_messages = [message for message in turn_messages if message["role"] == "assistant"]
+        self._session_turns.append(json.dumps(turn_messages, ensure_ascii=False))
         self._turn_counter = self._turn_index = self._turn_counter + 1
         if remainder := self._turn_counter % self._retain_every_n_turns:
             logger.debug(
