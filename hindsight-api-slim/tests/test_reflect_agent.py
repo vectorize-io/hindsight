@@ -220,6 +220,27 @@ class TestReflectStructuredOutput:
         assert llm.call.await_args.kwargs["temperature"] == 0.0
 
     @pytest.mark.asyncio
+    async def test_structured_output_omits_temperature_when_reflect_omits_it(self, monkeypatch):
+        """Schema extraction must not reintroduce a parameter disabled for the model."""
+        config = MagicMock(llm_temperature_reflect=None, llm_strict_schema_reflect=False)
+        monkeypatch.setattr("hindsight_api.engine.reflect.agent.get_config", lambda: config)
+        llm = MagicMock()
+        llm.call = AsyncMock(side_effect=RuntimeError("stop after request capture"))
+
+        await _generate_structured_output(
+            answer="Alice prefers concise engineering updates.",
+            response_schema={
+                "type": "object",
+                "properties": {"summary": {"type": "string"}},
+                "required": ["summary"],
+            },
+            llm_config=llm,
+            reflect_id="test-reflect",
+        )
+
+        assert llm.call.await_args.kwargs["temperature"] is None
+
+    @pytest.mark.asyncio
     async def test_structured_output_omits_budget_when_unset(self):
         """With no max_tokens (default), the structured call forwards
         max_completion_tokens=None -- which LLMProvider.call omits, exactly like
