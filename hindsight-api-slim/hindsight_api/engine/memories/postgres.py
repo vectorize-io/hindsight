@@ -456,6 +456,19 @@ class PostgresMemories(MemoriesExtension):
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_ids=unit_ids, when=when, failed=failed
         )
 
+    async def mark_consolidation_skipped(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        unit_ids: list[str],
+        when: datetime,
+    ) -> None:
+        await reads.mark_consolidation_skipped(
+            conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_ids=unit_ids, when=when
+        )
+
     async def any_memory_updated_since(
         self,
         *,

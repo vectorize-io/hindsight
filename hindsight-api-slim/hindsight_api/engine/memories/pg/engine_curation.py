@@ -181,7 +181,7 @@ async def clear_observations_and_requeue(*, conn, fq_table: Callable[[str], str]
     # Reset consolidated_at on source memories so they get re-consolidated.
     # Bookkeeping only: `updated_at` stays put (see META_UPDATED_AT).
     await conn.execute(
-        f"UPDATE {fq_table('memory_units')} SET consolidated_at = NULL WHERE bank_id = $1 AND fact_type IN ('experience', 'world')",
+        f"UPDATE {fq_table('memory_units')} SET consolidated_at = NULL, consolidation_skipped_at = NULL WHERE bank_id = $1 AND fact_type IN ('experience', 'world')",
         bank_id,
     )
     return count
@@ -202,7 +202,7 @@ async def requeue_failed_consolidation(*, conn, fq_table: Callable[[str], str], 
     await conn.execute(
         f"""
         UPDATE {fq_table("memory_units")}
-        SET consolidation_failed_at = NULL, consolidated_at = NULL
+        SET consolidation_failed_at = NULL, consolidated_at = NULL, consolidation_skipped_at = NULL
         WHERE bank_id = $1
           AND consolidation_failed_at IS NOT NULL
           AND fact_type IN ('experience', 'world')
@@ -217,7 +217,7 @@ async def requeue_source_memory(*, conn, fq_table: Callable[[str], str], bank_id
     await conn.execute(
         f"""
         UPDATE {fq_table("memory_units")}
-        SET consolidated_at = NULL
+        SET consolidated_at = NULL, consolidation_skipped_at = NULL
         WHERE id = $1
           AND bank_id = $2
           AND fact_type IN ('experience', 'world')

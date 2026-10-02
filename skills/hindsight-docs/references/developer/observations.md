@@ -223,6 +223,11 @@ Leave it blank to use the server default — durable, specific facts that stay t
 
 Set `observations_mission` via the [bank config API](api/memory-banks.md#observations-configuration) or the [`HINDSIGHT_API_OBSERVATIONS_MISSION`](configuration.md#observations) environment variable.
 
+> **🚨 A restrictive mission can skip most of your facts**
+>
+Because your mission *replaces* the built-in rules, every constraint in it is a reason for the model to decline a fact. A mission such as *"only create an observation when two or more facts support a conclusion"* leaves a single fact with nothing valid to produce, so the model correctly skips it.
+
+A skipped fact is still marked consolidated: it leaves the pending queue and is not retried, so `pending_consolidation` reads 0 and nothing looks wrong. Hindsight also records it in `consolidation_skipped_at` and counts it in the [`hindsight.consolidation.skipped_facts`](monitoring.md#consolidation-metrics) metric. If that count is high for the data you retain, the mission is probably too narrow. This matters most when recall is observation-only, because a skipped fact is then absent from recall.
 ---
 
 ## Consolidation Strategies
@@ -341,7 +346,7 @@ To wipe all consolidated knowledge and start over:
 await client.banks.clear_observations(bank_id=BANK_ID)
 ```
 
-This resets the consolidation state for all source memories in the bank, so the next consolidation run will re-derive all observations from scratch.
+This resets the consolidation state for all source memories in the bank, so the next consolidation run will re-derive all observations from scratch. Facts that an earlier run skipped are reset too, so they are offered to the model again.
 
 ---
 

@@ -520,7 +520,7 @@ async def retag_document_memories(
             await conn.execute(
                 f"""
                 UPDATE {fq_table("memory_units")}
-                SET consolidated_at = NULL
+                SET consolidated_at = NULL, consolidation_skipped_at = NULL
                 WHERE id = ANY($1::uuid[])
                   AND fact_type IN ('experience', 'world')
                 """,
@@ -530,7 +530,7 @@ async def retag_document_memories(
                 await conn.execute(
                     f"""
                     UPDATE {fq_table("memory_units")}
-                    SET consolidated_at = NULL
+                    SET consolidated_at = NULL, consolidation_skipped_at = NULL
                     WHERE id = ANY($1::uuid[])
                       AND fact_type IN ('experience', 'world')
                     """,
