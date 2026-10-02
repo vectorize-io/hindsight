@@ -238,6 +238,68 @@ describe("HindsightClient.drain", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(log).toHaveBeenCalledWith("[wait] test drained — 2 done, 1 failed");
   });
+
+  // A 403/404 will never become a terminal op status by waiting out the budget (#5080).
+  it.each([403, 404])(
+    "fails a forever-%i on the first poll instead of pending until timeout",
+    async (status) => {
+      vi.useFakeTimers();
+      const log = vi.fn();
+      const client = new HindsightClient({ apiUrl: "http://x", bank: "b", log });
+      const fetchMock = vi.fn(async () => jsonResponse(status, {}));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const p = client.drain(["1"], "test", 60_000);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await p;
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const lines = log.mock.calls.map((c) => String(c[0]));
+      expect(lines.some((l) => l.includes(String(status)))).toBe(true);
+      expect(log).toHaveBeenCalledWith("[wait] test drained — 1 done, 1 failed");
+      expect(lines.some((l) => l.includes("still pending"))).toBe(false);
+    }
+  );
+
+  it("retries a 5xx a few times, then fails it instead of pending until timeout", async () => {
+    vi.useFakeTimers();
+    const log = vi.fn();
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b", log });
+    const fetchMock = vi.fn(async () => jsonResponse(503, {}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const p = client.drain(["1"], "test", 60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await p;
+
+    // Three polls: the first two stay pending (5s cycle), the third is terminal.
+    // A full 60s budget at that cycle would otherwise be 12 polls (#5080).
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const lines = log.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => l.includes("503"))).toBe(true);
+    expect(log).toHaveBeenCalledWith("[wait] test drained — 1 done, 1 failed");
+    expect(lines.some((l) => l.includes("still pending"))).toBe(false);
+  });
+
+  it("keeps an op that 5xxs once and then completes", async () => {
+    vi.useFakeTimers();
+    const log = vi.fn();
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b", log });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(503, {}))
+      .mockResolvedValueOnce(jsonResponse(200, { status: "completed" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const p = client.drain(["1"], "test", 60_000);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await p;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenCalledWith("[wait] test drained — 1 done, 0 failed");
+  });
 });
 
 describe("retryAfterMs", () => {

@@ -267,6 +267,15 @@ export const DEFAULT_RECALL_OPTIONS: Record<string, unknown> = {
 /** How long drain() pauses between poll cycles when the API did not rate-limit (429). */
 const POLL_CYCLE_MS = 5000;
 
+/**
+ * Consecutive 5xx polls of one operation before drain() gives up on it.
+ *
+ * One 5xx is a blip — the next cycle is POLL_CYCLE_MS later. Three in a row is a dead operation.
+ * Holding it for the rest of the budget (up to an hour) is how a vanished bank used to show up as
+ * "still pending" (#5080). 403 and 404 fail on the first poll; waiting cannot repair them.
+ */
+const POLL_5XX_ATTEMPTS = 3;
+
 /** Minimum backoff after a 429 that carried no (or a shorter) Retry-After. */
 const RETRY_AFTER_FLOOR_MS = 10 * 1000;
 
@@ -669,7 +678,9 @@ export class HindsightClient {
    * Concurrency is capped at `maxParallelRetains` (the API rate-limits bursts, not single
    * requests — a 200 to a lone GET with 429s under `Promise.all` over every pending op). A 429
    * leaves the op pending and backs the next cycle off by its `Retry-After` (10s floor) instead
-   * of hammering the next cycle 5s later.
+   * of hammering the next cycle 5s later. A 403 or 404 is dropped and counted failed immediately.
+   * A 5xx is polled up to POLL_5XX_ATTEMPTS times, then failed the same way — both name the HTTP
+   * status in the log, so a dead op is not reported as still pending (#5080).
    */
   async drain(ids: string[], label: string, maxMs = 60 * 60 * 1000): Promise<void> {
     if (!ids.length) return;
@@ -677,6 +688,16 @@ export class HindsightClient {
     const start = Date.now();
     const pending = new Set(ids);
     let failed = 0;
+    // Consecutive 5xx responses per id. Cleared when a poll returns a body, so a blip does not
+    // accumulate across a long-running operation.
+    const serverErrors = new Map<string, number>();
+    const giveUp = (id: string, status: number): void => {
+      pending.delete(id);
+      failed++;
+      serverErrors.delete(id);
+      // The status is the diagnosis. "failed" alone is what an hour of 403s used to hide (#5080).
+      this.log(`  … ${label} op ${id} failed: HTTP ${status}`);
+    };
     while (pending.size && Date.now() - start < maxMs) {
       // Cycle backoff: default 5s; any 429 in the cycle raises it to the longest Retry-After seen
       // (floor 10s) so a rate-limited API gets room to recover before the next poll round.
@@ -691,14 +712,29 @@ export class HindsightClient {
             );
             return; // op stays pending — retried after the backoff
           }
+          // Auth drift or a vanished op/bank. Another poll cannot succeed.
+          if (r.status === 403 || r.status === 404) {
+            giveUp(id, r.status);
+            return;
+          }
+          if (r.status >= 500) {
+            const seen = (serverErrors.get(id) ?? 0) + 1;
+            if (seen >= POLL_5XX_ATTEMPTS) {
+              giveUp(id, r.status);
+              return;
+            }
+            serverErrors.set(id, seen);
+            return;
+          }
           if (!r.ok) return;
+          serverErrors.delete(id);
           const st = (((await r.json()) as { status?: string }).status || "").toLowerCase();
           if (TERMINAL.has(st)) {
             pending.delete(id);
             if (st !== "completed") failed++;
           }
         } catch {
-          /* transient — retry next cycle */
+          /* A thrown fetch (network) is retried next cycle. HTTP 5xx is counted above. */
         }
       });
       if (pending.size) {
