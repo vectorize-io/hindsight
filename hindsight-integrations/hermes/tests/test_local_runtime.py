@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from hindsight_hermes import embedded
+from pathlib import Path
 
 
 def test_the_probe_requires_only_the_client_and_the_daemon_manager(monkeypatch):
@@ -155,14 +156,23 @@ def test_the_start_worker_reconciles_the_profile_env_before_the_daemon_boots(mon
     monkeypatch.setattr("hindsight_hermes._build_embedded_profile_env", lambda cfg: {"FRESH": "1"})
     monkeypatch.setattr("hindsight_hermes._may_rewrite_profile_env", lambda cfg: True)
     monkeypatch.setattr("hindsight_hermes._embedded_profile_env_path", lambda cfg: tmp_path / "p.env")
-    monkeypatch.setattr("hindsight_hermes._materialize_embedded_profile_env", lambda cfg: order.append("rewrote env"))
+
+    def _fake_write(path, content):
+        order.append("wrote env")
+        Path(path).write_text(content)
+
+    monkeypatch.setattr("hindsight_hermes._secure_write_profile_env", _fake_write)
+    monkeypatch.setattr("hindsight_hermes._validate_profile_env_permissions", lambda path: None)
     monkeypatch.setattr("hindsight_hermes._daemon_is_running", lambda profile: True)
     monkeypatch.setattr("hindsight_hermes._stop_daemon", lambda profile: order.append("stopped daemon"))
     monkeypatch.setattr(type(provider), "_get_client", lambda self: order.append("built client"))
 
     provider._daemon_start_worker()
 
-    assert order == ["rewrote env", "stopped daemon", "built client"]
+    assert order == ["wrote env", "stopped daemon", "built client"]
+    written = (tmp_path / "p.env").read_text()
+    assert "STALE=1" in written, "operator keys must be carried forward"
+    assert "FRESH=1" in written, "builder keys must win"
 
 
 def test_an_old_embed_starts_the_daemon_from_a_child_without_our_pythonpath(monkeypatch):

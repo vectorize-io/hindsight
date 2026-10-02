@@ -45,8 +45,10 @@ from .embedded import (
     _local_runtime_hint,
     _materialize_embedded_profile_env,
     _may_rewrite_profile_env,
+    _secure_write_profile_env,
     _start_daemon,
     _stop_daemon,
+    _validate_profile_env_permissions,
 )
 from .settings import (
     _DEFAULT_API_URL,
@@ -1199,7 +1201,18 @@ class HindsightMemoryProvider(MemoryProvider):
             # whatever key WAS available (config, secret scope, or the file itself).
             if _load_simple_env(_embedded_profile_env_path(self._config)) != _build_embedded_profile_env(self._config):
                 if _may_rewrite_profile_env(self._config):
-                    _materialize_embedded_profile_env(self._config)
+                    # Keys the builder does not manage are carried forward: an operator-tuned
+                    # profile env (LLM timeouts for slow providers, reranker/embeddings
+                    # overrides, port) must survive reconciliation — the builder only
+                    # guarantees its own keys, everything else it would silently drop.
+                    with contextlib.suppress(Exception):
+                        _existing_env = _load_simple_env(_embedded_profile_env_path(self._config))
+                        _built_env = _build_embedded_profile_env(self._config)
+                        _merged_env = {**_existing_env, **_built_env}
+                        _profile_env_path = _embedded_profile_env_path(self._config)
+                        _content = "".join(f"{k}={v}\n" for k, v in _merged_env.items())
+                        _secure_write_profile_env(_profile_env_path, _content)
+                        _validate_profile_env_permissions(_profile_env_path)
                     if _daemon_is_running(profile):
                         _log("\n=== Config changed, restarting daemon ===\n")
                         _stop_daemon(profile)
