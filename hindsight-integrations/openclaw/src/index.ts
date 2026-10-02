@@ -3359,11 +3359,21 @@ ${memoriesFormatted}
         // (which lacks senderId/messageProvider) still routes to the per-user bank.
         const factory = (ctx: PluginToolContext) => {
           const resolution = resolveBankIdForKnowledgeTools(ctx, pluginConfig);
-          const tools = createKnowledgeTools({
+          // Variable, not a fresh object literal: these recall fields are
+          // optional on older @vectorize-io/hindsight-agent-sdk declarations,
+          // and a literal would fail excess-property checks until that
+          // package is published. The SDK applies them when the agent omits
+          // the matching arguments, so manual recall matches auto-recall. (#5057)
+          const knowledgeToolOptions = {
             apiUrl,
             apiToken,
             bankId: resolution.bankId,
-          });
+            recallFactTypes: pluginConfig.recallTypes,
+            preferObservations: pluginConfig.preferObservations,
+            minScores: pluginConfig.recallMinScores,
+            recallBudget: pluginConfig.recallBudget,
+          };
+          const tools = createKnowledgeTools(knowledgeToolOptions);
           return tools.map((t) => ({
             name: t.name,
             label: t.label,

@@ -192,6 +192,8 @@ When `enableKnowledgeTools` is enabled, the plugin registers explicit `agent_kno
 
 Knowledge tools resolve the same dynamic memory bank as auto-recall and auto-retain: the plugin runs the shared identity-resolution path (`resolveAndCacheIdentity`) from the tool session context before deriving the bank ID. With user-scoped dynamic banking (`dynamicBankGranularity` includes `"user"`), tools target the per-user bank for that session; if sender identity cannot be resolved, tool execution returns a clear error instead of querying the shared `openclaw` default or an `anonymous` fallback bank. Configured bank defaults (missions, extraction mode, entity labels, etc.) are applied on first knowledge-tool use, matching `getClientForContext` behavior.
 
+`agent_knowledge_recall` uses the same recall settings as auto-recall when the agent omits them: memory types come from `recallTypes` (default `["observation"]`), and `preferObservations`, `recallMinScores`, and `recallBudget` are forwarded. Pass `fact_types`, `prefer_observations`, `min_scores`, or `budget` on the call to override them for that lookup.
+
 `agent_knowledge_reflect` uses conservative defaults: `budget: "low"`, `max_tokens: 1024`, and `fact_types: ["world", "experience", "observation"]`. Production deployments should also set a finite bank-level `reflect_source_facts_max_tokens` value, such as `4096` or `8192`, rather than leaving reflection source facts unlimited.
 
 ### Session pattern filtering

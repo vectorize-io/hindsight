@@ -27,6 +27,16 @@ export interface KnowledgeToolResult {
   content: Array<{ type: "text"; text: string }>;
 }
 
+/** Per-stage score floors forwarded to recall as `min_scores`. */
+export interface RecallMinScores {
+  semantic?: number | null;
+  keyword?: number | null;
+  reranker?: number | null;
+  final?: number | null;
+}
+
+export type RecallBudget = "low" | "mid" | "high";
+
 export interface CreateKnowledgeToolsOptions {
   /** Hindsight API base URL */
   apiUrl: string;
@@ -34,6 +44,18 @@ export interface CreateKnowledgeToolsOptions {
   apiToken?: string;
   /** Memory bank ID for this agent */
   bankId: string;
+  /**
+   * Default memory types for `agent_knowledge_recall` when the caller omits
+   * `fact_types`/`types`. Defaults to world, experience, and observation.
+   * OpenClaw passes its `recallTypes` so manual lookup matches auto-recall.
+   */
+  recallFactTypes?: ReadonlyArray<"world" | "experience" | "observation">;
+  /** Default `prefer_observations` when the tool call omits it. */
+  preferObservations?: boolean;
+  /** Default `min_scores` when the tool call omits `min_scores`. */
+  minScores?: RecallMinScores;
+  /** Default recall `budget` when the tool call omits `budget`. */
+  recallBudget?: RecallBudget;
 }
 
 // ── Constants ──────────────────────────────────────────
@@ -41,7 +63,11 @@ export interface CreateKnowledgeToolsOptions {
 const FACT_TYPES = ["world", "experience", "observation"] as const;
 type FactType = (typeof FACT_TYPES)[number];
 
-const DEFAULT_RECALL_FACT_TYPES = ["world", "experience"] as const satisfies readonly FactType[];
+// All three types. The previous default (world + experience) hid consolidated
+// observations: the API searches every type when `types` is omitted, and
+// OpenClaw auto-recall follows `recallTypes` (default `["observation"]`).
+// Harnesses pass `recallFactTypes` to keep manual recall on that same list. (#5057)
+const DEFAULT_RECALL_FACT_TYPES = FACT_TYPES;
 const DEFAULT_REFLECT_FACT_TYPES = FACT_TYPES;
 
 const PAGE_DEFAULTS = {
@@ -88,6 +114,30 @@ function normalizeFactTypes(input: unknown, defaultTypes: readonly FactType[]): 
   }
 
   return [...new Set(normalized)];
+}
+
+const MIN_SCORE_FIELDS = ["semantic", "keyword", "reranker", "final"] as const;
+
+function parseOptionalBoolean(input: unknown): boolean | undefined {
+  return typeof input === "boolean" ? input : undefined;
+}
+
+function parseRecallBudget(input: unknown): RecallBudget | undefined {
+  return input === "low" || input === "mid" || input === "high" ? input : undefined;
+}
+
+/** Keep only known score floors. An empty or non-object input means "no floors". */
+function parseMinScores(input: unknown): RecallMinScores | undefined {
+  if (input == null || typeof input !== "object" || Array.isArray(input)) return undefined;
+  const src = input as Record<string, unknown>;
+  const out: RecallMinScores = {};
+  for (const key of MIN_SCORE_FIELDS) {
+    const value = src[key];
+    if (value === null || (typeof value === "number" && Number.isFinite(value))) {
+      out[key] = value;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 const DEFAULT_RECALL_MAX_TOKENS = 1024;
@@ -262,12 +312,34 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
             type: "array",
             items: { type: "string", enum: ["world", "experience", "observation"] },
             description:
-              "Memory types to recall. Defaults to world and experience. Include observation for consolidated knowledge pages/rules/preferences.",
+              "Memory types to recall. Defaults to world, experience, and observation unless the host configured a different default (OpenClaw: recallTypes).",
           },
           types: {
             type: "array",
             items: { type: "string", enum: ["world", "experience", "observation"] },
             description: "Alias for fact_types.",
+          },
+          prefer_observations: {
+            type: "boolean",
+            description:
+              "When true, drop raw world/experience facts that a returned observation was consolidated from. No effect unless observation and at least one raw type are both requested. Defaults to false unless the host configured otherwise.",
+          },
+          min_scores: {
+            type: "object",
+            description:
+              "Optional per-stage score floors (semantic, keyword, reranker, final). Missing keys impose no floor. When omitted, the host's configured floors are used.",
+            properties: {
+              semantic: { type: ["number", "null"] },
+              keyword: { type: ["number", "null"] },
+              reranker: { type: ["number", "null"] },
+              final: { type: ["number", "null"] },
+            },
+          },
+          budget: {
+            type: "string",
+            enum: ["low", "mid", "high"],
+            description:
+              "Retrieval effort: low, mid, or high. Defaults to mid unless the host configured a recall budget.",
           },
           include_chunks: {
             type: "boolean",
@@ -285,13 +357,25 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
       },
       async execute(params: Record<string, unknown>) {
         const maxTokens = parseRecallMaxTokens(params.max_tokens);
+        // An explicit tool argument wins. Otherwise use the host default
+        // (OpenClaw's recallTypes / preferObservations / recallMinScores /
+        // recallBudget) so manual lookup matches auto-recall. (#5057)
         const types = normalizeFactTypes(
           params.fact_types ?? params.types,
-          DEFAULT_RECALL_FACT_TYPES
+          opts.recallFactTypes ?? DEFAULT_RECALL_FACT_TYPES
         );
+        const preferObservations =
+          parseOptionalBoolean(params.prefer_observations) ?? opts.preferObservations;
+        const minScores =
+          params.min_scores !== undefined ? parseMinScores(params.min_scores) : opts.minScores;
+        const budget =
+          params.budget !== undefined ? parseRecallBudget(params.budget) : opts.recallBudget;
         const result = await client.recall(bankId, params.query as string, {
           maxTokens,
           types,
+          preferObservations,
+          minScores,
+          budget,
           includeChunks: params.include_chunks === true,
           maxChunkTokens: parseChunkMaxTokens(params.max_chunk_tokens),
         });
