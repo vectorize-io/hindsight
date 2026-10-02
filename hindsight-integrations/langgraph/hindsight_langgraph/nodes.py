@@ -8,7 +8,7 @@ import logging
 from typing import Any, Optional
 
 from hindsight_client import Hindsight
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, RemoveMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import MessagesState
 
@@ -112,6 +112,12 @@ def create_recall_node(
     resolved_client = resolve_client(client, hindsight_api_url, api_key)
 
     async def recall_node(state: MessagesState, config: Optional[RunnableConfig] = None) -> dict[str, Any]:
+        # add_messages appends updates: an empty list leaves the previous recall
+        # context intact. Remove only our own message when this turn has no memory.
+        empty_messages: list[BaseMessage] = []
+        if not output_key and any(msg.id == "hindsight_memory_context" for msg in state["messages"]):
+            empty_messages = [RemoveMessage(id="hindsight_memory_context")]
+
         resolved_bank_id = bank_id
         if resolved_bank_id is None and config:
             configurable = config.get("configurable", {})
@@ -121,7 +127,7 @@ def create_recall_node(
             logger.warning("No bank_id available for recall node, skipping memory injection.")
             if output_key:
                 return {output_key: None}
-            return {"messages": []}
+            return {"messages": empty_messages}
 
         # Extract query from the latest human message
         query = None
@@ -133,7 +139,7 @@ def create_recall_node(
         if not query:
             if output_key:
                 return {output_key: None}
-            return {"messages": []}
+            return {"messages": empty_messages}
 
         try:
             recall_kwargs: dict[str, Any] = {
@@ -156,7 +162,7 @@ def create_recall_node(
             if not results:
                 if output_key:
                     return {output_key: None}
-                return {"messages": []}
+                return {"messages": empty_messages}
 
             lines = ["Relevant memories about this user:"]
             for i, result in enumerate(results, 1):
