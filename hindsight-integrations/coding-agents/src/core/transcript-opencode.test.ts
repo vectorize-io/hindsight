@@ -110,13 +110,20 @@ describe("readOpencodeMessages", () => {
     expect(readOpencodeMessages(messages)).toEqual([]);
   });
 
-  it("opencodeSessionId returns the first message's session id, or undefined", () => {
+  it("opencodeSessionId returns the last identified session, or undefined", () => {
     expect(
       opencodeSessionId([
         { info: { role: "assistant" } },
         { info: { role: "user", sessionID: "ses_9" } },
       ])
     ).toBe("ses_9");
+    expect(
+      opencodeSessionId([
+        { info: { role: "user", sessionID: "parent" } },
+        { info: { role: "user", sessionID: "side" } },
+        { info: { role: "assistant" } },
+      ])
+    ).toBe("side");
     expect(opencodeSessionId([{ info: { role: "user" } }])).toBeUndefined();
     expect(opencodeSessionId([])).toBeUndefined();
   });
