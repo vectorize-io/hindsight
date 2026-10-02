@@ -295,8 +295,6 @@ class LiteLLMLLM(LLMInterface):
         strict_schema: bool = False,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> LLMCallResult:
-        start_time = time.time()
-
         call_kwargs = self._build_common_kwargs(messages, max_completion_tokens, temperature)
 
         # Add JSON schema response format if provided
@@ -337,6 +335,7 @@ class LiteLLMLLM(LLMInterface):
 
         for attempt in range(max_retries + 1):
             try:
+                attempt_start_time = time.time()
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.{self._stage_label}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
                     response = await asyncio.wait_for(
@@ -346,69 +345,70 @@ class LiteLLMLLM(LLMInterface):
                 # Stash usage before the length check and parse/validate below,
                 # which may raise locally even though the provider charged for
                 # these tokens (#2387).
-                stash_response_usage(_usage_from_litellm_response(response))
-
-                message = response.choices[0].message
-                content = message.content or ""
-                finish_reason = response.choices[0].finish_reason
-                model_name = self._resolve_completion_model(response)
-
-                if use_forced_tool:
-                    # Forced tool call: its arguments ARE the structured response.
-                    # Absent (a gateway that drops tool_choice) -> keep the text
-                    # content so the existing parse path still has a chance.
-                    forced_arguments = _forced_tool_arguments(message)
-                    if forced_arguments is not None:
-                        content = forced_arguments
-
-                # Check for length-limited output
-                if finish_reason == "length":
-                    raise OutputTooLongError("LiteLLM response was truncated due to token limit")
-
-                if response_format is not None:
-                    # Fences are stripped line-based by the shared helper, so a
-                    # JSON value that itself contains the text "```json" is no
-                    # longer truncated mid-payload (#4819).
-                    try:
-                        json_data = json.loads(_strip_code_fences(content))
-                    except json.JSONDecodeError:
-                        if attempt < max_retries:
-                            # Prefer a clean re-roll first — a fresh generation
-                            # usually beats repairing a malformed one.
-                            raise
-                        # Retry budget spent: structural repair as a last
-                        # resort (#2547/#2544). Raises again if unrecoverable,
-                        # which the outer handler surfaces loudly.
-                        json_data = parse_llm_json(content)
-
-                    if skip_validation:
-                        result = json_data
-                    else:
-                        result = response_format.model_validate(json_data)
-                else:
-                    result = content
-
-                # Extract usage
                 response_usage = _usage_from_litellm_response(response)
+                stash_response_usage(response_usage)
                 input_tokens = response_usage.input_tokens
                 output_tokens = response_usage.output_tokens
                 thoughts_tokens = response_usage.thoughts_tokens
                 total_tokens = input_tokens + output_tokens
+                model_name = self._resolve_completion_model(response)
+                accepted = False
+                try:
+                    message = response.choices[0].message
+                    content = message.content or ""
+                    finish_reason = response.choices[0].finish_reason
 
-                # Record metrics
-                duration = time.time() - start_time
-                metrics = get_metrics_collector()
-                metrics.record_llm_call(
-                    provider=self.provider,
-                    model=model_name,
-                    scope=scope,
-                    duration=duration,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    success=True,
-                    cached_input_tokens=response_usage.cached_tokens,
-                    thoughts_tokens=thoughts_tokens,
-                )
+                    if use_forced_tool:
+                        # Forced tool call: its arguments ARE the structured response.
+                        # Absent (a gateway that drops tool_choice) -> keep the text
+                        # content so the existing parse path still has a chance.
+                        forced_arguments = _forced_tool_arguments(message)
+                        if forced_arguments is not None:
+                            content = forced_arguments
+
+                    # Check for length-limited output
+                    if finish_reason == "length":
+                        raise OutputTooLongError("LiteLLM response was truncated due to token limit")
+
+                    if response_format is not None:
+                        # Fences are stripped line-based by the shared helper, so a
+                        # JSON value that itself contains the text "```json" is no
+                        # longer truncated mid-payload (#4819).
+                        try:
+                            json_data = json.loads(_strip_code_fences(content))
+                        except json.JSONDecodeError:
+                            if attempt < max_retries:
+                                # Prefer a clean re-roll first — a fresh generation
+                                # usually beats repairing a malformed one.
+                                raise
+                            # Retry budget spent: structural repair as a last
+                            # resort (#2547/#2544). Raises again if unrecoverable,
+                            # which the outer handler surfaces loudly.
+                            json_data = parse_llm_json(content)
+
+                        if skip_validation:
+                            result = json_data
+                        else:
+                            result = response_format.model_validate(json_data)
+                    else:
+                        result = content
+                    accepted = True
+                finally:
+                    # A returned completion is billable even if Hindsight rejects
+                    # it for truncation or malformed structured output. The success
+                    # label describes application acceptance, not provider delivery.
+                    duration = time.time() - attempt_start_time
+                    get_metrics_collector().record_llm_call(
+                        provider=self.provider,
+                        model=model_name,
+                        scope=scope,
+                        duration=duration,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        success=accepted,
+                        cached_input_tokens=response_usage.cached_tokens,
+                        thoughts_tokens=thoughts_tokens,
+                    )
 
                 # Record trace span
                 from hindsight_api.tracing import _serialize_for_span, get_span_recorder
@@ -521,8 +521,6 @@ class LiteLLMLLM(LLMInterface):
         tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> LLMToolCallResult:
-        start_time = time.time()
-
         call_kwargs = self._build_common_kwargs(messages, max_completion_tokens, temperature)
         call_kwargs["tools"] = tools
         call_kwargs["tool_choice"] = (
@@ -537,6 +535,7 @@ class LiteLLMLLM(LLMInterface):
         last_exception = None
         for attempt in range(max_retries + 1):
             try:
+                attempt_start_time = time.time()
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.{self._stage_label}.tools.attempt={attempt + 1}/{max_retries + 1}")
                     response = await asyncio.wait_for(
@@ -550,48 +549,46 @@ class LiteLLMLLM(LLMInterface):
                 # gemini call_with_tools paths so the litellm tool path (and the
                 # LiteLLMRouterLLM subclass that inherits this method) completes
                 # the #2396 usage-on-error coverage.
-                stash_response_usage(_usage_from_litellm_response(response))
-
-                message = response.choices[0].message
-                content = message.content
-                finish_reason = response.choices[0].finish_reason
-                model_name = self._resolve_completion_model(response)
-
-                # Extract tool calls
-                tool_calls: list[LLMToolCall] = []
-                if message.tool_calls:
-                    for tc in message.tool_calls:
-                        arguments = tc.function.arguments
-                        if isinstance(arguments, str):
-                            arguments = json.loads(arguments)
-                        tool_calls.append(
-                            LLMToolCall(
-                                id=tc.id,
-                                name=tc.function.name,
-                                arguments=arguments,
-                            )
-                        )
-
-                # Extract usage
                 response_usage = _usage_from_litellm_response(response)
+                stash_response_usage(response_usage)
                 input_tokens = response_usage.input_tokens
                 output_tokens = response_usage.output_tokens
                 thoughts_tokens = response_usage.thoughts_tokens
+                model_name = self._resolve_completion_model(response)
+                accepted = False
+                try:
+                    message = response.choices[0].message
+                    content = message.content
+                    finish_reason = response.choices[0].finish_reason
 
-                # Record metrics
-                duration = time.time() - start_time
-                metrics = get_metrics_collector()
-                metrics.record_llm_call(
-                    provider=self.provider,
-                    model=model_name,
-                    scope=scope,
-                    duration=duration,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    success=True,
-                    cached_input_tokens=response_usage.cached_tokens,
-                    thoughts_tokens=thoughts_tokens,
-                )
+                    # Extract tool calls
+                    tool_calls: list[LLMToolCall] = []
+                    if message.tool_calls:
+                        for tc in message.tool_calls:
+                            arguments = tc.function.arguments
+                            if isinstance(arguments, str):
+                                arguments = json.loads(arguments)
+                            tool_calls.append(
+                                LLMToolCall(
+                                    id=tc.id,
+                                    name=tc.function.name,
+                                    arguments=arguments,
+                                )
+                            )
+                    accepted = True
+                finally:
+                    duration = time.time() - attempt_start_time
+                    get_metrics_collector().record_llm_call(
+                        provider=self.provider,
+                        model=model_name,
+                        scope=scope,
+                        duration=duration,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        success=accepted,
+                        cached_input_tokens=response_usage.cached_tokens,
+                        thoughts_tokens=thoughts_tokens,
+                    )
 
                 # Record trace span
                 from hindsight_api.tracing import get_span_recorder
