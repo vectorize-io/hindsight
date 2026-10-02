@@ -251,7 +251,7 @@ Config file: `~/.hermes/hindsight/config.json`
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `auto_retain` | `true` | Automatically retain conversation turns |
+| `auto_retain` | `true` | Automatically retain primary conversation turns (skips cron, subagent, and flush contexts; explicit memory tools remain available) |
 | `retain_async` | `true` | Process retain asynchronously on the Hindsight server |
 | `retain_every_n_turns` | `1` | Retain every N turns (1 = every turn) |
 | `retain_context` | `conversation between Hermes Agent and the User` | Context label for retained memories |

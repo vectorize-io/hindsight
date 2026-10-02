@@ -407,6 +407,7 @@ class HindsightMemoryProvider(MemoryProvider):
         # host constructs the provider without calling initialize() (availability probes do).
         self._warning_callback: Optional[Callable[[str], None]] = None
         self._platform: str = "cli"
+        self._agent_context: str = "primary"
 
         # Retain: single-writer model — sync_turn() enqueues, one writer thread
         # drains sequentially (ad-hoc threads raced interpreter shutdown:
@@ -985,6 +986,9 @@ class HindsightMemoryProvider(MemoryProvider):
         # Gated presentation for automatic startup warnings (agent._emit_warning on CLI).
         self._warning_callback = kwargs.get("warning_callback") if callable(kwargs.get("warning_callback")) else None
         self._platform = str(kwargs.get("platform") or "cli")
+        # Hermes supplies the execution context independently of the transport/platform.
+        # Older hosts omit it; only primary conversations should be auto-retained.
+        self._agent_context = kwargs.get("agent_context", "primary")
         # session_id stays in tags so processes for one session remain filterable together.
         self._document_id = _mint_document_id(self._session_id)
         _warn_if_client_outdated()
@@ -1439,6 +1443,8 @@ class HindsightMemoryProvider(MemoryProvider):
         why = (
             "auto_retain disabled"
             if not self._auto_retain
+            else "non-primary agent context"
+            if self._agent_context != "primary"
             else "shutting down"
             if self._shutting_down.is_set()
             else None
