@@ -16,7 +16,16 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .search.tags import TagGroup, TagsMatch, filter_results_by_tag_groups, filter_results_by_tags
+from .search.tags import (
+    TagGroup,
+    TagsMatch,
+    filter_results_by_tag_groups,
+    filter_results_by_tags,
+)
+
+# Re-exported under the scope-side name callers already use; the predicate itself
+# lives in search/tags.py so "is this filter on" has one definition.
+from .search.tags import tag_filter_active as tag_filter_is_active
 
 if TYPE_CHECKING:
     from .db.base import DatabaseConnection
@@ -28,12 +37,6 @@ class _Tagged:
 
     id: str
     tags: list[str]
-
-
-def tag_filter_is_active(tags: list[str] | None, tags_match: TagsMatch, tag_groups: list[TagGroup] | None) -> bool:
-    """Whether this filter restricts anything. ``exact`` with no tags still does: it
-    selects the untagged scope (see ``search/tags.py``)."""
-    return bool(tags) or bool(tag_groups) or tags_match == "exact"
 
 
 def ids_passing(

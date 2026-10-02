@@ -30,6 +30,7 @@ from ...search.tags import (
     tag_filter_active,
 )
 from ...time_filter import MEMORY_TIME_FIELDS, build_time_clause
+from .graph import _ops_for
 
 
 def _entity_rows_for_units_sql(*, ops, fq_table, unit_ids_placeholder: int) -> str:
@@ -582,36 +583,87 @@ def _entity_list_item(row: Any) -> dict[str, Any]:
     }
 
 
-def visible_entity_stats_sql(fq_table, tag_clause_sql: str) -> str:
+def visible_entity_mentions_sql(fq_table, ops, tag_clause_sql: str) -> str:
+    """``(unit_id, entity_id, seen_at)`` rows: which entities each tag-matching memory mentions.
+
+    Direct ``unit_entities`` postings, plus — for a visible observation carrying no
+    postings of its own — the postings it inherits from its source memories, the
+    same fallback ``_entity_rows_for_units_sql`` implements for addressed reads
+    (``source_memory_ids`` on PG, the ``observation_sources`` junction on Oracle).
+    Without it an entity only an observation mentions would vanish under a tag
+    filter even though the observation itself is visible, and the counts would
+    diverge from the unfiltered semantics. The UNION dedups an entity reached
+    through several sources.
+
+    ``seen_at`` is the same per-memory date retain stamps on the entity —
+    ``occurred_start``, falling back to ``mentioned_at`` (``event_date`` as a last
+    resort, it is never null). ``$1`` must be the bank id. ``tag_clause_sql`` is a
+    :func:`build_tag_filter_clause` clause built WITHOUT a table alias: the Oracle
+    rewriter turns ``tags && :n`` into a ``JSON_TABLE`` probe and now accepts
+    qualified columns too, but the unaliased subquery keeps the filter working
+    identically on both dialects.
+    """
+    ue = fq_table("unit_entities")
+    mu = fq_table("memory_units")
+    direct = (
+        f"SELECT ue.unit_id, ue.entity_id, vu.seen_at "
+        f"FROM {ue} ue "
+        f"JOIN ("
+        f"SELECT id, COALESCE(occurred_start, mentioned_at, event_date) AS seen_at "
+        f"FROM {mu} WHERE bank_id = $1 {tag_clause_sql}"
+        f") vu ON vu.id = ue.unit_id"
+    )
+    if ops.uses_observation_sources_table:
+        os_t = fq_table("observation_sources")
+        inherited = (
+            f"SELECT vu.id AS unit_id, src_ue.entity_id, vu.seen_at "
+            f"FROM ("
+            f"SELECT id, COALESCE(occurred_start, mentioned_at, event_date) AS seen_at "
+            f"FROM {mu} WHERE bank_id = $1 {tag_clause_sql}"
+            f") vu "
+            f"JOIN {os_t} os ON os.observation_id = vu.id "
+            f"JOIN {ue} src_ue ON src_ue.unit_id = os.source_id "
+            f"WHERE NOT EXISTS (SELECT 1 FROM {ue} d WHERE d.unit_id = vu.id)"
+        )
+    else:
+        inherited = (
+            f"SELECT vu.id AS unit_id, src_ue.entity_id, vu.seen_at "
+            f"FROM ("
+            f"SELECT id, COALESCE(occurred_start, mentioned_at, event_date) AS seen_at, "
+            f"fact_type, source_memory_ids "
+            f"FROM {mu} WHERE bank_id = $1 {tag_clause_sql}"
+            f") vu "
+            f"CROSS JOIN LATERAL unnest(vu.source_memory_ids) AS src_id "
+            f"JOIN {ue} src_ue ON src_ue.unit_id = src_id "
+            f"WHERE vu.fact_type = 'observation' AND vu.source_memory_ids IS NOT NULL "
+            f"AND NOT EXISTS (SELECT 1 FROM {ue} d WHERE d.unit_id = vu.id)"
+        )
+    return f"({direct}) UNION ({inherited})"
+
+
+def visible_entity_stats_sql(fq_table, ops, tag_clause_sql: str) -> str:
     """``SELECT entity_id, mention_count, first_seen, last_seen`` over the memories a tag filter lets through.
 
     The stored ``entities.mention_count`` / ``first_seen`` / ``last_seen`` count every
     memory in the bank, so a tag-filtered read that returned them would tell the
     reader how much out-of-scope memories mention an entity (#5031). These are
-    recomputed from the visible memories instead. An entity with no visible memory
-    has no row, which is what hides it.
-
-    Dates use the same per-memory date retain stamps on the entity —
-    ``occurred_start``, falling back to ``mentioned_at`` (``event_date`` as a last
-    resort, it is never null).
+    recomputed from the visible memories instead — see
+    :func:`visible_entity_mentions_sql` for which memories mention an entity,
+    including the observation inheritance. An entity with no visible memory has no
+    row, which is what hides it.
 
     ``$1`` must be the bank id. ``tag_clause_sql`` is a :func:`build_tag_filter_clause`
     clause built WITHOUT a table alias: the Oracle rewriter turns ``tags && :n`` into
-    a ``JSON_TABLE`` probe by matching a bare column name, so ``mu.tags`` would come
-    out as ``mu.EXISTS(...)``. That is why the filter runs on an unaliased subquery.
+    a ``JSON_TABLE`` probe and now accepts qualified columns too, but the unaliased
+    subquery keeps the filter working identically on both dialects.
     """
     return f"""
-        SELECT ue.entity_id,
+        SELECT entity_id,
                COUNT(*) AS mention_count,
-               MIN(vu.seen_at) AS first_seen,
-               MAX(vu.seen_at) AS last_seen
-        FROM {fq_table("unit_entities")} ue
-        JOIN (
-            SELECT id, COALESCE(occurred_start, mentioned_at, event_date) AS seen_at
-            FROM {fq_table("memory_units")}
-            WHERE bank_id = $1 {tag_clause_sql}
-        ) vu ON vu.id = ue.unit_id
-        GROUP BY ue.entity_id
+               MIN(seen_at) AS first_seen,
+               MAX(seen_at) AS last_seen
+        FROM ({visible_entity_mentions_sql(fq_table, ops, tag_clause_sql)}) mentions
+        GROUP BY entity_id
     """
 
 
@@ -644,7 +696,7 @@ async def _list_entities_tag_filtered(
     # entities row directly: Oracle cannot GROUP BY the `metadata` JSON column.
     from_sql = f"""
         FROM {fq_table("entities")} e
-        JOIN ({visible_entity_stats_sql(fq_table, built.sql)}) s ON s.entity_id = e.id
+        JOIN ({visible_entity_stats_sql(fq_table, _ops_for(conn), built.sql)}) s ON s.entity_id = e.id
         WHERE e.bank_id = $1 {search_clause}
     """
 
@@ -670,4 +722,10 @@ async def _list_entities_tag_filtered(
     }
 
 
-__all__ = ["get_memory_unit", "list_entities", "list_memory_units", "visible_entity_stats_sql"]
+__all__ = [
+    "get_memory_unit",
+    "list_entities",
+    "list_memory_units",
+    "visible_entity_mentions_sql",
+    "visible_entity_stats_sql",
+]

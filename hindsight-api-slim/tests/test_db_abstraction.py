@@ -12,8 +12,8 @@ import asyncpg
 import pytest
 
 from hindsight_api.engine.db import DatabaseBackend, DatabaseConnection, create_database_backend
-from hindsight_api.engine.db.ops import UpdatedWindow
 from hindsight_api.engine.db import postgresql as pg_backend
+from hindsight_api.engine.db.ops import UpdatedWindow
 from hindsight_api.engine.db.postgresql import PostgreSQLBackend, apply_session_settings
 from hindsight_api.engine.db.result import DictResultRow as ResultRow
 from hindsight_api.engine.sql import SQLDialect, create_sql_dialect
@@ -500,8 +500,33 @@ class TestOracleDialect:
         assert "VECTOR_DISTANCE" in arm
         assert ">= 0.58" in arm
         assert "fact_type = 'world'" in arm
-        assert "FETCH FIRST 100 ROWS ONLY" in arm
+        # EXACT is spelled out: on Autonomous Database a bare FETCH FIRST is answered from a
+        # vector index when one exists, i.e. approximately.
+        assert "FETCH EXACT FIRST 100 ROWS ONLY" in arm
+        assert "APPROX" not in arm
         assert "'semantic' AS source" in arm
+
+    def test_build_semantic_arm_approx_uses_fetch_approx(self, d, monkeypatch):
+        """FETCH APPROX is what lets Oracle answer from the embedding's vector index."""
+        from hindsight_api.config import clear_config_cache
+
+        monkeypatch.setenv("HINDSIGHT_API_ORACLE_VECTOR_SEARCH", "approx")
+        monkeypatch.setenv("HINDSIGHT_API_ORACLE_VECTOR_TARGET_ACCURACY", "90")
+        clear_config_cache()
+        try:
+            arm = d.build_semantic_arm(
+                table="memory_units",
+                cols="id, text",
+                fact_type="world",
+                embedding_param=":1",
+                bank_id_param=":2",
+                fetch_limit=100,
+                min_similarity=0.58,
+            )
+        finally:
+            clear_config_cache()
+        assert "FETCH APPROX FIRST 100 ROWS ONLY WITH TARGET ACCURACY 90" in arm
+        assert "bank_id = :2" in arm
 
     def test_build_bm25_arm(self, d):
         arm = d.build_bm25_arm(
@@ -543,12 +568,37 @@ class TestOracleDialect:
 
     def test_prepare_bm25_text(self, d):
         result = d.prepare_bm25_text(["hello", "world"], "hello world")
-        assert result == "hello OR world"
+        assert result == "{hello} ACCUM {world}"
 
-    def test_prepare_bm25_text_special_chars_filtered(self, d):
-        result = d.prepare_bm25_text(["hello", "$special", "world"], "hello $special world")
-        assert "$special" not in result
-        assert "hello" in result
+    def test_prepare_bm25_text_escapes_underscore_wildcard(self, d):
+        """`_` is Oracle Text's one-character wildcard, so a bare snake_case term matches nothing.
+
+        On a live 26ai index, CONTAINS(text, 'hindsight_api') found 0 rows while
+        '{hindsight_api}' found 584, and a lone '_' matched every one-letter token.
+        """
+        assert d.prepare_bm25_text(["hindsight_api", "__init__"], "") == "{hindsight_api} ACCUM {__init__}"
+
+    def test_prepare_bm25_text_escapes_reserved_words_and_operators(self, d):
+        result = d.prepare_bm25_text(["near", "about", "$special", "a&b"], "")
+        assert result == "{near} ACCUM {about} ACCUM {$special} ACCUM {a&b}"
+
+    def test_prepare_bm25_text_cannot_close_the_escape(self, d):
+        """A brace inside a term would end the escape and let the rest act as operators."""
+        result = d.prepare_bm25_text(["a}", "OR", "x%{"], "")
+        assert result == "{a} ACCUM {OR} ACCUM {x%}"
+
+    def test_prepare_bm25_text_never_binds_the_raw_query(self, d):
+        result = d.prepare_bm25_text(["{}"], "} OR mem% {")
+        assert "mem%" not in result
+
+    def test_prepare_bm25_text_dedupes_case_insensitively(self, d):
+        assert d.prepare_bm25_text(["Oracle", "oracle", "text"], "") == "{Oracle} ACCUM {text}"
+
+    @pytest.mark.parametrize(
+        ("cap", "expected"), [(2, "{a} ACCUM {b}"), (0, "{a} ACCUM {b} ACCUM {c}"), (None, "{a} ACCUM {b} ACCUM {c}")]
+    )
+    def test_prepare_bm25_text_respects_max_query_terms(self, d, cap, expected):
+        assert d.prepare_bm25_text(["a", "b", "a", "c"], "", max_query_terms=cap) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -573,6 +623,155 @@ class TestOracleQueryRewriter:
         query, _, _ = _rewrite_pg_to_oracle("$1::jsonb")
         assert "::jsonb" not in query
         assert ":1" in query
+
+    def test_vector_ordered_limit_is_an_exact_fetch(self):
+        """On Autonomous Database a bare FETCH FIRST over a vector index is approximate.
+
+        The temporal arm and link expansion order by `embedding <=> $1 LIMIT n`; measured on
+        Oracle AI Database 26ai (ADB) with the baseline IVF index present, that plain FETCH FIRST
+        returned 42% of the true top-20, so vector-ordered limits must ask for EXACT.
+        """
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle(
+            "SELECT id FROM memory_units WHERE bank_id = $2 ORDER BY embedding <=> $1::vector LIMIT 5"
+        )
+        assert "ORDER BY VECTOR_DISTANCE(embedding, :1, COSINE) FETCH EXACT FIRST 5 ROWS ONLY" in query
+
+        query, _, _ = _rewrite_pg_to_oracle("SELECT id FROM t ORDER BY created_at LIMIT 5 OFFSET 10")
+        assert query.endswith("OFFSET 10 ROWS FETCH FIRST 5 ROWS ONLY")
+
+    def test_vector_distance_params_bind_as_native_vectors(self):
+        """A query embedding bound as text fails with ORA-01460 once it passes 32,767 bytes.
+
+        str() of a 1536-dimension embedding with full-precision floats is ~33 KB, so recall
+        failed on every query with such a provider; a native VECTOR bind has no such limit.
+        Other JSON-looking params (tag lists) keep their text/CLOB binding.
+        """
+        import array
+
+        from hindsight_api.engine.db.oracle import OracleConnection
+
+        params = {"1": "[0.123456789, -0.5]", "2": "bank", "3": '["tag"]'}
+        OracleConnection._bind_vectors_natively(
+            "SELECT id FROM memory_units WHERE bank_id = :2 AND tags = :3 "
+            "ORDER BY VECTOR_DISTANCE(mu.embedding, :1, COSINE)",
+            params,
+        )
+        assert isinstance(params["1"], array.array)
+        assert params["1"].typecode == "f"
+        assert list(params["1"]) == pytest.approx([0.123456789, -0.5])
+        assert params["2"] == "bank"
+        assert params["3"] == '["tag"]'
+
+    def test_vector_distance_operand_wrapped_in_to_vector_binds_natively(self):
+        """The retain link probe (link_utils) wraps the operand: VECTOR_DISTANCE(embedding, TO_VECTOR($3), ...)."""
+        import array
+
+        from hindsight_api.engine.db.oracle import OracleConnection, _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle(
+            "SELECT id, 1 - VECTOR_DISTANCE(embedding, TO_VECTOR($3), COSINE) AS similarity "
+            "FROM memory_units WHERE bank_id = $1 AND id <> $2 "
+            "ORDER BY VECTOR_DISTANCE(embedding, TO_VECTOR($3), COSINE)"
+        )
+        params = {"1": "bank", "2": "id", "3": "[0.5, -0.25]"}
+        OracleConnection._bind_vectors_natively(query, params)
+        assert isinstance(params["3"], array.array)
+        assert params["1"] == "bank"
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "INSERT INTO memory_units (\n id, bank_id, text, fact_type, embedding, tags\n)\n"
+            "VALUES (:1, :2, :3, 'observation', :4, :5) RETURNING id INTO :ret_0",
+            "UPDATE memory_units SET text = :3, embedding = :4, tags = :5 WHERE id = :1 AND bank_id = :2",
+        ],
+    )
+    def test_embedding_column_writes_bind_as_native_vectors(self, query):
+        """Writing a ~33 KB embedding string into the column failed with ORA-01461 (consolidation)."""
+        import array
+
+        from hindsight_api.engine.db.oracle import OracleConnection
+
+        params = {"1": "id", "2": "bank", "3": "text", "4": "[0.5, -0.25]", "5": '["t"]'}
+        OracleConnection._bind_vectors_natively(query, params)
+        assert isinstance(params["4"], array.array)
+        assert params["5"] == '["t"]'
+
+    def test_executemany_binds_embeddings_as_native_vectors(self):
+        """The batch write path (insert_facts_batch) carried the same str() embeddings but
+        never ran the conversion, so an oversized embedding still failed on retain."""
+        import array
+        from unittest.mock import MagicMock
+
+        from hindsight_api.engine.db.oracle import OracleConnection
+
+        cursor = AsyncMock()
+        cursor.setinputsizes = MagicMock()
+        cursor.close = MagicMock()
+        raw = MagicMock()
+        raw.cursor.return_value = cursor
+        conn = OracleConnection(raw)
+
+        asyncio.run(
+            conn.executemany(
+                "INSERT INTO memory_units (id, bank_id, text, embedding, tags) VALUES ($1, $2, $3, $4, $5)",
+                [
+                    ("id-1", "bank", "text a", "[0.123456789, -0.5]", "t1"),
+                    ("id-2", "bank", "text b", "[0.25, 0.5]", "t2"),
+                ],
+            )
+        )
+
+        query, rows = cursor.executemany.call_args.args
+        assert "embedding" in query
+        assert [type(row["4"]) for row in rows] == [array.array, array.array]
+        assert rows[0]["4"].typecode == "f"
+        assert list(rows[0]["4"]) == pytest.approx([0.123456789, -0.5])
+        assert rows[0]["5"] == "t1"
+
+    def test_merge_upsert_binds_the_using_embedding_as_native_vector(self):
+        """ON CONFLICT DO UPDATE rewrites to MERGE: the bind key hides in `SELECT :N AS
+        embedding` — not in an assignment or INSERT column list — so a SET clause that
+        only touches other columns left the embedding a text bind (ORA-01461 again)."""
+        import array
+
+        from hindsight_api.engine.db.oracle import OracleConnection, _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle(
+            "INSERT INTO memory_units (id, bank_id, embedding) VALUES ($1, $2, $3) "
+            "ON CONFLICT (id, bank_id) DO UPDATE SET bank_id = EXCLUDED.bank_id"
+        )
+        params = {"1": "id", "2": "bank", "3": "[0.5, -0.25]"}
+        OracleConnection._bind_vectors_natively(query, params)
+        assert isinstance(params["3"], array.array)
+
+    def test_multi_row_insert_binds_every_row_group_embedding(self):
+        """VALUES (:1,:2),(:3,:4) mispaired the column/value lists: the greedy capture
+        swallowed the second row group and the embedding param stayed a text bind."""
+        import array
+
+        from hindsight_api.engine.db.oracle import OracleConnection
+
+        params = {"1": "id-1", "2": "[0.5, -0.25]", "3": "id-2", "4": "[0.25, 0.5]"}
+        OracleConnection._bind_vectors_natively(
+            "INSERT INTO memory_units (id, embedding) VALUES (:1, :2), (:3, :4)",
+            params,
+        )
+        assert isinstance(params["2"], array.array)
+        assert isinstance(params["4"], array.array)
+
+    def test_vector_distance_detection_is_case_insensitive(self):
+        """`vector_distance ( ... )` — lowercase or spaced — must still fetch EXACT."""
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        for query in (
+            "SELECT id FROM t ORDER BY vector_distance (embedding, :1, COSINE) LIMIT 5",
+            "SELECT id FROM t ORDER BY VECTOR_DISTANCE(embedding, :1, COSINE) LIMIT 5",
+        ):
+            rewritten, _, _ = _rewrite_pg_to_oracle(query)
+            assert "FETCH EXACT FIRST 5 ROWS ONLY" in rewritten
 
     def test_multiple_casts(self):
         from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
@@ -946,6 +1145,28 @@ class TestConfig:
         from hindsight_api.config import DEFAULT_DATABASE_BACKEND
 
         assert DEFAULT_DATABASE_BACKEND == "postgresql"
+
+    def test_oracle_vector_search_defaults_to_exact(self):
+        from hindsight_api.config import HindsightConfig
+
+        config = HindsightConfig.from_env()
+        assert config.oracle_vector_search == "exact"
+        assert config.oracle_vector_target_accuracy == 95
+
+    @pytest.mark.parametrize(
+        ("name", "value"),
+        [
+            ("HINDSIGHT_API_ORACLE_VECTOR_SEARCH", "fuzzy"),
+            ("HINDSIGHT_API_ORACLE_VECTOR_TARGET_ACCURACY", "0"),
+            ("HINDSIGHT_API_ORACLE_VECTOR_TARGET_ACCURACY", "101"),
+        ],
+    )
+    def test_oracle_vector_search_settings_are_validated(self, monkeypatch, name, value):
+        from hindsight_api.config import HindsightConfig
+
+        monkeypatch.setenv(name, value)
+        with pytest.raises(ValueError, match="oracle_vector"):
+            HindsightConfig.from_env().validate()
 
 
 # ---------------------------------------------------------------------------
@@ -1325,6 +1546,34 @@ class TestNormalizeSchema:
         assert backend.normalize_schema("public") is None
         assert backend.normalize_schema("tenant_abc") == "tenant_abc"
         assert backend.normalize_schema(None) is None
+
+
+@pytest.mark.parametrize("backend_type", ["postgresql", "oracle"])
+def test_backend_migrations_run_with_the_migration_database_url(backend_type, monkeypatch):
+    """Startup migrations use HINDSIGHT_API_MIGRATION_DATABASE_URL on every backend.
+
+    The migration URL is what lets DDL run as a schema-owner account while the API
+    connects as a runtime account without DDL privileges. The Oracle backend used to
+    drop it and migrate with the runtime DSN, so a least-privilege runtime user could
+    not boot with migrations on.
+    """
+    from hindsight_api import migrations
+    from hindsight_api.config import clear_config_cache
+
+    monkeypatch.setenv("HINDSIGHT_API_MIGRATION_DATABASE_URL", "migration-url")
+    clear_config_cache()
+    calls: list[tuple[str, str | None, str | None]] = []
+
+    def _fake_run_migrations(dsn, *, schema=None, migration_database_url=None, **_kwargs):
+        calls.append((dsn, schema, migration_database_url))
+
+    monkeypatch.setattr(migrations, "run_migrations", _fake_run_migrations)
+    try:
+        create_database_backend(backend_type).run_migrations("runtime-url", schema="S1")
+    finally:
+        clear_config_cache()
+
+    assert calls == [("runtime-url", "S1", "migration-url")]
 
 
 # ---------------------------------------------------------------------------

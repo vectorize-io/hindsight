@@ -656,6 +656,8 @@ ENV_RERANKER_GOOGLE_SERVICE_ACCOUNT_KEY = "HINDSIGHT_API_RERANKER_GOOGLE_SERVICE
 ENV_VECTOR_EXTENSION = "HINDSIGHT_API_VECTOR_EXTENSION"
 ENV_ANN_ITERATIVE_SCAN = "HINDSIGHT_API_ANN_ITERATIVE_SCAN"
 ENV_ANN_MAX_SCAN_TUPLES = "HINDSIGHT_API_ANN_MAX_SCAN_TUPLES"
+ENV_ORACLE_VECTOR_SEARCH = "HINDSIGHT_API_ORACLE_VECTOR_SEARCH"
+ENV_ORACLE_VECTOR_TARGET_ACCURACY = "HINDSIGHT_API_ORACLE_VECTOR_TARGET_ACCURACY"
 ENV_TEXT_SEARCH_EXTENSION = "HINDSIGHT_API_TEXT_SEARCH_EXTENSION"
 ENV_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE = "HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE"
 ENV_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER = "HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER"
@@ -1452,6 +1454,16 @@ DEFAULT_ANN_ITERATIVE_SCAN = True
 # Lower it to trade retrieval depth back for latency; the initial scan is not counted,
 # so even 1 leaves the pre-existing behaviour intact. pgvector's own default is 20000.
 DEFAULT_ANN_MAX_SCAN_TUPLES = 4000
+
+# Oracle semantic recall. "exact" orders every candidate row of the bank's partition by
+# VECTOR_DISTANCE; "approx" asks for FETCH APPROX so Oracle may answer from the embedding's
+# vector index (IVF/HNSW) at the given target accuracy. Exact is the default because it
+# needs no index and, with memory_units partitioned by bank, stays cheap for small banks
+# (about 40 ms for 8k rows on an Always Free Autonomous Database); approx pays off on large
+# banks. Without a vector index, FETCH APPROX falls back to the same exact plan.
+VALID_ORACLE_VECTOR_SEARCH = ("exact", "approx")
+DEFAULT_ORACLE_VECTOR_SEARCH = "exact"
+DEFAULT_ORACLE_VECTOR_TARGET_ACCURACY = 95
 
 # Text search extension (native PostgreSQL, vchord BM25, Timescale pg_textsearch,
 # pgroonga, or ParadeDB pg_search). Unused by banks with enable_text_search off.
@@ -3649,6 +3661,8 @@ class HindsightConfig:
     reranker_members: list[RerankerMemberConfig] = field(default_factory=list)
     bm25_max_query_terms: int = DEFAULT_BM25_MAX_QUERY_TERMS
     bm25_selective_terms: bool = DEFAULT_BM25_SELECTIVE_TERMS
+    oracle_vector_search: str = DEFAULT_ORACLE_VECTOR_SEARCH  # "exact" or "approx"
+    oracle_vector_target_accuracy: int = DEFAULT_ORACLE_VECTOR_TARGET_ACCURACY
 
     # Webhook SSRF hardening (static, server-level only — deliberately NOT
     # per-bank configurable: a tenant must not be able to re-open the private
@@ -4051,6 +4065,17 @@ class HindsightConfig:
 
         if self.bm25_max_query_terms < 0:
             raise ValueError(f"Invalid bm25_max_query_terms: {self.bm25_max_query_terms}. Must be >= 0")
+
+        if self.oracle_vector_search not in VALID_ORACLE_VECTOR_SEARCH:
+            raise ValueError(
+                f"Invalid oracle_vector_search: {self.oracle_vector_search}. "
+                f"Must be one of: {', '.join(VALID_ORACLE_VECTOR_SEARCH)}"
+            )
+        # Inlined into the SQL text (WITH TARGET ACCURACY <n>), so it must be a plain integer.
+        if type(self.oracle_vector_target_accuracy) is not int or not 1 <= self.oracle_vector_target_accuracy <= 100:
+            raise ValueError(
+                f"Invalid oracle_vector_target_accuracy: {self.oracle_vector_target_accuracy}. Must be an integer between 1 and 100"
+            )
 
         # Validate bedrock_service_tier
         valid_bedrock_tiers = (None, "flex", "priority", "reserved")
@@ -4659,6 +4684,12 @@ class HindsightConfig:
                 DEFAULT_BM25_MAX_QUERY_TERMS,
             ),
             bm25_selective_terms=_parse_boolean_env(ENV_BM25_SELECTIVE_TERMS, DEFAULT_BM25_SELECTIVE_TERMS),
+            oracle_vector_search=os.getenv(ENV_ORACLE_VECTOR_SEARCH, DEFAULT_ORACLE_VECTOR_SEARCH).lower(),
+            oracle_vector_target_accuracy=_parse_non_negative_int(
+                ENV_ORACLE_VECTOR_TARGET_ACCURACY,
+                os.getenv(ENV_ORACLE_VECTOR_TARGET_ACCURACY),
+                DEFAULT_ORACLE_VECTOR_TARGET_ACCURACY,
+            ),
             recall_max_candidates_per_source=int(
                 os.getenv(ENV_RECALL_MAX_CANDIDATES_PER_SOURCE, str(DEFAULT_RECALL_MAX_CANDIDATES_PER_SOURCE))
             ),

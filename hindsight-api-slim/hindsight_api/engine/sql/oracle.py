@@ -5,50 +5,12 @@ vector distance (VECTOR_DISTANCE), full-text search (Oracle Text), and
 other non-portable patterns.
 """
 
+from ...config import get_config
 from .base import SQLDialect, bm25_score_gate
 
 
 class OracleDialect(SQLDialect):
     """SQL dialect for Oracle 23ai (python-oracledb)."""
-
-    # Characters that need escaping in Oracle Text CONTAINS queries.
-    _ORACLE_TEXT_SPECIAL = frozenset("&|!{}()[]~*?%-$>")
-
-    # Oracle Text reserved words that must be escaped with curly braces
-    # when used as plain search terms.  Full list from Oracle Text docs:
-    # ABOUT, AND, BT, BTG, BTI, BTP, EQUIV, FUZZY, HASPATH, INPATH,
-    # MINUS, NEAR, NOT, NT, NTG, NTI, NTP, OR, PT, RT, SQE, SYN,
-    # TR, TRSYN, TT, WITHIN.
-    _ORACLE_TEXT_RESERVED = frozenset(
-        {
-            "about",
-            "and",
-            "bt",
-            "btg",
-            "bti",
-            "btp",
-            "equiv",
-            "fuzzy",
-            "haspath",
-            "inpath",
-            "minus",
-            "near",
-            "not",
-            "nt",
-            "ntg",
-            "nti",
-            "ntp",
-            "or",
-            "pt",
-            "rt",
-            "sqe",
-            "syn",
-            "tr",
-            "trsyn",
-            "tt",
-            "within",
-        }
-    )
 
     # -- Parameter binding -----------------------------------------------
 
@@ -237,6 +199,20 @@ class OracleDialect(SQLDialect):
     ) -> str:
         # Oracle 23ai: VECTOR_DISTANCE for cosine, FETCH FIRST for limiting.
         # Wrapped in a derived table to work within UNION ALL.
+        # The row-limiting clause picks exact vs approximate search. EXACT must be spelled out:
+        # on Autonomous Database a bare FETCH FIRST is answered from a vector index whenever one
+        # exists (documented in "Perform Exact Similarity Search"), and with the baseline's global
+        # IVF index plus the bank filter it returned 42% of the true top-20 on 26ai. APPROX is
+        # the opt-in for large banks. Both values are inlined: the mode is validated against a
+        # fixed set and the accuracy is an integer in [1, 100] (see HindsightConfig validation).
+        config = get_config()
+        if config.oracle_vector_search == "approx":
+            fetch = (
+                f"FETCH APPROX FIRST {fetch_limit} ROWS ONLY "
+                f"WITH TARGET ACCURACY {int(config.oracle_vector_target_accuracy)}"
+            )
+        else:
+            fetch = f"FETCH EXACT FIRST {fetch_limit} ROWS ONLY"
         return (
             f"SELECT * FROM (SELECT {cols},"
             f"        1 - VECTOR_DISTANCE(embedding, {embedding_param}, COSINE) AS similarity,"
@@ -251,7 +227,7 @@ class OracleDialect(SQLDialect):
             f"   {groups_clause}"
             f"   {extra_where}"
             f" ORDER BY VECTOR_DISTANCE(embedding, {embedding_param}, COSINE)"
-            f" FETCH FIRST {fetch_limit} ROWS ONLY) t"
+            f" {fetch}) t"
         )
 
     def build_bm25_arm(
@@ -305,19 +281,29 @@ class OracleDialect(SQLDialect):
         text_search_extension: str = "native",
         max_query_terms: int | None = None,
     ) -> str:
-        # Oracle Text: filter tokens with special chars, escape reserved words
-        # with curly braces (e.g. "about" → "{about}"), and join with OR.
-        safe: list[str] = []
-        for t in tokens:
-            if any(c in self._ORACLE_TEXT_SPECIAL for c in t):
+        # Oracle Text: wrap every term in braces, which makes CONTAINS read it literally.
+        # Previously only reserved words (NEAR, ABOUT, ...) were braced and terms with
+        # operator characters were dropped, but `_` — Oracle Text's one-character wildcard,
+        # and a word character to the tokenizer — went through raw: on a live 26ai index
+        # 'hindsight_api' matched 0 rows (a wildcard pattern against the lexer's two tokens)
+        # where '{hindsight_api}' matched 584, and a lone '_' matched every one-letter token.
+        # Braces are stripped from the term so it cannot close the escape early, and the raw
+        # query text is never bound: the old all-filtered fallback braced it verbatim, so a
+        # '}' in it reopened the expression to operators.
+        terms: list[str] = []
+        seen: set[str] = set()
+        for token in tokens:
+            term = token.replace("{", " ").replace("}", " ").strip()
+            if not term or term.lower() in seen:
                 continue
-            if t.lower() in self._ORACLE_TEXT_RESERVED:
-                safe.append(f"{{{t}}}")
-            else:
-                safe.append(t)
-        if safe:
-            return " OR ".join(safe)
-        # All tokens were filtered out — escape the original query text as a
-        # single term so we still attempt a search rather than erroring out.
-        fallback = query_text.strip() or tokens[0]
-        return f"{{{fallback}}}"
+            seen.add(term.lower())
+            terms.append(f"{{{term}}}")
+        # Same cap as the PostgreSQL native path; without it a long question became an
+        # unbounded OR over every token.
+        if max_query_terms:
+            terms = terms[:max_query_terms]
+        # ACCUM, not OR: OR scores a row by its best single term, so a common word ranks as
+        # high as the rare one the question is about; ACCUM ranks rows matching more terms
+        # higher and matches the same rows. On BEIR SciFact (100 queries, Gemini 1536, 26ai)
+        # keyword nDCG@10 went 0.348 -> 0.666 and the RRF hybrid 0.693 -> 0.806.
+        return " ACCUM ".join(terms)

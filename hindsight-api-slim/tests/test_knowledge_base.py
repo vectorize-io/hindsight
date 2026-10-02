@@ -2002,7 +2002,9 @@ class TestTagFilter:
         bad = await api_client.get(
             f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree", params={"tag_groups": "[{"}
         )
-        assert bad.status_code == 422
+        # Same malformed-tag_groups contract as the other query-param endpoints
+        # (`_parse_tag_groups_query`): 400, not 422.
+        assert bad.status_code == 400
 
     async def test_search_only_returns_matching_pages(self, api_client, kb_bank):
         bank_id, ids = kb_bank

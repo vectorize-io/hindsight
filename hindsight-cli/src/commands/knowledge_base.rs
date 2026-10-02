@@ -55,11 +55,61 @@ pub fn tag_filter(
             })
         })
         .transpose()?;
+    if let Some(raw) = tag_groups.as_deref() {
+        validate_tag_groups_json(raw)?;
+        if !tags.is_empty() {
+            anyhow::bail!("--tags and --tag-groups are mutually exclusive — use --tag-groups for compound filtering");
+        }
+    }
     Ok(KnowledgeTagFilter {
         tags,
         tags_match,
         tag_groups,
     })
+}
+
+/// Validate `--tag-groups` locally so a malformed filter fails with a CLI error
+/// instead of a server 400 — same shape as recall's `tag_groups`: a top-level
+/// array whose members are leaves `{"tags": [...], "match"?, "resolve"?}` or
+/// compound `{"and"|"or": [...]}` / `{"not": {...}}` nodes. No depth cap here —
+/// serde_json's own parse recursion limit already bounds nesting, and the API
+/// schema imposes none, so a deep `not` chain the server accepts must pass.
+fn validate_tag_groups_json(raw: &str) -> Result<()> {
+    fn check(node: &serde_json::Value) -> bool {
+        let Some(obj) = node.as_object() else {
+            return false;
+        };
+        if let Some(tags) = obj.get("tags") {
+            tags.is_array()
+                && tags.as_array().unwrap().iter().all(|t| t.is_string())
+                && obj.get("match").map_or(true, |m| {
+                    m.as_str().map_or(false, |s| {
+                        ["any", "all", "any_strict", "all_strict", "exact"]
+                            .contains(&s)
+                    })
+                })
+                && obj.get("resolve").map_or(true, |r| {
+                    r.as_str().map_or(false, |s| ["exact", "fuzzy"].contains(&s))
+                })
+        } else if let Some(list) = obj.get("and").or_else(|| obj.get("or")) {
+            list.as_array()
+                .map_or(false, |items| items.iter().all(|g| check(g)))
+        } else if let Some(g) = obj.get("not") {
+            check(g)
+        } else {
+            false
+        }
+    }
+
+    let parsed: serde_json::Value = serde_json::from_str(raw)
+        .map_err(|e| anyhow::anyhow!("invalid --tag-groups JSON: {e}"))?;
+    match parsed.as_array() {
+        Some(items) if items.iter().all(check) => Ok(()),
+        _ => anyhow::bail!(
+            "invalid --tag-groups: expected a JSON array of tag groups \
+             (leaves {{\"tags\": [...]}} or {{\"and\"/\"or\"/\"not\": ...}})"
+        ),
+    }
 }
 
 /// Show the folder/page tree for a bank
@@ -593,5 +643,16 @@ mod tag_filter_tests {
         assert!(tag_filter(vec![], Some("most".into()), None).is_err());
         let f = tag_filter(vec![], None, Some("[]".into())).unwrap();
         assert_eq!((f.tags_match, f.tag_groups.as_deref()), (None, Some("[]")));
+    }
+
+    #[test]
+    fn tags_and_tag_groups_are_mutually_exclusive() {
+        let groups = Some(r#"[{"tags":["a","b"]}]"#.to_string());
+        let err = tag_filter(vec!["user:kate".into()], None, groups.clone()).unwrap_err();
+        assert!(err.to_string().contains("mutually exclusive"));
+        let f = tag_filter(vec!["user:kate".into()], None, None).unwrap();
+        assert_eq!(f.tags, vec!["user:kate".to_string()]);
+        let f = tag_filter(vec![], None, groups).unwrap();
+        assert_eq!(f.tag_groups.as_deref(), Some(r#"[{"tags":["a","b"]}]"#));
     }
 }

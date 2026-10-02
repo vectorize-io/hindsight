@@ -2452,9 +2452,11 @@ class MemoriesExtension(Extension, ABC):
             search_query=search_query,
             document_id=document_id,
             chunk_id=chunk_id,
-            tags=tags,
-            tags_match=tags_match,
-            tag_groups=tag_groups,
+            **(
+                {"tags": tags, "tags_match": tags_match, "tag_groups": tag_groups}
+                if tag_filter_active(tags, tags_match, tag_groups)
+                else {}
+            ),
             limit=limit,
         )
         units = page["units"]
@@ -2971,9 +2973,11 @@ class MemoriesExtension(Extension, ABC):
         return await self.list_documents(
             bank_id=bank_id,
             search_query=search_query,
-            tags=tags,
-            tags_match=tags_match,
-            tag_groups=tag_groups,
+            **(
+                {"tags": tags, "tags_match": tags_match, "tag_groups": tag_groups}
+                if tag_filter_active(tags, tags_match, tag_groups)
+                else {}
+            ),
             time_field=time_field,
             start_date=start_date,
             end_date=end_date,
@@ -3213,9 +3217,11 @@ class MemoriesExtension(Extension, ABC):
             bank_id=bank_id,
             limit=limit,
             min_count=min_count,
-            tags=tags,
-            tags_match=tags_match,
-            tag_groups=tag_groups,
+            **(
+                {"tags": tags, "tags_match": tags_match, "tag_groups": tag_groups}
+                if tag_filter_active(tags, tags_match, tag_groups)
+                else {}
+            ),
         )
 
     async def count_bank_documents(self, *, conn, fq_table, bank_id: str) -> int:
@@ -3253,9 +3259,11 @@ class MemoriesExtension(Extension, ABC):
             fq_table=fq_table,
             bank_id=bank_id,
             entity_ids=[eid],
-            tags=tags,
-            tags_match=tags_match,
-            tag_groups=tag_groups,
+            **(
+                {"tags": tags, "tags_match": tags_match, "tag_groups": tag_groups}
+                if tag_filter_active(tags, tags_match, tag_groups)
+                else {}
+            ),
         )
         if tag_filter_active(tags, tags_match, tag_groups) and eid not in counts:
             return None

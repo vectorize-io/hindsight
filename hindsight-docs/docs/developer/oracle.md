@@ -1,7 +1,8 @@
 # Oracle Database
 
 Hindsight uses PostgreSQL as its default storage backend, but it also runs on
-**Oracle Database 23ai** for organizations that standardize on Oracle
+**Oracle Database 23ai** and **Oracle AI Database 26ai** — including Oracle
+Autonomous AI Database — for organizations that standardize on Oracle
 infrastructure. All memory operations — retain, recall, and reflect — work the
 same way on Oracle; the backend is selected with a single environment variable.
 
@@ -22,7 +23,7 @@ deployment.
 
 | Requirement | Details |
 |-------------|---------|
-| Oracle Database | **23ai** (23.4+). [Oracle Database Free 23ai](https://www.oracle.com/database/free/) works for development. |
+| Oracle Database | **23ai** (23.4+) or **Oracle AI Database 26ai** (23.26). [Oracle Database Free](https://www.oracle.com/database/free/) works for development; Oracle Autonomous AI Database (including the Always Free tier) works for production — see [Autonomous AI Database](#autonomous-ai-database). |
 | `VECTOR` type | Used for embeddings. Requires the schema to live in an **ASSM tablespace** (see below). |
 | Oracle Text | Full-text search uses Oracle Text indexes. The schema user needs the `CTXAPP` role. |
 | Driver | [`python-oracledb`](https://python-oracledb.readthedocs.io/) ≥ 2.5.0, running in **thin mode** — pure Python, no Oracle Instant Client required. |
@@ -122,6 +123,35 @@ the requirements are unchanged: an **ASSM** default tablespace (needed for
 `VECTOR` columns) plus the `CTXAPP` role.
 :::
 
+#### Runtime user without DDL privileges
+
+The schema user above owns the tables and runs the migrations. The API itself
+does not need DDL: on Oracle AI Database 26ai, give it a separate user with
+**schema privileges**, which cover the owner's current *and future* tables, so a
+later migration does not need new grants:
+
+```sql
+CREATE USER hindsight_app IDENTIFIED BY "<strong-password>";
+GRANT CREATE SESSION TO hindsight_app;
+GRANT SELECT ANY TABLE, INSERT ANY TABLE, UPDATE ANY TABLE, DELETE ANY TABLE
+    ON SCHEMA hindsight TO hindsight_app;
+```
+
+The runtime user needs no quota: rows are stored in the owner's schema. Point the
+API at the runtime user and let migrations run as the owner:
+
+```bash
+export HINDSIGHT_API_DATABASE_URL='oracle+oracledb://hindsight_app:<password>@db.internal:1521/ORCLPDB1'
+export HINDSIGHT_API_MIGRATION_DATABASE_URL='oracle+oracledb://hindsight:<password>@db.internal:1521/ORCLPDB1'
+export HINDSIGHT_API_DATABASE_SCHEMA=HINDSIGHT   # the owner, not the runtime user
+```
+
+With `HINDSIGHT_API_MIGRATION_DATABASE_URL` set, the startup migrations and the
+embedding-dimension check run as the owner; everything else runs as the runtime
+user. On Oracle Database 23ai, which lacks the schema-level DML grants that 26ai
+adds, grant the four object privileges on each table instead, and re-run the
+grants after migrations that add tables.
+
 ### 2. Build the connection URL
 
 Hindsight uses SQLAlchemy-style URLs. The Oracle form is:
@@ -213,16 +243,23 @@ This routes through the dialect-aware migration runner and creates the Oracle
 schema. (Unlike the admin CLI's data-movement commands, `run-db-migration`
 is fully supported on Oracle — see [Limitations](#limitations-vs-postgresql).)
 
-:::warning Migrate with your runtime embedding dimension
-The embedding `VECTOR` columns are sized to the dimension of the configured
-embeddings model. Run migrations with the **same embeddings provider/model you
-will serve with** — otherwise the column dimension won't match the vectors the
-API produces and retain fails with `ORA-51803: Vector dimension count must
-match…` (for example, a schema built for a 384-dim local model rejects the
-1536-dim vectors from OpenAI `text-embedding-3-small`). If you change the
-embeddings model later, re-run migrations with `--embedding-dimension <N>` to
-resize the columns.
-:::
+#### Embedding dimension
+
+The baseline creates the embedding columns as `VECTOR(384, FLOAT32)`. On every
+startup — and with `hindsight-admin run-db-migration --embedding-dimension <N>` —
+Hindsight reconciles `memory_units.embedding` and `mental_models.embedding` with
+the configured embeddings model, as it does on PostgreSQL:
+
+| Column state | What happens |
+|--------------|--------------|
+| Same dimension as the model | Nothing. |
+| Other dimension, table empty (a fresh install) | The column is replaced with `VECTOR(<N>, FLOAT32)` and its vector indexes are rebuilt with the same organization. Oracle cannot change a `VECTOR` dimension in place (`ALTER TABLE … MODIFY` fails with `ORA-51859` even on an empty table), so the column is renamed, re-added and the old one dropped; an interrupted run is finished by the next one, including the index rebuild (the dropped indexes' DDL is kept in a comment on the `embedding` column until they exist again). Workers booting together converge: one that loses a DDL race re-reads the catalog and carries on. |
+| Other dimension, embeddings stored | Startup fails with an explicit error. Re-embed the data or configure a model with the stored dimension. |
+| Flexible `VECTOR(*, *)` column (created by hand) | Accepted as long as every stored embedding has the model's dimension; never altered. |
+
+So a deployment with a 1536-dimension model (OpenAI `text-embedding-3-small`,
+Gemini `gemini-embedding-001` with 1536 output dimensions, …) needs no manual
+DDL: the first startup sizes the empty tables.
 
 ### 5. Start the API
 
@@ -243,7 +280,94 @@ Oracle-relevant settings, all documented in full on the
 | `HINDSIGHT_API_DATABASE_BACKEND` | `postgresql` (default) or `oracle`. |
 | `HINDSIGHT_API_DATABASE_URL` | `oracle+oracledb://…` connection URL. |
 | `HINDSIGHT_API_DATABASE_SCHEMA` | Schema/user for the tables. On Oracle set this to your schema user (uppercase); the `public` default fails. |
+| `HINDSIGHT_API_MIGRATION_DATABASE_URL` | URL of the schema owner, used for migrations and the embedding-dimension check when the API connects as a [runtime user](#runtime-user-without-ddl-privileges). |
 | `HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP` | Auto-apply migrations when the API boots (default `true`). |
+| `HINDSIGHT_API_ORACLE_VECTOR_SEARCH` | `exact` (default) or `approx` — see [Vector search](#vector-search). |
+| `HINDSIGHT_API_ORACLE_VECTOR_TARGET_ACCURACY` | Target accuracy (1–100) of `approx` semantic recall (default `95`). |
+| `HINDSIGHT_API_DB_POOL_MAX_SIZE` | Upper bound of the connection pool (default `100`); lower it to fit the service's session limit — see [Autonomous AI Database](#autonomous-ai-database). |
+
+## Autonomous AI Database
+
+Hindsight runs on Oracle Autonomous AI Database, including the Always Free tier
+(verified on Oracle AI Database 26ai 23.26.3). Oracle manages the instance; you
+manage the schema, users, grants and the connection.
+
+- **Connection.** Use a TLS connect descriptor (see [Full connect descriptors](#full-connect-descriptors-and-tns-aliases)):
+  wallet-based mTLS is not supported, so set *Mutual TLS (mTLS) authentication*
+  to *Not required* and restrict access with an access control list or a private
+  endpoint. The `_low` or `_tp` service suits the API.
+- **Sessions.** Always Free instances accept 30 concurrent sessions, shared with
+  every other client of the database. Size `HINDSIGHT_API_DB_POOL_MAX_SIZE`
+  (default `100`) well below that — for example `10` — so a load spike cannot
+  exhaust the sessions other clients need.
+- **Storage.** Always Free instances have 20 GB. `memory_units` is list-partitioned
+  by bank, and every partition allocates its LOB segments up front, so each bank
+  costs tens of MB even when nearly empty. The audit log
+  (`HINDSIGHT_API_AUDIT_LOG_ENABLED`) stores full request bodies and grows fastest;
+  enable it only while you need it.
+- **Vector memory.** The vector pool is managed by the service: `vector_memory_size`
+  reads `0` and cannot be set, and the pool grows when an HNSW index is created.
+- **DDL latency.** Index creation and drops take seconds to minutes on a 1-ECPU
+  instance (they wait for checkpoints); plan index changes outside peak hours.
+
+## Vector search
+
+Semantic recall ranks the bank's memories by `VECTOR_DISTANCE(…, COSINE)` against
+the query embedding. The row-limiting clause decides whether that search is
+exact or approximate:
+
+- **`exact` (default)** — `FETCH EXACT FIRST n ROWS ONLY`. Every candidate row of
+  the bank's partition is compared, so results are the true nearest neighbours.
+  The `EXACT` keyword matters on Autonomous Database: there a bare `FETCH FIRST`
+  is answered from a vector index whenever one exists, which with the baseline's
+  global IVF index and the per-bank filter returned less than half of the true
+  top-20 in our tests. Vector-ordered queries built elsewhere (temporal recall,
+  link expansion) always use `EXACT`.
+- **`approx`** — `HINDSIGHT_API_ORACLE_VECTOR_SEARCH=approx` switches semantic
+  recall to `FETCH APPROX FIRST n ROWS ONLY WITH TARGET ACCURACY <n>` so Oracle
+  may answer from the `memory_units.embedding` vector index. It only pays off for
+  large banks: with the partition pruning on `bank_id`, exact search over a few
+  thousand memories takes tens of milliseconds.
+
+The baseline creates a global IVF index (`idx_mu_embedding_hnsw`, organization
+`NEIGHBOR PARTITIONS`, despite its name). Oracle also offers local HNSW indexes on
+partitioned tables (Oracle AI Database 26ai), which search only the bank's
+partition:
+
+```sql
+DROP INDEX idx_mu_embedding_hnsw;
+CREATE VECTOR INDEX idx_mu_embedding_hnsw ON memory_units (embedding)
+    ORGANIZATION INMEMORY NEIGHBOR GRAPH DISTANCE COSINE
+    WITH TARGET ACCURACY 95 LOCAL;
+```
+
+Whether the optimizer actually uses an index is cost-based; check with
+`EXPLAIN PLAN` (an HNSW scan shows as `VECTOR INDEX HNSW SCAN`, an IVF scan as
+access to its `VECTOR$…IVF_FLAT_CENTROIDS` tables) and measure recall against
+`exact` before enabling `approx`.
+
+## Full-text search
+
+The BM25 arm uses an Oracle Text `CTXSYS.CONTEXT` index on `memory_units(text)`
+with `SYNC (ON COMMIT)`. Every query term is wrapped in braces, so Oracle Text
+reads it literally: reserved words (`NEAR`, `ABOUT`, …), operator characters and
+`_` (Oracle Text's one-character wildcard) cannot change the expression, and
+`snake_case` identifiers match the words the lexer indexed. Terms are
+deduplicated, capped by `HINDSIGHT_API_BM25_MAX_QUERY_TERMS` like on
+PostgreSQL, and combined with `ACCUM`, which ranks a memory higher the more query
+terms it contains (`OR` scores it by its best single term, so a common word ranks
+as high as the rare one the question is about).
+
+## Hybrid search
+
+Semantic, keyword, graph and temporal results are fused by Hindsight itself with
+reciprocal rank fusion, then reranked by the configured reranker — the same
+pipeline as on PostgreSQL, with every arm's scores in the recall trace. Oracle's
+own hybrid search (hybrid vector indexes queried with `DBMS_HYBRID_VECTOR.SEARCH`)
+is not used: a hybrid vector index computes its own embeddings with an
+in-database ONNX model (or a provider called from the database), and queries it
+with a `search_vector` must use that same model — a second vector space alongside
+the embeddings Hindsight produces with its configured provider.
 
 ## Limitations vs PostgreSQL
 
@@ -264,6 +388,12 @@ internal details differ:
 - **Entity resolution uses Oracle fuzzy matching.** Fuzzy entity lookup during
   retain uses Oracle's text matching rather than PostgreSQL's `pg_trgm` trigram
   matching. Behaviour is equivalent; the underlying mechanism differs.
+- **Approximate search is opt-in for the recall-time lookups.**
+  `HINDSIGHT_API_ORACLE_VECTOR_SEARCH=approx` affects the semantic arm of
+  recall; the other recall-time vector-ordered lookups (temporal recall, link
+  expansion) always search exactly. Separately, semantic link construction
+  during retain always searches approx — `HINDSIGHT_API_ORACLE_VECTOR_SEARCH`
+  does not change it.
 
 ## Troubleshooting
 
@@ -271,7 +401,10 @@ internal details differ:
 |---------|-------------|
 | `python-oracledb is required for Oracle backend` | The driver isn't installed. Run `pip install oracledb` (or install the `[oracle]` extra). |
 | `ORA-01435: user does not exist` on migration | `HINDSIGHT_API_DATABASE_SCHEMA` is unset (defaults to `public`) or misspelled. Set it to your Oracle schema user, uppercase (e.g. `HINDSIGHT`). |
-| `ORA-51803: Vector dimension count must match` on retain | The schema was migrated with a different embedding dimension than the running embeddings model. Migrate with the same embeddings config, or re-run `run-db-migration --embedding-dimension <N>`. |
+| Startup fails with `Cannot change embedding dimension from <X> to <N>` | The tables already hold embeddings of another dimension than the configured model. Re-embed the data (empty the tables and restart) or configure a model with `<X>` dimensions. See [Embedding dimension](#embedding-dimension). |
+| `ORA-51803: Vector dimension count must match` on retain or recall | A flexible or hand-altered `VECTOR` column holds embeddings of several dimensions. Re-embed the stored rows with the configured model. |
+| `ORA-01031: insufficient privileges` during startup migrations | The API connects as a runtime user without DDL rights. Set `HINDSIGHT_API_MIGRATION_DATABASE_URL` to the schema owner — see [Runtime user without DDL privileges](#runtime-user-without-ddl-privileges). |
+| Semantic recall differs between Oracle Free and Autonomous Database | Fixed by `FETCH EXACT`: a bare `FETCH FIRST` is approximate on Autonomous Database when a vector index exists. Upgrade, or see [Vector search](#vector-search). |
 | Migration errors when creating embedding/`VECTOR` columns | The schema user's default tablespace is not ASSM (often the `SYSTEM` tablespace). Recreate the user in an ASSM tablespace as shown above. |
 | Full-text search errors / missing Oracle Text index | The schema user is missing the `CTXAPP` role. Run `GRANT CTXAPP TO <user>;`. |
 | `ORA-12514` / service not found | The URL uses a SID or wrong service name. Use the pluggable database **service name** (e.g. `FREEPDB1`), not the SID. |

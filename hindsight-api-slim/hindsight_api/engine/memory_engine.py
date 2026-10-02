@@ -22,7 +22,7 @@ import random
 import sys
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta, timezone
@@ -314,6 +314,75 @@ def _shared_document_id(contents: "Iterable[Mapping[str, Any]]") -> str | None:
     """
     ids = {item.get("document_id") for item in contents}
     return ids.pop() if len(ids) == 1 else None
+
+
+def _ingress_for_contents(
+    ingress_attachments: "Mapping[str, Sequence[str]] | None",
+    contents: "Iterable[Mapping[str, Any]]",
+    document_id: str | None,
+    *extra_contents: "Iterable[Mapping[str, Any]]",
+    keep: "Mapping[str, Iterable[str]] | None" = None,
+) -> "Mapping[str, Sequence[str]] | None":
+    """The slice of a request-wide ingress map this retain call covers.
+
+    The HTTP layer stores attachments once for the whole request, then calls
+    retain once per strategy group — and groups can share a document. A refusal
+    here may only take back the short ids this call's items actually referenced
+    (the placeholders in their content, plus any named in
+    ``attachment_filenames``), never what an earlier group already committed or
+    queued into the same document. Items without a document id generate one
+    later, so nothing they carry was written under a key this map knows.
+    ``extra_contents`` carries the validator's replacement list when it differs,
+    since its rewrite must not widen or narrow what the refusal touches.
+    ``keep`` holds ids an earlier group of the same request already committed
+    or queued — shared attachments this call happens to reference too, which a
+    refusal here must not take from under them.
+    """
+    if not ingress_attachments:
+        return ingress_attachments
+    from .retain.attachment_content import iter_placeholder_ids
+
+    keep = keep or {}
+    covered: "dict[str, set[str]]" = {}
+    for items in (contents, *extra_contents):
+        for item in items:
+            doc = item.get("document_id") or document_id
+            if not isinstance(doc, str):
+                continue
+            ids = covered.setdefault(doc, set())
+            ids.update(iter_placeholder_ids(str(item.get("content") or "")))
+            ids.update(item.get("attachment_filenames") or {})
+    return {
+        d: [sid for sid in ids if sid in covered[d] and sid not in keep.get(d, ())]
+        for d, ids in ingress_attachments.items()
+        if d in covered
+    }
+
+
+def _claim_ingress_contents(
+    committed_attachments: "MutableMapping[str, set[str]] | None",
+    contents: "Iterable[Mapping[str, Any]]",
+    document_id: str | None,
+) -> None:
+    """Record the short ids a successful retain call committed or queued.
+
+    The HTTP layer passes the same map to every strategy group of a request,
+    so the claims must reflect what the call actually retained — the
+    post-validator ``contents``, not what was submitted. A call that raises
+    never reaches this: only ids backed by a committed or queued retain get
+    kept out of a later group's refusal.
+    """
+    if committed_attachments is None:
+        return
+    from .retain.attachment_content import iter_placeholder_ids
+
+    for item in contents:
+        doc = item.get("document_id") or document_id
+        if not isinstance(doc, str):
+            continue
+        ids = committed_attachments.setdefault(doc, set())
+        ids.update(iter_placeholder_ids(str(item.get("content") or "")))
+        ids.update(item.get("attachment_filenames") or {})
 
 
 def fq_table(table_name: str) -> str:
@@ -5875,10 +5944,24 @@ class MemoryEngine(MemoryEngineInterface):
                     # unnecessary; run sequentially via the backend's own runner.
                     # normalize_schema() maps PG's "public" default to None (the
                     # connecting user's schema) on Oracle.
+                    from ..migrations import ensure_embedding_dimension
+                    from .memories import get_memories
+
                     for tenant in tenants:
                         if tenant.schema:
-                            self._backend.run_migrations(
-                                self.db_url, schema=self._backend.normalize_schema(tenant.schema)
+                            schema = self._backend.normalize_schema(tenant.schema)
+                            self._backend.run_migrations(self.db_url, schema=schema)
+                            # The Oracle baseline declares VECTOR(384); reconcile it with the model
+                            # like the PG path does. It alters tables, so it runs as the migration
+                            # user when one is configured. Its DDL (index rebuilds included) can take
+                            # a while on Autonomous Database, so it runs off the event loop, as the
+                            # PG path does.
+                            await asyncio.to_thread(
+                                ensure_embedding_dimension,
+                                config.migration_database_url or self.db_url,
+                                self.embeddings.dimension,
+                                schema=schema,
+                                store_owned_memories=get_memories().store_owned,
                             )
                 logger.info("Schema migrations completed")
 
@@ -6416,6 +6499,7 @@ class MemoryEngine(MemoryEngineInterface):
         strategy: str | None = None,
         fold_members: list[FoldMemberRef] | None = None,
         ingress_attachments: "Mapping[str, Sequence[str]] | None" = None,
+        committed_attachments: "MutableMapping[str, set[str]] | None" = None,
     ):
         """
         Store multiple content items as memory units in ONE batch operation.
@@ -6481,6 +6565,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Validate operation if validator is configured
         contents_copy = [dict(c) for c in contents]  # Convert TypedDict to regular dict for extension
+        ingress_contents = contents  # Pre-validator items: their document_ids keyed the ingress writes.
         if self._operation_validator:
             from hindsight_api.extensions import RetainContext
 
@@ -6503,21 +6588,54 @@ class MemoryEngine(MemoryEngineInterface):
                 # keep them out of the bank is to take them back out here.
                 # Nothing else would: reclaim is otherwise driven by document
                 # deletion, and a rejected retain never creates a document.
-                await self._discard_unreferenced_attachments(bank_id, ingress_attachments, request_context)
+                await self._discard_unreferenced_attachments(
+                    bank_id,
+                    _ingress_for_contents(ingress_attachments, contents, document_id, keep=committed_attachments),
+                    request_context,
+                )
                 raise
             if result and result.contents is not None:
                 contents = cast(list[RetainContentDict], result.contents)
-        await self._check_retain_writes(
-            bank_id, contents, request_context, strategy=strategy, document_tags=document_tags
-        )
-
-        await self._ensure_bank_exists(bank_id, request_context)
 
         # Engine-owned copy: the orchestrator clears per-item "content" strings
         # after building the document's combined text (memory pressure
-        # optimization, see retain/orchestrator.py). Without an internal copy
-        # those mutations leak back to the caller's dicts.
+        # optimization, see retain/orchestrator.py), and the document_id merge
+        # below writes into items — without an internal copy those mutations
+        # leak back to the caller's dicts.
         contents = cast(list[RetainContentDict], [dict(c) for c in contents])
+
+        # Apply batch-level document_id to contents that don't have their own (backwards
+        # compatibility). This must land before the write-scope check: the check reads the
+        # document_ids off the items, and a batch-level id merged afterwards would write into
+        # a document the caller may not be scoped to.
+        if document_id:
+            for item in contents:
+                if "document_id" not in item:
+                    item["document_id"] = document_id
+
+        # Post-validator, pre-processing snapshot for the commit claim at the
+        # end of this call. The validator may have replaced the item list
+        # wholesale, so contents_copy cannot speak for what was retained; and
+        # the live list cannot either — the orchestrator empties an item's
+        # content once it has described its attachments.
+        claim_contents = [dict(c) for c in contents]
+        try:
+            await self._check_retain_writes(
+                bank_id, contents, request_context, strategy=strategy, document_tags=document_tags
+            )
+        except Exception:
+            # Same reclaim as the validator refusal above: a retain refused here has already
+            # stored its ingress attachment bytes, so they must be taken back out too.
+            await self._discard_unreferenced_attachments(
+                bank_id,
+                _ingress_for_contents(
+                    ingress_attachments, contents, document_id, ingress_contents, keep=committed_attachments
+                ),
+                request_context,
+            )
+            raise
+
+        await self._ensure_bank_exists(bank_id, request_context)
 
         # Sanitize the whole item at ingress. A lone UTF-16 surrogate (e.g. a
         # half-emoji a client serialized as a `\udXXX` escape) crashes the
@@ -6544,12 +6662,6 @@ class MemoryEngine(MemoryEngineInterface):
                     for entity in item["entities"]
                     if (entity.get("text") or "").strip()
                 ]
-
-        # Apply batch-level document_id to contents that don't have their own (backwards compatibility)
-        if document_id:
-            for item in contents:
-                if "document_id" not in item:
-                    item["document_id"] = document_id
 
         # NOTE: items sharing a document_id are ALLOWED here and folded into one
         # document (see the grouping dispatch below). The synchronous in-process
@@ -6681,6 +6793,12 @@ class MemoryEngine(MemoryEngineInterface):
                 total_processed_content_tokens = merge_processed_content_tokens(
                     total_processed_content_tokens, group_outcome.processed_content_tokens
                 )
+
+        # The batch retained these contents — their attachment ids now back
+        # committed units, so a later group's refusal may not take them back.
+        # Claim from the post-validator snapshot taken before processing
+        # emptied any content strings.
+        _claim_ingress_contents(committed_attachments, claim_contents, document_id)
 
         # A cancelled run (bank deleted mid-flight) skips the completion side
         # effects, mirroring the pre-grouping early return from the sub-batch loop.
@@ -22118,6 +22236,7 @@ class MemoryEngine(MemoryEngineInterface):
         strategy: str | None = None,
         operation_id: str | None = None,
         ingress_attachments: "Mapping[str, Sequence[str]] | None" = None,
+        committed_attachments: "MutableMapping[str, set[str]] | None" = None,
     ) -> dict[str, Any]:
         """Submit a batch retain operation to run asynchronously.
 
@@ -22135,6 +22254,7 @@ class MemoryEngine(MemoryEngineInterface):
         # Run operation validator (bank access, credits, etc.) before queuing.
         # This runs on every retry too, so a replay cannot bypass access/credit
         # checks even though it performs no ingestion work.
+        ingress_contents = contents  # Pre-validator items: their document_ids keyed the ingress writes.
         if self._operation_validator:
             from hindsight_api.extensions import RetainContext
 
@@ -22152,13 +22272,29 @@ class MemoryEngine(MemoryEngineInterface):
             except Exception:
                 # Same reclaim as the synchronous path: the bytes were stored at
                 # ingress, so a refusal here is the only chance to take them back.
-                await self._discard_unreferenced_attachments(bank_id, ingress_attachments, request_context)
+                await self._discard_unreferenced_attachments(
+                    bank_id,
+                    _ingress_for_contents(ingress_attachments, contents, None, keep=committed_attachments),
+                    request_context,
+                )
                 raise
             if result and result.contents is not None:
                 contents = result.contents
-        await self._check_retain_writes(
-            bank_id, contents, request_context, strategy=strategy, document_tags=document_tags
-        )
+        try:
+            await self._check_retain_writes(
+                bank_id, contents, request_context, strategy=strategy, document_tags=document_tags
+            )
+        except Exception:
+            # Same reclaim as the validator refusal above: the bytes were stored at
+            # ingress, so a refusal here is the only chance to take them back.
+            await self._discard_unreferenced_attachments(
+                bank_id,
+                _ingress_for_contents(
+                    ingress_attachments, contents, None, ingress_contents, keep=committed_attachments
+                ),
+                request_context,
+            )
+            raise
 
         # Sanitize at the same ingress point the synchronous path does, and for a
         # second reason on top of it: the whole item is serialized into
@@ -22395,6 +22531,12 @@ class MemoryEngine(MemoryEngineInterface):
         # synchronous execution against the now-committed rows.
         for full_payload in deferred_child_payloads:
             await self._task_backend.submit_task(full_payload)
+
+        # The children are queued — their contents' attachment ids now back a
+        # pending retain a later group's refusal may not take back. `contents`
+        # is still the post-validator list here; the worker does the mutating
+        # attachment processing later.
+        _claim_ingress_contents(committed_attachments, contents, None)
 
         return {
             "operation_id": str(parent_operation_id),

@@ -147,6 +147,9 @@ async def test_memory_reads_are_confined(memory, scoped_bank):
     )
     recalled_texts = " | ".join(r.text for r in recalled.results)
     assert "interviewing" not in recalled_texts
+    # An empty result set satisfies the scope assertions vacuously — the recall
+    # must have actually gathered Dan-visible evidence for this to mean anything.
+    assert recalled.results, "the scoped recall should have gathered Dan-visible evidence"
     assert all(tags_satisfy_groups(r.tags, DAN_SCOPE) for r in recalled.results)
 
     tags = await memory.list_tags(scoped_bank, request_context=dan)

@@ -8,12 +8,13 @@ type TagFilter = { tags?: string[]; tags_match?: TagsMatch };
 /**
  * Read `tags` (repeated) and `tags_match` from a request. `tags_match` is only
  * forwarded alongside tags — on its own it would override the dataplane default
- * for an unfiltered read — and an unknown mode is dropped rather than sent on to
- * become a 422.
+ * for an unfiltered read — except `exact`, which with no tags means "only
+ * entities of untagged memories" and is a filter in itself. An unknown mode is
+ * dropped rather than sent on to become a 422.
  */
 export function readTagFilter(searchParams: URLSearchParams): TagFilter {
   const tags = searchParams.getAll("tags").filter((tag) => tag.length > 0);
-  if (tags.length === 0) return {};
+  if (tags.length === 0 && searchParams.get("tags_match") !== "exact") return {};
   const mode = searchParams.get("tags_match");
   // Set.has() does not narrow, so the cast is what carries the check into the type.
   return mode && TAGS_MATCH_MODES.has(mode) ? { tags, tags_match: mode as TagsMatch } : { tags };

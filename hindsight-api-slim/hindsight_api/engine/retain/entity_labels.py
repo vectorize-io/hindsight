@@ -344,6 +344,11 @@ def label_tag_candidates(labels_cfg: "EntityLabelsConfig | dict | list | None") 
     for group in labels_cfg.attributes:
         if not (group.tag and group.key):
             continue
+        # Keys must keep the config's casing verbatim: the entity strings
+        # ``_inject_label_tags`` stores are built as ``group.key:value`` with the
+        # raw key, and ``tags_writable`` matches patterns case-sensitively — a
+        # lowercased candidate would check a tag that is never written and let
+        # the real one through unchecked.
         if group.type in ("text", "multi-text", "map"):
             out.append(f"{group.key}:*")
         else:

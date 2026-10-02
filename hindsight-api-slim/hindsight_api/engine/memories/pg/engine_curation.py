@@ -17,7 +17,8 @@ from typing import Any
 
 from ...search.tags import TagsMatch, build_tag_filter_clause, tag_filter_active
 from ..base import BankContentCounts, MemoryLocation, StoredMemory, TypedMemoryScope
-from .curation import visible_entity_stats_sql
+from .curation import visible_entity_mentions_sql, visible_entity_stats_sql
+from .graph import _ops_for
 
 # Ids per DELETE in the bulk delete, so one statement's parameter array stays bounded.
 _DELETE_CHUNK_SIZE = 10_000
@@ -313,15 +314,7 @@ async def _tag_filtered_entity_graph_edges(
     limit_param = len(params)
     return await conn.fetch(
         f"""
-        WITH ve AS (
-            SELECT ue.unit_id, ue.entity_id, vu.seen_at
-            FROM {fq_table("unit_entities")} ue
-            JOIN (
-                SELECT id, COALESCE(occurred_start, mentioned_at, event_date) AS seen_at
-                FROM {fq_table("memory_units")}
-                WHERE bank_id = $1 {built.sql}
-            ) vu ON vu.id = ue.unit_id
-        ),
+        WITH ve AS ({visible_entity_mentions_sql(fq_table, _ops_for(conn), built.sql)}),
         pairs AS (
             -- One row per unordered pair, smaller id first, like the materialized table.
             SELECT a.entity_id AS entity_id_1,
@@ -498,7 +491,7 @@ async def get_entity_detail(
             f"""
             SELECT e.id, e.canonical_name, s.mention_count, s.first_seen, s.last_seen, e.metadata
             FROM {fq_table("entities")} e
-            JOIN ({visible_entity_stats_sql(fq_table, built.sql)}) s ON s.entity_id = e.id
+            JOIN ({visible_entity_stats_sql(fq_table, _ops_for(conn), built.sql)}) s ON s.entity_id = e.id
             WHERE e.bank_id = $1 AND e.id = ${len(built.params) + 2}
             """,
             bank_id,

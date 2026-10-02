@@ -1202,7 +1202,9 @@ enum KnowledgeBaseCommands {
         /// Bank ID
         bank_id: String,
 
-        /// Only pages carrying these tags (comma-separated, e.g. user:alice,team)
+        /// Only pages carrying these tags (comma-separated, e.g. user:alice,team).
+        /// Caveat: `any`/`all` also match untagged pages — the _strict modes and
+        /// `exact` do not.
         #[arg(long, value_delimiter = ',')]
         tags: Vec<String>,
 
@@ -1284,7 +1286,9 @@ enum KnowledgeBaseCommands {
         #[arg(long)]
         limit: Option<u64>,
 
-        /// Only pages carrying these tags (comma-separated, e.g. user:alice,team)
+        /// Only pages carrying these tags (comma-separated, e.g. user:alice,team).
+        /// Caveat: `any`/`all` also match untagged pages — the _strict modes and
+        /// `exact` do not.
         #[arg(long, value_delimiter = ',')]
         tags: Vec<String>,
 

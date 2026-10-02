@@ -235,7 +235,9 @@ function appendTagFilter(
   filter: { tags?: string[]; tags_match?: TagsMatch }
 ) {
   for (const tag of filter.tags ?? []) queryParams.append("tags", tag);
-  if (filter.tags?.length && filter.tags_match) queryParams.append("tags_match", filter.tags_match);
+  // `exact` without tags is itself a filter (entities of untagged memories).
+  if (filter.tags_match && (filter.tags?.length || filter.tags_match === "exact"))
+    queryParams.append("tags_match", filter.tags_match);
 }
 
 // Time axes the two list endpoints can filter and order by. The chosen axis does

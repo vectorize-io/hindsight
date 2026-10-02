@@ -16,6 +16,10 @@ describe("readTagFilter", () => {
     expect(read("tags=")).toEqual({});
   });
 
+  it("keeps exact with no tags — it is itself a filter for untagged entities", () => {
+    expect(read("tags_match=exact")).toEqual({ tags: [], tags_match: "exact" });
+  });
+
   it("drops an unknown mode instead of forwarding it", () => {
     expect(read("tags=user:dan&tags_match=bogus")).toEqual({ tags: ["user:dan"] });
   });

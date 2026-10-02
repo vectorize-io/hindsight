@@ -3623,14 +3623,11 @@ def _knowledge_tag_filter(
         None,
         description="JSON-encoded compound tag filter, same shape as recall's `tag_groups`, e.g. "
         '`[{"or":[{"tags":["user:kate"],"match":"all_strict"},{"tags":["team"]}]}]`. '
-        "Top-level groups are AND-ed, and AND-ed with `tags`.",
+        "Top-level groups are AND-ed. Mutually exclusive with `tags`.",
     ),
 ) -> KnowledgeTagFilter:
     """Query-string tag filter shared by the knowledge-base tree and search."""
-    try:
-        groups = _TAG_GROUPS_ADAPTER.validate_json(tag_groups) if tag_groups else None
-    except ValidationError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid tag_groups: {e}")
+    groups = _parse_tag_groups_query(tag_groups, tags)
     return KnowledgeTagFilter(tags=tags or None, tags_match=tags_match, tag_groups=groups)
 
 
@@ -10087,6 +10084,11 @@ def _register_routes(app: FastAPI):
                 # Async processing: one submit per strategy group
                 all_operation_ids = []
                 total_items_count = 0
+                # Short ids an earlier group's queued retain now backs — a
+                # later group's refusal must not take those back. The engine
+                # adds to this map after a successful submit, using the
+                # post-validator contents rather than what was submitted.
+                claimed_attachments: dict[str, set[str]] = {}
                 for group_strategy, contents in strategy_groups.items():
                     result = await app.state.memory.submit_async_retain(
                         bank_id,
@@ -10096,6 +10098,7 @@ def _register_routes(app: FastAPI):
                         request_context=request_context,
                         operation_id=request.operation_id,
                         ingress_attachments=ingress_attachments,
+                        committed_attachments=claimed_attachments,
                     )
                     all_operation_ids.append(result["operation_id"])
                     total_items_count += result["items_count"]
@@ -10126,6 +10129,9 @@ def _register_routes(app: FastAPI):
                 total_items_count = 0
                 total_usage = TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0)
                 with metrics.record_operation("retain", bank_id=bank_id, source="api"):
+                    # Same claim tracking as the async loop: an earlier group's
+                    # committed attachments stay out of a later group's refusal.
+                    claimed_attachments: dict[str, set[str]] = {}
                     for group_strategy, contents in strategy_groups.items():
                         result, usage = await app.state.memory.retain_batch_async(
                             bank_id=bank_id,
@@ -10135,6 +10141,7 @@ def _register_routes(app: FastAPI):
                             request_context=request_context,
                             return_usage=True,
                             ingress_attachments=ingress_attachments,
+                            committed_attachments=claimed_attachments,
                             outbox_callback_factory=app.state.memory._build_retain_outbox_callback_factory(
                                 bank_id=bank_id,
                                 operation_id=None,
