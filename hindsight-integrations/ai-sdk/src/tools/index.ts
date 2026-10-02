@@ -312,7 +312,11 @@ export function createHindsightTools({
   type RetainOutput = { success: boolean; itemsCount: number };
 
   type RecallInput = z.infer<typeof recallParams>;
-  type RecallOutput = { results: RecallResult[]; entities?: Record<string, EntityState> | null };
+  type RecallOutput = {
+    results: RecallResult[];
+    entities?: Record<string, EntityState> | null;
+    chunks?: Record<string, ChunkData> | null;
+  };
 
   type ReflectInput = z.infer<typeof reflectParams>;
   type ReflectOutput = { text: string; basedOn?: ReflectBasedOn | null };
@@ -369,6 +373,9 @@ export function createHindsightTools({
         return {
           results: result.results ?? [],
           entities: result.entities,
+          // Preserve the raw evidence requested through includeChunks; dropping
+          // it here paid the retrieval cost but hid exact source text from agents.
+          chunks: result.chunks,
         };
       },
     }),

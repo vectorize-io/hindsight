@@ -205,6 +205,20 @@ describe("createHindsightTools", () => {
       expect(result.results).toEqual([]);
     });
 
+    it("should preserve requested chunks and their truncation flags", async () => {
+      const tools = createHindsightTools({
+        client: mockClient,
+        bankId: "test-bank",
+        recall: { includeChunks: true },
+      });
+      const chunks = {
+        c1: { id: "c1", text: "Exact source wording", chunk_index: 2, truncated: true },
+      };
+      vi.mocked(mockClient.recall).mockResolvedValue({ results: [], chunks });
+      const result = await tools.recall.execute({ query: "exact wording" });
+      expect(result.chunks).toEqual(chunks);
+    });
+
     it("should include entities when present", async () => {
       const tools = createHindsightTools({
         client: mockClient,
