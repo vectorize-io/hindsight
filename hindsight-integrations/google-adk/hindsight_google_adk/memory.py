@@ -241,6 +241,9 @@ class HindsightMemoryService(BaseMemoryService):
                 await self._client.aretain(
                     bank_id=bank_id,
                     content=text,
+                    # Keep the original event time (or explicit timeless sentinel),
+                    # rather than silently dating every imported entry at ingestion.
+                    timestamp=memory.timestamp,
                     context=self._context,
                     document_id=memory.id,
                     tags=self._base_tags(app_name, user_id),
