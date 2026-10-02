@@ -220,6 +220,13 @@ def _knowledge_snippet(content: str | None) -> str:
 # absent means version — no backfill needed.
 _MM_HISTORY_KIND_FAILURE = "refresh_failed"
 
+#: Consecutive ``delta_ops_all_skipped`` failures after which a delta-mode refresh
+#: escalates to a full regeneration. Two, not one: the first failure already pauses
+#: the automatic triggers (#4532), and a single skipped delta can be a transient
+#: model slip; a second identical failure against the same baseline means the delta
+#: path is wedged, and only a rebuilt baseline unwedges it (#4875).
+_DELTA_SKIP_ESCALATION_THRESHOLD = 2
+
 #: Marks a queued ``refresh_mental_model`` operation as *automatically* triggered — by
 #: consolidation or by the cron scan — and therefore subject to the minimum-interval
 #: floor. Explicit refreshes omit it and always run at once.
@@ -17158,6 +17165,7 @@ class MemoryEngine(MemoryEngineInterface):
         use_delta = False
         mode_fallback_reason: ModeFallbackReason | None = None
         stored_structured_content: dict[str, Any] | None = None
+        consecutive_skips = 0
         # The legacy placeholder is not a baseline. Pages are created empty now, but a
         # page created before that change still holds the literal string and has never
         # refreshed — and a never-refreshed page has no last_refreshed_source_query, so
@@ -17173,12 +17181,13 @@ class MemoryEngine(MemoryEngineInterface):
             backend = await self._get_backend()
             async with acquire_with_retry(backend) as conn:
                 tracking_row = await conn.fetchrow(
-                    f"SELECT last_refreshed_source_query, structured_content "
+                    f"SELECT last_refreshed_source_query, structured_content, delta_all_skip_streak "
                     f"FROM {fq_table('mental_models')} "
                     f"WHERE bank_id = $1 AND id = $2",
                     bank_id,
                     mental_model_id,
                 )
+                consecutive_skips = tracking_row["delta_all_skip_streak"] if tracking_row else 0
             last_refreshed_source_query: str | None = (
                 tracking_row["last_refreshed_source_query"] if tracking_row else None
             )
@@ -17190,6 +17199,18 @@ class MemoryEngine(MemoryEngineInterface):
             use_delta = last_refreshed_source_query is None or last_refreshed_source_query == source_query
             if not use_delta:
                 mode_fallback_reason = "source_query_changed"
+            elif consecutive_skips >= _DELTA_SKIP_ESCALATION_THRESHOLD:
+                # A preserved document never unwedges itself: every recent delta
+                # produced ops that did not apply, and the next one is run against
+                # the same baseline. Rebuild the baseline with one full
+                # regeneration instead of failing forever. The streak lives on
+                # the model, not in optional audit history, and resets on success.
+                logger.warning(
+                    f"[MENTAL_MODELS] Delta refresh for {mental_model_id} skipped all ops "
+                    f"{consecutive_skips} time(s) in a row; escalating to a full regeneration"
+                )
+                use_delta = False
+                mode_fallback_reason = "delta_ops_all_skipped"
             if tracking_row is not None:
                 raw_struct = tracking_row["structured_content"]
                 if isinstance(raw_struct, str):
@@ -18518,6 +18539,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # no longer the one that keeps failing: let the automatic triggers have it
                 # back rather than making the next reader wonder why it never refreshes.
                 updates.append("last_refresh_failed_at = NULL")
+                updates.append("delta_all_skip_streak = 0")
             # last_memory_seen_at — data watermark, "how far through the bank's memories
             # this document is written". Staleness keys off it. A row that commits after
             # the refresh snapshot stays newer than the watermark and is caught next
@@ -18730,10 +18752,14 @@ class MemoryEngine(MemoryEngineInterface):
                 # automatic triggers, so it must land even if the audit row below
                 # (optional, and capped) cannot be written.
                 await conn.execute(
-                    f"UPDATE {fq_table('mental_models')} SET last_refresh_failed_at = now() "
+                    f"UPDATE {fq_table('mental_models')} SET last_refresh_failed_at = now(), "
+                    "delta_all_skip_streak = CASE WHEN $3 = 'delta_ops_all_skipped' "
+                    "THEN LEAST(delta_all_skip_streak + 1, $4) ELSE 0 END "
                     "WHERE bank_id = $1 AND id = $2",
                     bank_id,
                     mental_model_id,
+                    failure_reason,
+                    _DELTA_SKIP_ESCALATION_THRESHOLD,
                 )
                 if config.enable_mental_model_history:
                     await self._insert_mental_model_history_row(
@@ -18819,6 +18845,7 @@ class MemoryEngine(MemoryEngineInterface):
                     structured_content = NULL,
                     last_refreshed_source_query = NULL,
                     last_refresh_failed_at = NULL,
+                    delta_all_skip_streak = 0,
                     embedding = $3{sv_clause}
                 WHERE bank_id = $1 AND id = $2
                 RETURNING id, bank_id, name, source_query, content, tags,
