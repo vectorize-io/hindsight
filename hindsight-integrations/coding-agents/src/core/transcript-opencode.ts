@@ -73,7 +73,15 @@ export function readOpencodeMessages(messages: OcMessage[]): TransportTurn[] {
   return (messages || []).flatMap((m) => renderMessage(m));
 }
 
-/** The session id carried on the messages (first message that has one), or undefined. */
+/**
+ * The current session is the last message with an identity. Side-conversation plugins can prepend
+ * read-only parent messages with their original session IDs; taking the first ID would upsert the
+ * side transcript over its parent's document. Callers must retain only this session's messages.
+ */
 export function opencodeSessionId(messages: OcMessage[]): string | undefined {
-  return (messages || []).find((m) => m.info?.sessionID)?.info?.sessionID;
+  for (let i = (messages || []).length - 1; i >= 0; i--) {
+    const id = messages[i].info?.sessionID;
+    if (id) return id;
+  }
+  return undefined;
 }

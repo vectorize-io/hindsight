@@ -128,7 +128,9 @@ function createRuntime(core: RuntimeCore) {
       const msgs = output.messages || [];
       const sid = opencodeSessionId(msgs);
       if (!sid) return;
-      await core.onTranscript(sid, readOpencodeMessages(msgs), false);
+      // Parent-context prefixes are useful to the model but are not owned by this session.
+      const ownMessages = msgs.filter((message) => message.info?.sessionID === sid);
+      await core.onTranscript(sid, readOpencodeMessages(ownMessages), false);
     },
     // The Stop-equivalent these hosts otherwise lack: `session.idle` fires once the assistant has
     // finished, which is the only moment the completed exchange is readable. Without it a session's
