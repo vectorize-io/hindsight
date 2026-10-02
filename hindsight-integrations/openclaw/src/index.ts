@@ -141,6 +141,8 @@ const banksWithDefaultsApplied = new Set<string>();
 
 // In-flight recall deduplication: concurrent recalls for the same bank reuse one promise
 import type { RecallResponse } from "./types.js";
+import { registerNativeMemoryCapabilityIfEnabled } from "./native-capability.js";
+
 const inflightRecalls = new Map<string, Promise<RecallResponse>>();
 
 // Lightweight bank-scoped facade over HindsightClient. Created per-request via
@@ -2300,7 +2302,19 @@ export default function (api: MoltbotPluginAPI) {
     // not on every CLI command.
     debug("[Hindsight] Registering service...");
     log.info("registering plugin service");
-    api.registerService({
+        // Native memory capability (OpenClaw Memory page, active-memory, plugin-sdk
+    // host search). Registers synchronously at load time, like memory-core does.
+    registerNativeMemoryCapabilityIfEnabled(
+      api,
+      {
+        getClientForContext: (ctx) => (global as any).__hindsightClient.getClientForContext(ctx),
+        getPluginConfig: () => currentPluginConfig ?? {},
+        getServerEndpoint: () => detectExternalApi(currentPluginConfig ?? {}),
+      },
+      pluginConfig
+    );
+
+api.registerService({
       id: "hindsight-memory",
       async start() {
         preServiceRecallController.abort();

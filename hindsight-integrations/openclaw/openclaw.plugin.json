@@ -43,7 +43,7 @@
       },
       "bankMission": {
         "type": "string",
-        "description": "Mission stamped onto the bank's reflect_mission column on first use. Only affects the /reflect operation — does not steer retain or recall. Leave unset (or empty) to manage missions out-of-band via PATCH /banks/{id}.",
+        "description": "Mission stamped onto the bank's reflect_mission column on first use. Only affects the /reflect operation \u2014 does not steer retain or recall. Leave unset (or empty) to manage missions out-of-band via PATCH /banks/{id}.",
         "default": "You are an AI assistant helping users across multiple communication channels (Telegram, Slack, Discord, etc.). Remember user preferences, instructions, and important context from conversations to provide personalized assistance."
       },
       "retainMission": {
@@ -57,7 +57,13 @@
       "retainExtractionMode": {
         "type": "string",
         "description": "Fact extraction mode stamped onto each bank on first use (dynamic or static). Options: concise, verbose, custom, verbatim, chunks. Leave unset to keep the Hindsight server default for new banks.",
-        "enum": ["concise", "verbose", "custom", "verbatim", "chunks"]
+        "enum": [
+          "concise",
+          "verbose",
+          "custom",
+          "verbatim",
+          "chunks"
+        ]
       },
       "enableObservations": {
         "type": "boolean",
@@ -96,14 +102,25 @@
       "llmProvider": {
         "type": "string",
         "description": "LLM provider for Hindsight memory (e.g. 'openai', 'anthropic', 'gemini', 'groq', 'ollama', 'openai-codex', 'claude-code').",
-        "enum": ["openai", "anthropic", "gemini", "groq", "ollama", "openai-codex", "claude-code"]
+        "enum": [
+          "openai",
+          "anthropic",
+          "gemini",
+          "groq",
+          "ollama",
+          "openai-codex",
+          "claude-code"
+        ]
       },
       "llmModel": {
         "type": "string",
         "description": "LLM model to use (e.g. 'gpt-4o-mini', 'claude-3-5-haiku-20241022'). Used with llmProvider."
       },
       "llmApiKey": {
-        "type": ["string", "object"],
+        "type": [
+          "string",
+          "object"
+        ],
         "description": "API key for the LLM provider used by the Hindsight memory daemon. Set via 'openclaw config set ... --ref-source env --ref-id OPENAI_API_KEY' to reference an env var without storing plaintext."
       },
       "llmBaseUrl": {
@@ -124,7 +141,10 @@
         "description": "External Hindsight API URL (e.g. 'https://mcp.hindsight.devcraft.team'). When set, skips local daemon and connects directly to this API."
       },
       "hindsightApiToken": {
-        "type": ["string", "object"],
+        "type": [
+          "string",
+          "object"
+        ],
         "description": "API token for external Hindsight API authentication. Required if the external API has authentication enabled."
       },
       "dynamicBankId": {
@@ -175,16 +195,27 @@
           "type": "string"
         },
         "description": "Message providers to exclude from recall and retain (e.g. ['heartbeat', 'telegram', 'discord'])",
-        "default": ["heartbeat"]
+        "default": [
+          "heartbeat"
+        ]
       },
       "dynamicBankGranularity": {
         "type": "array",
         "items": {
           "type": "string",
-          "enum": ["agent", "channel", "user", "provider"]
+          "enum": [
+            "agent",
+            "channel",
+            "user",
+            "provider"
+          ]
         },
         "description": "Fields used to derive bank ID. Controls memory isolation granularity. Default: ['agent', 'channel', 'user'].",
-        "default": ["agent", "channel", "user"]
+        "default": [
+          "agent",
+          "channel",
+          "user"
+        ]
       },
       "autoRetain": {
         "type": "boolean",
@@ -195,20 +226,31 @@
         "type": "array",
         "items": {
           "type": "string",
-          "enum": ["user", "assistant", "system", "tool"]
+          "enum": [
+            "user",
+            "assistant",
+            "system",
+            "tool"
+          ]
         },
         "description": "Message roles to include in retained transcript. Default: ['user', 'assistant'].",
-        "default": ["user", "assistant"]
+        "default": [
+          "user",
+          "assistant"
+        ]
       },
       "retainFormat": {
         "type": "string",
         "description": "Serialization format for retained conversation content. 'json' (default) emits a structured array of {role, content} messages, matching the Claude Code integration. 'text' emits the legacy '[role: x] ... [x:end]' markers.",
-        "enum": ["json", "text"],
+        "enum": [
+          "json",
+          "text"
+        ],
         "default": "json"
       },
       "retainToolCalls": {
         "type": "boolean",
-        "description": "When true (default) and retainFormat is 'json', each message's content is an Anthropic-shaped array of typed blocks including tool_use (agent tool calls) and tool_result (truncated at 2000 chars). Operational MCP tools — Hindsight's own recall/retain/search — are filtered out to avoid feedback loops. Set to false to retain text-only content, one string per message.",
+        "description": "When true (default) and retainFormat is 'json', each message's content is an Anthropic-shaped array of typed blocks including tool_use (agent tool calls) and tool_result (truncated at 2000 chars). Operational MCP tools \u2014 Hindsight's own recall/retain/search \u2014 are filtered out to avoid feedback loops. Set to false to retain text-only content, one string per message.",
         "default": true
       },
       "retainEveryNTurns": {
@@ -226,7 +268,11 @@
       "recallBudget": {
         "type": "string",
         "description": "Recall effort level. Higher budgets use more retrieval strategies for better results but take longer.",
-        "enum": ["low", "mid", "high"],
+        "enum": [
+          "low",
+          "mid",
+          "high"
+        ],
         "default": "mid"
       },
       "recallMaxTokens": {
@@ -239,10 +285,16 @@
         "type": "array",
         "items": {
           "type": "string",
-          "enum": ["world", "experience", "observation"]
+          "enum": [
+            "world",
+            "experience",
+            "observation"
+          ]
         },
-        "description": "Memory types to recall. Defaults to ['observation'] — surfaces only the consolidated, deduplicated view; raw world/experience facts can drive the same answer multiple times when many memories say the same thing.",
-        "default": ["observation"]
+        "description": "Memory types to recall. Defaults to ['observation'] \u2014 surfaces only the consolidated, deduplicated view; raw world/experience facts can drive the same answer multiple times when many memories say the same thing.",
+        "default": [
+          "observation"
+        ]
       },
       "preferObservations": {
         "type": "boolean",
@@ -254,20 +306,52 @@
         "description": "Optional per-stage score floors for auto-recall. Missing fields impose no floor; memories with a missing or null score for a configured stage pass.",
         "additionalProperties": false,
         "properties": {
-          "semantic": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
-          "keyword": { "type": ["number", "null"] },
-          "reranker": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
-          "final": { "type": ["number", "null"] }
+          "semantic": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
+          },
+          "keyword": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "reranker": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
+          },
+          "final": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
         }
       },
       "recallRoles": {
         "type": "array",
         "items": {
           "type": "string",
-          "enum": ["user", "assistant", "system", "tool"]
+          "enum": [
+            "user",
+            "assistant",
+            "system",
+            "tool"
+          ]
         },
         "description": "Roles to include when composing contextual recall query. Default: ['user', 'assistant'].",
-        "default": ["user", "assistant"]
+        "default": [
+          "user",
+          "assistant"
+        ]
       },
       "recallContextTurns": {
         "type": "integer",
@@ -299,7 +383,11 @@
       },
       "recallInjectionPosition": {
         "type": "string",
-        "enum": ["prepend", "append", "user"],
+        "enum": [
+          "prepend",
+          "append",
+          "user"
+        ],
         "description": "Where to inject recalled memories. 'user' = before the user message (default, preserves system prompt cache), 'prepend' = start of system prompt, 'append' = end of system prompt.",
         "default": "user"
       },
@@ -311,7 +399,13 @@
       "logLevel": {
         "type": "string",
         "description": "Console log verbosity. 'off' = no output, 'error' = errors only, 'warning' = errors + warnings, 'info' = key events + periodic summaries, 'debug' = all details.",
-        "enum": ["off", "error", "warning", "info", "debug"],
+        "enum": [
+          "off",
+          "error",
+          "warning",
+          "info",
+          "debug"
+        ],
         "default": "info"
       },
       "logSummaryIntervalMs": {
@@ -364,7 +458,12 @@
       },
       "senderPrefixPattern": {
         "type": "string",
-        "description": "Regex matching a human display-name prefix some channels prepend to user text (e.g. 'Alice: today weather?'). Supply the name part only — 'Alice|Bob' or '[A-Za-z ]{1,20}' — the ':' separator and anchoring are added by the plugin. When set, the prefix is stripped from both recall queries and retained transcripts. Unset strips nothing; an invalid regex is ignored."
+        "description": "Regex matching a human display-name prefix some channels prepend to user text (e.g. 'Alice: today weather?'). Supply the name part only \u2014 'Alice|Bob' or '[A-Za-z ]{1,20}' \u2014 the ':' separator and anchoring are added by the plugin. When set, the prefix is stripped from both recall queries and retained transcripts. Unset strips nothing; an invalid regex is ignored."
+      },
+      "nativeCapability": {
+        "type": "boolean",
+        "description": "Register OpenClaw's native memory capability (Control UI Memory page, active-memory manager, plugin-sdk host search) backed by Hindsight recall on the same per-context banks the hooks use. Additive and prompt-safe: prompt-side memory stays with the autoRecall hook, so this cannot double-inject. Default: true.",
+        "default": true
       }
     },
     "additionalProperties": false
@@ -396,23 +495,23 @@
     },
     "enableObservations": {
       "label": "Enable Observations",
-      "placeholder": "true or false — stamped on first bank use"
+      "placeholder": "true or false \u2014 stamped on first bank use"
     },
     "enableAutoConsolidation": {
       "label": "Enable Auto Consolidation",
-      "placeholder": "true or false — stamped on first bank use"
+      "placeholder": "true or false \u2014 stamped on first bank use"
     },
     "dispositionSkepticism": {
       "label": "Disposition Skepticism",
-      "placeholder": "1–5"
+      "placeholder": "1\u20135"
     },
     "dispositionLiteralism": {
       "label": "Disposition Literalism",
-      "placeholder": "1–5"
+      "placeholder": "1\u20135"
     },
     "dispositionEmpathy": {
       "label": "Disposition Empathy",
-      "placeholder": "1–5"
+      "placeholder": "1\u20135"
     },
     "entityLabels": {
       "label": "Entity Labels",
@@ -510,7 +609,7 @@
     },
     "retainToolCalls": {
       "label": "Retain Tool Calls",
-      "placeholder": "true (default) — include tool_use / tool_result blocks in retained JSON"
+      "placeholder": "true (default) \u2014 include tool_use / tool_result blocks in retained JSON"
     },
     "retainEveryNTurns": {
       "label": "Retain Every N Turns",
@@ -580,11 +679,11 @@
     },
     "debugPerfTiming": {
       "label": "Debug Perf Timing",
-      "placeholder": "false (default) — enable to log per-hook latency"
+      "placeholder": "false (default) \u2014 enable to log per-hook latency"
     },
     "enableKnowledgeTools": {
       "label": "Enable Knowledge Tools",
-      "placeholder": "false (default) — enable agent_knowledge_* tools, including reflect"
+      "placeholder": "false (default) \u2014 enable agent_knowledge_* tools, including reflect"
     },
     "retainQueuePath": {
       "label": "Retain Queue File Path",
@@ -613,6 +712,10 @@
     "senderPrefixPattern": {
       "label": "Sender Prefix Pattern",
       "placeholder": "e.g. Alice|Bob (strips 'Alice: ' from recall and retain)"
+    },
+    "nativeCapability": {
+      "label": "Native Memory Capability",
+      "placeholder": "true (default)"
     }
   }
 }
