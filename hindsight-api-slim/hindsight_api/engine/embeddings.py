@@ -833,7 +833,6 @@ class RemoteTEIEmbeddings(Embeddings):
             return
 
         logger.info(f"Embeddings: initializing TEI provider at {self.base_url}")
-        self._initialized = True
 
         # Verify server is reachable and get model info
         try:
@@ -855,6 +854,9 @@ class RemoteTEIEmbeddings(Embeddings):
             if test_embeddings and len(test_embeddings) > 0:
                 self._dimension = len(test_embeddings[0])
 
+            # A failed or cancelled probe must remain retryable. Publishing readiness
+            # before the HTTP awaits made later initialize() calls silently skip recovery.
+            self._initialized = True
             logger.info(f"Embeddings: TEI provider initialized (model: {self._model_id}, dim: {self._dimension})")
         except _HTTP_ERRORS as e:
             raise RuntimeError(f"Failed to connect to TEI server at {self.base_url}: {e}")
