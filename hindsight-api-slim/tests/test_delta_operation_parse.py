@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from hindsight_api.engine.reflect.delta_ops import (
@@ -10,6 +12,7 @@ from hindsight_api.engine.reflect.delta_ops import (
     DeltaOperationsInvalidError,
     DeltaOperationList,
     ReplaceSectionBlocksOp,
+    _as_reply_text,
     apply_operations,
     parse_delta_operation_list,
     request_delta_operations,
@@ -246,9 +249,13 @@ def test_parse_delta_operation_list_top_level_array_all_invalid_raises():
 
 
 class _ScriptedLLM:
-    """An LLM that returns canned replies in order and records what it was sent."""
+    """An LLM that returns canned replies in order and records what it was sent.
 
-    def __init__(self, *replies: str) -> None:
+    ``LLMCallResult.content`` is ``Any``, so a reply may be the parsed dict a
+    ``skip_validation`` structured call actually returns, not just the text.
+    """
+
+    def __init__(self, *replies: Any) -> None:
         self._replies = list(replies)
         self.calls: list[list[dict]] = []
 
@@ -390,3 +397,53 @@ async def test_request_delta_operations_does_not_retry_an_op_skipped_for_its_con
     llm = _ScriptedLLM(empty_text)
     await request_delta_operations(llm, system_prompt="sys", user_prompt="usr", scope="test", document=_DOC_TWO_BLOCKS)
     assert len(llm.calls) == 1
+
+
+# The retry's assistant turn must be a string (#5002) --------------------------
+
+
+def test_as_reply_text_renders_the_parsed_json_a_structured_call_returns():
+    """A ``skip_validation`` call hands back the parsed dict, which every chat
+    endpoint rejects as a message body."""
+    parsed = {"operations": [{"op": "append_block", "section_id": "gone", "text": "ok"}]}
+    text = _as_reply_text(parsed)
+    assert isinstance(text, str)
+    assert parse_delta_operation_list(text) == parse_delta_operation_list(parsed)
+
+
+def test_as_reply_text_passes_a_text_reply_through_unchanged():
+    """Text mode is the common case, and the retry must replay it byte-identically:
+    the prompt cache still covers the prefix the provider saw."""
+    assert _as_reply_text(_ONE_TYPO) == _ONE_TYPO
+
+
+def test_as_reply_text_renders_an_empty_or_absent_reply_as_empty_text():
+    assert _as_reply_text(None) == ""
+    assert _as_reply_text({}) == "{}"
+
+
+def test_as_reply_text_never_raises_on_a_reply_it_cannot_encode():
+    """The last chance to ask again: a payload ``json.dumps`` refuses is quoted as
+    best it can be, because raising here is the very failure this helper prevents.
+    A self-referential payload is the one shape ``default=str`` still cannot encode."""
+    self_nested: list = ["ok"]
+    self_nested.append(self_nested)
+    assert _as_reply_text({"operations": self_nested}) == str({"operations": self_nested})
+
+
+async def test_request_delta_operations_sends_the_parsed_reply_as_a_string():
+    """#5002: the delta call runs with ``skip_validation``, so the first reply *is* a
+    dict. Replayed as a message body it was refused by the provider (HTTP 400/422),
+    so the ask-again path never reached the model and the refresh failed."""
+    first = {"operations": [{"op": "append_block", "section_id": "gone", "text": "ok"}]}
+    llm = _ScriptedLLM(first, _KNOWN_SECTION)
+    op_list = await request_delta_operations(llm, system_prompt="sys", user_prompt="usr", scope="test", document=_DOC)
+
+    assert len(llm.calls) == 2, "the unreachable-op path must still get its one retry"
+    replayed = llm.calls[1][2]
+    assert replayed["role"] == "assistant"
+    assert isinstance(replayed["content"], str), "a non-string content is refused by every chat endpoint"
+    assert parse_delta_operation_list(replayed["content"]).operations[0].section_id == "gone"
+    # The retry still appends, so the cached prefix survives.
+    assert llm.calls[1][:2] == llm.calls[0]
+    assert op_list.operations[0].section_id == "prefs"
