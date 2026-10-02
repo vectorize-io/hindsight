@@ -72,7 +72,7 @@ describe("createKnowledgeTools", () => {
   });
 
   it("list_pages calls the correct endpoint", async () => {
-    mockFetch.mockReturnValueOnce(mockResponse({ models: [] }));
+    mockFetch.mockReturnValueOnce(mockResponse({ items: [] }));
 
     const tool = tools.find((t) => t.name === "agent_knowledge_list_pages")!;
     const result = await tool.execute({});
@@ -313,6 +313,25 @@ describe("createKnowledgeTools", () => {
     expect(body.items[0].document_id).toBe("my-document");
     expect(body.items[0].content).toBe("Full text here");
     expect(body.async).toBe(true);
+  });
+
+  it.each([
+    ["agent_knowledge_list_pages", {}],
+    ["agent_knowledge_get_page", { page_id: "prefs" }],
+    [
+      "agent_knowledge_create_page",
+      { page_id: "prefs", name: "Preferences", source_query: "What matters?" },
+    ],
+    ["agent_knowledge_update_page", { page_id: "prefs", name: "Preferences" }],
+    ["agent_knowledge_delete_page", { page_id: "prefs" }],
+    ["agent_knowledge_recall", { query: "preferences" }],
+    ["agent_knowledge_reflect", { query: "preferences" }],
+    ["agent_knowledge_ingest", { title: "Preferences", content: "prefers tea" }],
+  ])("%s rejects an API failure instead of returning success", async (name, params) => {
+    mockFetch.mockReturnValueOnce(mockResponse({ detail: "backend unavailable" }, 500));
+    const tool = tools.find((candidate) => candidate.name === name)!;
+    await expect(tool.execute(params)).rejects.toThrow("backend unavailable");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it("works without apiToken", () => {
