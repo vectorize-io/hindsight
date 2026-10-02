@@ -55,6 +55,9 @@ _DEFAULT_REFRESH_MARGIN_SECONDS = 5 * 60
 # retain batch waiting on the cold-start create). On timeout the create soft-fails
 # to None and callers proceed uncached, rather than stalling the whole batch.
 _DEFAULT_CREATE_TIMEOUT_SECONDS = 30.0
+# Cleanup is best-effort, but still runs on reflect's completion path. Match the
+# cache-create ceiling so a hung SDK delete cannot hold a finished reflect open.
+_DEFAULT_DELETE_TIMEOUT_SECONDS = 30.0
 
 # TTL for the per-step reflect caches created by ``create_incremental``. These
 # live only for the duration of one reflect (seconds), so the TTL is just a
@@ -298,7 +301,10 @@ class GeminiCacheManager:
         """
         self.invalidate(name)
         try:
-            await self._client.aio.caches.delete(name=name)
+            await asyncio.wait_for(
+                self._client.aio.caches.delete(name=name),
+                timeout=_DEFAULT_DELETE_TIMEOUT_SECONDS,
+            )
         except Exception:
             logger.debug("GeminiCacheManager: delete of cache %s failed (will age out on TTL)", name, exc_info=True)
 
