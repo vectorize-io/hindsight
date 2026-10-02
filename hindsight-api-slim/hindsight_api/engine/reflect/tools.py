@@ -548,6 +548,8 @@ async def tool_expand(
     tags: list[str] | None,
     tags_match: TagsMatch,
     tag_groups: list[TagGroup] | None,
+    created_after: datetime | None = None,
+    created_before: datetime | None = None,
 ) -> dict[str, Any]:
     """
     Expand multiple memories to get chunk or document context.
@@ -566,6 +568,8 @@ async def tool_expand(
         tags: The reader's tag filter (same as the recall it expands)
         tags_match: How ``tags`` is matched
         tag_groups: The reader's compound tag filter, already fuzzy-resolved
+        created_after: Optional upper bound of the caller's temporal window.
+        created_before: Optional lower bound of the caller's temporal window.
 
     Returns:
         Dict with results array, each containing memory, chunk, and optionally document data
@@ -605,6 +609,27 @@ async def tool_expand(
             {str(m["id"]): m["tags"] for m in memories}, tags=tags, tags_match=tags_match, tag_groups=tag_groups
         )
         memories = [m for m in memories if str(m["id"]) in _visible_ids]
+
+    # The reflect request's temporal window applies here too: recall and
+    # search_observations honor it, so expand must not resurrect memories from
+    # outside it. Named "created" upstream but filtering `updated_at`, exactly like
+    # recall's window — an edited fact re-enters, which is what the mental-model
+    # delta refresh wants.
+    if created_after is not None or created_before is not None:
+
+        def _in_window(m: dict[str, Any]) -> bool:
+            ts = m.get("updated_at")
+            if ts is None:
+                # Fail open per-memory if the store does not expose the column;
+                # every SQL store does today.
+                return True
+            if created_after is not None and ts <= created_after:
+                return False
+            if created_before is not None and ts >= created_before:
+                return False
+            return True
+
+        memories = [m for m in memories if _in_window(m)]
     # Source text follows its document's tags, not the fact's. Resolved before any chunk or
     # document text is read, so a hidden source is never fetched at all.
     visible_docs = await visible_document_ids(

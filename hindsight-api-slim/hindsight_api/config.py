@@ -1006,6 +1006,7 @@ ENV_REFLECT_WALL_TIMEOUT = "HINDSIGHT_API_REFLECT_WALL_TIMEOUT"
 ENV_REFLECT_MISSION = "HINDSIGHT_API_REFLECT_MISSION"
 ENV_REFLECT_SOURCE_FACTS_MAX_TOKENS = "HINDSIGHT_API_REFLECT_SOURCE_FACTS_MAX_TOKENS"
 ENV_REFLECT_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_REFLECT_MAX_COMPLETION_TOKENS"
+ENV_REFLECT_MAX_EVIDENCE_TOKENS = "HINDSIGHT_API_REFLECT_MAX_EVIDENCE_TOKENS"
 ENV_RECALL_INCLUDE_CHUNKS = "HINDSIGHT_API_RECALL_INCLUDE_CHUNKS"
 ENV_RECALL_MAX_TOKENS = "HINDSIGHT_API_RECALL_MAX_TOKENS"
 ENV_RECALL_CHUNKS_MAX_TOKENS = "HINDSIGHT_API_RECALL_CHUNKS_MAX_TOKENS"
@@ -1917,6 +1918,7 @@ DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS = -1  # Token budget for source facts in
 # reasoning tokens and would otherwise cut pages off mid-word (#3365). Set an integer
 # only if you want a hard cost ceiling on the synthesis call.
 DEFAULT_REFLECT_MAX_COMPLETION_TOKENS: int | None = None
+DEFAULT_REFLECT_MAX_EVIDENCE_TOKENS = 24000
 DEFAULT_RECALL_INCLUDE_CHUNKS = True  # Whether internal recall (e.g. mental model refresh) returns raw chunks
 DEFAULT_RECALL_MAX_TOKENS = 2048  # Token budget for facts returned by internal recall
 DEFAULT_RECALL_CHUNKS_MAX_TOKENS = 1000  # Token budget for raw chunks returned by internal recall
@@ -3139,6 +3141,7 @@ class HindsightConfig:
     reflect_llm_model: str | None
     reflect_llm_base_url: str | None
     reflect_llm_max_concurrent: int | None
+    reflect_max_evidence_tokens: int | None
     reflect_llm_max_retries: int | None
     reflect_llm_initial_backoff: float | None
     reflect_llm_max_backoff: float | None
@@ -5141,6 +5144,11 @@ class HindsightConfig:
             in ("1", "true", "yes", "on"),
             reflect_max_context_tokens=int(
                 os.getenv(ENV_REFLECT_MAX_CONTEXT_TOKENS, str(DEFAULT_REFLECT_MAX_CONTEXT_TOKENS))
+            ),
+            reflect_max_evidence_tokens=(
+                int(os.getenv(ENV_REFLECT_MAX_EVIDENCE_TOKENS))
+                if os.getenv(ENV_REFLECT_MAX_EVIDENCE_TOKENS)
+                else DEFAULT_REFLECT_MAX_EVIDENCE_TOKENS
             ),
             reflect_wall_timeout=int(os.getenv(ENV_REFLECT_WALL_TIMEOUT, str(DEFAULT_REFLECT_WALL_TIMEOUT))),
             reflect_mission=os.getenv(ENV_REFLECT_MISSION) or None,

@@ -513,6 +513,11 @@ def _spawn_cache_cleanup(
     task.add_done_callback(_cache_cleanup_tasks.discard)
 
 
+def _estimate_tokens(char_count: int) -> int:
+    """Rough token estimate from character count (~4 chars/token)."""
+    return max(1, char_count // 4)
+
+
 async def run_reflect_agent(
     llm_config: "AnyLLMProvider",
     bank_id: str,
@@ -592,6 +597,7 @@ async def _run_reflect_agent_inner(
     include_recall: bool = True,
     budget: str | None = None,
     max_context_tokens: int = 100_000,
+    max_evidence_tokens: int | None = None,
     llm_output_language: str | None = None,
     cancel_check: Callable[[], None] | None = None,
     store_document_text: bool = True,
@@ -775,6 +781,8 @@ async def _run_reflect_agent_inner(
     # cached_tokens and thoughts_tokens are surfaced for cost attribution
     # and prompt-cache tuning. Both are subsets of (or parallel to) the
     # input/output counts and are NOT double-counted in total_tokens.
+    total_evidence_tokens = 0
+    evidence_exceeded = False
     total_input_tokens = 0
     total_output_tokens = 0
     total_cached_tokens = 0
@@ -970,6 +978,29 @@ async def _run_reflect_agent_inner(
         hundreds of citations the synthesis model never saw (#3122).
         """
         nonlocal total_input_tokens, total_output_tokens, total_cached_tokens, total_thoughts_tokens
+
+        # Evidence-budget trim: when the total-evidence cap fired, keep the
+        # NEWEST tool results up to the budget and drop the oldest. Without
+    # this, a single over-budget recall leaves the pile intact and the
+        # map-reduce below still fans out over dozens of chunks.
+        nonlocal context_history
+        if evidence_exceeded and max_evidence_tokens:
+            kept = []
+            running = 0
+            for entry in reversed(context_history):
+                est = max(0, len(json.dumps(entry.get("output", ""), ensure_ascii=False, default=str)) // 4)
+                if kept and running + est > max_evidence_tokens:
+                    continue
+                kept.append(entry)
+                running += est
+            kept.reverse()
+            dropped = len(context_history) - len(kept)
+            if dropped:
+                logger.warning(
+                    f"[REFLECT {reflect_id}] Trimming evidence to budget: dropping {dropped} oldest "
+                    f"tool result(s), keeping {len(kept)} (~{running} tok)."
+                )
+            context_history = kept
         final_system = build_final_system_prompt(bank_profile.get("mission"), llm_output_language, directives)
         chunks = split_context_history(context_history, max_context_tokens)
         # Every call below uses the transport-level cap, never the caller's
@@ -1097,6 +1128,14 @@ async def _run_reflect_agent_inner(
         if is_last:
             # Out of iterations: no more retrieval, just the answer.
             return await _finish(iteration + 1)
+
+        # Total-evidence guard: stop collecting once the overall budget is hit.
+        if evidence_exceeded:
+            logger.warning(
+                f"[REFLECT {reflect_id}] Evidence budget {max_evidence_tokens} hit; "
+                "forcing final synthesis."
+            )
+            return await _forced_final_synthesis(iteration + 1)
 
         # Proactive context-window guard: if accumulated messages would exceed the
         # configured token budget, bail out early and synthesize from what we have.
@@ -1502,12 +1541,110 @@ async def _run_reflect_agent_inner(
                         if "id" in memory:
                             available_memory_ids.add(memory["id"])
 
-                # Record the serialized result; emitted in original order below. The
-                # model reads the presented form (see presentation.py); the trace
-                # below keeps the raw output.
+                # Record the serialized result; emitted in original order below.
+                # Evidence-budget truncation: if one tool result alone exceeds
+                # the remaining budget, keep the largest PREFIX of list items
+                # that fits (recall/search return items in relevance order, so
+                # the head carries the best evidence). Prevents a single ~800k
+                # char result from forcing a 30+ chunk split synthesis.
+                # First: slim bulky proof arrays. Serialized observations carry
+                # full source_memories arrays; the synthesis model needs the
+                # observation text, not every proof copy. Keep the newest proof
+                # per entry when the whole result exceeds the budget.
+                #
+                # The ladder runs on the RAW output; upstream's presenter then
+                # builds the prompt form (aliases, compacted timestamps), which
+                # is what the model reads and what context_history stores — so
+                # the evidence tally counts the PRESENTED serialization. The
+                # gate stays conservative: raw >= presented, so an oversized
+                # raw result is slimmed even if the presented form would fit.
+                full_json = json.dumps(output, default=str, ensure_ascii=False)
+                remaining = max_evidence_tokens - total_evidence_tokens if max_evidence_tokens else None
+                if remaining is not None and len(full_json) // 4 > remaining and isinstance(output, dict):
+                    slimmed_note = None
+                    # Top-level side maps first: tool_search_observations ships
+                    # source_facts (memory-id -> full memory dumps incl. chunk
+                    # text) alongside the observations. It is lookup cargo, not
+                    # evidence the synthesis needs wholesale — drop it first.
+                    if isinstance(output.get("source_facts"), dict) and output["source_facts"]:
+                        dropped_facts = len(output["source_facts"])
+                        output = dict(output)
+                        output.pop("source_facts", None)
+                        full_json = json.dumps(output, default=str, ensure_ascii=False)
+                        logger.warning(
+                            f"[REFLECT {reflect_id}] Dropped source_facts map ({dropped_facts} entries) "
+                            f"to fit evidence budget."
+                        )
+                    size_note = {k: len(json.dumps(v, default=str, ensure_ascii=False)) // 4
+                                 for k, v in output.items() if isinstance(v, (list, dict))}
+                    logger.warning(
+                        f"[REFLECT {reflect_id}] Oversized result breakdown (tok): {size_note}"
+                    )
+                    for slim_key in ("observations", "memories", "results"):
+                        cand = output.get(slim_key)
+                        if isinstance(cand, list) and cand:
+                            slimmed = []
+                            for item in cand:
+                                if isinstance(item, dict) and isinstance(item.get("source_memories"), list) and item["source_memories"]:
+                                    item = dict(item)
+                                    item.pop("source_memories", None)
+                                slimmed.append(item)
+                            output = dict(output)
+                            output[slim_key] = slimmed
+                            full_json = json.dumps(output, default=str, ensure_ascii=False)
+                            slimmed_note = slim_key
+                            if len(full_json) // 4 <= remaining:
+                                break
+                    if slimmed_note:
+                        logger.warning(
+                            f"[REFLECT {reflect_id}] Slimmed {slimmed_note}: stripped proof arrays (kept proof_count)."
+                        )
+                    for key in ("memories", "observations", "results"):
+                        if isinstance(output.get(key), list) and len(output[key]) > 1:
+                            items = output[key]
+                            lo, hi = 1, len(items)
+                            best = 1
+                            while lo <= hi:
+                                mid = (lo + hi) // 2
+                                probe = dict(output)
+                                probe[key] = items[:mid]
+                                if len(json.dumps(probe, default=str, ensure_ascii=False)) // 4 <= remaining:
+                                    best = mid
+                                    lo = mid + 1
+                                else:
+                                    hi = mid - 1
+                            output = dict(output)
+                            output[key] = items[:best]
+                            output["_truncated"] = {
+                                "kept": best,
+                                "total": len(items),
+                                "reason": "evidence budget",
+                            }
+                            logger.warning(
+                                f"[REFLECT {reflect_id}] Tool result truncated to evidence budget: "
+                                f"kept {best}/{len(items)} {key} (~{len(full_json) // 4} tok -> "
+                                f"within {max_evidence_tokens} tok budget)."
+                            )
+                            break
+                # Serialize the PROMPT form: what the model reads is the
+                # presented result, and that is what the evidence budget exists
+                # to bound. The trace (below) keeps the raw output.
                 presented = presenter.present(output)
                 tool_outputs[position] = json.dumps(presented, default=str, ensure_ascii=False)
+                evidence_tokens_for_this_result = max(0, len(tool_outputs[position]) // 4)
 
+                # Track total evidence against the overall budget
+                total_evidence_tokens += evidence_tokens_for_this_result
+                if (
+                    not evidence_exceeded
+                    and max_evidence_tokens
+                    and total_evidence_tokens >= max_evidence_tokens
+                ):
+                    evidence_exceeded = True
+                    logger.warning(
+                        f"[REFLECT {reflect_id}] Total evidence budget ({max_evidence_tokens}) "
+                        "exceeded; forcing final synthesis after this batch."
+                    )
                 # Track for logging and context history
                 input_dict = {"tool": tc.name, **tc.arguments}
                 input_summary = _summarize_input(tc.name, tc.arguments, tool_token_limits, call_ceiling)

@@ -15,7 +15,7 @@ async def expand_memories(*, conn, fq_table: Callable[[str], str], bank_id: str,
     """``id, text, chunk_id, document_id, fact_type, context, tags`` for each of ``unit_ids`` that exists."""
     return await conn.fetch(
         f"""
-            SELECT id, text, chunk_id, document_id, fact_type, context, tags
+            SELECT id, text, chunk_id, document_id, fact_type, context, tags, updated_at
             FROM {fq_table("memory_units")}
             WHERE id = ANY($1) AND bank_id = $2
             """,
