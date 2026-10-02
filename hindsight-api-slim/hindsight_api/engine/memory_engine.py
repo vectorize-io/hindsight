@@ -6230,6 +6230,10 @@ class MemoryEngine(MemoryEngineInterface):
         # Shutdown task backend
         await self._task_backend.shutdown()
 
+        # The work that just finished schedules its audit rows as background
+        # tasks; let them land before the pool they write through is closed below.
+        await self._audit_logger.drain()
+
         # Release the memories store's own resources (client/pool). No-op for the
         # default Postgres store; symmetric with init_memories() at startup.
         try:
