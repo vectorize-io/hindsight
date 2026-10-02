@@ -156,13 +156,17 @@ _spec.loader.exec_module(plugin)
 
 
 class FakeResult:
-    def __init__(self, text: str):
+    """A recall result as the SDK returns it: text plus the optional time fields."""
+
+    def __init__(self, text: str, mentioned_at: str | None = None, occurred_start: str | None = None):
         self.text = text
+        self.mentioned_at = mentioned_at
+        self.occurred_start = occurred_start
 
 
 class FakeRecallResponse:
-    def __init__(self, texts):
-        self.results = [FakeResult(t) for t in texts]
+    def __init__(self, results):
+        self.results = [r if isinstance(r, FakeResult) else FakeResult(r) for r in results]
 
 
 class FakeReflectResponse:
@@ -174,6 +178,8 @@ class FakeClient:
     """Records the calls the plugin makes against the Hindsight client."""
 
     def __init__(self, recall_texts=(), reflect_text=""):
+        """``recall_texts`` takes plain strings, or ``FakeResult`` items when a test needs
+        the time fields too."""
         self.retains: list[dict] = []
         self.recalls: list[dict] = []
         self.reflects: list[dict] = []

@@ -6,6 +6,7 @@ import contextlib
 import json
 import logging
 import re
+from datetime import datetime
 from typing import Any, List
 
 # Log under the plugin package's own logger name (loader-path independent).
@@ -109,6 +110,25 @@ def _normalize_observation_scopes(value: Any) -> Any:
         for entry in value
     ]
     return [s for s in scopes if s] or None
+
+
+def _memory_date_prefix(result: Any) -> str:
+    """``"[YYYY-MM-DD] "`` for a recall result, or ``""`` when it carries no date.
+
+    ``mentioned_at`` first — the server stamps it on every result (the time the source
+    was said or retained), whereas ``occurred_start`` is only set when the fact names an
+    event time and is empty on more than half of results in practice. Fall back rather
+    than prefer it, or the prefix silently disappears on most memories (#4697). The client
+    models both as ISO-8601 strings; a ``datetime`` is accepted too so a client that starts
+    parsing them keeps the prefix. The date is the first ten characters of the ISO form, so
+    a value too short to hold one yields no prefix instead of a garbled one."""
+    for field in ("mentioned_at", "occurred_start"):
+        value = getattr(result, field, None)
+        if isinstance(value, datetime):
+            value = value.isoformat()
+        if isinstance(value, str) and len(value) >= 10:
+            return f"[{value[:10]}] "
+    return ""
 
 
 def _sanitize_bank_segment(value: str) -> str:
