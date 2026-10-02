@@ -25,6 +25,9 @@ def build_llm() -> CodexLLM:
 def assert_codex_request_identity(headers: Mapping[str, str]) -> None:
     assert headers["originator"] == "codex_cli_rs"
     assert headers["User-Agent"] == "codex_cli_rs/0.0.0 (Hindsight)"
+    # The old header left the ChatGPT account unselected and could bill an exhausted allowance.
+    assert headers["ChatGPT-Account-ID"] == "account"
+    assert "OpenAI-Account-ID" not in headers
 
 
 @pytest.mark.asyncio

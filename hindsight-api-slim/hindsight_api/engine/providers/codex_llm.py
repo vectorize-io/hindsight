@@ -298,7 +298,9 @@ class CodexLLM(LLMInterface):
         return {
             "Authorization": f"Bearer {self.access_token}",
             "Content-Type": "application/json",
-            "OpenAI-Account-ID": self.account_id,
+            # Codex routes subscription usage by this header; OpenAI-Account-ID can charge the
+            # wrong allowance and return usage_limit_reached even for an available account (#4951).
+            "ChatGPT-Account-ID": self.account_id,
             "User-Agent": _CODEX_USER_AGENT,
             "Origin": "https://chatgpt.com",
             "originator": _CODEX_ORIGINATOR,
