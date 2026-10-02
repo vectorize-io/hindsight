@@ -102,7 +102,9 @@ export class HindsightServer {
     });
     const args = [...baseArgs, "daemon", "--profile", this.profile, "stop"];
 
-    const child = spawn(cmd, args, { stdio: "pipe", windowsHide: true });
+    // Resolve the CLI and its profile with the same caller overrides as start.
+    // Inheriting process.env here loses a custom PATH or configuration root.
+    const child = spawn(cmd, args, { stdio: "pipe", env: this.buildEnv(), windowsHide: true });
     this.pipeOutput(child, "daemon.stop");
 
     await new Promise<void>((resolve) => {
