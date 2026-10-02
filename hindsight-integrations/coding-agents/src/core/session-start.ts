@@ -417,11 +417,19 @@ export async function runSessionStartHook(
     // user-facing message as the legacy-plugin warning — the banner is the only visible channel.
     if (mcpHint)
       out.systemMessage = out.systemMessage ? `${out.systemMessage}\n${mcpHint}` : mcpHint;
-    if (out.deferInitialReflect && sessionId) {
-      writeSessionCache(sessionCacheFile(harness, sessionId), { deferInitialReflect: true });
-    }
     // The lifecycle computes one host-neutral output; the registry owns each host's wire schema.
     const payload = spec.emit(out);
+    // Did the full tool guide actually reach the agent? Some hosts' SessionStart cannot carry
+    // context (their emit drops it), so this is read off the payload, not assumed. When it did,
+    // the first prompt skips its own copy of the guide (see the guide choice in hook.ts).
+    const guideDelivered =
+      !!out.additionalContext && JSON.stringify(payload).includes("<hindsight_knowledge>");
+    if (sessionId && (out.deferInitialReflect || guideDelivered)) {
+      writeSessionCache(sessionCacheFile(harness, sessionId), {
+        ...(out.deferInitialReflect ? { deferInitialReflect: true } : {}),
+        ...(guideDelivered ? { guideAtTurn: 0 } : {}),
+      });
+    }
     if (out.systemMessage || out.additionalContext) {
       process.stdout.write(JSON.stringify(payload));
     }

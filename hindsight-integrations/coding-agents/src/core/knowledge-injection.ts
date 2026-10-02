@@ -138,6 +138,35 @@ export function buildKnowledgePreamble(pages: PageRef[], opts?: ToolGuideOpts): 
  * building its first features. The page roster is included only when pages exist; the reminder of
  * which tools exist and WHEN to call each is unconditional.
  */
+/**
+ * Turns between two sends of the FULL tool guide. Every turn in between carries the short reminder
+ * below instead. The guide is ~900 tokens and sits in a user message, so it accumulates: measured on
+ * sde-bench (Claude Code, 61 tasks), the guide and preamble were ~10% of every token the agent read,
+ * and cut the cost saving memory brings from 21% to 2%. The short reminder keeps the trigger and the
+ * crediting rule — the two things a turn must not lose — in ~150 tokens; the full when-to-call
+ * detail returns often enough that a long session still has it in recent context.
+ */
+export const FULL_GUIDE_EVERY_TURNS = 10;
+
+/**
+ * The per-turn reminder between full guides: what exists, when to reach for it, how to credit it.
+ * Same tag as the full refresh, so hosts and the injected-memory stripper treat both alike.
+ */
+export function buildRosterReminder(pages: PageRef[], opts?: ToolGuideOpts): string {
+  const rosterBlock = pages.length ? `${indexLine(pages)}\n` : "";
+  const extra = opts?.extra?.trim();
+  return (
+    "<hindsight_knowledge_refresh>\n" +
+    rosterBlock +
+    (opts?.reflectOnNewGoals ? PAGES_FIRST_ON_GOALS : "") +
+    'Reminder: before acting on a bug, a test, new work, a "why" or a commit, search the knowledge pages ' +
+    "(hindsight_search_knowledge_pages, then hindsight_read_knowledge_page); hindsight_reflect for the deeper " +
+    'why. Credit anything they contribute with "> 🧠 **From Hindsight memory (<page>)** — <the facts>".\n' +
+    (extra ? `${extra}\n` : "") +
+    "</hindsight_knowledge_refresh>"
+  );
+}
+
 export function buildRosterRefresh(pages: PageRef[], opts?: ToolGuideOpts): string {
   const rosterBlock = pages.length ? `${indexLine(pages)}\n` : "";
   return (

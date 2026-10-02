@@ -839,6 +839,31 @@ describe("runRetainHook honors retainSessions", () => {
     expect(makeClient).not.toHaveBeenCalled();
   });
 
+  it("retainSessions: false still records usage — stats must see whether the agent credits memory", async () => {
+    rawConfig = { retainSessions: false };
+    const usageFile = join(root, "usage.jsonl");
+    vi.stubEnv("HINDSIGHT_USAGE_FILE", usageFile);
+    writeFileSync(
+      file,
+      [
+        { type: "user", message: { role: "user", content: "fix the slug bug" } },
+        {
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "> 🧠 **From Hindsight memory** — $ maps to usd" }],
+          },
+        },
+      ]
+        .map((l) => JSON.stringify({ timestamp: "2026-01-01T00:00:00Z", ...l }))
+        .join("\n")
+    );
+    const { retain, makeClient } = stubClient();
+    await runRetainHook(spec, makeClient);
+    expect(retain).not.toHaveBeenCalled();
+    expect(readFileSync(usageFile, "utf8")).toContain('"credited":true');
+  });
+
   it("a banks.<id> override opts one repo out while the global default still writes", async () => {
     const bankId = deriveBankId(resolveConfig(), root, spec.harness, root);
     rawConfig = { banks: { [bankId]: { retainSessions: false } } };

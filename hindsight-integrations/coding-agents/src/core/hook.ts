@@ -39,7 +39,12 @@ import {
   RECALL_INJECT_LEAD,
 } from "./inject";
 import type { PageRef } from "./knowledge-injection";
-import { buildRosterRefresh, parsePageList } from "./knowledge-injection";
+import {
+  buildRosterRefresh,
+  buildRosterReminder,
+  FULL_GUIDE_EVERY_TURNS,
+  parsePageList,
+} from "./knowledge-injection";
 import {
   readSessionCache,
   sessionCacheFile,
@@ -327,11 +332,26 @@ export async function buildHookOutput(args: {
     }
   }
 
+  // Which tool guide this turn carries, on the cadence: the FULL guide when it has not reached the
+  // agent for FULL_GUIDE_EVERY_TURNS turns, the short reminder otherwise — and nothing on the first
+  // prompt when a preamble delivered the full guide just before it (it used to go out twice there).
+  const refreshTurn = cadence > 0 && turns % cadence === 0;
+  const sinceGuide = turns - (cached.guideAtTurn ?? -Infinity);
+  const guide: "full" | "reminder" | undefined = !refreshTurn
+    ? undefined
+    : sinceGuide >= FULL_GUIDE_EVERY_TURNS
+      ? "full"
+      : turns > 1
+        ? "reminder"
+        : undefined;
+  const guideAtTurn = guide === "full" ? turns : cached.guideAtTurn;
+
   writeSessionCache(cacheFile, {
     turns,
     reflectAnswer,
     reflectAttempts,
     pages: { atTurn: stale ? turns : (cached.pages?.atTurn ?? turns), list: pages },
+    ...(guideAtTurn !== undefined ? { guideAtTurn } : {}),
   } satisfies SessionCache);
 
   const blocks: string[] = [];
@@ -345,12 +365,15 @@ export async function buildHookOutput(args: {
   // hindsight_search_knowledge_pages when a question warrants it — an unprompted injection on
   // every turn (even a plain "yes") read as phantom research. The roster below keeps the tool
   // and the page names in front of the agent.
-  if (cadence > 0 && turns % cadence === 0) {
+  if (guide) {
+    const guideOpts = {
+      reflectOnNewGoals: cfg.autoInject !== "reflect",
+      extra: cfg.toolGuideExtra,
+    };
     blocks.push(
-      buildRosterRefresh(pages, {
-        reflectOnNewGoals: cfg.autoInject !== "reflect",
-        extra: cfg.toolGuideExtra,
-      })
+      guide === "full"
+        ? buildRosterRefresh(pages, guideOpts)
+        : buildRosterReminder(pages, guideOpts)
     );
   }
   const kept = blocks.filter(Boolean);
