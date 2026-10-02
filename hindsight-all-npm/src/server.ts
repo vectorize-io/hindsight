@@ -55,7 +55,11 @@ export class HindsightServer {
     this.profile = opts.profile ?? DEFAULT_PROFILE;
     this.port = opts.port ?? DEFAULT_PORT;
     this.host = opts.host ?? DEFAULT_HOST;
-    this.baseUrl = `http://${this.host}:${this.port}`;
+    // URL authorities require brackets around IPv6 literals. Keep already
+    // bracketed hosts intact so both forms of the existing host option work.
+    const urlHost =
+      this.host.includes(":") && !this.host.startsWith("[") ? `[${this.host}]` : this.host;
+    this.baseUrl = `http://${urlHost}:${this.port}`;
     this.embedVersion = opts.embedVersion;
     this.embedPackagePath = opts.embedPackagePath;
     this.userEnv = opts.env ?? {};
