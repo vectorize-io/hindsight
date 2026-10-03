@@ -68,6 +68,16 @@ class RequestContext:
         if self.cancellation is not None:
             self.cancellation.raise_if_cancelled()
 
+    @property
+    def cancelled(self) -> bool:
+        """Whether the cancellation token has fired, without raising.
+
+        For checkpoints that wind down gracefully (e.g. breaking out of a batch
+        loop and returning whatever was already committed) rather than aborting
+        with ``OperationCancelledError``. ``False`` when no token is attached.
+        """
+        return self.cancellation is not None and self.cancellation.cancelled
+
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (

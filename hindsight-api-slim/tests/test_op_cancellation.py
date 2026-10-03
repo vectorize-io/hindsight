@@ -7,16 +7,19 @@ Covers:
   gone, and never overwriting an operator's 'cancelled' (issue #4131)
 - Consolidation checkpoint: stops early after a batch commit if op was cancelled
 - Retain checkpoint: stops between sub-batches if op was cancelled
+- Retain client-disconnect checkpoint: stops between sub-batches/documents on a
+  synchronous retain (no operation_id) when request_context.cancellation fires
+  (issue #4526)
 """
 
 import uuid
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
 
+from hindsight_api.cancellation import CancellationToken, OperationCancelledError
 from hindsight_api.engine.memory_engine import MemoryEngine
-
 
 pytestmark = pytest.mark.xdist_group("op_cancellation_tests")
 
@@ -26,6 +29,7 @@ _BANK_PREFIX = "test-op-cancel"
 @pytest_asyncio.fixture
 async def pool(pg0_db_url):
     import asyncpg
+
     from hindsight_api.pg0 import resolve_database_url
 
     resolved_url = await resolve_database_url(pg0_db_url)
@@ -389,5 +393,97 @@ class TestRetainCheckpoint:
                 f"Expected early stop (fewer non-empty results than inputs), got {non_empty}"
             )
             assert check_calls >= 1
+        finally:
+            config.retain_batch_tokens = original_tokens
+
+
+# ---------------------------------------------------------------------------
+# Retain client-disconnect checkpoint (issue #4526)
+# ---------------------------------------------------------------------------
+
+
+class TestRetainClientDisconnectCheckpoint:
+    """A synchronous retain (async=false) has no operation_id / async_operations
+    row, so _check_op_alive can never fire for it. The client-disconnect token
+    on request_context is the only thing that can stop it once admitted or
+    running — this exercises that path directly against the engine, without
+    going through the HTTP layer.
+    """
+
+    @pytest.mark.asyncio
+    async def test_sync_retain_aborts_before_any_work_if_already_disconnected(
+        self, memory: MemoryEngine, request_context
+    ):
+        """A client gone before the retain is even admitted must not start fresh work."""
+        bank_id = f"{_BANK_PREFIX}-{uuid.uuid4().hex[:8]}"
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        token = CancellationToken()
+        token.cancel("client disconnected")
+        request_context.cancellation = token
+
+        contents = [{"content": "Should never be processed."}]
+
+        with pytest.raises(OperationCancelledError):
+            await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=contents,
+                request_context=request_context,
+                operation_id=None,
+            )
+
+    @pytest.mark.asyncio
+    async def test_disconnect_mid_batch_leaves_later_document_untouched(self, memory: MemoryEngine, request_context):
+        """Regression for the reported bug: a retain that disconnects between
+        sub-batches must not go on to write the later ones (e.g. into a bank
+        that gets deleted in the gap), even though it has no operation_id."""
+        from hindsight_api.config import _get_raw_config
+
+        bank_id = f"{_BANK_PREFIX}-{uuid.uuid4().hex[:8]}"
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        config = _get_raw_config()
+        original_tokens = config.retain_batch_tokens
+        config.retain_batch_tokens = 1  # force one item per sub-batch
+
+        try:
+            token = CancellationToken()
+            request_context.cancellation = token
+            doc_untouched = f"{bank_id}-doc-untouched"
+
+            contents = [
+                {"content": "First document's content.", "document_id": f"{bank_id}-doc-1"},
+                {"content": "Second document's content.", "document_id": doc_untouched},
+            ]
+
+            original_internal = memory._retain_batch_async_internal
+            calls = 0
+
+            async def _fire_disconnect_after_first_call(**kwargs):
+                nonlocal calls
+                calls += 1
+                outcome = await original_internal(**kwargs)
+                if calls == 1:
+                    # Client hangs up right after the first sub-batch commits.
+                    token.cancel("client disconnected")
+                return outcome
+
+            with patch.object(memory, "_retain_batch_async_internal", side_effect=_fire_disconnect_after_first_call):
+                result = await memory.retain_batch_async(
+                    bank_id=bank_id,
+                    contents=contents,
+                    request_context=request_context,
+                    operation_id=None,
+                )
+
+            assert calls == 1, "the second sub-batch must not have run once disconnected"
+            assert result[0], "the first document should have completed"
+            assert result[1] == [], "the second document must not have been retained"
+
+            async with memory._pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT 1 FROM documents WHERE bank_id = $1 AND id = $2", bank_id, doc_untouched
+                )
+            assert row is None, "no document row should exist for the un-processed content"
         finally:
             config.retain_batch_tokens = original_tokens
