@@ -204,9 +204,10 @@ async function isEndpointMissing(r: Response): Promise<boolean> {
         .toLowerCase() === "not found"
     );
   } catch {
-    // No JSON body at all (a proxy's HTML 404, a bare gateway response). Our API always answers
-    // bank-not-found in JSON, so this is not it — latch, as this code did before the fix.
-    return true;
+    // No JSON body at all (a proxy's HTML 404, a bare gateway response while the backend
+    // restarts). Only the API itself answering {"detail":"Not Found"} indicates an absent
+    // endpoint. Non-JSON errors leave the capability unknown so the next call retries (#5071).
+    return false;
   }
 }
 

@@ -174,20 +174,35 @@ describe("HindsightClient knowledge-page reads", () => {
     expect(c.knowledgePagesSupported).toBe(false);
   });
 
-  it("a 404 with no JSON body at all still latches (a proxy, not our API answering)", async () => {
+  it("a 404 with no JSON body at all does not latch (proxy during backend restart, #5071)", async () => {
+    let callCount = 0;
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => ({
-        ok: false,
-        status: 404,
-        json: async () => {
-          throw new Error("Unexpected token < in JSON");
-        },
-      })) as any
+      vi.fn(async () => {
+        callCount++;
+        return callCount === 1
+          ? {
+              ok: false,
+              status: 404,
+              json: async () => {
+                throw new Error("Unexpected token < in JSON");
+              },
+            }
+          : {
+              ok: true,
+              status: 200,
+              json: async () => ({ roots: [{ id: "kp-1", kind: "page", name: "Core concepts" }] }),
+            };
+      }) as any
     );
     const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
-    await expect(c.listPages()).rejects.toMatchObject({ code: "knowledge_pages_unavailable" });
-    expect(c.knowledgePagesSupported).toBe(false);
+    // First call during restart returns empty list and does not latch capability off
+    expect(await c.listPages()).toEqual({ items: [] });
+    expect(c.knowledgePagesSupported).toBeUndefined();
+
+    // Once proxy/backend recovers, next call succeeds and latches true
+    expect(await c.listPages()).toEqual({ items: [{ id: "kp-1", name: "Core concepts" }] });
+    expect(c.knowledgePagesSupported).toBe(true);
   });
 
   it("seedPages: a bank that does not exist yet writes nothing and does not latch", async () => {
