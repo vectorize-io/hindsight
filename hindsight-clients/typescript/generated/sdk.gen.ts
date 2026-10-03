@@ -144,6 +144,9 @@ import type {
   GetKnowledgePageResponses,
   GetLivenessData,
   GetLivenessResponses,
+  GetLlmConcurrencyData,
+  GetLlmConcurrencyErrors,
+  GetLlmConcurrencyResponses,
   GetMemoriesTimeseriesData,
   GetMemoriesTimeseriesErrors,
   GetMemoriesTimeseriesResponses,
@@ -254,6 +257,9 @@ import type {
   ResetBankConfigData,
   ResetBankConfigErrors,
   ResetBankConfigResponses,
+  ResetLlmConcurrencyData,
+  ResetLlmConcurrencyErrors,
+  ResetLlmConcurrencyResponses,
   RetainMemoriesData,
   RetainMemoriesErrors,
   RetainMemoriesResponses,
@@ -290,6 +296,9 @@ import type {
   UpdateKnowledgeNodeData,
   UpdateKnowledgeNodeErrors,
   UpdateKnowledgeNodeResponses,
+  UpdateLlmConcurrencyData,
+  UpdateLlmConcurrencyErrors,
+  UpdateLlmConcurrencyResponses,
   UpdateMemoryData,
   UpdateMemoryErrors,
   UpdateMemoryResponses,
@@ -369,6 +378,55 @@ export const getVersion = <ThrowOnError extends boolean = false>(
   (options?.client ?? client).get<GetVersionResponses, unknown, ThrowOnError>({
     url: "/version",
     ...options,
+  });
+
+/**
+ * Reset LLM concurrency
+ *
+ * Restore the process-wide LLM concurrency cap to HINDSIGHT_API_LLM_MAX_CONCURRENT.
+ */
+export const resetLlmConcurrency = <ThrowOnError extends boolean = false>(
+  options?: Options<ResetLlmConcurrencyData, ThrowOnError>
+) =>
+  (options?.client ?? client).delete<
+    ResetLlmConcurrencyResponses,
+    ResetLlmConcurrencyErrors,
+    ThrowOnError
+  >({ url: "/v1/default/llm-concurrency", ...options });
+
+/**
+ * Get LLM concurrency
+ *
+ * The process-wide cap on concurrent LLM calls, its configured default, and live usage. Always available: HINDSIGHT_API_ENABLE_LLM_CONCURRENCY_API gates only the write operations on this resource.
+ */
+export const getLlmConcurrency = <ThrowOnError extends boolean = false>(
+  options?: Options<GetLlmConcurrencyData, ThrowOnError>
+) =>
+  (options?.client ?? client).get<
+    GetLlmConcurrencyResponses,
+    GetLlmConcurrencyErrors,
+    ThrowOnError
+  >({ url: "/v1/default/llm-concurrency", ...options });
+
+/**
+ * Update LLM concurrency
+ *
+ * Resize the process-wide cap on concurrent LLM calls without a restart. In-flight calls are never interrupted: lowering the cap stops new calls from starting until usage is under it, and raising it starts waiting calls immediately. Not persisted: a restart restores HINDSIGHT_API_LLM_MAX_CONCURRENT.
+ */
+export const updateLlmConcurrency = <ThrowOnError extends boolean = false>(
+  options: Options<UpdateLlmConcurrencyData, ThrowOnError>
+) =>
+  (options.client ?? client).patch<
+    UpdateLlmConcurrencyResponses,
+    UpdateLlmConcurrencyErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/llm-concurrency",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
   });
 
 /**

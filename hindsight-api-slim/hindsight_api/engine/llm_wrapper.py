@@ -68,6 +68,11 @@ _llm_max_concurrent = _get_raw_config().llm_max_concurrent
 _global_llm_semaphore = CrossLoopSemaphore(_llm_max_concurrent)
 
 
+def get_global_llm_semaphore() -> CrossLoopSemaphore:
+    """The process-wide LLM cap. Resizable at runtime through /v1/default/llm-concurrency."""
+    return _global_llm_semaphore
+
+
 def _build_per_op_semaphores() -> dict[str, CrossLoopSemaphore]:
     """Build the per-operation semaphore registry from the resolved config.
 

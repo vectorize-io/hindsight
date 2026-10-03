@@ -70,12 +70,49 @@ class CrossLoopSemaphore:
         self._capacity = value
         self._lock = threading.Lock()
         self._free = value
+        self._debt = 0
         self._waiters: collections.deque[_Ticket] = collections.deque()
 
     @property
     def capacity(self) -> int:
         """The configured cap. Public so callers and tests need not read a private."""
         return self._capacity
+
+    @property
+    def in_flight(self) -> int:
+        """Permits held right now, counting any granted to a waiter that has not resumed yet."""
+        with self._lock:
+            return self._capacity - self._free + self._debt
+
+    @property
+    def waiting(self) -> int:
+        """Tasks queued for a permit."""
+        with self._lock:
+            return len(self._waiters)
+
+    def set_capacity(self, value: int) -> None:
+        """Resize the cap in place, without interrupting anyone.
+
+        Growing hands the new permits to waiters straight away, oldest first, and
+        pools the rest. Shrinking takes free permits first; any shortfall becomes
+        debt that the next releases pay instead of handing on, so holders finish
+        normally and nobody new starts until usage is under the new cap. Growing
+        again while debt is outstanding cancels the debt before admitting anyone.
+        """
+        if value < 1:
+            raise ValueError(f"capacity must be at least 1, got {value!r}")
+        with self._lock:
+            delta = value - self._capacity
+            self._capacity = value
+            if delta >= 0:
+                cancelled = min(delta, self._debt)
+                self._debt -= cancelled
+                for _ in range(delta - cancelled):
+                    self._hand_on()
+            else:
+                taken = min(-delta, self._free)
+                self._free -= taken
+                self._debt += -delta - taken
 
     async def acquire(self) -> None:
         with self._lock:
@@ -118,8 +155,13 @@ class CrossLoopSemaphore:
         permit for up to ``_MAX_DELAY`` before it wakes and nobody else may take it,
         but K permits freed at once reach K waiters at once. Claiming would hand out
         one permit per poll tick, draining a burst at ``_MAX_DELAY`` per waiter.
+
+        A permit released while a shrink is outstanding pays the debt instead: that
+        is how a resize closes a slot without interrupting its holder.
         """
-        if self._waiters:
+        if self._debt:
+            self._debt -= 1
+        elif self._waiters:
             self._waiters.popleft().granted = True
         else:
             self._free += 1

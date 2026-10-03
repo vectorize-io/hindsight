@@ -4723,6 +4723,7 @@ class FeaturesInfo(BaseModel):
     store_document_text: bool = Field(
         description="Whether raw source text is persisted. When false, document/chunk source text is not stored."
     )
+    llm_concurrency_api: bool = Field(description="Whether the runtime LLM concurrency API accepts changes")
 
 
 class VersionResponse(BaseModel):
@@ -4744,6 +4745,7 @@ class VersionResponse(BaseModel):
                     "audit_log": False,
                     "llm_trace": False,
                     "store_document_text": True,
+                    "llm_concurrency_api": False,
                 },
             }
         }
@@ -4751,6 +4753,28 @@ class VersionResponse(BaseModel):
 
     api_version: str = Field(description="API version string")
     features: FeaturesInfo = Field(description="Enabled feature flags")
+
+
+class LLMConcurrencyUpdate(BaseModel):
+    """Request model for changing the process-wide LLM concurrency cap."""
+
+    max_concurrent: int = Field(
+        ge=1,
+        description="New cap on concurrent LLM calls in this process. Lowering it lets in-flight "
+        "calls finish and starts no new call until usage is under the cap; raising it starts "
+        "waiting calls immediately.",
+    )
+
+
+class LLMConcurrencyResponse(BaseModel):
+    """The process-wide LLM concurrency cap and its live usage."""
+
+    max_concurrent: int = Field(description="Current cap on concurrent LLM calls in this process")
+    configured_max_concurrent: int = Field(
+        description="The cap from HINDSIGHT_API_LLM_MAX_CONCURRENT, restored by DELETE and on restart"
+    )
+    in_flight: int = Field(description="LLM calls currently holding a permit")
+    waiting: int = Field(description="LLM calls queued for a permit")
 
 
 # =========================================================================
@@ -5619,8 +5643,81 @@ def _register_routes(app: FastAPI):
                 audit_log=config.audit_log_enabled,
                 llm_trace=config.llm_trace_enabled,
                 store_document_text=config.store_document_text,
+                llm_concurrency_api=config.enable_llm_concurrency_api,
             ),
         )
+
+    _LLM_CONCURRENCY_DISABLED = (
+        "LLM concurrency API is disabled. Set HINDSIGHT_API_ENABLE_LLM_CONCURRENCY_API=true to enable it."
+    )
+
+    @app.get(
+        "/v1/default/llm-concurrency",
+        response_model=LLMConcurrencyResponse,
+        summary="Get LLM concurrency",
+        description="The process-wide cap on concurrent LLM calls, its configured default, and live usage. "
+        "Always available: HINDSIGHT_API_ENABLE_LLM_CONCURRENCY_API gates only the write operations on this resource.",
+        operation_id="get_llm_concurrency",
+        tags=["Monitoring"],
+    )
+    async def api_get_llm_concurrency(request_context: RequestContext = Depends(get_request_context)):
+        """Get the process-wide LLM concurrency cap and its live usage."""
+        try:
+            return LLMConcurrencyResponse(**await app.state.memory.get_llm_concurrency(request_context=request_context))
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            raise _internal_error(e, "GET /v1/default/llm-concurrency")
+
+    @app.patch(
+        "/v1/default/llm-concurrency",
+        response_model=LLMConcurrencyResponse,
+        summary="Update LLM concurrency",
+        description="Resize the process-wide cap on concurrent LLM calls without a restart. In-flight calls are "
+        "never interrupted: lowering the cap stops new calls from starting until usage is under it, and raising "
+        "it starts waiting calls immediately. Not persisted: a restart restores HINDSIGHT_API_LLM_MAX_CONCURRENT.",
+        operation_id="update_llm_concurrency",
+        tags=["Monitoring"],
+    )
+    @audited("update_llm_concurrency")
+    async def api_update_llm_concurrency(
+        request: LLMConcurrencyUpdate, request_context: RequestContext = Depends(get_request_context)
+    ):
+        """Resize the process-wide LLM concurrency cap."""
+        if not get_config().enable_llm_concurrency_api:
+            raise HTTPException(status_code=404, detail=_LLM_CONCURRENCY_DISABLED)
+        try:
+            return LLMConcurrencyResponse(
+                **await app.state.memory.update_llm_concurrency(request.max_concurrent, request_context=request_context)
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            raise _internal_error(e, "PATCH /v1/default/llm-concurrency")
+
+    @app.delete(
+        "/v1/default/llm-concurrency",
+        response_model=LLMConcurrencyResponse,
+        summary="Reset LLM concurrency",
+        description="Restore the process-wide LLM concurrency cap to HINDSIGHT_API_LLM_MAX_CONCURRENT.",
+        operation_id="reset_llm_concurrency",
+        tags=["Monitoring"],
+    )
+    @audited("reset_llm_concurrency", request_param=None)
+    async def api_reset_llm_concurrency(request_context: RequestContext = Depends(get_request_context)):
+        """Restore the configured LLM concurrency cap."""
+        if not get_config().enable_llm_concurrency_api:
+            raise HTTPException(status_code=404, detail=_LLM_CONCURRENCY_DISABLED)
+        try:
+            return LLMConcurrencyResponse(
+                **await app.state.memory.reset_llm_concurrency(request_context=request_context)
+            )
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            raise _internal_error(e, "DELETE /v1/default/llm-concurrency")
 
     @app.get(
         "/metrics",

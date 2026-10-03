@@ -72,6 +72,102 @@ paths:
       summary: Get API version and feature flags
       tags:
       - Monitoring
+  /v1/default/llm-concurrency:
+    delete:
+      description: Restore the process-wide LLM concurrency cap to HINDSIGHT_API_LLM_MAX_CONCURRENT.
+      operationId: reset_llm_concurrency
+      parameters:
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMConcurrencyResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Reset LLM concurrency
+      tags:
+      - Monitoring
+    get:
+      description: "The process-wide cap on concurrent LLM calls, its configured default,\
+        \ and live usage. Always available: HINDSIGHT_API_ENABLE_LLM_CONCURRENCY_API\
+        \ gates only the write operations on this resource."
+      operationId: get_llm_concurrency
+      parameters:
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMConcurrencyResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get LLM concurrency
+      tags:
+      - Monitoring
+    patch:
+      description: "Resize the process-wide cap on concurrent LLM calls without a\
+        \ restart. In-flight calls are never interrupted: lowering the cap stops new\
+        \ calls from starting until usage is under it, and raising it starts waiting\
+        \ calls immediately. Not persisted: a restart restores HINDSIGHT_API_LLM_MAX_CONCURRENT."
+      operationId: update_llm_concurrency
+      parameters:
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LLMConcurrencyUpdate'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMConcurrencyResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Update LLM concurrency
+      tags:
+      - Monitoring
   /metrics:
     get:
       description: Exports metrics in Prometheus format for scraping
@@ -8555,6 +8651,10 @@ components:
             \ source text is not stored."
           title: Store Document Text
           type: boolean
+        llm_concurrency_api:
+          description: Whether the runtime LLM concurrency API accepts changes
+          title: Llm Concurrency Api
+          type: boolean
       required:
       - audit_log
       - bank_config_api
@@ -8562,6 +8662,7 @@ components:
       - document_export_api
       - document_import_api
       - file_upload_api
+      - llm_concurrency_api
       - llm_trace
       - mcp
       - observations
@@ -9106,6 +9207,52 @@ components:
       - duration_ms
       - scope
       title: LLMCallTrace
+    LLMConcurrencyResponse:
+      description: The process-wide LLM concurrency cap and its live usage.
+      example:
+        waiting: 5
+        configured_max_concurrent: 6
+        max_concurrent: 0
+        in_flight: 1
+      properties:
+        max_concurrent:
+          description: Current cap on concurrent LLM calls in this process
+          title: Max Concurrent
+          type: integer
+        configured_max_concurrent:
+          description: "The cap from HINDSIGHT_API_LLM_MAX_CONCURRENT, restored by\
+            \ DELETE and on restart"
+          title: Configured Max Concurrent
+          type: integer
+        in_flight:
+          description: LLM calls currently holding a permit
+          title: In Flight
+          type: integer
+        waiting:
+          description: LLM calls queued for a permit
+          title: Waiting
+          type: integer
+      required:
+      - configured_max_concurrent
+      - in_flight
+      - max_concurrent
+      - waiting
+      title: LLMConcurrencyResponse
+    LLMConcurrencyUpdate:
+      description: Request model for changing the process-wide LLM concurrency cap.
+      example:
+        max_concurrent: 1
+      properties:
+        max_concurrent:
+          description: New cap on concurrent LLM calls in this process. Lowering it
+            lets in-flight calls finish and starts no new call until usage is under
+            the cap; raising it starts waiting calls immediately.
+          minimum: 1.0
+          title: Max Concurrent
+          type: integer
+      required:
+      - max_concurrent
+      title: LLMConcurrencyUpdate
     LLMRequestEntry:
       description: "A single LLM request trace row, as returned by the read API."
       example:
@@ -13154,6 +13301,7 @@ components:
           document_export_api: true
           document_import_api: true
           file_upload_api: true
+          llm_concurrency_api: false
           llm_trace: false
           mcp: true
           observations: false

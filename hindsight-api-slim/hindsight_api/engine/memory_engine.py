@@ -2471,6 +2471,30 @@ def _provider_default_base_url(provider: str | None) -> str:
             return ""
 
 
+def _llm_concurrency_state() -> dict[str, int]:
+    """The process-wide LLM cap, the value it was configured with, and its live usage."""
+    from ..config import _get_raw_config
+    from .llm_wrapper import get_global_llm_semaphore
+
+    sem = get_global_llm_semaphore()
+    return {
+        "max_concurrent": sem.capacity,
+        "configured_max_concurrent": _get_raw_config().llm_max_concurrent,
+        "in_flight": sem.in_flight,
+        "waiting": sem.waiting,
+    }
+
+
+def _set_llm_concurrency(value: int) -> dict[str, int]:
+    from .llm_wrapper import get_global_llm_semaphore
+
+    sem = get_global_llm_semaphore()
+    previous = sem.capacity
+    sem.set_capacity(value)
+    logger.info("LLM concurrency cap changed at runtime: %d -> %d", previous, value)
+    return _llm_concurrency_state()
+
+
 class MemoryEngine(MemoryEngineInterface):
     """
     Advanced memory system using temporal and semantic linking with PostgreSQL.
@@ -14280,6 +14304,23 @@ class MemoryEngine(MemoryEngineInterface):
         # 404s exactly as reading its config does, rather than rendering the prompts a
         # hypothetical bank on server defaults would send.
         await self._require_bank_exists(bank_id)
+
+    async def get_llm_concurrency(self, *, request_context: "RequestContext") -> dict[str, int]:
+        """The process-wide LLM concurrency cap, its configured default, and live usage."""
+        await self._authenticate_tenant(request_context)
+        return _llm_concurrency_state()
+
+    async def update_llm_concurrency(self, max_concurrent: int, *, request_context: "RequestContext") -> dict[str, int]:
+        """Resize the process-wide LLM cap in place: in-flight calls finish, waiters start at once."""
+        await self._authenticate_tenant(request_context)
+        return _set_llm_concurrency(max_concurrent)
+
+    async def reset_llm_concurrency(self, *, request_context: "RequestContext") -> dict[str, int]:
+        """Return the cap to HINDSIGHT_API_LLM_MAX_CONCURRENT."""
+        from ..config import _get_raw_config
+
+        await self._authenticate_tenant(request_context)
+        return _set_llm_concurrency(_get_raw_config().llm_max_concurrent)
 
     async def get_bank_config(
         self,

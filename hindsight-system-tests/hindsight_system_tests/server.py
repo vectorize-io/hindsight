@@ -120,6 +120,8 @@ def stub_environment(stub_url: str) -> dict[str, str]:
         "HINDSIGHT_API_LLM_MODEL": "stub-model",
         "HINDSIGHT_API_LLM_API_KEY": "stub-key",
         "HINDSIGHT_API_LLM_BASE_URL": f"{stub_url}/v1",
+        # Lets a story retune the global LLM cap at runtime (test_97).
+        "HINDSIGHT_API_ENABLE_LLM_CONCURRENCY_API": "true",
         # Embeddings: same trick, and it means no torch and no model download.
         "HINDSIGHT_API_EMBEDDINGS_PROVIDER": "openai",
         "HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY": "stub-key",

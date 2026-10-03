@@ -219,6 +219,21 @@ class MemoryEngineInterface(ABC):
         ...
 
     @abstractmethod
+    async def get_llm_concurrency(self, *, request_context: "RequestContext") -> dict[str, int]:
+        """Return the process-wide LLM concurrency cap, its configured default and live usage."""
+        ...
+
+    @abstractmethod
+    async def update_llm_concurrency(self, max_concurrent: int, *, request_context: "RequestContext") -> dict[str, int]:
+        """Resize the process-wide LLM concurrency cap in place after authenticating the caller."""
+        ...
+
+    @abstractmethod
+    async def reset_llm_concurrency(self, *, request_context: "RequestContext") -> dict[str, int]:
+        """Restore the process-wide LLM concurrency cap to its configured value."""
+        ...
+
+    @abstractmethod
     async def get_bank_config(
         self,
         bank_id: str,

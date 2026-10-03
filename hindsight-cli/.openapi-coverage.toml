@@ -100,6 +100,12 @@ get_bank_attachment = "Streams attachment bytes for the control plane/API, not t
 get_liveness = "Liveness probe for orchestrators; `hindsight health` covers the human-facing check"
 get_readiness = "Alias of /health, which `hindsight health` already calls"
 
+# Runtime LLM concurrency cap: an operator knob for pacing controllers and
+# autoscalers, with writes off by default (HINDSIGHT_API_ENABLE_LLM_CONCURRENCY_API).
+get_llm_concurrency = "Operator tuning knob for pacing controllers; not an end-user CLI command"
+update_llm_concurrency = "Operator tuning knob for pacing controllers, off by default; not an end-user CLI command"
+reset_llm_concurrency = "Operator tuning knob for pacing controllers, off by default; not an end-user CLI command"
+
 # ---------------------------------------------------------------------------
 # Per-operation parameter skips
 # ---------------------------------------------------------------------------

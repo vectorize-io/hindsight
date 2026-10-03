@@ -97,6 +97,162 @@
         }
       }
     },
+    "/v1/default/llm-concurrency": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Get LLM concurrency",
+        "description": "The process-wide cap on concurrent LLM calls, its configured default, and live usage. Always available: HINDSIGHT_API_ENABLE_LLM_CONCURRENCY_API gates only the write operations on this resource.",
+        "operationId": "get_llm_concurrency",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMConcurrencyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Update LLM concurrency",
+        "description": "Resize the process-wide cap on concurrent LLM calls without a restart. In-flight calls are never interrupted: lowering the cap stops new calls from starting until usage is under it, and raising it starts waiting calls immediately. Not persisted: a restart restores HINDSIGHT_API_LLM_MAX_CONCURRENT.",
+        "operationId": "update_llm_concurrency",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LLMConcurrencyUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMConcurrencyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Reset LLM concurrency",
+        "description": "Restore the process-wide LLM concurrency cap to HINDSIGHT_API_LLM_MAX_CONCURRENT.",
+        "operationId": "reset_llm_concurrency",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMConcurrencyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/metrics": {
       "get": {
         "tags": [
@@ -12563,6 +12719,11 @@
             "type": "boolean",
             "title": "Store Document Text",
             "description": "Whether raw source text is persisted. When false, document/chunk source text is not stored."
+          },
+          "llm_concurrency_api": {
+            "type": "boolean",
+            "title": "Llm Concurrency Api",
+            "description": "Whether the runtime LLM concurrency API accepts changes"
           }
         },
         "type": "object",
@@ -12577,7 +12738,8 @@
           "document_import_api",
           "audit_log",
           "llm_trace",
-          "store_document_text"
+          "store_document_text",
+          "llm_concurrency_api"
         ],
         "title": "FeaturesInfo",
         "description": "Feature flags indicating which capabilities are enabled."
@@ -13163,6 +13325,55 @@
         ],
         "title": "LLMCallTrace",
         "description": "A single LLM call made during reflect."
+      },
+      "LLMConcurrencyResponse": {
+        "properties": {
+          "max_concurrent": {
+            "type": "integer",
+            "title": "Max Concurrent",
+            "description": "Current cap on concurrent LLM calls in this process"
+          },
+          "configured_max_concurrent": {
+            "type": "integer",
+            "title": "Configured Max Concurrent",
+            "description": "The cap from HINDSIGHT_API_LLM_MAX_CONCURRENT, restored by DELETE and on restart"
+          },
+          "in_flight": {
+            "type": "integer",
+            "title": "In Flight",
+            "description": "LLM calls currently holding a permit"
+          },
+          "waiting": {
+            "type": "integer",
+            "title": "Waiting",
+            "description": "LLM calls queued for a permit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "max_concurrent",
+          "configured_max_concurrent",
+          "in_flight",
+          "waiting"
+        ],
+        "title": "LLMConcurrencyResponse",
+        "description": "The process-wide LLM concurrency cap and its live usage."
+      },
+      "LLMConcurrencyUpdate": {
+        "properties": {
+          "max_concurrent": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Max Concurrent",
+            "description": "New cap on concurrent LLM calls in this process. Lowering it lets in-flight calls finish and starts no new call until usage is under the cap; raising it starts waiting calls immediately."
+          }
+        },
+        "type": "object",
+        "required": [
+          "max_concurrent"
+        ],
+        "title": "LLMConcurrencyUpdate",
+        "description": "Request model for changing the process-wide LLM concurrency cap."
       },
       "LLMRequestEntry": {
         "properties": {
@@ -19506,6 +19717,7 @@
             "document_export_api": true,
             "document_import_api": true,
             "file_upload_api": true,
+            "llm_concurrency_api": false,
             "llm_trace": false,
             "mcp": true,
             "observations": false,

@@ -2770,6 +2770,12 @@ export type FeaturesInfo = {
    * Whether raw source text is persisted. When false, document/chunk source text is not stored.
    */
   store_document_text: boolean;
+  /**
+   * Llm Concurrency Api
+   *
+   * Whether the runtime LLM concurrency API accepts changes
+   */
+  llm_concurrency_api: boolean;
 };
 
 /**
@@ -3121,6 +3127,52 @@ export type LlmCallTrace = {
    * Execution time in milliseconds
    */
   duration_ms: number;
+};
+
+/**
+ * LLMConcurrencyResponse
+ *
+ * The process-wide LLM concurrency cap and its live usage.
+ */
+export type LlmConcurrencyResponse = {
+  /**
+   * Max Concurrent
+   *
+   * Current cap on concurrent LLM calls in this process
+   */
+  max_concurrent: number;
+  /**
+   * Configured Max Concurrent
+   *
+   * The cap from HINDSIGHT_API_LLM_MAX_CONCURRENT, restored by DELETE and on restart
+   */
+  configured_max_concurrent: number;
+  /**
+   * In Flight
+   *
+   * LLM calls currently holding a permit
+   */
+  in_flight: number;
+  /**
+   * Waiting
+   *
+   * LLM calls queued for a permit
+   */
+  waiting: number;
+};
+
+/**
+ * LLMConcurrencyUpdate
+ *
+ * Request model for changing the process-wide LLM concurrency cap.
+ */
+export type LlmConcurrencyUpdate = {
+  /**
+   * Max Concurrent
+   *
+   * New cap on concurrent LLM calls in this process. Lowering it lets in-flight calls finish and starts no new call until usage is under the cap; raising it starts waiting calls immediately.
+   */
+  max_concurrent: number;
 };
 
 /**
@@ -7165,6 +7217,103 @@ export type GetVersionResponses = {
 };
 
 export type GetVersionResponse = GetVersionResponses[keyof GetVersionResponses];
+
+export type ResetLlmConcurrencyData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/default/llm-concurrency";
+};
+
+export type ResetLlmConcurrencyErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ResetLlmConcurrencyError = ResetLlmConcurrencyErrors[keyof ResetLlmConcurrencyErrors];
+
+export type ResetLlmConcurrencyResponses = {
+  /**
+   * Successful Response
+   */
+  200: LlmConcurrencyResponse;
+};
+
+export type ResetLlmConcurrencyResponse =
+  ResetLlmConcurrencyResponses[keyof ResetLlmConcurrencyResponses];
+
+export type GetLlmConcurrencyData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/default/llm-concurrency";
+};
+
+export type GetLlmConcurrencyErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetLlmConcurrencyError = GetLlmConcurrencyErrors[keyof GetLlmConcurrencyErrors];
+
+export type GetLlmConcurrencyResponses = {
+  /**
+   * Successful Response
+   */
+  200: LlmConcurrencyResponse;
+};
+
+export type GetLlmConcurrencyResponse =
+  GetLlmConcurrencyResponses[keyof GetLlmConcurrencyResponses];
+
+export type UpdateLlmConcurrencyData = {
+  body: LlmConcurrencyUpdate;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/default/llm-concurrency";
+};
+
+export type UpdateLlmConcurrencyErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type UpdateLlmConcurrencyError =
+  UpdateLlmConcurrencyErrors[keyof UpdateLlmConcurrencyErrors];
+
+export type UpdateLlmConcurrencyResponses = {
+  /**
+   * Successful Response
+   */
+  200: LlmConcurrencyResponse;
+};
+
+export type UpdateLlmConcurrencyResponse =
+  UpdateLlmConcurrencyResponses[keyof UpdateLlmConcurrencyResponses];
 
 export type MetricsEndpointMetricsGetData = {
   body?: never;

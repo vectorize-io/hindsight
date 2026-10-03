@@ -278,3 +278,103 @@ def test_handoff_reaches_a_waiter_on_another_loop():
     assert not errors, f"cross-loop handoff raised: {errors[:1]}"
     assert waited, "waiter never acquired across the loop boundary"
     assert waited[0] < 0.2, f"waited {waited[0] * 1000:.0f} ms behind {sections} critical sections on another loop"
+
+
+@pytest.mark.asyncio
+async def test_growing_the_cap_starts_waiters_immediately():
+    sem = CrossLoopSemaphore(1)
+    await sem.acquire()
+    started: list[int] = []
+
+    async def wait(i: int) -> None:
+        await sem.acquire()
+        started.append(i)
+
+    tasks = [asyncio.create_task(wait(i)) for i in range(2)]
+    await asyncio.sleep(0.05)
+    assert started == [] and sem.waiting == 2
+
+    sem.set_capacity(3)
+    await asyncio.wait_for(asyncio.gather(*tasks), 1)
+    assert sorted(started) == [0, 1]
+    assert (sem.capacity, sem.in_flight, sem.waiting) == (3, 3, 0)
+
+
+@pytest.mark.asyncio
+async def test_shrinking_below_in_flight_lets_holders_finish_and_admits_nobody_until_under_the_cap():
+    sem = CrossLoopSemaphore(3)
+    for _ in range(3):
+        await sem.acquire()
+    sem.set_capacity(1)
+    assert sem.in_flight == 3  # nobody is interrupted
+
+    waiter = asyncio.create_task(sem.acquire())
+    sem.release()
+    sem.release()  # both releases pay down the debt of 2
+    await asyncio.sleep(0.05)
+    assert not waiter.done() and sem.in_flight == 1
+
+    sem.release()
+    await asyncio.wait_for(waiter, 1)
+    assert sem.in_flight == 1
+
+
+@pytest.mark.asyncio
+async def test_shrinking_takes_free_permits_before_creating_debt():
+    sem = CrossLoopSemaphore(4)
+    await sem.acquire()
+    sem.set_capacity(2)
+    assert sem.in_flight == 1
+    await asyncio.wait_for(sem.acquire(), 1)  # the one remaining free permit
+    blocked = asyncio.create_task(sem.acquire())
+    await asyncio.sleep(0.05)
+    assert not blocked.done()
+    sem.release()
+    await asyncio.wait_for(blocked, 1)
+
+
+@pytest.mark.asyncio
+async def test_growing_while_in_debt_cancels_debt_before_admitting_anyone():
+    sem = CrossLoopSemaphore(4)
+    for _ in range(4):
+        await sem.acquire()
+    sem.set_capacity(1)  # debt 3
+    sem.set_capacity(3)  # debt 1: growing cancels debt, admits nobody
+    blocked = asyncio.create_task(sem.acquire())
+    await asyncio.sleep(0.05)
+    assert not blocked.done() and sem.in_flight == 4
+
+    sem.release()  # pays the last debt: 3 held, cap 3, still full
+    await asyncio.sleep(0.05)
+    assert not blocked.done()
+
+    sem.release()
+    await asyncio.wait_for(blocked, 1)
+    assert sem.in_flight == 3
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_waiter_while_in_debt_does_not_leak_a_permit():
+    sem = CrossLoopSemaphore(2)
+    await sem.acquire()
+    await sem.acquire()
+    sem.set_capacity(1)  # debt 1
+    waiter = asyncio.create_task(sem.acquire())
+    await asyncio.sleep(0.02)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert sem.waiting == 0
+
+    sem.release()
+    sem.release()
+    assert sem.in_flight == 0
+    await asyncio.wait_for(sem.acquire(), 1)  # the cap of 1 is fully usable again
+    assert sem.in_flight == 1
+
+
+def test_capacity_below_one_is_rejected():
+    sem = CrossLoopSemaphore(2)
+    with pytest.raises(ValueError):
+        sem.set_capacity(0)
+    assert sem.capacity == 2
