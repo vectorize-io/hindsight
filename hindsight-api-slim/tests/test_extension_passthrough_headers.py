@@ -248,6 +248,60 @@ class TestMcpTransport:
 
         assert middleware._get_extra_headers(scope) == {ASSERTION_HEADER: "token-abc"}
 
+    @pytest.mark.asyncio
+    async def test_bank_alias_resolution_carries_passthrough_headers(self, set_passthrough):
+        """Regression test for #5066: resolve_bank_alias must receive forwarded headers.
+
+        When a TenantExtension authenticates callers based on extra_headers, the
+        edge bank-alias lookup in MCPMiddleware must include those headers in its
+        RequestContext so the extension does not reject it.
+        """
+        from unittest.mock import AsyncMock, MagicMock
+
+        set_passthrough(ASSERTION_HEADER)
+        mock_memory = MagicMock()
+        middleware = self._middleware(mock_memory)
+
+        # Mock tenant extension so authenticate_mcp returns a TenantContext
+        from hindsight_api.extensions.tenant import TenantContext
+
+        middleware.tenant_extension = MagicMock()
+        middleware.tenant_extension.authenticate_mcp = AsyncMock(return_value=TenantContext(schema_name="public"))
+
+        captured_context = None
+
+        async def capture_alias(bank_id, request_context=None):
+            nonlocal captured_context
+            captured_context = request_context
+            return "resolved-bank"
+
+        mock_memory.resolve_bank_alias = AsyncMock(side_effect=capture_alias)
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp/default/messages",
+            "headers": [
+                (b"authorization", b"Bearer test-token"),
+                (ASSERTION_HEADER.encode(), b"token-abc"),
+            ],
+        }
+
+        async def dummy_receive():
+            return {"type": "http.request", "body": b""}
+
+        async def dummy_send(message):
+            pass
+
+        middleware.single_bank_app = AsyncMock()
+
+        await middleware(scope, dummy_receive, dummy_send)
+
+        assert captured_context is not None
+        assert captured_context.extra_headers == {ASSERTION_HEADER: "token-abc"}
+        assert captured_context.api_key == "test-token"
+        assert captured_context.mcp_authenticated is False
+
 
 class TestReachesOperationValidator:
     """The headers survive the whole HTTP path, not just the auth hop."""
