@@ -2643,52 +2643,63 @@ export default function (api: MoltbotPluginAPI) {
     debug("[Hindsight] Registering agent hooks...");
     log.info("registering agent hooks");
 
-    api.on("before_dispatch", async (event: any, ctx?: PluginHookAgentContext) => {
-      try {
-        const sessionKey =
-          ctx?.sessionKey ?? (typeof event?.sessionKey === "string" ? event.sessionKey : undefined);
-        if (!sessionKey) {
-          return;
-        }
+    // Agent-only banks do not depend on the sender or dispatch surface. Resolve
+    // identity in the recall/retain hooks instead, so before_dispatch does not
+    // block OpenClaw Goal start/resume admission (#5177). Keep early identity
+    // capture and surface-mismatch suppression for other routing configurations.
+    const agentOnlyDynamicBanking =
+      pluginConfig.dynamicBankId !== false &&
+      pluginConfig.dynamicBankGranularity?.length === 1 &&
+      pluginConfig.dynamicBankGranularity[0] === "agent";
+    if (!agentOnlyDynamicBanking) {
+      api.on("before_dispatch", async (event: any, ctx?: PluginHookAgentContext) => {
+        try {
+          const sessionKey =
+            ctx?.sessionKey ??
+            (typeof event?.sessionKey === "string" ? event.sessionKey : undefined);
+          if (!sessionKey) {
+            return;
+          }
 
-        const dispatchChannel =
-          (typeof event?.channel === "string" ? event.channel : undefined) ||
-          ctx?.messageProvider ||
-          parseSessionKey(sessionKey).provider;
-        const { resolvedCtx, skipReason } = resolveAndCacheIdentity({
-          sessionKey,
-          ctx: {
-            ...ctx,
+          const dispatchChannel =
+            (typeof event?.channel === "string" ? event.channel : undefined) ||
+            ctx?.messageProvider ||
+            parseSessionKey(sessionKey).provider;
+          const { resolvedCtx, skipReason } = resolveAndCacheIdentity({
             sessionKey,
-            senderId:
-              (typeof event?.senderId === "string" ? event.senderId : undefined) || ctx?.senderId,
-          },
-          dispatchChannel,
-          pluginConfig,
-        });
+            ctx: {
+              ...ctx,
+              sessionKey,
+              senderId:
+                (typeof event?.senderId === "string" ? event.senderId : undefined) || ctx?.senderId,
+            },
+            dispatchChannel,
+            pluginConfig,
+          });
 
-        if (skipReason) {
+          if (skipReason) {
+            debug(
+              `[Hindsight] before_dispatch marked session ${sessionKey} to skip this turn: ${formatIdentitySkipReason(skipReason)}`
+            );
+            logSkipOnce("dispatch", sessionKey, skipReason);
+            return;
+          }
+          if (!resolvedCtx?.senderId || typeof resolvedCtx.senderId !== "string") {
+            return;
+          }
+
           debug(
-            `[Hindsight] before_dispatch marked session ${sessionKey} to skip this turn: ${formatIdentitySkipReason(skipReason)}`
+            `[Hindsight] before_dispatch cached identity for ${sessionKey}: ${resolvedCtx.messageProvider}/${resolvedCtx.channelId} sender=${resolvedCtx.senderId}`
           );
-          logSkipOnce("dispatch", sessionKey, skipReason);
-          return;
+        } catch (error) {
+          log.warn(`before_dispatch identity cache error: ${error}`);
         }
-        if (!resolvedCtx?.senderId || typeof resolvedCtx.senderId !== "string") {
-          return;
-        }
-
-        debug(
-          `[Hindsight] before_dispatch cached identity for ${sessionKey}: ${resolvedCtx.messageProvider}/${resolvedCtx.channelId} sender=${resolvedCtx.senderId}`
-        );
-      } catch (error) {
-        log.warn(`before_dispatch identity cache error: ${error}`);
-      }
-    });
+      });
+    }
 
     // No `before_agent_start` registration: the callback used to call
     // `resolveAndCacheIdentity()` and emit a debug log, but `before_dispatch`
-    // already populates the identity cache earlier in the inbound path,
+    // populates the identity cache earlier when routing needs it,
     // `before_prompt_build` re-resolves before recall (and can infer
     // `senderId` from prompt content when ctx is missing it), and `agent_end`
     // re-resolves before retain. Subscribing here was duplicate work on the

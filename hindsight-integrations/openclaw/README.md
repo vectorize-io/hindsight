@@ -186,6 +186,10 @@ When `dynamicBankId` is enabled (default), OpenClaw derives a separate Hindsight
 
 Unset options are not sent — existing behaviour is unchanged when you only configure missions (as before). Each bank is configured at most once per gateway process.
 
+### OpenClaw Goals
+
+With dynamic banking enabled and `dynamicBankGranularity: ["agent"]`, the plugin resolves identity in the recall and retain hooks without registering `before_dispatch`. This avoids Hindsight's dispatch hook blocking OpenClaw Goal start/resume admission. Other routing configurations retain dispatch identity capture and may still be rejected by OpenClaw's restart-recovery safety check. The runtime, session history, and identity requirements still apply.
+
 ### Manual Knowledge Tools
 
 When `enableKnowledgeTools` is enabled, the plugin registers explicit `agent_knowledge_*` tools in addition to automatic recall. Use `agent_knowledge_recall` for ordinary memory lookup. Use `agent_knowledge_reflect` only for deliberate synthesis, retrospectives, or long-term preference/pattern questions; it retrieves memories and then calls the configured Reflect LLM to generate an answer.
