@@ -22,12 +22,41 @@ from .ops import (
     memory_unit_columns,
 )
 from .result import DictResultRow as ResultRow
+from .result import ResultRow as DatabaseResultRow
 
 ORACLE_IN_LIST_LIMIT = 1000
 
 
 class OracleOps(DataAccessOps):
     """Oracle-specific data access operations."""
+
+    async def fetch_reconcilable_batch_parents(self, conn: DatabaseConnection, table: str) -> list[DatabaseResultRow]:
+        return await conn.fetch(
+            f"""
+            WITH pending_parents AS (
+                SELECT operation_id, bank_id, LOWER(RAWTOHEX(operation_id)) AS uuid_hex
+                FROM {table}
+                WHERE operation_type = 'batch_retain'
+                  AND status = 'pending'
+                  AND task_payload IS NULL
+            )
+            SELECT parent.operation_id, parent.bank_id
+            FROM pending_parents parent
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM {table} child
+                WHERE child.bank_id = parent.bank_id
+                  AND child.status NOT IN ('completed', 'failed')
+                  AND JSON_VALUE(child.result_metadata, '$.type()') = 'object'
+                  AND JSON_VALUE(child.result_metadata, '$.parent_operation_id') COLLATE BINARY =
+                      SUBSTR(parent.uuid_hex, 1, 8) || '-' ||
+                      SUBSTR(parent.uuid_hex, 9, 4) || '-' ||
+                      SUBSTR(parent.uuid_hex, 13, 4) || '-' ||
+                      SUBSTR(parent.uuid_hex, 17, 4) || '-' ||
+                      SUBSTR(parent.uuid_hex, 21, 12)
+            )
+            """
+        )
 
     async def bulk_upsert_chunks(
         self,

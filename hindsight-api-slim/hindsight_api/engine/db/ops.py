@@ -934,6 +934,11 @@ class DataAccessOps(ABC):
     # -- Task claiming operations ------------------------------------------
 
     @abstractmethod
+    async def fetch_reconcilable_batch_parents(self, conn: DatabaseConnection, table: str) -> list[ResultRow]:
+        """Find pending payload-less batch parents without unfinished same-bank children."""
+        ...
+
+    @abstractmethod
     async def prune_terminal_operations(
         self,
         conn: DatabaseConnection,

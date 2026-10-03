@@ -83,6 +83,24 @@ class PostgreSQLOps(DataAccessOps):
     def uses_observation_sources_table(self) -> bool:
         return False  # PG uses native array ops on source_memory_ids
 
+    async def fetch_reconcilable_batch_parents(self, conn: DatabaseConnection, table: str) -> list[ResultRow]:
+        return await conn.fetch(
+            f"""
+            SELECT parent.operation_id, parent.bank_id
+            FROM {table} parent
+            WHERE parent.operation_type = 'batch_retain'
+              AND parent.status = 'pending'
+              AND parent.task_payload IS NULL
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM {table} child
+                  WHERE child.bank_id = parent.bank_id
+                    AND child.result_metadata->>'parent_operation_id' = parent.operation_id::text
+                    AND child.status NOT IN ('completed', 'failed')
+              )
+            """
+        )
+
     async def bulk_upsert_chunks(
         self,
         conn: DatabaseConnection,

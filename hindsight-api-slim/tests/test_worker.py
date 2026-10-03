@@ -1795,6 +1795,295 @@ class TestWorkerRecovery:
         assert parent_row["status"] == "pending"
 
 
+class TestBatchParentRecoveryCandidates:
+    """Discovery removes healthy backlog work without changing locked recovery."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("child_status", ["pending", "processing", "cancelled"])
+    async def test_unfinished_children_do_not_open_parent_transactions(
+        self, pool, backend, clean_operations, child_status
+    ):
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        parent_id = uuid.uuid4()
+        await pool.execute(
+            """INSERT INTO async_operations (operation_id, bank_id, operation_type, status)
+               VALUES ($1, $2, 'batch_retain', 'pending')""",
+            parent_id,
+            bank_id,
+        )
+        await pool.execute(
+            """INSERT INTO async_operations
+                   (operation_id, bank_id, operation_type, status, task_payload, result_metadata)
+               VALUES ($1, $2, 'retain', $3, '{}'::jsonb, $4::jsonb)""",
+            uuid.uuid4(),
+            bank_id,
+            child_status,
+            json.dumps({"parent_operation_id": str(parent_id)}),
+        )
+        before = await pool.fetchrow("SELECT * FROM async_operations WHERE operation_id = $1", parent_id)
+        poller = WorkerPoller(backend=backend, worker_id="candidate-worker", executor=AsyncMock())
+        with patch.object(backend, "acquire", wraps=backend.acquire) as acquire:
+            assert await poller._reconcile_orphaned_parents(None) == 0
+        # Only discovery acquires a connection; there is no per-parent transaction.
+        assert acquire.call_count == 1
+        after = await pool.fetchrow("SELECT * FROM async_operations WHERE operation_id = $1", parent_id)
+        assert after == before
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "relation",
+        ["canonical", "uppercase", "array", "array-object", "root-array", "null", "number", "object", "missing"],
+    )
+    async def test_discovery_preserves_exact_json_relation(self, pool, backend, clean_operations, relation):
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        parent_id = uuid.UUID("a" + uuid.uuid4().hex[1:])
+        parent_text = str(parent_id)
+        values = {
+            "canonical": parent_text,
+            "uppercase": parent_text.upper(),
+            "array": [parent_text],
+            "array-object": [{"parent_operation_id": parent_text}],
+            "null": None,
+            "number": 123,
+            "object": {"id": parent_text},
+        }
+        if relation == "root-array":
+            metadata = [{"parent_operation_id": parent_text}]
+        else:
+            metadata = {} if relation == "missing" else {"parent_operation_id": values[relation]}
+        await pool.execute(
+            """INSERT INTO async_operations (operation_id, bank_id, operation_type, status)
+               VALUES ($1, $2, 'batch_retain', 'pending')""",
+            parent_id,
+            bank_id,
+        )
+        await pool.execute(
+            """INSERT INTO async_operations
+                   (operation_id, bank_id, operation_type, status, task_payload, result_metadata)
+               VALUES ($1, $2, 'retain', 'pending', '{}'::jsonb, $3::jsonb)""",
+            uuid.uuid4(),
+            bank_id,
+            json.dumps(metadata),
+        )
+        # Compare discovery against the existing locked sibling lookup, including
+        # malformed JSON values that must never be cast blindly to UUID.
+        siblings = await pool.fetchval(
+            """SELECT count(*) FROM async_operations
+               WHERE bank_id = $1 AND result_metadata @> $2::jsonb""",
+            bank_id,
+            json.dumps({"parent_operation_id": parent_text}),
+        )
+        poller = WorkerPoller(backend=backend, worker_id="relation-worker", executor=AsyncMock())
+        repaired = await poller._reconcile_orphaned_parents(None)
+        assert repaired == (0 if siblings else 1)
+        assert await pool.fetchval("SELECT status FROM async_operations WHERE operation_id = $1", parent_id) == (
+            "pending" if siblings else "failed"
+        )
+
+    @pytest.mark.asyncio
+    async def test_other_bank_child_does_not_hide_orphan(self, pool, backend, clean_operations):
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        other_bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        await _ensure_bank(pool, other_bank_id)
+        parent_id, child_id = uuid.uuid4(), uuid.uuid4()
+        await pool.execute(
+            """INSERT INTO async_operations (operation_id, bank_id, operation_type, status)
+               VALUES ($1, $2, 'batch_retain', 'pending')""",
+            parent_id,
+            bank_id,
+        )
+        await pool.execute(
+            """INSERT INTO async_operations
+                   (operation_id, bank_id, operation_type, status, task_payload, result_metadata)
+               VALUES ($1, $2, 'retain', 'pending', '{}'::jsonb, $3::jsonb)""",
+            child_id,
+            other_bank_id,
+            json.dumps({"parent_operation_id": str(parent_id)}),
+        )
+        poller = WorkerPoller(backend=backend, worker_id="bank-worker", executor=AsyncMock())
+        assert await poller._reconcile_orphaned_parents(None) == 1
+        assert await pool.fetchval("SELECT status FROM async_operations WHERE operation_id = $1", child_id) == "pending"
+
+    @pytest.mark.asyncio
+    async def test_candidate_recheck_sees_retried_child(self, pool, backend, clean_operations):
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        parent_id, child_id = uuid.uuid4(), uuid.uuid4()
+        await pool.execute(
+            """INSERT INTO async_operations (operation_id, bank_id, operation_type, status)
+               VALUES ($1, $2, 'batch_retain', 'pending')""",
+            parent_id,
+            bank_id,
+        )
+        await pool.execute(
+            """INSERT INTO async_operations
+                   (operation_id, bank_id, operation_type, status, task_payload, result_metadata)
+               VALUES ($1, $2, 'retain', 'failed', '{}'::jsonb, $3::jsonb)""",
+            child_id,
+            bank_id,
+            json.dumps({"parent_operation_id": str(parent_id)}),
+        )
+        discover = backend.ops.fetch_reconcilable_batch_parents
+
+        async def retry_after_discovery(conn, table):
+            candidates = await discover(conn, table)
+            await pool.execute("UPDATE async_operations SET status = 'pending' WHERE operation_id = $1", child_id)
+            return candidates
+
+        poller = WorkerPoller(backend=backend, worker_id="retry-worker", executor=AsyncMock())
+        with patch.object(backend.ops, "fetch_reconcilable_batch_parents", side_effect=retry_after_discovery):
+            assert await poller._reconcile_orphaned_parents(None) == 0
+        assert (
+            await pool.fetchval("SELECT status FROM async_operations WHERE operation_id = $1", parent_id) == "pending"
+        )
+
+    @pytest.mark.asyncio
+    async def test_child_finishing_after_snapshot_is_recovered_next_pass(self, pool, backend, clean_operations):
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        parent_id, child_id = uuid.uuid4(), uuid.uuid4()
+        await pool.execute(
+            """INSERT INTO async_operations (operation_id, bank_id, operation_type, status)
+               VALUES ($1, $2, 'batch_retain', 'pending')""",
+            parent_id,
+            bank_id,
+        )
+        await pool.execute(
+            """INSERT INTO async_operations
+                   (operation_id, bank_id, operation_type, status, task_payload, result_metadata)
+               VALUES ($1, $2, 'retain', 'pending', '{}'::jsonb, $3::jsonb)""",
+            child_id,
+            bank_id,
+            json.dumps({"parent_operation_id": str(parent_id)}),
+        )
+        discover = backend.ops.fetch_reconcilable_batch_parents
+
+        async def finish_after_discovery(conn, table):
+            candidates = await discover(conn, table)
+            # Model a terminal child commit whose normal parent aggregation was
+            # lost. Discovery's old snapshot deliberately leaves it for recovery.
+            await pool.execute("UPDATE async_operations SET status = 'completed' WHERE operation_id = $1", child_id)
+            return candidates
+
+        poller = WorkerPoller(backend=backend, worker_id="snapshot-worker", executor=AsyncMock())
+        with patch.object(backend.ops, "fetch_reconcilable_batch_parents", side_effect=finish_after_discovery):
+            assert await poller._reconcile_orphaned_parents(None) == 0
+        assert await poller._reconcile_orphaned_parents(None) == 1
+        assert (
+            await pool.fetchval("SELECT status FROM async_operations WHERE operation_id = $1", parent_id) == "completed"
+        )
+
+    @pytest.mark.asyncio
+    async def test_competing_recovery_workers_repair_parent_once(self, pool, backend, clean_operations):
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        parent_id = uuid.uuid4()
+        await pool.execute(
+            """INSERT INTO async_operations (operation_id, bank_id, operation_type, status)
+               VALUES ($1, $2, 'batch_retain', 'pending')""",
+            parent_id,
+            bank_id,
+        )
+        discover = backend.ops.fetch_reconcilable_batch_parents
+        barrier = asyncio.Barrier(2)
+
+        async def concurrent_discovery(conn, table):
+            candidates = await discover(conn, table)
+            await barrier.wait()
+            return candidates
+
+        workers = [WorkerPoller(backend=backend, worker_id=f"competing-{i}", executor=AsyncMock()) for i in range(2)]
+        with patch.object(backend.ops, "fetch_reconcilable_batch_parents", side_effect=concurrent_discovery):
+            repairs = await asyncio.wait_for(
+                asyncio.gather(*(worker._reconcile_orphaned_parents(None) for worker in workers)), timeout=5
+            )
+        assert sorted(repairs) == [0, 1]
+
+    @pytest.mark.asyncio
+    async def test_discovery_and_recheck_use_supplied_tenant_schema(self, pool, backend, clean_operations):
+        from hindsight_api.worker import WorkerPoller
+
+        schema = f"recovery_{uuid.uuid4().hex[:8]}"
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await pool.execute("INSERT INTO public.banks (bank_id, name) VALUES ($1, $2)", bank_id, bank_id)
+        parent_id = uuid.uuid4()
+        await pool.execute(f'CREATE SCHEMA "{schema}"')
+        try:
+            await pool.execute(f'CREATE TABLE "{schema}".async_operations (LIKE public.async_operations INCLUDING ALL)')
+            await pool.execute(
+                f"""INSERT INTO "{schema}".async_operations (operation_id, bank_id, operation_type, status)
+                    VALUES ($1, $2, 'batch_retain', 'pending')""",
+                parent_id,
+                bank_id,
+            )
+            # A matching live child in public must not affect the tenant's orphan.
+            await pool.execute(
+                """INSERT INTO public.async_operations
+                       (operation_id, bank_id, operation_type, status, task_payload, result_metadata)
+                   VALUES ($1, $2, 'retain', 'pending', '{}'::jsonb, $3::jsonb)""",
+                uuid.uuid4(),
+                bank_id,
+                json.dumps({"parent_operation_id": str(parent_id)}),
+            )
+            poller = WorkerPoller(backend=backend, worker_id="schema-worker", executor=AsyncMock())
+            assert await poller._reconcile_orphaned_parents(schema) == 1
+            assert (
+                await pool.fetchval(
+                    f'SELECT status FROM "{schema}".async_operations WHERE operation_id = $1', parent_id
+                )
+                == "failed"
+            )
+        finally:
+            await pool.execute(f'DROP SCHEMA "{schema}" CASCADE')
+            await pool.execute("DELETE FROM public.banks WHERE bank_id = $1", bank_id)
+
+    @pytest.mark.asyncio
+    async def test_oracle_discovery_compares_canonical_uuid_text(self):
+        from hindsight_api.engine.db.ops_oracle import OracleOps
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        conn = MagicMock()
+        conn.fetch = AsyncMock(return_value=[])
+        assert await OracleOps().fetch_reconcilable_batch_parents(conn, '"tenant".async_operations') == []
+        query = conn.fetch.await_args.args[0]
+        rewritten = _rewrite_pg_to_oracle(query).query
+        for sql in (query, rewritten):
+            compact = " ".join(sql.split())
+            assert "WITH pending_parents AS" in compact
+            assert "LOWER(RAWTOHEX(operation_id)) AS uuid_hex" in compact
+            assert 'FROM "tenant".async_operations' in compact
+            assert "FROM pending_parents parent" in compact
+            assert 'FROM "tenant".async_operations child' in compact
+            assert "child.bank_id = parent.bank_id" in compact
+            assert "child.status NOT IN ('completed', 'failed')" in compact
+            assert "JSON_VALUE(child.result_metadata, '$.type()') = 'object'" in compact
+            assert "JSON_VALUE(child.result_metadata, '$.parent_operation_id') COLLATE BINARY =" in compact
+            assert (
+                "SUBSTR(parent.uuid_hex, 1, 8) || '-' || SUBSTR(parent.uuid_hex, 9, 4) || '-' || "
+                "SUBSTR(parent.uuid_hex, 13, 4) || '-' || SUBSTR(parent.uuid_hex, 17, 4) || '-' || "
+                "SUBSTR(parent.uuid_hex, 21, 12)"
+            ) in compact
+            assert "CASE" not in compact
+            assert "HEXTORAW" not in compact
+            assert "REGEXP" not in compact
+            assert "child.JSON_VALUE" not in compact
+
+
 class TestTaskReleaseOnStop:
     """A task that stops running must not leave its operation 'processing'.
 
