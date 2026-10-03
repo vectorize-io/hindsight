@@ -134,6 +134,37 @@ def test_register_exposes_the_provider_to_hermes():
     assert registered and registered[0].name == "hindsight"
 
 
+def test_retain_omits_strategy_by_default(provider):
+    """No strategy configured means no key on the item, so the bank keeps deciding."""
+    instance, fake = provider()
+    instance.sync_turn("hello", "hi")
+    instance.shutdown()
+
+    assert fake.retains
+    for call in fake.retains:
+        for item in call["items"]:
+            assert "strategy" not in item
+
+
+def test_retain_sends_the_configured_strategy(provider):
+    """A configured strategy rides on every stored item."""
+    instance, fake = provider({"retain_strategy": "agent-session"})
+    instance.sync_turn("hello", "hi")
+    instance.shutdown()
+
+    assert fake.retains
+    for call in fake.retains:
+        for item in call["items"]:
+            assert item["strategy"] == "agent-session"
+
+
+def test_retain_strategy_is_exposed_as_a_setting(provider):
+    """Operators must be able to set it without editing code."""
+    instance, _ = provider()
+    keys = {option["key"] for option in instance.get_config_schema()}
+    assert "retain_strategy" in keys
+
+
 def test_append_mode_drops_retained_turns_from_the_buffer(provider):
     """Append retains ship a delta, so keeping every turn would pin the whole session
     in memory on a long-running gateway (hermes-agent #62950).
