@@ -38,6 +38,44 @@ describe("createWorker", () => {
       expect(provider.fetch).not.toHaveBeenCalled();
     });
 
+    for (const header of ["Mcp-Protocol-Version", "Last-Event-ID"]) {
+      it(`allows the Streamable HTTP ${header} request header`, async () => {
+        const worker = createWorker({ fetch: vi.fn() });
+        const response = await worker.fetch(
+          new Request("https://proxy.example.com/mcp", {
+            method: "OPTIONS",
+            headers: {
+              Origin: "https://claude.ai",
+              "Access-Control-Request-Method": "GET",
+              "Access-Control-Request-Headers": header,
+            },
+          }),
+          fakeEnv(),
+          fakeCtx
+        );
+        const allowed = response.headers
+          .get("Access-Control-Allow-Headers")!
+          .toLowerCase()
+          .split(/,\s*/);
+        expect(allowed).toContain(header.toLowerCase());
+      });
+    }
+
+    it("allows a browser to terminate a Streamable HTTP session", async () => {
+      const worker = createWorker({ fetch: vi.fn() });
+      const response = await worker.fetch(
+        new Request("https://proxy.example.com/mcp", {
+          method: "OPTIONS",
+          headers: { Origin: "https://claude.ai", "Access-Control-Request-Method": "DELETE" },
+        }),
+        fakeEnv(),
+        fakeCtx
+      );
+      expect(response.headers.get("Access-Control-Allow-Methods")!.split(/,\s*/)).toContain(
+        "DELETE"
+      );
+    });
+
     it("returns 403 for a disallowed origin without touching the provider", async () => {
       const provider: ProviderLike = { fetch: vi.fn() };
       const worker = createWorker(provider);
@@ -53,6 +91,30 @@ describe("createWorker", () => {
       expect(response.status).toBe(403);
       expect(provider.fetch).not.toHaveBeenCalled();
     });
+  });
+
+  it("exposes only the forwarded MCP session ID to an allowed browser origin", async () => {
+    const worker = createWorker({
+      fetch: vi.fn(
+        async () =>
+          new Response("initialized", {
+            headers: {
+              "Mcp-Session-Id": "session",
+              "Access-Control-Expose-Headers": "X-Unrelated",
+            },
+          })
+      ),
+    });
+    const response = await worker.fetch(
+      new Request("https://proxy.example.com/mcp", {
+        method: "POST",
+        headers: { Origin: "https://claude.ai" },
+      }),
+      fakeEnv(),
+      fakeCtx
+    );
+    expect(response.headers.get("Mcp-Session-Id")).toBe("session");
+    expect(response.headers.get("Access-Control-Expose-Headers")).toBe("Mcp-Session-Id");
   });
 
   describe("/.well-known/oauth-authorization-server", () => {

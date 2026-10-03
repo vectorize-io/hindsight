@@ -10,7 +10,7 @@ describe("corsHeaders", () => {
 
   it("uses specific methods, not a wildcard", () => {
     const headers = corsHeaders("https://claude.ai");
-    expect(headers["Access-Control-Allow-Methods"]).toBe("GET, POST, OPTIONS");
+    expect(headers["Access-Control-Allow-Methods"]).toBe("GET, POST, DELETE, OPTIONS");
     expect(headers["Access-Control-Allow-Methods"]).not.toContain("*");
   });
 
