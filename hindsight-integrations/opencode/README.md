@@ -177,6 +177,39 @@ export HINDSIGHT_CHANNEL_ID="slack-general"
 export HINDSIGHT_USER_ID="user123"
 ```
 
+## OpenCode v2
+
+OpenCode v2 uses a different plugin API from v1. This package exposes a v2
+entrypoint at the `./v2` subpath; the default (v1) entrypoint is unchanged.
+
+Enable the v2 entrypoint in `opencode.json(c)`:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["@vectorize-io/opencode-hindsight/v2"]
+}
+```
+
+With options:
+
+```jsonc
+{
+  "plugins": [
+    {
+      "package": "@vectorize-io/opencode-hindsight/v2",
+      "options": { "bankId": "my-bank", "hindsightApiUrl": "http://localhost:8888" }
+    }
+  ]
+}
+```
+
+The v2 entrypoint provides the same tools (`hindsight_retain`,
+`hindsight_recall`, `hindsight_reflect`) plus auto-recall on the session
+context, auto-retain on `session.idle`, and retain + recall around compaction.
+Configuration (plugin options, `~/.hindsight/opencode.json`, environment
+variables) is shared with the v1 entrypoint.
+
 ## Development
 
 ```bash

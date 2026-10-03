@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./v2": {
+      "types": "./dist/index.v2.d.ts",
+      "import": "./dist/index.v2.js"
     }
   },
   "keywords": [
@@ -43,6 +47,7 @@
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.3.13",
+    "@opencode/plugin": "^2.0.22",
     "@vectorize-io/hindsight-client": "^0.10.1"
   },
   "devDependencies": {
