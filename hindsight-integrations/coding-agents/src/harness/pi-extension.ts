@@ -46,6 +46,7 @@ interface BeforeAgentStartResult {
 
 interface SessionManagerLike {
   getSessionId(): string;
+  getBranch(): readonly { type: string; message?: PiMessage }[];
 }
 
 /** Only what this adapter reads. Both hosts also expose a UI notifier, but the seed banner it would
@@ -188,6 +189,15 @@ export function createPiExtension(harness: string): ExtensionFactory {
     pi.on("before_agent_start", (event, ctx) =>
       hooks.beforeAgentStart(event, ctx.sessionManager.getSessionId())
     );
-    pi.on("agent_end", (event, ctx) => hooks.agentEnd(event, ctx.sessionManager.getSessionId()));
+    pi.on("agent_end", (_event, ctx) =>
+      hooks.agentEnd(
+        {
+          messages: ctx.sessionManager
+            .getBranch()
+            .flatMap((entry) => (entry.type === "message" && entry.message ? [entry.message] : [])),
+        },
+        ctx.sessionManager.getSessionId()
+      )
+    );
   };
 }
