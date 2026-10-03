@@ -179,6 +179,7 @@ class FakeClient:
         self.reflects: list[dict] = []
         self._recall_texts = list(recall_texts)
         self._reflect_text = reflect_text
+        self.closed = False
 
     async def aretain_batch(self, **kwargs):
         self.retains.append(kwargs)
@@ -193,7 +194,7 @@ class FakeClient:
         return FakeReflectResponse(self._reflect_text)
 
     async def aclose(self):
-        pass
+        self.closed = True
 
 
 @pytest.fixture

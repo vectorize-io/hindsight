@@ -2,9 +2,13 @@
 sends to Hindsight (a recording fake client stands in for the real SDK)."""
 
 import json
+from types import SimpleNamespace
 
 import hindsight_hermes as plugin
-from conftest import FakeClient
+import pytest
+from hindsight_hermes import embedded
+from hindsight_hermes.embedded import LocalRuntimeStatus, _build_embedded_profile_env, _embedded_tenant_api_key
+from conftest import SECRETS, FakeClient
 
 
 def _retain_item(fake: FakeClient, index: int = 0) -> dict:
@@ -298,3 +302,394 @@ def test_building_the_embedded_client_announces_before_it_waits(provider, monkey
 
     assert order == ["announced", "started"], order
     instance.shutdown()
+
+
+def _embedded_client_kwargs(provider, monkeypatch, cfg):
+    """kwargs the embedded client is constructed with, daemon start stubbed out."""
+    import hindsight_client
+
+    instance, _ = provider(cfg)
+    instance._mode = "local_embedded"
+
+    built = {}
+    monkeypatch.setattr(plugin, "_check_local_runtime", lambda: LocalRuntimeStatus(available=True))
+    monkeypatch.setattr(plugin, "_build_embedded_profile_env", lambda cfg: {})
+    monkeypatch.setattr(plugin, "_start_daemon", lambda config, profile: "http://127.0.0.1:1")
+    monkeypatch.setattr(hindsight_client, "Hindsight", lambda **kw: built.update(kw))
+
+    instance._new_embedded_client()
+    instance.shutdown()
+    return built
+
+
+def test_embedded_client_sends_the_tenant_api_key(provider, monkeypatch):
+    """A daemon running a tenant extension answers 401 to a keyless client (#5023)."""
+    cfg = {"mode": "local_embedded", "tenant_api_key": "tenant-key"}
+
+    kwargs = _embedded_client_kwargs(provider, monkeypatch, cfg)
+
+    assert kwargs == {"base_url": "http://127.0.0.1:1", "api_key": "tenant-key"}
+
+
+def test_embedded_client_sends_the_tenant_api_key_from_the_secret_scope(provider, monkeypatch):
+    """~/.hermes/.env feeds the plugin through the secret scope: the documented way to set it."""
+    SECRETS["HINDSIGHT_API_TENANT_API_KEY"] = "scoped-key"
+
+    kwargs = _embedded_client_kwargs(provider, monkeypatch, {"mode": "local_embedded"})
+
+    assert kwargs == {"base_url": "http://127.0.0.1:1", "api_key": "scoped-key"}
+
+
+def test_embedded_client_never_sends_the_cloud_api_key(provider, monkeypatch):
+    """The Cloud credential is not the daemon's tenant key; it must not leave for the daemon."""
+    kwargs = _embedded_client_kwargs(provider, monkeypatch, {"mode": "local_embedded", "apiKey": "cloud-key"})
+
+    assert kwargs == {"base_url": "http://127.0.0.1:1"}
+
+
+def test_the_tenant_api_key_survives_profile_env_reconciliation(hermes_env):
+    """The profile env is rewritten from config on every change; the tenant settings must be in it
+    or a rewrite strips them and the daemon boots unauthenticated (#5023)."""
+    env = _build_embedded_profile_env({"tenant_api_key": "tenant-key"}, llm_api_key="sk")
+
+    assert env["HINDSIGHT_API_TENANT_API_KEY"] == "tenant-key"
+    assert env["HINDSIGHT_API_TENANT_EXTENSION"] == "hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension"
+
+
+def test_no_tenant_settings_are_written_without_a_tenant_api_key(hermes_env):
+    env = _build_embedded_profile_env({}, llm_api_key="sk")
+
+    assert not [key for key in env if "TENANT" in key]
+
+
+def test_the_tenant_api_key_accepts_the_camel_case_alias(hermes_env):
+    assert _embedded_tenant_api_key({"tenantApiKey": "camel"}) == "camel"
+
+
+def test_a_padded_tenant_api_key_is_stripped(hermes_env):
+    """The profile file is read back stripped; an unstripped build never equals it and every
+    start would rewrite the file and restart the daemon."""
+    assert _embedded_tenant_api_key({"tenant_api_key": "  padded \n"}) == "padded"
+    assert _embedded_tenant_api_key({"tenant_api_key": "   "}) == ""
+
+
+def test_a_tenant_api_key_with_a_newline_is_rejected(hermes_env):
+    """The profile env is KEY=value lines: a newline would inject settings of its own."""
+    with pytest.raises(ValueError, match="line break"):
+        _embedded_tenant_api_key({"tenant_api_key": "key\nHINDSIGHT_API_TENANT_EXTENSION=evil"})
+
+
+@pytest.mark.parametrize("separator", ["\n", "\r", "\x0b", "\x85", "\u2028"])
+def test_every_line_break_the_profile_reader_splits_on_is_rejected(hermes_env, separator):
+    """The file is read back with splitlines(), which breaks on more than \\n."""
+    with pytest.raises(ValueError, match="line break"):
+        _embedded_tenant_api_key({"tenant_api_key": f"key{separator}HINDSIGHT_API_TENANT_EXTENSION=evil"})
+
+
+def test_an_explicit_tenant_api_key_is_validated_too(hermes_env):
+    """The wizard hands the builder a key directly; it must not bypass the checks."""
+    with pytest.raises(ValueError, match="line break"):
+        _build_embedded_profile_env({}, llm_api_key="sk", tenant_api_key="a\nB=c")
+    assert (
+        _build_embedded_profile_env({}, llm_api_key="sk", tenant_api_key=" k ")["HINDSIGHT_API_TENANT_API_KEY"] == "k"
+    )
+
+
+def _write_profile_env(tmp_path, text):
+    path = tmp_path / ".hindsight" / "profiles" / "hermes.env"
+    path.parent.mkdir(parents=True)
+    path.write_text(text)
+    return path
+
+
+def _scopeless(monkeypatch):
+    def _no_scope(name, default=""):
+        raise embedded.UnscopedSecretError(name)
+
+    monkeypatch.setattr(embedded, "get_secret", _no_scope)
+
+
+def test_a_scopeless_thread_keeps_the_tenant_api_key_from_the_profile_file(hermes_env, monkeypatch):
+    """The daemon-start worker has no secret scope. Building "" there would rewrite the file
+    without the key and reboot the daemon unauthenticated."""
+    _write_profile_env(hermes_env, "HINDSIGHT_API_TENANT_API_KEY=disk-key\n")
+    _scopeless(monkeypatch)
+
+    assert _embedded_tenant_api_key({"profile": "hermes"}) == "disk-key"
+    assert _build_embedded_profile_env({"profile": "hermes"})["HINDSIGHT_API_TENANT_API_KEY"] == "disk-key"
+
+
+def test_removing_the_tenant_api_key_where_a_scope_is_visible_turns_auth_off(hermes_env):
+    """The disk fallback is for scopeless threads only, or auth could never be removed."""
+    _write_profile_env(hermes_env, "HINDSIGHT_API_TENANT_API_KEY=old-key\n")
+
+    assert _embedded_tenant_api_key({"profile": "hermes"}) == ""
+
+
+def _run_start_worker(monkeypatch, config, *, stop_returns=True, survives=False, cached_client=None):
+    """Run the daemon-start worker against the real profile file.
+
+    ``stop_returns`` is what _stop_daemon reports; ``survives`` is whether the daemon is still up
+    afterwards (the two can disagree: is_running swallows errors and reports False)."""
+    import hindsight_embed.daemon_embed_manager as dem
+    from hindsight_hermes import HindsightMemoryProvider
+
+    # The worker swaps this module global for a console on a log file; undo it at teardown.
+    monkeypatch.setattr(dem, "console", getattr(dem, "console", None), raising=False)
+    stopped, built = [], []
+    daemon_up = {"running": True}
+
+    def _stop(profile):
+        stopped.append(profile)
+        daemon_up["running"] = survives
+        return stop_returns
+
+    provider = HindsightMemoryProvider()
+    provider._config = config
+    provider._client = cached_client
+    monkeypatch.setattr(plugin, "_daemon_is_running", lambda profile: daemon_up["running"])
+    monkeypatch.setattr(plugin, "_stop_daemon", _stop)
+    real_get_client = type(provider)._get_client
+    monkeypatch.setattr(type(provider), "_get_client", lambda self: built.append(True))
+    provider._daemon_start_worker()
+    return SimpleNamespace(
+        stopped=stopped, built=built, provider=provider, get_client=lambda: real_get_client(provider)
+    )
+
+
+def test_the_start_worker_does_not_strip_the_tenant_key_without_a_scope(hermes_env, monkeypatch):
+    """The bug in #5023 problem 2: reconciliation rewrote the profile without the tenant settings
+    and restarted the daemon, which came back with no authentication."""
+    config = {"profile": "hermes", "llm_provider": "ollama", "llm_model": "m"}
+    SECRETS["HINDSIGHT_API_TENANT_API_KEY"] = "tenant-key"
+    profile_env = embedded._materialize_embedded_profile_env(config)
+    before = profile_env.read_text()
+    assert "HINDSIGHT_API_TENANT_API_KEY=tenant-key" in before
+    _scopeless(monkeypatch)
+
+    run = _run_start_worker(monkeypatch, config)
+
+    assert run.built == [True]  # the worker ran to the end, so the assertions below mean something
+    assert profile_env.read_text() == before
+    assert run.stopped == []
+
+
+def test_the_start_worker_applies_a_rotated_tenant_key_and_restarts(hermes_env, monkeypatch):
+    config = {"profile": "hermes", "llm_provider": "ollama", "llm_model": "m"}
+    SECRETS["HINDSIGHT_API_TENANT_API_KEY"] = "old-key"
+    profile_env = embedded._materialize_embedded_profile_env(config)
+    SECRETS["HINDSIGHT_API_TENANT_API_KEY"] = "new-key"
+
+    run = _run_start_worker(monkeypatch, config)
+
+    assert "HINDSIGHT_API_TENANT_API_KEY=new-key" in profile_env.read_text()
+    assert run.stopped == ["hermes"]
+    assert run.built == [True]
+
+
+def _rotate_the_tenant_key(config):
+    SECRETS["HINDSIGHT_API_TENANT_API_KEY"] = "old-key"
+    profile_env = embedded._materialize_embedded_profile_env(config)
+    before = profile_env.read_text()
+    SECRETS["HINDSIGHT_API_TENANT_API_KEY"] = "new-key"
+    return profile_env, before
+
+
+@pytest.mark.parametrize(
+    ("stop_returns", "survives"),
+    [(False, True), (False, False), (True, True)],
+    ids=["stop failed, daemon up", "stop failed, is_running errored", "stop reported ok, daemon up"],
+)
+def test_a_daemon_that_may_have_survived_a_tenant_key_change_is_never_reused(
+    hermes_env, monkeypatch, stop_returns, survives
+):
+    """A daemon that ignores the stop keeps its old auth. Reusing it would let a newly added key
+    sit on a daemon that still accepts anything. The worker's own exception is only logged, so the
+    refusal has to outlive it: every later client build refuses too."""
+    config = {"profile": "hermes", "llm_provider": "ollama", "llm_model": "m"}
+    profile_env, before = _rotate_the_tenant_key(config)
+
+    run = _run_start_worker(monkeypatch, config, stop_returns=stop_returns, survives=survives)
+
+    assert run.stopped == ["hermes"]
+    assert run.built == []
+    with pytest.raises(RuntimeError, match="refusing to reuse"):
+        run.provider._new_embedded_client()
+    # The old file is back, so the next start still sees the drift and retries the restart.
+    assert profile_env.read_text() == before
+
+
+def test_a_client_cached_before_the_refusal_is_dropped_too(hermes_env, monkeypatch):
+    """The worker reconciles while the first memory operation may already have built and cached a
+    client against the old daemon. Refusing only new builds would leave that one talking to it."""
+    config = {"profile": "hermes", "llm_provider": "ollama", "llm_model": "m"}
+    _rotate_the_tenant_key(config)
+    cached = FakeClient()
+
+    run = _run_start_worker(monkeypatch, config, stop_returns=False, survives=True, cached_client=cached)
+
+    assert run.provider._client is None
+    assert cached.closed  # dropped AND closed: an unclosed client leaks its aiohttp session
+    with pytest.raises(RuntimeError, match="refusing to reuse"):
+        run.get_client()
+
+
+def test_a_client_cached_after_the_refusal_is_not_handed_out(hermes_env, monkeypatch):
+    """A client can also land in the cache after the flag is set (retry path, other threads)."""
+    from hindsight_hermes import HindsightMemoryProvider
+
+    provider = HindsightMemoryProvider()
+    cached = provider._client = FakeClient()
+    provider._embedded_auth_stale = "refusing to reuse a daemon with the old auth"
+
+    with pytest.raises(RuntimeError, match="refusing to reuse"):
+        provider._get_client()
+    assert provider._client is None
+    assert cached.closed
+
+
+def test_the_restore_removes_the_new_profile_when_there_was_none_before(hermes_env, monkeypatch):
+    """No file to put back: leaving the new one would make the next start see no drift and reuse
+    the daemon that never stopped."""
+    config = {"profile": "hermes", "llm_provider": "ollama", "llm_model": "m"}
+    SECRETS["HINDSIGHT_API_TENANT_API_KEY"] = "new-key"
+    profile_env = hermes_env / ".hindsight" / "profiles" / "hermes.env"
+    assert not profile_env.exists()
+
+    run = _run_start_worker(monkeypatch, config, stop_returns=False, survives=True)
+
+    assert run.stopped == ["hermes"]
+    assert run.built == []
+    assert not profile_env.exists()
+
+
+def test_a_failing_restore_does_not_leave_the_new_profile_behind(hermes_env, monkeypatch):
+    profile_env = _write_profile_env(hermes_env, "HINDSIGHT_API_TENANT_API_KEY=old-key\n")
+
+    def _boom(path, text):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(embedded, "_secure_write_profile_env", _boom)
+    profile_env.write_text("HINDSIGHT_API_TENANT_API_KEY=new-key\n")
+
+    embedded._restore_profile_env(profile_env, "HINDSIGHT_API_TENANT_API_KEY=old-key\n")
+
+    assert not profile_env.exists()
+
+
+def test_a_failed_stop_for_non_tenant_drift_behaves_as_it_always_did(hermes_env, monkeypatch):
+    """Only a changed tenant key makes the stop mandatory."""
+    config = {"profile": "hermes", "llm_provider": "ollama", "llm_model": "m"}
+    embedded._materialize_embedded_profile_env(config)
+
+    run = _run_start_worker(monkeypatch, {**config, "llm_model": "other"}, stop_returns=False, survives=True)
+
+    assert run.stopped == ["hermes"]
+    assert run.built == [True]
+    assert run.provider._embedded_auth_stale == ""
+
+
+def test_the_start_worker_warns_when_it_drops_a_hand_written_tenant_key(hermes_env, monkeypatch, caplog):
+    """The reporter of #5023 set the key in the profile file by hand; the rewrite removes it, and
+    that must not happen silently."""
+    config = {"profile": "hermes", "llm_provider": "ollama", "llm_model": "m"}
+    _write_profile_env(hermes_env, "HINDSIGHT_API_TENANT_API_KEY=hand-written\n")
+
+    with caplog.at_level("WARNING"):
+        _run_start_worker(monkeypatch, config)
+
+    assert "tenant auth is being disabled" in caplog.text
+    assert "hand-written" not in caplog.text
+
+
+# --- the setup wizard's profile-env write -------------------------------------------------------
+
+
+def _wizard(monkeypatch, hermes_env, *, config=None, dotenv="", running=False, stop_returns=True, survives=False):
+    """Run the wizard's embedded step; return the stops it issued."""
+    from hindsight_hermes import setup as wizard
+
+    stopped = []
+    state = {"running": running}
+
+    def _stop(profile):
+        stopped.append(profile)
+        state["running"] = survives
+        return stop_returns
+
+    monkeypatch.setattr(wizard, "_daemon_is_running", lambda profile: state["running"])
+    monkeypatch.setattr(wizard, "_stop_daemon", _stop)
+    env_path = hermes_env / ".env"
+    env_path.write_text(dotenv)
+    base = {"profile": "hermes", "llm_provider": "ollama", "llm_model": "m"}
+    wizard._apply_embedded_profile_env({**base, **(config or {})}, str(hermes_env), env_path, {})
+    return stopped
+
+
+def _profile_env_text(hermes_env):
+    return (hermes_env / ".hindsight" / "profiles" / "hermes.env").read_text()
+
+
+def test_the_wizard_restarts_a_running_daemon_when_the_tenant_key_changed(hermes_env, monkeypatch):
+    _wizard(monkeypatch, hermes_env, dotenv="HINDSIGHT_API_TENANT_API_KEY=old-key\n")
+
+    stopped = _wizard(monkeypatch, hermes_env, dotenv="HINDSIGHT_API_TENANT_API_KEY=new-key\n", running=True)
+
+    assert stopped == ["hermes"]
+    assert "HINDSIGHT_API_TENANT_API_KEY=new-key" in _profile_env_text(hermes_env)
+
+
+def test_the_wizard_leaves_a_running_daemon_alone_when_the_tenant_key_is_unchanged(hermes_env, monkeypatch):
+    dotenv = "HINDSIGHT_API_TENANT_API_KEY=same-key\n"
+    _wizard(monkeypatch, hermes_env, dotenv=dotenv)
+
+    assert _wizard(monkeypatch, hermes_env, dotenv=dotenv, running=True) == []
+
+
+def test_the_wizard_restores_the_old_profile_when_the_daemon_will_not_stop(hermes_env, monkeypatch, capsys):
+    """Leaving the new file would make the next start see no drift and reuse the stale daemon."""
+    _wizard(monkeypatch, hermes_env, dotenv="HINDSIGHT_API_TENANT_API_KEY=old-key\n")
+    before = _profile_env_text(hermes_env)
+
+    _wizard(
+        monkeypatch,
+        hermes_env,
+        dotenv="HINDSIGHT_API_TENANT_API_KEY=new-key\n",
+        running=True,
+        stop_returns=False,
+        survives=True,
+    )
+
+    assert _profile_env_text(hermes_env) == before
+    assert "Could not restart" in capsys.readouterr().out
+
+
+def test_the_wizard_prefers_the_config_key_like_the_runtime_does(hermes_env, monkeypatch):
+    """Else the wizard writes one key and the next start rewrites the file with the other."""
+    _wizard(
+        monkeypatch, hermes_env, config={"tenant_api_key": "cfg-key"}, dotenv="HINDSIGHT_API_TENANT_API_KEY=env-key\n"
+    )
+
+    assert "HINDSIGHT_API_TENANT_API_KEY=cfg-key" in _profile_env_text(hermes_env)
+
+
+def test_the_wizard_reports_an_invalid_tenant_key_instead_of_crashing(hermes_env, monkeypatch, capsys):
+    _wizard(monkeypatch, hermes_env, config={"tenant_api_key": "a\nB=c"})
+
+    assert "not updated" in capsys.readouterr().out
+    assert not (hermes_env / ".hindsight" / "profiles" / "hermes.env").exists()
+
+
+def test_the_wizard_removes_the_new_profile_when_there_was_none_before_and_the_daemon_will_not_stop(
+    hermes_env, monkeypatch
+):
+    _wizard(
+        monkeypatch,
+        hermes_env,
+        dotenv="HINDSIGHT_API_TENANT_API_KEY=new-key\n",
+        running=True,
+        stop_returns=False,
+        survives=True,
+    )
+
+    assert not (hermes_env / ".hindsight" / "profiles" / "hermes.env").exists()

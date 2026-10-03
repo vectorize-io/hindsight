@@ -279,6 +279,7 @@ Config file: `~/.hermes/hindsight/config.json`
 | `llm_provider` | `openai` | `openai`, `anthropic`, `gemini`, `groq`, `openrouter`, `minimax`, `ollama`, `lmstudio`, `openai_compatible` |
 | `llm_model` | per-provider | Model name (e.g. `gpt-4o-mini`, `qwen/qwen3.5-9b`) |
 | `llm_base_url` | — | Endpoint URL for `openai_compatible` (e.g. `http://192.168.1.10:8080/v1`) |
+| `tenant_api_key` | — | Require this API key on the embedded daemon (enables `ApiKeyTenantExtension`); add it to `~/.hermes/.env` as `HINDSIGHT_API_TENANT_API_KEY` (the setup wizard does not prompt for it) |
 
 The LLM API key is stored in `~/.hermes/.env` as `HINDSIGHT_LLM_API_KEY`.
 
@@ -288,6 +289,16 @@ scope, so it reads the key from `~/.hindsight/profiles/<profile>.env`
 order is explicit config → secret scope → the on-disk profile env, and the
 rewrite path is fail-closed: a build with no key never clobbers a profile
 file that already holds one.
+
+The profile env is managed by the plugin: it is rewritten from this config whenever it changes,
+so a setting added only to that file (a tenant key included) is removed on the next start. Set
+`tenant_api_key`, or `HINDSIGHT_API_TENANT_API_KEY` in `~/.hermes/.env`, instead.
+
+Adding, rotating or removing the tenant key restarts a running daemon so its auth matches: from
+`hermes memory setup`, and at start when Hermes can see the key (config, or the secret scope). If
+the daemon cannot be restarted, Hermes refuses to use it rather than reuse the old auth. A key
+changed only in `~/.hermes/.env` while a daemon is already running, on a start where Hermes cannot
+see the secret scope, is applied by re-running `hermes memory setup` (or stopping the daemon).
 
 ## Tools
 
@@ -305,6 +316,7 @@ Available in `hybrid` and `tools` memory modes:
 |----------|-------------|
 | `HINDSIGHT_API_KEY` | API key for Hindsight Cloud |
 | `HINDSIGHT_LLM_API_KEY` | LLM API key for local mode |
+| `HINDSIGHT_API_TENANT_API_KEY` | API key to require on the embedded daemon (local_embedded mode) |
 | `HINDSIGHT_API_LLM_BASE_URL` | LLM Base URL for local mode (e.g. OpenRouter) |
 | `HINDSIGHT_API_URL` | Override API endpoint |
 | `HINDSIGHT_BANK_ID` | Override bank name |

@@ -235,8 +235,13 @@ def _stop_daemon(profile: str) -> bool:
 
 
 def _daemon_is_running(profile: str) -> bool:
-    """Whether the daemon for *profile* is up (used for status reporting, never to gate a call:
-    the retry path in ``_run_hindsight_operation`` recreates the client, which restarts it)."""
+    """Whether the daemon for *profile* is up.
+
+    Reports status, and also gates the restart and stale-auth decisions in the start worker and the
+    setup wizard (a daemon that survives a stop after a tenant key change is refused). It returns
+    False on any error, so those callers also check the result of ``_stop_daemon``. It never gates
+    an ordinary call: the retry path in ``_run_hindsight_operation`` recreates the client instead.
+    """
     try:
         from hindsight_embed import get_embed_manager
 
@@ -300,6 +305,52 @@ def _embedded_llm_api_key(config: dict[str, Any]) -> str:
     return _on_disk_llm_api_key(config)
 
 
+_TENANT_EXTENSION = "hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension"
+_TENANT_API_KEY_ENV = "HINDSIGHT_API_TENANT_API_KEY"
+
+
+def _clean_tenant_api_key(value: Any) -> str:
+    """Normalize a tenant key the way the profile file round-trips it ("" = no key)."""
+    key = str(value or "").strip()
+    # The profile env is KEY=value lines, read back with splitlines(): any line break (not just
+    # \n) would smuggle in settings of its own, or make the file never equal the build.
+    if key.splitlines() != [key] and key:
+        raise ValueError("The embedded daemon tenant API key must not contain a line break")
+    return key
+
+
+def _tenant_key_changed(old_env: dict[str, str], new_env: dict[str, str]) -> bool:
+    """Whether a running daemon must be restarted for its tenant auth to match *new_env*."""
+    return old_env.get(_TENANT_API_KEY_ENV, "") != new_env.get(_TENANT_API_KEY_ENV, "")
+
+
+def _on_disk_tenant_api_key(config: dict[str, Any]) -> str:
+    """The tenant key currently persisted in the profile env file ("" when absent)."""
+    with contextlib.suppress(Exception):
+        return _load_simple_env(_embedded_profile_env_path(config)).get(_TENANT_API_KEY_ENV, "") or ""
+    return ""
+
+
+def _embedded_tenant_api_key(config: dict[str, Any]) -> str:
+    """The key the embedded daemon's tenant extension requires ("" = daemon runs unauthenticated).
+
+    Explicit config first, then the secret scope. On a thread with no scope (the daemon-start
+    worker) the profile file is the only copy it can read, so fall back to that: building "" there
+    would rewrite the file without the key and reboot the daemon unauthenticated. The fallback is
+    scopeless-only, so dropping the key where a scope is visible still turns auth off.
+
+    Deliberately not the Cloud ``apiKey``: that credential belongs to Hindsight Cloud and must
+    not be sent to, or written for, a local daemon.
+    """
+    value = config.get("tenant_api_key") or config.get("tenantApiKey")
+    if not value:
+        try:
+            value = get_secret(_TENANT_API_KEY_ENV, "")
+        except UnscopedSecretError:
+            value = _on_disk_tenant_api_key(config)
+    return _clean_tenant_api_key(value)
+
+
 def _may_rewrite_profile_env(config: dict[str, Any]) -> bool:
     """Whether rewriting the profile env file is safe right now.
 
@@ -313,10 +364,15 @@ def _may_rewrite_profile_env(config: dict[str, Any]) -> bool:
     return not _on_disk_llm_api_key(config)
 
 
-def _build_embedded_profile_env(config: dict[str, Any], *, llm_api_key: str | None = None) -> dict[str, str]:
+def _build_embedded_profile_env(
+    config: dict[str, Any], *, llm_api_key: str | None = None, tenant_api_key: str | None = None
+) -> dict[str, str]:
     """Build the profile-scoped env that standalone hindsight-embed consumes."""
     if llm_api_key is None:
         llm_api_key = _embedded_llm_api_key(config)
+    tenant_api_key = (
+        _embedded_tenant_api_key(config) if tenant_api_key is None else _clean_tenant_api_key(tenant_api_key)
+    )
     env_values = {
         "HINDSIGHT_API_LLM_PROVIDER": str(_daemon_llm_provider(config.get("llm_provider", ""))),
         "HINDSIGHT_API_LLM_API_KEY": str(llm_api_key or ""),
@@ -333,6 +389,11 @@ def _build_embedded_profile_env(config: dict[str, Any], *, llm_api_key: str | No
             base_url = ""
     if base_url:
         env_values["HINDSIGHT_API_LLM_BASE_URL"] = str(base_url)
+    # Part of the profile so reconciliation keeps it: the file is rewritten whole (O_TRUNC), so a
+    # tenant key that lived only in the file would be stripped on the next config change.
+    if tenant_api_key:
+        env_values["HINDSIGHT_API_TENANT_EXTENSION"] = _TENANT_EXTENSION
+        env_values[_TENANT_API_KEY_ENV] = tenant_api_key
     if (idle_timeout := config.get("idle_timeout")) is None:
         idle_timeout = os.environ.get("HINDSIGHT_IDLE_TIMEOUT")
     if idle_timeout is not None and idle_timeout != "":
@@ -351,6 +412,23 @@ def _secure_write_profile_env(profile_env: Path, content: str) -> None:
         fh.write(content)
 
 
+def _restore_profile_env(profile_env: Path, before_text: str | None) -> None:
+    """Undo a profile rewrite whose daemon restart failed, so the next start still sees the drift.
+
+    Puts the old text back; with no old file (or if putting it back fails) removes the new one.
+    Leaving a file that already matches the new config would hide the stale daemon from the next
+    start, which would reuse it.
+    """
+    if before_text is not None:
+        try:
+            _secure_write_profile_env(profile_env, before_text)
+            return
+        except OSError:
+            logger.warning("Could not restore the Hindsight profile env %s; removing it", profile_env)
+    with contextlib.suppress(OSError):
+        profile_env.unlink(missing_ok=True)
+
+
 def _validate_profile_env_permissions(profile_env: Path) -> None:
     """Post-write check: owner-only on POSIX (Windows ACLs aren't mode bits; skipped)."""
     if os.name != "posix":
@@ -364,12 +442,14 @@ def _validate_profile_env_permissions(profile_env: Path) -> None:
             raise PermissionError(f"Embedded Hindsight profile environment is not owner-only: {profile_env}")
 
 
-def _materialize_embedded_profile_env(config: dict[str, Any], *, llm_api_key: str | None = None) -> Path:
+def _materialize_embedded_profile_env(
+    config: dict[str, Any], *, llm_api_key: str | None = None, tenant_api_key: str | None = None
+) -> Path:
     """Write the profile env file; never leave a plaintext key in a file whose
     permissions could not be verified."""
     profile_env = _embedded_profile_env_path(config)
     profile_env.parent.mkdir(parents=True, exist_ok=True)
-    env_values = _build_embedded_profile_env(config, llm_api_key=llm_api_key)
+    env_values = _build_embedded_profile_env(config, llm_api_key=llm_api_key, tenant_api_key=tenant_api_key)
     content = "".join(f"{key}={value}\n" for key, value in env_values.items())
     try:
         _secure_write_profile_env(profile_env, content)

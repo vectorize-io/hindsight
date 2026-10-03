@@ -34,19 +34,23 @@ from utils import read_json_or_empty
 
 from .embedded import (
     _RETRIABLE_CONNECTION_MARKERS,
+    _TENANT_API_KEY_ENV,
     _build_embedded_profile_env,
     _check_local_runtime,
     _daemon_is_running,
     _embedded_llm_api_key,
     _embedded_profile_env_path,
+    _embedded_tenant_api_key,
     _export_port_health_grace_timeout,
     _installed_api_binary_exists,
     _load_simple_env,
     _local_runtime_hint,
     _materialize_embedded_profile_env,
     _may_rewrite_profile_env,
+    _restore_profile_env,
     _start_daemon,
     _stop_daemon,
+    _tenant_key_changed,
 )
 from .settings import (
     _DEFAULT_API_URL,
@@ -392,6 +396,9 @@ class HindsightMemoryProvider(MemoryProvider):
     def __init__(self):
         self._config = self._api_key = self._client = None
         self._embedded_url = None
+        # Set when a daemon could not be restarted to apply a changed tenant key: building a client
+        # would reuse it with its old auth, so every build refuses while this is set.
+        self._embedded_auth_stale = ""
         self._client_lock = threading.Lock()
         self._api_url, self._mode = _DEFAULT_API_URL, "cloud"
         self._timeout, self._idle_timeout = _DEFAULT_TIMEOUT, _DEFAULT_IDLE_TIMEOUT
@@ -555,6 +562,13 @@ class HindsightMemoryProvider(MemoryProvider):
                 "when": {"mode": "local_embedded"},
             },
             {
+                "key": "tenant_api_key",
+                "description": "API key to require on the embedded daemon (optional; empty = no daemon auth)",
+                "secret": True,
+                "env_var": "HINDSIGHT_API_TENANT_API_KEY",
+                "when": {"mode": "local_embedded"},
+            },
+            {
                 "key": "llm_model",
                 "description": "LLM model",
                 "default": "gpt-4o-mini",
@@ -709,6 +723,8 @@ class HindsightMemoryProvider(MemoryProvider):
         compose the same two packages ourselves. Same daemon, same profile, same profile ``.env``,
         same pg0 database: nothing of an existing user's data or config moves.
         """
+        if self._embedded_auth_stale:
+            raise RuntimeError(self._embedded_auth_stale)
         status = _check_local_runtime()
         if not status.available:
             raise RuntimeError(
@@ -737,7 +753,11 @@ class HindsightMemoryProvider(MemoryProvider):
         self._announce_slow_first_start(profile)
         self._embedded_url = _start_daemon(daemon_config, profile)
         logger.info("Connected to embedded Hindsight daemon at %s", self._embedded_url)
-        return Hindsight(base_url=self._embedded_url)
+        # A daemon running a tenant extension rejects keyless calls (401).
+        kwargs = {"base_url": self._embedded_url}
+        if tenant_api_key := _embedded_tenant_api_key(cfg):
+            kwargs["api_key"] = tenant_api_key
+        return Hindsight(**kwargs)
 
     def _new_cloud_client(self):
         from hindsight_client import Hindsight
@@ -793,11 +813,22 @@ class HindsightMemoryProvider(MemoryProvider):
         the guarded section never awaits.
         """
         with self._client_lock:
+            if self._embedded_auth_stale:
+                # Also covers a client cached before the flag was set (see the start worker).
+                self._discard_client()
+                raise RuntimeError(self._embedded_auth_stale)
             if self._client is None:
                 self._client = (
                     self._new_embedded_client() if self._mode == "local_embedded" else self._new_cloud_client()
                 )
             return self._client
+
+    def _discard_client(self) -> None:
+        """Close and forget the cached client. The caller holds ``_client_lock``."""
+        if self._client is not None:
+            with contextlib.suppress(Exception):
+                self._close_client()
+            self._client = None
 
     def _run_sync(self, coro):
         """Schedule *coro* on the shared loop using the configured timeout."""
@@ -1197,12 +1228,40 @@ class HindsightMemoryProvider(MemoryProvider):
             # stop: restarting the daemon now would boot it keyless, which is the
             # exact outage this guards against. _get_client() below sends the daemon
             # whatever key WAS available (config, secret scope, or the file itself).
-            if _load_simple_env(_embedded_profile_env_path(self._config)) != _build_embedded_profile_env(self._config):
+            # Tenant auth: a daemon that keeps running through a changed key would keep its old
+            # auth, so a failed restart sets _embedded_auth_stale and every client is refused.
+            profile_env = _embedded_profile_env_path(self._config)
+            on_disk = _load_simple_env(profile_env)
+            rebuilt = _build_embedded_profile_env(self._config)
+            if on_disk != rebuilt:
                 if _may_rewrite_profile_env(self._config):
+                    if on_disk.get(_TENANT_API_KEY_ENV) and not rebuilt.get(_TENANT_API_KEY_ENV):
+                        logger.warning(
+                            "Hindsight tenant auth is being disabled for profile %r: the profile env holds a "
+                            "tenant API key that this config does not. Set HINDSIGHT_API_TENANT_API_KEY in "
+                            "~/.hermes/.env (or tenant_api_key) to keep it.",
+                            profile,
+                        )
+                    before_text = profile_env.read_text(encoding="utf-8") if profile_env.exists() else None
                     _materialize_embedded_profile_env(self._config)
                     if _daemon_is_running(profile):
                         _log("\n=== Config changed, restarting daemon ===\n")
-                        _stop_daemon(profile)
+                        stopped = _stop_daemon(profile)
+                        # A daemon that survives the stop keeps its old auth and would be reused.
+                        if _tenant_key_changed(on_disk, rebuilt) and (not stopped or _daemon_is_running(profile)):
+                            self._embedded_auth_stale = (
+                                "could not restart the Hindsight daemon to apply a changed tenant API key; "
+                                "refusing to reuse a daemon with the old auth. Stop it (or re-run "
+                                "`hermes memory setup`) and restart Hermes."
+                            )
+                            logger.error("%s (profile %r)", self._embedded_auth_stale, profile)
+                            # Put the old file back so the next start still sees the drift and retries.
+                            _restore_profile_env(profile_env, before_text)
+                            # A client built against the old daemon while we reconciled is cached
+                            # already; drop it, or it keeps talking to that daemon.
+                            with self._client_lock:
+                                self._discard_client()
+                            raise RuntimeError(self._embedded_auth_stale)
                 else:
                     logger.warning(
                         "Hindsight profile env for %r holds an LLM API key this process cannot see "
