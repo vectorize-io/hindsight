@@ -165,7 +165,7 @@ def test_the_start_worker_reconciles_the_profile_env_before_the_daemon_boots(mon
     assert order == ["rewrote env", "stopped daemon", "built client"]
 
 
-def test_an_old_embed_starts_the_daemon_from_a_child_without_our_pythonpath(monkeypatch):
+def test_an_old_embed_starts_the_daemon_from_a_child_without_our_pythonpath(monkeypatch, tmp_path):
     """hindsight-embed <= 0.10.2 copies os.environ into the daemon, so Hermes' PYTHONPATH (its own
     3.14 generation) reaches a server that uvx may run on another Python — which then imports
     Hermes' pydantic and dies. Start it from a child that never had those variables."""
@@ -173,6 +173,8 @@ def test_an_old_embed_starts_the_daemon_from_a_child_without_our_pythonpath(monk
     monkeypatch.setenv("PYTHONPATH", "/hermes/venv/lib/python3.14/site-packages")
     monkeypatch.setenv("VIRTUAL_ENV", "/hermes/venv")
     monkeypatch.setenv("PATH", "/usr/bin")
+    # Keep this environment-scrubbing test independent of the host's managed tools.
+    monkeypatch.setattr(embedded.Path, "home", classmethod(lambda cls: tmp_path))
     recorded = {}
 
     def _run(cmd, **kwargs):
