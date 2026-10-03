@@ -276,6 +276,9 @@ async def insert_observation(
     mentioned_at: datetime | None,
 ) -> str:
     """Insert a new observation as a `memory_units` row (and its Oracle source postings)."""
+    # One proof per distinct source memory the observation is built from.
+    proof_count = len(set(source_memory_ids))
+
     # Query varies based on text search backend.
     from ...schema import _is_oracle  # noqa: PLC0415
 
@@ -287,7 +290,7 @@ async def insert_observation(
                     id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids,
                     tags, event_date, occurred_start, occurred_end, mentioned_at, search_vector
                 )
-                VALUES ($1, $2, $3, 'observation', $4::vector, 1, $5, $6, $7, $8, $9, $10,
+                VALUES ($1, $2, $3, 'observation', $4::vector, $11, $5, $6, $7, $8, $9, $10,
                         tokenize($3, 'llmlingua2')::bm25_catalog.bm25vector)
                 RETURNING id
             """
@@ -302,7 +305,7 @@ async def insert_observation(
                     id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids,
                     tags, event_date, occurred_start, occurred_end, mentioned_at, search_vector
                 )
-                VALUES ($1, $2, $3, 'observation', $4::vector, 1, $5, $6, $7, $8, $9, $10,
+                VALUES ($1, $2, $3, 'observation', $4::vector, $11, $5, $6, $7, $8, $9, $10,
                         to_tsvector('{config.text_search_extension_native_language}'::regconfig, COALESCE($3, '')))
                 RETURNING id
             """
@@ -312,7 +315,7 @@ async def insert_observation(
                     id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids,
                     tags, event_date, occurred_start, occurred_end, mentioned_at
                 )
-                VALUES ($1, $2, $3, 'observation', $4::vector, 1, $5, $6, $7, $8, $9, $10)
+                VALUES ($1, $2, $3, 'observation', $4::vector, $11, $5, $6, $7, $8, $9, $10)
                 RETURNING id
             """
 
@@ -328,6 +331,7 @@ async def insert_observation(
         occurred_start,
         occurred_end,
         mentioned_at,
+        proof_count,
     )
 
     # Populate observation_sources junction table (Oracle only — PG uses native array ops).
