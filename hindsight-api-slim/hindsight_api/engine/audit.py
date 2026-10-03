@@ -25,6 +25,9 @@ from .schema import fq_table_explicit
 
 logger = logging.getLogger(__name__)
 
+# How long close() waits for in-flight audit writes before giving up on them.
+_DRAIN_TIMEOUT_SECONDS = 5.0
+
 
 class AuditLogEntry(BaseModel):
     """A single audit log entry."""
@@ -143,6 +146,10 @@ class AuditLogger:
         # (env -> tenant -> bank). None means "no per-bank resolution wired",
         # in which case the global value alone decides.
         self._bank_enabled_resolver = bank_enabled_resolver
+        # In-flight write tasks. The event loop only keeps weak references to
+        # tasks, so one nothing else references can be garbage collected
+        # mid-write; close() also needs them to drain before the pool goes away.
+        self._pending: set[asyncio.Task[None]] = set()
 
     def action_allowed(self, action: str) -> bool:
         """Global action-allowlist check. Cheap, synchronous, bank-independent.
@@ -189,10 +196,25 @@ class AuditLogger:
         if not self.action_allowed(entry.action):
             return
         try:
-            asyncio.create_task(self._safe_log(entry))
+            task = asyncio.create_task(self._safe_log(entry))
         except RuntimeError:
             # No running event loop (e.g. during shutdown)
             logger.debug("Cannot schedule audit log write: no running event loop")
+            return
+        self._pending.add(task)
+        task.add_done_callback(self._pending.discard)
+
+    async def drain(self) -> None:
+        """Wait for audit writes already scheduled; call before the database pool is closed.
+
+        Bounded, so a stuck database cannot hang shutdown. Writes still running
+        at the deadline are abandoned and counted in a warning.
+        """
+        if not self._pending:
+            return
+        _, abandoned = await asyncio.wait(self._pending, timeout=_DRAIN_TIMEOUT_SECONDS)
+        if abandoned:
+            logger.warning(f"{len(abandoned)} audit log write(s) still in flight after {_DRAIN_TIMEOUT_SECONDS}s")
 
     async def _safe_log(self, entry: AuditEntry) -> None:
         """Write audit entry to DB. Errors are logged, never raised."""
