@@ -159,6 +159,21 @@ def _start_daemon_in_clean_child(config: dict[str, str], profile: str) -> bool:
     a first run — and Hermes' own children rely on that PYTHONPATH. A child process confines it.
     """
     env = {key: value for key, value in os.environ.items() if key not in _PARENT_INTERPRETER_ENV}
+    # Hermes can install uv outside its active tool PATH. Only extend this child's
+    # environment, and preserve an explicitly available uvx rather than replacing it.
+    if shutil.which("uvx", path=env.get("PATH")) is None:
+        tools_root = Path.home() / ".hermes" / "tools"
+        candidates = sorted(
+            (
+                path
+                for path in tools_root.glob("uv-*/uvx")
+                if path.is_file() and os.access(path, os.X_OK)
+            ),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        if candidates:
+            env["PATH"] = str(candidates[0].parent) + os.pathsep + env.get("PATH", "")
     try:
         result = subprocess.run(
             [sys.executable, "-c", _DAEMON_START_SNIPPET, profile],
