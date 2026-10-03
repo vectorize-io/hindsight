@@ -162,7 +162,7 @@ class FakeResult:
 
 class FakeRecallResponse:
     def __init__(self, texts):
-        self.results = [FakeResult(t) for t in texts]
+        self.results = [FakeResult(t) if isinstance(t, str) else t for t in texts]
 
 
 class FakeReflectResponse:

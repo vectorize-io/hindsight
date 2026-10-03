@@ -1,5 +1,5 @@
 name: hindsight
-version: 1.2.1
+version: 1.3.0
 description: "Hindsight — long-term memory with knowledge graph, entity resolution, and multi-strategy retrieval."
 # No dependency list here on purpose: Hermes' package manager reads this plugin's own
 # pyproject.toml (pm/plugin_declarations.py prefers an authored project.dependencies and ignores
