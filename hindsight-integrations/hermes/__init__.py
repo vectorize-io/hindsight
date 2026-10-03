@@ -391,6 +391,12 @@ class HindsightMemoryProvider(MemoryProvider):
 
     def __init__(self):
         self._config = self._api_key = self._client = None
+        # LEAF lock guarding _client construction/retirement: two threads racing
+        # a cold or just-nulled client would both build one, and the loser owns
+        # an aiohttp session nothing ever closes. Never held across
+        # _run_sync/operation(client) or while taking _prefetch_lock /
+        # _pending_retain_ops_lock.
+        self._client_lock = threading.Lock()
         self._embedded_url = None
         self._client_lock = threading.Lock()
         self._api_url, self._mode = _DEFAULT_API_URL, "cloud"
@@ -435,6 +441,10 @@ class HindsightMemoryProvider(MemoryProvider):
         self._prefetch_result, self._prefetch_count = "", 0
         self._prefetch_lock = threading.Lock()
         self._prefetch_thread = None
+        # Prefetch-slot ownership (guarded by _prefetch_lock): bumped per spawned
+        # worker and on session switch/shutdown, so a late or superseded worker
+        # whose captured generation is stale can never publish into the slot.
+        self._prefetch_generation = 0
         self._last_recall_returned, self._last_recall_count = False, 0
         self._apply_recall_settings({})
 
@@ -783,16 +793,31 @@ class HindsightMemoryProvider(MemoryProvider):
                     platform=self._platform,
                 )
 
-    def _get_client(self):
-        """Return the cached Hindsight client, creating it at most once.
+    def _get_client(self, *, retire=None):
+        """Return the cached Hindsight client (created once, reused).
+
+        *retire* is the exact client instance the caller's failed operation ran
+        with — identity passed as an argument, never shared broken-client state a
+        concurrent retry could clobber. It is dropped and the client rebuilt
+        exactly once, under the lock; if a sibling already rebuilt after our
+        failure, that fresh client is returned as-is instead of being orphaned.
 
         Locked because in local_embedded the creation *starts the daemon*: the background start
-        worker and the first memory operation both land here, and an unguarded check-then-set let
+        worker and the first memory operation both land here, and an unguarded check-and-set let
         them each start one and build one client, of which the loser was dropped without being
         closed (an unclosed aiohttp session). threading.Lock, not asyncio: these are threads, and
         the guarded section never awaits.
         """
+        if retire is None and (client := self._client) is not None:
+            return client
         with self._client_lock:
+            if retire is not None:
+                # Identity CAS: retire only the client the operation actually ran
+                # with. A sibling thread may have already replaced it — its fresh
+                # replacement must survive our retry.
+                if self._client is not None and self._client is not retire:
+                    return self._client
+                self._client = None
             if self._client is None:
                 self._client = (
                     self._new_embedded_client() if self._mode == "local_embedded" else self._new_cloud_client()
@@ -807,14 +832,17 @@ class HindsightMemoryProvider(MemoryProvider):
         """Run an async client operation; for local_embedded, a stale-daemon
         connection failure recreates the client and retries once."""
         try:
-            return self._run_sync(operation(self._get_client()))
+            client = self._get_client()
+            return self._run_sync(operation(client))
         except Exception as exc:
             text = f"{type(exc).__name__}: {exc}".lower()
             if self._mode != "local_embedded" or not any(m in text for m in _RETRIABLE_CONNECTION_MARKERS):
                 raise
             logger.info("Hindsight embedded daemon appears unreachable; recreating client and retrying once: %s", exc)
-            self._client = None
-            self._client = client = self._get_client()
+            # Retire the exact client this operation ran with (identity as an
+            # argument); the loser of a concurrent retry is not closed inline
+            # (closing against a dead daemon can hang) — only shutdown() closes.
+            client = self._get_client(retire=client)
             return self._run_sync(operation(client))
 
     # -- retain writer thread + server-side visibility -------------------------
@@ -1324,15 +1352,36 @@ class HindsightMemoryProvider(MemoryProvider):
         if self._recall_sync or self._recall_disabled():
             return
 
+        # One worker at a time (mirrors _ensure_writer): rapid turns must not
+        # stack concurrent recalls against one embedded daemon — the LAST
+        # finisher would win the slot, not the newest warm.
+        if self._prefetch_thread is not None and self._prefetch_thread.is_alive():
+            logger.debug("Prefetch: prior worker still running; skipping this warm")
+            return
+
+        with self._prefetch_lock:
+            self._prefetch_generation += 1
+            generation = self._prefetch_generation
+
         def _run():
             # Wait (bounded, off the reply path) for the just-completed turn's
             # retain to be recall-visible so the warmed context includes it.
             if self._prefetch_waits_for_retain:
                 self._wait_for_retains_drained(self._prefetch_retain_drain_timeout)
+            # A superseded/shut-down worker must not even spend a recall
+            # against the daemon on a result nobody will use.
+            with self._prefetch_lock:
+                if generation != self._prefetch_generation or self._shutting_down.is_set():
+                    return
             text, count = self._do_recall(query)
             if text:
+                # Fenced publish: the slot can outlive the switching session's
+                # 3s join (drain up to 10s + recall up to 120s), so only the
+                # generation that owns the slot may write it — a stale worker
+                # must not inject the old session's memories into the new one.
                 with self._prefetch_lock:
-                    self._prefetch_result, self._prefetch_count = text, count
+                    if generation == self._prefetch_generation and not self._shutting_down.is_set():
+                        self._prefetch_result, self._prefetch_count = text, count
 
         self._prefetch_thread = spawn_context_thread(_run, name="hindsight-prefetch")
         self._prefetch_thread.start()
@@ -1517,7 +1566,11 @@ class HindsightMemoryProvider(MemoryProvider):
             content, context=context, tags=args.get("tags"), occurred_at=args.get("occurred_at")
         )
         logger.debug("Tool hindsight_retain: bank=%s, content_len=%d, context=%s", self._bank_id, len(content), context)
-        self._retain_batch(item, bank_id=self._bank_id)
+        # Forward the configured retain_async mode: it is a call-level arg
+        # (never an item key), so omitting it here drops the async/sync choice
+        # and aretain_batch falls back to its own server default. Matches the
+        # auto-retain path.
+        self._retain_batch(item, bank_id=self._bank_id, retain_async=self._retain_async)
         logger.debug("Tool hindsight_retain: success")
         return "Memory stored successfully."
 
@@ -1607,6 +1660,9 @@ class HindsightMemoryProvider(MemoryProvider):
         # 2. Drain the old session's in-flight prefetch and drop its result.
         self._join_prefetch(3.0)
         with self._prefetch_lock:
+            # Fence out any worker still running past the join: the slot now
+            # belongs to the new session.
+            self._prefetch_generation += 1
             self._prefetch_result = ""
 
         # 3. Rotate to the new session.
@@ -1623,7 +1679,7 @@ class HindsightMemoryProvider(MemoryProvider):
             self._document_id,
         )
 
-    def _close_client(self) -> None:
+    def _close_client_of(self, client) -> None:
         """Both modes now hold a plain ``hindsight_client.Hindsight``, so one aclose on the
         shared loop is the whole story. The old local_embedded branch existed because
         ``HindsightEmbedded.close()`` closed its inner sync client from the calling thread
@@ -1631,12 +1687,16 @@ class HindsightMemoryProvider(MemoryProvider):
         wrapper to unwind any more. The daemon deliberately outlives us — it is shared with
         the hindsight-embed CLI and other profiles' clients.
         """
-        self._run_sync(self._client.aclose())
+        self._run_sync(client.aclose())
 
     def shutdown(self) -> None:
         logger.debug("Hindsight shutdown: stopping writer + waiting for background threads")
         # Stop accepting retain jobs first so late sync_turn() calls are dropped.
         self._shutting_down.set()
+        # Fence any in-flight prefetch worker: a recall finishing during or
+        # after the joins below must never publish into a closing provider.
+        with self._prefetch_lock:
+            self._prefetch_generation += 1
         # The writer finishes in-flight work then exits on the sentinel; the
         # bounded join keeps shutdown predictable even if the daemon is wedged.
         if (writer := self._writer_thread) is not None and writer.is_alive():
@@ -1648,10 +1708,14 @@ class HindsightMemoryProvider(MemoryProvider):
                     self._retain_queue.qsize(),
                 )
         self._join_prefetch(5.0)
-        if self._client is not None:
-            with contextlib.suppress(Exception):
-                self._close_client()
+        # Retire the client under the lock BEFORE closing it, so a concurrent
+        # _get_client() sees None and rebuilds instead of racing the close.
+        with self._client_lock:
+            client = self._client
             self._client = None
+        if client is not None:
+            with contextlib.suppress(Exception):
+                self._close_client_of(client)
         # The module-global loop is intentionally NOT stopped: it's shared by every
         # provider in the process (one per gateway chat session); stopping it would
         # strand siblings' aiohttp sessions ("Unclosed client session"). Daemon
