@@ -81,6 +81,7 @@ interface ExtensionAPI {
     event: "agent_end",
     handler: (event: AgentEndEvent, ctx: ExtensionContext) => Promise<void> | void
   ): void;
+  on(event: "session_shutdown", handler: () => Promise<void> | void): void;
   registerTool(definition: ToolDefinition): void;
 }
 
@@ -116,7 +117,7 @@ export function toPiTool(spec: ToolSpec): ToolDefinition {
  * calls Hindsight directly.
  */
 export function createPiHooks(
-  core: Pick<RuntimeCore, "onPrompt" | "getInjection" | "onTranscript">,
+  core: Pick<RuntimeCore, "onPrompt" | "getInjection" | "onTranscript" | "flushRetains">,
   harness: string,
   sessionStart?: Promise<void>
 ) {
@@ -154,6 +155,11 @@ export function createPiHooks(
       const turns = readPiMessages(event.messages);
       if (turns.length) await core.onTranscript(sessionId, turns, true); // the run has ended
     },
+    async sessionShutdown(): Promise<void> {
+      // Pi awaits this event before normal exit. Also drain on reload/session switches, where the
+      // old runtime may be disposed; keep agent_end asynchronous so each turn stays responsive.
+      await core.flushRetains();
+    },
   };
 }
 
@@ -189,5 +195,6 @@ export function createPiExtension(harness: string): ExtensionFactory {
       hooks.beforeAgentStart(event, ctx.sessionManager.getSessionId())
     );
     pi.on("agent_end", (event, ctx) => hooks.agentEnd(event, ctx.sessionManager.getSessionId()));
+    pi.on("session_shutdown", () => hooks.sessionShutdown());
   };
 }

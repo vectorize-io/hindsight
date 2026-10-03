@@ -296,6 +296,12 @@ npx @vectorize-io/hindsight-coding-agents install pi
 An extension entry in `~/.pi/agent/settings.json`, plus the companion skill in
 `~/.pi/agent/skills` — native tools, no MCP needed.
 
+Conversation write-back runs in the background after each `agent_end`. On a normal
+`session_shutdown`, the pi-family extension waits up to 10 seconds for queued submissions to be
+accepted by Hindsight; it does not wait for server-side extraction. Failed submissions and flush
+timeouts are recorded in `plugin.log` and `diag.jsonl`. Reloads and session switches use the same
+drain. Forced termination (including `SIGKILL`) cannot guarantee write-back.
+
 This command is the only supported route, for pi and for Prime Agent below. Installing us as a pi
 package (`pi install npm:@vectorize-io/hindsight-coding-agents`) is deliberately not wired: both
 hosts read the same `pi` key of a package's `package.json`, and that key can only name one entry —

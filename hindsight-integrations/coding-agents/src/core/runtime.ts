@@ -13,6 +13,7 @@
  *   - onTranscript(sessionId, turns, lastTurnComplete): full transcript -> write back (on by default)
  *   - onSessionIdle(sessionId)      : assistant finished -> refetch + write back the completed
  *                                     exchange (the Stop-equivalent these hosts lack)
+ *   - flushRetains(timeoutMs)       : normal host shutdown -> bounded wait for queued write-backs
  * No opencode/claude specifics live here — only the memory logic.
  */
 import type { Config } from "./config";
@@ -43,6 +44,8 @@ export class RuntimeCore {
   private readonly cursors = memoryCursorStore();
   /** Turns already written to the usage log (core/usage.ts), per session. */
   private readonly usageCursors = memoryUsageCursorStore();
+  /** Includes daemon readiness and serialized writes, not just the HTTP request. */
+  private readonly pendingRetains = new Set<Promise<boolean>>();
   /** Pulls a session's CURRENT transcript from the host (set by the adapter); see onSessionIdle. */
   private fetchTranscript?: (sessionId: string) => Promise<TransportTurn[]>;
   private lastInjection = ""; // most recent turn's injection block, keyed by nothing (see getInjection)
@@ -226,11 +229,10 @@ export class RuntimeCore {
    * write-back), so opencode sessions compound into memory; opt out with `retainSessions: false`.
    *
    * There is deliberately no client-side cadence. Batching write-backs meant holding turns in a
-   * process the host can close at any moment, with no reliable signal on the way out — the flush a
-   * cadence needs would have to ride a session-end hook, and those are cancelled at shutdown. The
+   * process the host can close at any moment: not every host has an awaited shutdown event. The
    * server coalesces instead: queued retains for one document fold into a single execution
    * (`engine.retain.fold`), so submitting every turn costs one extraction, not one per turn, and
-   * nothing is ever held somewhere it can be lost.
+   * hosts with an awaited shutdown event can drain the in-flight submissions with `flushRetains`.
    */
   async onTranscript(
     sessionId: string,
@@ -282,6 +284,42 @@ export class RuntimeCore {
     this.retain(sessionId, turns, st.startTs, "idle");
   }
 
+  /**
+   * Wait for write-backs queued at call time to be accepted by the API (not for server-side
+   * extraction). Returns false on a failed write or timeout. A timeout leaves the original work
+   * tracked: another flush waits for it rather than sending it again. Call after the last turn,
+   * before a normal host exit; forced termination cannot run this cleanup.
+   */
+  async flushRetains(timeoutMs = 10_000): Promise<boolean> {
+    const pending = [...this.pendingRetains];
+    if (!pending.length) return true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        Promise.all(pending),
+        new Promise<undefined>((resolve) => {
+          timer = setTimeout(() => resolve(undefined), timeoutMs);
+        }),
+      ]);
+      if (result === undefined) {
+        diag(this.harness, "retain_flush_timeout", {
+          timeoutMs,
+          pending: this.pendingRetains.size,
+        });
+        log.warn(this.harness, "write-back flush timed out; pending writes may be lost on exit", {
+          timeoutMs,
+          pending: this.pendingRetains.size,
+        });
+        return false;
+      }
+      const ok = result.every(Boolean);
+      diag(this.harness, "retain_flush_done", { writes: pending.length, ok });
+      return ok;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+
   private recordUsage(sessionId: string, turns: TransportTurn[], lastTurnComplete: boolean): void {
     recordUsage({
       harness: this.harness,
@@ -320,10 +358,10 @@ export class RuntimeCore {
     // Daemon mode: the write path is the last chance to get a daemon up — the Stop-hook role, for
     // hosts that have no Stop hook. A daemon that died mid-session would otherwise take the whole
     // exchange with it. The wait sits INSIDE the fire-and-forget chain, so
-    // unlike the Stop hook it costs the host nothing: this call already returns before the retain
-    // does. Deliberately not gated on the result — retain proceeds either way, so an unreachable
+    // unlike the Stop hook it does not block the turn; flushRetains can wait at shutdown instead.
+    // Deliberately not gated on the result — retain proceeds either way, so an unreachable
     // daemon produces the same `retain_failed` diagnostic as an unreachable Cloud server.
-    void ensureDaemon(this.cfg, this.harness, { waitMs: DAEMON_WAIT_RETAIN_MS })
+    const pending = ensureDaemon(this.cfg, this.harness, { waitMs: DAEMON_WAIT_RETAIN_MS })
       .then(() =>
         retainLiveSession(this.client, sessionId, turns, startTs, this.harness, {
           cursors: this.cursors,
@@ -335,21 +373,29 @@ export class RuntimeCore {
           }),
         })
       )
-      .then(() =>
+      .then(() => {
         diag(this.harness, "retain_ok", {
           ms: Date.now() - t0,
           turns: turns.length,
           session: sessionId,
           trigger,
-        })
-      )
-      .catch((e) =>
+        });
+        return true;
+      })
+      .catch((e) => {
+        const error = describeError(e);
         diag(this.harness, "retain_failed", {
           ms: Date.now() - t0,
-          error: describeError(e),
+          error,
           session: sessionId,
           trigger,
-        })
-      );
+        });
+        log.warn(this.harness, "session write-back failed", { session: sessionId, error });
+        return false;
+      });
+    this.pendingRetains.add(pending);
+    // Previously this chain was discarded; an awaited agent_end still returned before submission.
+    // Keep per-turn delivery non-blocking, but give hosts an explicit shutdown wait.
+    void pending.then(() => this.pendingRetains.delete(pending));
   }
 }

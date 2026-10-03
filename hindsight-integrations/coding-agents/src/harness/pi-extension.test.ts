@@ -1,14 +1,42 @@
 import { z } from "zod";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { RuntimeCore } from "../core/runtime";
 import type { ToolSpec } from "../core/knowledge-tools";
-import { createPiHooks, toPiTool } from "./pi-extension";
+import { createPiExtension, createPiHooks, toPiTool } from "./pi-extension";
+
+afterEach(() => vi.restoreAllMocks());
 
 describe("pi extension adapter", () => {
+  it.each(["pi", "prime-agent"])("%s registers an awaited shutdown drain", async (harness) => {
+    vi.spyOn(RuntimeCore.prototype, "seedIfCold").mockResolvedValue(undefined);
+    let release!: () => void;
+    const flush = vi.spyOn(RuntimeCore.prototype, "flushRetains").mockImplementation(
+      () =>
+        new Promise<boolean>((r) => {
+          release = () => r(true);
+        })
+    );
+    const on = vi.fn();
+    createPiExtension(harness)({ on, registerTool: vi.fn() });
+    const handler = on.mock.calls.find(([event]) => event === "session_shutdown")?.[1];
+    expect(handler).toBeDefined();
+    let finished = false;
+    const shutdown = handler().then(() => {
+      finished = true;
+    });
+    expect(flush).toHaveBeenCalledOnce();
+    await Promise.resolve();
+    expect(finished).toBe(false);
+    release();
+    await shutdown;
+    expect(finished).toBe(true);
+  });
   it.each(["before", "after"])("preserves sections added %s memory injection", async (order) => {
     const core = {
       onPrompt: vi.fn(async () => {}),
       getInjection: vi.fn(() => "<hindsight_memories>remember this</hindsight_memories>"),
       onTranscript: vi.fn(async () => {}),
+      flushRetains: vi.fn(async () => true),
     };
     const hooks = createPiHooks(core, "pi");
     const sections: Record<string, string> = { base: "You are pi." };
@@ -35,6 +63,7 @@ describe("pi extension adapter", () => {
       onPrompt,
       getInjection: vi.fn(() => "<hindsight_memories>remember this</hindsight_memories>"),
       onTranscript: vi.fn(async () => {}),
+      flushRetains: vi.fn(async () => true),
     };
     const hooks = createPiHooks(core as never, "pi");
 
@@ -55,6 +84,7 @@ describe("pi extension adapter", () => {
       onPrompt: vi.fn(async () => {}),
       getInjection: vi.fn(() => undefined),
       onTranscript: vi.fn(async () => {}),
+      flushRetains: vi.fn(async () => true),
     };
     const hooks = createPiHooks(core as never, "pi");
     const result = await hooks.beforeAgentStart({ prompt: "hi", systemPrompt: "sys" }, "session-1");
@@ -70,6 +100,7 @@ describe("pi extension adapter", () => {
       onPrompt: vi.fn(async () => {}),
       getInjection: vi.fn(() => undefined),
       onTranscript: vi.fn(async () => {}),
+      flushRetains: vi.fn(async () => true),
     };
     const hooks = createPiHooks(core as never, "pi", sessionStart);
     const pending = hooks.beforeAgentStart(
@@ -90,6 +121,7 @@ describe("pi extension adapter", () => {
       onPrompt: vi.fn(async () => {}),
       getInjection: vi.fn(() => undefined),
       onTranscript,
+      flushRetains: vi.fn(async () => true),
     };
     const hooks = createPiHooks(core as never, "pi");
 
@@ -127,6 +159,7 @@ describe("pi extension adapter", () => {
       onPrompt: vi.fn(async () => {}),
       getInjection: vi.fn(() => undefined),
       onTranscript,
+      flushRetains: vi.fn(async () => true),
     };
     const hooks = createPiHooks(core as never, "pi");
     await hooks.agentEnd({ messages: [] }, "session-1");
