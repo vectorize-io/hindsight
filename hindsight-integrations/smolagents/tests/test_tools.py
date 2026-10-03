@@ -602,3 +602,89 @@ class TestMemoryInstructions:
             mock_cls.return_value = mock_instance
             result = memory_instructions(bank_id="test")
             assert "fact" in result
+
+
+class TestConfiguredDefaults:
+    def setup_method(self) -> None:
+        reset_config()
+
+    def teardown_method(self) -> None:
+        reset_config()
+
+    @pytest.mark.parametrize("use_factory", [False, True])
+    def test_recall_uses_configured_defaults(self, use_factory: bool) -> None:
+        configure(budget="high", max_tokens=1234, recall_tags=["team"], recall_tags_match="all")
+        client = _mock_client()
+        client.recall.return_value = _mock_recall_response(["configured fact"])
+        if use_factory:
+            tool = next(
+                t for t in create_hindsight_tools(bank_id="test", client=client) if t.name == "hindsight_recall"
+            )
+        else:
+            tool = HindsightRecallTool(bank_id="test", client=client)
+        assert tool(query="preferences") == "1. configured fact"
+        client.recall.assert_called_once_with(
+            bank_id="test",
+            query="preferences",
+            budget="high",
+            max_tokens=1234,
+            tags=["team"],
+            tags_match="all",
+        )
+
+    @pytest.mark.parametrize("use_factory", [False, True])
+    def test_explicit_recall_defaults_override_configuration(self, use_factory: bool) -> None:
+        configure(budget="high", max_tokens=1234, recall_tags=["team"], recall_tags_match="all")
+        client = _mock_client()
+        client.recall.return_value = _mock_recall_response(["explicit fact"])
+        if use_factory:
+            tool = next(
+                t
+                for t in create_hindsight_tools(
+                    bank_id="test", client=client, budget="mid", max_tokens=4096, recall_tags_match="any"
+                )
+                if t.name == "hindsight_recall"
+            )
+        else:
+            tool = HindsightRecallTool(
+                bank_id="test", client=client, budget="mid", max_tokens=4096, recall_tags_match="any"
+            )
+        assert tool(query="preferences") == "1. explicit fact"
+        client.recall.assert_called_once_with(
+            bank_id="test",
+            query="preferences",
+            budget="mid",
+            max_tokens=4096,
+            tags=["team"],
+            tags_match="any",
+        )
+
+    @pytest.mark.parametrize("use_factory", [False, True])
+    def test_reflect_uses_configured_budget(self, use_factory: bool) -> None:
+        configure(budget="high")
+        client = _mock_client()
+        client.reflect.return_value = _mock_reflect_response("configured reflection")
+        if use_factory:
+            tool = next(
+                t for t in create_hindsight_tools(bank_id="test", client=client) if t.name == "hindsight_reflect"
+            )
+        else:
+            tool = HindsightReflectTool(bank_id="test", client=client)
+        assert tool(query="preferences") == "configured reflection"
+        client.reflect.assert_called_once_with(bank_id="test", query="preferences", budget="high")
+
+    @pytest.mark.parametrize("use_factory", [False, True])
+    def test_explicit_reflect_default_overrides_configuration(self, use_factory: bool) -> None:
+        configure(budget="high")
+        client = _mock_client()
+        client.reflect.return_value = _mock_reflect_response("explicit reflection")
+        if use_factory:
+            tool = next(
+                t
+                for t in create_hindsight_tools(bank_id="test", client=client, budget="mid")
+                if t.name == "hindsight_reflect"
+            )
+        else:
+            tool = HindsightReflectTool(bank_id="test", client=client, budget="mid")
+        assert tool(query="preferences") == "explicit reflection"
+        client.reflect.assert_called_once_with(bank_id="test", query="preferences", budget="mid")

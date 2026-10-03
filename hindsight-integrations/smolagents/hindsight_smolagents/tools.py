@@ -138,10 +138,10 @@ class HindsightRecallTool(Tool):
         client: Hindsight | None = None,
         hindsight_api_url: str | None = None,
         api_key: str | None = None,
-        budget: str = "mid",
-        max_tokens: int = 4096,
+        budget: str | None = None,
+        max_tokens: int | None = None,
         recall_tags: list[str] | None = None,
-        recall_tags_match: str = "any",
+        recall_tags_match: str | None = None,
         **kwargs: Any,
     ):
         super().__init__(**kwargs)
@@ -149,10 +149,13 @@ class HindsightRecallTool(Tool):
         self._client = _resolve_client(client, hindsight_api_url, api_key)
 
         config = get_config()
-        self._budget = budget or (config.budget if config else "mid")
-        self._max_tokens = max_tokens or (config.max_tokens if config else 4096)
+        # None means omitted; explicit built-in defaults must still override configuration.
+        self._budget = budget if budget is not None else (config.budget if config else "mid")
+        self._max_tokens = max_tokens if max_tokens is not None else (config.max_tokens if config else 4096)
         self._recall_tags = recall_tags if recall_tags is not None else (config.recall_tags if config else None)
-        self._recall_tags_match = recall_tags_match or (config.recall_tags_match if config else "any")
+        self._recall_tags_match = (
+            recall_tags_match if recall_tags_match is not None else (config.recall_tags_match if config else "any")
+        )
 
     def forward(self, query: str) -> str:
         try:
@@ -207,7 +210,7 @@ class HindsightReflectTool(Tool):
         client: Hindsight | None = None,
         hindsight_api_url: str | None = None,
         api_key: str | None = None,
-        budget: str = "mid",
+        budget: str | None = None,
         **kwargs: Any,
     ):
         super().__init__(**kwargs)
@@ -215,7 +218,7 @@ class HindsightReflectTool(Tool):
         self._client = _resolve_client(client, hindsight_api_url, api_key)
 
         config = get_config()
-        self._budget = budget or (config.budget if config else "mid")
+        self._budget = budget if budget is not None else (config.budget if config else "mid")
 
     def forward(self, query: str) -> str:
         try:
@@ -239,11 +242,11 @@ def create_hindsight_tools(
     client: Hindsight | None = None,
     hindsight_api_url: str | None = None,
     api_key: str | None = None,
-    budget: str = "mid",
-    max_tokens: int = 4096,
+    budget: str | None = None,
+    max_tokens: int | None = None,
     tags: list[str] | None = None,
     recall_tags: list[str] | None = None,
-    recall_tags_match: str = "any",
+    recall_tags_match: str | None = None,
     enable_retain: bool = True,
     enable_recall: bool = True,
     enable_reflect: bool = True,
