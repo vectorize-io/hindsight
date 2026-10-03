@@ -126,9 +126,18 @@ pub fn slug(name: &str) -> String {
 }
 
 /// Ensure sibling nodes get distinct path segments even if their names collide.
-fn unique_segment(base: &str, id: &str, used: &mut HashSet<String>) -> String {
-    if !used.contains(base) {
+fn unique_segment(
+    base: &str,
+    id: &str,
+    extension: &str,
+    used: &mut HashSet<String>,
+    used_paths: &mut HashSet<String>,
+) -> String {
+    // Segment-only uniqueness missed a page `guide` (guide.md) beside a folder
+    // `guide.md`. Reserve final disk names too, retaining existing segment rules.
+    if !used.contains(base) && !used_paths.contains(&format!("{}{}", base, extension)) {
         used.insert(base.to_string());
+        used_paths.insert(format!("{}{}", base, extension));
         return base.to_string();
     }
     let alnum: String = id.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
@@ -145,10 +154,11 @@ fn unique_segment(base: &str, id: &str, used: &mut HashSet<String>) -> String {
             .collect()
     };
     let mut seg = format!("{}-{}", base, suffix);
-    while used.contains(&seg) {
+    while used.contains(&seg) || used_paths.contains(&format!("{}{}", seg, extension)) {
         seg = format!("{}-x", seg);
     }
     used.insert(seg.clone());
+    used_paths.insert(format!("{}{}", seg, extension));
     seg
 }
 
@@ -221,8 +231,16 @@ fn walk_plan(
     plan: &mut MirrorPlan,
 ) {
     let mut used = HashSet::new();
+    let mut used_paths = HashSet::new();
     for node in sorted_by_name(nodes) {
-        let seg = unique_segment(&slug(&node.name), &node.id, &mut used);
+        let extension = if node.is_folder() { "" } else { ".md" };
+        let seg = unique_segment(
+            &slug(&node.name),
+            &node.id,
+            extension,
+            &mut used,
+            &mut used_paths,
+        );
         let rel = if parent_dir.is_empty() {
             seg
         } else {
@@ -264,8 +282,16 @@ pub fn render_index(snapshot: &KnowledgeSnapshot, bank_id: &str, api_url: &str) 
 
 fn walk_index(nodes: &[KnowledgeNode], depth: usize, parent_dir: &str, lines: &mut Vec<String>) {
     let mut used = HashSet::new();
+    let mut used_paths = HashSet::new();
     for node in sorted_by_name(nodes) {
-        let seg = unique_segment(&slug(&node.name), &node.id, &mut used);
+        let extension = if node.is_folder() { "" } else { ".md" };
+        let seg = unique_segment(
+            &slug(&node.name),
+            &node.id,
+            extension,
+            &mut used,
+            &mut used_paths,
+        );
         let rel = if parent_dir.is_empty() {
             seg
         } else {
@@ -399,6 +425,64 @@ mod tests {
             paths[0], paths[1],
             "colliding names must get distinct paths"
         );
+    }
+
+    #[test]
+    fn final_page_paths_do_not_collide_with_sibling_directories() {
+        for roots in [
+            vec![
+                page("p1", "Guide"),
+                folder("f1", "Guide.md", vec![page("p2", "Child")]),
+            ],
+            vec![
+                folder("f1", "Guide.md", vec![page("p2", "Child")]),
+                page("p1", "guide"),
+            ],
+            vec![page("p1", "Guide.md"), folder("f1", "Guide.md.md", vec![])],
+        ] {
+            let snapshot = KnowledgeSnapshot {
+                roots,
+                content: HashMap::new(),
+            };
+            let plan = plan_mirror(&snapshot);
+            for file in &plan.files {
+                assert!(
+                    !plan.dirs.contains(&file.rel_path),
+                    "file and directory collide at {}",
+                    file.rel_path
+                );
+            }
+            let temporary = std::env::temp_dir().join(format!(
+                "hindsight-mirror-collision-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&temporary).unwrap();
+            let result = (|| -> std::io::Result<()> {
+                for dir in &plan.dirs {
+                    std::fs::create_dir_all(temporary.join(dir))?;
+                }
+                for file in &plan.files {
+                    std::fs::write(temporary.join(&file.rel_path), &file.content)?;
+                }
+                for file in &plan.files {
+                    assert_eq!(
+                        std::fs::read_to_string(temporary.join(&file.rel_path))?,
+                        file.content
+                    );
+                }
+                Ok(())
+            })();
+            std::fs::remove_dir_all(temporary).unwrap();
+            result.unwrap();
+            let index = render_index(&snapshot, "bank", "http://localhost");
+            for file in &plan.files {
+                assert!(index.contains(&format!("(../{})", file.rel_path)));
+            }
+        }
     }
 
     #[test]
