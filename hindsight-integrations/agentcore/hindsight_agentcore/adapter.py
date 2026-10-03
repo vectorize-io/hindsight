@@ -192,7 +192,7 @@ class HindsightRuntimeAdapter:
                     budget=budget,
                     max_tokens=max_tokens,
                 )
-                return resp.answer if resp and resp.answer else ""
+                return resp.text if resp and resp.text else ""
 
             resp = await client.arecall(
                 bank_id=bank_id,

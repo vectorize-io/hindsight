@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from hindsight_client_api.models.reflect_response import ReflectResponse
+
 from hindsight_agentcore import (
     HindsightRuntimeAdapter,
     RecallPolicy,
@@ -123,8 +125,7 @@ class TestBeforeTurn:
     @pytest.mark.asyncio
     async def test_reflect_mode_calls_reflect(self):
         adapter, mock_client = self._make_adapter(recall_policy=RecallPolicy(mode="reflect"))
-        reflect_resp = MagicMock()
-        reflect_resp.answer = "Synthesized context about the user."
+        reflect_resp = ReflectResponse(text="Synthesized context about the user.")
         mock_client.areflect.return_value = reflect_resp
         result = await adapter.before_turn(_ctx(), query="what should I prioritize?")
         mock_client.arecall.assert_not_called()
