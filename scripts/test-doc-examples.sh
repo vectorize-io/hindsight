@@ -23,6 +23,20 @@ LANGUAGE_FILTER=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --lang)
+            # Reject invalid selectors before running a gate: a missing value used
+            # to loop on a failed shift, and unknown values reported zero tests green.
+            if [[ $# -lt 2 ]]; then
+                echo "Usage: $0 [--lang <python|node|cli|go>]"
+                exit 1
+            fi
+            case "$2" in
+                python|node|cli|go) ;;
+                *)
+                    echo "Unknown language: $2"
+                    echo "Usage: $0 [--lang <python|node|cli|go>]"
+                    exit 1
+                    ;;
+            esac
             LANGUAGE_FILTER="$2"
             shift 2
             ;;
