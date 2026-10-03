@@ -421,6 +421,8 @@ export HINDSIGHT_API_LLM_MODEL=gpt-5.4-mini
 
 # Claude Code (Claude Pro/Max subscription - uses OAuth, no API key needed)
 export HINDSIGHT_API_LLM_PROVIDER=claude-code
+# Optional: token from `claude setup-token` (otherwise the CLI login is used)
+# export HINDSIGHT_API_LLM_API_KEY=sk-ant-oat01-...
 export HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-5-20250929
 # No API key needed - uses claude auth login credentials
 
