@@ -18,7 +18,7 @@ import sys
 import warnings
 from collections.abc import Callable
 
-from ..config import get_config, load_dotenv_for_entrypoint
+from ..config import _get_raw_config, load_dotenv_for_entrypoint
 from ..engine.task_backend import WorkerTaskBackend
 from .poller import WorkerPoller
 
@@ -171,7 +171,7 @@ def main():
     load_dotenv_for_entrypoint()
 
     # Load configuration from environment
-    config = get_config()
+    config = _get_raw_config()
 
     parser = argparse.ArgumentParser(
         prog="hindsight-worker",
@@ -220,7 +220,12 @@ def main():
 
     args = parser.parse_args()
 
-    # Configure logging
+    # Apply CLI overrides to the cached startup config before logging or engine creation.
+    # Previously the banner used args while the poller and execute_task read env defaults.
+    # The engine obtains its retry budget through get_config(), so changing only the
+    # poller's constructor would still leave task retries on the old budget.
+    config.worker_max_retries = args.max_retries
+    config.log_level = args.log_level
     config.configure_logging()
 
     # Initialize OpenTelemetry tracing if enabled. The worker runs consolidation,
