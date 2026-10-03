@@ -6,9 +6,9 @@ import pytest
 
 from hindsight_api.config import RECALL_BOOST_LEVELS, _parse_strategy_boosts
 from hindsight_api.engine.search.recall_boost import (
-    apply_post_rerank_boost,
     BOOST_LEVELS,
     additive_strategy_boost,
+    apply_post_rerank_boost,
     boosted_rrf_score,
     stage2_passthrough,
     trim_merged_candidates,
@@ -186,6 +186,48 @@ def test_additive_sum_has_no_combined_cap():
 
 def test_additive_ignores_unmatched_arm():
     assert additive_strategy_boost({"semantic_rank": 1}, {"graph": "high"}) == 0.0
+
+
+# --- the temporal arm is exempt from the rank decay (#4939) --------------------
+#
+# The temporal arm's rank is distance from the middle of the query's date window
+# (``temporal_score``, since #4494). Every entry point touches the window, so that rank carries
+# no relevance signal, and decaying the bump by it hands almost all of it to whichever memories
+# sit nearest the midpoint.
+
+
+@pytest.mark.parametrize("level", ["low", "medium", "high"])
+@pytest.mark.parametrize("rank", [1, 9, 200])
+def test_temporal_bump_is_the_full_ceiling_at_every_rank(level, rank):
+    assert additive_strategy_boost({"temporal_rank": rank}, {"temporal": level}) == pytest.approx(
+        BOOST_LEVELS[level].additive
+    )
+
+
+def test_the_temporal_exemption_only_applies_when_the_arm_surfaced_the_candidate():
+    assert additive_strategy_boost({"semantic_rank": 1}, {"temporal": "high"}) == 0.0
+
+
+def test_exempting_temporal_leaves_the_other_arms_decaying():
+    """The decay exists for #4008 (a flat ``graph:high`` reordered nearly the whole result set)."""
+    ranks = {"graph_rank": 200, "temporal_rank": 200}
+    total = additive_strategy_boost(ranks, {"graph": "high", "temporal": "high"})
+    assert total == pytest.approx(_bump("high", 200) + BOOST_LEVELS["high"].additive)
+    assert additive_strategy_boost({"graph_rank": 200}, {"graph": "high"}) == pytest.approx(_bump("high", 200))
+
+
+def test_a_temporal_candidate_keeps_its_cross_encoder_order_whatever_its_date_proximity_rank():
+    """The cross-encoder's best in-window match must not lose to a weaker one that happens to sit
+    nearer the window midpoint. Both are in the temporal arm, so both earn the same bump and the
+    cross-encoder's order survives."""
+    best_match_far_from_midpoint = _scored(0.55, {"temporal_rank": 40}, suffix="best")
+    weaker_match_at_midpoint = _scored(0.40, {"temporal_rank": 1}, suffix="weaker")
+    rows = [weaker_match_at_midpoint, best_match_far_from_midpoint]
+
+    apply_post_rerank_boost(rows, {"temporal": "medium"}, passthrough=stage2_passthrough("cross_encoder", "tei"))
+
+    order = [row.candidate.retrieval.id for row in sorted(rows, key=lambda row: row.weight, reverse=True)]
+    assert order == ["best", "weaker"]
 
 
 def test_deep_rank_bump_still_beats_a_tiny_absolute_score():
