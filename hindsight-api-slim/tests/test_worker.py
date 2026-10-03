@@ -14,6 +14,7 @@ import asyncio
 import json
 import os
 import uuid
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -3312,6 +3313,146 @@ async def test_pending_breakdown_explains_unclaimable_rows(pool, backend, clean_
     assert buckets["retain"]["assigned"] >= 1
     assert buckets["retain"]["claimable"] >= 1
     assert buckets["consolidation"]["claimable"] >= 1
+
+
+def _parse_pending_breakdown(line: str) -> dict[str, dict[str, int]]:
+    """Parse one [PENDING_BREAKDOWN] log line into {op_type: {field: count}}."""
+    buckets: dict[str, dict[str, int]] = {}
+    for section in line.removeprefix("[PENDING_BREAKDOWN]").split("|"):
+        op_type, _, fields = section.strip().partition(":")
+        buckets[op_type.strip()] = {k: int(v) for k, _, v in (t.partition("=") for t in fields.split())}
+    return buckets
+
+
+@pytest.mark.asyncio
+async def test_pending_breakdown_claimable_matches_claim_query(pool, backend, clean_operations, caplog):
+    """[PENDING_BREAKDOWN]'s claimable must equal what the claim query actually takes (#4527).
+
+    The line used to compute claimable as total minus buckets it restated by hand,
+    so rows held back by per-document or per-bank serialization showed up as
+    claimable, a pending row carrying a stale worker_id was subtracted although
+    nothing filters on it, and a row failing two filters was subtracted twice.
+    Comparing against a real claim over the same rows (this file's private schema
+    holds nothing else) keeps the two from drifting apart again.
+    """
+    import logging
+
+    from hindsight_api.worker.poller import WorkerPoller
+
+    bank_a = f"test-worker-{uuid.uuid4().hex[:8]}"
+    bank_b = f"test-worker-{uuid.uuid4().hex[:8]}"
+    for bank in (bank_a, bank_b):
+        await _ensure_bank(pool, bank)
+    base = datetime.now(UTC) - timedelta(minutes=10)
+    seq = iter(range(100))
+
+    async def insert(
+        bank_id: str,
+        op_type: str,
+        *,
+        status: str = "pending",
+        key: str | None = None,
+        payload: bool = True,
+        retry_in_future: bool = False,
+        worker_id: str | None = None,
+        created_at: datetime | None = None,
+    ) -> None:
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, task_payload, serialization_key,
+                 next_retry_at, worker_id, created_at, claimed_at)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6,
+                    CASE WHEN $7 THEN now() + interval '1 hour' END, $8, $9,
+                    CASE WHEN $4 = 'processing' THEN now() END)
+            """,
+            uuid.uuid4(),
+            bank_id,
+            op_type,
+            status,
+            json.dumps({"type": op_type, "bank_id": bank_id}) if payload else None,
+            key,
+            retry_in_future,
+            worker_id,
+            created_at or base + timedelta(seconds=next(seq)),
+        )
+
+    # retain, bank A: three appends to doc-1 (only the oldest may run), one queued
+    # behind a running append to doc-2, one keyless, one keyless with a stale
+    # worker_id (still claimable), and one retry-blocked.
+    # Expected retain: total 11, claimable 5 (doc-1 oldest, keyless x2, doc-3 newer,
+    # one doc-4), retry_blocked 2, serialization_blocked 4 (doc-1 x2, doc-2, doc-4).
+    for _ in range(3):
+        await insert(bank_a, "retain", key="doc-1")
+    await insert(bank_a, "retain", key="doc-2", status="processing", worker_id="other")
+    await insert(bank_a, "retain", key="doc-2")
+    await insert(bank_a, "retain")
+    await insert(bank_a, "retain", worker_id="ghost-worker")
+    await insert(bank_a, "retain", retry_in_future=True)
+    # doc-3: an older append waiting on its retry does not hold the line, so the
+    # newer one behind it is claimable (the claim's peer check skips it too).
+    await insert(bank_a, "retain", key="doc-3", retry_in_future=True)
+    await insert(bank_a, "retain", key="doc-3")
+    # doc-4: two appends with the same created_at. The predicate breaks the tie on
+    # operation_id, so exactly one runs; a restated ORDER BY that drops the
+    # tie-break would let both through or neither.
+    tie = base + timedelta(seconds=next(seq))
+    await insert(bank_a, "retain", key="doc-4", created_at=tie)
+    await insert(bank_a, "retain", key="doc-4", created_at=tie)
+    # A mental-model refresh whose key collides with doc-1's. Peers must share
+    # operation_type (#4389), so the pending doc-1 appends ahead of it don't hold
+    # it back: dropping operation_type from the partition would.
+    await insert(bank_a, "refresh_mental_model", key="doc-1")
+    # consolidation: bank A has a run in flight, so both pending ones wait; bank B
+    # has two pending and nothing running, so exactly one (the oldest) may run.
+    await insert(bank_a, "consolidation", status="processing", worker_id="other")
+    await insert(bank_a, "consolidation")
+    await insert(bank_a, "consolidation")
+    await insert(bank_b, "consolidation")
+    await insert(bank_b, "consolidation")
+    # batch_retain parent with no payload *and* a future retry: counted once.
+    await insert(bank_a, "batch_retain", payload=False, retry_in_future=True)
+
+    poller = WorkerPoller(
+        backend=backend,
+        worker_id="test-worker-breakdown-exact",
+        executor=lambda _t: asyncio.sleep(0),
+        poll_interval_ms=50,
+        max_slots=5,
+    )
+    with caplog.at_level(logging.INFO, logger="hindsight_api.worker.poller"):
+        await poller._log_progress_if_due()
+    lines = [r.message for r in caplog.records if r.message.startswith("[PENDING_BREAKDOWN]")]
+    assert len(lines) == 1, lines
+    buckets = _parse_pending_breakdown(lines[0])
+
+    assert buckets["retain"] == {
+        "total": 11,
+        "claimable": 5,
+        "payload_null": 0,
+        "retry_blocked": 2,
+        "serialization_blocked": 4,
+        "assigned": 1,
+    }
+    assert buckets["refresh_mental_model"]["claimable"] == 1
+    assert buckets["consolidation"]["claimable"] == 1
+    assert buckets["consolidation"]["serialization_blocked"] == 3
+    assert buckets["batch_retain"]["payload_null"] == 1
+    assert buckets["batch_retain"]["retry_blocked"] == 0
+    assert buckets["batch_retain"]["claimable"] == 0
+
+    # Slots well above the row count, so claimable rows can only be missed by a
+    # predicate, never by a limit.
+    async with backend.acquire() as conn:
+        async with conn.transaction():
+            claimed = await backend.ops.claim_tasks(
+                conn, "async_operations", "test-worker-breakdown-exact", {"consolidation": 50}, 50
+            )
+    claimed_by_type = Counter(row["operation_type"] for row in claimed.rows)
+    for op_type, fields in buckets.items():
+        assert claimed_by_type[op_type] == fields["claimable"], (
+            f"{op_type}: breakdown says {fields['claimable']} claimable, claim query took {claimed_by_type[op_type]}"
+        )
 
 
 class TestSummariseChildErrorMessages:
