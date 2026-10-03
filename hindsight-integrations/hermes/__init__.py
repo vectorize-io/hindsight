@@ -22,7 +22,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from agent.memory_provider import MemoryProvider, RecallStatus, spawn_context_thread
 from agent.secret_scope import UnscopedSecretError, get_secret
@@ -31,6 +31,11 @@ from hermes_constants import get_hermes_home
 from hermes_time import now as _hermes_now
 from tools.registry import tool_error
 from utils import read_json_or_empty
+
+from .capture import CapturedTurn, capture_turn
+
+if TYPE_CHECKING:
+    from agent.memory_sync_snapshot import CompletedTurnSnapshot
 
 from .embedded import (
     _RETRIABLE_CONNECTION_MARKERS,
@@ -382,6 +387,7 @@ class HindsightMemoryProvider(MemoryProvider):
 
     # Each server-side op status poll is a round trip — coarser than the 0.05s queue poll.
     _RETAIN_OP_POLL_INTERVAL_S = 0.5
+    sync_turn_snapshot_version = 1
 
     def backup_paths(self) -> List[str]:
         """Legacy shared config + embedded-mode profile env files live under ~/.hindsight."""
@@ -421,7 +427,7 @@ class HindsightMemoryProvider(MemoryProvider):
         self._retain_source = _DEFAULT_RETAIN_SOURCE
         self._retain_user_prefix, self._retain_assistant_prefix = "User", "Assistant"
         self._turn_counter = self._turn_index = 0
-        self._session_turns: list[str] = []  # ALL turns for the session
+        self._session_turns: list[CapturedTurn] = []  # ALL turns for the session
         self._last_retained_turn_count = 0  # append-mode delta watermark
         # Server-side async retain ops still in flight: aretain_batch returns on
         # *acceptance*, not durability, so the prefetch gates on these via
@@ -1339,16 +1345,6 @@ class HindsightMemoryProvider(MemoryProvider):
 
     # -- retain ------------------------------------------------------------------
 
-    def _build_turn_messages(self, user_content: str, assistant_content: str) -> List[Dict[str, str]]:
-        now = _event_timestamp()  # one turn -> both messages share the event timestamp
-        return [
-            {"role": role, "content": f"{prefix}: {content}", "timestamp": now}
-            for role, prefix, content in (
-                ("user", self._retain_user_prefix, user_content),
-                ("assistant", self._retain_assistant_prefix, assistant_content),
-            )
-        ]
-
     def _build_metadata(self, *, message_count: int, turn_index: int) -> Dict[str, str]:
         metadata: Dict[str, str] = {
             # UTC write/audit time (event time lives on the item timestamp).
@@ -1387,12 +1383,22 @@ class HindsightMemoryProvider(MemoryProvider):
 
     def _retain_batch(
         self, item: dict, *, bank_id: str, document_id: str | None = None, retain_async: bool | None = None
-    ):
-        """Dispatch one item via aretain_batch (bank_id/document_id/retain_async are
+    ) -> Any:
+        return self._retain_items([item], bank_id=bank_id, document_id=document_id, retain_async=retain_async)
+
+    def _retain_items(
+        self,
+        items: List[Dict[str, Any]],
+        *,
+        bank_id: str,
+        document_id: str | None = None,
+        retain_async: bool | None = None,
+    ) -> Any:
+        """Dispatch items via aretain_batch (bank_id/document_id/retain_async are
         call-level args, never item keys)."""
         kwargs: Dict[str, Any] = {
             "bank_id": bank_id,
-            "items": [item],
+            "items": items,
             "document_id": document_id,
             "retain_async": retain_async,
         }
@@ -1400,20 +1406,41 @@ class HindsightMemoryProvider(MemoryProvider):
         return self._run_hindsight_operation(lambda client: client.aretain_batch(**kwargs))
 
     def _make_turn_retain_job(
-        self, turns: list[str], *, document_id: str, update_mode: str | None, label: str, track_ops: bool = True
+        self,
+        turns: list[CapturedTurn],
+        *,
+        document_id: str,
+        update_mode: str | None,
+        label: str,
+        track_ops: bool = True,
     ) -> Callable[[], None]:
         """Writer job shipping *turns* as one document. Inputs are snapshotted NOW: the
         writer runs after later sync_turn() calls mutate _session_turns/_turn_index/_session_id."""
-        content = "[" + ",".join(turns) + "]"
         metadata = self._build_metadata(message_count=len(turns) * 2, turn_index=self._turn_index)
         lineage = (("session", self._session_id), ("parent", self._parent_session_id))
         tags = [f"{kind}:{sid}" for kind, sid in lineage if sid] or None
         bank_id, retain_async, retain_context = self._bank_id, self._retain_async, self._retain_context
 
-        def _job() -> None:
-            item = self._build_retain_kwargs(
-                content, context=retain_context, metadata=metadata, tags=tags, update_mode=update_mode
+        # The API timestamp controls relative-date extraction. One item per
+        # message keeps buffered turns on their own clocks, while document_id
+        # groups them into the session. Build items before the writer handoff.
+        items = [
+            self._build_retain_kwargs(
+                json.dumps(
+                    [{"role": message.role, "content": message.content, "timestamp": message.timestamp}],
+                    ensure_ascii=False,
+                ),
+                context=retain_context,
+                metadata=metadata,
+                tags=tags,
+                occurred_at=message.timestamp,
+                update_mode=update_mode,
             )
+            for turn in turns
+            for message in turn.messages
+        ]
+
+        def _job() -> None:
             logger.debug(
                 "Hindsight %s: bank=%s, doc=%s, mode=%s, async=%s, content_len=%d, num_turns=%d",
                 label,
@@ -1421,10 +1448,10 @@ class HindsightMemoryProvider(MemoryProvider):
                 document_id,
                 update_mode,
                 retain_async,
-                len(content),
+                sum(len(item["content"]) for item in items),
                 len(turns),
             )
-            resp = self._retain_batch(item, bank_id=bank_id, document_id=document_id, retain_async=retain_async)
+            resp = self._retain_items(items, bank_id=bank_id, document_id=document_id, retain_async=retain_async)
             # Async retains are only *accepted* here; track the op id(s) so the
             # next-turn prefetch can wait for true server-side completion.
             if retain_async and track_ops:
@@ -1433,7 +1460,14 @@ class HindsightMemoryProvider(MemoryProvider):
 
         return _job
 
-    def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "") -> None:
+    def sync_turn(
+        self,
+        user_content: str,
+        assistant_content: str,
+        *,
+        session_id: str = "",
+        messages: CompletedTurnSnapshot | None = None,
+    ) -> None:
         """Enqueue a retain for the current turn (non-blocking; writer thread). Dropped
         once shutdown() fired so post-exit retains never reach aiohttp during teardown."""
         why = (
@@ -1450,7 +1484,14 @@ class HindsightMemoryProvider(MemoryProvider):
             self._session_id = str(session_id).strip()
 
         self._session_turns.append(
-            json.dumps(self._build_turn_messages(user_content, assistant_content), ensure_ascii=False)
+            capture_turn(
+                user_content,
+                assistant_content,
+                snapshot=messages,
+                fallback_timestamp=_event_timestamp(),
+                user_prefix=self._retain_user_prefix,
+                assistant_prefix=self._retain_assistant_prefix,
+            )
         )
         self._turn_counter = self._turn_index = self._turn_counter + 1
         if remainder := self._turn_counter % self._retain_every_n_turns:
@@ -1473,7 +1514,7 @@ class HindsightMemoryProvider(MemoryProvider):
             "sync_turn: retaining %d/%d turns, payload %d chars",
             len(turns_to_retain),
             len(self._session_turns),
-            sum(len(t) for t in turns_to_retain),
+            sum(turn.content_size for turn in turns_to_retain),
         )
 
         job = self._make_turn_retain_job(

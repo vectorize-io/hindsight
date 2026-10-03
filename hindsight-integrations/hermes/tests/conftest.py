@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import types
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -143,7 +144,10 @@ def hermes_env(tmp_path, monkeypatch):
     SECRETS.clear()
 
 
-_install_hermes_stubs(Path.home())
+# Tests that do not request hermes_env must not write daemon logs into the
+# developer's real home either. Keep the import-time stub isolated too.
+_import_home = tempfile.TemporaryDirectory(prefix="hindsight-hermes-test-")
+_install_hermes_stubs(Path(_import_home.name))
 
 _spec = importlib.util.spec_from_file_location(
     "hindsight_hermes",

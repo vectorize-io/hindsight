@@ -253,13 +253,27 @@ Config file: `~/.hermes/hindsight/config.json`
 |-----|---------|-------------|
 | `auto_retain` | `true` | Automatically retain conversation turns |
 | `retain_async` | `true` | Process retain asynchronously on the Hindsight server |
-| `retain_every_n_turns` | `1` | Retain every N turns (1 = every turn) |
+| `retain_every_n_turns` | `1` | Retain every N turns (1 = every turn); buffering does not change source timestamps |
 | `retain_context` | `conversation between Hermes Agent and the User` | Context label for retained memories |
 | `retain_tags` | — | Default tags applied to retained memories; merged with per-call tool tags |
 | `retain_source` | — | Opt-in `metadata.source` attached to retained memories (identifies the storing client, e.g. `hermes`). Empty by default — no attribution tag ships unless you set it. |
 | `retain_indicator` | `true` | Show a `👁️ Hindsight — saving to memory…` status line when a turn is saved. Turn off for customer-facing agents. |
 | `retain_user_prefix` | `User` | Label used before user turns in auto-retained transcripts |
 | `retain_assistant_prefix` | `Assistant` | Label used before assistant turns in auto-retained transcripts |
+
+Automatic retention opts into Hermes' version-1 `CompletedTurnSnapshot` contract
+(NousResearch/hermes-agent#113400 or equivalent). The snapshot supplies the original
+user and final-assistant timestamps; tool messages and tool arguments are not captured
+by this feature. Epoch seconds and timezone-aware ISO dates are normalized to UTC.
+Missing, malformed, non-finite, or timezone-less dates use the provider's clock when
+the turn is captured; a timezone is never inferred for an ambiguous source date.
+
+Each message is sent as its own retain item, carrying its event time both in the
+content and in the API timestamp. Items share the session document, tags, and scopes.
+Buffering batches the submission without assigning a single date to all messages;
+the writer does not recompute dates. Retention audit metadata stays separate.
+This increases the number of extraction units compared with one item per buffered
+conversation, so evaluate cost and dialogue retrieval quality before a large replay.
 
 ### Integration
 
