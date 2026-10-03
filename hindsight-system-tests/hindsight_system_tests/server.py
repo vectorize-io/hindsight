@@ -70,6 +70,9 @@ def start_stub_server(stubs: Stubs) -> StubServer:
         port=port,
         log_level="warning",
         access_log=False,
+        # Outlive aiohttp's default 15s idle pool timeout so a test's next
+        # provider POST does not race the stub closing a reused connection.
+        timeout_keep_alive=30,
     )
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True, name="provider-stub")
