@@ -110,6 +110,33 @@ describe("maxParallelRetains", () => {
   });
 });
 
+describe("injectQueryMaxChars (#5089)", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("defaults to 2000 and accepts a positive integer limit", () => {
+    expect(resolveConfig({}).injectQueryMaxChars).toBe(2000);
+    expect(resolveConfig({ injectQueryMaxChars: 300 }).injectQueryMaxChars).toBe(300);
+  });
+
+  it.each([0, -1, 1.5, NaN, Infinity])("ignores an invalid limit %s", (limit) => {
+    expect(resolveConfig({ injectQueryMaxChars: limit }).injectQueryMaxChars).toBe(2000);
+  });
+
+  it("applies file, harness and bank overrides over the environment fallback", () => {
+    vi.stubEnv("HINDSIGHT_INJECT_QUERY_MAX_CHARS", "900");
+    expect(loadConfig({ path: join(root, "missing.json") }).injectQueryMaxChars).toBe(900);
+    writeJson(globalCfg, {
+      injectQueryMaxChars: 600,
+      harnesses: { dsh: { injectQueryMaxChars: 300 } },
+      banks: { small: { injectQueryMaxChars: 100 } },
+    });
+    expect(loadConfig({ path: globalCfg }).injectQueryMaxChars).toBe(600);
+    const cfg = loadConfig({ path: globalCfg, harness: "dsh" });
+    expect(cfg.injectQueryMaxChars).toBe(300);
+    expect(applyBankConfig(cfg, "small").cfg.injectQueryMaxChars).toBe(100);
+  });
+});
+
 describe("injectTimeoutMs (#4843)", () => {
   afterEach(() => {
     vi.unstubAllEnvs();

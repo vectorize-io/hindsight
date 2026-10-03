@@ -61,6 +61,36 @@ function makeClient(
 }
 
 describe("buildHookOutput", () => {
+  it.each([undefined, 300])(
+    "bounds recall queries with limit %s, including reflect fallback",
+    async (limit) => {
+      const prompt = "project context ".repeat(200);
+      for (const autoInject of ["recall", "reflect"] as const) {
+        const client = makeClient({
+          reflect: vi.fn(async () => {
+            throw new ReflectError("timed out", undefined, true);
+          }),
+          recallObservations: vi.fn(async () => ["Remembered context"]),
+        });
+        await buildHookOutput({
+          harness: "claude-code",
+          prompt,
+          cfg: resolveConfig({ autoInject, injectQueryMaxChars: limit }),
+          client,
+          cacheFile: join(root, `${autoInject}.json`),
+        });
+        expect(client.recallObservations).toHaveBeenCalledWith(prompt.slice(0, limit ?? 2000), {
+          timeoutMs: expect.any(Number),
+        });
+        if (autoInject === "reflect") {
+          expect(client.searchKnowledgePages).toHaveBeenCalledWith(prompt.slice(0, 500), {
+            timeoutMs: expect.any(Number),
+          });
+        }
+      }
+    }
+  );
+
   it("turn 1: injects the reflect answer wrapped in the system-injection preamble", async () => {
     const cfg = resolveConfig({});
     const client = makeClient();

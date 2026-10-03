@@ -139,13 +139,16 @@ async function injectRecall(
   prompt: string,
   client: HookClient,
   timeoutMs: number,
+  queryMaxChars: number,
   event: string,
   lead?: string
 ): Promise<string | null | undefined> {
   const t0 = Date.now();
   try {
     // What is asked for — types, token budget, everything — is the client's `recallOptions`.
-    const observations = await client.recallObservations(prompt.slice(0, 2000), { timeoutMs });
+    const observations = await client.recallObservations(prompt.slice(0, queryMaxChars), {
+      timeoutMs,
+    });
     diag(harness, event, { ms: Date.now() - t0, count: observations.length });
     return observations.length ? formatRecallFallback(observations, lead) : null;
   } catch (e) {
@@ -165,7 +168,8 @@ async function reflectFallback(
   harness: string,
   prompt: string,
   client: HookClient,
-  timeoutMs: number
+  timeoutMs: number,
+  queryMaxChars: number
 ): Promise<string | null | undefined> {
   // Page search and recall share ONE retrieval budget after reflect fails, rather than each
   // spending a full injectTimeoutMs and doubling the time added to the host's hook window.
@@ -175,7 +179,14 @@ async function reflectFallback(
     (await injectPages(harness, prompt, client, remaining(), "reflect_fallback_pages")) ??
     // Event name predates the `injectRecall` rename and is kept: it is a logged contract that
     // other tools read, so renaming it would silently break them.
-    (await injectRecall(harness, prompt, client, remaining(), "reflect_fallback_observations"))
+    (await injectRecall(
+      harness,
+      prompt,
+      client,
+      remaining(),
+      queryMaxChars,
+      "reflect_fallback_observations"
+    ))
   );
 }
 
@@ -251,6 +262,7 @@ export async function buildHookOutput(args: {
       prompt,
       client,
       cfg.injectTimeoutMs,
+      cfg.injectQueryMaxChars,
       "inject_recall",
       RECALL_INJECT_LEAD
     );
@@ -299,7 +311,13 @@ export async function buildHookOutput(args: {
         query: prompt.slice(0, 80),
       });
       if (e instanceof ReflectError && e.fallbackEligible) {
-        fallback = await reflectFallback(harness, prompt, client, cfg.injectTimeoutMs);
+        fallback = await reflectFallback(
+          harness,
+          prompt,
+          client,
+          cfg.injectTimeoutMs,
+          cfg.injectQueryMaxChars
+        );
         // The fallback body is cached exactly like a reflect answer: injected once, not retried.
         if (fallback) reflectAnswer = fallback;
       }

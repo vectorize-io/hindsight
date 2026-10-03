@@ -119,6 +119,9 @@ export interface RawConfig {
    *  the page-search -> recall fallback after a reflect timeout/5xx. On hook harnesses, the full
    *  reflect + fallback must fit the host's prompt-hook timeout (30s by default). */
   injectTimeoutMs?: number;
+  /** Maximum prompt characters sent to automatic recall, including reflect fallback (default 2000).
+   *  A shorter query can keep CPU reranking within the injection timeout. Positive integer only. */
+  injectQueryMaxChars?: number;
   /** Reflect budget for the `hindsight_reflect` tool: "low" | "mid" | "high" (default "high").
    *  Drop to "mid"/"low" on a large bank where high-budget synthesis exceeds the server's wall
    *  timeout. The automatic session-start reflect is NOT affected — it always uses "low" to fit
@@ -327,6 +330,7 @@ export interface Config {
   reflectTimeoutMs: number;
   reflectToolTimeoutMs: number;
   injectTimeoutMs: number;
+  injectQueryMaxChars: number;
   reflectBudget: "low" | "mid" | "high";
   autoInject: AutoInject;
   pageSearchLimit: number;
@@ -491,6 +495,7 @@ export const DEFAULT_REFLECT_TIMEOUT_MS = 20_000;
 export const DEFAULT_REFLECT_TOOL_TIMEOUT_MS = 330_000;
 /** Default retrieval budget for automatic injection — see RawConfig.injectTimeoutMs. */
 export const DEFAULT_INJECT_TIMEOUT_MS = 7_000;
+export const DEFAULT_INJECT_QUERY_MAX_CHARS = 2_000;
 
 const REFLECT_BUDGETS = ["low", "mid", "high"] as const;
 
@@ -634,6 +639,10 @@ export function resolveConfig(raw: RawConfig = {}): Config {
       raw.reflectToolTimeoutMs ||
       Math.max(raw.reflectTimeoutMs || 0, DEFAULT_REFLECT_TOOL_TIMEOUT_MS),
     injectTimeoutMs: raw.injectTimeoutMs || DEFAULT_INJECT_TIMEOUT_MS,
+    injectQueryMaxChars:
+      Number.isSafeInteger(raw.injectQueryMaxChars) && (raw.injectQueryMaxChars ?? 0) > 0
+        ? raw.injectQueryMaxChars!
+        : DEFAULT_INJECT_QUERY_MAX_CHARS,
     reflectBudget: resolveReflectBudget(raw),
     autoInject: resolveAutoInject(raw),
     pageSearchLimit: raw.pageSearchLimit || DEFAULT_PAGE_SEARCH_LIMIT,
@@ -776,6 +785,7 @@ const ENV_KEYS = {
   reflectTimeoutMs: "HINDSIGHT_REFLECT_TIMEOUT_MS",
   reflectToolTimeoutMs: "HINDSIGHT_REFLECT_TOOL_TIMEOUT_MS",
   injectTimeoutMs: "HINDSIGHT_INJECT_TIMEOUT_MS",
+  injectQueryMaxChars: "HINDSIGHT_INJECT_QUERY_MAX_CHARS",
   reflectBudget: "HINDSIGHT_REFLECT_BUDGET",
   autoInject: "HINDSIGHT_AUTO_INJECT",
   pageSearchLimit: "HINDSIGHT_PAGE_SEARCH_LIMIT",
@@ -824,6 +834,7 @@ const ENV_NUMBERS = new Set<keyof RawConfig>([
   "reflectTimeoutMs",
   "reflectToolTimeoutMs",
   "injectTimeoutMs",
+  "injectQueryMaxChars",
   "pageSearchLimit",
   "pageRefreshEveryTurns",
   "seedLimit",
