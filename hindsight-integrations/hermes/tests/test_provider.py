@@ -91,7 +91,10 @@ def test_tool_call_errors_are_reported_not_raised(provider):
 def test_prefetch_injects_recalled_memories(provider):
     instance, fake = provider({"recall_sync": True}, client=FakeClient(recall_texts=["fact one"]))
     block = instance.prefetch("what do you know?")
-    assert "- fact one" in block
+    # Recalled content ships as bounded JSON under an untrusted-reference header
+    # (injection hardening) — assert the payload carries the memory, not a bullet.
+    assert "untrusted reference data" in block
+    assert json.loads(block.split("\n\n", 1)[1])["content"] == ["fact one"]
     status = instance.recall_status()
     assert status.count == 1 and status.provider_label == "Hindsight"
     instance.shutdown()
