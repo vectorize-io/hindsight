@@ -78,11 +78,14 @@ print_info "Releasing $TOOL: $CURRENT → $VERSION"
 echo
 
 # Update version in package manifest
+# A nonempty backup suffix works with both GNU and BSD sed, unlike `-i ''`.
 if [ -f "$TOOL_DIR/package.json" ]; then
-    sed -i '' "s/\"version\": \"$CURRENT\"/\"version\": \"$VERSION\"/" "$TOOL_DIR/package.json"
+    sed -i.bak "s/\"version\": \"$CURRENT\"/\"version\": \"$VERSION\"/" "$TOOL_DIR/package.json"
+    rm "$TOOL_DIR/package.json.bak"
     print_success "Updated package.json"
 elif [ -f "$TOOL_DIR/pyproject.toml" ]; then
-    sed -i '' "s/version = \"$CURRENT\"/version = \"$VERSION\"/" "$TOOL_DIR/pyproject.toml"
+    sed -i.bak "s/version = \"$CURRENT\"/version = \"$VERSION\"/" "$TOOL_DIR/pyproject.toml"
+    rm "$TOOL_DIR/pyproject.toml.bak"
     print_success "Updated pyproject.toml"
 fi
 
