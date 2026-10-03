@@ -22,6 +22,7 @@ _resource_mod = importlib.import_module("resource") if importlib.util.find_spec(
 import threading
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Callable, NamedTuple
 
 from opentelemetry import metrics
@@ -40,6 +41,28 @@ def _get_tenant() -> str:
     from hindsight_api.engine.memory_engine import get_current_schema
 
     return get_current_schema()
+
+
+#: The memories backend serving the operation in progress, set by ``record_operation`` for the
+#: length of the operation so phase metrics recorded inside it carry the same label without
+#: threading a bank id down to every call site. Empty outside an operation.
+_current_memories_backend: ContextVar[str] = ContextVar("hindsight_metrics_memories_backend", default="")
+
+
+def memories_backend_for(bank_id: str) -> str:
+    """The ``memories_backend`` label for a bank: the name the memories extension gives the store
+    serving it, or "" -- the default -- for no label, which leaves existing series untouched.
+    Only a metric attribute, so it never raises: an unresolvable store also yields ""."""
+    try:
+        from hindsight_api.engine.memories import get_memories
+
+        return get_memories().backend_name_for(bank_id) or ""
+    except Exception:
+        return ""
+
+
+def _backend_attrs(backend: str) -> dict[str, str]:
+    return {"memories_backend": backend} if backend else {}
 
 
 def _is_client_cancellation(exc: BaseException) -> bool:
@@ -268,6 +291,7 @@ class MetricsCollectorBase:
         source: str = "api",
         budget: str | None = None,
         max_tokens: int | None = None,
+        memories_backend: str | None = None,
     ):
         """Record a single completed operation with an explicit success label."""
         raise NotImplementedError
@@ -381,6 +405,7 @@ class NoOpMetricsCollector(MetricsCollectorBase):
         source: str = "api",
         budget: str | None = None,
         max_tokens: int | None = None,
+        memories_backend: str | None = None,
     ):
         """No-op operation result recording."""
         pass
@@ -686,6 +711,11 @@ class MetricsCollector(MetricsCollectorBase):
         start_time = time.time()
         success = True
         cancelled = False
+        # Resolved once, and published for the length of the operation so the recall phases
+        # recorded inside it carry the same backend label. (Retain phases label their store
+        # themselves, in timed_retain.)
+        backend = memories_backend_for(bank_id)
+        backend_token = _current_memories_backend.set(backend)
         try:
             yield
         except Exception as exc:
@@ -701,6 +731,7 @@ class MetricsCollector(MetricsCollectorBase):
                 success = False
             raise
         finally:
+            _current_memories_backend.reset(backend_token)
             if not cancelled:
                 self.record_operation_result(
                     operation,
@@ -710,6 +741,7 @@ class MetricsCollector(MetricsCollectorBase):
                     source=source,
                     budget=budget,
                     max_tokens=max_tokens,
+                    memories_backend=backend,
                 )
 
     def record_operation_result(
@@ -721,6 +753,7 @@ class MetricsCollector(MetricsCollectorBase):
         source: str = "api",
         budget: str | None = None,
         max_tokens: int | None = None,
+        memories_backend: str | None = None,
     ):
         """Record a single completed operation (duration + count) with a success label.
 
@@ -733,6 +766,7 @@ class MetricsCollector(MetricsCollectorBase):
             "operation": operation,
             "source": source,
             **self._tenant_attrs(),
+            **_backend_attrs(memories_backend_for(bank_id) if memories_backend is None else memories_backend),
         }
         if self._include_bank_id:
             attributes["bank_id"] = bank_id
@@ -912,7 +946,12 @@ class MetricsCollector(MetricsCollectorBase):
         # absolute counts scale by 1/N. Default 1 records every call, exactly as before.
         if self._recall_phase_sample_every > 1 and random.random() * self._recall_phase_sample_every >= 1.0:
             return
-        attrs = {"phase": phase, **self._tenant_attrs(), "diagnostic": str(bool(diagnostic)).lower()}
+        attrs = {
+            "phase": phase,
+            **self._tenant_attrs(),
+            **_backend_attrs(_current_memories_backend.get()),
+            "diagnostic": str(bool(diagnostic)).lower(),
+        }
         # One instrument, not two: the histogram already carries `_count` for this attribute set,
         # so the parallel counter was recording the same measurement a second time — and OTel's
         # consume_measurement path, not the record call, is what costs.

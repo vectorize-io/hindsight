@@ -1073,6 +1073,18 @@ class MemoriesExtension(Extension, ABC):
         attribute."""
         return self.store_owned
 
+    def backend_name_for(self, bank_id: str) -> str:
+        """Which store serves this bank, as the ``memories_backend`` metric label. Empty by default.
+
+        Empty means no label at all, so a deployment that never overrides this keeps exactly the
+        series it has today: adding a label to an existing series starts a new one and orphans its
+        history. A router whose banks live in different backends overrides this to name the store
+        it routes a bank to -- typically only the non-default one, leaving the default store's
+        series unlabelled and continuous. Per-backend latency otherwise needs the per-tenant label,
+        which is too high-cardinality to leave on. Must be a short, bounded name.
+        """
+        return ""
+
     async def put_documents(self, *, bank_id: str, documents: list[dict], expect_watermark: int | None = None) -> None:
         """Store (or replace) several documents in one call.
 
