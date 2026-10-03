@@ -12,7 +12,8 @@ for arg in "$@"; do
 done
 
 # Load .env to pick up HINDSIGHT_API_PORT if set
-ROOT_DIR="$(git rev-parse --show-toplevel)"
+# Resolve this checkout, not whichever repository the caller happens to be in.
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 if [ -f "$ROOT_DIR/.env" ]; then
     set -a
     source "$ROOT_DIR/.env"

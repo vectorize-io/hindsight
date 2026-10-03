@@ -1,7 +1,8 @@
 #!/bin/bash
 set -e
 
-ROOT_DIR="$(git rev-parse --show-toplevel)"
+# Resolve this checkout, not whichever repository the caller happens to be in.
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR" || exit 1
 
 # Check if .env exists in workspace root
