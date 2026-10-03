@@ -354,6 +354,13 @@ cat ~/.hindsight/profiles/<profile>.log    # daemon runtime
 **Recall returns nothing** — memories need at least one retain cycle, and extraction is an LLM call.
 Store a fact, then ask about it on a later turn.
 
+**The daemon restarts once after you hand-edit the profile env** — `~/.hindsight/profiles/<profile>.env`
+is read **last-wins**, so when a key appears twice the *last* line is the value that counts. Adding a
+corrected value *below* a stale one is picked up; adding it *above* leaves the stale line winning, the
+file reads as out of sync against the config, and the plugin rewrites it and restarts the daemon — once,
+then it settles (the rewrite truncates the file and drops the duplicate). Edit the existing line rather
+than appending a second one.
+
 ## Development
 
 ### Releasing
