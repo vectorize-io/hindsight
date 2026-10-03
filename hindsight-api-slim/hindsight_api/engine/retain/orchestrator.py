@@ -1521,6 +1521,12 @@ async def retain_batch(
                     body_accum=body_accum,
                     retain_session=retain_session,
                     document_prefetch=document_prefetch,
+                    # Forward the attachment loader and vision model config. Without them, the
+                    # recursive sub-batches reset them to None, causing fact extraction to skip
+                    # resolving inline attachment placeholders into prompt blocks (leaving raw
+                    # placeholders in the prompt) and dropping multimodal vision routing.
+                    attachment_loader=attachment_loader,
+                    vlm_config=vlm_config,
                 )
                 # Returned rather than merged in place: the groups may run concurrently, and the
                 # usage totals are not safe to accumulate from several tasks at once. The driver
