@@ -29,8 +29,10 @@ function mockOpencodeSessionMessages(messages: Array<{ role: string; content: st
       async messages() {
         return {
           data: messages.map((m) => ({
-            info: { role: m.role },
-            parts: [{ type: "text", text: m.content }],
+            type: m.role,
+            ...(m.role === "user"
+              ? { text: m.content }
+              : { content: [{ type: "text", text: m.content }] }),
           })),
         };
       },
@@ -80,7 +82,7 @@ describeLive("live: OpenCode plugin against Hindsight", () => {
     expect(String(recallOut).toLowerCase()).toContain("haskell");
   }, 30_000);
 
-  it("session.idle → auto-retain captures the transcript", async () => {
+  it("session.execution.succeeded → auto-retain captures the transcript", async () => {
     const sessionId = "idle-test-session";
     const fakeMessages = [
       { role: "user", content: "I prefer dark mode and use VS Code." },
@@ -101,7 +103,7 @@ describeLive("live: OpenCode plugin against Hindsight", () => {
     );
 
     await plugin.event!({
-      event: { type: "session.idle", properties: { sessionID: sessionId } },
+      event: { type: "session.execution.succeeded", data: { sessionID: sessionId } },
     } as any);
 
     // Give the auto-retain RPC and the server-side extraction time to land.

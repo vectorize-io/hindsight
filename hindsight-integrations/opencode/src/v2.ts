@@ -34,23 +34,29 @@ interface RecallOutcome {
   ok: boolean;
 }
 
-/** Normalize OpenCode V2 session messages into `{ role, content }`. */
+/** Normalize OpenCode V2 session messages into `{ role, content }`.
+ *  V2 shapes: user `{ type: "user", text }`, assistant `{ type: "assistant", content: [{ type: "text", text }] }`.
+ *  Also tolerates the V1 `{ role, parts: [{ type: "text", text }] }` shape. */
 function normalizeMessages(raw: unknown): Message[] {
   const out: Message[] = [];
   if (!Array.isArray(raw)) return out;
   for (const m of raw as Array<Record<string, unknown>>) {
     const info = (m?.info ?? {}) as Record<string, unknown>;
-    const role = (info.role ?? m?.role) as string | undefined;
+    const role = (info.role ?? m?.role ?? m?.type) as string | undefined;
     if (role !== "user" && role !== "assistant") continue;
     let text = "";
-    const parts = (m?.parts ?? m?.content) as unknown;
-    if (Array.isArray(parts)) {
-      text = (parts as Array<Record<string, unknown>>)
-        .filter((p) => p && p.type === "text" && typeof p.text === "string")
-        .map((p) => p.text as string)
-        .join("\n");
-    } else if (typeof parts === "string") {
-      text = parts;
+    if (typeof m?.text === "string" && m.text) {
+      text = m.text;
+    } else {
+      const parts = (m?.parts ?? m?.content) as unknown;
+      if (Array.isArray(parts)) {
+        text = (parts as Array<Record<string, unknown>>)
+          .filter((p) => p && p.type === "text" && typeof p.text === "string")
+          .map((p) => p.text as string)
+          .join("\n");
+      } else if (typeof parts === "string") {
+        text = parts;
+      }
     }
     if (text) out.push({ role, content: text });
   }
@@ -336,13 +342,17 @@ export const HindsightV2Plugin = Plugin.define({
       }
     });
 
-    // Auto-retain on session.idle.
+    // Auto-retain on end-of-turn.
+    // OpenCode v1 emitted `session.idle`; v2 delivers the durable
+    // `session.execution.succeeded` event to plugins instead (`session.idle` is a
+    // client/status event plugins never receive). Accept both.
+    const RETAIN_EVENTS = new Set(["session.idle", "session.execution.succeeded"]);
     const controller = new AbortController();
     void (async () => {
       try {
         for await (const evt of ctx.event.subscribe({ signal: controller.signal })) {
           const e = evt as { type?: string; properties?: { sessionID?: string }; data?: { sessionID?: string } };
-          if (e?.type === "session.idle") {
+          if (e?.type && RETAIN_EVENTS.has(e.type)) {
             const sessionID = e.properties?.sessionID || e.data?.sessionID;
             if (sessionID) await handleSessionIdle(sessionID);
           }

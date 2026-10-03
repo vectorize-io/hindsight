@@ -16,6 +16,7 @@ vi.mock("@vectorize-io/hindsight-client", () => {
 });
 
 import plugin from "./index.v2.js";
+import { HindsightClient } from "@vectorize-io/hindsight-client";
 
 interface TestCtx {
   options: Record<string, unknown>;
@@ -82,5 +83,55 @@ describe("Hindsight V2 plugin entry", () => {
 
     expect(typeof ctx.hooks["context"]).toBe("function");
     expect(typeof ctx.hooks["compaction"]).toBe("function");
+  });
+
+  // Guards the real OpenCode v2 contract (see #5136): plugins receive
+  // `session.execution.succeeded` — NOT `session.idle` — and v2 session
+  // messages use `type` + top-level `text`/`content`, not `role`/`parts`.
+  it("auto-retains on session.execution.succeeded with v2 message shapes", async () => {
+    const messages = [
+      { type: "user", text: "I prefer dark mode and use VS Code." },
+      { type: "assistant", content: [{ type: "text", text: "Noted." }] },
+    ];
+    const ctx = makeCtx();
+    ctx.options = { retainEveryNTurns: 1 };
+    ctx.session.context = async () => messages;
+    ctx.event.subscribe = () =>
+      (async function* () {
+        yield {
+          type: "session.execution.succeeded",
+          data: { sessionID: "ses_contract_test" },
+        };
+      })();
+
+    await plugin.setup(ctx as never);
+    await new Promise((r) => setTimeout(r, 20)); // let the event loop drain
+
+    const instances = (HindsightClient as unknown as { mock: { instances: any[] } }).mock
+      .instances;
+    const client = instances.at(-1);
+    expect(client.retain).toHaveBeenCalled();
+    const content = String(client.retain.mock.calls.at(-1)?.[1]);
+    expect(content).toContain("dark mode");
+  });
+
+  it("still accepts the legacy session.idle event", async () => {
+    const ctx = makeCtx();
+    ctx.options = { retainEveryNTurns: 1 };
+    ctx.session.context = async () => [
+      { type: "user", text: "legacy path" },
+      { type: "assistant", content: [{ type: "text", text: "ok" }] },
+    ];
+    ctx.event.subscribe = () =>
+      (async function* () {
+        yield { type: "session.idle", properties: { sessionID: "ses_legacy" } };
+      })();
+
+    await plugin.setup(ctx as never);
+    await new Promise((r) => setTimeout(r, 20));
+
+    const instances = (HindsightClient as unknown as { mock: { instances: any[] } }).mock
+      .instances;
+    expect(instances.at(-1).retain).toHaveBeenCalled();
   });
 });
