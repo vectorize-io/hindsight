@@ -22,7 +22,7 @@ dependencies = [
     "hindsight-client",
     # This package creates the run's database and drops it afterwards; the
     # server's own venv is a subprocess away and cannot do the cleanup for us.
-    "pg0-embedded>=0.15.0",
+    "pg0-embedded>=0.15.2",
 ]
 
 [tool.uv.sources]

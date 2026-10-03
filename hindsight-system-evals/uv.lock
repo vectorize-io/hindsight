@@ -722,7 +722,7 @@ requires-dist = [
     { name = "google-genai", specifier = ">=1.0.0" },
     { name = "hindsight-client", editable = "../hindsight-clients/python" },
     { name = "httpx", specifier = ">=0.27.0" },
-    { name = "pg0-embedded", specifier = ">=0.15.0" },
+    { name = "pg0-embedded", specifier = ">=0.15.2" },
     { name = "pydantic", specifier = ">=2" },
     { name = "pytest", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.21.0" },
