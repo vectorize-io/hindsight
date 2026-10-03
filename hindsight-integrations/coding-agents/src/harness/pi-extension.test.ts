@@ -156,4 +156,59 @@ describe("pi extension adapter", () => {
     const result = await def.execute("call-1", { query: "x" });
     expect(result.content).toEqual([{ type: "text", text: "page A\npage B" }]);
   });
+
+  it("accumulates transcript turns across multiple agent_end events in the same session", async () => {
+    const onTranscript = vi.fn(async () => {});
+    const core = {
+      onPrompt: vi.fn(async () => {}),
+      getInjection: vi.fn(() => undefined),
+      onTranscript,
+    };
+    const hooks = createPiHooks(core as never, "pi");
+
+    // First run in session-1
+    await hooks.agentEnd(
+      {
+        messages: [
+          { role: "user", content: [{ type: "text", text: "Alpha statement" }] },
+          { role: "assistant", content: [{ type: "text", text: "Alpha ack" }] },
+        ],
+      },
+      "session-1"
+    );
+
+    expect(onTranscript).toHaveBeenNthCalledWith(
+      1,
+      "session-1",
+      [
+        { role: "user", content: "Alpha statement" },
+        { role: "assistant", content: "Alpha ack" },
+      ],
+      true
+    );
+
+    // Second run in the same session (Pi sends only the new run's messages)
+    await hooks.agentEnd(
+      {
+        messages: [
+          { role: "user", content: [{ type: "text", text: "Beta statement" }] },
+          { role: "assistant", content: [{ type: "text", text: "Beta ack" }] },
+        ],
+      },
+      "session-1"
+    );
+
+    // Must retain the cumulative transcript so the session document does not replace Alpha
+    expect(onTranscript).toHaveBeenNthCalledWith(
+      2,
+      "session-1",
+      [
+        { role: "user", content: "Alpha statement" },
+        { role: "assistant", content: "Alpha ack" },
+        { role: "user", content: "Beta statement" },
+        { role: "assistant", content: "Beta ack" },
+      ],
+      true
+    );
+  });
 });

@@ -19,6 +19,7 @@ import { diag } from "../core/diag";
 import type { ToolSpec } from "../core/knowledge-tools";
 import { RuntimeCore } from "../core/runtime";
 import { type PiMessage, readPiMessages } from "../core/transcript-pi";
+import type { TransportTurn } from "../core/chat";
 
 // ── Structural subset of the pi extension API ───────────────────────────────────────────────────
 // Declared locally so this package takes no dependency on the fast-moving pi / Prime Agent SDKs;
@@ -121,6 +122,10 @@ export function createPiHooks(
   sessionStart?: Promise<void>
 ) {
   let sessionStartAwaited = false;
+  // Pi's `agent_end` event supplies only the turns for the completed run, not the full session
+  // history. Retaining cumulative turns preserves previous outcomes under the same session ID (#4963).
+  const sessionTranscripts = new Map<string, TransportTurn[]>();
+
   return {
     async beforeAgentStart(
       event: Omit<BeforeAgentStartEvent, "type">,
@@ -152,7 +157,10 @@ export function createPiHooks(
     },
     async agentEnd(event: { messages: readonly PiMessage[] }, sessionId: string): Promise<void> {
       const turns = readPiMessages(event.messages);
-      if (turns.length) await core.onTranscript(sessionId, turns, true); // the run has ended
+      if (!turns.length) return;
+      const accumulated = [...(sessionTranscripts.get(sessionId) ?? []), ...turns];
+      sessionTranscripts.set(sessionId, accumulated);
+      await core.onTranscript(sessionId, accumulated, true); // the run has ended
     },
   };
 }
