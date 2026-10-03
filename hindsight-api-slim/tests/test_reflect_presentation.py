@@ -70,6 +70,35 @@ def test_aliases_the_model_writes_back_resolve_to_real_ids():
     }
 
 
+def test_resolve_text_expands_known_aliases_in_prose():
+    presenter = ToolResultPresenter()
+    presenter.present(_observations("uuid-a", "uuid-b"))
+    assert presenter.resolve_text("see o1 and o2") == "see uuid-a and uuid-b"
+    # present() already aliased source_fact_ids as f1/f2; unknown tokens stay put.
+    assert presenter.resolve_text("cite f1 not f10 or f99") == "cite src-uuid-a not f10 or f99"
+    assert presenter.resolve_text("") == ""
+    assert ToolResultPresenter().resolve_text("o1 alone") == "o1 alone"
+
+
+def test_resolve_expands_aliases_in_answer_and_document_not_query():
+    presenter = ToolResultPresenter()
+    presenter.present(_observations("uuid-a", "uuid-b"))
+    args = {
+        "answer": "Duplicates: o1 supersedes o2.",
+        "memory_ids": ["o1"],
+        "query": "o1 again",
+        "reason": "o2",
+        "document": {"sections": [{"heading": "Report", "blocks": [{"text": "Keep o1, drop o2."}]}]},
+    }
+    assert presenter.resolve(args) == {
+        "answer": "Duplicates: uuid-a supersedes uuid-b.",
+        "memory_ids": ["uuid-a"],
+        "query": "o1 again",
+        "reason": "o2",
+        "document": {"sections": [{"heading": "Report", "blocks": [{"text": "Keep uuid-a, drop uuid-b."}]}]},
+    }
+
+
 def test_an_item_already_shown_is_referenced_not_repeated():
     presenter = ToolResultPresenter()
     presenter.present(_observations("uuid-a"))

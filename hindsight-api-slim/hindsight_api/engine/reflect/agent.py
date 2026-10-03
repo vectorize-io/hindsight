@@ -1027,6 +1027,10 @@ async def _run_reflect_agent_inner(
                 f"over {len(chunks)} context chunk(s)."
             )
 
+        # Expand aliases the model cited in free text (f1, o2, …) to real ids —
+        # same contract as the done-tool path's presenter.resolve on answer/document.
+        answer = presenter.resolve_text(answer)
+
         # Enforce the visible-length budget before anything derives from the answer,
         # so structured output is built from the capped text — same order as the
         # done path.
