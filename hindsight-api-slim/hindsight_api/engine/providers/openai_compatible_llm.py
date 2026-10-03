@@ -1256,8 +1256,11 @@ class OpenAICompatibleLLM(LLMInterface):
                         first_msg = call_params["messages"][0]
                         if isinstance(first_msg, dict) and isinstance(first_msg.get("content"), str):
                             first_msg["content"] = schema_msg + "\n\n" + first_msg["content"]
-                # Providers that skip json_object grammar enforcement
-                skip_grammar = self.provider in ("lmstudio", "ollama", "volcano")
+                # Providers that skip json_object grammar enforcement. z.ai's json_object
+                # mode deletes the literal token "json" from generated text ("--json" ->
+                # "--", "latest.json" -> "latest."), corrupting every stored fact that
+                # names a flag or file; the schema in the prompt is enough for GLM.
+                skip_grammar = self.provider in ("lmstudio", "ollama", "volcano", "zai")
                 if self.provider == "llamacpp":
                     from hindsight_api.config import get_config
 

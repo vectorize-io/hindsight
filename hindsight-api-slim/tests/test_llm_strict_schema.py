@@ -226,6 +226,30 @@ async def test_openai_soft_uses_json_object():
     assert rf is not None and rf["type"] == "json_object"
 
 
+@pytest.mark.asyncio
+async def test_zai_soft_skips_json_object_and_keeps_schema_in_prompt():
+    """z.ai's json_object mode deletes the token "json" from output ("--json" -> "--"),
+    so the soft path must not request it; the prompt-embedded schema still applies."""
+    llm = OpenAICompatibleLLM(
+        provider="zai", api_key="test-key", base_url="https://example.test/v4", model="glm-5.3-flash"
+    )
+    create = AsyncMock(return_value=_openai_response())
+    llm._client.chat.completions.create = create
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        await llm.call(
+            messages=[
+                {"role": "system", "content": "Extract facts."},
+                {"role": "user", "content": "Run `fleet --json` and read latest.json."},
+            ],
+            response_format=_Resp,
+            strict_schema=False,
+            max_retries=0,
+        )
+    kwargs = create.call_args.kwargs
+    assert "response_format" not in kwargs
+    assert "You must respond with valid JSON matching this schema" in kwargs["messages"][0]["content"]
+
+
 # --------------------------------------------------------------------------- #
 # litellm: strict_schema -> response_format strict flag
 # --------------------------------------------------------------------------- #
