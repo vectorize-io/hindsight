@@ -95,6 +95,7 @@ export interface HindsightClient {
     query: string,
     options?: {
       types?: FactType[];
+      tags?: string[];
       maxTokens?: number;
       budget?: Budget;
       trace?: boolean;

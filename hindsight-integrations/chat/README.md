@@ -66,19 +66,20 @@ Returns a standard Chat SDK handler `(thread, message) => Promise<void>`.
 
 #### Options
 
-| Option                   | Type                        | Default     | Description                         |
-| ------------------------ | --------------------------- | ----------- | ----------------------------------- |
-| `client`                 | `HindsightClient`           | _required_  | Hindsight client instance           |
-| `bankId`                 | `string \| (msg) => string` | _required_  | Memory bank ID or resolver function |
-| `recall.enabled`         | `boolean`                   | `true`      | Auto-recall memories before handler |
-| `recall.budget`          | `'low' \| 'mid' \| 'high'`  | `'mid'`     | Processing budget for recall        |
-| `recall.maxTokens`       | `number`                    | API default | Max tokens for recall results       |
-| `recall.types`           | `FactType[]`                | all         | Filter to specific fact types       |
-| `recall.includeEntities` | `boolean`                   | `true`      | Include entity observations         |
-| `retain.enabled`         | `boolean`                   | `false`     | Auto-retain inbound messages        |
-| `retain.async`           | `boolean`                   | `true`      | Fire-and-forget retain              |
-| `retain.tags`            | `string[]`                  | –           | Tags for retained memories          |
-| `retain.metadata`        | `Record<string, string>`    | –           | Metadata for retained memories      |
+| Option                   | Type                        | Default     | Description                           |
+| ------------------------ | --------------------------- | ----------- | ------------------------------------- |
+| `client`                 | `HindsightClient`           | _required_  | Hindsight client instance             |
+| `bankId`                 | `string \| (msg) => string` | _required_  | Memory bank ID or resolver function   |
+| `recall.enabled`         | `boolean`                   | `true`      | Auto-recall memories before handler   |
+| `recall.budget`          | `'low' \| 'mid' \| 'high'`  | `'mid'`     | Processing budget for recall          |
+| `recall.maxTokens`       | `number`                    | API default | Max tokens for recall results         |
+| `recall.types`           | `FactType[]`                | all         | Filter to specific fact types         |
+| `recall.tags`            | `string[]`                  | –           | Tags used to filter recalled memories |
+| `recall.includeEntities` | `boolean`                   | `true`      | Include entity observations           |
+| `retain.enabled`         | `boolean`                   | `false`     | Auto-retain inbound messages          |
+| `retain.async`           | `boolean`                   | `true`      | Fire-and-forget retain                |
+| `retain.tags`            | `string[]`                  | –           | Tags for retained memories            |
+| `retain.metadata`        | `Record<string, string>`    | –           | Metadata for retained memories        |
 
 ### Context (`ctx`)
 

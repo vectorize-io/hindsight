@@ -86,6 +86,7 @@ export function withHindsightChat<TState = unknown>(
           budget: recallOpts.budget ?? "mid",
           maxTokens: recallOpts.maxTokens,
           types: recallOpts.types,
+          ...(recallOpts.tags !== undefined ? { tags: recallOpts.tags } : {}),
           includeEntities: recallOpts.includeEntities !== false,
         });
         memories = recallResponse.results ?? [];
