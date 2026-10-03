@@ -151,6 +151,13 @@ def _to_gemini_parts(content: Any, genai_types: Any) -> list[Any]:
     return parts
 
 
+# Google's documented placeholder for functionCall parts the API did not generate
+# (e.g. history handed over from a provider that has no thought signatures); Gemini 3
+# otherwise rejects them. A last resort per Google, so it is applied sparingly below.
+# https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking/thought-signatures
+_SKIP_THOUGHT_SIGNATURE_VALIDATOR = b"skip_thought_signature_validator"
+
+
 @dataclass(frozen=True)
 class _GeminiConversation:
     """A message list converted to Gemini's request shape."""
@@ -167,6 +174,13 @@ def _convert_messages_to_gemini(msg_list: list[dict[str, Any]]) -> _GeminiConver
     any drift would fingerprint differently and defeat the cache. Consecutive
     ``role="tool"`` messages are grouped into a single ``user`` Content with
     multiple FunctionResponse parts, matching Gemini's multi-turn requirement.
+
+    Assistant tool calls with no ``thought_signature`` came from another provider
+    (multi-LLM failover or round-robin handing a tool loop to Gemini). Gemini 3
+    validates the first functionCall of each step, so that part gets Google's
+    bypass value; later parallel calls and calls that already carry a signature
+    are left as they are. The rule looks only at one message, so converting a
+    slice of the history gives the same parts as converting the whole of it.
     """
     system_instruction: str | None = None
     gemini_contents: list[genai_types.Content] = []
@@ -212,7 +226,7 @@ def _convert_messages_to_gemini(msg_list: list[dict[str, Any]]) -> _GeminiConver
                 parts = []
                 if content:
                     parts.append(genai_types.Part(text=content))
-                for tc in tool_calls_in_msg:
+                for idx, tc in enumerate(tool_calls_in_msg):
                     tool_call_id = tc["id"]
                     fn = tc["function"]
                     fn_name = fn["name"]
@@ -228,6 +242,12 @@ def _convert_messages_to_gemini(msg_list: list[dict[str, Any]]) -> _GeminiConver
                     part_kwargs: dict[str, Any] = {"function_call": genai_types.FunctionCall(**fc_kwargs)}
                     if thought_signature:
                         part_kwargs["thought_signature"] = base64.b64decode(thought_signature)
+                    elif idx == 0:
+                        # Called by another provider, so Gemini never signed it. Gemini 3
+                        # 400s on an unsigned first functionCall in a step; later parallel
+                        # calls in the same step are not validated and stay unsigned,
+                        # exactly as Gemini returns its own.
+                        part_kwargs["thought_signature"] = _SKIP_THOUGHT_SIGNATURE_VALIDATOR
                     parts.append(genai_types.Part(**part_kwargs))
                 gemini_contents.append(genai_types.Content(role="model", parts=parts))
             else:
