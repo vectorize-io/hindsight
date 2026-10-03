@@ -49,11 +49,20 @@ fn server_response_section(err_str: &str) -> String {
 
 fn format_error_message(err: &anyhow::Error, api_url: &str) -> String {
     let err_str = err.to_string();
+    // Classify the failure heading, not server-provided response text: a body
+    // can mention timeout, DNS or resource numbers without changing the status.
+    let error_heading = err_str
+        .split_once("): ")
+        .filter(|(head, _)| {
+            head.rsplit_once('(')
+                .is_some_and(|(_, status)| status.starts_with(|c: char| c.is_ascii_digit()))
+        })
+        .map_or(err_str.as_str(), |(head, _)| head);
 
     // Connection refused
-    if err_str.contains("Connection refused")
-        || err_str.contains("tcp connect error")
-        || err_str.contains("error sending request")
+    if error_heading.contains("Connection refused")
+        || error_heading.contains("tcp connect error")
+        || error_heading.contains("error sending request")
     {
         return format!(
             "{} {}\n\n{}\n  {}\n\n{}\n  • {}\n  • {}\n  • {}\n\n{}\n  {}",
@@ -77,7 +86,7 @@ fn format_error_message(err: &anyhow::Error, api_url: &str) -> String {
     // Preserve validation details before looking for timeout keywords. A fast
     // HTTP 400 may legitimately explain that a requested mode would time out;
     // classifying that body as a transport timeout hides the server's fix.
-    if err_str.contains("400 Bad Request") || err_str.contains("(400)") {
+    if error_heading.contains("400 Bad Request") || error_heading.contains("(400)") {
         return format!(
             "{} {}\n\n{}\n  {}\n\n{}\n  {}",
             "✗".bright_red().bold(),
@@ -92,7 +101,7 @@ fn format_error_message(err: &anyhow::Error, api_url: &str) -> String {
     }
 
     // Timeout
-    if err_str.contains("timeout") || err_str.contains("Timeout") {
+    if error_heading.contains("timeout") || error_heading.contains("Timeout") {
         return format!(
             "{} {}\n\n{}\n  {}\n\n{}\n  • {}\n  • {}\n\n{}\n  • {}\n  • {}",
             "✗".bright_red().bold(),
@@ -109,7 +118,10 @@ fn format_error_message(err: &anyhow::Error, api_url: &str) -> String {
     }
 
     // DNS/Host resolution
-    if err_str.contains("dns") || err_str.contains("DNS") || err_str.contains("failed to lookup") {
+    if error_heading.contains("dns")
+        || error_heading.contains("DNS")
+        || error_heading.contains("failed to lookup")
+    {
         return format!(
             "{} {}\n\n{}\n  {}\n\n{}\n  • {}\n  • {}\n\n{}\n  {}",
             "✗".bright_red().bold(),
@@ -125,7 +137,7 @@ fn format_error_message(err: &anyhow::Error, api_url: &str) -> String {
     }
 
     // 404 Not Found - check for disabled features first
-    if err_str.contains("404") {
+    if error_heading.contains("404") {
         if err_str.contains("Bank configuration API is disabled") {
             return format!(
                 "{} {}\n\n{}\n  {}\n\n{}\n  {}\n\n{}\n  {}",
@@ -169,7 +181,7 @@ fn format_error_message(err: &anyhow::Error, api_url: &str) -> String {
     }
 
     // 401 Authentication failed
-    if err_str.contains("401") {
+    if error_heading.contains("401") {
         return format!(
             "{} {}\n\n{}\n  {}\n\n{}\n  • {}\n  • {}\n\n{}\n  {}{}",
             "✗".bright_red().bold(),
@@ -186,7 +198,7 @@ fn format_error_message(err: &anyhow::Error, api_url: &str) -> String {
     }
 
     // 403 Forbidden
-    if err_str.contains("403") {
+    if error_heading.contains("403") {
         return format!(
             "{} {}\n\n{}\n  {}\n\n{}\n  • {}\n  • {}\n\n{}\n  {}{}",
             "✗".bright_red().bold(),
@@ -203,7 +215,10 @@ fn format_error_message(err: &anyhow::Error, api_url: &str) -> String {
     }
 
     // 500 Server Error
-    if err_str.contains("500") || err_str.contains("502") || err_str.contains("503") {
+    if error_heading.contains("500")
+        || error_heading.contains("502")
+        || error_heading.contains("503")
+    {
         return format!(
             "{} {}\n\n{}\n  {}\n\n{}\n  • {}\n  • {}\n\n{}\n  • {}\n  • {}{}",
             "✗".bright_red().bold(),
@@ -221,7 +236,7 @@ fn format_error_message(err: &anyhow::Error, api_url: &str) -> String {
     }
 
     // Invalid URL
-    if err_str.contains("invalid URL") || err_str.contains("InvalidUri") {
+    if error_heading.contains("invalid URL") || error_heading.contains("InvalidUri") {
         return format!(
             "{} {}\n\n{}\n  {}\n\n{}\n  {}\n\n{}\n  {}",
             "✗".bright_red().bold(),
@@ -236,7 +251,7 @@ fn format_error_message(err: &anyhow::Error, api_url: &str) -> String {
     }
 
     // JSON parsing error - show actual response
-    if err_str.contains("Failed to parse") || err_str.contains("error decoding") {
+    if error_heading.contains("Failed to parse") || error_heading.contains("error decoding") {
         // Extract the actual response if available
         let response_hint = if err_str.contains("Response was:") {
             let parts: Vec<&str> = err_str.split("Response was:").collect();
@@ -404,5 +419,44 @@ mod tests {
         let message = format_error_message(&error, "http://localhost:8888");
 
         assert!(message.contains("<html>nginx 404</html>"));
+    }
+}
+
+#[cfg(test)]
+mod http_response_classification_tests {
+    use super::format_error_message;
+    #[test]
+    fn forbidden_body_timeout_does_not_mask_http_status() {
+        let error=anyhow::anyhow!("API request failed (403 Forbidden): {{\"detail\":\"Permission denied: timeout override is not allowed\"}}");
+        let message = format_error_message(&error, "http://localhost:8888");
+        assert!(message.contains("Permission denied (403)"), "{message}");
+        assert!(
+            message.contains("timeout override is not allowed"),
+            "{message}"
+        );
+        assert!(!message.contains("Request timed out"));
+    }
+    #[test]
+    fn server_error_body_resource_number_is_not_http_status() {
+        let error=anyhow::anyhow!("API request failed (500 Internal Server Error): {{\"detail\":\"Could not process document 404\"}}");
+        let message = format_error_message(&error, "http://localhost:8888");
+        assert!(message.contains("API server error"), "{message}");
+        assert!(
+            message.contains("Could not process document 404"),
+            "{message}"
+        );
+        assert!(!message.contains("Not found (404)"));
+    }
+    #[test]
+    fn transport_errors_without_http_bodies_keep_their_guidance() {
+        for (error, expected) in [
+            ("request timeout", "Request timed out"),
+            ("error sending request", "Cannot connect to Hindsight API"),
+            ("failed to lookup DNS name", "Cannot resolve API hostname"),
+            ("invalid URL", "Invalid API URL"),
+        ] {
+            let message = format_error_message(&anyhow::anyhow!(error), "http://localhost:8888");
+            assert!(message.contains(expected), "{message}");
+        }
     }
 }
