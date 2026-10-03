@@ -314,6 +314,10 @@ jobs:
             target: aarch64-unknown-linux-gnu
             artifact_name: hindsight
             asset_name: hindsight-linux-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: hindsight.exe
+            asset_name: hindsight-windows-amd64.exe
 
     steps:
     - uses: actions/checkout@v6
@@ -358,13 +362,16 @@ jobs:
         grep -Fq "THIRD-PARTY SOFTWARE LICENSES" artifacts/THIRD_PARTY_LICENSES.txt
 
     - name: Prepare artifact
+      shell: bash
       run: |
         mkdir -p artifacts
         cp hindsight-cli/target/${{ matrix.target }}/release/${{ matrix.artifact_name }} artifacts/${{ matrix.asset_name }}
         if [ "${{ matrix.asset_name }}" = "hindsight-linux-amd64" ]; then
           cp LICENSE artifacts/LICENSE
         fi
-        chmod +x artifacts/${{ matrix.asset_name }}
+        if [ "${{ runner.os }}" != "Windows" ]; then
+          chmod +x artifacts/${{ matrix.asset_name }}
+        fi
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v7
@@ -612,6 +619,12 @@ jobs:
         name: rust-cli-hindsight-darwin-arm64
         path: ./artifacts/rust-cli-darwin-arm64
 
+    - name: Download Rust CLI (Windows x64)
+      uses: actions/download-artifact@v8
+      with:
+        name: rust-cli-hindsight-windows-amd64.exe
+        path: ./artifacts/rust-cli-windows-amd64
+
     - name: Download Helm chart
       uses: actions/download-artifact@v8
       with:
@@ -639,7 +652,8 @@ jobs:
         cp artifacts/rust-cli-linux-arm64/hindsight-linux-arm64 release-assets/ || true
         cp artifacts/rust-cli-darwin-amd64/hindsight-darwin-amd64 release-assets/ || true
         cp artifacts/rust-cli-darwin-arm64/hindsight-darwin-arm64 release-assets/ || true
-        # Rust CLI license files (shared by all four platform binaries)
+        cp artifacts/rust-cli-windows-amd64/hindsight-windows-amd64.exe release-assets/
+        # Rust CLI license files (shared by all platform binaries)
         cp artifacts/rust-cli-linux/LICENSE release-assets/
         cp artifacts/rust-cli-linux/THIRD_PARTY_LICENSES.txt release-assets/
         test -s release-assets/LICENSE

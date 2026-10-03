@@ -15,6 +15,23 @@ The Hindsight CLI provides command-line access to memory operations and bank man
 curl -fsSL https://hindsight.vectorize.io/get-cli | bash
 ```
 
+### Windows (x64)
+
+Download `hindsight-windows-amd64.exe` from the [GitHub release](https://github.com/vectorize-io/hindsight/releases/latest), rename it to `hindsight.exe`, and place it in a directory on your user `PATH`. The release also includes `LICENSE` and `THIRD_PARTY_LICENSES.txt` for the CLI.
+
+You can download the binary into a directory of your choice from PowerShell:
+
+```powershell
+$release = Invoke-RestMethod 'https://api.github.com/repos/vectorize-io/hindsight/releases/latest'
+$asset = $release.assets | Where-Object name -eq 'hindsight-windows-amd64.exe'
+if (-not $asset) { throw 'This release does not include the Windows CLI asset.' }
+Invoke-WebRequest $asset.browser_download_url -OutFile '.\hindsight.exe'
+```
+
+Until that directory is on `PATH`, invoke the binary as `.\hindsight.exe`. It uses the same configuration and named-profile commands as the other platforms. Windows ARM64 binaries are not provided.
+
+The `fs` background daemon is Unix-only. On Windows, use the foreground mount instead; keep that process running for refreshes.
+
 ## Configuration
 
 Configure the API URL:

@@ -1,0 +1,68 @@
+name: Windows CLI
+
+on:
+  pull_request:
+    paths:
+      - "hindsight-cli/**"
+      - "hindsight-clients/rust/**"
+      - ".github/workflows/windows-cli.yml"
+      - ".github/workflows/release.yml"
+  push:
+    paths:
+      - "hindsight-cli/**"
+      - "hindsight-clients/rust/**"
+      - ".github/workflows/windows-cli.yml"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-cli-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows-cli:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            hindsight-cli/target
+          key: windows-cli-msvc-${{ hashFiles('hindsight-cli/Cargo.toml', 'hindsight-clients/rust/Cargo.toml') }}
+          restore-keys: windows-cli-msvc-
+
+      - name: Build release binary
+        working-directory: hindsight-cli
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      # These commands run without a server, credentials, or any memory writes.
+      - name: Check executable and memory command entry points
+        shell: pwsh
+        run: |
+          $cli = './hindsight-cli/target/x86_64-pc-windows-msvc/release/hindsight.exe'
+          & $cli --version
+          if ($LASTEXITCODE -ne 0) { throw 'Version command failed' }
+          foreach ($command in @('retain', 'recall', 'reflect')) {
+            & $cli memory $command --help
+            if ($LASTEXITCODE -ne 0) { throw "Memory command failed: $command" }
+          }
+
+      - name: Upload Windows executable
+        uses: actions/upload-artifact@v7
+        with:
+          name: hindsight-windows-amd64
+          path: hindsight-cli/target/x86_64-pc-windows-msvc/release/hindsight.exe
+          if-no-files-found: error
