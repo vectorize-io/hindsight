@@ -52,6 +52,27 @@ describe("gitLogText", () => {
     expect(gitLogText(dir, 10)).toBe("");
   });
 
+  it("orders commits oldest-first so adding commits is append-stable for delta retain", () => {
+    execFileSync("git", ["-C", dir, "commit", "--allow-empty", "-m", "feat: initial commit"]);
+    execFileSync("git", ["-C", dir, "commit", "--allow-empty", "-m", "fix: second commit"]);
+
+    const textBefore = gitLogText(dir, 10);
+
+    // Initial commit must precede second commit
+    const idxInitial = textBefore.indexOf("feat: initial commit");
+    const idxSecond = textBefore.indexOf("fix: second commit");
+    expect(idxInitial).toBeGreaterThanOrEqual(0);
+    expect(idxSecond).toBeGreaterThan(idxInitial);
+
+    // Add a third commit
+    execFileSync("git", ["-C", dir, "commit", "--allow-empty", "-m", "perf: third commit"]);
+    const textAfter = gitLogText(dir, 10);
+
+    // Append-stability: prior document text must remain an exact prefix
+    expect(textAfter.startsWith(textBefore)).toBe(true);
+    expect(textAfter).toContain("perf: third commit");
+  });
+
   it("gitLogNewestAuthorDate returns null for a repo with no commits", () => {
     expect(gitLogNewestAuthorDate(dir)).toBeNull();
   });

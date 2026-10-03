@@ -160,8 +160,8 @@ export async function ingestGit(
 
 /**
  * The last `limit` commits as an aggregated MESSAGES-ONLY block (no diffs) — one record per commit:
- * "<shortsha> <date> <author>\n<subject>\n\n<body>", newest first, separated by a divider line.
- * Thin wrapper over `git log`; empty repo (no commits) -> "".
+ * "<shortsha> <date> <author>\n<subject>\n\n<body>", oldest first (append-stable for delta retain),
+ * separated by a divider line. Thin wrapper over `git log`; empty repo (no commits) -> "".
  */
 export function gitLogText(repo: string, limit: number): string {
   let raw: string;
@@ -182,6 +182,7 @@ export function gitLogText(repo: string, limit: number): string {
     .split(RS)
     .map((rec) => rec.trim())
     .filter(Boolean)
+    .reverse() // chronological order: new commits append at the tail, preserving prior chunk boundaries (#5003)
     .map((rec) => {
       const [sha, date, author, subj, body] = rec.split(US);
       const header = `${sha} ${date} ${author}`;
