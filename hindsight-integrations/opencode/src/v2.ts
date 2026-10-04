@@ -78,7 +78,9 @@ export const HindsightV2Plugin = Plugin.define({
     const debug = config.debug;
     const log = (level: string, message: string, extra?: Record<string, unknown>) => {
       if (level === "debug" && !debug) return;
-      console.error(extra ? `[Hindsight] ${message} ${JSON.stringify(extra)}` : `[Hindsight] ${message}`);
+      console.error(
+        extra ? `[Hindsight] ${message} ${JSON.stringify(extra)}` : `[Hindsight] ${message}`
+      );
     };
 
     const client = new HindsightClient({
@@ -274,7 +276,10 @@ export const HindsightV2Plugin = Plugin.define({
       try {
         await retainSession(sessionID, messages);
         lastRetainedTurn.set(sessionID, userTurns);
-        log("info", `Auto-retained ${messages.length} messages`, { session: sessionID, bank: bankId });
+        log("info", `Auto-retained ${messages.length} messages`, {
+          session: sessionID,
+          bank: bankId,
+        });
       } catch (e) {
         log("error", "Auto-retain failed", { error: String(e) });
       }
@@ -295,7 +300,11 @@ export const HindsightV2Plugin = Plugin.define({
         const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
         let query = "project context and recent work";
         if (lastUserMsg && lastUserMsg.content.trim()) {
-          const composed = composeRecallQuery(lastUserMsg.content, messages, config.recallContextTurns);
+          const composed = composeRecallQuery(
+            lastUserMsg.content,
+            messages,
+            config.recallContextTurns
+          );
           query = truncateRecallQuery(composed, lastUserMsg.content, config.recallMaxQueryChars);
         }
         const { context, ok } = await recallForContext(query);
@@ -331,8 +340,16 @@ export const HindsightV2Plugin = Plugin.define({
         if (messages.length) {
           const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
           if (lastUserMsg) {
-            const query = composeRecallQuery(lastUserMsg.content, messages, config.recallContextTurns);
-            const truncated = truncateRecallQuery(query, lastUserMsg.content, config.recallMaxQueryChars);
+            const query = composeRecallQuery(
+              lastUserMsg.content,
+              messages,
+              config.recallContextTurns
+            );
+            const truncated = truncateRecallQuery(
+              query,
+              lastUserMsg.content,
+              config.recallMaxQueryChars
+            );
             const { context } = await recallForContext(truncated);
             if (context) event.system.push({ type: "text", text: context });
           }
@@ -351,7 +368,11 @@ export const HindsightV2Plugin = Plugin.define({
     void (async () => {
       try {
         for await (const evt of ctx.event.subscribe({ signal: controller.signal })) {
-          const e = evt as { type?: string; properties?: { sessionID?: string }; data?: { sessionID?: string } };
+          const e = evt as {
+            type?: string;
+            properties?: { sessionID?: string };
+            data?: { sessionID?: string };
+          };
           if (e?.type && RETAIN_EVENTS.has(e.type)) {
             const sessionID = e.properties?.sessionID || e.data?.sessionID;
             if (sessionID) await handleSessionIdle(sessionID);

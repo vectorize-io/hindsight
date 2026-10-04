@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 
 // Mock the V2 SDK so the entry can be loaded without OpenCode running.
 vi.mock("@opencode/plugin", () => ({
-  Plugin: { define: <T,>(definition: T): T => definition },
+  Plugin: { define: <T>(definition: T): T => definition },
 }));
 
 vi.mock("@vectorize-io/hindsight-client", () => {
@@ -107,8 +107,7 @@ describe("Hindsight V2 plugin entry", () => {
     await plugin.setup(ctx as never);
     await new Promise((r) => setTimeout(r, 20)); // let the event loop drain
 
-    const instances = (HindsightClient as unknown as { mock: { instances: any[] } }).mock
-      .instances;
+    const instances = (HindsightClient as unknown as { mock: { instances: any[] } }).mock.instances;
     const client = instances.at(-1);
     expect(client.retain).toHaveBeenCalled();
     const content = String(client.retain.mock.calls.at(-1)?.[1]);
@@ -130,8 +129,7 @@ describe("Hindsight V2 plugin entry", () => {
     await plugin.setup(ctx as never);
     await new Promise((r) => setTimeout(r, 20));
 
-    const instances = (HindsightClient as unknown as { mock: { instances: any[] } }).mock
-      .instances;
+    const instances = (HindsightClient as unknown as { mock: { instances: any[] } }).mock.instances;
     expect(instances.at(-1).retain).toHaveBeenCalled();
   });
 });

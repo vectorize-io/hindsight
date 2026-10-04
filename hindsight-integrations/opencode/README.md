@@ -187,7 +187,7 @@ Enable the v2 entrypoint in `opencode.json(c)`:
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["@vectorize-io/opencode-hindsight/v2"]
+  "plugins": ["@vectorize-io/opencode-hindsight/v2"],
 }
 ```
 
@@ -198,9 +198,9 @@ With options:
   "plugins": [
     {
       "package": "@vectorize-io/opencode-hindsight/v2",
-      "options": { "bankId": "my-bank", "hindsightApiUrl": "http://localhost:8888" }
-    }
-  ]
+      "options": { "bankId": "my-bank", "hindsightApiUrl": "http://localhost:8888" },
+    },
+  ],
 }
 ```
 
