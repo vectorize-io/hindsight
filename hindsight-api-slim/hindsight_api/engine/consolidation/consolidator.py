@@ -50,6 +50,7 @@ from ..llm_trace import (
 from ..llm_wrapper import sanitize_llm_output
 from ..memories import StoredMemory, get_memories
 from ..memory_engine import Budget, fq_table
+from ..multi_llm import MemberCachedPrefixes, get_or_create_cached_prefix
 from ..prompt_utils import truncate_context_for_prompt
 from ..retain import embedding_utils
 from .prompts import (
@@ -3239,16 +3240,13 @@ async def _consolidate_batch_with_llm(
     # supports it (gemini/vertexai with the flag on). response_schema is NOT
     # passed to the fingerprint: it varies per batch (max_creates) but is not
     # part of the cached prefix, so keying on it would needlessly bust the cache.
-    cached_prefix_name: str | None = None
-    provider_impl = getattr(llm_config, "_provider_impl", None)
-    if provider_impl is not None and provider_impl.supports_prompt_caching():
-        try:
-            cached_prefix_name = await provider_impl.get_or_create_cached_prefix(
-                system_instruction=system_prompt,
-            )
-        except Exception:
-            logger.exception("Consolidation cache prefix lookup failed; falling back to uncached call")
-            cached_prefix_name = None
+    # In a multi-LLM chain each member gets its own handle (#5123).
+    cached_prefix_name: str | MemberCachedPrefixes | None = None
+    try:
+        cached_prefix_name = await get_or_create_cached_prefix(llm_config, system_instruction=system_prompt)
+    except Exception:
+        logger.exception("Consolidation cache prefix lookup failed; falling back to uncached call")
+        cached_prefix_name = None
 
     # Use a constrained response model when observation limit is active
     response_model = _build_response_model(

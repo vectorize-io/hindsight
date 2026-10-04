@@ -24,6 +24,7 @@ from ..llm_wrapper import (
     sanitize_llm_output,
     sanitize_value,
 )
+from ..multi_llm import MemberCachedPrefixes, get_or_create_cached_prefix
 from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
 from ..structured_output import provider_json_schema, strict_json_schema
@@ -2039,19 +2040,19 @@ async def _extract_facts_from_chunk(
     # cost. ``get_or_create_cached_prefix`` returns None when caching is
     # disabled, unsupported, or the prefix is too small; the LLM call
     # transparently falls back to the uncached path in that case.
-    cached_prefix_name: str | None = None
-    provider_impl = getattr(llm_config, "_provider_impl", None)
-    if provider_impl is not None and provider_impl.supports_prompt_caching():
-        try:
-            cached_prefix_name = await provider_impl.get_or_create_cached_prefix(
-                system_instruction=prompt,
-                response_schema=response_schema,
-            )
-        except Exception:
-            # Caching is a soft optimisation — never let a cache-side
-            # error block a retain operation.
-            logger.exception("Cache prefix lookup failed; falling back to uncached call")
-            cached_prefix_name = None
+    # In a multi-LLM chain each member gets its own handle (#5123).
+    cached_prefix_name: str | MemberCachedPrefixes | None = None
+    try:
+        cached_prefix_name = await get_or_create_cached_prefix(
+            llm_config,
+            system_instruction=prompt,
+            response_schema=response_schema,
+        )
+    except Exception:
+        # Caching is a soft optimisation — never let a cache-side
+        # error block a retain operation.
+        logger.exception("Cache prefix lookup failed; falling back to uncached call")
+        cached_prefix_name = None
 
     # Retry logic for JSON validation errors
     # Use retain-specific overrides if set, otherwise fall back to global LLM config

@@ -26,6 +26,11 @@ batch lifecycle stays on that member and does not fail over. Every other direct
 ``_provider_impl`` access still resolves to the primary via attribute passthrough
 — failover/round-robin apply to the interactive ``call`` / ``call_with_tools``
 paths.
+
+Prompt-prefix caching is member-aware too (see ``get_or_create_cached_prefix``):
+each member that supports it creates its own cache handle, and ``_dispatch``
+hands every member only its own handle, so a failover or round-robin member is
+never sent another provider's cache name (#5123).
 """
 
 import logging
@@ -34,11 +39,11 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from ..config import LLM_STRATEGY_FAILOVER, LLM_STRATEGY_METADATA, LLMStrategyConfig
-from .llm_wrapper import LLMProvider, OutputTooLongError
+from .llm_wrapper import ConfiguredLLMProvider, LLMProvider, OutputTooLongError
 
 if TYPE_CHECKING:
     from .llm_interface import LLMInterface
-    from .llm_wrapper import ConfiguredLLMProvider, LLMToolCallResult
+    from .llm_wrapper import LLMToolCallResult
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +105,59 @@ class _WeightedRoundRobin:
                     best = i
             self._current[best] -= self._total
             return best
+
+
+class MemberCachedPrefixes:
+    """Prompt-cache handles for a multi-LLM chain, one slot per member.
+
+    A cache handle is provider-specific (a Gemini ``CachedContent`` name means
+    nothing to any other member, or even to another Gemini account), so a chain
+    cannot share one handle across its members. ``_dispatch`` resolves this to
+    the handle of the member actually serving the request, or to no handle when
+    that member has none.
+    """
+
+    __slots__ = ("_handles",)
+
+    def __init__(self, handles: list[str | None]) -> None:
+        self._handles = tuple(handles)
+
+    def for_member(self, index: int) -> str | None:
+        return self._handles[index] if index < len(self._handles) else None
+
+    def __repr__(self) -> str:
+        return f"MemberCachedPrefixes({list(self._handles)!r})"
+
+
+async def get_or_create_cached_prefix(
+    llm_config: Any,
+    *,
+    system_instruction: str,
+    response_schema: Any | None = None,
+) -> "str | MemberCachedPrefixes | None":
+    """Cache handle for ``llm_config``'s stable prompt prefix, or ``None``.
+
+    A single provider answers from its own ``_provider_impl``. A multi-LLM chain
+    (bare or inside ``ConfiguredLLMProvider``) answers per member, because
+    ``_provider_impl`` on a chain is only the primary's: asking the primary alone
+    would leave a caching-capable failover / round-robin member uncached, and
+    would send a caching primary's handle to members that cannot use it.
+    """
+    provider = llm_config
+    if isinstance(provider, ConfiguredLLMProvider):
+        provider = object.__getattribute__(provider, "_provider")
+    if isinstance(provider, MultiLLMProvider):
+        return await provider.get_or_create_cached_prefix(
+            system_instruction=system_instruction,
+            response_schema=response_schema,
+        )
+    provider_impl = getattr(llm_config, "_provider_impl", None)
+    if provider_impl is None or not provider_impl.supports_prompt_caching():
+        return None
+    return await provider_impl.get_or_create_cached_prefix(
+        system_instruction=system_instruction,
+        response_schema=response_schema,
+    )
 
 
 class MultiLLMProvider:
@@ -166,7 +224,7 @@ class MultiLLMProvider:
         for position, idx in enumerate(order):
             member = self._members[idx]
             try:
-                return await getattr(member, method_name)(**kwargs)
+                return await getattr(member, method_name)(**self._member_kwargs(idx, kwargs))
             except BaseException as e:  # noqa: BLE001 - re-raised unless it should fail over
                 if not _should_failover(e):
                     raise
@@ -184,6 +242,22 @@ class MultiLLMProvider:
         # All members failed; surface the last error (loop ran at least once).
         assert last_exc is not None
         raise last_exc
+
+    @staticmethod
+    def _member_kwargs(idx: int, kwargs: dict[str, Any]) -> dict[str, Any]:
+        """``kwargs`` with a chain cache handle narrowed to member ``idx``'s own."""
+        cached_prefix = kwargs.get("cached_prefix")
+        if not isinstance(cached_prefix, MemberCachedPrefixes):
+            return kwargs
+        member_kwargs = dict(kwargs)
+        handle = cached_prefix.for_member(idx)
+        if handle is None:
+            # This member has no cache: send the full, uncached prompt.
+            member_kwargs.pop("cached_prefix")
+            member_kwargs.pop("cached_prefix_message_count", None)
+        else:
+            member_kwargs["cached_prefix"] = handle
+        return member_kwargs
 
     async def call(self, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
         return await self._dispatch("call", messages=messages, **kwargs)
@@ -234,6 +308,47 @@ class MultiLLMProvider:
         if any(answer is None for answer in answers):
             return None
         return True
+
+    # ── prompt caching ─────────────────────────────────────────────────────────────
+
+    def _cache_member_indices(self) -> list[int]:
+        # Metadata mode keeps chain-level calls on the primary (routed items call
+        # their member directly), so only the primary can use a chain handle.
+        if self._strategy.mode == LLM_STRATEGY_METADATA:
+            return [0]
+        return list(range(len(self._members)))
+
+    def supports_prompt_caching(self) -> bool:
+        """Whether ANY member that can serve a chain call supports prefix caching."""
+        return any(self._members[idx]._provider_impl.supports_prompt_caching() for idx in self._cache_member_indices())
+
+    async def get_or_create_cached_prefix(
+        self,
+        *,
+        system_instruction: str,
+        response_schema: Any | None = None,
+    ) -> MemberCachedPrefixes | None:
+        """Per-member cache handles, or ``None`` when no member returned one.
+
+        Every member that may serve a request and supports caching creates its
+        own cache. A member whose cache lookup fails is logged and left uncached
+        rather than failing the lookup for the whole chain.
+        """
+        handles: list[str | None] = [None] * len(self._members)
+        for idx in self._cache_member_indices():
+            impl = self._members[idx]._provider_impl
+            if not impl.supports_prompt_caching():
+                continue
+            try:
+                handles[idx] = await impl.get_or_create_cached_prefix(
+                    system_instruction=system_instruction,
+                    response_schema=response_schema,
+                )
+            except Exception:
+                logger.exception("Cache prefix lookup failed for LLM member %d; it will run uncached", idx)
+        if all(handle is None for handle in handles):
+            return None
+        return MemberCachedPrefixes(handles)
 
     # ── batch routing ───────────────────────────────────────────────────────────
 
