@@ -35,7 +35,7 @@ CONFIG_DIR = Path.home() / ".hindsight"
 CONFIG_FILE = CONFIG_DIR / "embed"
 CONFIG_FILE_ALT = CONFIG_DIR / "config.env"  # Alternative config file location
 
-# Module-level variable to store CLI profile override (set by argparse)
+# None means no flag; an empty string explicitly selects the default profile.
 _cli_profile_override: str | None = None
 
 
@@ -43,7 +43,7 @@ def get_cli_profile_override() -> str | None:
     """Get the profile override from CLI flag (--profile).
 
     Returns:
-        Profile name if set via CLI flag, None otherwise.
+        Profile name if set via CLI flag (empty string for default), None otherwise.
     """
     return _cli_profile_override
 
@@ -52,7 +52,7 @@ def set_cli_profile_override(profile: str | None) -> None:
     """Set the profile override from CLI flag (--profile).
 
     Args:
-        profile: Profile name to set, or None to clear.
+        profile: Profile name to set (empty string for default), or None to clear.
     """
     global _cli_profile_override
     _cli_profile_override = profile
@@ -1423,11 +1423,9 @@ def do_profile_command(args: list[str]) -> int:
 
         # Determine source
         source = "default"
-        if not active_profile:
-            source = "default"
-        elif os.getenv("HINDSIGHT_EMBED_PROFILE"):
+        if os.getenv("HINDSIGHT_EMBED_PROFILE"):
             source = "HINDSIGHT_EMBED_PROFILE"
-        elif get_cli_profile_override():
+        elif get_cli_profile_override() is not None:
             source = "cli_flag"
         elif pm.get_active_profile():
             source = "active_profile_file"
@@ -1471,7 +1469,7 @@ def do_profile_command(args: list[str]) -> int:
     return 1
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     # Windows defaults stdout/stderr to the legacy cp1252 codec, which crashes
     # on the Unicode glyphs (✓, box-drawing, etc.) used throughout Rich-rendered
@@ -1493,7 +1491,7 @@ def main():
     global_args, remaining_args = parent_parser.parse_known_args()
     global_profile = global_args.profile
     if global_profile == "default":
-        global_profile = None
+        global_profile = ""
 
     # Set the CLI profile override so it's available to resolve_active_profile()
     # This must happen BEFORE any config loading (load_config_file, get_config, etc.)
@@ -1545,6 +1543,12 @@ def main():
             exit_code = do_profile_command(remaining_args[1:])  # Skip 'profile' itself
             sys.exit(exit_code)
 
+        from .profile_manager import resolve_active_profile
+
+        # Configuration and every command target must use the same priority chain.
+        # Passing the raw flag used to bypass env/active selection for some commands.
+        resolved_profile = resolve_active_profile()
+
         # Handle daemon subcommands
         if command == "daemon":
             # Parse daemon subcommand (profile already extracted globally)
@@ -1559,8 +1563,7 @@ def main():
             logs_parser.add_argument("--lines", "-n", type=int, default=50)
 
             args = parser.parse_args(remaining_args[1:])  # Skip 'daemon' itself
-            # Use globally extracted profile
-            args.profile = global_profile
+            args.profile = resolved_profile
             logger = setup_logging(False)
             config = get_config()
             exit_code = do_daemon(args, config, logger)
@@ -1584,7 +1587,7 @@ def main():
             logs_parser.add_argument("--lines", "-n", type=int, default=50)
 
             args = parser.parse_args(remaining_args[1:])
-            args.profile = global_profile
+            args.profile = resolved_profile
             logger = setup_logging(False)
             config = get_config()
             exit_code = do_ui(args, config, logger)
@@ -1631,9 +1634,9 @@ def main():
         from . import daemon_client
 
         # Forward to hindsight-cli (handles daemon startup and CLI installation)
-        # Pass the globally extracted profile
+        # Pass the same resolved profile used to load the configuration.
         # remaining_args already has --profile/-p filtered out
-        exit_code = daemon_client.run_cli(remaining_args, config, global_profile)
+        exit_code = daemon_client.run_cli(remaining_args, config, resolved_profile)
         sys.exit(exit_code)
 
     # No command - show help

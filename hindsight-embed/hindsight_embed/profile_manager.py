@@ -753,12 +753,13 @@ def resolve_active_profile() -> str:
     """
     # 1. Environment variable
     if env_profile := os.getenv("HINDSIGHT_EMBED_PROFILE"):
-        return env_profile
+        return "" if env_profile == "default" else env_profile
 
     # 2. CLI flag (set by caller before invoking commands)
     from . import cli
 
-    if cli_profile := cli.get_cli_profile_override():
+    cli_profile = cli.get_cli_profile_override()
+    if cli_profile is not None:
         return cli_profile
 
     # 3. Active profile file
