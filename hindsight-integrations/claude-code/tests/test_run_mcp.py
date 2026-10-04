@@ -24,6 +24,7 @@ import textwrap
 
 SCRIPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "scripts")
 RUN_MCP_SH = os.path.abspath(os.path.join(SCRIPTS_DIR, "run_mcp.sh"))
+REQUIREMENTS = os.path.abspath(os.path.join(SCRIPTS_DIR, "..", "requirements.txt"))
 
 
 def _resolve_py(venv_dir: str) -> str:
@@ -115,9 +116,8 @@ class TestResolvePyVenvLayouts:
 
         resolved = _resolve_py(str(venv))
 
-        assert resolved == str(bin_python), (
-            "resolve_py must still select <venv>/bin/python on POSIX; got: "
-            + repr(resolved)
+        assert resolved == str(bin_python), "resolve_py must still select <venv>/bin/python on POSIX; got: " + repr(
+            resolved
         )
 
 
@@ -144,3 +144,16 @@ class TestMcpServerWorkingDirectory:
 
         assert project_cwd == str(project)
         assert server_cwd == str(plugin_data)
+
+
+class TestMcpDependencyCompatibility:
+    """The launcher must repair environments that cannot import FastMCP."""
+
+    def test_requirements_exclude_mcp_v2(self):
+        requirements = open(REQUIREMENTS, encoding="utf-8").read().splitlines()
+        assert "mcp>=1.0.0,<2" in requirements
+
+    def test_warm_start_probes_the_api_the_server_imports(self):
+        launcher = open(RUN_MCP_SH, encoding="utf-8").read()
+        assert "from mcp.server.fastmcp import FastMCP" in launcher
+        assert '"${PY}" -c "import mcp"' not in launcher

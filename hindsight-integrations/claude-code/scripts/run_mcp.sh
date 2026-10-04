@@ -41,12 +41,13 @@ if [ -z "${PY}" ]; then
 fi
 
 # Re-pip only when the requirements cache is missing, requirements drifted, or
-# `mcp` is not importable from the venv. Splitting this from venv creation
+# the FastMCP API used by the server is not importable from the venv. Splitting
+# this from venv creation
 # keeps warm starts cheap and avoids re-running pip over a venv that's already
 # in use (which fails with ERROR_SHARING_VIOLATION on Windows).
 if [ ! -f "${REQ_CACHED}" ] \
    || ! diff -q "${REQ_SRC}" "${REQ_CACHED}" >/dev/null 2>&1 \
-   || ! "${PY}" -c "import mcp" >/dev/null 2>&1; then
+   || ! "${PY}" -c "from mcp.server.fastmcp import FastMCP" >/dev/null 2>&1; then
   "${PIP}" install --quiet -r "${REQ_SRC}"
   cp "${REQ_SRC}" "${REQ_CACHED}"
 fi
