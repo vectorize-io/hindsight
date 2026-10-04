@@ -56,4 +56,50 @@ describe("HindsightServer construction", () => {
       expect.objectContaining({ stdio: "pipe", windowsHide: true })
     );
   });
+
+  it("hides profile create and daemon start command windows on Windows", async () => {
+    spawnMock.mockClear();
+    const child = {
+      stdout: { on: vi.fn() },
+      stderr: { on: vi.fn() },
+      on: vi.fn((event: string, handler: (code?: number) => void) => {
+        if (event === "exit") handler(0);
+        return child;
+      }),
+    };
+    spawnMock.mockReturnValue(child);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+
+    try {
+      const server = new HindsightServer();
+      await server.start();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    // start() spawns twice — `profile create` (configureProfile) and `daemon start`
+    // (startDaemon), both through runCommand(). Both must pass windowsHide: true,
+    // or a console-less parent (the detached daemon-start entrypoint) makes Windows
+    // allocate a new visible console for the console-subsystem uvx.exe child.
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    const options = spawnMock.mock.calls.map((call) => call[2]);
+    expect(options[0]).toEqual(expect.objectContaining({ stdio: "pipe", windowsHide: true }));
+    expect(options[1]).toEqual(expect.objectContaining({ stdio: "pipe", windowsHide: true }));
+    expect(spawnMock.mock.calls[0][1]).toEqual([
+      "hindsight-embed@latest",
+      "profile",
+      "create",
+      "default",
+      "--merge",
+      "--port",
+      "8888",
+    ]);
+    expect(spawnMock.mock.calls[1][1]).toEqual([
+      "hindsight-embed@latest",
+      "daemon",
+      "--profile",
+      "default",
+      "start",
+    ]);
+  });
 });
