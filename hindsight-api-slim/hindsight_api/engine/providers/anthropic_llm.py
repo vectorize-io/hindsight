@@ -22,6 +22,7 @@ from hindsight_api.engine.llm_interface import (
     LLMInterface,
     LLMToolChoice,
     LLMToolChoiceMode,
+    ProviderContentPolicyError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_llm_error
@@ -46,6 +47,36 @@ def _usage_from_anthropic_response(response: Any) -> LLMResponseUsage:
         output_tokens=usage.output_tokens or 0,
         cached_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
     )
+
+
+#: ``stop_reason`` values the Messages API sets when it declines the *content*
+#: rather than the request. These arrive as an ordinary HTTP 200 whose content
+#: list is empty or near-empty, so nothing downstream can tell a refusal from a
+#: truncated reply: it parses as invalid JSON and gets replayed. Matching the
+#: enum keeps the test exact -- no prose matching, so an ordinary completion can
+#: never be misread as permanent (the failure mode #3690 warned about when it
+#: matched the anthropic.com/legal/aup link in Claude Code's error text).
+_CONTENT_POLICY_STOP_REASONS = frozenset({"refusal", "content_filter"})
+
+
+def _raise_if_content_policy_refusal(response: Any) -> None:
+    """Raise ``ProviderContentPolicyError`` when Anthropic refused on AUP grounds.
+
+    #3690 made a content-policy refusal permanent -- raised once, never retried
+    -- but only in the Claude Code provider, which sees refusals as an
+    ``is_error`` ResultMessage. The native provider gets them as a normal
+    response, so the empty body fell through to the JSON-decode retry ladder
+    (one paid call per attempt, up to ``max_retries``) and the worker then
+    re-queued the whole retain: #5201 measured 4-16 paid calls for a single
+    refused chunk. Raising here hands the refusal to the layers #3690 already
+    taught to treat it as permanent.
+    """
+    stop_reason = getattr(response, "stop_reason", None)
+    if stop_reason in _CONTENT_POLICY_STOP_REASONS:
+        raise ProviderContentPolicyError(
+            f"Anthropic refused the request (stop_reason={stop_reason}); "
+            "the same content earns the same refusal on every attempt"
+        )
 
 
 _EPHEMERAL_CACHE = {"type": "ephemeral"}
@@ -368,6 +399,9 @@ class AnthropicLLM(LLMInterface):
                 # Stash usage before parse/validate, which may raise locally
                 # even though the provider charged for these tokens (#2387).
                 stash_response_usage(_usage_from_anthropic_response(response))
+                # ...and before the refusal check, for the same reason: the
+                # provider was still paid for a refusal.
+                _raise_if_content_policy_refusal(response)
 
                 if use_forced_tool:
                     # Forced tool_use → the validated args are already a dict; no parsing,
@@ -502,6 +536,14 @@ class AnthropicLLM(LLMInterface):
                         continue
 
                 logger.error(f"Anthropic API error after {max_retries + 1} attempts: {describe_llm_error(e)}")
+                raise
+
+            except ProviderContentPolicyError:
+                # Permanent refusal, same guard as claude_code_llm (#3690). Logged
+                # on its own line rather than as "unexpected": it is an expected
+                # answer to this content, and the worker reports it as a failed
+                # operation instead of rescheduling the batch.
+                logger.info(f"Anthropic content-policy refusal (scope={scope}, model={self.model}), not retrying")
                 raise
 
             except Exception as e:
@@ -653,6 +695,7 @@ class AnthropicLLM(LLMInterface):
                         self._client.messages.create(**call_params), timeout=self.timeout or _DEFAULT_ANTHROPIC_TIMEOUT
                     )
                 stash_response_usage(_usage_from_anthropic_response(response))
+                _raise_if_content_policy_refusal(response)
 
                 # Extract content and tool calls
                 content_parts = []
