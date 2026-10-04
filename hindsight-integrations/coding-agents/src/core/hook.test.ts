@@ -168,6 +168,39 @@ describe("buildHookOutput", () => {
     expect(client.reflect).toHaveBeenCalledTimes(2);
   });
 
+  it("reflect 4xx: no retry — the budget is spent on the first failure", async () => {
+    const cfg = resolveConfig({});
+    const client = makeClient({
+      reflect: vi.fn(async () => {
+        throw new ReflectError("reflect 401", 401, false);
+      }),
+    });
+    const args = { harness: "claude-code", prompt: UNRELATED_PROMPT, cfg, client, cacheFile };
+    const t1 = await buildHookOutput(args);
+    // Same user-facing notice as any failed turn — the session is memory-less, not silently so.
+    expect(t1.notice).toContain("no memory this turn");
+    // ...but unlike a timeout/5xx, a 4xx fails identically on every turn, so the second
+    // attempt is never spent: a dead credential costs one server call per session, not two.
+    expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBe("");
+    await buildHookOutput(args);
+    expect(client.reflect).toHaveBeenCalledTimes(1);
+  });
+
+  it("reflect 5xx stays retryable: retried once, then cached ''", async () => {
+    const cfg = resolveConfig({});
+    const client = makeClient({
+      reflect: vi.fn(async () => {
+        throw new ReflectError("reflect 500", 500, false);
+      }),
+    });
+    const args = { harness: "claude-code", prompt: UNRELATED_PROMPT, cfg, client, cacheFile };
+    await buildHookOutput(args);
+    expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBeUndefined();
+    await buildHookOutput(args);
+    expect(client.reflect).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBe("");
+  });
+
   it("reflect_failed records the bank, the deadline, and the server's full error body", async () => {
     const diagFile = join(root, "diag.log");
     vi.stubEnv("HINDSIGHT_DIAG_FILE", diagFile);

@@ -285,7 +285,16 @@ export async function buildHookOutput(args: {
       // budget is spent. Caching "" here meant one timeout on the session's first prompt disabled
       // synthesis for the ENTIRE session, and against a real server a reflect near the timeout is a
       // coin flip, not an edge case (#4607).
-      reflectAnswer = resolveInjection(undefined, reflectAttempts);
+      //
+      // A 4xx is the exception: auth, a missing bank, a rejected key — it fails identically on
+      // every turn AND on every endpoint (see fallbackEligible), so spending the second attempt on
+      // it only bills another doomed server call. Exhaust the budget now; timeouts and 5xx stay
+      // retryable because those are transient server-side wobbles.
+      const clientError = e instanceof ReflectError && e.status !== undefined && e.status < 500;
+      reflectAnswer = resolveInjection(
+        undefined,
+        clientError ? HOOK_INJECT_ATTEMPTS : reflectAttempts
+      );
       reflectFailed = true;
       log.warn(harness, "reflect failed — session runs without memory", {
         error: describeError(e),
