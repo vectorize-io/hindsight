@@ -10,12 +10,17 @@ options below, so there is no free text to parse or validate.
     triage-labels.py backfill        # every open PR and issue, once
 
 Needs the gh CLI (authenticated) and, for issues, TYPESAFE_API_KEY.
+
+Labelling is best-effort housekeeping, so a classifier that is down, unreachable or
+unauthenticated warns and leaves the item unlabelled rather than failing the run: the
+backlog stays sortable by hand and the run summary carries the reason. See #5083.
 """
 
 import json
 import os
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 
 CORE = "core"
@@ -49,6 +54,11 @@ def gh(*args: str) -> str:
     return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
 
 
+def warn(message: str) -> None:
+    """Surface a best-effort failure where a triager looks: the run summary."""
+    print(f"::warning::{message}")
+
+
 def pr_labels(number: int) -> set[str]:
     files = gh("api", "--paginate", f"repos/{{owner}}/{{repo}}/pulls/{number}/files", "--jq", ".[].filename")
     return {path_label(path) for path in files.split()}
@@ -71,10 +81,20 @@ assert path_label("skills/hindsight-docs/references/sdks/integrations/crewai.md"
 assert path_label("hindsight-api-slim/x.py") == CORE
 
 
-def issue_label(title: str, body: str) -> str:
+def issue_label(title: str, body: str) -> str | None:
+    """The area Jev picks, or None when the classifier could not be reached.
+
+    None is a normal outcome, not an error: an unreachable or unauthenticated
+    classifier leaves the issue unlabelled for a human instead of failing every
+    issue-opened run (#5083).
+    """
+    api_key = os.environ.get("TYPESAFE_API_KEY", "")
+    if not api_key:
+        warn("TYPESAFE_API_KEY is unset or empty, so no area label can be chosen")
+        return None
     request = urllib.request.Request(
         "https://api.typesafe.ai/v1/systemone",
-        headers={"Authorization": f"Bearer {os.environ['TYPESAFE_API_KEY']}", "Content-Type": "application/json"},
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         data=json.dumps(
             {
                 "model": "jev-latest",
@@ -90,8 +110,19 @@ def issue_label(title: str, body: str) -> str:
             }
         ).encode(),
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return json.load(response)["answers"]["area"]["choice"]
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return json.load(response)["answers"]["area"]["choice"]
+    except urllib.error.HTTPError as error:
+        # The two statuses are worth telling apart, because only one of them is
+        # this repository's problem: 403 means no credential reached the server,
+        # 401 means the one that did was rejected.
+        detail = error.read().decode("utf-8", "replace").strip()[:200]
+        warn(f"the area classifier rejected the request: HTTP {error.code} {error.reason} ({detail})")
+        return None
+    except urllib.error.URLError as error:
+        warn(f"the area classifier is unreachable: {error.reason}")
+        return None
 
 
 def add_labels(number: int, labels: set[str]) -> None:
@@ -111,6 +142,8 @@ def label_pr(number: int) -> None:
 def label_issue(number: int) -> None:
     issue = json.loads(gh("issue", "view", str(number), "--json", "title,body"))
     label = issue_label(issue["title"], issue["body"])
+    if label is None:
+        return
     add_labels(number, {label})
     print(f"issue #{number}: {label}")
 

@@ -19,6 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Guards the guard: labelling is best-effort, so issue_label swallows a
+      # classifier that is down or unauthenticated. That is only safe while the
+      # swallowing itself stays correct, so its cases run here, before the real
+      # one. Pure stdlib, no secrets, sub-second.
+      - name: Self-test the classifier failure handling
+        run: python3 scripts/triage-labels-selftest.py
       - run: python3 scripts/triage-labels.py ${{ github.event_name == 'issues' && 'issue' || 'pr' }} ${{ github.event.issue.number || github.event.pull_request.number }}
         env:
           GH_TOKEN: ${{ github.token }}
