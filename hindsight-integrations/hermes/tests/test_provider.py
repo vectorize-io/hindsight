@@ -82,6 +82,21 @@ def test_retain_tool_stores_content_with_per_call_tags(provider):
     instance.shutdown()
 
 
+def test_builtin_memory_adds_and_replaces_are_retained(provider):
+    instance, fake = provider({"bank_id": "team", "retain_tags": "base"})
+    instance.on_memory_write("add", "memory", "Deploys go through Fly.io")
+    instance.on_memory_write("replace", "user", "Ada prefers tea", metadata={"previous_content": "Ada likes tea"})
+    instance.on_memory_write("remove", "memory", "", metadata={"previous_content": "Deploys go through Fly.io"})
+    instance.shutdown()
+
+    assert [call["bank_id"] for call in fake.retains] == ["team", "team"]
+    first, second = _retain_item(fake, 0), _retain_item(fake, 1)
+    assert first["content"] == "Deploys go through Fly.io"
+    assert first["tags"] == ["base", "builtin-memory", "builtin-target:memory", "builtin-action:add"]
+    assert second["content"] == "Ada prefers tea"
+    assert second["tags"] == ["base", "builtin-memory", "builtin-target:user", "builtin-action:replace"]
+
+
 def test_tool_call_errors_are_reported_not_raised(provider):
     instance, _ = provider({})
     assert instance.handle_tool_call("hindsight_recall", {}).startswith("ERROR:")

@@ -1517,6 +1517,20 @@ class HindsightMemoryProvider(MemoryProvider):
             self._session_turns.clear()
             self._last_retained_turn_count = 0
 
+    def on_memory_write(self, action: str, target: str, content: str, metadata: Dict[str, Any] | None = None) -> None:
+        """Retain built-in memory adds and replaces (``target``: memory | user) on the writer
+        thread, so an entry the agent later prunes from the size-capped file stays in the bank.
+        Removals are not retained."""
+        if action not in ("add", "replace") or not content or self._shutting_down.is_set():
+            return
+        item = self._build_retain_kwargs(
+            content,
+            context=f"Hermes built-in {target} memory entry",
+            tags=["builtin-memory", f"builtin-target:{target}", f"builtin-action:{action}"],
+        )
+        bank_id, retain_async = self._bank_id, self._retain_async
+        self._enqueue_retain(lambda: self._retain_batch(item, bank_id=bank_id, retain_async=retain_async))
+
     def _enqueue_retain(self, job: Callable[[], None]) -> None:
         """Hand *job* to the (lazily started) writer and arm the atexit drain."""
         self._ensure_writer()
