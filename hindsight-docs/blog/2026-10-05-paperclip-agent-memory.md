@@ -44,9 +44,11 @@ And in the Paperclip integration, `bankGranularity` is the setting that answers 
 
 Paperclip models a company as an organisation of agents.
 
-Every agent except the CEO reports to one manager. That reporting tree gives agents a chain of command for delegation and escalation. Issues are the unit of work, and an issue can be assigned to an agent. Agents can also work across reporting lines when a task needs to move between teams.
+Agents have roles, titles, reporting lines, permissions and budgets. In Paperclip's own description, your agents have a boss, a title, and a job description, and delegation flows up and down that org chart. Issues are the unit of work, and a task can be assigned to an agent or a person.
 
-Paperclip also has a permission system. Agents and human members go through the same underlying authorisation engine, with permissions controlling actions such as assigning tasks or configuring agents.
+Paperclip also governs who can do what. The org chart deliberately covers humans and agents alike. The access controls underneath are separate, though: human roles and permissions on one side, agent API keys and agent eligibility on the other.
+
+One more property matters for everything that follows. A single Paperclip deployment can host several organisations, with company-scoped access checks keeping each organisation's work, agents and activity separate.
 
 That gives you a useful model of the organisation:
 
@@ -137,7 +139,7 @@ hindsight_retain(content)
 
 There is also an automatic retention path.
 
-When `issue.comment.created` fires, the plugin fetches the full comment body and retains it. The event payload contains only a short snippet, so the plugin calls Paperclip's comments API to retrieve the full text.
+When `issue.comment.created` fires, the plugin fetches the full comment body and retains it. The event payload carries only a 120-character snippet, so the plugin calls Paperclip's comments API for the full text. If that call fails, it falls back to the snippet rather than losing the comment entirely.
 
 For an agent-authored comment, the comment's agent is used for bank attribution. If there is no agent attribution, the plugin falls back to the issue's assignee.
 
@@ -305,9 +307,17 @@ The important point is technical rather than regulatory: the plugin is creating 
 
 Do not read "useful for GDPR compliance" in the plugin configuration as a guarantee of compliance. A bank boundary can support an isolation strategy, but compliance depends on the rest of your system and your policies.
 
-There is also an important fallback.
+There is also a fallback worth understanding, because it is quieter than it looks.
 
-If the plugin cannot identify a user, it omits the user segment rather than inventing an identity.
+If the plugin cannot identify a user, it omits the user segment rather than inventing an identity. The bank then becomes:
+
+```
+paperclip::{companyId}::{agentId}
+```
+
+which is the bank shared by every user of that agent.
+
+Not inventing an identity is the right call. The consequence is the part to notice: under user granularity, memory from an issue with no identifiable user does not get its own isolated bank. It lands in the shared one. If per-user isolation is the point, check that your issues actually carry an identity.
 
 ### Static memory: deliberately remove the dynamic boundary
 
@@ -358,7 +368,7 @@ alice@acme.com
 
 If `creatorEmail` is available, that takes precedence.
 
-Otherwise, the plugin scans the `originId` segments from the end and uses the last segment that looks like an email address.
+Otherwise, the plugin splits `originId` on `::` and scans the segments from the end, taking the first one that contains an `@`.
 
 That means a Slack-originated issue can become memory scoped to the person who created it.
 
@@ -448,7 +458,7 @@ A stable identity makes a stable memory boundary.
 
 v0.4.0 declares `issues.read` and `issue.comments.read` because it fetches the issue at run start and retrieves full comment bodies.
 
-Paperclip's plugin model requires explicit approval when an upgrade adds capabilities. If Paperclip prompts you after installing or upgrading, that is expected.
+Paperclip may prompt for these on first install or upgrade. If it does, that is expected rather than a sign that something is wrong.
 
 **You upgraded the plugin and the Hindsight API key stopped working**
 
@@ -463,6 +473,14 @@ Check `enabledAgentIds`.
 An empty list means all agents are enabled. Once the list contains IDs, only those agents are allowed through the plugin's recall and retain paths.
 
 This can look like a bank problem when it is actually an enablement problem.
+
+**A comment was never retained, and nothing looks broken**
+
+Retention needs an agent to attribute the memory to.
+
+The plugin uses the comment's own agent when there is one, and otherwise falls back to the issue's assigned agent. If the issue has no assigned agent either, there is nothing to attribute the memory to, so the plugin skips the retain and logs that no agent attribution was available.
+
+A comment on an unassigned issue is therefore not stored. Assign the issue if you want its discussion to reach memory.
 
 **You set `autoRetain` to false and comments stopped appearing in memory**
 
