@@ -500,7 +500,7 @@ hindsight-api
 
 ## Contributing Extensions
 
-Custom extensions that solve common use cases are welcome contributions to the Hindsight project. If you've built an extension for:
+If you've built an extension that solves a common use case, for example:
 
 - Authentication providers (OAuth, SAML, API gateways)
 - Rate limiting or quota management
@@ -508,6 +508,6 @@ Custom extensions that solve common use cases are welcome contributions to the H
 - Metrics exporters (Datadog, New Relic, etc.)
 - Custom HTTP endpoints for specific platforms
 
-Add it to the [extensions registry](https://github.com/vectorize-io/hindsight/blob/main/hindsight-extensions/README.md) — either as a directory under `hindsight-extensions/`, or as a registry entry linking to your own repository. That README covers the layout, the development workflow, and Docker packaging.
+[open a feature request](https://github.com/vectorize-io/hindsight/issues/new?template=feature_request.yml) with a link to your repository, and we can list it in the [extensions registry](https://github.com/vectorize-io/hindsight/blob/main/hindsight-extensions/README.md). Hindsight does not accept pull requests from outside the team, so the team adds registry entries. That README covers the extension layout, the development workflow, and Docker packaging.
 
 Extensions live outside the server so that installing Hindsight does not pull in a vendor's client library, and so changing an extension does not require a Hindsight release. Only extensions that add no dependencies and are useful to any deployment (`ApiKeyTenantExtension`, `MemoryDefenseRegexExtension`) stay in `hindsight_api.extensions.builtin`.

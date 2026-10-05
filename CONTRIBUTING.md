@@ -1,10 +1,30 @@
 # Contributing to Hindsight
 
-Thanks for your interest in contributing to Hindsight!
+Thanks for your interest in Hindsight!
+
+## How to contribute
+
+**We don't accept pull requests from outside the Hindsight team.** PRs opened by
+external contributors are closed without review. This is not about you or the
+quality of your code: it lets the team decide what gets built, review fewer
+half-finished changes, and ship fixes together.
+
+The best way to help is to tell us what's wrong or missing:
+
+- **Bugs**: [open a bug report](https://github.com/vectorize-io/hindsight/issues/new?template=bug_report.yml).
+  A clear way to reproduce it is the most useful thing you can give us. If you
+  already know where the problem is in the code, say so in the issue.
+- **Features, new integrations, extensions and bank templates**:
+  [open a feature request](https://github.com/vectorize-io/hindsight/issues/new?template=feature_request.yml).
+- **Questions and ideas**: use [GitHub Discussions](https://github.com/vectorize-io/hindsight/discussions).
+- **Security issues**: follow [SECURITY.md](./SECURITY.md). Don't open a public issue.
+
+The rest of this guide covers building and running Hindsight from source, which
+is useful for reproducing a bug before you report it.
 
 ## Getting Started
 
-1. Fork and clone the repository
+1. Clone the repository
    ```bash
    git clone git@github.com:vectorize-io/hindsight.git
    cd hindsight
@@ -109,13 +129,6 @@ uv run ty check hindsight_api  # Type check
 - Follow existing code patterns
 - Keep functions focused and well-named
 
-## Pull Requests
-
-1. Create a feature branch from `main`
-2. Make your changes
-3. Run tests to ensure nothing breaks
-4. Submit a PR with a clear description of changes
-
 ## Release Process
 
 The project uses `scripts/release.sh` for creating releases. This script automates the entire release workflow:
@@ -150,7 +163,7 @@ Open an issue on GitHub with:
 - Clear description of the problem
 - Steps to reproduce
 - Expected vs actual behavior
-- Environment details (OS, Python version)
+- Environment details (OS, Python version, Hindsight version, LLM provider)
 
 ## Questions?
 

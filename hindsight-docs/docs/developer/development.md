@@ -115,10 +115,10 @@ hindsight/
 
 ## Contributing
 
-1. Create a feature branch from `main`
-2. Make your changes
-3. Run tests: `uv run pytest`
-4. Submit a pull request
+Hindsight does not accept pull requests from outside the team. To report a bug or
+ask for a feature, [open an issue](https://github.com/vectorize-io/hindsight/issues/new/choose).
+See [CONTRIBUTING.md](https://github.com/vectorize-io/hindsight/blob/main/CONTRIBUTING.md)
+for details.
 
 ## Troubleshooting
 

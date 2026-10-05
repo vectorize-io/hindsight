@@ -7,8 +7,8 @@ import catalog from '@site/src/data/templates.json';
 import integrationsData from '@site/src/data/integrations.json';
 import styles from './index.module.css';
 
-const TEMPLATES_JSON_URL =
-  'https://github.com/vectorize-io/hindsight/edit/main/hindsight-docs/src/data/templates.json';
+const SUBMIT_TEMPLATE_URL =
+  'https://github.com/vectorize-io/hindsight/issues/new?template=feature_request.yml&title=Bank+template%3A+';
 
 // Webpack's require.context eagerly bundles every .json file under
 // src/data/templates/, so adding a template only requires creating
@@ -239,10 +239,10 @@ export default function TemplateGallery(): React.ReactElement {
           <div className={styles.submitBannerContent}>
             <h3 className={styles.submitBannerTitle}>Have a template to share?</h3>
             <p className={styles.submitBannerText}>
-              Contribute it to the community. Open a pull request and add your entry to the bank templates.
+              Share it with the community. Open an issue with your template and we will add it to the bank templates.
             </p>
             <Link
-              href={TEMPLATES_JSON_URL}
+              href={SUBMIT_TEMPLATE_URL}
               className={styles.submitButton}
               target="_blank"
               rel="noopener noreferrer">

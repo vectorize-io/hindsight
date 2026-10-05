@@ -23,8 +23,8 @@ import styles from './index.module.css';
  */
 const FEATURED_IDS = ['coding-agents', 'hermes', 'openclaw'];
 
-const INTEGRATIONS_JSON_URL =
-  'https://github.com/vectorize-io/hindsight/edit/main/hindsight-docs/src/data/integrations.json';
+const SUBMIT_INTEGRATION_URL =
+  'https://github.com/vectorize-io/hindsight/issues/new?template=feature_request.yml&title=Integration%3A+';
 
 type IntegrationType = 'official' | 'community';
 
@@ -302,10 +302,10 @@ export default function IntegrationsHub(): React.ReactElement {
           <div className={styles.submitBannerContent}>
             <h2 className={styles.submitBannerTitle}>Built something with Hindsight?</h2>
             <p className={styles.submitBannerText}>
-              Share your integration with the community. Open a pull request and add your entry to the integrations list.
+              Share your integration with the community. Open an issue with a link to it and we will add it to the integrations list.
             </p>
             <Link
-              href={INTEGRATIONS_JSON_URL}
+              href={SUBMIT_INTEGRATION_URL}
               className={styles.submitButton}
               target="_blank"
               rel="noopener noreferrer">
