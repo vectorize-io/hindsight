@@ -37,6 +37,11 @@ cl100k_base and 13 under o200k_base. Since these counts drive budgets that stand
 for a model's context window, the closer vocabulary is the more honest one. Set the
 variable to ``cl100k_base`` to restore the previous counts exactly.
 
+A caller that *knows* the vocabulary it is budgeting against passes it explicitly and
+bypasses the variable: the embedding input cap counts with the embedding model's own
+tokenizer, because a text cut to exactly the model's limit in some other vocabulary is
+still over the limit the provider enforces (#5234).
+
 **Special-token literals.** A tiktoken-shaped ``encode()`` defaults to
 ``disallowed_special="all"``, which makes it *raise* on content that merely mentions
 a literal such as ``<|endoftext|>`` — which reached users as an HTTP 500 on
@@ -59,7 +64,9 @@ import toktok
 BUNDLED_ENCODINGS = ("o200k_base", "cl100k_base", "o200k_harmony")
 
 
-@lru_cache(maxsize=4)
+# Cached like _load_encoding, and for the same reason — loading one parses a
+# multi-megabyte vocabulary — but keyed by name, bounded by the whole bundled set.
+@lru_cache(maxsize=len(BUNDLED_ENCODINGS))
 def _encoding_by_name(name: str) -> "toktok._Tokenizer":
     """The tokenizer for an explicitly named encoding (see :func:`_load_encoding`)."""
     try:
@@ -100,7 +107,7 @@ def _load_encoding() -> "toktok._Tokenizer":
         ) from err
 
 
-def _resolve(encoding: str | None) -> "toktok._Tokenizer":
+def _encoding_for(encoding: str | None) -> "toktok._Tokenizer":
     """``encoding`` when a caller knows the model's own vocabulary, else the configured one.
 
     Only the embedding cap passes one: a provider whose tokenizer is known (OpenAI's
@@ -125,7 +132,7 @@ def count_tokens(text: str, encoding: str | None = None) -> int:
     approximate answer, since a fixed character cut can split a token. ``count()``
     removes the reason for both: it allocates nothing and it is exact.
     """
-    return _resolve(encoding).count(text)
+    return _encoding_for(encoding).count(text)
 
 
 @dataclass(frozen=True)
@@ -171,5 +178,5 @@ def truncate_many_to_tokens(
     """
     return [
         TokenTruncation(text=truncated, original_tokens=original_tokens)
-        for truncated, original_tokens in toktok.batch_truncate(texts, max(max_tokens, 0), _resolve(encoding).name)
+        for truncated, original_tokens in toktok.batch_truncate(texts, max(max_tokens, 0), _encoding_for(encoding).name)
     ]
