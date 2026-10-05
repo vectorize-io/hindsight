@@ -12,8 +12,10 @@ So, per reflect:
 
 * ids become short aliases (``f1`` fact, ``o1`` observation, ``p1`` page,
   ``c1`` chunk), and every alias the model writes back — in ``done``, in
-  ``expand`` — is resolved to the real id before anything reads it. The API
-  trace keeps the raw output; only the prompt is shortened.
+  ``expand``, and in the answer text itself — is resolved to the real id before
+  anything reads it. The aliases mean nothing outside this one reflect, so none
+  may reach the caller or a stored mental model (#4876). The API trace keeps the
+  raw output; only the prompt is shortened.
 * timestamps keep their minute (``2026-03-07 12:00``), dropping seconds,
   microseconds and the UTC offset (they are all UTC). Dates are evidence:
   supersession is decided by them, so they are shortened, never dropped.
@@ -31,6 +33,7 @@ import re
 from typing import Any
 
 _ALIAS_RE = re.compile(r"^[fopc]\d+$")
+_ALIAS_IN_TEXT_RE = re.compile(r"\b[fopc]\d+\b")
 _TIMESTAMP_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]00:?00)?$")
 _DATE_FIELDS = ("mentioned_at", "occurred_start", "occurred_end", "updated_at", "created_at")
 #: Result lists and the alias prefix of their items.
@@ -77,7 +80,34 @@ class ToolResultPresenter:
         if isinstance(value, list):
             return [self.resolve(v) for v in value]
         if isinstance(value, dict):
-            return {k: (v if k in ("query", "reason", "answer") else self.resolve(v)) for k, v in value.items()}
+            out: dict[str, Any] = {}
+            for k, v in value.items():
+                if k in ("query", "reason"):
+                    out[k] = v
+                elif k in ("answer", "document"):
+                    # Prose that outlives the run: aliases inside it become real ids too.
+                    out[k] = self._resolve_prose(v)
+                else:
+                    out[k] = self.resolve(v)
+            return out
+        return value
+
+    def resolve_text(self, text: str) -> str:
+        """Swap every alias cited in free text for its real id.
+
+        Only tokens that are aliases of this reflect are touched, so a word like
+        ``c3`` that was never handed out stays as written.
+        """
+        return _ALIAS_IN_TEXT_RE.sub(lambda m: self._id_by_alias.get(m.group(0), m.group(0)), text)
+
+    def _resolve_prose(self, value: Any) -> Any:
+        """``resolve_text`` over every string of an answer or a structured document."""
+        if isinstance(value, str):
+            return self.resolve_text(value)
+        if isinstance(value, list):
+            return [self._resolve_prose(v) for v in value]
+        if isinstance(value, dict):
+            return {k: self._resolve_prose(v) for k, v in value.items()}
         return value
 
     def present(self, output: Any) -> Any:

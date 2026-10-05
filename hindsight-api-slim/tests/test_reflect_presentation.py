@@ -70,6 +70,21 @@ def test_aliases_the_model_writes_back_resolve_to_real_ids():
     }
 
 
+def test_aliases_cited_in_the_answer_become_real_ids():
+    """The answer and a mental model's content outlive the reflect, its aliases do not (#4876)."""
+    presenter = ToolResultPresenter()
+    presenter.present(_observations("uuid-a", "uuid-b"))
+    args = {
+        "answer": "o1 contradicts o2 (see [o2]); c9 and vitamin C1 are untouched",
+        "document": {"sections": [{"heading": "o1", "level": 2, "blocks": ["o2 supersedes o1."]}]},
+    }
+    assert presenter.resolve(args) == {
+        "answer": "uuid-a contradicts uuid-b (see [uuid-b]); c9 and vitamin C1 are untouched",
+        "document": {"sections": [{"heading": "uuid-a", "level": 2, "blocks": ["uuid-b supersedes uuid-a."]}]},
+    }
+    assert presenter.resolve_text("o10 is not o1") == "o10 is not uuid-a"
+
+
 def test_an_item_already_shown_is_referenced_not_repeated():
     presenter = ToolResultPresenter()
     presenter.present(_observations("uuid-a"))

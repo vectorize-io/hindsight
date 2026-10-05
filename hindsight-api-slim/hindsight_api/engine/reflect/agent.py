@@ -1026,6 +1026,8 @@ async def _run_reflect_agent_inner(
                 f"Reflect's final synthesis returned no text after {iterations_completed} iteration(s) "
                 f"over {len(chunks)} context chunk(s)."
             )
+        # Aliases mean nothing outside this reflect: cite the real ids (#4876).
+        answer = presenter.resolve_text(answer)
 
         # Enforce the visible-length budget before anything derives from the answer,
         # so structured output is built from the capped text — same order as the
