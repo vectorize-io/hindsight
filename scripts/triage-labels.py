@@ -57,9 +57,11 @@ def issue_label(title: str, body: str) -> str:
                     {
                         "parts": [
                             {
-                                "text": f"Which part of the Hindsight project is this GitHub issue about?\n\n{options}\n\n"
-                                # ponytail: crude cut to keep the prompt small.
-                                f"GitHub issue title: {title}\n\n{(body or '')[:20_000]}"
+                                "text": "Which part of the Hindsight project is this GitHub issue about?\n\n"
+                                f"{options}\n\nGitHub issue title: {title}\n\n"
+                                # ponytail: crude 20k-char cut to keep each call cheap; a longer issue
+                                # is labelled from its opening only, which is where the area is named.
+                                f"{(body or '')[:20_000]}"
                             }
                         ]
                     }
