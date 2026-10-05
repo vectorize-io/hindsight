@@ -143,7 +143,7 @@ def _build_directives_applied(directives: list[dict[str, Any]] | None) -> list[D
 
 if TYPE_CHECKING:
     from ..llm_wrapper import AnyLLMProvider
-    from ..response_models import LLMToolCall
+    from ..response_models import LLMToolCall, TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -1760,12 +1760,15 @@ class _RewriteUsage:
     cached_tokens: int = 0
     thoughts_tokens: int = 0
 
-    def add(self, usage: Any) -> None:
+    def add(self, usage: "TokenUsage") -> None:
         self.input_tokens += usage.input_tokens
         self.output_tokens += usage.output_tokens
-        # Not every provider reports these two.
-        self.cached_tokens += getattr(usage, "cached_tokens", 0) or 0
-        self.thoughts_tokens += getattr(usage, "thoughts_tokens", 0) or 0
+        # Every field is declared on TokenUsage and defaults to 0, so a provider
+        # that reports neither of these still gives numbers here -- no getattr
+        # fallback needed, unlike the LLMToolCallResult reads elsewhere in this
+        # module, where the attributes really are optional.
+        self.cached_tokens += usage.cached_tokens
+        self.thoughts_tokens += usage.thoughts_tokens
 
 
 async def _rewrite_to_length_budget(

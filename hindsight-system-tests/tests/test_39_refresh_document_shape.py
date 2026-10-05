@@ -24,6 +24,7 @@ import pytest
 
 from hindsight_system_tests import reflect_loop, wait_until_settled
 from hindsight_system_tests.payloads import consolidation, extracted, fact
+from hindsight_system_tests.rulebook import ChatRequest, ToolCall
 
 pytestmark = pytest.mark.asyncio
 
@@ -49,9 +50,7 @@ def _done_with_blocks(llm, *blocks_per_call: list[Any]) -> None:
     """
     calls = iter(range(len(blocks_per_call)))
 
-    def build(_request):
-        from hindsight_system_tests.rulebook import ToolCall
-
+    def build(_request: ChatRequest) -> ToolCall:
         index = next(calls, len(blocks_per_call) - 1)
         return ToolCall(
             name="done",
