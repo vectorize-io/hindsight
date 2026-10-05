@@ -529,7 +529,12 @@ class MCPMiddleware:
         # before aliases existed.
         try:
             bank_id = await self.memory.resolve_bank_alias(
-                bank_id, request_context=RequestContext(api_key=auth_token, mcp_authenticated=mcp_pre_authenticated)
+                bank_id,
+                request_context=RequestContext(
+                    api_key=auth_token,
+                    mcp_authenticated=mcp_pre_authenticated,
+                    extra_headers=dict(passthrough_headers),
+                ),
             )
         except Exception:
             logger.warning("Bank alias resolution failed for %r; using it as-is", bank_id, exc_info=True)

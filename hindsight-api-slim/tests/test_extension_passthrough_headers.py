@@ -248,6 +248,38 @@ class TestMcpTransport:
 
         assert middleware._get_extra_headers(scope) == {ASSERTION_HEADER: "token-abc"}
 
+    @pytest.mark.asyncio
+    async def test_bank_alias_lookup_carries_the_headers(self, set_passthrough):
+        """The alias lookup re-authenticates, so it needs the headers the login used (#5066)."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from hindsight_api.api.mcp import MCPMiddleware
+
+        class AcceptingTenantExtension(TenantExtension):
+            async def authenticate(self, context: RequestContext) -> TenantContext:
+                return TenantContext(schema_name="public")
+
+            async def list_tenants(self) -> list[Tenant]:
+                return [Tenant(schema="public")]
+
+        set_passthrough(ASSERTION_HEADER)
+        memory = MagicMock()
+        memory._tenant_extension = AcceptingTenantExtension({})
+        memory.resolve_bank_alias = AsyncMock(side_effect=lambda bank_id, **_: bank_id)
+        mcp_app = AsyncMock()
+        middleware = MCPMiddleware(app=None, memory=memory, multi_bank_app=mcp_app, single_bank_app=mcp_app)
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp/my-bank/",
+            "headers": [(ASSERTION_HEADER.encode(), b"token-abc")],
+        }
+        await middleware(scope, AsyncMock(), AsyncMock())
+
+        request_context = memory.resolve_bank_alias.await_args.kwargs["request_context"]
+        assert request_context.extra_headers == {ASSERTION_HEADER: "token-abc"}
+
 
 class TestReachesOperationValidator:
     """The headers survive the whole HTTP path, not just the auth hop."""
