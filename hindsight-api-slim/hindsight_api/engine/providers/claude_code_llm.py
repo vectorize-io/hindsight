@@ -73,11 +73,17 @@ def _claude_env(oauth_token: str | None) -> dict[str, str]:
     The CLI prefers a stored login over that variable, so the token path drops
     CLAUDE_SECURESTORAGE_CONFIG_DIR="": the storage lookup stays namespaced to the
     empty isolated dir, finds no login, and falls through to the token.
+
+    Built by copying the isolation env and removing that one key, rather than
+    re-listing the keys to keep: a third isolation variable added above would
+    otherwise be silently missing from the token path only.
     """
-    env = _get_isolated_claude_env()
     if not oauth_token:
-        return env
-    return {"CLAUDE_CONFIG_DIR": env["CLAUDE_CONFIG_DIR"], "CLAUDE_CODE_OAUTH_TOKEN": oauth_token}
+        return _get_isolated_claude_env()
+    env = dict(_get_isolated_claude_env())
+    del env["CLAUDE_SECURESTORAGE_CONFIG_DIR"]
+    env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
+    return env
 
 
 def _result_error_detail(message: Any) -> str:
@@ -136,8 +142,11 @@ class ClaudeCodeLLM(LLMInterface):
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
         self._warn_reasoning_effort_unsupported()
         self._env = _claude_env(api_key.strip() if api_key else None)
+        # The key can also come from a per-operation or per-bank LLM config, so the
+        # hint names the config rather than only the env var an operator may not have set.
         self._auth_hint = (
-            "The configured HINDSIGHT_API_LLM_API_KEY was rejected. Generate a new one with 'claude setup-token'."
+            "The configured Claude Code API key was rejected. Generate a new token with "
+            "'claude setup-token' and update HINDSIGHT_API_LLM_API_KEY (or the bank/operation LLM key)."
             if "CLAUDE_CODE_OAUTH_TOKEN" in self._env
             else "Run 'claude auth login', or set HINDSIGHT_API_LLM_API_KEY to a token from 'claude setup-token'."
         )

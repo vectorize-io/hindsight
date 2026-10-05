@@ -419,12 +419,11 @@ export HINDSIGHT_API_LLM_MODEL=gpt-5.4-mini
 # ChatGPT profiles in one process.
 # export HINDSIGHT_API_LLM_CODEX_HOME=/var/lib/hindsight/codex-a
 
-# Claude Code (Claude Pro/Max subscription - uses OAuth, no API key needed)
+# Claude Code (Claude Pro/Max subscription - uses OAuth)
 export HINDSIGHT_API_LLM_PROVIDER=claude-code
-# Optional: token from `claude setup-token` (otherwise the CLI login is used)
-# export HINDSIGHT_API_LLM_API_KEY=sk-ant-oat01-...
 export HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-5-20250929
-# No API key needed - uses claude auth login credentials
+# No API key needed - uses `claude auth login` credentials.
+# Set HINDSIGHT_API_LLM_API_KEY to a token from `claude setup-token` to authenticate with a key instead.
 
 # Cursor (Cursor subscription - drives the cursor-agent CLI in headless mode)
 export HINDSIGHT_API_LLM_PROVIDER=cursor

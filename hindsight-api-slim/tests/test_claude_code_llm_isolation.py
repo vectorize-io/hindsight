@@ -43,12 +43,12 @@ class _FakeTextBlock:
         self.text = text
 
 
-def _instantiate_provider():
+def _instantiate_provider(api_key: str = ""):
     from hindsight_api.engine.providers.claude_code_llm import ClaudeCodeLLM
 
     return ClaudeCodeLLM(
         provider="claude-code",
-        api_key="",
+        api_key=api_key,
         base_url="",
         model="claude-haiku-4-5",
         reasoning_effort="low",
@@ -180,18 +180,22 @@ def test_isolation_dir_is_not_home():
 
 def test_setup_token_is_passed_to_cli_as_oauth_token():
     """A configured `claude setup-token` token reaches the CLI; no key leaves CLI login in charge."""
-    from hindsight_api.engine.providers.claude_code_llm import ClaudeCodeLLM, _get_isolated_claude_env
+    from hindsight_api.engine.providers.claude_code_llm import _get_isolated_claude_env
 
-    with_token = ClaudeCodeLLM(provider="claude-code", api_key=" sk-ant-oat01-x ", base_url="", model="m")
+    with_token = _instantiate_provider(api_key=" sk-ant-oat01-x ")
     assert with_token._env["CLAUDE_CONFIG_DIR"] == _get_isolated_claude_env()["CLAUDE_CONFIG_DIR"]
     assert with_token._env["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat01-x"
     # The CLI prefers a stored login over the token; the un-suffixed keychain
     # redirect would hand it the host login and silently ignore the token.
     assert "CLAUDE_SECURESTORAGE_CONFIG_DIR" not in with_token._env
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in _get_isolated_claude_env(), "token must not leak into the shared env"
+    # The shared isolation env is a process-lifetime singleton: the token path must
+    # copy it, not mutate it, or the no-key path would inherit the token.
+    assert "CLAUDE_SECURESTORAGE_CONFIG_DIR" in _get_isolated_claude_env()
 
-    without = ClaudeCodeLLM(provider="claude-code", api_key="", base_url="", model="m")
+    without = _instantiate_provider(api_key="")
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in without._env
+
     # A rejected token must not send the operator to `claude auth login`, which the token bypasses.
     assert "claude setup-token" in with_token._auth_hint
     assert "claude auth login" not in with_token._auth_hint
