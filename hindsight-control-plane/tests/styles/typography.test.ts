@@ -36,7 +36,7 @@ it("generates paragraph, heading and list styles for rendered Markdown", () => {
 });
 
 it("wraps long answer text without reducing table cells' intrinsic minimum widths", () => {
-  // Unlike anywhere, break-word leaves min-content sizing intact. Chromium
+  // Unlike `overflow-wrap: anywhere`, break-word leaves min-content sizing intact. Chromium
   // verifies that a six-column table scrolls while a long paragraph URL wraps.
   const wrapping: string[] = [];
   compiled.walkRules(".reflect-answer", (rule) => {
