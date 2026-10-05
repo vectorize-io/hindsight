@@ -89,9 +89,9 @@ pytestmark = pytest.mark.asyncio
 #:
 #: So the floors sit below the LOWER state, which is the honest thing to assert
 #: until the spread is understood: this still catches a real regression (anything
-#: that drops ranking by more than ~5%) and will not produce a random red build.
-#: Tighten them to the upper state once a run is reproducible — that is worth
-#: doing, because the gate is much weaker than it looks like it should be.
+#: that drops ranking by more than ~5%) without firing on the spread itself.
+#: Tighten them to the upper state once a run is reproducible — worth doing,
+#: because until then this detects far less than the numbers suggest it could.
 #:
 #: NOT comparable to a published SciFact nDCG@10 (~0.70 for a strong dense
 #: retriever): that is 5,183 abstracts, this is 500, and this ranks extracted
