@@ -567,22 +567,16 @@ The run ID is used for temporary plugin state, such as the cached recall and use
 
 **Can I use a static `bankId` and `bankGranularity` together?**
 
-You can configure both, but the static bank wins unless `dynamicBankId` is explicitly true.
+You can configure both, and `bankId` is designed to win. The derivation treats any value of `dynamicBankId` other than `true` as a static override, and the test suite asserts that setting `bankId` on its own activates the static path, as an explicit backwards-compatibility guarantee.
 
-With:
+One caveat is worth acting on rather than reasoning about. The plugin manifest declares `dynamicBankId` with a default of `true`, so whether the value arrives at the derivation as `undefined` or as `true` depends on how the host materialises schema defaults. Do not rely on it. Set the flag explicitly:
 
 ```json
+dynamicBankId: false
 bankId: "shared-team-bank"
-bankGranularity: ["company", "agent", "user"]
 ```
 
-and no explicit `dynamicBankId: true`, the bank is:
-
-```
-shared-team-bank
-```
-
-Set `dynamicBankId: true` if you want the granularity-derived bank instead.
+That is unambiguous under either behaviour, and it is what the plugin documentation tells you to do. Set `dynamicBankId: true` when you want the granularity-derived bank instead.
 
 **Does the default mean agents never share knowledge?**
 
