@@ -62,6 +62,8 @@ _EPHEMERAL_CACHE = {"type": "ephemeral"}
 # scope's max_completion_tokens config.
 _DEFAULT_MAX_TOKENS = 64000
 
+_CONTENT_POLICY_STOP_REASONS = frozenset({"refusal", "content_filter"})
+
 
 def _cached_system_blocks(system_prompt: str) -> list[dict[str, Any]]:
     """Render the system prompt as a block list with a cache_control marker.
@@ -936,10 +938,21 @@ class AnthropicLLM(LLMInterface):
         async for entry in decoder:
             outcome = entry.result
             if outcome.type == "succeeded":
+                message = outcome.message
+                stop_reason = getattr(message, "stop_reason", None)
+                if stop_reason in _CONTENT_POLICY_STOP_REASONS:
+                    # A refusal fails this request, not its successful batch siblings.
+                    results.append(
+                        {
+                            "custom_id": entry.custom_id,
+                            "error": f"Anthropic refused the request (stop_reason={stop_reason}); not retrying",
+                        }
+                    )
+                    continue
                 results.append(
                     {
                         "custom_id": entry.custom_id,
-                        "response": {"body": self._translate_batch_message(outcome.message)},
+                        "response": {"body": self._translate_batch_message(message)},
                     }
                 )
             else:

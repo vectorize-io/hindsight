@@ -283,6 +283,34 @@ async def test_retrieve_batch_results_text_content_passthrough():
     assert results[0]["response"]["body"]["choices"][0]["message"]["content"] == '{"facts": []}'
 
 
+@pytest.mark.parametrize("stop_reason", ["refusal", "content_filter"])
+async def test_retrieve_batch_results_isolates_refusal_to_its_item(stop_reason):
+    provider = _make_provider()
+    provider._client.messages.batches.retrieve = AsyncMock(return_value=_batch("ended", succeeded=2))
+    refusal = SimpleNamespace(
+        content=[],
+        stop_reason=stop_reason,
+        usage=SimpleNamespace(input_tokens=8, output_tokens=0, cache_read_input_tokens=0),
+    )
+    refused_entry = SimpleNamespace(
+        custom_id="chunk_refused",
+        result=SimpleNamespace(type="succeeded", message=refusal),
+    )
+    successful_entry = _succeeded_entry("chunk_ok", {"facts": ["A useful fact."]})
+    provider._client.messages.batches.results = AsyncMock(return_value=_AsyncIter([refused_entry, successful_entry]))
+
+    results = await provider.retrieve_batch_results("msgbatch_test1")
+
+    assert len(results) == 2
+    by_id = {result["custom_id"]: result for result in results}
+    assert by_id["chunk_refused"]["error"] == (
+        f"Anthropic refused the request (stop_reason={stop_reason}); not retrying"
+    )
+    assert "response" not in by_id["chunk_refused"]
+    successful_body = by_id["chunk_ok"]["response"]["body"]
+    assert json.loads(successful_body["choices"][0]["message"]["content"]) == {"facts": ["A useful fact."]}
+
+
 async def test_retrieve_batch_results_raises_when_not_ended():
     provider = _make_provider()
     provider._client.messages.batches.retrieve = AsyncMock(return_value=_batch("in_progress", processing=2))

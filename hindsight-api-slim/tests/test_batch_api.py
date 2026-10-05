@@ -668,7 +668,7 @@ async def test_batch_api_crash_recovery(mock_llm_config, test_contents, hindsigh
 async def test_batch_api_records_non_fatal_extraction_errors(
     mock_llm_config, test_contents, hindsight_config, memory, request_context
 ):
-    """Batch API skipped chunks are surfaced in operation result_metadata."""
+    """A per-item batch error is recorded without discarding successful sibling facts."""
     bank_id = f"test_batch_errors_{datetime.now(timezone.utc).timestamp()}"
     operation_id = str(uuid.uuid4())
 
@@ -729,7 +729,11 @@ async def test_batch_api_records_non_fatal_extraction_errors(
                             "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
                         }
                     },
-                }
+                },
+                {
+                    "custom_id": "chunk_1",
+                    "error": "Anthropic refused the request (stop_reason=refusal); not retrying",
+                },
             ]
         )
 
@@ -756,7 +760,9 @@ async def test_batch_api_records_non_fatal_extraction_errors(
         )
         assert metadata["batch_id"] == batch_id
         assert metadata["extraction_errors_count"] == 1
-        assert metadata["extraction_errors_sample"] == ["chunk_1: missing batch result"]
+        assert metadata["extraction_errors_sample"] == [
+            "chunk_1: Anthropic refused the request (stop_reason=refusal); not retrying"
+        ]
 
     finally:
         try:
