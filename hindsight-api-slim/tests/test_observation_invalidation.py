@@ -1328,6 +1328,39 @@ class TestConsolidationSourceMemoryFiltering:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    async def test_create_observation_counts_each_live_source_once(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """proof_count is the number of distinct live sources, not a literal 1 (#4955)."""
+        from tests.consolidation_actions import create_observation as _create_observation_directly
+
+        bank_id = f"test-create-proof-count-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            a = await _insert_memory(memory, conn, bank_id, "Alice changed the timeout in app.yaml.")
+            b = await _insert_memory(memory, conn, bank_id, "Alice changed the retry count in app.yaml.")
+            c = await _insert_memory(memory, conn, bank_id, "Alice changed the log level in app.yaml.")
+        dead = uuid.uuid4()
+
+        result = await _create_observation_directly(
+            pool=backend,
+            memory_engine=memory,
+            bank_id=bank_id,
+            source_memory_ids=[a, b, a, dead, c],
+            observation_text="Alice keeps tuning app.yaml.",
+        )
+
+        assert result["action"] == "created"
+        async with acquire_with_retry(backend) as conn:
+            stored = await _get_memory(conn, bank_id, result["observation_id"])
+        assert [str(s) for s in stored.source_memory_ids] == [str(a), str(b), str(c)]
+        assert stored.proof_count == 3
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
     async def test_create_observation_skipped_when_all_sources_deleted(
         self, memory: MemoryEngine, request_context: RequestContext
     ):

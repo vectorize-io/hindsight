@@ -3716,7 +3716,7 @@ class MemoriesExtension(Extension, ABC):
                 embedding=cast("list[float] | str", embedding),
                 fact_type="observation",
                 tags=list(tags),
-                proof_count=len(set(source_memory_ids)) or 1,
+                proof_count=len(source_memory_ids),
                 source_memory_ids=[str(s) for s in source_memory_ids],
                 event_date=event_date,
                 occurred_start=occurred_start,

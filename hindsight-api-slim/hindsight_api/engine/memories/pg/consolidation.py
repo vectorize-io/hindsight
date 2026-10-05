@@ -344,7 +344,7 @@ async def insert_observation(
         occurred_start,
         occurred_end,
         mentioned_at,
-        len(set(source_memory_ids)) or 1,  # proof_count: one per distinct source
+        len(source_memory_ids),  # proof_count: the caller passes each live source once
     )
 
     # Populate observation_sources junction table (Oracle only — PG uses native array ops).
