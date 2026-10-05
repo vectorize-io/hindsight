@@ -262,6 +262,20 @@ const geniePrompt = (harness: string): HookSpec => ({
   }),
 });
 
+const genieRetain = (
+  harness: string,
+  readTranscript: RetainHookSpec["readTranscript"]
+): RetainHookSpec => ({
+  hostTimeoutSec: 60,
+  harness,
+  parse: (ev) => ({
+    sessionId: ev.session_id as string | undefined,
+    transcriptPath: ev.transcript_path as string | undefined,
+    cwd: ev.cwd as string | undefined,
+  }),
+  readTranscript,
+});
+
 /**
  * Grok Build also runs the hooks in ~/.claude/settings.json (its Claude compatibility layer), so
  * without this gate every Grok session would run Claude Code's hooks next to Grok's own: a second
@@ -743,16 +757,7 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
     },
     sessionStart: genieSessionStart("workbuddy"),
     prompt: geniePrompt("workbuddy"),
-    retain: {
-      hostTimeoutSec: 60,
-      harness: "workbuddy",
-      parse: (ev) => ({
-        sessionId: ev.session_id as string | undefined,
-        transcriptPath: ev.transcript_path as string | undefined,
-        cwd: ev.cwd as string | undefined,
-      }),
-      readTranscript: readWorkbuddyTranscript,
-    },
+    retain: genieRetain("workbuddy", readWorkbuddyTranscript),
   },
   /**
    * CodeBuddy — the same `@genie/agent-cli` engine WorkBuddy ships, running under its own product
@@ -772,16 +777,7 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
     },
     sessionStart: genieSessionStart("codebuddy"),
     prompt: geniePrompt("codebuddy"),
-    retain: {
-      hostTimeoutSec: 60,
-      harness: "codebuddy",
-      parse: (ev) => ({
-        sessionId: ev.session_id as string | undefined,
-        transcriptPath: ev.transcript_path as string | undefined,
-        cwd: ev.cwd as string | undefined,
-      }),
-      readTranscript: readCodebuddyTranscript,
-    },
+    retain: genieRetain("codebuddy", readCodebuddyTranscript),
   },
 };
 

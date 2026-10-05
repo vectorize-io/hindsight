@@ -14,8 +14,8 @@
  * Antigravity is intentionally absent: its harness E2E is covered separately.
  * TraeCode is absent too: it is the agent inside the TRAE desktop IDE, with no documented headless mode a
  * container could drive. Its hook wire is covered by src/journal-harnesses.test.ts instead.
- * WorkBuddy and CodeBuddy are absent for the same reason: both ship inside Tencent's desktop IDEs,
- * with no documented headless mode a container could drive. Their installers are covered by
+ * WorkBuddy is absent for the same reason (a desktop app with no documented headless mode), and
+ * CodeBuddy Code because driving its CLI needs a Tencent account. Their installers are covered by
  * src/installer.test.ts and their transcript readers by their own unit tests.
  */
 import { homedir } from "node:os";

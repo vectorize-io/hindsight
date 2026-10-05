@@ -78,8 +78,8 @@ export const HARNESS_NAMES = [
   "workbuddy",
   // CodeBuddy Code is the SAME @genie/agent-cli HOOK host, one product config apart (WorkBuddy only
   // renames the home folder): the installer wires ~/.codebuddy/settings.json and the stdio MCP
-  // registration in CodeBuddy's priority-chained MCP file (see src/installer.ts). It shares
-  // WorkBuddy's transcript reader — same engine, same on-disk schema.
+  // registration in CodeBuddy's priority-chained MCP file (see src/installer.ts). The CLI
+  // writes WorkBuddy's transcript format; the CodeBuddy IDE has a reader of its own.
   "codebuddy",
 ];
 

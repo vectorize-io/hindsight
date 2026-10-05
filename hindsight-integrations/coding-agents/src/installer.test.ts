@@ -1153,13 +1153,17 @@ describe("traecode installer", () => {
   });
 });
 
-describe("workbuddy installer", () => {
-  const settingsPath = (ctx: InstallCtx) => join(ctx.home, ".workbuddy", "settings.json");
-  const mcpPath = (ctx: InstallCtx) => join(ctx.home, ".workbuddy", "mcp.json");
+// WorkBuddy and CodeBuddy share one installer (same engine, different home folder and MCP file).
+describe.each([
+  { harness: "workbuddy", home: ".workbuddy", mcpFile: "mcp.json" },
+  { harness: "codebuddy", home: ".codebuddy", mcpFile: ".mcp.json" },
+])("$harness installer", ({ harness, home, mcpFile }) => {
+  const settingsPath = (ctx: InstallCtx) => join(ctx.home, home, "settings.json");
+  const mcpPath = (ctx: InstallCtx) => join(ctx.home, home, mcpFile);
 
-  it("registers the three hooks in ~/.workbuddy/settings.json, in Claude's nested shape", () => {
+  it("registers the three hooks in settings.json, in Claude's nested shape", () => {
     const ctx = makeCtx();
-    expect(run(["install", "workbuddy"], ctx)).toBe(0);
+    expect(run(["install", harness], ctx)).toBe(0);
     const hooks = readJson(settingsPath(ctx)).hooks;
     expect(Object.keys(hooks).sort()).toEqual(["SessionStart", "Stop", "UserPromptSubmit"]);
     const entry = (ev: string) => hooks[ev][0].hooks[0];
@@ -1167,18 +1171,18 @@ describe("workbuddy installer", () => {
       expect(entry(ev).type).toBe("command");
       expect(entry(ev).command).toContain(ctx.dist);
     }
-    expect(entry("SessionStart").command).toContain("workbuddy-sessionstart-hook.js");
-    expect(entry("UserPromptSubmit").command).toContain("workbuddy-hook.js");
-    expect(entry("Stop").command).toContain("workbuddy-stop-hook.js");
+    expect(entry("SessionStart").command).toContain(`${harness}-sessionstart-hook.js`);
+    expect(entry("UserPromptSubmit").command).toContain(`${harness}-hook.js`);
+    expect(entry("Stop").command).toContain(`${harness}-stop-hook.js`);
     expect(entry("SessionStart").timeout).toBe(30);
     expect(entry("Stop").timeout).toBe(60);
   });
 
-  it("registers the stdio MCP server in ~/.workbuddy/mcp.json, tagged with the workbuddy harness", () => {
+  it("registers the stdio MCP server in the host MCP file, tagged with its harness", () => {
     const ctx = makeCtx();
-    expect(run(["install", "workbuddy"], ctx)).toBe(0);
+    expect(run(["install", harness], ctx)).toBe(0);
     const server = readJson(mcpPath(ctx)).mcpServers.hindsight;
-    expect(server).toMatchObject({ command: "node", env: { HINDSIGHT_MCP_HARNESS: "workbuddy" } });
+    expect(server).toMatchObject({ command: "node", env: { HINDSIGHT_MCP_HARNESS: harness } });
     expect(server.args[0]).toContain("mcp-server.js");
   });
 
@@ -1188,7 +1192,7 @@ describe("workbuddy installer", () => {
       enabledPlugins: { "pptx@codebuddy-plugins-official": true },
       hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "their-hook" }] }] },
     });
-    expect(run(["install", "workbuddy"], ctx)).toBe(0);
+    expect(run(["install", harness], ctx)).toBe(0);
     const settings = readJson(settingsPath(ctx));
     expect(settings.enabledPlugins).toBeDefined();
     expect(JSON.stringify(settings.hooks)).toContain("their-hook");
@@ -1198,8 +1202,8 @@ describe("workbuddy installer", () => {
 
   it("is idempotent — a second install replaces our entries rather than stacking them", () => {
     const ctx = makeCtx();
-    expect(run(["install", "workbuddy"], ctx)).toBe(0);
-    expect(run(["install", "workbuddy"], ctx)).toBe(0);
+    expect(run(["install", harness], ctx)).toBe(0);
+    expect(run(["install", harness], ctx)).toBe(0);
     expect(readJson(settingsPath(ctx)).hooks.UserPromptSubmit).toHaveLength(1);
   });
 
@@ -1208,7 +1212,7 @@ describe("workbuddy installer", () => {
     writeJsonAt(mcpPath(ctx), {
       mcpServers: { affine: { command: "npx", args: ["-y", "affine-mcp-server"] } },
     });
-    expect(run(["install", "workbuddy"], ctx)).toBe(0);
+    expect(run(["install", harness], ctx)).toBe(0);
     const servers = readJson(mcpPath(ctx)).mcpServers;
     expect(servers.affine).toBeDefined();
     expect(servers.hindsight).toBeDefined();
@@ -1217,8 +1221,8 @@ describe("workbuddy installer", () => {
   it("uninstall removes our hooks and MCP entry, keeping a foreign server", () => {
     const ctx = makeCtx();
     writeJsonAt(mcpPath(ctx), { mcpServers: { affine: { command: "npx" } } });
-    expect(run(["install", "workbuddy"], ctx)).toBe(0);
-    expect(run(["uninstall", "workbuddy"], ctx)).toBe(0);
+    expect(run(["install", harness], ctx)).toBe(0);
+    expect(run(["uninstall", harness], ctx)).toBe(0);
     expect(readJson(settingsPath(ctx)).hooks).toBeUndefined();
     const servers = readJson(mcpPath(ctx)).mcpServers;
     expect(servers.affine).toBeDefined();
@@ -1226,35 +1230,16 @@ describe("workbuddy installer", () => {
   });
 });
 
-describe("codebuddy installer", () => {
+describe("codebuddy installer MCP file chain", () => {
   const settingsPath = (ctx: InstallCtx) => join(ctx.home, ".codebuddy", "settings.json");
   const mcpPath = (ctx: InstallCtx) => join(ctx.home, ".codebuddy", ".mcp.json"); // recommended
   const deprecatedMcpPath = (ctx: InstallCtx) => join(ctx.home, ".codebuddy", "mcp.json");
   const legacyMcpPath = (ctx: InstallCtx) => join(ctx.home, ".codebuddy.json");
 
-  it("registers the three hooks in ~/.codebuddy/settings.json, in Claude's nested shape", () => {
+  it("creates only the recommended ~/.codebuddy/.mcp.json on a fresh home", () => {
     const ctx = makeCtx();
     expect(run(["install", "codebuddy"], ctx)).toBe(0);
-    const hooks = readJson(settingsPath(ctx)).hooks;
-    expect(Object.keys(hooks).sort()).toEqual(["SessionStart", "Stop", "UserPromptSubmit"]);
-    const entry = (ev: string) => hooks[ev][0].hooks[0];
-    for (const ev of ["SessionStart", "Stop", "UserPromptSubmit"]) {
-      expect(entry(ev).type).toBe("command");
-      expect(entry(ev).command).toContain(ctx.dist);
-    }
-    expect(entry("SessionStart").command).toContain("codebuddy-sessionstart-hook.js");
-    expect(entry("UserPromptSubmit").command).toContain("codebuddy-hook.js");
-    expect(entry("Stop").command).toContain("codebuddy-stop-hook.js");
-    expect(entry("SessionStart").timeout).toBe(30);
-    expect(entry("Stop").timeout).toBe(60);
-  });
-
-  it("registers the stdio MCP server in ~/.codebuddy/.mcp.json, tagged with the codebuddy harness", () => {
-    const ctx = makeCtx();
-    expect(run(["install", "codebuddy"], ctx)).toBe(0);
-    const server = readJson(mcpPath(ctx)).mcpServers.hindsight;
-    expect(server).toMatchObject({ command: "node", env: { HINDSIGHT_MCP_HARNESS: "codebuddy" } });
-    expect(server.args[0]).toContain("mcp-server.js");
+    expect(readJson(mcpPath(ctx)).mcpServers.hindsight).toBeDefined();
     // Fresh home: the recommended file is created, no older link of the chain appears.
     expect(existsSync(deprecatedMcpPath(ctx))).toBe(false);
     expect(existsSync(legacyMcpPath(ctx))).toBe(false);
@@ -1282,38 +1267,6 @@ describe("codebuddy installer", () => {
     expect(cfg.mcpServers.hindsight).toBeDefined();
     expect(cfg.projects).toEqual({});
     expect(existsSync(mcpPath(ctx))).toBe(false);
-  });
-
-  it("preserves the rest of the settings and any foreign hooks", () => {
-    const ctx = makeCtx();
-    writeJsonAt(settingsPath(ctx), {
-      enabledPlugins: { "pptx@codebuddy-plugins-official": true },
-      hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "their-hook" }] }] },
-    });
-    expect(run(["install", "codebuddy"], ctx)).toBe(0);
-    const settings = readJson(settingsPath(ctx));
-    expect(settings.enabledPlugins).toBeDefined();
-    expect(JSON.stringify(settings.hooks)).toContain("their-hook");
-    expect(settings.hooks.PreToolUse).toBeDefined();
-    expect(settings.hooks.UserPromptSubmit).toHaveLength(1);
-  });
-
-  it("is idempotent — a second install replaces our entries rather than stacking them", () => {
-    const ctx = makeCtx();
-    expect(run(["install", "codebuddy"], ctx)).toBe(0);
-    expect(run(["install", "codebuddy"], ctx)).toBe(0);
-    expect(readJson(settingsPath(ctx)).hooks.UserPromptSubmit).toHaveLength(1);
-  });
-
-  it("preserves a foreign MCP server while adding ours", () => {
-    const ctx = makeCtx();
-    writeJsonAt(mcpPath(ctx), {
-      mcpServers: { affine: { command: "npx", args: ["-y", "affine-mcp-server"] } },
-    });
-    expect(run(["install", "codebuddy"], ctx)).toBe(0);
-    const servers = readJson(mcpPath(ctx)).mcpServers;
-    expect(servers.affine).toBeDefined();
-    expect(servers.hindsight).toBeDefined();
   });
 
   it("uninstall removes our hooks and MCP entry, keeping a foreign server", () => {
