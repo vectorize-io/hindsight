@@ -321,6 +321,25 @@ def split_markdown(markdown: str) -> StructuredDocument:
     return StructuredDocument(sections=sections)
 
 
+class DocumentSectionsInvalidError(ValueError):
+    """The ``done`` tool's ``document`` argument did not match the declared shape.
+
+    Not coerced, by the same reasoning that made delta operations all-or-nothing
+    (#4443): the schema asks for sections of plain-string blocks, so a block that
+    arrives as an object is the model writing to a shape it invented, and there is
+    no reading of that payload we can trust the rest of. Guessing one is how
+    ``str({"text": ...})`` put the literal ``{'text': '...'}`` into
+    ``mental_models.content`` and every prompt built from it (#4910).
+
+    ``errors`` is the text handed back to the model, one line per offending
+    field, so the retry can fix the shape instead of repeating it.
+    """
+
+    def __init__(self, errors: list[str]) -> None:
+        self.errors = errors
+        super().__init__("; ".join(errors))
+
+
 def document_from_sections(payload: dict) -> StructuredDocument:
     """Build a document from the ``done`` tool's emitted sections.
 
@@ -329,11 +348,20 @@ def document_from_sections(payload: dict) -> StructuredDocument:
     ever read back to work out what it meant. Ids are assigned here — the model
     is never asked for one, since a generated document has no prior ids to echo.
 
-    Tolerant by design, because a tool call is still model output: a missing
-    heading, an out-of-range level or a non-string block is coerced rather than
-    rejected. A block holding several blank-line-separated fragments is split
-    into one block each, so the document keeps the granularity delta operations
-    address even when the model packs a whole section into one string.
+    Normalising, but not guessing. A missing heading, an out-of-range level or a
+    heading that kept its ``#`` are rewritten, because each has one correct
+    reading and nothing is lost either way. A block holding several
+    blank-line-separated fragments is split into one block each, so the document
+    keeps the granularity delta operations address even when the model packs a
+    whole section into one string.
+
+    A *type* violation is refused instead: a block that is not a string, or a
+    section that is not an object, raises :class:`DocumentSectionsInvalidError`
+    for the caller to feed back to the model. There is no correct reading of
+    those to pick, and the coercion that used to stand in for one stored
+    ``str()`` of the object — the Python repr, ``{'text': '...'}`` — as the
+    block's markdown, then rendered it into ``mental_models.content`` and into
+    every prompt that content reaches (#4910).
 
     That tolerance now extends to the wrapper itself. A one-section document is
     the shape a model most often flattens — it emits the section *as* the
@@ -348,13 +376,38 @@ def document_from_sections(payload: dict) -> StructuredDocument:
     if "sections" not in payload and isinstance(payload.get("blocks"), list):
         payload = {"sections": [payload]}
 
+    raw_sections = payload.get("sections") or []
+    if not isinstance(raw_sections, list):
+        raise DocumentSectionsInvalidError(
+            [f"sections: expected an array of section objects, got {type(raw_sections).__name__}"]
+        )
+
+    errors: list[str] = []
+    for i, raw_section in enumerate(raw_sections):
+        if not isinstance(raw_section, dict):
+            errors.append(
+                f"sections[{i}]: expected an object with heading/level/blocks, got {type(raw_section).__name__}"
+            )
+            continue
+        raw_blocks = raw_section.get("blocks") or []
+        if not isinstance(raw_blocks, list):
+            errors.append(f"sections[{i}].blocks: expected an array of strings, got {type(raw_blocks).__name__}")
+            continue
+        for j, raw_block in enumerate(raw_blocks):
+            if not isinstance(raw_block, str):
+                errors.append(
+                    f"sections[{i}].blocks[{j}]: expected a markdown string, got {type(raw_block).__name__} "
+                    f"({raw_block!r:.80}) — write the markdown itself, not an object wrapping it"
+                )
+    if errors:
+        raise DocumentSectionsInvalidError(errors)
+
     sections: list[Section] = []
     used_ids: set[str] = set()
     block_ids: set[str] = set()
 
-    for raw_section in payload.get("sections") or []:
-        if not isinstance(raw_section, dict):
-            continue
+    for raw_section in raw_sections:
+        assert isinstance(raw_section, dict)  # validated above
         heading = str(raw_section.get("heading") or "").strip().lstrip("#").strip()
         try:
             level = int(raw_section.get("level") or 2)
@@ -364,9 +417,7 @@ def document_from_sections(payload: dict) -> StructuredDocument:
 
         lines: list[str] = []
         for raw_block in raw_section.get("blocks") or []:
-            if raw_block is None:
-                continue
-            text = normalize_block_text(str(raw_block))
+            text = normalize_block_text(raw_block)
             if not text.strip():
                 continue
             if lines:

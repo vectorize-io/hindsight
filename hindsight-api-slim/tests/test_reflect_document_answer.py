@@ -18,6 +18,7 @@ import uuid
 import pytest
 
 from hindsight_api.engine.reflect.structured_doc import (
+    DocumentSectionsInvalidError,
     document_from_sections,
     render_document,
 )
@@ -113,15 +114,64 @@ class TestDocumentFromSections:
         )
         assert [s.id for s in doc.sections] == ["t", "t-2"]
 
-    def test_empty_and_malformed_entries_are_dropped(self):
-        doc = document_from_sections(
-            {"sections": [{"heading": "", "level": 2, "blocks": ["   ", None]}, "not a section", {}]}
-        )
+    def test_blank_blocks_are_dropped(self):
+        """An empty string is a well-typed block that renders to nothing."""
+        doc = document_from_sections({"sections": [{"heading": "", "level": 2, "blocks": ["   ", ""]}, {}]})
         assert doc.sections == []
 
     def test_empty_payload_is_an_empty_document(self):
         assert document_from_sections({}).sections == []
         assert render_document(document_from_sections({"sections": []})) == ""
+
+
+class TestMalformedDocumentIsRejected:
+    """#4910: a type violation is refused, never read as the text it is not.
+
+    ``str()`` of a block object is its Python repr, so the literal
+    ``{'text': '...'}`` used to be stored as the block's markdown and rendered
+    into ``mental_models.content``, where every prompt built from that content
+    carried the wrapper until the next full refresh. There is no correct reading
+    of the payload to guess, so the caller is handed the per-field errors to feed
+    back to the model instead.
+    """
+
+    def test_block_written_as_an_object_is_rejected(self):
+        with pytest.raises(DocumentSectionsInvalidError) as exc:
+            document_from_sections({"sections": [{"heading": "Ops", "level": 2, "blocks": [{"text": "Intro."}]}]})
+        assert "sections[0].blocks[0]" in str(exc.value)
+
+    def test_the_repr_never_reaches_a_block(self):
+        with pytest.raises(DocumentSectionsInvalidError):
+            document_from_sections({"sections": [{"heading": "Ops", "blocks": [{"text": "Hello."}]}]})
+
+    def test_null_block_is_rejected(self):
+        with pytest.raises(DocumentSectionsInvalidError):
+            document_from_sections({"sections": [{"heading": "Ops", "blocks": ["fine", None]}]})
+
+    def test_non_object_section_is_rejected(self):
+        with pytest.raises(DocumentSectionsInvalidError):
+            document_from_sections({"sections": ["not a section"]})
+
+    def test_sections_that_is_not_a_list_is_rejected(self):
+        with pytest.raises(DocumentSectionsInvalidError):
+            document_from_sections({"sections": {"heading": "Ops"}})
+
+    def test_blocks_that_is_not_a_list_is_rejected(self):
+        with pytest.raises(DocumentSectionsInvalidError):
+            document_from_sections({"sections": [{"heading": "Ops", "blocks": "Intro."}]})
+
+    def test_every_offending_field_is_reported_in_one_error(self):
+        """The retry gets the whole list, so it is not fixed one round-trip at a time."""
+        with pytest.raises(DocumentSectionsInvalidError) as exc:
+            document_from_sections(
+                {
+                    "sections": [
+                        {"heading": "A", "blocks": [{"text": "x"}, 7]},
+                        {"heading": "B", "blocks": [{"text": "y"}]},
+                    ]
+                }
+            )
+        assert len(exc.value.errors) == 3
 
 
 class TestBareSectionIsReadAsOne:
@@ -207,11 +257,14 @@ class TestDocumentPromptStatesTheShape:
 
 
 class TestOverBudgetRewrite:
-    """A document too long for its budget is trimmed as a document, not as prose.
+    """A document too long for its budget is trimmed as a document, or not at all.
 
-    The trim is the one place a long answer gets regenerated, so asking for prose
-    there would put the model back in charge of the markdown that gets stored —
-    on exactly the documents whose structure matters most.
+    The trim is the one place a long answer gets regenerated, so a response that
+    is not a document is refused rather than read back as prose: that would put
+    the model in charge of the markdown that gets stored, on exactly the
+    documents whose structure matters most, and would let a schema violation
+    reach stored content unreported (#4910). The caller re-asks and otherwise
+    keeps the full document.
     """
 
     def test_a_json_rewrite_is_read_back_as_a_document(self):
@@ -220,36 +273,41 @@ class TestOverBudgetRewrite:
         rewritten = (
             '{"sections": [{"heading": "Ops", "level": 2, "blocks": ["| a | b |\\n| --- | --- |\\n| 1 | 2 |"]}]}'
         )
-        trimmed = _document_from_rewrite(rewritten, "previous")
+        trimmed = _document_from_rewrite(rewritten)
         assert [s.heading for s in trimmed.structure.sections] == ["Ops"]
         assert trimmed.markdown == "## Ops\n\n| a | b |\n| --- | --- |\n| 1 | 2 |"
 
-    def test_markdown_rewrite_falls_back_to_a_lossless_split(self):
-        """A model that ignores the format must not cost us the whole reflect."""
+    def test_markdown_instead_of_json_is_refused(self):
         from hindsight_api.engine.reflect.agent import _document_from_rewrite
 
-        trimmed = _document_from_rewrite("## Ops\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n", "previous")
-        assert [s.heading for s in trimmed.structure.sections] == ["Ops"]
-        assert "| 1 | 2 |" in trimmed.markdown.splitlines()
+        with pytest.raises(DocumentSectionsInvalidError):
+            _document_from_rewrite("## Ops\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n")
 
-    def test_empty_rewrite_keeps_the_previous_answer(self):
+    def test_object_blocks_are_refused(self):
         from hindsight_api.engine.reflect.agent import _document_from_rewrite
 
-        trimmed = _document_from_rewrite("   ", "## Kept\n\nbody\n")
-        assert trimmed.markdown == "## Kept\n\nbody\n"
-        assert [s.heading for s in trimmed.structure.sections] == ["Kept"]
+        with pytest.raises(DocumentSectionsInvalidError) as exc:
+            _document_from_rewrite('{"sections": [{"heading": "Ops", "blocks": [{"text": "x"}]}]}')
+        assert "blocks[0]" in str(exc.value)
+
+    def test_empty_rewrite_is_refused(self):
+        from hindsight_api.engine.reflect.agent import _document_from_rewrite
+
+        with pytest.raises(DocumentSectionsInvalidError):
+            _document_from_rewrite("   ")
+
+    def test_sections_that_render_to_nothing_are_refused(self):
+        from hindsight_api.engine.reflect.agent import _document_from_rewrite
+
+        with pytest.raises(DocumentSectionsInvalidError):
+            _document_from_rewrite('{"sections": [{"heading": "", "blocks": ["  "]}]}')
 
     def test_the_render_always_matches_the_structure(self):
         from hindsight_api.engine.reflect.agent import _document_from_rewrite
         from hindsight_api.engine.reflect.structured_doc import render_document
 
-        for rewritten in (
-            '{"sections": [{"heading": "A", "level": 2, "blocks": ["one", "two"]}]}',
-            "## A\n\none\n\ntwo\n",
-            "",
-        ):
-            trimmed = _document_from_rewrite(rewritten, "## Kept\n\nbody\n")
-            assert trimmed.markdown.strip() == render_document(trimmed.structure).strip()
+        trimmed = _document_from_rewrite('{"sections": [{"heading": "A", "level": 2, "blocks": ["one", "two"]}]}')
+        assert trimmed.markdown.strip() == render_document(trimmed.structure).strip()
 
 
 @pytest.mark.hs_llm_core

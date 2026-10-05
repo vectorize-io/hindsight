@@ -29,6 +29,7 @@ from hindsight_api.engine.reflect.agent import (
     _normalize_tool_name,
     run_reflect_agent,
 )
+from hindsight_api.engine.reflect.structured_doc import DocumentSectionsInvalidError
 from hindsight_api.engine.response_models import LLMCallResult, LLMToolCall, LLMToolCallResult, TokenUsage
 from tests.llm_judge import assert_meets_criteria
 
@@ -1601,6 +1602,267 @@ class TestReflectAgentMocked:
         assert all(tool_use_id for tool_use_id in tool_use_ids), tool_use_ids
         assert len(set(tool_use_ids)) == 2, tool_use_ids
         assert [m["tool_call_id"] for m in messages if m.get("role") == "tool"] == tool_use_ids
+
+
+class TestMalformedDoneDocumentIsFedBack:
+    """A ``document`` whose shape the schema refuses is re-asked, never guessed (#4910).
+
+    ``str()`` of a block object is its Python repr, so a block emitted as
+    ``{"text": ...}`` used to be stored as the literal ``{'text': '...'}`` and
+    rendered into ``mental_models.content``. The payload is refused instead, and
+    the per-field errors go back as the done call's tool result so the model can
+    re-emit the same content in the declared shape.
+    """
+
+    @pytest.fixture
+    def mock_llm(self):
+        llm = MagicMock()
+        llm.call_with_tools = AsyncMock()
+        llm.call = AsyncMock(
+            return_value=LLMCallResult(
+                content="Fallback answer",
+                usage=TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15),
+            )
+        )
+        return llm
+
+    @pytest.fixture
+    def mock_functions(self):
+        return {
+            "search_mental_models_fn": AsyncMock(
+                return_value={
+                    "mental_models": [{"id": "mm-1", "name": "P", "content": "Fresh.", "is_stale": False}],
+                }
+            ),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "search_observations_fn": AsyncMock(return_value={"observations": []}),
+            "recall_fn": AsyncMock(return_value={"memories": []}),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+
+    @staticmethod
+    def _done(call_id: str, blocks: list) -> LLMToolCallResult:
+        return LLMToolCallResult(
+            tool_calls=[
+                LLMToolCall(
+                    id=call_id,
+                    name="done",
+                    arguments={
+                        "document": {"sections": [{"heading": "Ops", "level": 2, "blocks": blocks}]},
+                        "mental_model_ids": ["mm-1"],
+                    },
+                )
+            ],
+            finish_reason="tool_calls",
+        )
+
+    @pytest.mark.asyncio
+    async def test_object_blocks_are_rejected_and_the_retry_answers(self, mock_llm, mock_functions):
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="1", name="search_mental_models", arguments={"reason": "curated", "query": "q"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            self._done("2", [{"text": "Intro."}]),
+            self._done("3", ["Intro."]),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="q",
+            bank_profile={"name": "Test", "mission": ""},
+            has_mental_models=True,
+            budget="low",
+            max_iterations=5,
+            answer_as_document=True,
+            **mock_functions,
+        )
+
+        assert result.text == "## Ops\n\nIntro."
+        assert "{'text'" not in result.text
+        # The rejection went back as the done call's own tool result.
+        messages = mock_llm.call_with_tools.await_args_list[2].kwargs["messages"]
+        rejection = messages[-1]
+        assert rejection["role"] == "tool"
+        assert "sections[0].blocks[0]" in rejection["content"]
+
+    @pytest.mark.asyncio
+    async def test_a_model_that_keeps_the_bad_shape_fails_rather_than_storing_it(self, mock_llm, mock_functions):
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="1", name="search_mental_models", arguments={"reason": "curated", "query": "q"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            self._done("2", [{"text": "Intro."}]),
+            self._done("3", [{"text": "Intro."}]),
+        ]
+
+        with pytest.raises(DocumentSectionsInvalidError):
+            await run_reflect_agent(
+                llm_config=mock_llm,
+                bank_id="test-bank",
+                query="q",
+                bank_profile={"name": "Test", "mission": ""},
+                has_mental_models=True,
+                budget="low",
+                max_iterations=5,
+                answer_as_document=True,
+                **mock_functions,
+            )
+
+    @pytest.mark.asyncio
+    async def test_the_closing_done_call_is_re_asked_not_answered_as_prose(self, mock_llm, mock_functions):
+        """The model stops with prose, the closing done() is malformed, and the re-ask lands.
+
+        The standalone prose synthesis (``llm.call``) must not be reached: it
+        would answer by re-reading markdown the model wrote, which is the one
+        thing document mode exists to avoid.
+        """
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="1", name="search_mental_models", arguments={"reason": "curated", "query": "q"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            # Stops with prose -> the closing done() call is asked for.
+            LLMToolCallResult(tool_calls=[], content="I have enough to answer.", finish_reason="stop"),
+            self._done("2", [{"text": "Intro."}]),
+            self._done("3", ["Intro."]),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="q",
+            bank_profile={"name": "Test", "mission": ""},
+            has_mental_models=True,
+            budget="low",
+            max_iterations=5,
+            answer_as_document=True,
+            **mock_functions,
+        )
+
+        assert result.text == "## Ops\n\nIntro."
+        mock_llm.call.assert_not_called()
+        # The rejection was fed back on the same prefix.
+        retry_messages = mock_llm.call_with_tools.await_args_list[3].kwargs["messages"]
+        assert "sections[0].blocks[0]" in retry_messages[-1]["content"]
+
+    @pytest.mark.asyncio
+    async def test_a_closing_call_that_stays_malformed_never_answers_as_prose(self, mock_llm, mock_functions):
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="1", name="search_mental_models", arguments={"reason": "curated", "query": "q"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(tool_calls=[], content="I have enough to answer.", finish_reason="stop"),
+            self._done("2", [{"text": "Intro."}]),
+            self._done("3", [{"text": "Intro."}]),
+        ]
+
+        with pytest.raises(DocumentSectionsInvalidError):
+            await run_reflect_agent(
+                llm_config=mock_llm,
+                bank_id="test-bank",
+                query="q",
+                bank_profile={"name": "Test", "mission": ""},
+                has_mental_models=True,
+                budget="low",
+                max_iterations=5,
+                answer_as_document=True,
+                **mock_functions,
+            )
+        mock_llm.call.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_an_over_budget_document_keeps_its_structure_when_the_trim_is_malformed(
+        self, mock_llm, mock_functions
+    ):
+        """A shortening response that is not a document is re-asked, then dropped.
+
+        The full document stands -- over the length budget is a reported outcome.
+        What must not happen is the trim being read back as prose, which is how
+        unvalidated model markdown would become the stored document.
+        """
+        long_blocks = ["important detail " * 40, "second detail " * 40]
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="1", name="search_mental_models", arguments={"reason": "curated", "query": "q"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            self._done("2", long_blocks),
+        ]
+        mock_llm.call = AsyncMock(
+            return_value=LLMCallResult(
+                # Prose where a document was asked for, every attempt.
+                content="## Ops\n\nshortened prose\n",
+                usage=TokenUsage(input_tokens=30, output_tokens=10, total_tokens=40),
+            )
+        )
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="q",
+            bank_profile={"name": "Test", "mission": ""},
+            has_mental_models=True,
+            budget="low",
+            max_iterations=5,
+            answer_as_document=True,
+            max_tokens=32,
+            **mock_functions,
+        )
+
+        assert "shortened prose" not in result.text
+        assert long_blocks[0].strip() in result.text
+        # Re-asked once before giving up, and both calls are billed.
+        assert mock_llm.call.await_count == 2
+        rewrite_trace = [call for call in result.llm_trace if call.scope == "final_rewrite"]
+        assert rewrite_trace and rewrite_trace[0].input_tokens == 60
+
+    @pytest.mark.asyncio
+    async def test_a_valid_document_trim_is_applied(self, mock_llm, mock_functions):
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="1", name="search_mental_models", arguments={"reason": "curated", "query": "q"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            self._done("2", ["important detail " * 40]),
+        ]
+        mock_llm.call = AsyncMock(
+            return_value=LLMCallResult(
+                content='{"sections": [{"heading": "Ops", "level": 2, "blocks": ["Short."]}]}',
+                usage=TokenUsage(input_tokens=30, output_tokens=10, total_tokens=40),
+            )
+        )
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="q",
+            bank_profile={"name": "Test", "mission": ""},
+            has_mental_models=True,
+            budget="low",
+            max_iterations=5,
+            answer_as_document=True,
+            max_tokens=32,
+            **mock_functions,
+        )
+
+        assert result.text == "## Ops\n\nShort."
+        assert mock_llm.call.await_count == 1
 
 
 class TestContextOverflowHelpers:
