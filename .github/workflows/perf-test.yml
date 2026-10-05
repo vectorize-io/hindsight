@@ -335,7 +335,8 @@ jobs:
 
   system-evals:
     # Knowledge-page convergence, reflect answers and retain language, graded by an
-    # independent judge. Blackbox: a real
+    # independent judge, plus ranked retrieval (nDCG@k / Recall@k) scored against
+    # BEIR's own labels rather than a judge. Blackbox: a real
     # hindsight-api process driven only through the published Python client, the
     # same shape as hindsight-system-tests — except the model is REAL, because a
     # quality eval against a stub would score the stub. That also means it needs

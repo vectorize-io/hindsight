@@ -133,6 +133,14 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="directory for the refresh-cost report and the synthesis prompt of every refresh it measured",
     )
     parser.addoption(
+        "--retrieval-output",
+        default=None,
+        help=(
+            "write test_08's metric table as JSON here — how two reranker or embedder arms get "
+            "compared, since each needs its own server process and therefore its own run"
+        ),
+    )
+    parser.addoption(
         "--keep-banks",
         action="store_true",
         default=False,

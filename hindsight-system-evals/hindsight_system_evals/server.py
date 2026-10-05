@@ -127,6 +127,15 @@ def provider_environment() -> dict[str, str]:
     provider, model = pick("LLM_PROVIDER"), pick("LLM_MODEL")
     env = {"HINDSIGHT_API_LLM_PROVIDER": provider, "HINDSIGHT_API_LLM_MODEL": model}
 
+    # `none` is a real provider: the server starts with no LLM and forces
+    # retain_extraction_mode=chunks. It needs no credentials because it never calls
+    # a model, which is what lets the retrieval suite run as a gate — that one
+    # restores a frozen bank and only measures the embedder and reranker, so
+    # demanding a provider key would be asking for a secret nothing spends.
+    # Every other suite still fails loudly without one.
+    if provider == "none":
+        return env
+
     if provider == "vertexai":
         for suffix in ("LLM_VERTEXAI_SERVICE_ACCOUNT_KEY", "LLM_VERTEXAI_PROJECT_ID", "LLM_VERTEXAI_REGION"):
             if value := pick(suffix):
@@ -141,7 +150,8 @@ def provider_environment() -> dict[str, str]:
         raise RuntimeError(
             "System evals need a real model. Set HINDSIGHT_EVAL_LLM_PROVIDER / _MODEL and either "
             "_API_KEY or, for vertexai, _VERTEXAI_SERVICE_ACCOUNT_KEY (HINDSIGHT_API_ equivalents "
-            "also work). A stub cannot be used here: it would score the stub."
+            "also work). A stub cannot be used here: it would score the stub. The one exception is "
+            "HINDSIGHT_EVAL_LLM_PROVIDER=none, for a suite that makes no model call at all."
         )
     # Optional knobs that change what the model emits (a provider's thinking
     # switch, the sampling temperature). A bug that only shows at temperature 0

@@ -25,6 +25,15 @@ dependencies = [
     "pg0-embedded>=0.15.2",
 ]
 
+[project.optional-dependencies]
+# The reference implementation BEIR itself scores with. Used by ONE test, which
+# cross-checks the retrieval metric arithmetic against it on random graded inputs
+# — it caught nDCG shipping with the exponential `2**grade - 1` gain instead of
+# trec_eval's linear one, a bug invisible on binary qrels and worth ~0.04 on
+# graded ones. A C extension, so the test skips rather than fails where no wheel
+# exists.
+reference-metrics = ["pytrec_eval-terrier>=0.5.6"]
+
 [tool.uv.sources]
 # editable, for the same reason the system tests give: a copied client silently
 # freezes the API surface at whenever the venv was last built.

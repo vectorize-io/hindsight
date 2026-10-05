@@ -148,6 +148,121 @@ rank the sources. The ways an operator can state the precedence with no new conf
 `HINDSIGHT_EVAL_SOURCE_STRATEGY`. It uses `hindsight_system_evals/sources.py`,
 not the shared corpus.
 
+**`test_08` — ranked retrieval on BEIR.** The only suite graded against labels
+nobody here wrote, and the only one that makes **no model call**. It records a
+*baseline*: what this pipeline scores on a public IR benchmark, and on what.
+
+It takes **BEIR SciFact** — scientific claims as queries, abstracts as documents,
+relevance judgements from the dataset — and reports the standard set at
+k = **1, 3, 5, 10, 20, 100**:
+
+| | |
+|---|---|
+| **nDCG@k** | `grade / log2(rank + 1)`, LINEAR gain, which is what `trec_eval` and therefore BEIR use |
+| **MAP@k** | divided by the TOTAL relevant (`pytrec_eval`'s `map_cut`), so MAP@1 cannot reach 1.0 on a 2-gold query |
+| **Recall@k**, **P@k** | P divides by k, not by what came back |
+| **MRR@k** | plus an untruncated MRR, because `MRR@10 == 0 < MRR` is exactly "returned, ranked too low" |
+| **Hit@k** | BEIR's Accuracy@k — what a user feels, and the first thing to saturate |
+| **R-precision** | P@R for that query's own R; cutoff-free, so a mostly-one-gold slice cannot flatter it |
+
+A unit test cross-checks all of them against `pytrec_eval` on 300 random graded
+runs — which is how we found nDCG had shipped with the exponential
+`2**grade - 1` gain instead of the linear one. Identical on binary qrels like
+SciFact, wrong by ~0.04 on the graded qrels of NFCorpus and TREC-COVID. Install
+it with `--extra reference-metrics`; without it that test skips.
+
+### It is a baseline, not a CI gate
+
+This package runs on perf-test's nightly cron, not on pull requests. The floors in
+the module exist so a nightly run says something when retrieval moves — not to
+block a merge. The measured numbers and the conditions behind them are recorded
+above those floors, and that record is the deliverable.
+
+It stays here rather than in `hindsight-system-tests` even though it makes no LLM
+call, which is normally that suite's whole criterion. That suite stubs the
+embedder AND the reranker with lexical stand-ins, and an nDCG measured over hashed
+word overlap is a fact about blake2b — it could never catch a real reranker or
+embedder regression. The models this grades have to be the ones that ship, which
+is what this package already runs.
+
+### Build once, evaluate many times
+
+```
+build (on purpose, ~500 model calls)            eval (every run, ZERO model calls)
+------------------------------------            ----------------------------------
+retain 500 abstracts, real extraction           import the archive
+export_bank -> fixtures/beir-scifact-bank.zip   recall each query, score vs. qrels
+```
+
+Re-ingesting per run would pay for extraction to measure something extraction is
+not under test for — and worse, would move the corpus underneath every
+comparison: a model that extracted different claims this afternoon changes the
+score with nothing in retrieval having changed. The archive makes the memories a
+constant, which is the only way an A/B on a retrieval setting means anything.
+
+| baked into the zip at build | free to A/B at eval time |
+|---|---|
+| extraction model and mode | embedder, reranker |
+| which claims each abstract became | `budget`, `max_tokens` |
+| observations / consolidation off | fusion and scoring settings |
+
+The embedder is on the right because **`export_bank` deliberately leaves
+embeddings out** — the importer regenerates them with its own model. That is the
+feature that makes the embedder itself a variable here.
+
+`fixtures/beir-scifact-bank.json` sits beside the archive and records which model
+wrote the memories, with the document and fact counts. Unknowable from the zip,
+and the single most important thing about it.
+
+Because nothing calls a model, this is the one suite that needs no credentials:
+
+```bash
+HINDSIGHT_EVAL_LLM_PROVIDER=none HINDSIGHT_EVAL_LLM_MODEL=none \
+  uv run pytest tests evals/test_08_retrieval_metrics.py        # ~2.5 minutes
+
+# rebuild the archive, against a server configured with the extraction model you want
+uv run python -m hindsight_system_evals.retrieval build --api-url http://localhost:8888
+```
+
+### Two things it asserts beyond the floors
+
+- **`mean documents returned` must exceed 100.** `recall` has no `k` — it budgets
+  by `max_tokens` — so every cutoff above the number of documents a response
+  reaches measures the *budget*, not the ranking, and would read as a flat,
+  flattering line across @20 and @100. The exception is a pruning reranker, which
+  returns a handful on purpose; that arm gets a Recall@10 floor instead, since the
+  only thing making aggressive pruning safe is keeping the gold document.
+- **Most queries must reach a gold document.** The scoring rests on `document_id`
+  surviving export and import; if the archive renumbered documents, every id would
+  miss the qrels and the run would read as a total retrieval collapse rather than
+  a broken fixture.
+
+### The committed slice, and what its number is for
+
+50 queries over 500 documents (51 gold), so a gold abstract beats ~475
+distractors. It was 200 first and that was a mistake worth recording: nDCG@10 read
+0.933, above SciFact's published ~0.70 over the full 5,183, because a gold hit
+only had ~190 distractors to beat. A benchmark that flatters is a floor that never
+trips. Documents cost one extraction call each and queries cost nothing but a
+`recall`, which is why the query count is generous and the document count is where
+the budget goes.
+
+A number here is **not** comparable to a published SciFact nDCG@10: 500 is not
+5,183, and this ranks extracted claims rather than the abstracts themselves.
+
+Re-cutting the slice invalidates the bank archive, which has to be rebuilt from it:
+
+```bash
+uv run python -m hindsight_system_evals.beir build          # re-downloads SciFact
+uv run python -m hindsight_system_evals.retrieval build ... # then rebuild the bank
+```
+
+`HINDSIGHT_EVAL_BEIR_QUERIES=5` trims the query set for a smoke run without
+touching the corpus, so the smoke run faces the same distractors.
+`HINDSIGHT_EVAL_BEIR_DIR` points at any unpacked BEIR directory (`corpus.jsonl`,
+`queries.jsonl`, `qrels/test.tsv`); the graded nDCG already handles NFCorpus's and
+TREC-COVID's 0/1/2 qrels.
+
 ## The corpus
 
 `hindsight_system_evals/corpus.py` generates facts and their gold labels

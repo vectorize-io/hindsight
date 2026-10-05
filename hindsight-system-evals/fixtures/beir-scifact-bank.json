@@ -1,0 +1,9 @@
+{
+ "built_at": "2026-10-01T16:19:16+00:00",
+ "llm_provider": "gemini",
+ "llm_model": "gemini-3.1-flash-lite",
+ "extraction_mode": "concise",
+ "documents": 500,
+ "queries": 50,
+ "facts": 1812
+}
