@@ -470,7 +470,9 @@ Older plugin versions could save the secret's name. The current host expects a s
 
 Check `enabledAgentIds`.
 
-An empty list means all agents are enabled. Once the list contains IDs, only those agents are allowed through the plugin's recall and retain paths.
+An empty list means all agents are enabled. Once the list contains IDs, the automatic paths are restricted to those agents: the recall at run start, and the retention of comments.
+
+Be careful about what that does not cover. In v0.4.0 the allowlist is checked in the three event handlers, and not in the two agent-callable tools. An agent left out of `enabledAgentIds` therefore gets no automatic recall and no automatic retention, but it can still call `hindsight_recall` and `hindsight_retain` itself, against the bank its own identity derives. Treat the setting as a switch for the automatic behaviour rather than as an access control.
 
 This can look like a bank problem when it is actually an enablement problem.
 
@@ -543,7 +545,7 @@ Not through a single `bankGranularity` setting in v0.4.0.
 
 The configuration is instance-level, so `["company"]` applies the company bank to all enabled agents. `["company", "agent"]` gives all agents their own company-scoped banks.
 
-`enabledAgentIds` controls which agents use the plugin. It does not give individual agents different bank strategies.
+`enabledAgentIds` controls which agents get the automatic recall and retention, and as noted above it does not block the agent-callable tools. Either way it does not give individual agents different bank strategies.
 
 If you need a mixed topology, that needs to be designed outside this single global granularity setting.
 
