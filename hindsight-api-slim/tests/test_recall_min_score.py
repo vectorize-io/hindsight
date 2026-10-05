@@ -18,8 +18,10 @@ import pytest
 import pytest_asyncio
 
 from hindsight_api import MemoryEngine, RequestContext
+from hindsight_api.engine.cross_encoder import CrossEncoderModel, MultiCrossEncoder
 from hindsight_api.engine.response_models import MinScores
 from hindsight_api.engine.retain import embedding_utils
+from hindsight_api.extensions.operation_validator import OperationValidationError
 
 # Shared hardcoded UUIDs (memory_units.id is a global PK) → serialize xdist workers
 # onto one group to avoid pk conflicts, same as test_recall_time_range.py.
@@ -155,6 +157,58 @@ class TestPostQueryFilters:
         assert len(filtered.results) < len(baseline.results)
         for r in filtered.results:
             assert r.scores.reranker is not None and r.scores.reranker >= threshold
+
+
+class _StubReranker(CrossEncoderModel):
+    """A reranker under a chosen provider name. "typesafe" mimics its rank-position
+    scores (top = 1.0, then evenly down); any other name may be set to fail."""
+
+    def __init__(self, name: str, fail: bool = False) -> None:
+        self._name = name
+        self._fail = fail
+
+    @property
+    def provider_name(self) -> str:
+        return self._name
+
+    async def initialize(self) -> None:
+        pass
+
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        if self._fail:
+            raise RuntimeError("down")
+        n = len(pairs)
+        return [(n - i) / n for i in range(n)]
+
+
+class TestRankScoreReranker:
+    """A rank-position reranker (TypeSafe) has no relevance score to floor or publish (#4901)."""
+
+    async def test_reranker_floor_is_rejected(self, seeded_memory, monkeypatch):
+        engine, bank_id = seeded_memory
+        monkeypatch.setattr(engine._cross_encoder_reranker, "cross_encoder", _StubReranker("typesafe"))
+        with pytest.raises(OperationValidationError) as exc:
+            await _recall(engine, bank_id, min_scores=MinScores(reranker=0.5))
+        assert exc.value.status_code == 400
+
+    async def test_no_reranker_score_is_published(self, seeded_memory, monkeypatch):
+        engine, bank_id = seeded_memory
+        monkeypatch.setattr(engine._cross_encoder_reranker, "cross_encoder", _StubReranker("typesafe"))
+        result = await _recall(engine, bank_id)
+        assert result.results
+        assert all(r.scores.reranker is None for r in result.results)
+
+    async def test_floor_is_skipped_after_failover_to_it(self, seeded_memory, monkeypatch):
+        """A pointwise primary accepts the floor; if the chain falls back to a
+        rank-score member, the floor is skipped instead of halving the pool."""
+        engine, bank_id = seeded_memory
+        chain = MultiCrossEncoder([_StubReranker("cohere", fail=True), _StubReranker("typesafe")])
+        monkeypatch.setattr(engine._cross_encoder_reranker, "cross_encoder", chain)
+        baseline = await _recall(engine, bank_id)
+        floored = await _recall(engine, bank_id, min_scores=MinScores(reranker=0.99))
+        assert len(baseline.results) >= 2
+        assert _ids(floored) == _ids(baseline)
+        assert all(r.scores.reranker is None for r in floored.results)
 
 
 class TestRetrievalLevelFilters:

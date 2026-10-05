@@ -69,6 +69,13 @@ _served_provider: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "hindsight_rerank_served_provider", default=None
 )
 
+# Providers whose score is a candidate's rank position within one pool, not a
+# relevance score for the pair: the top candidate is 1.0 on every recall however
+# weak it is, so a fixed floor just keeps a fixed share of the pool and the value
+# is not comparable between recalls (#4901). Recall rejects min_scores.reranker
+# for these and publishes no reranker score.
+RANK_SCORE_PROVIDERS = frozenset({"typesafe"})
+
 
 class RerankTimeoutError(Exception):
     """An in-process reranker ran out of wall-clock before scoring every pair.
@@ -111,6 +118,11 @@ class CrossEncoderModel(ABC):
         so does :class:`MultiCrossEncoder` — it offloads its own members.
         """
         return False
+
+    @property
+    def primary_provider_name(self) -> str:
+        """The provider that serves requests while nothing has failed over."""
+        return self.provider_name
 
     @abstractmethod
     async def initialize(self) -> None:
@@ -2094,6 +2106,10 @@ class MultiCrossEncoder(CrossEncoderModel):
         captured on RerankResult to decide passthrough scoring and response metadata.
         """
         return self._members[self._active].provider_name
+
+    @property
+    def primary_provider_name(self) -> str:
+        return self._members[0].provider_name
 
     async def _initialize_member(self, index: int) -> None:
         """Initialize one member, off the event loop when it loads a model in-process."""

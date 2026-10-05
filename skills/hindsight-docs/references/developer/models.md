@@ -1168,6 +1168,9 @@ candidates and nothing else. It is off by default because it meaningfully shrink
 recall returns. See [Configuration](configuration.md#typesafe) for the full
 behaviour and its trade-offs.
 
+TypeSafe's scores are rank positions within one recall, not relevance scores, so recall
+publishes no `scores.reranker` under it and rejects `min_scores.reranker` with HTTP 400.
+
 ### Alibaba Cloud Models
 
 Alibaba Cloud DashScope exposes `qwen3-rerank` via a Cohere-compatible `/reranks` endpoint:
