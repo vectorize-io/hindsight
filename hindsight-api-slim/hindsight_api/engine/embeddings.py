@@ -156,6 +156,13 @@ class Embeddings(ABC):
     query_prefix: str = ""
     passage_prefix: str = ""
 
+    # The vocabulary this provider's model actually tokenizes with, when it is known
+    # and bundled. Only the input-token cap reads it (see `_truncate_inputs`), so that
+    # a text cut to the model's limit is under the limit *the provider* will count.
+    # None — the default — means "unknown", and the cap falls back to the configured
+    # HINDSIGHT_API_TOKENIZER_ENCODING.
+    tokenizer_encoding: str | None = None
+
     # How many provider requests one encode() call may keep in flight. 1 — the
     # historical, strictly sequential behaviour — is the right default for the
     # in-process backends, which have no round trip to overlap and already batch
@@ -938,6 +945,12 @@ class OpenAIEmbeddings(Embeddings):
         self.max_retries = max_retries
         self.query_prefix = query_prefix
         self.passage_prefix = passage_prefix
+        # OpenAI's own embedding models tokenize with cl100k_base, which counts slightly
+        # more tokens on English/markdown than the o200k_base default — enough that an
+        # input truncated to exactly 8192 still drew a 400 (#5234). Only for a model we
+        # recognize: the same class serves OpenAI-compatible servers with other models.
+        if model in self.MODEL_DIMENSIONS:
+            self.tokenizer_encoding = "cl100k_base"
         # One AsyncOpenAI per event loop: its pooled connections belong to the loop that
         # opened them, and initialize() is not guaranteed to run on the serving loop.
         self._clients: LoopLocal[Any] | None = None

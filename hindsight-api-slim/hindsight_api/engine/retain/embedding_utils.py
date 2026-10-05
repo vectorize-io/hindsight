@@ -25,6 +25,18 @@ class EmbeddingsBackend(Protocol):
     async def encode_documents(self, texts: list[str]) -> list[list[float]]: ...
 
 
+def _tokenizer_encoding(backend: EmbeddingsBackend) -> str | None:
+    """The backend's own tokenizer vocabulary, when it declares one.
+
+    `Embeddings.tokenizer_encoding` is an optional capability of the concrete ABC and
+    not part of this duck-typed Protocol, so getattr can hand back anything; only a
+    real string selects an encoding. See #5234 — counting the cap with the configured
+    encoding instead of the model's overshoots OpenAI's 8192 by a handful of tokens.
+    """
+    encoding = getattr(backend, "tokenizer_encoding", None)
+    return encoding if isinstance(encoding, str) and encoding else None
+
+
 def _prefix_tokens(backend: EmbeddingsBackend, input_type: EmbeddingInputType) -> int:
     """Tokens the backend will prepend to every text after this cap is applied.
 
@@ -39,7 +51,9 @@ def _prefix_tokens(backend: EmbeddingsBackend, input_type: EmbeddingInputType) -
     # hand back anything at all. Only a real, non-empty string costs budget.
     attr = "query_prefix" if input_type == "query" else "passage_prefix"
     prefix = getattr(backend, attr, "")
-    return count_tokens(prefix) if isinstance(prefix, str) and prefix else 0
+    if not (isinstance(prefix, str) and prefix):
+        return 0
+    return count_tokens(prefix, _tokenizer_encoding(backend))
 
 
 def _truncate_inputs(
@@ -60,7 +74,7 @@ def _truncate_inputs(
     cap rather than one token past it (#4165).
     """
     budget = max(max_input_tokens - _prefix_tokens(backend, input_type), 0)
-    results = truncate_many_to_tokens(texts, budget)
+    results = truncate_many_to_tokens(texts, budget, _tokenizer_encoding(backend))
     truncated = [result.text for result in results]
     original_token_counts = [r.original_tokens for r in results if r.original_tokens > budget]
     if original_token_counts:

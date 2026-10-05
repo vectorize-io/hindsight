@@ -172,3 +172,31 @@ class TestFinalPayloadFitsTheCap:
             await embedding_utils.generate_embeddings_batch(backend, [f"User working preferences {content}"])
 
         assert count_tokens(backend.received[0]) <= 8192
+
+
+@pytest.mark.asyncio
+async def test_backend_tokenizer_encoding_counts_the_cap(monkeypatch):
+    """A backend that declares its model's vocabulary is counted with *that* one.
+
+    #5234: the default o200k_base count is a few tokens short of cl100k_base on English
+    markdown, so an input cut to exactly 8192 o200k tokens is still over OpenAI's limit
+    and the request 400s. The cap must be counted with the model's own tokenizer.
+    """
+    text = "The quick brown fox jumps over the lazy dog. " * 4000
+    backend = _FakeBackend()
+    backend.tokenizer_encoding = "cl100k_base"
+
+    with _patch_cap(8192):
+        await embedding_utils.generate_embeddings_batch(backend, [text])
+
+    assert count_tokens(backend.received[0], "cl100k_base") <= 8192
+    # ...and the configured encoding alone would not have guaranteed that.
+    assert count_tokens(text, "o200k_base") > 8192
+
+
+def test_openai_backend_declares_cl100k_for_openai_models():
+    from hindsight_api.engine.embeddings import OpenAIEmbeddings
+
+    assert OpenAIEmbeddings(api_key="k", model="text-embedding-3-large").tokenizer_encoding == "cl100k_base"
+    # An OpenAI-compatible server running something else: tokenizer unknown, no override.
+    assert OpenAIEmbeddings(api_key="k", model="bge-m3", base_url="http://localhost:8080").tokenizer_encoding is None
