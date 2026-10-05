@@ -364,6 +364,8 @@ class TestSplitSynthesisAgentFlow:
             bank_id="b",
             query="q?",
             bank_profile={"name": "Test", "mission": "Testing"},
+            # Recall is the only forced step, so the empty second turn is a real stop.
+            include_observations=False,
             **self._functions(small),
         )
 

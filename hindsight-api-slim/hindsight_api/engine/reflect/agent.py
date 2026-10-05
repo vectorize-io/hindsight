@@ -1073,10 +1073,16 @@ async def _run_reflect_agent_inner(
 
     consecutive_errors = 0
     # When a forced ``search_mental_models`` returns fresh, usable models on a
-    # low/mid-budget call, we stop forcing the lower retrieval layers from this
-    # iteration onward and let the agent answer (or retrieve deeper itself)
-    # under ``auto`` tool choice. None means the full forced path still applies.
-    stop_forcing_from_iteration: int | None = None
+    # low/mid-budget call, we stop forcing the lower retrieval layers for the
+    # rest of the run and let the agent answer (or retrieve deeper itself)
+    # under ``auto`` tool choice.
+    forcing_released = False
+    # How many forced steps actually produced a tool call. The next forced step
+    # is indexed by this. It used to be indexed by the iteration, so a turn that
+    # errored or came back empty moved on to the next step and the skipped one
+    # never ran (#4564); now that turn asks for the same step again.
+    forced_steps_done = 0
+    forced_empty_retry_used = False
     # Every wire id already written into ``messages`` as a tool_use block. The
     # whole loop serialises into ONE request, so uniqueness has to hold across
     # iterations, not just within a batch: a gateway that blanks (or repeats) an
@@ -1126,11 +1132,10 @@ async def _run_reflect_agent_inner(
         if include_recall:
             forced_sequence.append("recall")
 
-        if stop_forcing_from_iteration is not None and iteration >= stop_forcing_from_iteration:
-            # A fresh mental model already short-circuited the forced path.
-            iter_tool_choice = LLM_TOOL_CHOICE_AUTO
-        elif iteration < len(forced_sequence):
-            iter_tool_choice = LLMToolChoice.named(forced_sequence[iteration])
+        # A fresh mental model releases the remaining forced steps.
+        forced_step_pending = not forcing_released and forced_steps_done < len(forced_sequence)
+        if forced_step_pending:
+            iter_tool_choice = LLMToolChoice.named(forced_sequence[forced_steps_done])
         else:
             iter_tool_choice = LLM_TOOL_CHOICE_AUTO
 
@@ -1138,13 +1143,7 @@ async def _run_reflect_agent_inner(
         # cache)? The cache we schedule this turn covers this turn's input and is
         # used by the next turn, so we only bother building it when the next turn
         # can use it — skipping the wasted creates between two forced turns.
-        next_iter = iteration + 1
-        if stop_forcing_from_iteration is not None and next_iter >= stop_forcing_from_iteration:
-            next_is_auto = True
-        elif next_iter < len(forced_sequence):
-            next_is_auto = False
-        else:
-            next_is_auto = True
+        next_is_auto = not forced_step_pending or forced_steps_done + 1 >= len(forced_sequence)
 
         # Before an ``auto`` turn, adopt the cache that was being built in the
         # background during the previous turn's tool execution. It covers that
@@ -1264,6 +1263,21 @@ async def _run_reflect_agent_inner(
                     "Check tool-choice handling for this prompt on the configured endpoint; "
                     "a successful tool call for another prompt does not establish compatibility." + detail
                 )
+            # A forced step the model skipped is not a stop: retry it once, so a
+            # single empty reply cannot silently drop a retrieval layer (#4564).
+            if forced_step_pending:
+                requested_choice = iter_tool_choice.function_name
+                if not forced_empty_retry_used:
+                    forced_empty_retry_used = True
+                    logger.warning(
+                        f"[REFLECT {reflect_id}] Forced step {requested_choice!r} returned no tool call "
+                        f"(iteration={iteration + 1}, finish_reason={result.finish_reason!r}); retrying it once."
+                    )
+                    continue
+                logger.warning(
+                    f"[REFLECT {reflect_id}] Forced step {requested_choice!r} returned no tool call again; "
+                    "answering without it."
+                )
             # Model tool-called earlier and is now stopping with prose.
             return await _finish(iteration + 1)
 
@@ -1271,6 +1285,8 @@ async def _run_reflect_agent_inner(
         # drive the loop, so a later text-only turn is a legitimate stop, not a
         # broken transport.
         saw_tool_call = True
+        if forced_step_pending:
+            forced_steps_done += 1
 
         # Check for done tool call (handle various LLM output formats)
         done_call = next((tc for tc in result.tool_calls if _is_done_tool(tc.name)), None)
@@ -1473,12 +1489,12 @@ async def _run_reflect_agent_inner(
                     # targeted ``search_observations``/``recall`` itself. Stale,
                     # empty, or missing mental models keep the full forced path.
                     if (
-                        stop_forcing_from_iteration is None
+                        not forcing_released
                         and (budget or "low").lower() != "high"
                         and output.get("mental_models")
                         and _all_mental_models_are_usable_and_fresh(output)
                     ):
-                        stop_forcing_from_iteration = iteration + 1
+                        forcing_released = True
                         logger.info(
                             f"[REFLECT {reflect_id}] Fresh mental models sufficient on iteration {iteration + 1}; "
                             "releasing forced lower-level retrieval to auto."

@@ -887,6 +887,50 @@ class TestReflectAgentMocked:
         mock_functions["recall_fn"].assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_empty_reply_on_forced_step_retries_that_step(self, mock_llm, mock_functions):
+        """A forced step that comes back with no tool call is asked for again, not skipped (#4564)."""
+        mock_functions["search_mental_models_fn"].return_value = {"query": "test query", "mental_models": []}
+        mock_llm.call_with_tools.side_effect = [
+            self._mm_call(),
+            # Endpoint ignores the forced ``search_observations`` once.
+            LLMToolCallResult(tool_calls=[], finish_reason="tool_calls"),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="2", name="search_observations", arguments={"query": "q"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="3", name="recall", arguments={"query": "q"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="4", name="done", arguments={"answer": "Done.", "memory_ids": ["mem-1"]})],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            has_mental_models=True,
+            budget="low",
+            max_iterations=10,
+            **mock_functions,
+        )
+
+        assert result.text == "Done."
+        choices = [c.kwargs["tool_choice"] for c in mock_llm.call_with_tools.call_args_list]
+        assert choices[:4] == [
+            LLMToolChoice.named("search_mental_models"),
+            LLMToolChoice.named("search_observations"),
+            LLMToolChoice.named("search_observations"),
+            LLMToolChoice.named("recall"),
+        ]
+        mock_functions["search_observations_fn"].assert_called_once()
+        mock_functions["recall_fn"].assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_handles_functions_prefix_in_done(self, mock_llm, mock_functions):
         """Test that 'functions.done' is handled correctly."""
         # First call: LLM calls recall
@@ -1154,6 +1198,9 @@ class TestReflectAgentMocked:
         )
 
         assert result.text == "Recovered after a blip"
+        # The retry asks for the step that failed, not the next one (#4564).
+        choices = [c.kwargs["tool_choice"] for c in mock_llm.call_with_tools.call_args_list]
+        assert choices[0] == choices[1] == LLMToolChoice.named("search_observations")
 
     @pytest.mark.asyncio
     async def test_cancellation_from_a_tool_is_not_wrapped(self, mock_llm, mock_functions):
@@ -1801,6 +1848,8 @@ class TestNoAnswerFailsHard:
                 tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "test query"})],
                 finish_reason="tool_calls",
             ),
+            # Empty while a forced step is still pending: retried once, then given up.
+            LLMToolCallResult(content="", tool_calls=[], finish_reason="stop"),
             LLMToolCallResult(content="", tool_calls=[], finish_reason="stop"),
         ]
 
