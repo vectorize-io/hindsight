@@ -382,7 +382,11 @@ def document_from_sections(payload: dict) -> StructuredDocument:
             [f"sections: expected an array of section objects, got {type(raw_sections).__name__}"]
         )
 
+    # Validate every section before building any of them, so the caller gets the
+    # whole list of what is wrong in one error and the model fixes it in one
+    # re-ask rather than one round-trip per field.
     errors: list[str] = []
+    validated: list[dict] = []
     for i, raw_section in enumerate(raw_sections):
         if not isinstance(raw_section, dict):
             errors.append(
@@ -399,6 +403,7 @@ def document_from_sections(payload: dict) -> StructuredDocument:
                     f"sections[{i}].blocks[{j}]: expected a markdown string, got {type(raw_block).__name__} "
                     f"({raw_block!r:.80}) — write the markdown itself, not an object wrapping it"
                 )
+        validated.append(raw_section)
     if errors:
         raise DocumentSectionsInvalidError(errors)
 
@@ -406,8 +411,7 @@ def document_from_sections(payload: dict) -> StructuredDocument:
     used_ids: set[str] = set()
     block_ids: set[str] = set()
 
-    for raw_section in raw_sections:
-        assert isinstance(raw_section, dict)  # validated above
+    for raw_section in validated:
         heading = str(raw_section.get("heading") or "").strip().lstrip("#").strip()
         try:
             level = int(raw_section.get("level") or 2)

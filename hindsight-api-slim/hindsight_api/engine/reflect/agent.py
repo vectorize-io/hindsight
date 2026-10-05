@@ -983,7 +983,8 @@ async def _run_reflect_agent_inner(
         synthesis prompt.
         """
         feedback: Sequence[dict[str, Any]] = ()
-        for attempt in range(_MAX_DOCUMENT_REJECTIONS + 1):
+        rejections = 0
+        while True:
             closing = await _ask_for_done(feedback)
             if closing is None:
                 if feedback:
@@ -1017,11 +1018,11 @@ async def _run_reflect_agent_inner(
                 # document the schema refused must not be replaced by markdown
                 # read back out of free text (#4910). Out of attempts, the run
                 # fails loudly.
-                logger.warning(f"[REFLECT {reflect_id}] closing done document rejected (attempt {attempt + 1}): {exc}")
-                if attempt == _MAX_DOCUMENT_REJECTIONS:
+                rejections += 1
+                logger.warning(f"[REFLECT {reflect_id}] closing done document rejected (attempt {rejections}): {exc}")
+                if rejections > _MAX_DOCUMENT_REJECTIONS:
                     raise
                 feedback = _document_rejection_messages(closing, exc)
-        raise AssertionError("unreachable: the loop returns or raises on every attempt")
 
     async def _forced_final_synthesis(iterations_completed: int) -> ReflectAgentResult:
         """Answer without tools from the accumulated tool results.
@@ -1746,6 +1747,27 @@ def _document_from_rewrite(rewritten: str) -> CanonicalDocument:
     return CanonicalDocument(markdown=rendered, structure=document)
 
 
+@dataclass
+class _RewriteUsage:
+    """Token usage accumulated across the length rewrite's attempts.
+
+    A refused shortening is re-asked, and both calls are billed, so the counts
+    are summed rather than taken from whichever call happened to be last.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_tokens: int = 0
+    thoughts_tokens: int = 0
+
+    def add(self, usage: Any) -> None:
+        self.input_tokens += usage.input_tokens
+        self.output_tokens += usage.output_tokens
+        # Not every provider reports these two.
+        self.cached_tokens += getattr(usage, "cached_tokens", 0) or 0
+        self.thoughts_tokens += getattr(usage, "thoughts_tokens", 0) or 0
+
+
 async def _rewrite_to_length_budget(
     answer: str,
     document: StructuredDocument | None,
@@ -1796,7 +1818,7 @@ async def _rewrite_to_length_budget(
     ]
     # Every attempt is billed, so the counts accumulate across a re-ask rather
     # than reporting only the last call.
-    totals = {"input": 0, "output": 0, "cached": 0, "thoughts": 0}
+    totals = _RewriteUsage()
 
     async def _call() -> str:
         call_result = await llm_config.call(
@@ -1805,11 +1827,7 @@ async def _rewrite_to_length_budget(
             temperature=get_config().llm_temperature_reflect,
             max_completion_tokens=get_config().reflect_max_completion_tokens,
         )
-        usage = call_result.usage
-        totals["input"] += usage.input_tokens
-        totals["output"] += usage.output_tokens
-        totals["cached"] += getattr(usage, "cached_tokens", 0) or 0
-        totals["thoughts"] += getattr(usage, "thoughts_tokens", 0) or 0
+        totals.add(call_result.usage)
         return call_result.content
 
     def _rewrite(markdown: str, structure: StructuredDocument | None) -> LengthRewrite:
@@ -1818,10 +1836,10 @@ async def _rewrite_to_length_budget(
             markdown=markdown,
             structure=structure,
             duration_ms=int((time.time() - rewrite_start) * 1000),
-            input_tokens=totals["input"],
-            output_tokens=totals["output"],
-            cached_tokens=totals["cached"],
-            thoughts_tokens=totals["thoughts"],
+            input_tokens=totals.input_tokens,
+            output_tokens=totals.output_tokens,
+            cached_tokens=totals.cached_tokens,
+            thoughts_tokens=totals.thoughts_tokens,
         )
 
     if document is not None:
@@ -1831,13 +1849,15 @@ async def _rewrite_to_length_budget(
         # reported, recoverable outcome -- the caller records the size against
         # the budget -- whereas reading the response back as prose would store a
         # document nobody validated (#4910).
-        for attempt in range(_MAX_DOCUMENT_REJECTIONS + 1):
+        rejections = 0
+        while True:
             rewritten = await _call()
             try:
                 trimmed = _document_from_rewrite(rewritten)
             except DocumentSectionsInvalidError as exc:
-                logger.warning(f"[REFLECT] length-rewrite document rejected (attempt {attempt + 1}): {exc}")
-                if attempt == _MAX_DOCUMENT_REJECTIONS:
+                rejections += 1
+                logger.warning(f"[REFLECT] length-rewrite document rejected (attempt {rejections}): {exc}")
+                if rejections > _MAX_DOCUMENT_REJECTIONS:
                     # ``applied`` records that a call was made and billed; the
                     # content is the input unchanged.
                     return _rewrite(answer, document)
