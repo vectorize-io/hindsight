@@ -9922,7 +9922,8 @@ class MemoryEngine(MemoryEngineInterface):
             if min_reranker is not None and served_provider in RANK_SCORE_PROVIDERS:
                 # Recall entry rejects this floor when the primary scores by rank; getting
                 # here means the chain failed over to such a member. Its scores are rank
-                # positions, so the floor would only cut the pool in half (#4901).
+                # positions, so the floor would only keep a fixed share of the pool (#4901).
+                # Skipped rather than rejected: the caller did nothing wrong, the primary failed.
                 log_buffer.append(f"  [4.9] min_scores.reranker ignored: '{served_provider}' scores by rank")
                 min_reranker = None
             if (min_reranker is not None or min_final is not None) and scored_results:
@@ -10384,10 +10385,10 @@ class MemoryEngine(MemoryEngineInterface):
             # Convert results to MemoryFact objects
             # Build per-result scores (final/reranker/semantic/text) keyed by id.
             # reranker is None when the configured reranker is a passthrough (rrf /
-            # interleave modes, or the RRFPassthroughCrossEncoder), since its
+            # interleave modes, or the RRFPassthroughCrossEncoder) or scores by rank
+            # position (RANK_SCORE_PROVIDERS, #4901), since its
             # cross_encoder_score_normalized is then a rank-derived placeholder, not a
             # true relevance score.
-            # Also None for a rank-position reranker (RANK_SCORE_PROVIDERS, #4901).
             reranker_passthrough = (
                 (reranking != "cross_encoder") or served_provider == "rrf" or served_provider in RANK_SCORE_PROVIDERS
             )

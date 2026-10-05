@@ -24,6 +24,7 @@ import uuid
 from collections.abc import AsyncIterator
 
 import pytest
+from hindsight_client_api.exceptions import ApiException
 
 from hindsight_system_tests import wait_until_settled
 from hindsight_system_tests.payloads import consolidation, extracted, fact
@@ -110,3 +111,22 @@ async def test_a_deeper_cut_keeps_the_top_of_the_same_ranking(typesafe_client, t
     response = await typesafe_client.arecall(bank_id=typesafe_bank, query=QUERY)
 
     assert [result.text for result in response.results] == full_order[:2]
+
+
+async def test_a_rank_position_is_not_published_or_floored(typesafe_client, typesafe_bank, stubs):
+    """TypeSafe's per-memory number is a rank position, not a relevance score (#4901).
+
+    The top memory would read 1.0 on every recall however weak it is, so recall
+    publishes no reranker score, and a reranker floor — which would only keep a
+    fixed share of the pool — is refused rather than silently applied.
+    """
+    stubs.rerank.cut_level = WIDEST_CUT
+
+    response = await typesafe_client.arecall(bank_id=typesafe_bank, query=QUERY)
+    assert len(response.results) == 3
+    assert [result.scores.reranker for result in response.results] == [None, None, None]
+
+    with pytest.raises(ApiException) as exc:
+        await typesafe_client.arecall(bank_id=typesafe_bank, query=QUERY, min_scores={"reranker": 0.5})
+    assert exc.value.status == 400
+    assert "min_scores.reranker" in str(exc.value.body)
