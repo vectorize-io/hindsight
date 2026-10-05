@@ -657,6 +657,7 @@ from .reflect import (
     ReflectToolTokenLimits,
     run_reflect_agent,
 )
+from .reflect.citations import annotate_memory_citations, retrieved_memory_ids
 from .reflect.models import StructuredOutputResult
 from .reflect.retractions import (
     RetractedGrounding,
@@ -17511,6 +17512,18 @@ class MemoryEngine(MemoryEngineInterface):
             outcome: RefreshOutcome,
         ) -> _MentalModelRefreshRun:
             """Close over everything the pipeline resolved before it branched."""
+            if outcome in ("content_written", "content_unchanged"):
+                # Delta/unsay operations happen after reflect, so check the final
+                # document too. Delta also carries previously verified grounding;
+                # those older references need not be re-retrieved this round.
+                verified_ids = retrieved_memory_ids(reflect_result.tool_trace)
+                if use_delta:
+                    verified_ids.update(based_on_fact_ids(stored_based_on))
+                    verified_ids.difference_update(retracted.ids)
+                annotated = annotate_memory_citations(final_content, final_structured, verified_ids, bank_id)
+                final_structured = annotated.document
+                final_content = render_document(final_structured) if final_structured is not None else annotated.text
+                outcome = "content_written" if final_content.strip() != current_content else "content_unchanged"
             retraction_record = (
                 MentalModelRetraction(
                     fact_ids=sorted(retracted.ids),

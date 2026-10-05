@@ -38,6 +38,7 @@ STEP_ANCHORS: dict[str, str] = {
     # caller's token budget. Anchored separately because a story about the budget
     # is about this call, not the one that wrote the answer.
     "reflect_trim": "Rewrite the user's text so it fits within the requested token budget.",
+    "mental_model_retraction": "You are removing *retracted information* from an existing structured document.",
     "connection_probe": "Say 'ok'",
 }
 

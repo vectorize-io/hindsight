@@ -19,6 +19,7 @@ from ...config import DEFAULT_RECALL_CHUNKS_MAX_TOKENS, DEFAULT_RECALL_MAX_TOKEN
 from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
 from ..llm_trace import LLMQueueWait, reset_queue_wait_sink, set_queue_wait_sink
 from ..llm_transport import describe_llm_error
+from .citations import annotate_memory_citations
 from .models import (
     DirectiveInfo,
     LengthRewrite,
@@ -956,6 +957,7 @@ async def _run_reflect_agent_inner(
             llm_config=llm_config,
             response_schema=response_schema,
             max_tokens=max_tokens,
+            bank_id=bank_id,
         )
 
     async def _forced_final_synthesis(iterations_completed: int) -> ReflectAgentResult:
@@ -1045,6 +1047,10 @@ async def _run_reflect_agent_inner(
                     "output_tokens": rewrite.output_tokens,
                 }
             )
+
+        # The final synthesis (and its length rewrite) can invent full UUIDs,
+        # independently of the short aliases in tool results (#5166).
+        answer = annotate_memory_citations(answer, None, available_memory_ids | available_observation_ids, bank_id).text
 
         structured_output = None
         structured_output_error = None
@@ -1330,6 +1336,7 @@ async def _run_reflect_agent_inner(
                     llm_config=llm_config,
                     response_schema=response_schema,
                     max_tokens=max_tokens,
+                    bank_id=bank_id,
                 )
 
         # Execute other tools in parallel (exclude done tool in all its format variants)
@@ -1733,11 +1740,12 @@ async def _process_done_tool(
     llm_config: "AnyLLMProvider | None" = None,
     response_schema: dict | None = None,
     max_tokens: int | None = None,
+    bank_id: str | None = None,
 ) -> ReflectAgentResult:
     """Process the done tool call and return the result."""
     args = done_call.arguments
 
-    # ``done`` is a structured tool call: trust its ``answer`` field verbatim.
+    # ``done`` is a structured tool call: read its ``answer`` field directly.
     # Sibling id fields (memory_ids, ...) live in their own arguments and are
     # validated separately below -- they can't bleed into a parsed answer string.
     #
@@ -1798,6 +1806,11 @@ async def _process_done_tool(
                 output_tokens=rewrite.output_tokens,
             )
         )
+
+    # Validate after the last model rewrite, and update document blocks as well
+    # as text so persistence cannot re-render an unchecked citation (#5166).
+    annotated = annotate_memory_citations(answer, document, available_memory_ids | available_observation_ids, bank_id)
+    answer, document = annotated.text, annotated.document
 
     # Validate IDs (only include IDs that were actually retrieved)
     used_memory_ids = [mid for mid in (args.get("memory_ids") or []) if mid in available_memory_ids]
