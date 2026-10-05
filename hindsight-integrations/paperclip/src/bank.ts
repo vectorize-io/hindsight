@@ -53,10 +53,10 @@ export function deriveBankId(context: BankContext, config: BankConfig): string {
 /**
  * Extract a user identifier from a Paperclip issue.
  *
- * Paperclip issues carry an `originId` field with the format
- * "channel-key::user-email" (e.g. "slack::alice@acme.com"). We scan the
- * segments backwards for one that looks like an email. Falls back to
- * `creatorEmail` if the issue object carries it.
+ * Prefers `creatorEmail` when the issue object carries it. Otherwise falls
+ * back to `originId`, which Paperclip formats as "channel-key::user-email"
+ * (e.g. "slack::alice@acme.com"): we split on "::" and scan the segments
+ * backwards for the first one containing an "@".
  *
  * Returns undefined when no user can be identified — callers treat this as
  * "user granularity not applicable for this event" (the bank ID just omits

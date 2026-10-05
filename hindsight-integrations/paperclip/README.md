@@ -2,7 +2,9 @@
 
 Persistent long-term memory for Paperclip agents via [Hindsight](https://github.com/vectorize-io/hindsight).
 
-Install once. Every agent in your Paperclip instance gets memory that persists across runs, companies, and restarts.
+Install once. Every agent in your Paperclip instance gets memory that persists across runs and restarts.
+
+Whether that memory also persists across companies is a configuration choice, not a given: `bankGranularity` decides it, and the default keeps each company separate. See [Bank ID Format](#bank-id-format).
 
 ## What It Does
 
@@ -43,7 +45,7 @@ hindsight-api
 | `bankGranularity`    | `["company", "agent"]`               | Memory isolation when `dynamicBankId` is `true`: per company+agent, per company, or per agent. Add `"user"` for per-user memory isolation (useful for GDPR compliance) |
 | `recallBudget`       | `mid`                                | `low` = fastest, `mid` = balanced, `high` = most thorough                                                                                                              |
 | `requestTimeoutMs`   | `15000`                              | Timeout for each request to Hindsight. Raise it for self-hosted instances where recall on long issue descriptions is slower                                            |
-| `autoRetain`         | `true`                               | Automatically retain run output after every run                                                                                                                        |
+| `autoRetain`         | `true`                               | Automatically retain the full body of every issue comment. Set `false` to turn comment retention off                                                                   |
 | `enabledAgentIds`    | —                                    | Restrict recall/retain to these agent IDs only. Leave empty to enable for all agents (default)                                                                         |
 
 ## Bank ID Format
@@ -83,9 +85,15 @@ agent.run.finished
   └─ no-op (subscription kept for future use when payload carries output)
 ```
 
+`autoRetain` gates the `issue.comment.created` handler above. It does not make
+`agent.run.finished` retain run output: Paperclip's run-finished payload does not
+carry the agent's output, so that handler has nothing to store. Setting
+`autoRetain` to `false` therefore turns off comment retention, and agents can
+still store memories explicitly with `hindsight_retain`.
+
 The bundled plugin manifest declares the `issues.read` and `issue.comments.read` capabilities needed by the new SDK calls, so Paperclip may prompt for these on first install or upgrade.
 
-Memory is keyed to `companyId` + `agentId`, never to the Paperclip session or run ID — so it survives across any number of runs.
+By default, memory is keyed to `companyId` + `agentId`, and never to the Paperclip session or run ID, so it survives across any number of runs. `bankGranularity` controls which of those parts the key is built from; the run ID is only ever used for run-scoped plugin state such as the cached recall.
 
 ## Development
 
