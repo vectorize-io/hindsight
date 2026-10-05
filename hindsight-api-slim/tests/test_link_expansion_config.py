@@ -1,5 +1,6 @@
 """Configuration wiring tests for Link Expansion retrieval."""
 
+import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
@@ -46,3 +47,27 @@ async def test_retrieve_passes_configured_graph_seed_threshold(monkeypatch):
     )
 
     assert seed_thresholds == [0.47]
+
+
+@pytest.mark.asyncio
+async def test_observation_expansion_times_out_to_empty_rows(monkeypatch):
+    """A stuck observation expansion must give up after link_expansion_timeout (#4529)."""
+    retriever = LinkExpansionRetriever()
+
+    async def stuck_expand_observations(*_args):
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr(
+        link_expansion,
+        "get_config",
+        lambda: SimpleNamespace(link_expansion_timeout=0.01, link_expansion_per_entity_limit=10),
+    )
+
+    rows = await retriever._expand_observations(
+        object(),
+        ["seed"],
+        2,
+        ops=SimpleNamespace(expand_observations=stuck_expand_observations),
+    )
+
+    assert rows == LinkExpansionRows(entity=[], semantic=[], causal=[])

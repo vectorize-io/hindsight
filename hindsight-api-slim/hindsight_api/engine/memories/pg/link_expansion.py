@@ -419,13 +419,26 @@ class LinkExpansionRetriever(GraphRetriever):
         # junction table with standard SQL joins (previously PG used native array
         # ops and Oracle used JSON_TABLE).
         # $1 seeds, $2 budget — the window binds after them.
-        return await ops.expand_observations(
-            conn,
-            mu,
-            ue,
-            ml,
-            seed_ids,
-            budget,
-            per_entity_limit,
-            UpdatedWindow(after=created_after, before=created_before, first_param_index=3),
-        )
+        # Same deadline as _expand_combined (#4529): the three arms are fused into
+        # one query, so there is no cheaper fallback — the graph arm yields nothing
+        # and recall continues on its other strategies.
+        try:
+            return await asyncio.wait_for(
+                ops.expand_observations(
+                    conn,
+                    mu,
+                    ue,
+                    ml,
+                    seed_ids,
+                    budget,
+                    per_entity_limit,
+                    UpdatedWindow(after=created_after, before=created_before, first_param_index=3),
+                ),
+                timeout=config.link_expansion_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[LinkExpansion] Observation expansion timed out after {config.link_expansion_timeout}s, "
+                "skipping graph results for fact_type=observation"
+            )
+            return LinkExpansionRows(entity=[], semantic=[], causal=[])
