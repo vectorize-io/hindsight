@@ -123,7 +123,7 @@ If you omit `document_id`, Hindsight assigns a random UUID, so re-ingesting the 
 
 | Request | Result |
 |---------|--------|
-| No item has a `document_id` | All items go into **one** new document. |
+| No item has a `document_id` | All items go into **one** new document. A request too large for one pass (over `HINDSIGHT_API_RETAIN_BATCH_TOKENS`) is split into parts, and each part becomes its own document. |
 | Some items have a `document_id`, others don't | Each item without one becomes its **own** new document. It is never folded into another item's document, so replacing or deleting that document leaves it alone. |
 | Items share the same `document_id` | Those items go into that one document, in request order. |
 

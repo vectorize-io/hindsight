@@ -159,7 +159,9 @@ async def test_item_without_document_id_not_absorbed(memory, request_context, qu
             )
             assert status["status"] == "completed"
         else:
-            result = await memory.retain_batch_async(bank_id=bank_id, contents=contents, request_context=request_context)
+            result = await memory.retain_batch_async(
+                bank_id=bank_id, contents=contents, request_context=request_context
+            )
             assert len(result) == 2
             assert result[1]
 

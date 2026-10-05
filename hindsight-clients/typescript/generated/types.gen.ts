@@ -3923,7 +3923,7 @@ export type MemoryItem = {
   /**
    * Document Id
    *
-   * Optional document ID for this memory item. Provide a distinct document_id per source document — items sharing a document_id are grouped into the same document. Auto-generated when omitted: if no item in the request has one, they all share one generated document; otherwise each item without one gets its own.
+   * Optional document ID for this memory item. Provide a distinct document_id per source document — items sharing a document_id are grouped into the same document. Auto-generated when omitted: if no item in the request has one, they all share one generated document (a request split into parts for size gets one per part); otherwise each item without one gets its own.
    */
   document_id?: string | null;
   /**
