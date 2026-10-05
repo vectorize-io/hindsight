@@ -1269,7 +1269,7 @@ describe("codebuddy installer MCP file chain", () => {
     expect(existsSync(mcpPath(ctx))).toBe(false);
   });
 
-  it("uninstall removes our hooks and MCP entry, keeping a foreign server", () => {
+  it("uninstall clears our entry from the deprecated mcp.json, keeping a foreign server", () => {
     const ctx = makeCtx();
     writeJsonAt(deprecatedMcpPath(ctx), { mcpServers: { affine: { command: "npx" } } });
     expect(run(["install", "codebuddy"], ctx)).toBe(0);

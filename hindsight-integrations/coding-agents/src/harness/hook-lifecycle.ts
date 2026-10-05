@@ -740,9 +740,10 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
   },
   /**
    * WorkBuddy (Tencent's AI workbench) keeps a durable transcript at
-   * ~/.workbuddy/projects/<cwd-encoded>/<uuid>.jsonl and speaks Claude's hook protocol field for
-   * field — `session_id` / `transcript_path` / `cwd` in, hookSpecificOutput + systemMessage out —
-   * so the ONLY host-specific piece is the transcript SCHEMA: `type:"message"` records carrying
+   * ~/.workbuddy/projects/<cwd-encoded>/<uuid>.jsonl and speaks Claude's hook protocol —
+   * `session_id` / `transcript_path` / `cwd` in, hookSpecificOutput + systemMessage out — apart
+   * from the two quirks genieSessionStart/geniePrompt handle. The other host-specific piece is the
+   * transcript SCHEMA: `type:"message"` records carrying
    * top-level `role`/`content`, which core/transcript-workbuddy.ts normalizes. Its Stop payload
    * fills `transcript_path` for real (the engine's own getHookTranscriptPath), so it retains
    * through `readTranscript` like every other file-backed host rather than the journal ZCode needs.

@@ -348,8 +348,8 @@ npx @vectorize-io/hindsight-coding-agents install workbuddy
 
 3 hooks in `~/.workbuddy/settings.json`, the stdio MCP server in `~/.workbuddy/mcp.json`, and the
 companion skill in `~/.workbuddy/skills`. WorkBuddy (Tencent's AI workbench) is built on the shared
-`@genie/agent-cli` engine, so its hook protocol is Claude Code's field for field — only the
-transcript schema differs (`type:"message"` records carrying top-level `role`/`content`), which the
+`@genie/agent-cli` engine, so its hooks follow Claude Code's protocol — the main difference is the
+transcript schema (`type:"message"` records carrying top-level `role`/`content`), which the
 package's own reader normalizes.
 
 #### <img src="/img/harness/codebuddy.png" alt="" width="20" height="20" /> CodeBuddy
