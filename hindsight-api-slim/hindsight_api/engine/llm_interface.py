@@ -60,7 +60,9 @@ class PromptCachePrefix:
     The caller says WHAT is cacheable; the provider that serves the call builds
     its own handle from it. In a multi-LLM chain that is whichever member runs,
     so a fallback member caches against its own account instead of being handed
-    the primary's handle, or none at all (#5123).
+    the primary's handle, or none at all (#5123). Callers used to resolve the
+    handle themselves via ``llm_config._provider_impl``, which in a chain is the
+    primary only.
     """
 
     system_instruction: str
