@@ -90,7 +90,11 @@ async def test_strongest_relation_wins_over_heavier_weight(memory):
 async def test_weaker_duplicate_link_does_not_consume_budget(memory):
     """A second link to an already-scored target costs nothing: the target is emitted once
     and the extra row neither re-scores it nor eats a budget slot that a distinct memory
-    would otherwise get."""
+    would otherwise get.
+
+    This held before the best-path change too (`visited` already skipped the duplicate row);
+    it is here to guard the dedup rewrite, which could plausibly have charged budget twice.
+    """
     bank_id = "test_temporal_best_path_budget"
     start = datetime(2025, 1, 1, tzinfo=UTC)
     end = datetime(2025, 2, 1, tzinfo=UTC)
@@ -113,3 +117,34 @@ async def test_weaker_duplicate_link_does_not_consume_budget(memory):
 
     ids = [r.id for r in results["world"]]
     assert sorted(ids) == sorted([str(source), str(doubly_linked), str(singly_linked)])
+
+
+@pytest.mark.asyncio
+async def test_budget_cutoff_drops_the_weakest_paths(memory):
+    """When budget runs out mid-batch, the targets that survive are the strongest-scoring
+    ones, not whichever the planner returned first."""
+    bank_id = "test_temporal_best_path_cutoff"
+    start = datetime(2025, 1, 1, tzinfo=UTC)
+    end = datetime(2025, 2, 1, tzinfo=UTC)
+
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(f"DELETE FROM {fq_table('memory_units')} WHERE bank_id = $1", bank_id)
+
+        source = await _insert_unit(conn, bank_id, "entry point", datetime(2025, 1, 16, 12, tzinfo=UTC))
+        # All three targets sit far outside the window, so each one's score is purely the
+        # strength of the link it is reached through.
+        strong = await _insert_unit(conn, bank_id, "strong path", datetime(2030, 1, 1, tzinfo=UTC))
+        medium = await _insert_unit(conn, bank_id, "medium path", datetime(2030, 1, 1, tzinfo=UTC))
+        weak = await _insert_unit(conn, bank_id, "weak path", datetime(2030, 1, 1, tzinfo=UTC))
+
+        await _insert_link(conn, bank_id, source, strong, "caused_by", 0.5)  # 0.5 * 2.0 * 0.7 = 0.70
+        await _insert_link(conn, bank_id, source, medium, "temporal", 0.9)  # 0.9 * 1.0 * 0.7 = 0.63
+        await _insert_link(conn, bank_id, source, weak, "temporal", 0.2)  # 0.2 * 1.0 * 0.7 = 0.14
+
+        # Budget 3 = 1 entry point + room for 2 of the 3 targets.
+        results = await retrieve_temporal_combined_sql(conn, _QUERY, bank_id, ["world"], start, end, budget=3)
+
+    ids = {r.id for r in results["world"]}
+    assert ids == {str(source), str(strong), str(medium)}
+    assert str(weak) not in ids
