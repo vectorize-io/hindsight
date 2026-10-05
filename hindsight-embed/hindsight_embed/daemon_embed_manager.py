@@ -356,10 +356,10 @@ class DaemonEmbedManager(EmbedManager):
         uv does not put a real interpreter in a venv's Scripts dir: the small
         ``pythonw.exe`` there is a trampoline that CreateProcess's the base
         interpreter recorded in ``pyvenv.cfg``. That relaunch lands on the CUI
-        ``python.exe`` and allocates the console our DETACHED_PROCESS flags were
-        meant to prevent — the flags applied to the trampoline, not to the
-        process the trampoline went on to spawn (issue #4466). Launching the
-        base pythonw.exe ourselves keeps the whole tree GUI-subsystem.
+        ``python.exe``, which allocates a visible console because the
+        ``CREATE_NO_WINDOW`` flag applied to the trampoline, not to the process
+        the trampoline went on to spawn (issue #4466). Launching the base
+        pythonw.exe ourselves keeps the whole tree GUI-subsystem.
 
         Returns None unless pyvenv.cfg carries uv's own ``uv =`` marker: a
         stdlib venv's pythonw.exe is the GUI venvwlauncher, which already

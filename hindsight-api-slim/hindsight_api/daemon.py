@@ -110,8 +110,10 @@ def daemonize():
       No fork, no re-exec.
 
     On Windows there is no fork model: the spawning parent is expected to
-    detach us via ``CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS`` and to
+    background us via ``CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW`` and to
     redirect stdout/stderr to ``HINDSIGHT_API_DAEMON_LOG`` before exec.
+    (hindsight-embed used ``DETACHED_PROCESS`` until #4562: leaving the launcher
+    with no console let its children allocate a visible one.)
     We still ensure the log directory exists.
     """
     if sys.platform == "win32":
