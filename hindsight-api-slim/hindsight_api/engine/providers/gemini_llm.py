@@ -40,6 +40,12 @@ logger = logging.getLogger(__name__)
 # set/reset, so it is properly scoped to each individual LLM call and never leaks.
 _safety_settings_ctx: ContextVar[list | None] = ContextVar("gemini_safety_settings", default=None)
 
+# Google's documented placeholder for functionCall parts that never had a thought
+# signature (history transferred from another model, or injected by hand). Gemini 3
+# requires a signature on every functionCall part of the current turn.
+# https://ai.google.dev/gemini-api/docs/thought-signatures
+_SKIP_THOUGHT_SIGNATURE_VALIDATOR = b"skip_thought_signature_validator"
+
 
 # Vertex AI imports (optional)
 try:
@@ -228,6 +234,11 @@ def _convert_messages_to_gemini(msg_list: list[dict[str, Any]]) -> _GeminiConver
                     part_kwargs: dict[str, Any] = {"function_call": genai_types.FunctionCall(**fc_kwargs)}
                     if thought_signature:
                         part_kwargs["thought_signature"] = base64.b64decode(thought_signature)
+                    else:
+                        # Tool calls replayed from another provider (failover mid tool loop)
+                        # carry no signature, and Gemini 3 rejects the turn with HTTP 400.
+                        # Google documents this literal as the bypass for exactly that case.
+                        part_kwargs["thought_signature"] = _SKIP_THOUGHT_SIGNATURE_VALIDATOR
                     parts.append(genai_types.Part(**part_kwargs))
                 gemini_contents.append(genai_types.Content(role="model", parts=parts))
             else:
