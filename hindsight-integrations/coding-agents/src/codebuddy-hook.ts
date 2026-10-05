@@ -8,9 +8,9 @@
  *
  * CodeBuddy Code runs the SAME `@genie/agent-cli` engine as WorkBuddy — WorkBuddy ships that engine
  * with its home folder set to `.workbuddy` by product config, CodeBuddy uses the default
- * `~/.codebuddy` — so it speaks Claude Code's hook protocol (two quirks handled by genieSessionStart/geniePrompt). This shares
- * the shared hook runtime unchanged: recall every prompt, reflect once per session on the first one
- * (see core/hook.ts).
+ * `~/.codebuddy` — so it speaks Claude Code's hook protocol (two quirks handled by
+ * genieSessionStart/geniePrompt) and uses the shared hook runtime: recall every prompt, reflect
+ * once per session on the first one (see core/hook.ts).
  */
 import { runHarnessPrompt } from "./harness/hook-lifecycle";
 

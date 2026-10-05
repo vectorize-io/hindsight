@@ -7,8 +7,9 @@
  *       { "type": "command", "command": "node \"…/workbuddy-hook.js\"", "timeout": 30 } ] } ] } }
  *
  * WorkBuddy (Tencent's AI workbench, built on the @genie/agent-cli engine) speaks Claude Code's
- * hook protocol (two quirks handled by genieSessionStart/geniePrompt), so this shares the shared hook runtime unchanged — recall every
- * prompt; reflect once per session on the first prompt (see core/hook.ts).
+ * hook protocol (two quirks handled by genieSessionStart/geniePrompt), so this uses the shared
+ * hook runtime — recall every prompt; reflect once per session on the first prompt (see
+ * core/hook.ts).
  */
 import { runHarnessPrompt } from "./harness/hook-lifecycle";
 
