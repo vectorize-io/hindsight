@@ -152,11 +152,17 @@ class MentalModelTriggerInput(BaseModel):
             "Unset means 'all_strict' for a tagged model and 'any' for an untagged one."
         ),
     )
-    tag_groups: list[TagGroup] | None = Field(
+    # Plain JSON objects, not list[TagGroup]: TagGroup nests itself (and/or/not hold
+    # more groups), so its JSON schema is recursive. Some LLM providers reject a
+    # recursive tool schema and fail the whole request, not just this tool (#5013).
+    # validate_tag_groups below still checks the shape, same as recall does.
+    tag_groups: list[dict[str, Any]] | None = Field(
         default=None,
         description=(
-            "Compound boolean tag expressions (nested and/or/not) used during refresh INSTEAD of the model's "
-            "flat tags. When set, the model's own tags are not used for filtering."
+            "Compound boolean tag expressions used during refresh INSTEAD of the model's flat tags. When set, "
+            "the model's own tags are not used for filtering. Each group is a leaf "
+            "{'tags': [...], 'match': 'any'|'all'|'any_strict'|'all_strict'|'exact'} or a compound "
+            "{'and': [groups]}, {'or': [groups]}, {'not': group}, nested to any depth."
         ),
     )
     include_chunks: bool | None = Field(
@@ -224,6 +230,13 @@ class MentalModelTriggerInput(BaseModel):
             return None
         if not croniter.is_valid(value):
             raise ValueError(f"refresh_cron is not a valid cron expression: {value!r}")
+        return value
+
+    @field_validator("tag_groups")
+    @classmethod
+    def validate_tag_groups(cls, value: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
+        if value is not None:
+            _TAG_GROUP_LIST_ADAPTER.validate_python(value)
         return value
 
     @field_validator("fact_types")

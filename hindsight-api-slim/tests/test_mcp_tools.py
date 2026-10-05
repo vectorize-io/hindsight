@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from hindsight_api.api import page_markdown
 from hindsight_api.engine.memory_engine import KEEP_PARENT, DirectivePage, MentalModelPage
 from hindsight_api.mcp_tools import (
+    _ALL_TOOLS,
     KNOWLEDGE_ROOT_PARENT,
     MCPToolsConfig,
     MentalModelTriggerInput,
@@ -2631,6 +2632,40 @@ class TestReflectTraceOmission:
         assert "directives_applied" not in data
 
 
+def _refs(node: Any) -> set[str]:
+    """Every $defs name a schema fragment points at, at any depth."""
+    if isinstance(node, dict):
+        found = {node["$ref"].rsplit("/", 1)[-1]} if isinstance(node.get("$ref"), str) else set()
+        return found.union(*(_refs(v) for v in node.values()))
+    if isinstance(node, list):
+        return set().union(*(_refs(v) for v in node))
+    return set()
+
+
+def test_no_tool_input_schema_is_recursive(mock_memory):
+    """Some LLM providers reject a recursive tool schema and fail the whole request (#5013)."""
+    from fastmcp import FastMCP
+
+    mcp = FastMCP("test")
+    register_mcp_tools(
+        mcp,
+        mock_memory,
+        MCPToolsConfig(bank_id_resolver=lambda: "b", include_bank_id_param=True, tools=set(_ALL_TOOLS)),
+    )
+    tools = _tools(mcp)
+    assert {"create_mental_model", "create_knowledge_page"} <= tools.keys()
+    for name, tool in tools.items():
+        defs = tool.parameters.get("$defs", {})
+        for start in defs:
+            seen, todo = set(), set(_refs(defs[start]))
+            while todo:
+                ref = todo.pop()
+                assert ref != start, f"{name}: $defs/{start} refers back to itself"
+                if ref not in seen:
+                    seen.add(ref)
+                    todo |= _refs(defs.get(ref, {}))
+
+
 class TestMentalModelTriggerInput:
     """The MCP trigger input contract: HTTP parity, patch shape, merge semantics."""
 
@@ -2652,6 +2687,11 @@ class TestMentalModelTriggerInput:
     def test_rejects_unknown_field(self):
         with pytest.raises(ValidationError):
             MentalModelTriggerInput(refresh_evry_hour=True)
+
+    def test_rejects_malformed_tag_groups(self):
+        """tag_groups is plain JSON in the schema, so the shape is checked by the validator."""
+        with pytest.raises(ValidationError):
+            MentalModelTriggerInput(tag_groups=[{"and": "not-a-list"}])
 
     def test_rejects_invalid_cron(self):
         with pytest.raises(ValidationError):
