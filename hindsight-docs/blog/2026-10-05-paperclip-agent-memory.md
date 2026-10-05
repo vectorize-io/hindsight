@@ -108,7 +108,7 @@ The setting is doing exactly what it says. It is also making a decision for you.
 
 ## 3. What the plugin does, concretely
 
-The Hindsight Paperclip plugin is installed at the Paperclip instance level. The current released package is `@vectorize-io/hindsight-paperclip` v0.4.0 and requires Paperclip 2026.720.0 or newer.
+The Hindsight Paperclip plugin is installed at the Paperclip instance level. The current released package is `@vectorize-io/hindsight-paperclip` v0.4.1 and requires Paperclip 2026.720.0 or newer.
 
 You install it with:
 
@@ -175,13 +175,13 @@ issue.comment.created
 retain full comment
 ```
 
-One detail is worth calling out because the v0.4.0 configuration currently makes it easy to misunderstand.
+One detail is worth calling out, because the naming used to point at the wrong event.
 
 `agent.run.finished` is subscribed to, but the handler is a no-op. Paperclip's run-finished payload does not contain the agent's output, so the plugin cannot retain that output from the event.
 
-In v0.4.0, `autoRetain` actually gates the automatic retention of comments. It does not make the `agent.run.finished` handler retain run output.
+`autoRetain` gates the automatic retention of **comments**. It does not make the `agent.run.finished` handler retain run output.
 
-The manifest still describes the option as "Automatically retain agent run output when a run completes". That description does not match the released worker implementation. The code is the source of truth here.
+Through 0.4.0 the setting was labelled "Auto-retain on Run Finished" and described as retaining run output when a run completes, which is not what it does. 0.4.1 relabels it. If your plugin settings still show the old wording, you are on 0.4.0.
 
 ## 4. Four ways to organise the memory
 
@@ -456,7 +456,7 @@ A stable identity makes a stable memory boundary.
 
 **The plugin installed, but Paperclip asks for new capabilities**
 
-v0.4.0 declares `issues.read` and `issue.comments.read` because it fetches the issue at run start and retrieves full comment bodies.
+The plugin declares `issues.read` and `issue.comments.read` because it fetches the issue at run start and retrieves full comment bodies.
 
 Paperclip may prompt for these on first install or upgrade. If it does, that is expected rather than a sign that something is wrong.
 
@@ -470,9 +470,9 @@ Older plugin versions could save the secret's name. The current host expects a s
 
 Check `enabledAgentIds`.
 
-An empty list means all agents are enabled. Once the list contains IDs, the automatic paths are restricted to those agents: the recall at run start, and the retention of comments.
+An empty list means all agents are enabled. Once the list contains IDs, only those agents get the recall at run start, the retention of comments, and the two agent-callable tools.
 
-Be careful about what that does not cover. In v0.4.0 the allowlist is checked in the three event handlers, and not in the two agent-callable tools. An agent left out of `enabledAgentIds` therefore gets no automatic recall and no automatic retention, but it can still call `hindsight_recall` and `hindsight_retain` itself, against the bank its own identity derives. Treat the setting as a switch for the automatic behaviour rather than as an access control.
+If you are on 0.4.0, check the version before you rely on that last part. In 0.4.0 the allowlist was applied to the three event handlers and not to the tools, so an excluded agent got no automatic recall or retention but could still call `hindsight_recall` and `hindsight_retain` itself, against the bank its own identity derives. 0.4.1 closes that. If you are using the allowlist to keep an agent away from memory rather than just to control cost, upgrade.
 
 This can look like a bank problem when it is actually an enablement problem.
 
@@ -488,7 +488,7 @@ A comment on an unassigned issue is therefore not stored. Assign the issue if yo
 
 That is expected.
 
-In v0.4.0, `autoRetain` gates the `issue.comment.created` retention handler. It does not control the no-op `agent.run.finished` subscription.
+`autoRetain` gates the `issue.comment.created` retention handler. It does not control the no-op `agent.run.finished` subscription.
 
 If you expected completed run output to be stored automatically, the current released worker does not do that from `agent.run.finished`.
 
@@ -541,11 +541,11 @@ This is why the bank choice is easier to make before a large amount of memory ac
 
 **Can two agents share a bank while a third stays isolated?**
 
-Not through a single `bankGranularity` setting in v0.4.0.
+Not through a single `bankGranularity` setting.
 
 The configuration is instance-level, so `["company"]` applies the company bank to all enabled agents. `["company", "agent"]` gives all agents their own company-scoped banks.
 
-`enabledAgentIds` controls which agents get the automatic recall and retention, and as noted above it does not block the agent-callable tools. Either way it does not give individual agents different bank strategies.
+`enabledAgentIds` controls which agents the plugin acts for at all. It does not give individual agents different bank strategies.
 
 If you need a mixed topology, that needs to be designed outside this single global granularity setting.
 
