@@ -3414,7 +3414,8 @@ async def _apply_create_observation(
     if not live_source_memory_ids:
         logger.debug(f"Create skipped: all {len(source_memory_ids)} source memories were deleted concurrently")
         return {"action": "skipped", "reason": "sources_deleted"}
-    source_memory_ids = live_source_memory_ids
+    # Each source counts once: the store derives proof_count from this list (#4955).
+    source_memory_ids = list(dict.fromkeys(live_source_memory_ids))
 
     t0 = time.time()
     created_id = await store.insert_observation(
