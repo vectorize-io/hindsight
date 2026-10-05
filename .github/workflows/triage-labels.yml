@@ -1,26 +1,21 @@
 name: Triage labels
 
-# Labels PRs (from their paths) and issues (via Jev) as core / integration.
-# pull_request_target so fork PRs can be labelled too; it checks out the base
-# branch only and never runs PR code.
+# Labels new issues as core / integration (via Gemini).
 on:
-  pull_request_target:
-    types: [opened, synchronize, reopened]
   issues:
     types: [opened]
 
 permissions:
   contents: read
   issues: write
-  pull-requests: write
 
 jobs:
   label:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: python3 scripts/triage-labels.py ${{ github.event_name == 'issues' && 'issue' || 'pr' }} ${{ github.event.issue.number || github.event.pull_request.number }}
+      - run: python3 scripts/triage-labels.py ${{ github.event.issue.number }}
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
