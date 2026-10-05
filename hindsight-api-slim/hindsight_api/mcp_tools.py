@@ -235,9 +235,12 @@ class MentalModelTriggerInput(BaseModel):
     @field_validator("tag_groups")
     @classmethod
     def validate_tag_groups(cls, value: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
-        if value is not None:
-            _TAG_GROUP_LIST_ADAPTER.validate_python(value)
-        return value
+        if value is None:
+            return None
+        # Round-trip through TagGroup so the engine gets the same canonical dicts the
+        # typed field used to dump (e.g. a 'filters' key comes out as 'and'/'or').
+        groups = _TAG_GROUP_LIST_ADAPTER.validate_python(value)
+        return _TAG_GROUP_LIST_ADAPTER.dump_python(groups, by_alias=True, exclude_unset=True)
 
     @field_validator("fact_types")
     @classmethod

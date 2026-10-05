@@ -2693,6 +2693,11 @@ class TestMentalModelTriggerInput:
         with pytest.raises(ValidationError):
             MentalModelTriggerInput(tag_groups=[{"and": "not-a-list"}])
 
+    def test_tag_groups_reach_the_engine_in_canonical_form(self):
+        """The field name 'filters' is accepted and sent down under its alias, as before #5013."""
+        trigger = MentalModelTriggerInput(tag_groups=[{"filters": [{"tags": ["a"]}, {"not": {"tags": ["b"]}}]}])
+        assert trigger.tag_groups == [{"and": [{"tags": ["a"]}, {"not": {"tags": ["b"]}}]}]
+
     def test_rejects_invalid_cron(self):
         with pytest.raises(ValidationError):
             MentalModelTriggerInput(refresh_cron="every tuesday")
