@@ -71,6 +71,33 @@ describe("HOOK_HARNESSES lifecycle contract", () => {
     }
   });
 
+  // The @genie/agent-cli engine pastes a hook's raw stdout into the model's context whenever
+  // additionalContext is absent, and its SessionStart payload carries no cwd.
+  it("keeps WorkBuddy/CodeBuddy hook JSON out of the model context and finds the project dir", () => {
+    const original = process.env.CODEBUDDY_PROJECT_DIR;
+    try {
+      process.env.CODEBUDDY_PROJECT_DIR = "/w/repo";
+      for (const harness of ["workbuddy", "codebuddy"] as const) {
+        const spec = HOOK_HARNESSES[harness];
+        expect(spec.sessionStart.emit({ systemMessage: "banner" })).toEqual({
+          systemMessage: "banner",
+          hookSpecificOutput: { hookEventName: "SessionStart" },
+          suppressOutput: true,
+        });
+        expect(spec.prompt.emit("ctx", "notice")).toEqual({
+          systemMessage: "notice",
+          hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "ctx" },
+          suppressOutput: true,
+        });
+        expect(spec.sessionStart.parse({ session_id: "s1" }).cwd).toBe("/w/repo");
+        expect(spec.sessionStart.parse({ session_id: "s1", cwd: "/given" }).cwd).toBe("/given");
+      }
+    } finally {
+      if (original === undefined) delete process.env.CODEBUDDY_PROJECT_DIR;
+      else process.env.CODEBUDDY_PROJECT_DIR = original;
+    }
+  });
+
   it("keeps the runtime schema and installed event names in the same host declaration", () => {
     const cursor = HOOK_HARNESSES["cursor-cli"];
     expect(cursor.install).toMatchObject({

@@ -19,6 +19,8 @@ import { readQwenTranscript } from "../core/transcript-qwen";
 import { readDroidTranscript } from "../core/transcript-droid";
 import { zcodeAssistantText } from "../core/transcript-zcode";
 import { kimiPromptText, kimiSessionDir, readKimiTranscript } from "../core/transcript-kimi";
+import { readWorkbuddyTranscript } from "../core/transcript-workbuddy";
+import { readCodebuddyTranscript } from "../core/transcript-codebuddy-ide";
 
 export type HookHarnessName =
   | "claude-code"
@@ -33,7 +35,9 @@ export type HookHarnessName =
   | "factory-droid"
   | "zcode"
   | "traecode"
-  | "kimi-code";
+  | "kimi-code"
+  | "workbuddy"
+  | "codebuddy";
 export type HookLifecycle = "sessionStart" | "prompt" | "stop";
 /**
  * How the HOST spells one hook registration.
@@ -225,6 +229,36 @@ const standardSessionStart = (harness: string): SessionStartHookSpec => ({
       hookEventName: "SessionStart",
       ...(out.additionalContext ? { additionalContext: out.additionalContext } : {}),
     },
+  }),
+});
+
+/**
+ * WorkBuddy and CodeBuddy share the `@genie/agent-cli` engine, which differs from Claude Code in two
+ * ways that matter here (both read from its bundle):
+ *   - when a hook's output carries no `hookSpecificOutput.additionalContext`, the engine pastes the
+ *     hook's RAW stdout into the model's context — our JSON, ANSI-coloured banner and all.
+ *     `suppressOutput` turns that fallback off; `additionalContext` still reaches the model and
+ *     `systemMessage` is still shown to the user.
+ *   - its SessionStart payload has no `cwd`; the engine sets CODEBUDDY_PROJECT_DIR on every hook.
+ */
+const genieSessionStart = (harness: string): SessionStartHookSpec => {
+  const base = standardSessionStart(harness);
+  return {
+    ...base,
+    parse: (ev) => ({
+      cwd: (ev.cwd as string | undefined) || process.env.CODEBUDDY_PROJECT_DIR,
+      sessionId: ev.session_id as string | undefined,
+    }),
+    emit: (out) => ({ ...(base.emit(out) as object), suppressOutput: true }),
+  };
+};
+
+const geniePrompt = (harness: string): HookSpec => ({
+  ...claudePrompt,
+  harness,
+  emit: (context, notice, ev) => ({
+    ...(claudePrompt.emit(context, notice, ev) as object),
+    suppressOutput: true,
   }),
 });
 
@@ -688,6 +722,65 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
         };
       },
       readTranscript: readKimiTranscript,
+    },
+  },
+  /**
+   * WorkBuddy (Tencent's AI workbench) keeps a durable transcript at
+   * ~/.workbuddy/projects/<cwd-encoded>/<uuid>.jsonl and speaks Claude's hook protocol field for
+   * field — `session_id` / `transcript_path` / `cwd` in, hookSpecificOutput + systemMessage out —
+   * so the ONLY host-specific piece is the transcript SCHEMA: `type:"message"` records carrying
+   * top-level `role`/`content`, which core/transcript-workbuddy.ts normalizes. Its Stop payload
+   * fills `transcript_path` for real (the engine's own getHookTranscriptPath), so it retains
+   * through `readTranscript` like every other file-backed host rather than the journal ZCode needs.
+   * CodeBuddy Code ships the same @genie/agent-cli engine and reuses this reader (see `codebuddy`).
+   */
+  workbuddy: {
+    configStyle: "nested",
+    install: {
+      sessionStart: { event: "SessionStart", entry: "workbuddy-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "workbuddy-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "workbuddy-stop-hook.js", timeout: 60 },
+    },
+    sessionStart: genieSessionStart("workbuddy"),
+    prompt: geniePrompt("workbuddy"),
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "workbuddy",
+      parse: (ev) => ({
+        sessionId: ev.session_id as string | undefined,
+        transcriptPath: ev.transcript_path as string | undefined,
+        cwd: ev.cwd as string | undefined,
+      }),
+      readTranscript: readWorkbuddyTranscript,
+    },
+  },
+  /**
+   * CodeBuddy — the same `@genie/agent-cli` engine WorkBuddy ships, running under its own product
+   * config (`~/.codebuddy`; WorkBuddy only renames the home folder). Hook names and payload shape
+   * are identical, so this spec differs from `workbuddy` in the files the installer writes, the
+   * harness name stamped on what it retains — and ONE thing more: CodeBuddy ships in two hosts whose
+   * transcripts do NOT look alike. CodeBuddy Code (the CLI) writes the WorkBuddy JSONL, while the
+   * IDE hands the Stop hook its own `<conversation>/index.json` directory layout. So the reader is
+   * a dispatcher on the shape it was handed (core/transcript-codebuddy-ide.ts).
+   */
+  codebuddy: {
+    configStyle: "nested",
+    install: {
+      sessionStart: { event: "SessionStart", entry: "codebuddy-sessionstart-hook.js", timeout: 30 },
+      prompt: { event: "UserPromptSubmit", entry: "codebuddy-hook.js", timeout: 30 },
+      stop: { event: "Stop", entry: "codebuddy-stop-hook.js", timeout: 60 },
+    },
+    sessionStart: genieSessionStart("codebuddy"),
+    prompt: geniePrompt("codebuddy"),
+    retain: {
+      hostTimeoutSec: 60,
+      harness: "codebuddy",
+      parse: (ev) => ({
+        sessionId: ev.session_id as string | undefined,
+        transcriptPath: ev.transcript_path as string | undefined,
+        cwd: ev.cwd as string | undefined,
+      }),
+      readTranscript: readCodebuddyTranscript,
     },
   },
 };
