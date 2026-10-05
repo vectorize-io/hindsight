@@ -179,6 +179,86 @@ async def test_concurrent_callers_share_one_bound() -> None:
     assert [len(result) for result in results] == [8, 8]
 
 
+@pytest.mark.parametrize(
+    ("texts_per_caller", "concurrency"),
+    [(1, 1), (1, 3), (4, 1), (4, 3)],
+    ids=["one-batch-limit-1", "one-batch-limit-3", "two-batches-limit-1", "two-batches-limit-3"],
+)
+async def test_inline_path_respects_the_shared_bound(texts_per_caller: int, concurrency: int) -> None:
+    """A call that runs inline (one batch, or a limit of one) still takes a slot (#5011).
+
+    Eight small recall queries at once used to put eight requests on the wire whatever
+    the limit, because the inline path returned before the shared semaphore.
+    """
+    probe = _ConcurrencyProbe(hold_until=1)
+    release = asyncio.Event()
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        await probe.enter()
+        try:
+            await asyncio.wait_for(release.wait(), timeout=10)
+            return web.json_response([[0.7]] * len(await _inputs(request)))
+        finally:
+            probe.leave()
+
+    async with _tei(batch_size=2, concurrency=concurrency, handler=handler) as embeddings:
+        callers = [
+            asyncio.create_task(embeddings.encode([f"{c} {i}" for i in range(texts_per_caller)])) for c in range(8)
+        ]
+        try:
+            async with asyncio.timeout(10):
+                while probe.open_now < concurrency:
+                    await asyncio.sleep(0.01)
+            # Settle window in which an unbounded path would open more.
+            await asyncio.sleep(0.1)
+            peak_while_held = probe.peak
+        finally:
+            release.set()
+            results = await asyncio.gather(*callers)
+
+    assert peak_while_held == concurrency
+    assert [len(result) for result in results] == [texts_per_caller] * 8
+
+
+async def test_inline_failure_releases_its_slot() -> None:
+    """A failed single-batch call must give its slot back, or the next call hangs."""
+    fail = True
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        if fail:
+            return web.json_response({"error": "boom"}, status=400)
+        return web.json_response([[0.8]])
+
+    async with _tei(batch_size=1, concurrency=1, handler=handler) as embeddings:
+        with pytest.raises(RuntimeError):
+            await embeddings.encode(["one"])
+        fail = False
+        async with asyncio.timeout(5):
+            assert await embeddings.encode(["two"]) == [[0.8]]
+
+
+async def test_inline_cancellation_releases_its_slot() -> None:
+    """A cancelled single-batch call must give its slot back too."""
+    started = asyncio.Event()
+    hang = True
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        if hang:
+            started.set()
+            await asyncio.sleep(10)
+        return web.json_response([[0.9]])
+
+    async with _tei(batch_size=1, concurrency=1, handler=handler) as embeddings:
+        call = asyncio.create_task(embeddings.encode(["one"]))
+        await asyncio.wait_for(started.wait(), timeout=5)
+        call.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await call
+        hang = False
+        async with asyncio.timeout(5):
+            assert await embeddings.encode(["two"]) == [[0.9]]
+
+
 async def test_the_semaphore_is_created_once_and_reused() -> None:
     """A semaphore per call would make the bound per-caller."""
 
