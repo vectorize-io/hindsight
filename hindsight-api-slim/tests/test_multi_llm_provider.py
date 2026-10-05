@@ -200,3 +200,60 @@ async def test_verify_connection_strict_primary_soft_secondary():
     b = FakeMember("b", RuntimeError("down"))
     await _failover(a, b).verify_connection()
     assert a.verified == 1 and b.verified == 1
+
+
+# ── prompt caching (#5123) ───────────────────────────────────────────────────
+
+
+def _caching_member(name: str, *, caches: bool, fails: bool = False):
+    """A real ``LLMProvider`` over a fake impl that records the cache handle it is called with."""
+    from hindsight_api.engine.llm_wrapper import LLMProvider
+
+    member = LLMProvider(provider="mock", api_key="", base_url="", model=name, max_retries=0)
+    impl = member._provider_impl
+    impl.seen_prefix = "unset"
+
+    async def get_or_create_cached_prefix(**kwargs):
+        return f"{name}-cache"
+
+    async def call(**kwargs):
+        impl.seen_prefix = kwargs.get("cached_prefix")
+        if fails:
+            raise RuntimeError(f"{name} down")
+        return LLMCallResult(content="ok", usage=TokenUsage())
+
+    impl.supports_prompt_caching = lambda: caches
+    impl.get_or_create_cached_prefix = get_or_create_cached_prefix
+    impl.call = call
+    return member, impl
+
+
+async def test_fallback_member_builds_its_own_prompt_cache():
+    """The member that serves the call caches its own prefix, not the primary's."""
+    from hindsight_api.engine.llm_interface import PromptCachePrefix
+
+    primary, primary_impl = _caching_member("codex", caches=False, fails=True)
+    gemini, gemini_impl = _caching_member("gemini", caches=True)
+
+    await _failover(primary, gemini).call(
+        messages=[{"role": "system", "content": "s"}],
+        prompt_cache=PromptCachePrefix(system_instruction="s"),
+    )
+
+    assert primary_impl.seen_prefix is None  # non-caching primary is never handed a handle
+    assert gemini_impl.seen_prefix == "gemini-cache"
+
+
+async def test_caching_primary_handle_never_reaches_fallback_member():
+    from hindsight_api.engine.llm_interface import PromptCachePrefix
+
+    primary, primary_impl = _caching_member("gemini", caches=True, fails=True)
+    other, other_impl = _caching_member("openai", caches=False)
+
+    await _failover(primary, other).call(
+        messages=[{"role": "system", "content": "s"}],
+        prompt_cache=PromptCachePrefix(system_instruction="s"),
+    )
+
+    assert primary_impl.seen_prefix == "gemini-cache"
+    assert other_impl.seen_prefix is None

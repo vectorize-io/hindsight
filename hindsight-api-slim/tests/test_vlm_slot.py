@@ -45,12 +45,6 @@ class _RecordingConfig:
 
         return LLMCallResult(content={"facts": []}, usage=TokenUsage())
 
-    async def get_or_create_cached_prefix(self, *a, **k):
-        return None
-
-    def supports_prompt_caching(self) -> bool:
-        return False
-
 
 class _Loader:
     def __init__(self, attachments):

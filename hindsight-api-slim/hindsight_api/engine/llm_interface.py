@@ -53,6 +53,21 @@ class LLMToolChoice:
         return self.function_name
 
 
+@dataclass(frozen=True, slots=True)
+class PromptCachePrefix:
+    """The reusable prompt prefix a caller wants cached, passed to ``LLMProvider.call``.
+
+    The caller says WHAT is cacheable; the provider that serves the call builds
+    its own handle from it. In a multi-LLM chain that is whichever member runs,
+    so a fallback member caches against its own account instead of being handed
+    the primary's handle, or none at all (#5123).
+    """
+
+    system_instruction: str
+    # Part of the cache key only; ``None`` keeps one cache across schema variants.
+    response_schema: Any | None = None
+
+
 LLM_TOOL_CHOICE_AUTO = LLMToolChoice(mode=LLMToolChoiceMode.AUTO)
 LLM_TOOL_CHOICE_NONE = LLMToolChoice(mode=LLMToolChoiceMode.NONE)
 LLM_TOOL_CHOICE_REQUIRED = LLMToolChoice(mode=LLMToolChoiceMode.REQUIRED)

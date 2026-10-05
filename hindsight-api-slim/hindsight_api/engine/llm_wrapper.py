@@ -37,6 +37,7 @@ from .llm_interface import (
     LLMInterface,
     LLMToolChoice,
     LLMToolChoiceMode,
+    PromptCachePrefix,
 )
 from .llm_interface import (
     OutputTooLongError as OutputTooLongError,
@@ -1192,6 +1193,22 @@ class LLMProvider:
             return None
         return self._provider_impl
 
+    async def _cached_prefix_for(self, prompt_cache: PromptCachePrefix) -> str | None:
+        """This provider's cache handle for ``prompt_cache``, or None to call uncached.
+
+        Caching is a soft optimisation: a cache-side error never blocks the call.
+        """
+        if not self._provider_impl.supports_prompt_caching():
+            return None
+        try:
+            return await self._provider_impl.get_or_create_cached_prefix(
+                system_instruction=prompt_cache.system_instruction,
+                response_schema=prompt_cache.response_schema,
+            )
+        except Exception:
+            logger.exception("Cache prefix lookup failed; falling back to uncached call")
+            return None
+
     async def call(
         self,
         messages: list[dict[str, str]],
@@ -1204,7 +1221,7 @@ class LLMProvider:
         max_backoff: float | None = None,
         skip_validation: bool = False,
         strict_schema: bool | None = None,
-        cached_prefix: str | None = None,
+        prompt_cache: PromptCachePrefix | None = None,
     ) -> LLMCallResult:
         """
         Make an LLM API call with retry logic.
@@ -1227,6 +1244,9 @@ class LLMProvider:
                 inherits the server-level HINDSIGHT_API_LLM_STRICT_SCHEMA flag; an explicit
                 True or False wins over it, so a caller can force strict output on -- or off --
                 for its own scope. Providers without a strict mode ignore it.
+            prompt_cache: The cacheable prompt prefix, or None. Resolved to a cache
+                handle by THIS provider, so each member of a multi-LLM chain uses its
+                own. Providers without explicit caching ignore it.
 
         Returns:
 
@@ -1290,6 +1310,8 @@ class LLMProvider:
             set_request_context,
             set_response_usage,
         )
+
+        cached_prefix = await self._cached_prefix_for(prompt_cache) if prompt_cache is not None else None
 
         call_start = time.monotonic()
         request_token = set_request_context(

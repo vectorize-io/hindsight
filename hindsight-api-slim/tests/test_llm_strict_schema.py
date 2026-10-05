@@ -331,7 +331,6 @@ async def test_retain_chunk_extraction_threads_retain_flag(strict):
 
     llm_config = MagicMock(spec=LLMProvider)
     llm_config.provider = "mock"
-    llm_config._provider_impl = SimpleNamespace(supports_prompt_caching=lambda: False)
     token_usage = TokenUsage()
     llm_config.call = AsyncMock(return_value=LLMCallResult(content={"facts": []}, usage=token_usage))
 

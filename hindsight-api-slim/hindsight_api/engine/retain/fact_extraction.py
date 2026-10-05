@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
-from ..llm_interface import ProviderContentPolicyError, ProviderRateLimitResetError
+from ..llm_interface import PromptCachePrefix, ProviderContentPolicyError, ProviderRateLimitResetError
 from ..llm_wrapper import (
     AnyLLMProvider,
     OutputTooLongError,
@@ -2032,26 +2032,12 @@ async def _extract_facts_from_chunk(
         if vlm_config is not None:
             llm_config = vlm_config
 
-    # Opt into context caching when the provider supports it. The prompt and
-    # response_schema are bank-agnostic (the mission lives in the user message),
-    # so one cached prefix serves every bank; reusing it across many small-payload
-    # retain calls dramatically lowers per-call input
-    # cost. ``get_or_create_cached_prefix`` returns None when caching is
-    # disabled, unsupported, or the prefix is too small; the LLM call
-    # transparently falls back to the uncached path in that case.
-    cached_prefix_name: str | None = None
-    provider_impl = getattr(llm_config, "_provider_impl", None)
-    if provider_impl is not None and provider_impl.supports_prompt_caching():
-        try:
-            cached_prefix_name = await provider_impl.get_or_create_cached_prefix(
-                system_instruction=prompt,
-                response_schema=response_schema,
-            )
-        except Exception:
-            # Caching is a soft optimisation — never let a cache-side
-            # error block a retain operation.
-            logger.exception("Cache prefix lookup failed; falling back to uncached call")
-            cached_prefix_name = None
+    # Opt into context caching. The prompt and response_schema are bank-agnostic
+    # (the mission lives in the user message), so one cached prefix serves every
+    # bank; reusing it across many small-payload retain calls dramatically lowers
+    # per-call input cost. The provider that serves the call resolves its own
+    # handle and falls back to the uncached path when caching is unavailable.
+    prompt_cache = PromptCachePrefix(system_instruction=prompt, response_schema=response_schema)
 
     # Retry logic for JSON validation errors
     # Use retain-specific overrides if set, otherwise fall back to global LLM config
@@ -2090,9 +2076,8 @@ async def _extract_facts_from_chunk(
                 initial_backoff=initial_backoff,
                 max_backoff=max_backoff,
                 skip_validation=True,  # Get raw JSON, we'll validate leniently
+                prompt_cache=prompt_cache,
             )
-            if cached_prefix_name is not None:
-                call_kwargs["cached_prefix"] = cached_prefix_name
 
             extraction_call = await llm_config.call(**call_kwargs)
             extraction_response_json = extraction_call.content
