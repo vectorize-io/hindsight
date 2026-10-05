@@ -872,15 +872,13 @@ async def test_codex_oauth_embeddings_reactive_refresh_on_401(tmp_path: Path, mo
     assert emb.api_key == new_access
 
 
-def test_request_headers_use_chatgpt_account_id(tmp_path: Path):
+def test_request_headers_use_chatgpt_account_id():
     """The account header must be ``ChatGPT-Account-ID`` (issue #4951).
 
     ``OpenAI-Account-ID`` made the ChatGPT backend answer 429
     ``usage_limit_reached`` for credentials the official Codex CLI used fine;
     the CLI sends ``chatgpt-account-id``.
     """
-    llm = _build_llm()
-    llm._auth_file = tmp_path / "auth.json"
-    headers = llm._build_request_headers()
+    headers = _build_llm()._build_request_headers()
     assert headers["ChatGPT-Account-ID"] == "acct-123"
     assert "OpenAI-Account-ID" not in headers
