@@ -2,9 +2,17 @@
 sends to Hindsight (a recording fake client stands in for the real SDK)."""
 
 import json
+import sys
+import types
 
 import hindsight_hermes as plugin
 from conftest import FakeClient
+
+
+def _stub_credential_fingerprint(monkeypatch) -> None:
+    credential_persistence = types.ModuleType("agent.credential_persistence")
+    credential_persistence.fingerprint_secret_value = lambda value: value
+    monkeypatch.setitem(sys.modules, "agent.credential_persistence", credential_persistence)
 
 
 def _retain_item(fake: FakeClient, index: int = 0) -> dict:
@@ -31,6 +39,53 @@ def test_sync_turn_retains_the_turn(provider):
     assert "hermes" in item["tags"] and "session:session-1" in item["tags"]
     messages = json.loads(item["content"][1:-1])
     assert [m["content"] for m in messages] == ["User: what is my name?", "Assistant: Ada."]
+
+
+def test_append_capability_retries_after_negative_cache_ttl(monkeypatch):
+    now = 1000.0
+    responses = iter([None, "0.5.0"])
+    _stub_credential_fingerprint(monkeypatch)
+    plugin._append_capability_cache.clear()
+    monkeypatch.setattr(plugin.time, "monotonic", lambda: now)
+    monkeypatch.setattr(plugin, "_fetch_hindsight_api_version", lambda *_args: next(responses))
+
+    assert not plugin._check_api_supports_update_mode_append("https://example.test", "secret")
+    now += plugin._APPEND_CAPABILITY_NEGATIVE_TTL_S - 1
+    assert not plugin._check_api_supports_update_mode_append("https://example.test", "secret")
+    now += 1
+    assert plugin._check_api_supports_update_mode_append("https://example.test", "secret")
+
+
+def test_append_capability_positive_cache_does_not_expire(monkeypatch):
+    now = 1000.0
+    _stub_credential_fingerprint(monkeypatch)
+    plugin._append_capability_cache.clear()
+    monkeypatch.setattr(plugin.time, "monotonic", lambda: now)
+    monkeypatch.setattr(plugin, "_fetch_hindsight_api_version", lambda *_args: "0.5.0")
+
+    assert plugin._check_api_supports_update_mode_append("https://example.test", "secret")
+    now += plugin._APPEND_CAPABILITY_NEGATIVE_TTL_S * 2
+    monkeypatch.setattr(plugin, "_fetch_hindsight_api_version", lambda *_args: None)
+    assert plugin._check_api_supports_update_mode_append("https://example.test", "secret")
+
+
+def test_append_capability_concurrent_positive_probe_wins(monkeypatch):
+    _stub_credential_fingerprint(monkeypatch)
+    plugin._append_capability_cache.clear()
+    probe_count = 0
+
+    def probe(api_url, api_key):
+        nonlocal probe_count
+        probe_count += 1
+        if probe_count == 1:
+            assert plugin._check_api_supports_update_mode_append(api_url, api_key)
+            return None
+        return "0.5.0"
+
+    monkeypatch.setattr(plugin, "_fetch_hindsight_api_version", probe)
+
+    assert plugin._check_api_supports_update_mode_append("https://example.test", "secret")
+    assert probe_count == 2
 
 
 def test_retain_every_n_turns_buffers_then_ships_the_batch(provider):

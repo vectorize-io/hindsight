@@ -20,6 +20,7 @@ import queue
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -127,11 +128,19 @@ def _warn_if_client_outdated() -> None:
         pass  # packaging or metadata unavailable — proceed anyway
 
 
+@dataclass(frozen=True)
+class _AppendCapabilityEntry:
+    supported: bool
+    probed_at: float
+
+
 # update_mode='append' capability (Hindsight >= 0.5.0), cached per (API URL, key fingerprint)
-# per process so every provider on the same API+key shares one /version round trip. A failed probe
-# caches False, so the key must include the credential or one profile's 401 would silently downgrade
-# a sibling profile that shares the URL with a valid key.
-_append_capability_cache: Dict[tuple[str, str | None], bool] = {}
+# per process so every provider on the same API+key shares one /version round trip. Positive results
+# are permanent; negative results expire so a transient startup failure cannot disable append mode for
+# the lifetime of a gateway. The key includes the credential so one profile's 401 cannot downgrade a
+# sibling profile that shares the URL with a valid key.
+_APPEND_CAPABILITY_NEGATIVE_TTL_S = 300.0
+_append_capability_cache: Dict[tuple[str, str | None], _AppendCapabilityEntry] = {}
 _append_capability_lock = threading.Lock()
 
 
@@ -157,7 +166,8 @@ def _check_api_supports_update_mode_append(api_url: str, api_key: str | None = N
     """Cached ``update_mode='append'`` check for *api_url*. False on any probe failure
     (safe default: per-process document_id, no update_mode = resume-overwrite fix intact).
 
-    Probes once per URL per process. See #6654.
+    Positive results are cached for the process lifetime. Negative results are retried after a
+    short TTL because they can represent a transient network or startup failure. See #6654.
     """
     if not api_url:
         return False
@@ -165,8 +175,11 @@ def _check_api_supports_update_mode_append(api_url: str, api_key: str | None = N
 
     cache_key = (api_url, fingerprint_secret_value(api_key))
     with _append_capability_lock:
-        if cache_key in _append_capability_cache:
-            return _append_capability_cache[cache_key]
+        entry = _append_capability_cache.get(cache_key)
+        if entry is not None and (
+            entry.supported or time.monotonic() - entry.probed_at < _APPEND_CAPABILITY_NEGATIVE_TTL_S
+        ):
+            return entry.supported
     version = _fetch_hindsight_api_version(api_url, api_key)
     try:  # missing/invalid version -> unsupported
         from packaging.version import Version
@@ -175,8 +188,13 @@ def _check_api_supports_update_mode_append(api_url: str, api_key: str | None = N
     except Exception:
         supported = False
     with _append_capability_lock:
-        # A concurrent probe may have filled the cache meanwhile; its answer wins.
-        supported = _append_capability_cache.setdefault(cache_key, supported)
+        entry = _append_capability_cache.get(cache_key)
+        # A successful concurrent probe is authoritative: a slower transient failure must not
+        # replace a positive result that otherwise remains valid for the process lifetime.
+        if entry is not None and entry.supported:
+            supported = True
+        else:
+            _append_capability_cache[cache_key] = _AppendCapabilityEntry(supported, time.monotonic())
     if supported:
         logger.debug("Hindsight API %s version %s supports update_mode='append'", api_url, version)
     else:
