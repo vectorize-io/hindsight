@@ -226,7 +226,17 @@ A caller-supplied string that groups one or more items under a logical document.
 
 When you provide a `document_id`, Hindsight upserts the document: if a document with that ID already exists in the bank, it and all its associated memories are deleted before the new content is processed and inserted. This means you can safely re-run retain on updated content — for example, a chat thread that grew since last time — without accumulating duplicate memories.
 
-If you omit `document_id`, Hindsight assigns a random UUID per request, so re-ingesting the same content will create duplicate memories.
+If you omit `document_id`, Hindsight assigns a random UUID, so re-ingesting the same content will create duplicate memories. How items without a `document_id` are grouped depends on the rest of the request:
+
+| Request | Result |
+|---------|--------|
+| No item has a `document_id` | All items go into **one** new document. |
+| Some items have a `document_id`, others don't | Each item without one becomes its **own** new document. It is never folded into another item's document, so replacing or deleting that document leaves it alone. |
+| Items share the same `document_id` | Those items go into that one document, in request order. |
+
+An item with an attachment always gets its own document when it has no `document_id`, so it counts as an item *with* one in the table above.
+
+To keep every item separate, give each one its own `document_id`. To put several items in one document, give them the same `document_id`.
 
 ### update_mode
 

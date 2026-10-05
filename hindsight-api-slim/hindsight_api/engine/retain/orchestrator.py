@@ -1423,13 +1423,16 @@ async def retain_batch(
     # Convert dicts to RetainContent objects
     contents = _build_contents(contents_dicts, document_tags)
 
-    # When contents have multiple distinct per-content document_ids and no
+    # When contents carry more than one document (several distinct per-content
+    # document_ids, or one document_id next to items without any) and no
     # batch-level document_id, group by doc_id and process each group
-    # independently so each document is tracked separately.
+    # independently so each document is tracked separately. An item without a
+    # document_id becomes its own document here: it must never be folded into
+    # another item's document, whose upsert/delete would then take it along.
     if not document_id:
         per_content_doc_ids = [item.get("document_id") for item in contents_dicts]
         unique_doc_ids = {d for d in per_content_doc_ids if d}
-        if len(unique_doc_ids) > 1:
+        if len(unique_doc_ids) > 1 or (unique_doc_ids and not all(per_content_doc_ids)):
             # Group contents by document_id, preserving original order
             groups: dict[str, tuple[list[RetainContentDict], list[RetainContent]]] = {}
             original_indices: dict[str, list[int]] = {}
