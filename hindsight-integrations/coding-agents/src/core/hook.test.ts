@@ -7,6 +7,7 @@ import { buildHookOutput, runHook } from "./hook";
 import { diagFilePath } from "./diag";
 import { ReflectError } from "./hindsight";
 import { buildReflectQuery } from "./inject";
+import { buildRosterRefresh } from "./knowledge-injection";
 
 let root: string;
 let cacheFile: string;
@@ -786,5 +787,55 @@ describe("runHook anti-recursion guard", () => {
     // alone without calling makeClient) proves the guard fired first.
     await runHook({ harness: "claude-code", parse: () => ({}), emit: (c) => ({ c }) }, makeClient);
     expect(makeClient).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildHookOutput: which tool guide a turn carries", () => {
+  const FULL = "CREDITING IS NOT OPTIONAL"; // only the full guide says this
+  const REMINDER = "Reminder: before acting on a bug";
+  const CREDIT = "From Hindsight memory (<page>)";
+
+  async function turnsOf(n: number) {
+    const cfg = resolveConfig({});
+    const client = makeClient();
+    const out: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const r = await buildHookOutput({
+        harness: "claude-code",
+        prompt: `prompt ${i}`,
+        cfg,
+        client,
+        cacheFile,
+      });
+      out.push(r.context ?? "");
+    }
+    return out;
+  }
+
+  it("after a SessionStart preamble: nothing on turn 1, the short reminder after, the full guide every 10 turns", async () => {
+    mkdirSync(join(root, "cache"), { recursive: true });
+    writeFileSync(cacheFile, JSON.stringify({ guideAtTurn: 0 }));
+    const ctx = await turnsOf(11);
+    expect(ctx[0]).not.toContain("<hindsight_knowledge_refresh>"); // the preamble just carried it
+    expect(ctx[1]).toContain(REMINDER);
+    expect(ctx[1]).not.toContain(FULL);
+    expect(ctx[8]).toContain(REMINDER); // turn 9
+    expect(ctx[9]).toContain(FULL); // turn 10: 10 turns since the preamble
+    expect(ctx[10]).toContain(REMINDER);
+  });
+
+  it("without a preamble (a host whose SessionStart carries no context): the full guide on turn 1", async () => {
+    const ctx = await turnsOf(2);
+    expect(ctx[0]).toContain(FULL);
+    expect(ctx[1]).toContain(REMINDER);
+  });
+
+  it("the reminder keeps the crediting rule and costs a fraction of the full guide", async () => {
+    mkdirSync(join(root, "cache"), { recursive: true });
+    writeFileSync(cacheFile, JSON.stringify({ guideAtTurn: 0 }));
+    const ctx = await turnsOf(2);
+    const full = buildRosterRefresh([{ id: "p1", title: "Uploader guide" }]);
+    expect(ctx[1]).toContain(CREDIT);
+    expect(ctx[1].length).toBeLessThan(full.length / 3);
   });
 });

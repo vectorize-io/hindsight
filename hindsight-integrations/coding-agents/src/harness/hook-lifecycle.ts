@@ -254,7 +254,15 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
         sessionId: ev.session_id as string | undefined,
         transcriptPath: ev.transcript_path as string | undefined,
         cwd: ev.cwd as string | undefined,
+        // Claude Code sends the finished reply with Stop, before it is flushed to the transcript.
+        // Without it a headless session (`claude -p`, one prompt, no later Stop to revise from)
+        // lost its final reply: the write-back missed it and usage recorded every credited
+        // answer as `credited: false` — 2 of 60 sde-bench tasks where the replies showed 20.
+        lastAssistantMessage: ev.last_assistant_message as string | undefined,
       }),
+      // Prose passes through untouched; a serialized block list (the shape Dcode sends) is reduced
+      // to its text — the family guard in hook-lifecycle.test.ts requires a decoder either way.
+      readLastMessage: dcodeAssistantText,
     },
   },
   codex: {

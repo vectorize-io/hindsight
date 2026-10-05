@@ -19,6 +19,9 @@ export interface SessionCache {
   /** SessionStart saw a new/empty bank; consume this on prompt one, then allow reflect. */
   deferInitialReflect?: boolean;
   pages?: { atTurn: number; list: PageRef[] };
+  /** Turn the FULL tool guide last reached the agent: 0 = the SessionStart preamble (or a persistent
+   *  plugin's turn-one preamble) delivered it before the first prompt. Unset = never this session. */
+  guideAtTurn?: number;
 }
 
 export function sessionCacheFile(harness: string, sessionId: string): string {

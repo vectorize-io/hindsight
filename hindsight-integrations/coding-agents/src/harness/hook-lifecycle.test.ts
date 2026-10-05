@@ -71,6 +71,18 @@ describe("HOOK_HARNESSES lifecycle contract", () => {
     }
   });
 
+  it("claude-code reads the Stop event's reply — a headless session's final answer is not in the transcript yet", () => {
+    const spec = HOOK_HARNESSES["claude-code"].retain;
+    const reply = "> 🧠 **From Hindsight memory** — $ maps to usd";
+    const parsed = spec.parse({
+      session_id: "s",
+      transcript_path: "/t",
+      cwd: "/c",
+      last_assistant_message: reply,
+    });
+    expect(spec.readLastMessage!(parsed.lastAssistantMessage!)).toBe(reply);
+  });
+
   it("keeps the runtime schema and installed event names in the same host declaration", () => {
     const cursor = HOOK_HARNESSES["cursor-cli"];
     expect(cursor.install).toMatchObject({

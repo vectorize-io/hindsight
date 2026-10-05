@@ -93,6 +93,63 @@ interface RetainClient {
 }
 
 /**
+ * Read the finished transcript and record this session's Hindsight tool usage and credits
+ * (core/usage.ts). Shared by the write-back and by a session with write-back turned off: usage is
+ * a local report about the AGENT, not part of retaining, so `retainSessions: false` must not
+ * silence it — it used to, and `stats` then reported nothing for exactly the setups (benchmarks,
+ * opted-out repos) that most need to see whether the agent credits memory.
+ */
+export function recordTurnUsage(args: {
+  harness: string;
+  sessionId: string;
+  transcriptPath: string;
+  readTranscript?: TranscriptReader;
+  lastAssistantMessage?: string;
+  readLastMessage?: LastMessageReader;
+  bankId?: string;
+  usageCursors?: UsageCursorStore;
+}): TransportTurn[] {
+  const { harness, sessionId, transcriptPath } = args;
+  const readTranscript = args.readTranscript ?? readClaudeTranscript;
+
+  const turns = readTranscript(transcriptPath);
+  // Decode BEFORE stripping/trimming: the raw field can be a serialized content-block list rather
+  // than prose (see LastMessageReader), and the injected-memory tags live inside its text blocks.
+  const decoded = args.lastAssistantMessage
+    ? (args.readLastMessage ?? ((raw: string) => raw))(args.lastAssistantMessage)
+    : "";
+  const lastAssistantMessage = stripInjectedMemory(decoded).trim();
+  // Dcode materializes before Stop handlers run, so its final response can be absent from the
+  // file. Dedupe by adjacent content because the same response is present after a flush on some
+  // runs; this keeps repeated Stop delivery idempotent without dropping a legitimate later reply.
+  // The decode above is what makes that compare meaningful — both sides now join text blocks the
+  // same way, so an already-flushed reply matches instead of being appended twice.
+  if (lastAssistantMessage && turns.at(-1)?.content !== lastAssistantMessage) {
+    turns.push({
+      role: "assistant",
+      content: lastAssistantMessage,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  if (turns.length === 0) return turns;
+  // Stop fires once the reply is finished, so every turn in the transcript is complete.
+  recordUsage({
+    harness,
+    sessionId,
+    bankId: args.bankId ?? "",
+    turns,
+    cursors: args.usageCursors ?? fileUsageCursorStore(harness),
+    lastTurnComplete: true,
+    // The host has usually not flushed this turn's final reply yet — and that is
+    // the message carrying the credit line. Re-emit the previous turn so the next
+    // Stop, reading a complete transcript, corrects it. See recordUsage.
+    reviseLastTurn: true,
+  });
+
+  return turns;
+}
+
+/**
  * Pure retain logic: read the transcript, and if it has any usable turns, upsert the full
  * conversation under `conversation:<sessionId>`. A transcript with no usable turns (e.g. only
  * tool calls / meta lines) is a no-op — nothing worth remembering. Fail-open: never throws.
@@ -117,42 +174,8 @@ export async function buildRetain(args: {
   usageCursors?: UsageCursorStore;
 }): Promise<void> {
   const { harness, sessionId, transcriptPath, client } = args;
-  const readTranscript = args.readTranscript ?? readClaudeTranscript;
-
-  const turns = readTranscript(transcriptPath);
-  // Decode BEFORE stripping/trimming: the raw field can be a serialized content-block list rather
-  // than prose (see LastMessageReader), and the injected-memory tags live inside its text blocks.
-  const decoded = args.lastAssistantMessage
-    ? (args.readLastMessage ?? ((raw: string) => raw))(args.lastAssistantMessage)
-    : "";
-  const lastAssistantMessage = stripInjectedMemory(decoded).trim();
-  // Dcode materializes before Stop handlers run, so its final response can be absent from the
-  // file. Dedupe by adjacent content because the same response is present after a flush on some
-  // runs; this keeps repeated Stop delivery idempotent without dropping a legitimate later reply.
-  // The decode above is what makes that compare meaningful — both sides now join text blocks the
-  // same way, so an already-flushed reply matches instead of being appended twice.
-  if (lastAssistantMessage && turns.at(-1)?.content !== lastAssistantMessage) {
-    turns.push({
-      role: "assistant",
-      content: lastAssistantMessage,
-      timestamp: new Date().toISOString(),
-    });
-  }
+  const turns = recordTurnUsage(args);
   if (turns.length === 0) return;
-  // Stop fires once the reply is finished, so every turn in the transcript is complete.
-  recordUsage({
-    harness,
-    sessionId,
-    bankId: args.bankId ?? "",
-    turns,
-    cursors: args.usageCursors ?? fileUsageCursorStore(harness),
-    lastTurnComplete: true,
-    // The host has usually not flushed this turn's final reply yet — and that is
-    // the message carrying the credit line. Re-emit the previous turn so the next
-    // Stop, reading a complete transcript, corrects it. See recordUsage.
-    reviseLastTurn: true,
-  });
-
   const startTs = turns[0]?.timestamp ?? new Date().toISOString();
   const t0 = Date.now();
   try {
@@ -234,6 +257,15 @@ export async function runRetainHook(
   // daemon start below: a session that writes nothing has no reason to bring a server up.
   if (!cfg.retainSessions) {
     diag(spec.harness, "retain_disabled", { bank: bankId, session: sessionId });
+    recordTurnUsage({
+      harness: spec.harness,
+      sessionId: sessionId || "no-session",
+      transcriptPath,
+      readTranscript,
+      lastAssistantMessage,
+      readLastMessage: spec.readLastMessage,
+      bankId,
+    });
     return;
   }
   // Last chance to get the daemon up: this is the write path, and a session whose daemon never

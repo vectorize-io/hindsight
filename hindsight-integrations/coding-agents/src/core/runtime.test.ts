@@ -130,6 +130,35 @@ describe("RuntimeCore session-idle write-back", () => {
     expect(retained).toHaveLength(1);
   });
 
+  it("records usage with retainSessions: false — and still retains nothing", async () => {
+    const usageFile = join(mkdtempSync(join(tmpdir(), "hs-rt-usage-")), "usage.jsonl");
+    vi.stubEnv("HINDSIGHT_USAGE_FILE", usageFile);
+    try {
+      const { client, retained } = makeClient();
+      const runtime = new RuntimeCore(
+        client,
+        "bank-1",
+        resolveConfig({ retainSessions: false }),
+        "pi"
+      );
+      // pi hands over the finished run (agent_end), reply included.
+      await runtime.onTranscript(
+        "s7",
+        [turn("user", "how do we round?"), turn("assistant", "🧠 From Hindsight memory — half up")],
+        true
+      );
+      await new Promise((r) => setTimeout(r, 0));
+      expect(retained).toHaveLength(0);
+      expect(JSON.parse(readFileSync(usageFile, "utf8").trim())).toMatchObject({
+        harness: "pi",
+        session: "s7",
+        credited: true,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("records Hindsight usage for a turn only once its reply is in", async () => {
     const usageFile = join(mkdtempSync(join(tmpdir(), "hs-rt-usage-")), "usage.jsonl");
     vi.stubEnv("HINDSIGHT_USAGE_FILE", usageFile);
