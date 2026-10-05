@@ -77,6 +77,9 @@ async function resolveApiKey(
   return resolved ?? undefined;
 }
 
+const DISABLED_FOR_AGENT =
+  "Hindsight memory is not enabled for this agent (see the plugin's enabledAgentIds setting).";
+
 function isAgentEnabled(config: PluginConfig, agentId: string | undefined | null): boolean {
   const allowlist = config.enabledAgentIds;
   if (!allowlist || allowlist.length === 0) return true;
@@ -294,6 +297,13 @@ const plugin = definePlugin({
         const { query } = params as { query: string };
         const config = await getConfig(ctx);
 
+        // The allowlist has to be enforced here too, not just in the event
+        // handlers: the tools are registered for every agent, so without this
+        // an agent left out of enabledAgentIds could still read its bank.
+        if (!isAgentEnabled(config, runCtx.agentId)) {
+          return { content: DISABLED_FOR_AGENT };
+        }
+
         // Read userId cached by agent.run.started for consistent bank derivation
         let userId: string | undefined;
         if (config.bankGranularity?.includes("user")) {
@@ -372,6 +382,12 @@ const plugin = definePlugin({
       async (params: unknown, runCtx: ToolRunContext) => {
         const { content } = params as { content: string };
         const config = await getConfig(ctx);
+
+        // Same gate as the recall tool: enabledAgentIds must hold on the tool
+        // path, otherwise an excluded agent could still write to its bank.
+        if (!isAgentEnabled(config, runCtx.agentId)) {
+          return { content: DISABLED_FOR_AGENT };
+        }
 
         // Read userId cached by agent.run.started for consistent bank derivation
         let userId: string | undefined;
