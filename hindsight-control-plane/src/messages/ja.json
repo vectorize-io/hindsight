@@ -616,6 +616,8 @@
     "recallGraphRetrievalDescription": "リコール時にエンティティとリンクの関係をたどります。無効にすると関係性による検索と引き換えに低レイテンシになります。",
     "recallRerankingLabel": "リランキング",
     "recallRerankingDescription": "統合された候補をクロスエンコーダで再ランク付けします。無効にするとRRFの順序をそのまま返します。高速ですが精度は下がります。",
+    "recallRerankerInstructionsLabel": "ランキングルール",
+    "recallRerankerInstructionsDescription": "決定モデル型リランカー（TypeSafe）向けの平易な言葉によるルール。新しさ・時期によるブーストの代わりに使われます。クロスエンコーダーでは無視されます。空欄の場合はサーバーの既定値を使います。",
     "extractionModeConcise": "簡潔",
     "extractionModeVerbose": "詳細",
     "extractionModeVerbatim": "逐語",

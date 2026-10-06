@@ -173,6 +173,7 @@ type RecallEdits = {
   enable_temporal_retrieval: boolean | null;
   enable_graph_retrieval: boolean | null;
   enable_reranking: boolean | null;
+  reranker_instructions: string | null;
 };
 
 // ─── Gemini safety settings catalogue ────────────────────────────────────────
@@ -432,6 +433,7 @@ function recallSlice(overrides: Record<string, any>): RecallEdits {
     enable_temporal_retrieval: overrides.enable_temporal_retrieval ?? null,
     enable_graph_retrieval: overrides.enable_graph_retrieval ?? null,
     enable_reranking: overrides.enable_reranking ?? null,
+    reranker_instructions: overrides.reranker_instructions ?? null,
   };
 }
 
@@ -741,6 +743,7 @@ export function BankConfigView() {
           "enable_temporal_retrieval",
           "enable_graph_retrieval",
           "enable_reranking",
+          "reranker_instructions",
         ] as const) {
           if (recallEdits[key] === null) delete next[key];
           else next[key] = recallEdits[key];
@@ -1388,6 +1391,14 @@ export function BankConfigView() {
               </Select>
             </FieldRow>
           ))}
+          <TextareaRow
+            label={t("recallRerankerInstructionsLabel")}
+            description={t("recallRerankerInstructionsDescription")}
+            value={recallEdits.reranker_instructions ?? ""}
+            onChange={(v) => setRecallEdits({ ...recallEdits, reranker_instructions: v || null })}
+            placeholder={t("recallServerDefault")}
+            rows={3}
+          />
         </ConfigSection>
 
         {/* Models Section */}

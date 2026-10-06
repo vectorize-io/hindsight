@@ -616,6 +616,8 @@
     "recallGraphRetrievalDescription": "Parcourir les relations d'entités et de liens lors du rappel. La désactivation échange la récupération relationnelle contre une latence réduite.",
     "recallRerankingLabel": "Reclassement",
     "recallRerankingDescription": "Reclasser les candidats fusionnés avec le cross-encoder. La désactivation renvoie directement l'ordre RRF : plus rapide, mais moins précis.",
+    "recallRerankerInstructionsLabel": "Règles de classement",
+    "recallRerankerInstructionsDescription": "Règles en langage simple pour les rerankers à modèle de décision (TypeSafe), qui remplacent les bonus de récence et de date. Ignorées par les cross-encoders. Vide utilise la valeur du serveur.",
     "extractionModeConcise": "Concis",
     "extractionModeVerbose": "Détaillé",
     "extractionModeVerbatim": "Verbatim",

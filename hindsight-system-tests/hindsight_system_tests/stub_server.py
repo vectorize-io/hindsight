@@ -137,7 +137,8 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
 
         Two question types reach it. A ``choice`` whose options are the candidates
         is the ranking: every option gets a probability, and they sum to 1, so the
-        stub scores each option's text lexically and normalises. A ``score`` is the
+        stub scores each option's text lexically, lifts the ones the bank's ranking
+        rules prefer (see ``RerankStub.decide``), and normalises. A ``score`` is the
         cut: its answer is a level, and the rulebook decides which one.
         """
         body = await request.json()
@@ -147,8 +148,11 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
         for question_id, question in body["questions"].items():
             if question["type"] == "choice":
                 criteria = question["criteria"]
+                stubs.rerank.rank_instructions.append(question["instructions"])
                 scores = {
-                    key: stubs.rerank.score(body["state"], text if isinstance(text, str) else str(text))
+                    key: stubs.rerank.decide(
+                        body["state"], question["instructions"], text if isinstance(text, str) else str(text)
+                    )
                     for key, text in criteria.items()
                 }
                 total = sum(scores.values()) or 1.0

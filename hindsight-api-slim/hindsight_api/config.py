@@ -622,6 +622,7 @@ ENV_RERANKER_LITELLM_TIMEOUT = "HINDSIGHT_API_RERANKER_LITELLM_TIMEOUT"
 ENV_RERANKER_LITELLM_SDK_TIMEOUT = "HINDSIGHT_API_RERANKER_LITELLM_SDK_TIMEOUT"
 ENV_RERANKER_GOOGLE_TIMEOUT = "HINDSIGHT_API_RERANKER_GOOGLE_TIMEOUT"
 ENV_RERANKER_MAX_CANDIDATES = "HINDSIGHT_API_RERANKER_MAX_CANDIDATES"
+ENV_RERANKER_INSTRUCTIONS = "HINDSIGHT_API_RERANKER_INSTRUCTIONS"
 # Per-budget override of the reranker candidate cap. 0 (default) = unset → fall back to
 # ENV_RERANKER_MAX_CANDIDATES, so the mapping is fully backwards-compatible until set.
 ENV_RERANKER_MAX_CANDIDATES_LOW = "HINDSIGHT_API_RERANKER_MAX_CANDIDATES_LOW"
@@ -1312,6 +1313,12 @@ DEFAULT_RERANKER_LITELLM_TIMEOUT = 60.0
 DEFAULT_RERANKER_LITELLM_SDK_TIMEOUT = 60.0
 DEFAULT_RERANKER_GOOGLE_TIMEOUT = 60.0
 DEFAULT_RERANKER_MAX_CANDIDATES = 300
+# Ranking rules for decision-model rerankers (typesafe), which skip the recency and
+# temporal boosts — so the default restates what those boosts did, in words.
+DEFAULT_RERANKER_INSTRUCTIONS = (
+    "- When candidates conflict, prefer the one with the more recent date.\n"
+    "- When the question is about a specific time, prefer candidates dated near that time."
+)
 # 0 = unset → the reranker cap falls back to DEFAULT_RERANKER_MAX_CANDIDATES for that budget level.
 DEFAULT_RERANKER_MAX_CANDIDATES_LOW = 0
 DEFAULT_RERANKER_MAX_CANDIDATES_MID = 0
@@ -3273,6 +3280,8 @@ class HindsightConfig:
     reranker_tei_max_concurrent: int
     reranker_tei_http_timeout: float
     reranker_max_candidates: int
+    # Natural-language ranking rules, followed only by decision-model rerankers.
+    reranker_instructions: str
     # Per-budget override of reranker_max_candidates (0 = fall back to reranker_max_candidates).
     reranker_max_candidates_low: int
     reranker_max_candidates_mid: int
@@ -3804,6 +3813,7 @@ class HindsightConfig:
         "enable_temporal_retrieval",
         "enable_graph_retrieval",
         "enable_reranking",
+        "reranker_instructions",
         # Consolidation settings
         "enable_observations",
         "enable_auto_consolidation",
@@ -4664,6 +4674,7 @@ class HindsightConfig:
                 os.getenv(ENV_RERANKER_TEI_HTTP_TIMEOUT, str(DEFAULT_RERANKER_TEI_HTTP_TIMEOUT))
             ),
             reranker_max_candidates=int(os.getenv(ENV_RERANKER_MAX_CANDIDATES, str(DEFAULT_RERANKER_MAX_CANDIDATES))),
+            reranker_instructions=os.getenv(ENV_RERANKER_INSTRUCTIONS) or DEFAULT_RERANKER_INSTRUCTIONS,
             reranker_max_candidates_low=int(
                 os.getenv(ENV_RERANKER_MAX_CANDIDATES_LOW, str(DEFAULT_RERANKER_MAX_CANDIDATES_LOW))
             ),

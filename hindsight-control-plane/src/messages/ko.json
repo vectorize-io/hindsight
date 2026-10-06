@@ -616,6 +616,8 @@
     "recallGraphRetrievalDescription": "리콜 중 엔티티와 링크 관계를 탐색합니다. 비활성화하면 관계 기반 검색 대신 지연 시간이 줄어듭니다.",
     "recallRerankingLabel": "재순위화",
     "recallRerankingDescription": "병합된 후보를 크로스 인코더로 재순위화합니다. 비활성화하면 RRF 순서를 그대로 반환하므로 더 빠르지만 정밀도는 낮습니다.",
+    "recallRerankerInstructionsLabel": "순위 규칙",
+    "recallRerankerInstructionsDescription": "결정 모델 리랭커(TypeSafe)를 위한 쉬운 말로 된 규칙으로, 최신성 및 시간 부스트를 대신합니다. 크로스 인코더는 무시합니다. 비워 두면 서버 기본값을 사용합니다.",
     "extractionModeConcise": "간결",
     "extractionModeVerbose": "상세",
     "extractionModeVerbatim": "원문 그대로",

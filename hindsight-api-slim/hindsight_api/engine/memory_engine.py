@@ -590,7 +590,7 @@ def validate_sql_schema(sql: str) -> None:
                         )
 
 
-from .cross_encoder import RANK_SCORE_PROVIDERS, CrossEncoderModel
+from .cross_encoder import DECISION_PROVIDERS, CrossEncoderModel
 from .embeddings import Embeddings, create_embeddings_from_env
 from .interface import BankConfigState, BankTemplateImportWrite, MemoryEngineInterface
 
@@ -8822,7 +8822,7 @@ class MemoryEngine(MemoryEngineInterface):
             min_scores is not None
             and min_scores.reranker is not None
             and reranking == "cross_encoder"
-            and self._cross_encoder_reranker.cross_encoder.primary_provider_name in RANK_SCORE_PROVIDERS
+            and self._cross_encoder_reranker.cross_encoder.primary_provider_name in DECISION_PROVIDERS
         ):
             from hindsight_api.extensions.operation_validator import OperationValidationError
 
@@ -8913,6 +8913,7 @@ class MemoryEngine(MemoryEngineInterface):
         enable_temporal_retrieval = bool(budget_config_dict.get("enable_temporal_retrieval", True))
         enable_graph_retrieval = bool(budget_config_dict.get("enable_graph_retrieval", True))
         reranking = _resolve_reranking(budget_config_dict, reranking)
+        reranker_instructions = budget_config_dict.get("reranker_instructions")
 
         # Log recall start with tags if present (skip if quiet mode for internal operations)
         if not _quiet:
@@ -8974,6 +8975,7 @@ class MemoryEngine(MemoryEngineInterface):
                             max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
                             reranking=reranking,
                             reranker_max_candidates=reranker_max_candidates,
+                            reranker_instructions=reranker_instructions,
                             enable_text_search=enable_text_search,
                             enable_temporal_retrieval=enable_temporal_retrieval,
                             enable_graph_retrieval=enable_graph_retrieval,
@@ -9149,6 +9151,7 @@ class MemoryEngine(MemoryEngineInterface):
         max_source_facts_tokens_per_observation: int = -1,
         reranking: RecallReranking = "cross_encoder",
         reranker_max_candidates: int | None = None,
+        reranker_instructions: str | None = None,
         enable_text_search: bool = True,
         enable_temporal_retrieval: bool = True,
         enable_graph_retrieval: bool = True,
@@ -9827,7 +9830,17 @@ class MemoryEngine(MemoryEngineInterface):
 
                     # Ensure reranker is initialized (for lazy initialization mode)
                     await reranker_instance.ensure_initialized()
-                    reranked = await reranker_instance.rerank(query, merged_candidates)
+                    # The bank's ranking rules, for a decision-model reranker. Today's date
+                    # lets it place relative times ("last month") the way the temporal boost did.
+                    rules = reranker_instructions or get_config().reranker_instructions
+                    today = _recall_scoring_now(question_date).date().isoformat()
+                    # Date first: the reranker caps how much of this it will carry, and a
+                    # verbose bank rulebook must not be what pushes the date out.
+                    reranked = await reranker_instance.rerank(
+                        query,
+                        merged_candidates,
+                        instructions=f"- Today's date is {today}.\n{rules}",
+                    )
                     scored_results = reranked.results
                     # Copied off the call that produced these scores. Do not read
                     # cross_encoder.provider_name here: on a failover chain that
@@ -9873,7 +9886,12 @@ class MemoryEngine(MemoryEngineInterface):
             # math, additive boosts and final sort would otherwise be invisible in
             # the phase metrics (issue #2361).
             scoring_start = time.time()
-            if scored_results and reranking == "interleave":
+            if scored_results and reranking == "cross_encoder" and served_provider in DECISION_PROVIDERS:
+                # A decision model ranked the whole pool against the bank's ranking rules;
+                # its order is final. The recency / temporal / strategy boosts would only
+                # second-guess it, so they are skipped — the rules are where preferences live.
+                log_buffer.append(f"  [4.6] Decision model '{served_provider}' order kept (combined scoring skipped)")
+            elif scored_results and reranking == "interleave":
                 # Interleave order is authoritative for dedup recall: do NOT re-sort by the
                 # recency/temporal boosts — that re-sort is precisely what buried the twin
                 # under RRF. Seed weight from the interleave-position rrf_score so the order
@@ -9923,7 +9941,7 @@ class MemoryEngine(MemoryEngineInterface):
             # (a clearly-relevant match can score ~0.001 while its *ranking* is right).
             min_reranker = min_scores.reranker if min_scores else None
             min_final = min_scores.final if min_scores else None
-            if min_reranker is not None and served_provider in RANK_SCORE_PROVIDERS:
+            if min_reranker is not None and served_provider in DECISION_PROVIDERS:
                 # Recall entry rejects this floor when the primary scores by rank; getting
                 # here means the chain failed over to such a member. Its scores are rank
                 # positions, so the floor would only keep a fixed share of the pool (#4901).
@@ -10390,11 +10408,11 @@ class MemoryEngine(MemoryEngineInterface):
             # Build per-result scores (final/reranker/semantic/text) keyed by id.
             # reranker is None when the configured reranker is a passthrough (rrf /
             # interleave modes, or the RRFPassthroughCrossEncoder) or scores by rank
-            # position (RANK_SCORE_PROVIDERS, #4901), since its
+            # position (DECISION_PROVIDERS, #4901), since its
             # cross_encoder_score_normalized is then a rank-derived placeholder, not a
             # true relevance score.
             reranker_passthrough = (
-                (reranking != "cross_encoder") or served_provider == "rrf" or served_provider in RANK_SCORE_PROVIDERS
+                (reranking != "cross_encoder") or served_provider == "rrf" or served_provider in DECISION_PROVIDERS
             )
             scores_by_id: dict[str, RecallScores] = {
                 sr.id: RecallScores(

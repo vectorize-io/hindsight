@@ -616,6 +616,8 @@
     "recallGraphRetrievalDescription": "Traverse entity and link relationships during recall. Disabling trades relational recall for lower latency.",
     "recallRerankingLabel": "Reranking",
     "recallRerankingDescription": "Rerank fused candidates with the cross-encoder. Disabling returns the RRF-fused order directly — faster, but less precise.",
+    "recallRerankerInstructionsLabel": "Ranking rules",
+    "recallRerankerInstructionsDescription": "Plain-words rules for decision-model rerankers (TypeSafe), which replace the recency and time boosts. Ignored by cross-encoders. Empty uses the server default.",
     "extractionModeConcise": "Concise",
     "extractionModeVerbose": "Verbose",
     "extractionModeVerbatim": "Verbatim",

@@ -616,6 +616,8 @@
     "recallGraphRetrievalDescription": "Recorrer relaciones de entidades y enlaces durante el recall. Desactivarlo cambia la recuperación relacional por menor latencia.",
     "recallRerankingLabel": "Reordenación",
     "recallRerankingDescription": "Reordenar los candidatos fusionados con el cross-encoder. Al desactivarlo se devuelve directamente el orden RRF: más rápido, pero menos preciso.",
+    "recallRerankerInstructionsLabel": "Reglas de ordenación",
+    "recallRerankerInstructionsDescription": "Reglas en lenguaje sencillo para rerankers de modelo de decisión (TypeSafe), que sustituyen los ajustes por recencia y tiempo. Los cross-encoders las ignoran. Vacío usa el valor del servidor.",
     "extractionModeConcise": "Conciso",
     "extractionModeVerbose": "Detallado",
     "extractionModeVerbatim": "Literal",

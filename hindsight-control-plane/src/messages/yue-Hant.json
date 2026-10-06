@@ -616,6 +616,8 @@
     "recallGraphRetrievalDescription": "召回時走訪實體同連結關係。停用即係用關聯檢索換低啲延遲。",
     "recallRerankingLabel": "重新排序",
     "recallRerankingDescription": "用交叉編碼器將融合後嘅候選重新排序。停用之後直接回傳 RRF 排序，快啲但準確度低啲。",
+    "recallRerankerInstructionsLabel": "排序規則",
+    "recallRerankerInstructionsDescription": "俾決策模型重排器（TypeSafe）用嘅白話規則，取代新近度同時間加權。Cross-encoder 會無視佢。留空就用伺服器預設。",
     "extractionModeConcise": "簡潔",
     "extractionModeVerbose": "詳盡",
     "extractionModeVerbatim": "逐字",

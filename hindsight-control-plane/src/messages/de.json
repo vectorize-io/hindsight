@@ -616,6 +616,8 @@
     "recallGraphRetrievalDescription": "Entitäts- und Verknüpfungsbeziehungen beim Recall durchlaufen. Deaktivieren tauscht relationalen Abruf gegen geringere Latenz.",
     "recallRerankingLabel": "Neubewertung",
     "recallRerankingDescription": "Zusammengeführte Kandidaten mit dem Cross-Encoder neu bewerten. Beim Deaktivieren wird direkt die RRF-Reihenfolge zurückgegeben – schneller, aber ungenauer.",
+    "recallRerankerInstructionsLabel": "Ranking-Regeln",
+    "recallRerankerInstructionsDescription": "Regeln in einfachen Worten für Decision-Model-Reranker (TypeSafe), die die Aktualitäts- und Zeit-Boosts ersetzen. Von Cross-Encodern ignoriert. Leer verwendet den Server-Standard.",
     "extractionModeConcise": "Kompakt",
     "extractionModeVerbose": "Ausführlich",
     "extractionModeVerbatim": "Wörtlich",

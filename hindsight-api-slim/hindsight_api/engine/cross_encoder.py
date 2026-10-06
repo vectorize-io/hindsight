@@ -13,6 +13,7 @@ import time
 import warnings
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
+from itertools import zip_longest
 from typing import Any, cast
 
 import aiohttp
@@ -68,12 +69,21 @@ _served_provider: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "hindsight_rerank_served_provider", default=None
 )
 
-# Providers whose score is a candidate's rank position within one pool, not a
-# relevance score for the pair: the top candidate is 1.0 on every recall however
-# weak it is, so a fixed floor just keeps a fixed share of the pool and the value
-# is not comparable between recalls (#4901). Recall rejects min_scores.reranker
-# for these and publishes no reranker score.
-RANK_SCORE_PROVIDERS = frozenset({"typesafe"})
+# Decision-model providers: they rank the whole pool in one judgement, guided by the
+# bank's natural-language ranking rules, so their order is final — recall skips the
+# recency / temporal / proof-count and strategy boosts that correct a cross-encoder.
+# Their score is a candidate's rank position within one pool, not a relevance score
+# for the pair: the top candidate is 1.0 on every recall however weak it is, so a
+# fixed floor just keeps a fixed share of the pool and the value is not comparable
+# between recalls (#4901). Recall rejects min_scores.reranker for these and
+# publishes no reranker score.
+DECISION_PROVIDERS = frozenset({"typesafe"})
+
+# The bank's ranking rules for the rerank running in this task, read by decision
+# providers. Set by CrossEncoderReranker.rerank(); cross-encoders ignore it.
+rerank_instructions: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "hindsight_rerank_instructions", default=None
+)
 
 
 class RerankTimeoutError(Exception):
@@ -981,6 +991,16 @@ _LISTING_ITEM_OVERHEAD = 10  # Formatting overhead per item in cut listing: "[1]
 _MAX_QUERY_TOKENS = 2_000  # Defensive ceiling on query tokens in reranker
 
 
+def _rank_instructions(query: str) -> str:
+    """The rank question's instructions: the question, then the bank's ranking rules."""
+    rules = rerank_instructions.get()
+    if rules and count_tokens(rules) > _MAX_QUERY_TOKENS:
+        # Bank-written text: bound it like the query so it cannot crowd out the candidates.
+        rules = truncate_to_tokens(rules, _MAX_QUERY_TOKENS).text
+    base = f"{_RANK_INSTRUCTIONS_PREFIX}{query}"
+    return f"{base}\n\nWhen ranking, follow these rules:\n{rules}" if rules else base
+
+
 class TypeSafeCrossEncoder(CrossEncoderModel):
     """
     TypeSafe reranker (https://typesafe.ai), Jev by default.
@@ -1010,6 +1030,14 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
     share of one pool, so 0.7 means "the best of these" and not "relevant", and two
     pools are not comparable. Candidates below the cut score exactly 0.0, which is
     how :attr:`prunes_candidates` tells the caller to leave them out.
+
+    The ``confidence`` both answers carry is deliberately ignored: at this question shape
+    it does not say how much to trust the answer. Over 40 recalls of 64-118 candidates it
+    ran 0.10-0.95 on the rank question and 0.00-0.99 on the cut, averaging about 0.5 on
+    both, while asking the identical cut three times returned the identical depth on 37
+    of the 40 — and two of the three that moved carried an above-average confidence. So a
+    gate on it would withhold pruning on about half of all recalls while telling us
+    nothing about which verdicts are wrong.
     """
 
     SYSTEMONE_PATH = "/v1/systemone"
@@ -1102,7 +1130,7 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
             "questions": {
                 "rank": {
                     "type": "choice",
-                    "instructions": f"{_RANK_INSTRUCTIONS_PREFIX}{query}",
+                    "instructions": _rank_instructions(query),
                     "criteria": {f"c{position}": docs[index] for position, index in enumerate(indices)},
                 }
             },
@@ -1129,7 +1157,7 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         # Available token budget for candidate options in one choice question.
         state_tokens = count_tokens(f"Question: {query}")
         # +30: cushion for the question's JSON framing (type, keys) around the instructions.
-        instr_tokens = count_tokens(f"{_RANK_INSTRUCTIONS_PREFIX}{query}") + 30
+        instr_tokens = count_tokens(_rank_instructions(query)) + 30
         net_budget = max(50, self.MAX_QUESTION_TOKENS - state_tokens - instr_tokens)
 
         # Pre-truncate outlier documents that individually exceed the question budget,
@@ -1176,15 +1204,30 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
             for i, r in zip(multi_indices, ranked_multi):
                 ranked_groups[i] = r
 
-        # Advance the top of each group to the finals; the rest fall back to RRF order (#4599).
-        # The finals is one Choice, so the finalists must fit MAX_OPTIONS too: long documents
-        # can split a pool into more than MAX_OPTIONS // SHORTLIST groups, so the per-group
-        # quota shrinks, and past MAX_OPTIONS groups the lowest-input-ranked winners overflow
-        # into the rest.
-        quota = max(1, min(self.SHORTLIST, self.MAX_OPTIONS // len(ranked_groups)))
-        finalists = [index for group in ranked_groups for index in group[:quota]]
-        rest = [index for group in ranked_groups for index in group[quota:]] + finalists[self.MAX_OPTIONS :]
-        finalists = finalists[: self.MAX_OPTIONS]
+        # Advance candidates to the finals round robin by their rank within each group —
+        # every group's best, then every group's second — taking as many as one Choice can
+        # hold. Whatever does not make the finals falls back to caller input order (RRF)
+        # with no model rank at all (#4599), and recall drops the recency and temporal
+        # boosts for a decision provider, so RRF is then the *only* thing ordering that
+        # tail. The finals are therefore made as wide as the option cap and the token
+        # budget allow rather than a few per group: it is the same single call either way,
+        # and a candidate judged in the finals is on the one scale that is comparable
+        # across the whole pool.
+        by_rank = [index for row in zip_longest(*ranked_groups) for index in row if index is not None]
+        finalists: list[int] = []
+        finals_tokens = 0
+        for index in by_rank:
+            item_tokens = doc_tokens[index] + _OPTION_KEY_OVERHEAD
+            if len(finalists) >= self.MAX_OPTIONS or (finalists and finals_tokens + item_tokens > net_budget):
+                break
+            finalists.append(index)
+            finals_tokens += item_tokens
+        # A Choice needs two options, so when the budget admits only one the second comes
+        # in anyway and the even cap below truncates both to fit.
+        if len(finalists) < 2:
+            finalists = by_rank[:2]
+        in_finals = set(finalists)
+        rest = [index for index in by_rank if index not in in_finals]
         index_pos = {idx: pos for pos, idx in enumerate(indices)}
         rest.sort(key=lambda idx: index_pos[idx])
 
@@ -1222,6 +1265,11 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
             ]
 
         listing = "\n\n".join(f"[{position + 1}] {shortlist_docs[position]}" for position in range(len(shortlist)))
+        # The bank's ranking rules are deliberately not added here. They belong to the rank
+        # question, which is comparative — "which of these beats which" — and a preference
+        # between candidates cannot change how many of them are relevant. A Score, by
+        # contrast, is read against a fixed set of levels, so extra wording moves the level
+        # the model lands on and would make the cut depth drift with whatever a bank wrote.
         body = {
             "state": f"{prefix}{listing}",
             "model": self.model,

@@ -18,7 +18,7 @@ import pytest
 import pytest_asyncio
 
 from hindsight_api import MemoryEngine, RequestContext
-from hindsight_api.engine.cross_encoder import CrossEncoderModel, MultiCrossEncoder
+from hindsight_api.engine.cross_encoder import CrossEncoderModel, MultiCrossEncoder, rerank_instructions
 from hindsight_api.engine.response_models import MinScores
 from hindsight_api.engine.retain import embedding_utils
 from hindsight_api.extensions.operation_validator import OperationValidationError
@@ -177,6 +177,7 @@ class _StubReranker(CrossEncoderModel):
     async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         if self._fail:
             raise RuntimeError("down")
+        self.seen_instructions = rerank_instructions.get()
         n = len(pairs)
         return [(n - i) / n for i in range(n)]
 
@@ -209,6 +210,44 @@ class TestRankScoreReranker:
         assert len(baseline.results) >= 2
         assert _ids(floored) == _ids(baseline)
         assert all(r.scores.reranker is None for r in floored.results)
+
+
+class TestDecisionReranker:
+    """A decision model's order is final: recall skips the boosts and hands it the rules."""
+
+    @staticmethod
+    async def _date_facts_today(engine) -> None:
+        # A fresh date makes the recency boost non-neutral, so skipping it is observable.
+        pool = await engine._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("UPDATE memory_units SET occurred_start = now() WHERE id = ANY($1::uuid[])", ALL_IDS)
+
+    async def test_boosts_apply_to_a_cross_encoder_but_not_a_decision_model(self, seeded_memory, monkeypatch):
+        engine, bank_id = seeded_memory
+        await self._date_facts_today(engine)
+
+        monkeypatch.setattr(engine._cross_encoder_reranker, "cross_encoder", _StubReranker("cohere"))
+        boosted = await _recall(engine, bank_id)
+        monkeypatch.setattr(engine._cross_encoder_reranker, "cross_encoder", _StubReranker("typesafe"))
+        decided = await _recall(engine, bank_id)
+
+        n = len(decided.results)
+        assert n >= 2
+        assert [r.scores.final for r in decided.results] == pytest.approx([(n - i) / n for i in range(n)])
+        assert boosted.results[0].scores.final > 1.0, "the recency boost lifts a fresh fact above its rerank score"
+
+    async def test_the_decision_model_receives_the_banks_rules(self, seeded_memory, monkeypatch):
+        engine, bank_id = seeded_memory
+        stub = _StubReranker("typesafe")
+        monkeypatch.setattr(engine._cross_encoder_reranker, "cross_encoder", stub)
+        await engine.update_bank_config(
+            bank_id, {"reranker_instructions": "- prefer facts about dogs"}, request_context=RC
+        )
+
+        await _recall(engine, bank_id)
+
+        assert "- prefer facts about dogs" in stub.seen_instructions
+        assert "Today's date is" in stub.seen_instructions
 
 
 class TestRetrievalLevelFilters:

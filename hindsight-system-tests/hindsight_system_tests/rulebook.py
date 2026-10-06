@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -445,10 +446,29 @@ class RerankStub:
     #: keep more. Ignored by the Cohere-shaped /rerank endpoint, which has no cut.
     cut_level: int = 0
 
+    #: The rank question's instructions, one per TypeSafe ranking call, so a story
+    #: can see which ranking rules reached the decision model.
+    rank_instructions: list[str]
+
+    def __init__(self) -> None:
+        self.rank_instructions = []
+
     def score(self, query: str, document: str) -> float:
         from .lexical import lexical_relevance
 
         return lexical_relevance(query, document)
+
+    def decide(self, state: str, instructions: str, option: str) -> float:
+        """A TypeSafe option's weight: lexical relevance, plus the rules it follows.
+
+        A real decision model reads its rules as prose. The stub understands one
+        shape — "prefer memories mentioning <word>" — and lifts every option that
+        mentions the word above any that does not, which is enough for a story to
+        tell a rule that was followed from one that never arrived.
+        """
+        preferred = re.findall(r"prefer memories mentioning (\w+)", instructions)
+        followed = any(word.lower() in option.lower() for word in preferred)
+        return self.score(state, option) + (1.0 if followed else 0.0)
 
 
 @dataclass(frozen=True)
@@ -480,10 +500,12 @@ class Stubs:
 
     def reset(self) -> None:
         """Between tests. The embedding stub is pure; the rerank stub is pure apart
-        from the cut level a story may have raised, which has to go back to its
-        default or it leaks into whatever runs next."""
+        from the cut level a story may have raised and the rank instructions it
+        recorded, which have to go back to their defaults or they leak into
+        whatever runs next."""
         self.llm.reset()
         self.rerank.cut_level = RerankStub.cut_level
+        self.rerank.rank_instructions.clear()
         self.rejected_requests.clear()
         self.webhooks.clear()
 

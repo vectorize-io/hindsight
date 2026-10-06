@@ -8,7 +8,7 @@ import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from ..cross_encoder import RerankTimeoutError, _served_provider
+from ..cross_encoder import RerankTimeoutError, _served_provider, rerank_instructions
 from .types import MergedCandidate, ScoredResult
 
 logger = logging.getLogger(__name__)
@@ -361,13 +361,17 @@ class CrossEncoderReranker:
             ) from e
         self._initialized = True
 
-    async def rerank(self, query: str, candidates: list[MergedCandidate]) -> RerankResult:
+    async def rerank(
+        self, query: str, candidates: list[MergedCandidate], instructions: str | None = None
+    ) -> RerankResult:
         """
         Rerank candidates using cross-encoder scores.
 
         Args:
             query: Search query
             candidates: Merged candidates from RRF
+            instructions: The bank's ranking rules, followed by decision-model
+                providers and ignored by cross-encoders.
 
         Returns:
             Scored results sorted by cross-encoder score, and the provider that
@@ -412,6 +416,7 @@ class CrossEncoderReranker:
         # scored ones rather than the recall never returning.
         unscored: set[int] = set()
         token = _served_provider.set(None)
+        instructions_token = rerank_instructions.set(instructions)
         try:
             try:
                 # The model takes 2-tuples; `pairs` is built as two-element lists.
@@ -422,6 +427,7 @@ class CrossEncoderReranker:
                 scores = [0.0 if score is None else score for score in exc.scores]
             served_provider = _served_provider.get()
         finally:
+            rerank_instructions.reset(instructions_token)
             _served_provider.reset(token)
         if served_provider is None:
             # Single-member encoders do not record one. Their provider_name is

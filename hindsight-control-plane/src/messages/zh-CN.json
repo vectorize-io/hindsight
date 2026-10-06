@@ -616,6 +616,8 @@
     "recallGraphRetrievalDescription": "在召回时遍历实体与链接关系。禁用可用关系检索换取更低的延迟。",
     "recallRerankingLabel": "重排序",
     "recallRerankingDescription": "使用交叉编码器对融合后的候选重新排序。禁用后直接返回 RRF 排序，更快但精度较低。",
+    "recallRerankerInstructionsLabel": "排序规则",
+    "recallRerankerInstructionsDescription": "供决策模型重排器（TypeSafe）使用的白话规则，取代新近度和时间加权。交叉编码器会忽略。留空则使用服务器默认值。",
     "extractionModeConcise": "简洁",
     "extractionModeVerbose": "详尽",
     "extractionModeVerbatim": "逐字",

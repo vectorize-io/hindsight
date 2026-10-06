@@ -6,12 +6,14 @@ pool by making the candidates the options of a single question, and — with
 `prune_candidates` on — asks a second question for where relevance ends, so recall
 returns the relevant memories and nothing else.
 
-That makes two things worth a story rather than a unit test. The ordering has to
+That makes three things worth a story rather than a unit test. The ordering has to
 survive the trip from a Choice's probability distribution, through the provider's
-rank positions, through the recency and proof-count boosts the pipeline applies
-on top, to the results a client sees. And the cut has to actually shrink what
-recall returns — a pruning reranker whose verdict the pipeline ignored would look
-identical in every unit test of the provider itself.
+rank positions, to the results a client sees — as a decision model its order is
+final, so the recency and proof-count boosts a cross-encoder gets are not applied.
+The cut has to actually shrink what recall returns — a pruning reranker whose
+verdict the pipeline ignored would look identical in every unit test of the
+provider itself. And a bank's ranking rules, written in plain words in its config,
+have to reach the model and change what the client sees.
 
 The server under test is `typesafe_server`, a second process configured for the
 provider: the reranker is server-level, so no bank can opt into it.
@@ -130,3 +132,28 @@ async def test_a_rank_position_is_not_published_or_floored(typesafe_client, type
         await typesafe_client.arecall(bank_id=typesafe_bank, query=QUERY, min_scores={"reranker": 0.5})
     assert exc.value.status == 400
     assert "min_scores.reranker" in str(exc.value.body)
+
+
+async def test_a_banks_ranking_rule_changes_the_order(typesafe_client, typesafe_bank, stubs):
+    """A rule in the bank's config reaches the model and reorders recall.
+
+    Lexically Berlin answers the question best. The bank then says to prefer
+    memories about the cello, and the stub model follows rules of that shape, so
+    the cello memory must come first — on the order alone, with no boost moving
+    anything back. Without the rule the same recall leads with Berlin, so the
+    reorder is the rule's doing.
+    """
+    stubs.rerank.cut_level = WIDEST_CUT
+    before = await typesafe_client.arecall(bank_id=typesafe_bank, query=QUERY)
+    assert before.results[0].text == BERLIN
+    assert "Today's date is" in stubs.rerank.rank_instructions[-1]
+
+    await typesafe_client.banks.update_bank_config(
+        typesafe_bank, {"updates": {"reranker_instructions": "- prefer memories mentioning cello"}}
+    )
+    after = await typesafe_client.arecall(bank_id=typesafe_bank, query=QUERY)
+
+    # The rule lifts the cello memory over everything; the rest keep their order.
+    before_order = [result.text for result in before.results]
+    assert [result.text for result in after.results] == [CELLO] + [text for text in before_order if text != CELLO]
+    assert "- prefer memories mentioning cello" in stubs.rerank.rank_instructions[-1]

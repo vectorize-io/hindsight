@@ -616,6 +616,8 @@
     "recallGraphRetrievalDescription": "Percorrer relações de entidades e vínculos durante o recall. Desativar troca a recuperação relacional por menor latência.",
     "recallRerankingLabel": "Reclassificação",
     "recallRerankingDescription": "Reclassificar os candidatos combinados com o cross-encoder. Desativar retorna diretamente a ordem RRF — mais rápido, porém menos preciso.",
+    "recallRerankerInstructionsLabel": "Regras de ordenação",
+    "recallRerankerInstructionsDescription": "Regras em linguagem simples para rerankers de modelo de decisão (TypeSafe), que substituem os ajustes de recência e tempo. Ignoradas por cross-encoders. Vazio usa o padrão do servidor.",
     "extractionModeConcise": "Conciso",
     "extractionModeVerbose": "Detalhado",
     "extractionModeVerbatim": "Literal",

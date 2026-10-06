@@ -17,6 +17,7 @@ from hindsight_api.engine.cross_encoder import (
     _OPTION_KEY_OVERHEAD,
     TypeSafeCrossEncoder,
     create_cross_encoder_from_env,
+    rerank_instructions,
 )
 from hindsight_api.engine.token_encoding import count_tokens
 
@@ -171,6 +172,42 @@ class TestRanking:
         assert session.posted == []
 
 
+class TestRankingRules:
+    @pytest.mark.asyncio
+    async def test_the_banks_rules_join_the_rank_question(self):
+        encoder, session = _encoder({"c0": 0.6, "c1": 0.4})
+        token = rerank_instructions.set("- prefer what the user said")
+        try:
+            await encoder._predict([("who paid?", "a"), ("who paid?", "b")])
+        finally:
+            rerank_instructions.reset(token)
+
+        instructions = session.rank_requests[0]["questions"]["rank"]["instructions"]
+        assert "who paid?" in instructions
+        assert "- prefer what the user said" in instructions
+
+    @pytest.mark.asyncio
+    async def test_no_rules_leaves_the_plain_question(self):
+        encoder, session = _encoder({"c0": 0.6, "c1": 0.4})
+        await encoder._predict([("who paid?", "a"), ("who paid?", "b")])
+
+        assert session.rank_requests[0]["questions"]["rank"]["instructions"] == (
+            "Which candidate answers the question: who paid?"
+        )
+
+    @pytest.mark.asyncio
+    async def test_oversized_rules_are_capped(self):
+        encoder, session = _encoder({"c0": 0.6, "c1": 0.4})
+        token = rerank_instructions.set("prefer newer facts. " * 5000)
+        try:
+            await encoder._predict([("q", "a"), ("q", "b")])
+        finally:
+            rerank_instructions.reset(token)
+
+        instructions = session.rank_requests[0]["questions"]["rank"]["instructions"]
+        assert count_tokens(instructions) < 2_100
+
+
 class TestChunking:
     @pytest.mark.asyncio
     async def test_a_pool_over_the_option_cap_is_ranked_in_rounds(self):
@@ -298,13 +335,11 @@ class TestTokenBudgetingAndOrder:
         """Issue #4599: non-finalists preserve caller input order (RRF), discarding intra-group model ranks.
 
         The mock model assigns higher probabilities to later option positions, inverting the
-        candidate ranking within each group relative to input RRF order.
-        Group 0 finalists (top 12) are 249..238; non-finalists are 0..237.
-        Group 1 finalists (top 12) are 269..258; non-finalists are 250..257.
-        Under the old chunk-based concatenation, non-finalists within each group kept their
-        intra-group model ranking, producing [237..0, 257..250] where candidate 237 outranked candidate 0.
-        Under the new code, non-finalists fall back to initial RRF order (0 < 1 < ...), discarding
-        uncalibrated intra-group probabilities.
+        candidate ranking within each group relative to input RRF order. The finals take as
+        much as one Choice holds, so candidates 20..269 compete there and 0..19 miss out.
+        Under the old chunk-based concatenation, non-finalists kept their intra-group model
+        ranking, so candidate 19 outranked candidate 0; they fall back to input order instead,
+        because a probability from a round that is not the finals is not on a shared scale.
         """
         size = TypeSafeCrossEncoder.MAX_OPTIONS + 20  # 270 candidates
         # Intra-group model preference is opposite to initial RRF order
@@ -312,9 +347,27 @@ class TestTokenBudgetingAndOrder:
         pairs = [("q", f"candidate_{i}") for i in range(size)]
         scores = await encoder._predict(pairs)
 
-        all_non_finalists = list(range(0, 238)) + list(range(250, 258))
+        all_non_finalists = list(range(0, 20))
         for a, b in zip(all_non_finalists[:-1], all_non_finalists[1:]):
             assert scores[a] > scores[b], f"Expected score[{a}] > score[{b}] by initial RRF order"
+
+    @pytest.mark.asyncio
+    async def test_the_finals_are_as_wide_as_one_call_allows(self):
+        """A partitioned pool sends as much as fits to the finals, not a few per round.
+
+        A candidate that misses the finals carries no model rank at all, and recall drops
+        the recency and temporal boosts for this provider, so input order is then the only
+        thing ordering it. One ranked 51st in its round still has to meet the other round's
+        candidates, and it costs no extra call to let it.
+        """
+        size = TypeSafeCrossEncoder.MAX_OPTIONS + 20  # two rounds: 250, then 20
+        # Each round is ranked in its own input order, so candidate_50 is its round's 51st.
+        encoder, session = _encoder({f"c{i}": 1.0 / (i + 1) for i in range(size)})
+        await encoder._predict([("q", f"candidate_{i}") for i in range(size)])
+
+        finals = list(session.rank_requests[-1]["questions"]["rank"]["criteria"].values())
+        assert len(finals) == TypeSafeCrossEncoder.MAX_OPTIONS
+        assert "candidate_50" in finals
 
     @pytest.mark.asyncio
     async def test_candidate_packing_by_tokens_partitions_long_docs_into_multiple_groups(self):
