@@ -116,29 +116,10 @@ BOOST_LEVELS: dict[str, BoostWeights] = {
 }
 
 # Arms whose stage-2 bump does NOT decay with the candidate's rank in the arm.
-#
-# The decay exists for ``graph`` (#4008): a flat ``+0.5`` at ``graph:high``
-# reordered nearly the whole result set (recall@20 0.907 -> 0.637), and a graph
-# hit's rank is a real strength signal, so decaying by it is right.
-#
-# The temporal arm is different. Its entry points are memories with a date, or a
-# date range, touching the query's date window, picked by similarity and spread
-# across it (``recall.py``). They are ranked by ``temporal_score`` (ordered that
-# way since #4494): the distance of the memory's date from the middle of the
-# window. Every entry point satisfies the date constraint, so that rank says
-# nothing about relevance. Decaying by it (#4653) gave nearly the whole bump to
-# the few memories nearest the window midpoint instead of the ones the
-# cross-encoder found relevant: dated-query recall@10 with ``temporal:medium``
-# fell from 0.807 (0.10.0) to 0.501 (0.10.2, which also has #4494).
-#
-# The arm also holds neighbours reached over temporal and causal links, and
-# those are not limited to the window. They sit in the same list, scored
-# ``max(own date proximity, a score propagated from the linking memory)``, so
-# they can rank above or below an entry point (a causal link can even push one
-# past 1.0). They now get the full bump too. Before #4653 the bump was flat for
-# every arm, neighbours included, so this is the behaviour #4939 measured as
-# good for stage 2 (the 0.807 build also predates #4494, so it says nothing
-# about which candidates survive stage 1).
+# The decay is right for ``graph`` (#4008), where rank tracks relevance. The
+# temporal arm is ranked by date proximity to the query window (#4494), not
+# relevance, so decaying by it handed the bump to the memories nearest the
+# window midpoint instead of the ones the cross-encoder ranked best (#4939).
 _FLAT_STAGE2_STRATEGIES = frozenset({"temporal"})
 
 
