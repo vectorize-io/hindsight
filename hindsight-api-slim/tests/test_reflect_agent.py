@@ -1990,6 +1990,52 @@ class TestContextOverflowBehavior:
         assert scopes[-1] == "final"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("max_iterations", [3, 10], ids=["recall-on-last-turn", "turns-to-spare"])
+    async def test_big_observations_do_not_skip_forced_recall(self, mock_llm, mock_functions, max_iterations):
+        """#4563: observations alone fill the budget before the forced recall turn.
+        The agent blanks the earlier result so recall still runs, then answers from
+        the full evidence -- both the observations and the recalled facts -- whether
+        the loop ends on its iteration limit or stops early."""
+        observations = [{"id": f"obs-{i}", "text": f"Observation {i}: " + "O" * 200} for i in range(20)]
+        functions = {
+            **mock_functions,
+            "search_observations_fn": AsyncMock(return_value={"observations": observations}),
+            "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "Newest correction"}]}),
+        }
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="1", name="search_observations", arguments={"query": "q"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="2", name="recall", arguments={"query": "q"})],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="What do you know?",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            include_observations=True,
+            max_iterations=max_iterations,
+            # ~3.5k tokens with the observations, ~2.1k once they are blanked.
+            max_context_tokens=2800,
+            **functions,
+        )
+
+        assert result.text == "Synthesized answer from gathered evidence."
+        functions["recall_fn"].assert_awaited_once()
+        assert mock_llm.call_with_tools.call_count == 2
+        recall_turn = mock_llm.call_with_tools.call_args_list[1].kwargs
+        assert recall_turn["tool_choice"].selected_function_name == "recall"
+        assert "Observation 0" not in str(recall_turn["messages"])
+        synthesis_prompts = str(mock_llm.call.call_args_list)
+        assert "Observation 0" in synthesis_prompts
+        assert "Newest correction" in synthesis_prompts
+
+    @pytest.mark.asyncio
     async def test_context_overflow_error_skips_retry(self, mock_llm, mock_functions_with_large_output):
         """A context_length_exceeded error from the LLM should NOT be retried —
         it should immediately fall back to final synthesis."""

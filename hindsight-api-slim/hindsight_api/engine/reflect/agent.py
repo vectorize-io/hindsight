@@ -148,6 +148,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS = 10
+_COMPACTED_TOOL_RESULT = "[Earlier tool result omitted to fit the context budget; it is kept for the final answer.]"
 
 #: How many times a ``done`` document whose shape the schema refuses is fed back
 #: for the model to re-emit before the run fails. One retry is what moved the
@@ -1046,7 +1047,9 @@ async def _run_reflect_agent_inner(
         if len(chunks) <= 1:
             prompt = build_final_prompt(
                 query,
-                context_history,
+                # The splitter's one chunk, not the raw history: it token-cuts an
+                # indivisible over-budget result that build_final_prompt would drop.
+                chunks[0] if chunks else context_history,
                 bank_profile,
                 context,
                 max_context_tokens=max_context_tokens,
@@ -1163,6 +1166,10 @@ async def _run_reflect_agent_inner(
     # shape, but a model that cannot will otherwise re-spend the whole iteration
     # budget on the same malformed payload.
     document_rejections = 0
+    # Set once earlier tool results were blanked in ``messages`` to fit a forced
+    # step. The model then saw a shortened conversation, so the answer must come
+    # from the full ``context_history`` via the standalone synthesis prompt.
+    compacted = False
     for iteration in range(max_iterations):
         # Cooperative cancellation checkpoint: abort the agent loop between
         # iterations if the caller (e.g. an HTTP client) has gone away, rather
@@ -1170,29 +1177,6 @@ async def _run_reflect_agent_inner(
         # (issue #2122). Raises OperationCancelledError when fired.
         if cancel_check is not None:
             cancel_check()
-
-        is_last = iteration == max_iterations - 1
-
-        if is_last:
-            # Out of iterations: no more retrieval, just the answer.
-            return await _finish(iteration + 1)
-
-        # Proactive context-window guard: if accumulated messages would exceed the
-        # configured token budget, bail out early and synthesize from what we have.
-        estimated_tokens = _count_messages_tokens(messages)
-        if estimated_tokens >= max_context_tokens and (
-            bool(available_memory_ids) or bool(available_mental_model_ids) or bool(available_observation_ids)
-        ):
-            logger.warning(
-                f"[REFLECT {reflect_id}] Context budget exceeded on iteration {iteration + 1}: "
-                f"~{estimated_tokens} tokens >= {max_context_tokens} limit. Forcing final synthesis."
-            )
-            # Not ``_finish``: asking for ``done`` appends to a conversation that is
-            # already over the budget. The standalone prompt splits the evidence.
-            return await _forced_final_synthesis(iteration + 1)
-
-        # Call LLM with tools
-        llm_start = time.time()
 
         # Determine tool_choice for this iteration.
         # Force the full hierarchical retrieval path (only for enabled tools) before allowing auto.
@@ -1211,6 +1195,47 @@ async def _run_reflect_agent_inner(
             iter_tool_choice = LLMToolChoice.named(forced_sequence[forced_steps_done])
         else:
             iter_tool_choice = LLM_TOOL_CHOICE_AUTO
+
+        is_last = iteration == max_iterations - 1
+
+        if is_last:
+            # Out of iterations: no more retrieval, just the answer.
+            return await (_forced_final_synthesis if compacted else _finish)(iteration + 1)
+
+        if compacted and not forced_step_pending:
+            # The forced path is complete; answer from the full evidence rather than
+            # letting the model keep going on a conversation with blanked results.
+            return await _forced_final_synthesis(iteration + 1)
+
+        estimated_tokens = _count_messages_tokens(messages)
+        if forced_step_pending and estimated_tokens >= max_context_tokens:
+            # A big result from an earlier layer (e.g. observations) must not skip a
+            # still-required step such as raw-fact recall (#4563). Blank the earlier
+            # tool results, oldest first, until the forced call fits. Only the
+            # model-facing copy changes: context_history keeps the full results.
+            for index, message in enumerate(messages):
+                if estimated_tokens < max_context_tokens:
+                    break
+                if message.get("role") == "tool":
+                    messages[index] = {**message, "content": _COMPACTED_TOOL_RESULT}
+                    compacted = True
+                    estimated_tokens = _count_messages_tokens(messages)
+
+        # Proactive context-window guard: if accumulated messages would exceed the
+        # configured token budget, bail out early and synthesize from what we have.
+        if estimated_tokens >= max_context_tokens and (
+            bool(available_memory_ids) or bool(available_mental_model_ids) or bool(available_observation_ids)
+        ):
+            logger.warning(
+                f"[REFLECT {reflect_id}] Context budget exceeded on iteration {iteration + 1}: "
+                f"~{estimated_tokens} tokens >= {max_context_tokens} limit. Forcing final synthesis."
+            )
+            # Not ``_finish``: asking for ``done`` appends to a conversation that is
+            # already over the budget. The standalone prompt splits the evidence.
+            return await _forced_final_synthesis(iteration + 1)
+
+        # Call LLM with tools
+        llm_start = time.time()
 
         # Will the NEXT turn be an ``auto`` turn (the only kind that references a
         # cache)? The cache we schedule this turn covers this turn's input and is
@@ -1497,8 +1522,8 @@ async def _run_reflect_agent_inner(
             # create latency. Only schedule when the next turn is ``auto`` (the
             # only kind that references it); the next turn's pre-call resolve then
             # adopts it. Resolve any prior in-flight create first so we don't drop
-            # its handle.
-            if incremental_caching and next_is_auto:
+            # its handle. Not after compaction: no auto turn follows it.
+            if incremental_caching and next_is_auto and not compacted:
                 await _resolve_pending_cache()
                 _schedule_cache(call_msg_count)
 
