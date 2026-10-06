@@ -2417,6 +2417,31 @@ class TestBuildResponseModel:
         assert len(result.updates) == 2
         assert len(result.deletes) == 1
 
+    def test_fact_ids_pin_source_fact_ids_in_schema(self):
+        """#5273: the schema only allows the batch's fact ids, at least one per action."""
+        model = _build_response_model(None, fact_ids=["f1", "f2"])
+        defs = model.model_json_schema()["$defs"]
+        for action in ("_Create", "_Update"):
+            ids = defs[action]["properties"]["source_fact_ids"]
+            assert ids["items"] == {"type": "string", "enum": ["f1", "f2"]}
+            assert ids["minItems"] == 1
+
+    def test_fact_ids_omit_min_items_when_unsupported(self):
+        model = _build_response_model(None, fact_ids=["f1"], supports_max_items=False)
+        ids = model.model_json_schema()["$defs"]["_Create"]["properties"]["source_fact_ids"]
+        assert ids["items"]["enum"] == ["f1"]
+        assert "minItems" not in ids
+
+    def test_fact_ids_are_a_schema_hint_not_validation(self):
+        """A provider that ignores the schema must not fail the whole batch."""
+        model = _build_response_model(3, fact_ids=["f1"])
+        result = model(
+            creates=[{"text": "obs", "source_fact_ids": "not-in-batch"}],
+            updates=[{"text": "upd", "observation_id": "o", "source_fact_ids": []}],
+        )
+        assert result.creates[0].source_fact_ids == ["not-in-batch"]
+        assert result.updates[0].source_fact_ids == []
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize(("remaining_slots", "expected_creates"), [(0, 0), (2, 2)])
     async def test_unsupported_max_items_still_truncates_creates(
@@ -2458,7 +2483,7 @@ class TestBuildResponseModel:
         )
 
         response_model = llm_config.call.await_args.kwargs["response_format"]
-        assert response_model is _ConsolidationBatchResponse
+        assert "maxItems" not in response_model.model_json_schema()["properties"]["creates"]
         assert len(result.creates) == expected_creates
 
 

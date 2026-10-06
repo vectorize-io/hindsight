@@ -133,7 +133,9 @@ def provider_json_schema(response_format: type[BaseModel]) -> dict[str, Any]:
     return response_format.model_json_schema(schema_generator=UnionSafeSchemaGenerator)
 
 
-@lru_cache(maxsize=None)
+# Bounded: consolidation builds a fresh response model per batch (its schema pins
+# that batch's fact ids), so an unbounded cache would keep every one alive.
+@lru_cache(maxsize=256)
 def has_tagged_union(response_format: type[BaseModel]) -> bool:
     """Whether serializing this model rewrites a tagged union.
 
