@@ -576,7 +576,7 @@ ENV_RERANKER_LITELLM_API_KEY = "HINDSIGHT_API_RERANKER_LITELLM_API_KEY"
 ENV_RERANKER_LITELLM_MODEL = "HINDSIGHT_API_RERANKER_LITELLM_MODEL"
 # Deprecated alias of ENV_RERANKER_MAX_TOKENS_PER_CANDIDATE, folded into it at load time.
 ENV_RERANKER_LITELLM_MAX_TOKENS_PER_DOC = "HINDSIGHT_API_RERANKER_LITELLM_MAX_TOKENS_PER_DOC"
-# Provider-agnostic per-document truncation cap (tokens, see ENV_TOKENIZER_ENCODING).
+# Provider-agnostic per-candidate truncation cap (tokens, see ENV_TOKENIZER_ENCODING).
 ENV_RERANKER_MAX_TOKENS_PER_CANDIDATE = "HINDSIGHT_API_RERANKER_MAX_TOKENS_PER_CANDIDATE"
 
 # LiteLLM SDK configuration (direct API access, no proxy needed)
@@ -1484,7 +1484,7 @@ DEFAULT_TEXT_SEARCH_EXTENSION_PG_SEARCH_FUNCTION_SCHEMA = "paradedb"
 DEFAULT_LITELLM_API_BASE = "http://localhost:4000"
 DEFAULT_EMBEDDINGS_LITELLM_MODEL = "text-embedding-3-small"
 DEFAULT_RERANKER_LITELLM_MODEL = "cohere/rerank-english-v3.0"
-# Per-document truncation before rerank, applied to every provider. Off by default;
+# Per-candidate truncation before rerank, applied to every provider. Off by default;
 # set it to the model's context window (or lower, to bound request size on a CPU-only
 # rerank server).
 DEFAULT_RERANKER_MAX_TOKENS_PER_CANDIDATE: int | None = None
@@ -2694,7 +2694,7 @@ class RerankerMemberConfig:
 
     index: int
     provider: str
-    # Provider-agnostic per-document token cap; None disables truncation.
+    # Provider-agnostic per-candidate token cap; None disables truncation.
     max_tokens_per_candidate: int | None
     # local
     local_model: str
@@ -3257,7 +3257,7 @@ class HindsightConfig:
 
     # Reranker
     reranker_provider: str
-    # Provider-agnostic per-document token cap; None disables truncation.
+    # Provider-agnostic per-candidate token cap; None disables truncation.
     reranker_max_tokens_per_candidate: int | None
     reranker_send_bank_as_header: bool
     reranker_local_model: str

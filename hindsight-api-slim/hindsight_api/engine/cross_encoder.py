@@ -150,7 +150,7 @@ class CrossEncoderModel(ABC):
     # unless the score is a real decision.
     prunes_candidates: bool = False
 
-    # Cap each document at this many tokens before it reaches the backend, or None to
+    # Cap each candidate at this many tokens before it reaches the backend, or None to
     # send it whole. Set by create_cross_encoder from the member's config; lives on the
     # base class for the same reason as retry_policy, so every provider honors it.
     max_tokens_per_candidate: int | None = None
