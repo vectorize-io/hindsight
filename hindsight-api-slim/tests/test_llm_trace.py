@@ -644,7 +644,7 @@ async def test_reasoning_tokens_persist_in_bank_trace_and_stats(trace_api_client
             thoughts_tokens=60,
             duration=0.1,
         )
-        await memory._llm_recorder._flush_pending(trace_id)
+        await memory._llm_recorder._writes.drain(trace_id)
     finally:
         llm_trace.reset_trace_context(token)
 

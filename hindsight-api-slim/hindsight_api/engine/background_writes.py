@@ -50,6 +50,10 @@ class PendingWrites:
             if not bucket:
                 self._pending.pop(key, None)
 
+    def in_flight(self) -> bool:
+        """True while any tracked write is still running."""
+        return any(not t.done() for bucket in self._pending.values() for t in bucket)
+
     async def drain(self, key: str | None = None) -> None:
         """Await one key's in-flight writes. Unbounded: callers are mid-operation."""
         tasks = [t for t in self._pending.get(key, ()) if not t.done()]

@@ -23,7 +23,6 @@ money and needs network. The default model is ``gemini-2.5-flash`` (override wit
 ``HINDSIGHT_GEMINI_EVAL_MODEL``); explicit caching needs a >=2,048-token prefix.
 """
 
-import asyncio
 import os
 import uuid
 
@@ -131,18 +130,17 @@ async def _gemini_engine(memory_no_llm_verify: MemoryEngine) -> MemoryEngine:
 async def _drain_traces(mem: MemoryEngine) -> None:
     """Wait for the recorder's fire-and-forget trace writes to land.
 
-    record_llm_call schedules each INSERT as a detached asyncio task tracked in
-    ``_pending`` (bucketed by trace_id). Gather them so the rows are queryable.
+    record_llm_call schedules each INSERT as a detached asyncio task tracked by
+    the recorder's ``PendingWrites``. Drain them so the rows are queryable.
     Loop a few times because consolidation's attach_memory_ids can spawn a
     follow-up write after the first drain.
     """
     await mem.wait_for_background_tasks()
-    rec = mem._llm_recorder
+    writes = mem._llm_recorder._writes
     for _ in range(10):
-        pending = [t for bucket in rec._pending.values() for t in bucket if not t.done()]
-        if not pending:
+        if not writes.in_flight():
             break
-        await asyncio.gather(*pending, return_exceptions=True)
+        await writes.drain_all(timeout=30)
 
 
 def _report(scope: str, rows: list[LLMRequestEntry]) -> float:
