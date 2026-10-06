@@ -798,11 +798,15 @@ describe("enabledAgentIds", () => {
     });
     await setupPlugin(harness);
 
-    const result = await harness.executeTool("hindsight_recall", { query: "anything" }, {
-      agentId: "ag-2",
-      runId: "run-tool-1",
-      companyId: "co-1",
-    });
+    const result = await harness.executeTool(
+      "hindsight_recall",
+      { query: "anything" },
+      {
+        agentId: "ag-2",
+        runId: "run-tool-1",
+        companyId: "co-1",
+      }
+    );
 
     expect(String(result.content)).toContain("not enabled for this agent");
     expect(fetchMock).not.toHaveBeenCalled();
@@ -815,11 +819,15 @@ describe("enabledAgentIds", () => {
     });
     await setupPlugin(harness);
 
-    const result = await harness.executeTool("hindsight_retain", { content: "a secret" }, {
-      agentId: "ag-2",
-      runId: "run-tool-2",
-      companyId: "co-1",
-    });
+    const result = await harness.executeTool(
+      "hindsight_retain",
+      { content: "a secret" },
+      {
+        agentId: "ag-2",
+        runId: "run-tool-2",
+        companyId: "co-1",
+      }
+    );
 
     expect(String(result.content)).toContain("not enabled for this agent");
     const retainCalls = fetchMock.mock.calls.filter(([url]: [string]) => /memories$/.test(url));
@@ -833,11 +841,15 @@ describe("enabledAgentIds", () => {
     });
     await setupPlugin(harness);
 
-    await harness.executeTool("hindsight_recall", { query: "anything" }, {
-      agentId: "ag-1",
-      runId: "run-tool-3",
-      companyId: "co-1",
-    });
+    await harness.executeTool(
+      "hindsight_recall",
+      { query: "anything" },
+      {
+        agentId: "ag-1",
+        runId: "run-tool-3",
+        companyId: "co-1",
+      }
+    );
 
     const recallCall = fetchMock.mock.calls.find((c: unknown[]) =>
       String(c[0]).includes("/memories/recall")
@@ -852,11 +864,15 @@ describe("enabledAgentIds", () => {
     });
     await setupPlugin(harness);
 
-    await harness.executeTool("hindsight_retain", { content: "a decision" }, {
-      agentId: "ag-1",
-      runId: "run-tool-4",
-      companyId: "co-1",
-    });
+    await harness.executeTool(
+      "hindsight_retain",
+      { content: "a decision" },
+      {
+        agentId: "ag-1",
+        runId: "run-tool-4",
+        companyId: "co-1",
+      }
+    );
 
     const retainCalls = fetchMock.mock.calls.filter(([url]: [string]) => /memories$/.test(url));
     expect(retainCalls.length).toBe(1);
@@ -866,11 +882,15 @@ describe("enabledAgentIds", () => {
     const harness = buildHarness(DEFAULT_CONFIG);
     await setupPlugin(harness);
 
-    const result = await harness.executeTool("hindsight_recall", { query: "anything" }, {
-      agentId: "ag-whoever",
-      runId: "run-tool-5",
-      companyId: "co-1",
-    });
+    const result = await harness.executeTool(
+      "hindsight_recall",
+      { query: "anything" },
+      {
+        agentId: "ag-whoever",
+        runId: "run-tool-5",
+        companyId: "co-1",
+      }
+    );
 
     expect(String(result.content)).not.toContain("not enabled for this agent");
     expect(fetchMock).toHaveBeenCalled();
