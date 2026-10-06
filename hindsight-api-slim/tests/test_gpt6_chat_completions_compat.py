@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from openai import APIStatusError
 
+from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_REQUIRED
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
 
 TOOLS = [
@@ -150,3 +151,45 @@ async def test_unrelated_400_is_not_repaired():
         with pytest.raises(APIStatusError):
             await llm.call_with_tools(messages=[{"role": "user", "content": "hi"}], tools=TOOLS, max_retries=0)
     assert create.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_rejected_tool_choice_retries_without_it():
+    # Intention: Alibaba's Qwen 3.8 host refuses a forced tool_choice in thinking
+    # mode; reflect forces its first call, so drop the field instead of failing.
+    # Expected: one immediate retry without tool_choice, and only one.
+    llm = _make_llm(model="qwen/qwen3.8-flash")
+    response = MagicMock()
+    response.status_code = 400
+    response.headers = {}
+    err = APIStatusError(
+        "400",
+        response=response,
+        body={
+            "error": {
+                "message": "The tool_choice parameter does not support being set to required or object in thinking mode"
+            }
+        },
+    )
+    with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as create:
+        create.side_effect = [err, _tool_call_response()]
+        result = await llm.call_with_tools(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=TOOLS,
+            tool_choice=LLM_TOOL_CHOICE_REQUIRED,
+            max_retries=0,
+        )
+        assert [tc.name for tc in result.tool_calls] == ["search_observations"]
+        assert create.await_args_list[0].kwargs["tool_choice"] == "required"
+        assert "tool_choice" not in create.await_args_list[1].kwargs
+
+        create.reset_mock()
+        create.side_effect = [err, err]
+        with pytest.raises(APIStatusError):
+            await llm.call_with_tools(
+                messages=[{"role": "user", "content": "hi"}],
+                tools=TOOLS,
+                tool_choice=LLM_TOOL_CHOICE_REQUIRED,
+                max_retries=0,
+            )
+        assert create.await_count == 2

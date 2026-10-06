@@ -593,6 +593,19 @@ def _asks_for_reasoning_effort_none(e: APIStatusError) -> bool:
     return "reasoning_effort" in message and "'none'" in message
 
 
+def _rejects_tool_choice(e: APIStatusError) -> bool:
+    """Whether the endpoint refused the request because of its ``tool_choice``.
+
+    The static lists above cover endpoints that always refuse a forced choice. Some
+    refuse it only in one mode, so no model name can tell: Alibaba's Qwen 3.8 host
+    (direct or through OpenRouter) answers "The tool_choice parameter does not
+    support being set to required or object in thinking mode", while vLLM and Groq
+    serve the same weights and accept it. Reflect forces its first retrieval call,
+    so without this every reflect against that host failed on its first request.
+    """
+    return e.status_code == 400 and "tool_choice" in _summarize_status_error(e, body_max=1000)
+
+
 def _parse_go_duration_seconds(text: str) -> float | None:
     total = 0.0
     pos = 0
@@ -1858,6 +1871,17 @@ class OpenAICompatibleLLM(LLMInterface):
                         "HINDSIGHT_API_LLM_PROVIDER=openai-responses to keep reasoning on the tool path."
                     )
                     call_params["reasoning_effort"] = "none"
+                    attempts_allowed += 1
+                    continue
+                if "tool_choice" in call_params and _rejects_tool_choice(e):
+                    # Same downgrade as the static Meta/Z.AI branch above: a named
+                    # choice was already narrowed to its one tool, so "auto" keeps
+                    # the call practically forced.
+                    logger.warning(
+                        f"{self.provider}/{self.model} rejected tool_choice={call_params['tool_choice']!r}; "
+                        f"retrying with auto (scope={scope}): {_summarize_status_error(e)}"
+                    )
+                    del call_params["tool_choice"]
                     attempts_allowed += 1
                     continue
 
