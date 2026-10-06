@@ -120,6 +120,7 @@ BOOST_LEVELS: dict[str, BoostWeights] = {
 # temporal arm is ranked by date proximity to the query window (#4494), not
 # relevance, so decaying by it handed the bump to the memories nearest the
 # window midpoint instead of the ones the cross-encoder ranked best (#4939).
+# Before #4653 every arm got this flat bump; temporal keeps it.
 _FLAT_STAGE2_STRATEGIES = frozenset({"temporal"})
 
 
