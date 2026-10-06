@@ -9,6 +9,7 @@ from unittest.mock import Mock
 import pytest
 
 from hindsight_embed import cli, daemon_client
+from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
 from hindsight_embed.profile_manager import ProfileManager
 
 
@@ -125,6 +126,20 @@ def test_daemon_status_displays_the_instance_it_probes(
     assert "http://127.0.0.1:19100" in output
     assert "hindsight-embed-work" in output
     assert "http://127.0.0.1:18888" not in output
+
+
+def test_daemon_start_ui_uses_the_selected_profile(profiles: ProfileManager, monkeypatch: pytest.MonkeyPatch) -> None:
+    profiles.set_active_profile("work")
+    monkeypatch.setattr(daemon_client, "is_daemon_running", Mock(return_value=False))
+    ensure_running = Mock(return_value=True)
+    monkeypatch.setattr(daemon_client, "ensure_daemon_running", ensure_running)
+    start_ui = Mock(return_value=True)
+    monkeypatch.setattr(DaemonEmbedManager, "start_ui", start_ui)
+
+    invoke_cli(monkeypatch, ["daemon", "start", "--ui"])
+
+    assert ensure_running.call_args.args[1] == "work"
+    start_ui.assert_called_once_with("work", None, "0.0.0.0")
 
 
 def test_profile_show_honours_explicit_default(

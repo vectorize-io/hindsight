@@ -501,7 +501,7 @@ def do_daemon(args, config: dict, logger):
 
     # Get profile-specific paths
     pm = ProfileManager()
-    paths = pm.resolve_profile_paths(profile or "")
+    paths = pm.resolve_profile_paths(profile)
 
     daemon_log_path = paths.log
     port = paths.port
@@ -535,12 +535,10 @@ def do_daemon(args, config: dict, logger):
             # Start UI if --ui flag was passed
             if getattr(args, "ui", False):
                 from .daemon_embed_manager import DaemonEmbedManager
-                from .profile_manager import resolve_active_profile
 
-                # Use the same profile resolution as the daemon
-                resolved_profile = profile if profile is not None else resolve_active_profile()
+                # main() already resolved the profile the daemon was started with
                 manager = DaemonEmbedManager()
-                ui_started = manager.start_ui(resolved_profile, None, "0.0.0.0")
+                ui_started = manager.start_ui(profile, None, "0.0.0.0")
                 if not ui_started:
                     console.print(
                         Panel(
@@ -711,7 +709,7 @@ def do_ui(args, config: dict, logger):
 
     # Resolve default UI port (from the profile's .env, else API + offset)
     pm = ProfileManager()
-    paths = pm.resolve_profile_paths(profile or "")
+    paths = pm.resolve_profile_paths(profile)
     default_ui_port = paths.ui_port
 
     if args.ui_command == "start":
