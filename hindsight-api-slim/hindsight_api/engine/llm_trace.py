@@ -19,7 +19,6 @@ Bank/operation attribution is carried via a ContextVar set by
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import uuid
@@ -32,6 +31,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from .background_writes import PendingWrites
 from .db_utils import acquire_with_retry
 
 logger = logging.getLogger(__name__)
@@ -437,7 +437,7 @@ class LLMTraceRecorder:
         # attach_memory_ids can await only *its own* operation's writes before the
         # post-operation UPDATE (otherwise the UPDATE could race ahead of the
         # INSERTs it patches — but it must not block on unrelated operations).
-        self._pending: dict[str | None, set[asyncio.Task]] = {}
+        self._writes = PendingWrites("LLM trace write")
         # Trace ids that have actually produced a row. `_pending` cannot answer this: it is
         # emptied as writes complete, so an absent entry means "nothing in flight", not "nothing
         # was ever written". Without the distinction, `attach_memory_ids` issues an UPDATE for
@@ -558,16 +558,8 @@ class LLMTraceRecorder:
 
     def _record_fire_and_forget(self, record: LLMRequestRecord) -> None:
         """Schedule a trace write as a background task."""
-        try:
-            task = asyncio.create_task(self._safe_write(record))
-        except RuntimeError:
-            # No running event loop (e.g. during shutdown)
-            logger.debug("Cannot schedule llm trace write: no running event loop")
-            return
         key = record.trace_id
-        self._pending.setdefault(key, set()).add(task)
-        task.add_done_callback(lambda t, k=key: self._discard_pending(k, t))
-        if key:
+        if self._writes.schedule(self._safe_write(record), key) and key:
             self._mark_rows_written(key)
 
     _ROWS_WRITTEN_MAX = 4096
@@ -579,13 +571,6 @@ class LLMTraceRecorder:
             # Evicting the oldest can only cause a MISSED patch on a very long-lived trace, never
             # a wrong one -- and the patch is best-effort metadata either way.
             self._rows_written.popitem(last=False)
-
-    def _discard_pending(self, key: str | None, task: asyncio.Task) -> None:
-        bucket = self._pending.get(key)
-        if bucket is not None:
-            bucket.discard(task)
-            if not bucket:
-                self._pending.pop(key, None)
 
     async def _safe_write(self, record: LLMRequestRecord) -> None:
         """Write a trace row. Errors are logged, never raised."""
@@ -637,12 +622,6 @@ class LLMTraceRecorder:
         except Exception as e:
             logger.warning(f"LLM trace write failed for scope={record.scope}: {e}")
 
-    async def _flush_pending(self, trace_id: str) -> None:
-        """Await this trace's in-flight writes so its rows exist before an UPDATE."""
-        pending = [t for t in self._pending.get(trace_id, ()) if not t.done()]
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
-
     def attach_memory_ids(
         self,
         trace_ctx: LLMTraceContext | None,
@@ -679,17 +658,16 @@ class LLMTraceRecorder:
         # the UPDATE would match zero rows.
         if trace_ctx.trace_id not in self._rows_written:
             return
-        try:
-            asyncio.create_task(self._attach_memory_ids(trace_ctx.bank_id, trace_ctx.trace_id, patch))
-        except RuntimeError:
-            logger.debug("Cannot schedule llm trace memory_id attach: no running event loop")
+        # Not bucketed under the trace id: this task drains that bucket itself,
+        # and a task in its own bucket would wait on itself forever.
+        self._writes.schedule(self._attach_memory_ids(trace_ctx.bank_id, trace_ctx.trace_id, patch))
 
     async def _attach_memory_ids(self, bank_id: str | None, trace_id: str, patch: dict[str, Any]) -> None:
         """Background worker: flush this trace's writes, then patch its rows."""
         # The trace-row INSERTs are fire-and-forget; flush *this trace's* writes
         # so the UPDATE patches rows that already exist rather than racing ahead
         # of them (without blocking on unrelated operations' pending writes).
-        await self._flush_pending(trace_id)
+        await self._writes.drain(trace_id)
         pool = self._writable()
         if pool is None:
             logger.debug("LLM trace memory_id attach skipped: pool not available")
