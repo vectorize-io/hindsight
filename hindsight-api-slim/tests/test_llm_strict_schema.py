@@ -400,7 +400,9 @@ async def test_reflect_structured_output_threads_reflect_flag(strict):
 
     with patch(
         "hindsight_api.engine.reflect.agent.get_config",
-        lambda: SimpleNamespace(llm_strict_schema_reflect=strict),
+        # The structured pass also reads llm_temperature_reflect to decide whether to
+        # send a temperature at all, so the stub must carry it.
+        lambda: SimpleNamespace(llm_strict_schema_reflect=strict, llm_temperature_reflect=0.9),
     ):
         await _generate_structured_output(
             answer="the answer",
