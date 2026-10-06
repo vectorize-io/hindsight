@@ -153,7 +153,7 @@ class CrossEncoderModel(ABC):
     # Cap each document at this many tokens before it reaches the backend, or None to
     # send it whole. Set by create_cross_encoder from the member's config; lives on the
     # base class for the same reason as retry_policy, so every provider honors it.
-    max_tokens_per_doc: int | None = None
+    max_tokens_per_candidate: int | None = None
 
     async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
@@ -165,8 +165,8 @@ class CrossEncoderModel(ABC):
         Returns:
             List of relevance scores (higher = more relevant)
         """
-        if self.max_tokens_per_doc is not None and pairs:
-            docs = _truncate_docs_to_tokens([doc for _, doc in pairs], self.max_tokens_per_doc)
+        if self.max_tokens_per_candidate is not None and pairs:
+            docs = _truncate_docs_to_tokens([doc for _, doc in pairs], self.max_tokens_per_candidate)
             pairs = [(query, doc) for (query, _), doc in zip(pairs, docs)]
         if self.retry_policy is None:
             return await self._predict(pairs)
@@ -2213,7 +2213,7 @@ def create_cross_encoder(member: RerankerMemberConfig) -> CrossEncoderModel:
     config) or an indexed fallback. Missing-setting errors name the member's own
     env var, so a chain misconfiguration points at the exact indexed variable.
 
-    Every member carries its ``max_tokens_per_doc`` cap, and remote members a
+    Every member carries its ``max_tokens_per_candidate`` cap, and remote members a
     ``retry_policy``; the base class's ``predict`` applies both; see ``_RERANKER_PROVIDERS_WITHOUT_RETRY`` for the ones that
     deliberately do not get one.
 
@@ -2224,7 +2224,7 @@ def create_cross_encoder(member: RerankerMemberConfig) -> CrossEncoderModel:
         Configured CrossEncoderModel instance
     """
     encoder = _create_cross_encoder_backend(member)
-    encoder.max_tokens_per_doc = member.max_tokens_per_doc
+    encoder.max_tokens_per_candidate = member.max_tokens_per_candidate
     if member.provider.lower() not in _RERANKER_PROVIDERS_WITHOUT_RETRY:
         encoder.retry_policy = _reranker_retry_policy()
     return encoder
