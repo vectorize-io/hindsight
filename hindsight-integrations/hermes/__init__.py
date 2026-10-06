@@ -45,6 +45,7 @@ from .embedded import (
     _local_runtime_hint,
     _materialize_embedded_profile_env,
     _may_rewrite_profile_env,
+    _profile_env_drifted,
     _start_daemon,
     _stop_daemon,
 )
@@ -793,7 +794,10 @@ class HindsightMemoryProvider(MemoryProvider):
         self._announce_slow_first_start(profile)
         self._embedded_url = _start_daemon(daemon_config, profile)
         logger.info("Connected to embedded Hindsight daemon at %s", self._embedded_url)
-        return Hindsight(base_url=self._embedded_url)
+        # A daemon running ApiKeyTenantExtension rejects every keyless call with 401 (#5023). Its key
+        # lives in the profile env the daemon boots from; a configured apiKey is the fallback.
+        api_key = _load_simple_env(_embedded_profile_env_path(cfg)).get("HINDSIGHT_API_TENANT_API_KEY") or self._api_key
+        return Hindsight(base_url=self._embedded_url, api_key=api_key or None)
 
     def _new_cloud_client(self):
         from hindsight_client import Hindsight
@@ -1365,7 +1369,7 @@ class HindsightMemoryProvider(MemoryProvider):
             # stop: restarting the daemon now would boot it keyless, which is the
             # exact outage this guards against. _get_client() below sends the daemon
             # whatever key WAS available (config, secret scope, or the file itself).
-            if _load_simple_env(_embedded_profile_env_path(self._config)) != _build_embedded_profile_env(self._config):
+            if _profile_env_drifted(self._config):
                 if _may_rewrite_profile_env(self._config):
                     _materialize_embedded_profile_env(self._config)
                     if _daemon_is_running(profile):

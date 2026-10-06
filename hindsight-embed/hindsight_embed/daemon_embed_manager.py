@@ -254,6 +254,14 @@ def _terminate_startup_process(process: subprocess.Popen) -> None:
         return
 
 
+# Runs hindsight_api.main on a base interpreter after adding a venv's site-packages (argv[1])
+# the way the venv itself would, .pth files included. Arguments after it reach the module.
+_VENV_SITE_BOOTSTRAP = (
+    "import runpy, site, sys; site.addsitedir(sys.argv.pop(1)); "
+    "runpy.run_module('hindsight_api.main', run_name='__main__', alter_sys=True)"
+)
+
+
 @dataclass(frozen=True)
 class UvTrampoline:
     """A uv venv's Scripts/pythonw.exe, resolved to what it actually launches."""
@@ -386,8 +394,8 @@ class DaemonEmbedManager(EmbedManager):
         return None
 
     @staticmethod
-    def _windows_gui_interpreter(preferred_dir: Path | None = None, env: dict[str, str] | None = None) -> str | None:
-        """Path to the GUI-subsystem Python (pythonw.exe), or None.
+    def _windows_gui_api_command(preferred_dir: Path | None = None) -> list[str] | None:
+        """Command that runs ``hindsight_api.main`` on the GUI-subsystem Python (pythonw.exe), or None.
 
         Returns None on non-Windows, or when pythonw.exe can't be located next
         to the preferred scripts directory or running interpreter.
@@ -401,9 +409,13 @@ class DaemonEmbedManager(EmbedManager):
         that contains hindsight-api.exe because wrapper entry points can make
         sys.executable point at a different launcher directory (issue #2389).
 
-        When the pythonw we find is a uv trampoline and ``env`` is a writable
-        dict, resolve the base interpreter instead and put the venv's
-        site-packages on PYTHONPATH so hindsight_api stays importable (#4466).
+        When the pythonw we find is a uv trampoline, run the base interpreter
+        instead (#4466) and add the venv's site-packages with
+        ``site.addsitedir`` before running the module. This used to put
+        site-packages on PYTHONPATH, which makes it importable but never
+        processes its ``.pth`` files: ``pywin32.pth`` (DLL search path for
+        ``pywintypes``) and the files that wire up fastmcp were skipped, and the
+        daemon died on import (#4974, #5025). ``addsitedir`` handles both.
         """
         if platform.system() != "Windows":
             return None
@@ -418,14 +430,11 @@ class DaemonEmbedManager(EmbedManager):
             # Only bypass the trampoline when we can hand the base interpreter
             # the venv's packages: without them it can't import hindsight_api,
             # and a daemon that won't start is worse than a console flash.
-            if target is not None and env is not None:
+            if target is not None:
                 site_packages = target.venv_root / "Lib" / "site-packages"
                 if site_packages.is_dir():
-                    env["PYTHONPATH"] = os.pathsep.join(
-                        part for part in (str(site_packages), env.get("PYTHONPATH", "")) if part
-                    )
-                    return target.base_pythonw
-            return str(pythonw)
+                    return [target.base_pythonw, "-c", _VENV_SITE_BOOTSTRAP, str(site_packages)]
+            return [str(pythonw), "-m", "hindsight_api.main"]
         return None
 
     def _component_version(self, profile: str, env_key: str) -> str:
@@ -486,10 +495,7 @@ class DaemonEmbedManager(EmbedManager):
             # The console exe lives in sys.executable's scripts dir, so
             # hindsight_api is importable by the GUI interpreter; prefer it on
             # Windows to avoid ConPTY popping a terminal tab (issue #1885).
-            gui_python = self._windows_gui_interpreter(scripts_dir, env if isinstance(env, dict) else None)
-            if gui_python is not None:
-                return [gui_python, "-m", "hindsight_api.main"]
-            return [str(candidate)]
+            return self._windows_gui_api_command(scripts_dir) or [str(candidate)]
 
         # --target installs place binaries alongside site-packages contents.
         # The running interpreter usually can't import hindsight_api here (it's

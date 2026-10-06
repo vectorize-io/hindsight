@@ -119,10 +119,15 @@ def _local_runtime_hint(reason: str | None) -> str:
 _PARENT_INTERPRETER_ENV = frozenset({"PYTHONPATH", "PYTHONHOME", "PYTHONSAFEPATH", "VIRTUAL_ENV"})
 
 # Ask the installed hindsight-embed to start the daemon, reading the config off stdin so an LLM
-# API key never appears in the process list.
+# API key never appears in the process list. The helper starts with our interpreter's env so it can
+# import hindsight_embed (on package-manager and store-Python installs PYTHONPATH is the only way the
+# plugin's packages are found, #5006), then drops the interpreter-selection variables before the
+# manager copies os.environ into the daemon child.
 _DAEMON_START_SNIPPET = (
-    "import json, sys\n"
+    "import json, os, sys\n"
     "from hindsight_embed import get_embed_manager\n"
+    "for key in sys.argv[2:]:\n"
+    "    os.environ.pop(key, None)\n"
     "sys.exit(0 if get_embed_manager().ensure_running(json.load(sys.stdin), sys.argv[1]) else 1)\n"
 )
 
@@ -144,6 +149,20 @@ def _embed_scrubs_parent_env() -> bool:
         return False
 
 
+def _managed_uvx_dir(path: str) -> str | None:
+    """Directory of the ``uvx`` Hermes installed for itself, when *path* has none.
+
+    The daemon manager falls back to ``uvx hindsight-api`` when no server is installed, and a
+    package-manager Hermes keeps its uvx under ``~/.hermes/tools/uv-*/``, which is not always on
+    PATH (#5192). Only the helper's env gets it; the parent's PATH is left alone."""
+    if shutil.which("uvx", path=path):
+        return None
+    for candidate in sorted((Path.home() / ".hermes" / "tools").glob("uv-*"), reverse=True):
+        if shutil.which("uvx", path=str(candidate)):
+            return str(candidate)
+    return None
+
+
 def _start_daemon_in_clean_child(config: dict[str, str], profile: str) -> bool:
     """Start the daemon from a short-lived child that never had our interpreter's PYTHONPATH.
 
@@ -157,11 +176,17 @@ def _start_daemon_in_clean_child(config: dict[str, str], profile: str) -> bool:
     Deliberately NOT done by scrubbing ``os.environ`` around ``ensure_running``: that hole would be
     process-wide for the whole spawn *and* health wait — minutes while uvx downloads the server on
     a first run — and Hermes' own children rely on that PYTHONPATH. A child process confines it.
+
+    The child used to be started with those variables already removed, which also hid
+    ``hindsight_embed`` from the helper itself wherever PYTHONPATH is how the plugin's packages are
+    found (#5006); the helper now drops them only after its imports.
     """
-    env = {key: value for key, value in os.environ.items() if key not in _PARENT_INTERPRETER_ENV}
+    env = dict(os.environ)
+    if uvx_dir := _managed_uvx_dir(env.get("PATH", "")):
+        env["PATH"] = os.pathsep.join(part for part in (uvx_dir, env.get("PATH", "")) if part)
     try:
         result = subprocess.run(
-            [sys.executable, "-c", _DAEMON_START_SNIPPET, profile],
+            [sys.executable, "-c", _DAEMON_START_SNIPPET, profile, *sorted(_PARENT_INTERPRETER_ENV)],
             input=json.dumps(config),
             env=env,
             capture_output=True,
@@ -313,6 +338,32 @@ def _may_rewrite_profile_env(config: dict[str, Any]) -> bool:
     return not _on_disk_llm_api_key(config)
 
 
+# Every key _build_embedded_profile_env can write. The profile env also holds keys this plugin does
+# not own — HINDSIGHT_API_PORT that hindsight-embed adds when the daemon starts, and anything an
+# operator sets by hand (a tenant extension and its key, a log format) — so drift is judged, and a
+# rewrite done, on these keys alone. A full-file compare used to read the daemon's own port as a
+# config change and restart the daemon on every new Hermes process (#5222); the rewrite truncated
+# the file and dropped every key outside this set (#5252).
+_PLUGIN_PROFILE_ENV_KEYS = frozenset(
+    {
+        "HINDSIGHT_API_LLM_PROVIDER",
+        "HINDSIGHT_API_LLM_API_KEY",
+        "HINDSIGHT_API_LLM_MODEL",
+        "HINDSIGHT_API_LOG_LEVEL",
+        "HINDSIGHT_API_LLM_BASE_URL",
+        "HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT",
+    }
+)
+
+
+def _profile_env_drifted(config: dict[str, Any]) -> bool:
+    """Whether the plugin-owned keys in the profile env differ from what *config* builds.
+    A key the build no longer sets (a removed base URL) still counts as drift."""
+    on_disk = _load_simple_env(_embedded_profile_env_path(config))
+    owned = {key: value for key, value in on_disk.items() if key in _PLUGIN_PROFILE_ENV_KEYS}
+    return owned != _build_embedded_profile_env(config)
+
+
 def _build_embedded_profile_env(config: dict[str, Any], *, llm_api_key: str | None = None) -> dict[str, str]:
     """Build the profile-scoped env that standalone hindsight-embed consumes."""
     if llm_api_key is None:
@@ -370,6 +421,10 @@ def _materialize_embedded_profile_env(config: dict[str, Any], *, llm_api_key: st
     profile_env = _embedded_profile_env_path(config)
     profile_env.parent.mkdir(parents=True, exist_ok=True)
     env_values = _build_embedded_profile_env(config, llm_api_key=llm_api_key)
+    # Keep the keys this plugin does not own (see _PLUGIN_PROFILE_ENV_KEYS).
+    for key, value in _load_simple_env(profile_env).items():
+        if key not in _PLUGIN_PROFILE_ENV_KEYS:
+            env_values.setdefault(key, value)
     content = "".join(f"{key}={value}\n" for key, value in env_values.items())
     try:
         _secure_write_profile_env(profile_env, content)

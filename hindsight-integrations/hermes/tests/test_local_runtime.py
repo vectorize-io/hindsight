@@ -7,7 +7,9 @@ otel-semconv>=0.65b0 against mistralai's <0.61 — so the daemon runs as a separ
 this venv keeps only a client plus the daemon manager.
 """
 
+import json
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -151,8 +153,7 @@ def test_the_start_worker_reconciles_the_profile_env_before_the_daemon_boots(mon
     provider = HindsightMemoryProvider()
     provider._config = {"profile": "orderingtest", "llm_provider": "ollama"}
 
-    monkeypatch.setattr("hindsight_hermes._load_simple_env", lambda path: {"STALE": "1"})
-    monkeypatch.setattr("hindsight_hermes._build_embedded_profile_env", lambda cfg: {"FRESH": "1"})
+    monkeypatch.setattr("hindsight_hermes._profile_env_drifted", lambda cfg: True)
     monkeypatch.setattr("hindsight_hermes._may_rewrite_profile_env", lambda cfg: True)
     monkeypatch.setattr("hindsight_hermes._embedded_profile_env_path", lambda cfg: tmp_path / "p.env")
     monkeypatch.setattr("hindsight_hermes._materialize_embedded_profile_env", lambda cfg: order.append("rewrote env"))
@@ -168,11 +169,11 @@ def test_the_start_worker_reconciles_the_profile_env_before_the_daemon_boots(mon
 def test_an_old_embed_starts_the_daemon_from_a_child_without_our_pythonpath(monkeypatch):
     """hindsight-embed <= 0.10.2 copies os.environ into the daemon, so Hermes' PYTHONPATH (its own
     3.14 generation) reaches a server that uvx may run on another Python — which then imports
-    Hermes' pydantic and dies. Start it from a child that never had those variables."""
+    Hermes' pydantic and dies. Start it from a child that drops those variables before the spawn."""
     calls = _fake_embed_module(monkeypatch, running=False, scrubs=False)
     monkeypatch.setenv("PYTHONPATH", "/hermes/venv/lib/python3.14/site-packages")
-    monkeypatch.setenv("VIRTUAL_ENV", "/hermes/venv")
     monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setattr(embedded, "_managed_uvx_dir", lambda path: None)
     recorded = {}
 
     def _run(cmd, **kwargs):
@@ -184,11 +185,44 @@ def test_an_old_embed_starts_the_daemon_from_a_child_without_our_pythonpath(monk
 
     assert embedded._start_daemon({"HINDSIGHT_API_LLM_API_KEY": "sk-secret"}, "hermes") == "http://127.0.0.1:54321"
     assert "ensure_running" not in calls  # started by the child, not in this process
-    assert "PYTHONPATH" not in recorded["env"] and "VIRTUAL_ENV" not in recorded["env"]
     assert recorded["env"]["PATH"] == "/usr/bin"  # everything else is inherited
+    assert set(recorded["cmd"][4:]) == embedded._PARENT_INTERPRETER_ENV  # the helper drops these
     # the key travels on stdin; argv is visible to every user on the box
     assert "sk-secret" not in " ".join(recorded["cmd"])
     assert "sk-secret" in recorded["input"]
+
+
+def test_the_helper_imports_embed_through_pythonpath_and_hides_it_from_the_daemon(tmp_path, monkeypatch):
+    """#5006: where PYTHONPATH is the only way the plugin's packages are found, the helper must keep
+    it for its own imports, then drop it before hindsight-embed copies os.environ into the daemon."""
+    package = tmp_path / "hindsight_embed"
+    package.mkdir()
+    seen = tmp_path / "daemon_env.json"
+    (package / "__init__.py").write_text(
+        "import json, os\n"
+        "class _Manager:\n"
+        "    def ensure_running(self, config, profile):\n"
+        f"        open({str(seen)!r}, 'w').write(json.dumps([profile, config, 'PYTHONPATH' in os.environ]))\n"
+        "        return True\n"
+        "def get_embed_manager():\n"
+        "    return _Manager()\n"
+    )
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+
+    assert embedded._start_daemon_in_clean_child({"HINDSIGHT_API_LLM_MODEL": "m"}, "hermes") is True
+    assert json.loads(seen.read_text()) == ["hermes", {"HINDSIGHT_API_LLM_MODEL": "m"}, False]
+
+
+def test_the_helper_finds_the_uvx_hermes_installed_when_path_has_none(tmp_path, monkeypatch):
+    """#5192: a package-manager Hermes keeps uvx under ~/.hermes/tools/uv-*/, off PATH."""
+    uv_dir = tmp_path / ".hermes" / "tools" / "uv-0.12.3-darwin-arm64"
+    uv_dir.mkdir(parents=True)
+    (uv_dir / "uvx").write_text("#!/bin/sh\n")
+    (uv_dir / "uvx").chmod(0o755)
+    monkeypatch.setattr(embedded.Path, "home", lambda: tmp_path)
+
+    assert embedded._managed_uvx_dir(str(tmp_path / "empty")) == str(uv_dir)
+    assert embedded._managed_uvx_dir(str(uv_dir)) is None  # already on PATH: leave it
 
 
 def test_a_new_embed_is_left_to_scrub_the_env_itself(monkeypatch):
@@ -240,3 +274,46 @@ def test_the_binary_probe_checks_the_scripts_dir_the_manager_uses(monkeypatch):
         embedded.shutil, "which", lambda name, path=None: "/s/hindsight-api" if path == scripts else None
     )
     assert embedded._installed_api_binary_exists() is True
+
+
+def _profile_env(text: str) -> Path:
+    path = embedded._embedded_profile_env_path({"profile": "hermes"})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    return path
+
+
+_CFG = {"profile": "hermes", "llm_provider": "openai", "llm_model": "gpt", "llmApiKey": "sk"}
+_OWNED = "HINDSIGHT_API_LLM_PROVIDER=openai\nHINDSIGHT_API_LLM_API_KEY=sk\nHINDSIGHT_API_LLM_MODEL=gpt\nHINDSIGHT_API_LOG_LEVEL=info\n"
+
+
+def test_keys_the_plugin_does_not_own_are_not_drift(hermes_env):
+    """#5222: the port hindsight-embed adds at daemon start must not restart the daemon."""
+    _profile_env(_OWNED + "HINDSIGHT_API_PORT=9077\nHINDSIGHT_API_TENANT_API_KEY=t\n")
+    assert embedded._profile_env_drifted(_CFG) is False
+
+
+def test_a_changed_or_removed_plugin_key_is_drift(hermes_env):
+    _profile_env(_OWNED.replace("gpt", "old-model"))
+    assert embedded._profile_env_drifted(_CFG) is True
+    _profile_env(_OWNED + "HINDSIGHT_API_LLM_BASE_URL=http://gone\n")  # no longer configured
+    assert embedded._profile_env_drifted(_CFG) is True
+
+
+def test_a_rewrite_keeps_the_keys_the_plugin_does_not_own(hermes_env):
+    """#5252: the rewrite replaced the whole file, dropping the daemon's port and operator keys."""
+    path = _profile_env(
+        _OWNED.replace("gpt", "old-model") + "HINDSIGHT_API_PORT=9077\nHINDSIGHT_API_TENANT_API_KEY=t\n"
+    )
+
+    embedded._materialize_embedded_profile_env(_CFG)
+
+    assert embedded._load_simple_env(path) == {
+        "HINDSIGHT_API_LLM_PROVIDER": "openai",
+        "HINDSIGHT_API_LLM_API_KEY": "sk",
+        "HINDSIGHT_API_LLM_MODEL": "gpt",
+        "HINDSIGHT_API_LOG_LEVEL": "info",
+        "HINDSIGHT_API_PORT": "9077",
+        "HINDSIGHT_API_TENANT_API_KEY": "t",
+    }
+    assert embedded._profile_env_drifted(_CFG) is False

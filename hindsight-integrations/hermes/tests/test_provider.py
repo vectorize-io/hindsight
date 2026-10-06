@@ -2,6 +2,8 @@
 sends to Hindsight (a recording fake client stands in for the real SDK)."""
 
 import json
+import sys
+from types import SimpleNamespace
 
 import hindsight_hermes as plugin
 from conftest import FakeClient
@@ -370,7 +372,9 @@ def test_building_the_embedded_client_announces_before_it_waits(provider, monkey
     """The notice has to fire from the path that actually blocks — asserting the helper in
     isolation would keep passing if nothing called it."""
     seen = []
-    instance, _ = provider({"mode": "local_embedded", "profile": "hermes"}, warning_callback=seen.append)
+    # Mode is switched after init: configuring local_embedded would also start the background
+    # daemon worker, which builds a client too and made this test announce twice at random.
+    instance, _ = provider({"profile": "hermes"}, warning_callback=seen.append)
     instance._mode = "local_embedded"
     order = []
     from hindsight_hermes.embedded import LocalRuntimeStatus
@@ -388,6 +392,32 @@ def test_building_the_embedded_client_announces_before_it_waits(provider, monkey
     instance._new_embedded_client()
 
     assert order == ["announced", "started"], order
+    instance.shutdown()
+
+
+def test_the_embedded_client_sends_the_daemons_tenant_key(provider, monkeypatch):
+    """#5023: a daemon running ApiKeyTenantExtension answers 401 to a keyless client."""
+    instance, _ = provider({"profile": "hermes"})
+    instance._mode = "local_embedded"
+    from hindsight_hermes.embedded import LocalRuntimeStatus, _embedded_profile_env_path
+
+    profile_env = _embedded_profile_env_path({"profile": "hermes"})
+    profile_env.parent.mkdir(parents=True, exist_ok=True)
+    profile_env.write_text("HINDSIGHT_API_TENANT_API_KEY=tenant-secret\n")
+    built = {}
+
+    class _Client:
+        def __init__(self, **kwargs):
+            built.update(kwargs)
+
+    monkeypatch.setattr(plugin, "_check_local_runtime", lambda: LocalRuntimeStatus(available=True))
+    monkeypatch.setattr(plugin, "_start_daemon", lambda config, profile: "http://127.0.0.1:1")
+    monkeypatch.setattr(plugin, "_installed_api_binary_exists", lambda: True)
+    monkeypatch.setitem(sys.modules, "hindsight_client", SimpleNamespace(Hindsight=_Client))
+
+    instance._new_embedded_client()
+
+    assert built == {"base_url": "http://127.0.0.1:1", "api_key": "tenant-secret"}
     instance.shutdown()
 
 

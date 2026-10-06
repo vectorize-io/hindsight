@@ -683,7 +683,7 @@ def _windows_scripts_dir(tmp_path: Path, *, with_pythonw: bool) -> Path:
 
     The dir holds hindsight-api.exe and python.exe; when ``with_pythonw`` is
     True the GUI-subsystem interpreter (pythonw.exe) is created next to
-    python.exe so `_windows_gui_interpreter()` can find it.
+    python.exe so `_windows_gui_api_command()` can find it.
     """
     scripts_dir = tmp_path / "Scripts"
     scripts_dir.mkdir()
@@ -828,17 +828,50 @@ def test_windows_uv_trampoline_resolves_to_base_pythonw(temp_home, tmp_path, mon
     A uv venv's Scripts/pythonw.exe is a trampoline that relaunches the base
     interpreter as the CUI python.exe, popping the console window our detach
     flags were supposed to prevent — they only ever applied to the trampoline.
-    Launch the base pythonw.exe directly, with the venv's site-packages on
-    PYTHONPATH so hindsight_api is still importable from outside the venv.
+    Launch the base pythonw.exe directly, adding the venv's site-packages with
+    site.addsitedir so hindsight_api is importable from outside the venv and the
+    venv's .pth files still run (#4974, #5025: PYTHONPATH skipped them).
     """
+    from hindsight_embed.daemon_embed_manager import _VENV_SITE_BOOTSTRAP
+
     scripts_dir = _windows_launcher_venv(tmp_path, uv=True)
     manager = _windows_manager(monkeypatch, scripts_dir)
 
     env = dict(_EXTERNAL_PROVIDERS)
     cmd = manager._find_api_command("0.0.0", env=env)
 
-    assert cmd == [str(_base_pythonw(tmp_path)), "-m", "hindsight_api.main"]
-    assert str(tmp_path / "Lib" / "site-packages") in env["PYTHONPATH"]
+    site_packages = str(tmp_path / "Lib" / "site-packages")
+    assert cmd == [str(_base_pythonw(tmp_path)), "-c", _VENV_SITE_BOOTSTRAP, site_packages]
+    assert "PYTHONPATH" not in env
+
+
+def test_venv_site_bootstrap_runs_pth_files_and_passes_the_daemon_args(tmp_path):
+    """The bootstrap must do what the venv would: process .pth files, then run
+    hindsight_api.main with the arguments the daemon command appends."""
+    import subprocess
+    import sys
+
+    from hindsight_embed.daemon_embed_manager import _VENV_SITE_BOOTSTRAP
+
+    site_packages = tmp_path / "site-packages"
+    (site_packages / "hindsight_api").mkdir(parents=True)
+    (site_packages / "extra").mkdir()
+    (site_packages / "extra.pth").write_text("extra\n")
+    (site_packages / "extra" / "pth_marker.py").write_text("LOADED = True\n")
+    (site_packages / "hindsight_api" / "__init__.py").write_text("")
+    (site_packages / "hindsight_api" / "main.py").write_text(
+        "import sys, pth_marker\nif __name__ == '__main__':\n    print(sys.argv[1:], pth_marker.LOADED)\n"
+    )
+
+    out = subprocess.run(
+        # -S: no site-packages of its own, like the base interpreter outside the venv; otherwise
+        # this dev environment's real hindsight_api would win over the fake one.
+        [sys.executable, "-S", "-c", _VENV_SITE_BOOTSTRAP, str(site_packages), "--port", "9077"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert out.strip() == "['--port', '9077'] True"
 
 
 def test_windows_stdlib_venv_keeps_its_own_pythonw(temp_home, tmp_path, monkeypatch):

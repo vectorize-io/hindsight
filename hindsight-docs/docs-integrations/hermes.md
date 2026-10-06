@@ -329,6 +329,11 @@ order is explicit config → secret scope → the on-disk profile env, and the
 rewrite path is fail-closed: a build with no key never clobbers a profile
 file that already holds one.
 
+The plugin owns only the LLM, log-level and idle-timeout keys in that file. Anything else in it
+(the port hindsight-embed records, a tenant extension and its `HINDSIGHT_API_TENANT_API_KEY`) is
+left alone and never counts as a config change, and the plugin's client sends that tenant key to
+the daemon.
+
 ## Tools
 
 Available in `hybrid` and `tools` memory modes:
