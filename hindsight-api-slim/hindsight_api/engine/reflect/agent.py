@@ -143,7 +143,7 @@ def _build_directives_applied(directives: list[dict[str, Any]] | None) -> list[D
 
 if TYPE_CHECKING:
     from ..llm_wrapper import AnyLLMProvider
-    from ..response_models import LLMToolCall, TokenUsage
+    from ..response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -922,7 +922,7 @@ async def _run_reflect_agent_inner(
             },
         ]
 
-    async def _ask_for_done(feedback: "Sequence[dict[str, Any]]" = ()) -> "LLMToolCall | None":
+    async def _ask_for_done(feedback: "Sequence[dict[str, Any]]" = ()) -> "LLMToolCallResult | None":
         """Ask for the answer as a ``done`` call, in the conversation it was gathered in.
 
         The model stopping with prose is the common case (measured: only ~29% of
@@ -938,8 +938,10 @@ async def _run_reflect_agent_inner(
         after the request prompt, so a document the schema refused is fixed on
         the same prefix instead of being read back some looser way.
 
-        Returns None when the provider will not produce the call, and the caller
-        falls back to the standalone prompt.
+        Returns the whole reply (the caller needs its ``finish_reason`` to decide
+        whether a malformed document may be repaired), or None when the provider
+        will not produce the call, and the caller falls back to the standalone
+        prompt.
         """
         nonlocal total_input_tokens, total_output_tokens, total_cached_tokens, total_thoughts_tokens
         if not messages or messages[-1].get("role") != "tool":
@@ -979,7 +981,7 @@ async def _run_reflect_agent_inner(
                 "output_tokens": result.output_tokens,
             }
         )
-        return next((tc for tc in result.tool_calls if _is_done_tool(tc.name)), None)
+        return result
 
     async def _finish(iterations_completed: int) -> ReflectAgentResult:
         """Produce the answer for a loop that has stopped retrieving.
@@ -991,8 +993,9 @@ async def _run_reflect_agent_inner(
         feedback: Sequence[dict[str, Any]] = ()
         rejections = 0
         while True:
-            closing = await _ask_for_done(feedback)
-            if closing is None:
+            reply = await _ask_for_done(feedback)
+            closing = next((tc for tc in reply.tool_calls if _is_done_tool(tc.name)), None) if reply else None
+            if reply is None or closing is None:
                 if feedback:
                     # A document was already refused on this path. Dropping to
                     # the standalone prose prompt would answer the question by
@@ -1018,6 +1021,7 @@ async def _run_reflect_agent_inner(
                     response_schema=response_schema,
                     max_tokens=max_tokens,
                     presenter=presenter,
+                    finish_reason=reply.finish_reason,
                 )
             except DocumentSectionsInvalidError as exc:
                 # Re-ask on the same prefix with the field errors attached, the
@@ -1454,6 +1458,7 @@ async def _run_reflect_agent_inner(
                         response_schema=response_schema,
                         max_tokens=max_tokens,
                         presenter=presenter,
+                        finish_reason=result.finish_reason,
                     )
                 except DocumentSectionsInvalidError as exc:
                     # The document did not match the declared shape. Hand the
@@ -1942,6 +1947,34 @@ async def _rewrite_to_length_budget(
     return _rewrite(rewritten.strip() or answer, None)
 
 
+def _decode_document_argument(raw: str, finish_reason: str | None) -> Any:
+    """Decode a string-encoded ``document`` argument.
+
+    A completed generation that is merely malformed (Qwen swapping the closing
+    ``]}`` pairs, #5272) is repaired with ``json_repair``. Repair is gated on the
+    same completed ``finish_reason`` as structured output: json_repair closes an
+    unterminated body by inventing the terminator, so a cut-off document would
+    come back short and look complete. Anything still unparseable raises
+    :class:`DocumentSectionsInvalidError`, so the caller re-asks with the parse
+    error instead of failing the run on the first bad emission.
+    """
+    from json_repair import repair_json
+
+    from ..providers.openai_compatible_llm import _COMPLETED_FINISH_REASONS
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        if finish_reason in _COMPLETED_FINISH_REASONS:
+            repaired = repair_json(raw, return_objects=True)
+            if isinstance(repaired, dict) and repaired.get("sections"):
+                logger.warning(f"[REFLECT] repaired a malformed done document ({exc.msg} at char {exc.pos})")
+                return repaired
+        raise DocumentSectionsInvalidError(
+            [f"document: not valid JSON ({exc.msg} at char {exc.pos} of {len(raw)}); check the closing brackets"]
+        ) from exc
+
+
 async def _process_done_tool(
     done_call: "LLMToolCall",
     available_memory_ids: set[str],
@@ -1959,6 +1992,7 @@ async def _process_done_tool(
     llm_config: "AnyLLMProvider | None" = None,
     response_schema: dict | None = None,
     max_tokens: int | None = None,
+    finish_reason: str | None = None,
 ) -> ReflectAgentResult:
     """Process the done tool call and return the result."""
     args = done_call.arguments
@@ -1978,10 +2012,7 @@ async def _process_done_tool(
     document: StructuredDocument | None = None
     raw_document = args.get("document")
     if isinstance(raw_document, str):
-        try:
-            raw_document = json.loads(raw_document)
-        except json.JSONDecodeError:
-            raw_document = None
+        raw_document = _decode_document_argument(raw_document, finish_reason)
     if isinstance(raw_document, dict):
         document = document_from_sections(raw_document)
         answer = render_document(document).strip()
@@ -1992,7 +2023,8 @@ async def _process_done_tool(
         # field and no decodable ``document`` object. Typically its output was
         # cut off mid-tool-call by the completion cap (finish_reason "length"),
         # but the same signature also comes from a well-formed completion whose
-        # ``document`` argument never parsed to an object, so truncation is one
+        # ``document`` argument decoded to something other than an object (an
+        # undecodable string is re-asked before reaching here), so truncation is one
         # possible cause, not the only one. Fail instead of standing in
         # a placeholder: it is non-empty, so every downstream emptiness guard reads
         # it as a real answer and stores it over working content (#2959).
@@ -2001,8 +2033,7 @@ async def _process_done_tool(
             f"{total_tools_called} tool call(s) made): the done call carried no usable "
             "answer and no decodable document object. If the model's output was cut off "
             "mid-tool-call, the answer field may have arrived empty; a document argument "
-            "that is not a JSON object (e.g. a string-encoded document) produces the "
-            "same signature."
+            "that is not a JSON object produces the same signature."
         )
 
     final_usage = usage

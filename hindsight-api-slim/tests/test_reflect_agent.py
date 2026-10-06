@@ -2289,15 +2289,65 @@ class TestDoneToolStringDocument:
         with pytest.raises(ReflectNoAnswerError):
             await self._run(mock_llm, mock_functions)
 
+    @staticmethod
+    def _swapped_closers() -> str:
+        """The #5272 Qwen emission: complete, but the final ``"]}]}`` written as ``"}]}]``."""
+        good = json.dumps(_DOCUMENT)
+        assert good.endswith('"]}]}')
+        return good[:-5] + '"}]}]'
+
+    def _done(self, call_id: str, document: str, finish_reason: str | None) -> LLMToolCallResult:
+        return LLMToolCallResult(
+            tool_calls=[
+                LLMToolCall(id=call_id, name="done", arguments={"document": document, "memory_ids": ["mem-1"]})
+            ],
+            finish_reason=finish_reason,
+        )
+
     @pytest.mark.asyncio
-    async def test_unparseable_string_document_without_answer_raises(self, mock_llm, mock_functions):
-        """An unparseable ``document`` string with no ``answer`` must raise, not slip through."""
-        mock_llm.call_with_tools.side_effect = self._recall_then({"document": "not json", "memory_ids": ["mem-1"]})
+    async def test_swapped_closers_from_a_completed_call_are_repaired(self, mock_llm, mock_functions):
+        """#5272: a finished generation with mis-ordered closing brackets renders, no re-ask."""
+        mock_llm.call_with_tools.side_effect = [
+            self._recall_then({})[0],
+            self._done("2", self._swapped_closers(), "tool_calls"),
+        ]
 
-        with pytest.raises(ReflectNoAnswerError) as exc_info:
+        result = await self._run(mock_llm, mock_functions)
+
+        mock_llm.call_with_tools.side_effect = self._recall_then({"document": _DOCUMENT, "memory_ids": ["mem-1"]})
+        expected = await self._run(mock_llm, mock_functions)
+        assert result.text == expected.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("finish_reason", [None, "length"])
+    async def test_swapped_closers_without_a_completion_signal_are_re_asked(
+        self, mock_llm, mock_functions, finish_reason
+    ):
+        """No completed finish_reason, no repair (it could be a cut-off body): re-ask with the parse error."""
+        mock_llm.call_with_tools.side_effect = [
+            self._recall_then({})[0],
+            self._done("2", self._swapped_closers(), finish_reason),
+            self._done("3", json.dumps(_DOCUMENT), "tool_calls"),
+        ]
+
+        result = await self._run(mock_llm, mock_functions)
+
+        assert "Quarterly planning is owned by the platform team." in result.text
+        rejection = mock_llm.call_with_tools.await_args_list[2].kwargs["messages"][-1]
+        assert rejection["role"] == "tool"
+        assert "not valid JSON" in rejection["content"]
+
+    @pytest.mark.asyncio
+    async def test_unparseable_string_document_that_is_never_fixed_raises(self, mock_llm, mock_functions):
+        """A model that keeps sending garbage still fails the run loudly."""
+        mock_llm.call_with_tools.side_effect = [
+            self._recall_then({})[0],
+            self._done("2", "not json", "tool_calls"),
+            self._done("3", "not json", "tool_calls"),
+        ]
+
+        with pytest.raises(DocumentSectionsInvalidError, match="not valid JSON"):
             await self._run(mock_llm, mock_functions)
-
-        assert "no answer" in str(exc_info.value)
 
 
 class TestDirectiveLeakageOnEmptyBank:
