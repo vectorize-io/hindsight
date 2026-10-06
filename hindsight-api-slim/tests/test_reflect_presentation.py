@@ -133,3 +133,13 @@ def test_chunks_lose_their_long_keys_and_bookkeeping():
 def test_error_results_pass_through_untouched():
     error = {"error": "recall requires a query parameter"}
     assert ToolResultPresenter().present(error) is error
+
+
+def test_drop_unseen_ids_keeps_only_uuids_the_model_read():
+    seen = "3f2a9c1e-0b4d-4e6f-8a1b-2c3d4e5f6a7b"
+    presenter = ToolResultPresenter()
+    presenter.see("asked about 11111111-2222-4333-8444-555555555555")
+    presenter.present({"memories": [{"id": seen, "text": "x"}]})
+
+    text = f"{seen.upper()} 11111111-2222-4333-8444-555555555555 3f2a9c1e-0000-4e6f-8a1b-2c3d4e5f6a7b"
+    assert presenter.drop_unseen_ids(text) == f"{seen.upper()} 11111111-2222-4333-8444-555555555555 [unverified id]"

@@ -16,6 +16,11 @@ So, per reflect:
   anything reads it. The aliases mean nothing outside this one reflect, so none
   may reach the caller or a stored mental model (#4876). The API trace keeps the
   raw output; only the prompt is shortened.
+* a full UUID in the final answer that the model was never shown — not a
+  retrieved id, not in any tool result, not in its prompt — was made up or
+  garbled (by the model or by the length rewrite), so it is replaced before it
+  can pose as a citation (#5166). A UUID the model did read, a request id
+  quoted in a memory say, passes untouched.
 * timestamps keep their minute (``2026-03-07 12:00``), dropping seconds,
   microseconds and the UTC offset (they are all UTC). Dates are evidence:
   supersession is decided by them, so they are shortened, never dropped.
@@ -29,11 +34,15 @@ So, per reflect:
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
 _ALIAS_RE = re.compile(r"^[fopc]\d+$")
 _ALIAS_IN_TEXT_RE = re.compile(r"\b[fopc]\d+\b")
+_UUID_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE)
+#: What an id the model was never shown is replaced with in the answer.
+_UNVERIFIED_ID = "[unverified id]"
 _TIMESTAMP_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]00:?00)?$")
 _DATE_FIELDS = ("mentioned_at", "occurred_start", "occurred_end", "updated_at", "created_at")
 #: Result lists and the alias prefix of their items.
@@ -58,6 +67,15 @@ class ToolResultPresenter:
         self._id_by_alias: dict[str, str] = {}
         self._counters: dict[str, int] = {}
         self._shown: set[tuple[str, str, bool]] = set()
+        self._seen_uuids: set[str] = set()
+
+    def see(self, text: str) -> None:
+        """Record the UUIDs in text the model reads, so the answer may repeat them."""
+        self._seen_uuids.update(m.lower() for m in _UUID_RE.findall(text))
+
+    def drop_unseen_ids(self, text: str) -> str:
+        """Replace every UUID in ``text`` the model was never shown (#5166)."""
+        return _UUID_RE.sub(lambda m: m.group(0) if m.group(0).lower() in self._seen_uuids else _UNVERIFIED_ID, text)
 
     def alias(self, raw_id: str, prefix: str) -> str:
         existing = self._alias_by_id.get(raw_id)
@@ -112,6 +130,9 @@ class ToolResultPresenter:
 
     def present(self, output: Any) -> Any:
         """The prompt form of one tool result. Never mutates ``output``."""
+        # The raw output, not the presented one: an aliased id resolves back to
+        # its UUID, so the answer may cite it in full.
+        self.see(json.dumps(output, default=str))
         if not isinstance(output, dict) or "error" in output:
             return output
         shown: dict[str, list[str]] = {}

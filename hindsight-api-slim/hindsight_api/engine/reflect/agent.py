@@ -703,6 +703,10 @@ async def _run_reflect_agent_inner(
     # What the model reads of each tool result, and the alias table that maps the
     # short ids it writes back to real ones — see presentation.py.
     presenter = ToolResultPresenter()
+    # A UUID the caller wrote (in the question, a directive, the mission) is one
+    # the answer may repeat.
+    for message in messages:
+        presenter.see(message["content"])
 
     # Step-by-step context caching for the agentic tool loop.
     #
@@ -1013,6 +1017,7 @@ async def _run_reflect_agent_inner(
                     llm_config=llm_config,
                     response_schema=response_schema,
                     max_tokens=max_tokens,
+                    presenter=presenter,
                 )
             except DocumentSectionsInvalidError as exc:
                 # Re-ask on the same prefix with the field errors attached, the
@@ -1117,6 +1122,8 @@ async def _run_reflect_agent_inner(
                     "output_tokens": rewrite.output_tokens,
                 }
             )
+        # After the rewrite, which can garble an id it was handed intact (#5166).
+        answer = presenter.drop_unseen_ids(answer)
 
         structured_output = None
         structured_output_error = None
@@ -1446,6 +1453,7 @@ async def _run_reflect_agent_inner(
                         llm_config=llm_config,
                         response_schema=response_schema,
                         max_tokens=max_tokens,
+                        presenter=presenter,
                     )
                 except DocumentSectionsInvalidError as exc:
                     # The document did not match the declared shape. Hand the
@@ -1799,6 +1807,23 @@ class _RewriteUsage:
         self.thoughts_tokens += usage.thoughts_tokens
 
 
+def _map_document_text(document: StructuredDocument, fn: Callable[[str], str]) -> StructuredDocument:
+    """``document`` with ``fn`` applied to every heading and block."""
+    return document.model_copy(
+        update={
+            "sections": [
+                section.model_copy(
+                    update={
+                        "heading": fn(section.heading),
+                        "blocks": [b.model_copy(update={"text": fn(b.text)}) for b in section.blocks],
+                    }
+                )
+                for section in document.sections
+            ]
+        }
+    )
+
+
 async def _rewrite_to_length_budget(
     answer: str,
     document: StructuredDocument | None,
@@ -1930,6 +1955,7 @@ async def _process_done_tool(
     log_completion: Callable,
     reflect_id: str,
     directives_applied: list[DirectiveInfo],
+    presenter: ToolResultPresenter,
     llm_config: "AnyLLMProvider | None" = None,
     response_schema: dict | None = None,
     max_tokens: int | None = None,
@@ -1998,6 +2024,11 @@ async def _process_done_tool(
                 output_tokens=rewrite.output_tokens,
             )
         )
+
+    # After the rewrite, which can garble an id it was handed intact (#5166).
+    answer = presenter.drop_unseen_ids(answer)
+    if document is not None:
+        document = _map_document_text(document, presenter.drop_unseen_ids)
 
     # Validate IDs (only include IDs that were actually retrieved)
     used_memory_ids = [mid for mid in (args.get("memory_ids") or []) if mid in available_memory_ids]

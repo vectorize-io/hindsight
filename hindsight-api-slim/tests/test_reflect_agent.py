@@ -2837,6 +2837,104 @@ class TestReflectShortIdAliases:
         assert result.tool_trace[1].output["memories"][0]["id"] == "mem-uuid-1"
 
 
+def _done(arguments: dict) -> LLMToolCallResult:
+    return LLMToolCallResult(
+        tool_calls=[LLMToolCall(id="2", name="done", arguments=arguments)], finish_reason="tool_calls"
+    )
+
+
+class TestReflectDropsUnseenIds:
+    """A UUID in the answer that the model never read is not passed off as a citation (#5166)."""
+
+    REAL = "3f2a9c1e-0b4d-4e6f-8a1b-2c3d4e5f6a7b"
+    # Same first eight characters as REAL, different after: the shape the report found.
+    FAKE = "3f2a9c1e-9999-4e6f-8a1b-000000000000"
+    # A request id quoted inside a memory's text: legitimate, not a citation.
+    REQUEST = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+
+    @pytest.fixture
+    def functions(self):
+        return {
+            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "search_observations_fn": AsyncMock(return_value={"observations": []}),
+            "recall_fn": AsyncMock(
+                return_value={"memories": [{"id": self.REAL, "text": f"Deploy failed, request {self.REQUEST}."}]}
+            ),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+
+    def _llm(self, *after_recall: LLMToolCallResult, rewrite: str | None = None):
+        llm = MagicMock()
+        recall = LLMToolCallResult(
+            tool_calls=[LLMToolCall(id="1", name="recall", arguments={"reason": "r", "query": "deploy"})],
+            finish_reason="tool_calls",
+        )
+        llm.call_with_tools = AsyncMock(side_effect=[recall, *after_recall])
+        llm.call = AsyncMock(
+            return_value=LLMCallResult(
+                content=rewrite or "", usage=TokenUsage(input_tokens=1, output_tokens=1, total_tokens=2)
+            )
+        )
+        return llm
+
+    async def _run(self, llm, functions, max_tokens=None):
+        return await run_reflect_agent(
+            llm_config=llm,
+            bank_id="b",
+            query="why did the deploy fail?",
+            bank_profile={"name": "T", "mission": "M"},
+            has_mental_models=False,
+            include_recall=True,
+            budget="low",
+            max_iterations=5,
+            max_tokens=max_tokens,
+            **functions,
+        )
+
+    @pytest.mark.asyncio
+    async def test_done_answer_with_made_up_uuid(self, functions):
+        llm = self._llm(
+            _done({"answer": f"Deploy failed ({self.REQUEST}). Sources: f1, {self.FAKE}", "memory_ids": ["f1"]})
+        )
+
+        result = await self._run(llm, functions)
+
+        assert result.text == f"Deploy failed ({self.REQUEST}). Sources: {self.REAL}, [unverified id]"
+        assert result.used_memory_ids == [self.REAL]
+
+    @pytest.mark.asyncio
+    async def test_length_rewrite_that_garbles_a_document_citation(self, functions, monkeypatch):
+        config = MagicMock(
+            reflect_prompt_cache_enabled=False, reflect_max_completion_tokens=None, llm_temperature_reflect=0.1
+        )
+        monkeypatch.setattr("hindsight_api.engine.reflect.agent.get_config", lambda: config)
+        document = {"sections": [{"heading": "Deploy", "blocks": ["detail " * 50 + "[f1]"]}]}
+        rewrite = json.dumps({"sections": [{"heading": "Deploy", "blocks": [f"It failed [{self.FAKE}]."]}]})
+        llm = self._llm(_done({"document": document, "memory_ids": ["f1"]}), rewrite=rewrite)
+
+        result = await self._run(llm, functions, max_tokens=8)
+
+        assert self.FAKE not in result.text
+        assert "[[unverified id]]" in result.text
+        assert all(self.FAKE not in b.text for s in result.document.sections for b in s.blocks)
+
+    @pytest.mark.asyncio
+    async def test_forced_synthesis_with_made_up_uuid(self, functions):
+        # The model stops with prose and declines the closing ask for ``done`` too,
+        # so the run ends in forced synthesis.
+        prose = LLMToolCallResult(tool_calls=[], content="Enough.", finish_reason="stop")
+        llm = self._llm(prose, prose)
+        llm.call.return_value = LLMCallResult(
+            content=f"Failed. Source: {self.REAL}, {self.FAKE}",
+            usage=TokenUsage(input_tokens=1, output_tokens=1, total_tokens=2),
+        )
+
+        result = await self._run(llm, functions)
+
+        assert result.text == f"Failed. Source: {self.REAL}, [unverified id]"
+
+
 class TestReflectFinishesThroughDone:
     """A model that stops with prose is asked for ``done`` in the same conversation.
 
