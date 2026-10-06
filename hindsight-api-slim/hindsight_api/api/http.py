@@ -431,7 +431,7 @@ async def run_task_cancellable_on_disconnect(
     task = asyncio.ensure_future(coro)
     waiter = asyncio.ensure_future(token.wait())
     try:
-        done, _pending = await asyncio.wait({task, waiter}, return_when=asyncio.FIRST_COMPLETED)
+        done, _ = await asyncio.wait({task, waiter}, return_when=asyncio.FIRST_COMPLETED)
         if task in done:
             return task.result()
         task.cancel()
@@ -443,6 +443,12 @@ async def run_task_cancellable_on_disconnect(
         raise HTTPException(status_code=_CLIENT_CLOSED_REQUEST_STATUS_CODE, detail=token.reason)
     finally:
         waiter.cancel()
+        # This call can itself be cancelled from above (server shutdown, a deadline),
+        # and `asyncio.wait` does not propagate that to what it was waiting on —
+        # leaving the retain running with nobody to answer, the very thing this
+        # helper exists to stop. Already done on the disconnect path above.
+        if not task.done():
+            task.cancel()
 
 
 class EntityIncludeOptions(BaseModel):
@@ -5459,9 +5465,11 @@ def _register_routes(app: FastAPI):
             if controller is None:
                 yield
                 return
-            # Recall and reflect carry a disconnect token (see api/disconnect.py). A
-            # queued request whose client has gone gives up its place immediately,
-            # which is what makes a patient deadline affordable.
+            # Recall, reflect and the retain POST carry a disconnect token (see
+            # api/disconnect.py). A queued request whose client has gone gives up its
+            # place immediately, which is what makes a patient deadline affordable.
+            # Retain joined them in #4526: before that its lane kept the place of a
+            # caller that had already hung up, because this returned None for it.
             abandoned = get_scope_cancellation_token(request.scope)
             try:
                 async with controller.admit(str(operation), abandoned=abandoned):
@@ -10172,10 +10180,13 @@ def _register_routes(app: FastAPI):
                 total_items_count = 0
                 total_usage = TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0)
 
+                # A coroutine rather than an inline loop so the whole thing can be run
+                # as one cancellable task below; the totals stay in the enclosing scope
+                # because the response is built from them.
                 async def _retain_groups() -> None:
                     nonlocal total_items_count, total_usage
                     for group_strategy, contents in strategy_groups.items():
-                        _result, usage = await app.state.memory.retain_batch_async(
+                        _, usage = await app.state.memory.retain_batch_async(
                             bank_id=bank_id,
                             contents=contents,
                             document_tags=request.document_tags,

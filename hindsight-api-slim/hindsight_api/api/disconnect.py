@@ -9,11 +9,16 @@ the recall/reflect cancellation in #2122/#2127 never actually fired in
 production — the disconnect was never observed.
 
 This pure-ASGI middleware sits *outside* the ``BaseHTTPMiddleware`` layer, where
-it still owns the real ``receive`` channel. For the recall and reflect routes it
-drains ``receive`` in a background task and trips a :class:`CancellationToken`
-the moment ``http.disconnect`` arrives, stashing the token on the ASGI ``scope``.
-The route copies that token onto its ``RequestContext`` and the engine checks it
-at stage boundaries — so abandoned work stops instead of running to completion.
+it still owns the real ``receive`` channel. For the routes it monitors (see
+``_should_monitor``) it drains ``receive`` in a background task and trips a
+:class:`CancellationToken` the moment ``http.disconnect`` arrives, stashing the
+token on the ASGI ``scope``.
+Recall and reflect copy that token onto their ``RequestContext`` and the engine
+checks it at stage boundaries. The retain POST cancels its task outright instead,
+because a sync retain spends its wall time inside one await (the LLM semaphore,
+then the provider) where no checkpoint gets a turn — see
+``run_task_cancellable_on_disconnect``. Either way, abandoned work stops instead
+of running to completion.
 
 It only wraps recall, reflect and the retain POST (small-to-moderate JSON
 bodies); every other request — uploads, MCP streams, etc. — passes straight

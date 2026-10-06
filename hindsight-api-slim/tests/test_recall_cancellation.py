@@ -1,13 +1,17 @@
-"""Tests for cooperative recall/reflect cancellation on client disconnect (#2122).
+"""Tests for cancelling an abandoned request on client disconnect (#2122, #4526).
 
 Layers covered:
 - the ``CancellationToken`` primitive,
 - ``RequestContext`` integration (the carrier the engine checks at boundaries),
 - ``run_cancellable_on_disconnect`` (reads the scope token, maps cancel -> 499),
+- ``run_task_cancellable_on_disconnect``, the hard variant the sync retain uses
+  because its wall time sits inside one await where no checkpoint gets a turn,
 - ``ClientDisconnectCancellationMiddleware``, including the critical regression
   test that it still fires **behind a BaseHTTPMiddleware** — the exact condition
   under which ``Request.is_disconnected()`` silently never fires and the original
-  #2127 implementation did nothing.
+  #2127 implementation did nothing,
+- the retain route end to end at the ASGI layer, the only level where a disconnect
+  can actually be delivered.
 """
 
 import asyncio
@@ -309,7 +313,7 @@ async def test_run_task_cancellable_returns_result_when_no_token():
     assert result == "ok"
 
 
-async def test_run_task_cancellable_kills_an_unco_operative_await():
+async def test_run_task_cancellable_stops_work_that_reaches_no_checkpoint():
     """The point of the hard variant: no checkpoint is reached, yet the work stops.
 
     A sync retain spends its wall time parked on the LLM semaphore and the provider
@@ -340,6 +344,33 @@ async def test_run_task_cancellable_kills_an_unco_operative_await():
     assert exc.value.status_code == _CLIENT_CLOSED_REQUEST_STATUS_CODE
     assert exc.value.detail == "client disconnected"
     assert unwound.is_set(), "the cancelled task was abandoned instead of awaited"
+
+
+async def test_run_task_cancellable_does_not_orphan_the_work_when_cancelled_from_above():
+    """Server shutdown (or any deadline above us) must take the retain down with it.
+
+    ``asyncio.wait`` does not propagate its own cancellation to what it waits on, so
+    without the teardown the work would keep running with nobody left to answer it.
+    """
+    token = CancellationToken()
+    req = _ScopeRequest({SCOPE_CANCELLATION_TOKEN: token})
+    running = asyncio.Event()
+    unwound = asyncio.Event()
+
+    async def work() -> str:
+        running.set()
+        try:
+            await asyncio.sleep(3600)
+            return "committed"
+        finally:
+            unwound.set()
+
+    outer = asyncio.ensure_future(run_task_cancellable_on_disconnect(req, work(), operation="retain", bank_id="b1"))
+    await asyncio.wait_for(running.wait(), timeout=_TEST_TIMEOUT_SECONDS)
+    outer.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await outer
+    await asyncio.wait_for(unwound.wait(), timeout=_TEST_TIMEOUT_SECONDS)
 
 
 async def test_run_task_cancellable_propagates_work_errors():
