@@ -15,7 +15,7 @@ hide_table_of_contents: true
 Hindsight is no longer bundled with Hermes. Nous Research moved every memory provider out of the
 Hermes core tree, so new installs now run `hermes plugins install hindsight` before
 `hermes memory setup`. Existing setups migrate themselves. See
-[How to Migrate Your Hindsight Memory in Hermes](/blog/2026/09/28/migrate-hindsight-hermes-plugin).
+[What Changes Now That Hindsight Is a Hermes Plugin](/blog/2026/10/01/hindsight-hermes-plugin-what-changed).
 :::
 
 Nous Research just shipped [Bot Mode](https://x.com/NousResearch/status/2089429432612147572) for Hermes. Your agent profiles become a roster of named **Bots**, and each one carries its own role, model, skills, and profile picture. Bots can use any model and even talk to each other in a shared room. Build a specialist once, and use it forever.

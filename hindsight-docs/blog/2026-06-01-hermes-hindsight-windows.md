@@ -15,7 +15,7 @@ hide_table_of_contents: true
 Hindsight is no longer bundled with Hermes. Nous Research moved every memory provider out of the
 Hermes core tree, so new installs now run `hermes plugins install hindsight` before
 `hermes memory setup`. Existing setups migrate themselves. See
-[How to Migrate Your Hindsight Memory in Hermes](/blog/2026/09/28/migrate-hindsight-hermes-plugin).
+[What Changes Now That Hindsight Is a Hermes Plugin](/blog/2026/10/01/hindsight-hermes-plugin-what-changed).
 :::
 
 Yesterday, Nous Research [announced that Hermes Agent is now natively supported on Windows](https://x.com/NousResearch/status/2061236625925886252). Here's how to give it persistent codebase memory.

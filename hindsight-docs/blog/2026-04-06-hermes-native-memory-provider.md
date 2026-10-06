@@ -14,7 +14,7 @@ hide_table_of_contents: true
 Hindsight is no longer bundled with Hermes. Nous Research moved every memory provider out of the
 Hermes core tree, so new installs now run `hermes plugins install hindsight` before
 `hermes memory setup`. Existing setups migrate themselves. See
-[How to Migrate Your Hindsight Memory in Hermes](/blog/2026/09/28/migrate-hindsight-hermes-plugin).
+[What Changes Now That Hindsight Is a Hermes Plugin](/blog/2026/10/01/hindsight-hermes-plugin-what-changed).
 :::
 
 Hermes Agent now ships with a pluggable memory provider system. Hindsight is one of the supported backends, and it's the one that leads on [the benchmark that actually tests memory at scale](/blog/2026/04/02/beam-sota).
