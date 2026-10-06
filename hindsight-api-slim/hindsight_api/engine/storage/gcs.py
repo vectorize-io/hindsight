@@ -75,3 +75,17 @@ class GCSFileStorage(ObstoreFileStorage):
             if gac is not None:
                 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = gac
         logger.info(f"Initialized GCS file storage: bucket={bucket}")
+
+    async def get_download_url(self, key: str, expires_in: int = 3600) -> str:
+        # Storage keys percent-encode their segments (``key_segment``), so a bank id
+        # with a space, a dot or non-ASCII is stored under an object name that
+        # literally contains ``%`` -- "Express%20AI" is the name, not an escaped
+        # "Express AI". obstore's GCS signer puts the key into the URL path as-is, so
+        # GCS decodes that ``%20`` and looks up a different object: NoSuchKey on a
+        # download whose export succeeded. Escaping ``%`` makes the path decode back to
+        # the literal name, and the signature is computed over that same path.
+        #
+        # GCS only: the S3 signer already escapes ``%`` (pre-escaping there would
+        # double-encode), which tests/test_file_storage_s3.py checks against a real
+        # S3 server.
+        return await super().get_download_url(key.replace("%", "%25"), expires_in)
