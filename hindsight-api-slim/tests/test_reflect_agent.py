@@ -2484,7 +2484,7 @@ class TestMentalModelShortCircuitRealLLM:
         )
 
     @pytest.mark.asyncio
-    async def test_real_fresh_but_uncovering_mental_model_digs_instead_of_denying(self, llm_config):
+    async def test_real_fresh_but_uncovering_mental_model_digs_instead_of_denying(self, llm_config, mock_functions):
         """Fresh pages that do not COVER the question must not become a negative answer.
 
         The regression from #4567: the short-circuit releases the forced lower
@@ -2510,6 +2510,7 @@ class TestMentalModelShortCircuitRealLLM:
         on the reporter's banks in #4567, not here.
         """
         functions = self._stub_functions(
+            mock_functions,
             mental_models=[
                 {
                     "id": "mm-process",
