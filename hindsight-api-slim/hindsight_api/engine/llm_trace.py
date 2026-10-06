@@ -438,7 +438,7 @@ class LLMTraceRecorder:
         # post-operation UPDATE (otherwise the UPDATE could race ahead of the
         # INSERTs it patches — but it must not block on unrelated operations).
         self._writes = PendingWrites("LLM trace write")
-        # Trace ids that have actually produced a row. `_pending` cannot answer this: it is
+        # Trace ids that have actually produced a row. `_writes` cannot answer this: it is
         # emptied as writes complete, so an absent entry means "nothing in flight", not "nothing
         # was ever written". Without the distinction, `attach_memory_ids` issues an UPDATE for
         # every operation that created memories -- including a retain in an extraction mode that
