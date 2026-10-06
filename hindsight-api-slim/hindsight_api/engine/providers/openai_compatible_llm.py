@@ -362,6 +362,11 @@ def _first_choice_or_error(response: Any, *, provider: str, model: str, scope: s
     return choices[0]
 
 
+def _is_openrouter(provider: str, base_url: str | None) -> bool:
+    """True for the openrouter provider and for openai pointed at an OpenRouter base URL."""
+    return provider == "openrouter" or urlparse(base_url or "").hostname == "openrouter.ai"
+
+
 def _content_or_error(response: Any, *, provider: str, model: str, scope: str) -> tuple[str, Any]:
     """Extract message.content, turning provider shape issues into useful errors.
 
@@ -1279,6 +1284,15 @@ class OpenAICompatibleLLM(LLMInterface):
                 if self._supports_json_mode():
                     call_params["messages"] = _ensure_json_word_in_user_message(call_params["messages"])
                     call_params["response_format"] = {"type": "json_object"}
+
+        # OpenRouter load-balances one model across upstreams, and an upstream that
+        # does not support response_format may answer with empty content and
+        # finish_reason=stop instead of an error (#3494). require_parameters limits
+        # routing to upstreams that honour every parameter sent. Operator-set
+        # provider routing keys win; the provider dict is copied, not mutated.
+        if "response_format" in call_params and _is_openrouter(self.provider, self.base_url):
+            body = call_params.setdefault("extra_body", {})
+            body["provider"] = {"require_parameters": True, **body.get("provider", {})}
 
         apply_bank_attribution(call_params)
         # Cache pinning, alongside the other identity injection above and, like

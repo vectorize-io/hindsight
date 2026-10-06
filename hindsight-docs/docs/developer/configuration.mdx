@@ -453,6 +453,10 @@ export HINDSIGHT_API_LLM_MODEL=doubao-pro-32k
 export HINDSIGHT_API_LLM_PROVIDER=openrouter
 export HINDSIGHT_API_LLM_API_KEY=your-openrouter-api-key
 export HINDSIGHT_API_LLM_MODEL=qwen/qwen3.5-9b
+# Structured-output calls (fact extraction, consolidation) send
+# provider.require_parameters=true, so OpenRouter only routes them to upstreams
+# that support response_format. Any "provider" keys you set in
+# HINDSIGHT_API_LLM_EXTRA_BODY (e.g. "only") are kept and take precedence.
 
 # Requesty (OpenAI-compatible gateway)
 export HINDSIGHT_API_LLM_PROVIDER=requesty
