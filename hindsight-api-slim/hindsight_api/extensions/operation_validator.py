@@ -416,6 +416,7 @@ class BankWriteOperation(StrEnum):
     DELETE_MENTAL_MODEL = "delete_mental_model"
     DELETE_OPERATION = "delete_operation"
     DELETE_WEBHOOK = "delete_webhook"
+    IMPORT_DOCUMENTS = "import_documents"
     MERGE_BANK_MISSION = "merge_bank_mission"
     MOVE_KNOWLEDGE_NODE = "move_knowledge_node"
     RENAME_KNOWLEDGE_NODE = "rename_knowledge_node"
