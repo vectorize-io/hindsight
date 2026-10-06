@@ -157,21 +157,24 @@ _COMPACTED_TOOL_RESULT = "[Earlier tool result omitted to fit the context budget
 #: rest of the iteration budget on it costs a reflect either way.
 _MAX_DOCUMENT_REJECTIONS = 1
 
-#: Temperature for split synthesis's map calls. They copy claims and ids out of one
-#: chunk — the mechanical half of the job, like consolidation's extraction passes,
-#: which also run at 0. The reflect temperature (0.9 by default) belongs to the calls
-#: that reason and write; at that setting a map call sometimes answered a plainly
-#: relevant chunk with the six-token "(no relevant evidence)" sentinel and
-#: finish_reason=stop, dropping that chunk's evidence from the reduce (#4054).
+#: Temperature for reflect's mechanical passes: split synthesis's map calls, which copy
+#: claims and ids out of one chunk, and the structured-output extraction pass, which
+#: parses an answer into a response_schema. Like consolidation's extraction passes they
+#: run at 0. The reflect temperature (0.9 by default) belongs to the calls that reason
+#: and write; at that setting a map call sometimes answered a plainly relevant chunk
+#: with the six-token "(no relevant evidence)" sentinel and finish_reason=stop, dropping
+#: that chunk's evidence from the reduce (#4054).
 #:
 #: Applied only when a reflect temperature is configured at all: ``none`` resolves the
 #: whole chain to None so the parameter is omitted, which is how reasoning models that
-#: reject any temperature are run. Hardcoding 0 here would put it back for them.
-_MAP_TEMPERATURE = 0.0
+#: reject any temperature are run. Hardcoding 0 here would put it back for them — a
+#: mental-model refresh against Bedrock GPT-6 Luna failed with structured_output_failed
+#: and kept the previous page content for exactly that reason.
+_DETERMINISTIC_TEMPERATURE = 0.0
 
 
-def _map_temperature() -> float | None:
-    return None if get_config().llm_temperature_reflect is None else _MAP_TEMPERATURE
+def _deterministic_temperature() -> float | None:
+    return None if get_config().llm_temperature_reflect is None else _DETERMINISTIC_TEMPERATURE
 
 
 class ReflectNoAnswerError(RuntimeError):
@@ -383,10 +386,7 @@ OUTPUT:"""
             response_format=DynamicModel,
             scope="reflect_structured",
             strict_schema=get_config().llm_strict_schema_reflect,
-            # Schema extraction is deterministic when temperature is supported,
-            # but must honor an omitted reflect temperature for models that
-            # reject the parameter entirely.
-            temperature=None if get_config().llm_temperature_reflect is None else 0.0,
+            temperature=_deterministic_temperature(),
             max_completion_tokens=max_tokens,
             max_retries=1,
             initial_backoff=0.25,
@@ -1072,7 +1072,7 @@ async def _run_reflect_agent_inner(
                         f"final_map_{i}",
                         CLAIMS_SYSTEM_PROMPT,
                         synthesis_max_completion_tokens,
-                        temperature=_map_temperature(),
+                        temperature=_deterministic_temperature(),
                     )
                     for i, chunk in enumerate(chunks, 1)
                 )
