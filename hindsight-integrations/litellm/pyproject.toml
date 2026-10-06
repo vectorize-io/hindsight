@@ -36,9 +36,10 @@ dependencies = [
     "hindsight-client>=0.4.0",  # provides both hindsight_client and hindsight_client_api
     # 1.82.7/1.82.8 supply-chain fix plus GHSA-jjhc-v7c2-5hh6 /
     # GHSA-53mr-6c8q-9789 / GHSA-qrc4-49gv-mv9m / GHSA-wpfp-gwwc-vwq6 /
-    # GHSA-4xpc-pv4p-pm3w. Floor 1.95.1: every release from
-    # it on ships cp314 wheels and macOS wheels (arm64 and x86_64), so one
-    # floor serves every platform, mirroring hindsight-api-slim.
+    # GHSA-4xpc-pv4p-pm3w. Floor 1.95.1: every release from it on ships cp314
+    # and macOS (arm64/x86_64) wheels, so one floor serves every platform. It
+    # replaces a darwin-only pin to 1.91.x, which capped Python at <3.14.
+    # Mirrors hindsight-api-slim.
     "litellm>=1.95.1",
     # Transitive dependency security fixes
     "aiohttp>=3.14.3",  # GHSA-cq5v-8q36-5273: OOB heap read in the C response parser, plus earlier DoS fixes
