@@ -2337,6 +2337,43 @@ class TestDoneToolStringDocument:
         assert rejection["role"] == "tool"
         assert "not valid JSON" in rejection["content"]
 
+    @staticmethod
+    def _raw_with_dropped_bracket() -> str:
+        """The #5272 qwen3.8-flash emission: the whole payload unparseable, a block list closed ``"}``."""
+        good = json.dumps({"document": _DOCUMENT, "memory_ids": ["mem-1"]})
+        assert '"]}' in good
+        return good.replace('"]}', '"}', 1)
+
+    def _raw_done(self, call_id: str, finish_reason: str | None) -> LLMToolCallResult:
+        return LLMToolCallResult(
+            tool_calls=[LLMToolCall(id=call_id, name="done", arguments={"_raw": self._raw_with_dropped_bracket()})],
+            finish_reason=finish_reason,
+        )
+
+    @pytest.mark.asyncio
+    async def test_unparseable_payload_from_a_completed_call_is_repaired(self, mock_llm, mock_functions):
+        """#5272: the provider could not parse done's arguments at all; repair them, no re-ask."""
+        mock_llm.call_with_tools.side_effect = [self._recall_then({})[0], self._raw_done("2", "tool_calls")]
+
+        result = await self._run(mock_llm, mock_functions)
+
+        assert "Quarterly planning is owned by the platform team." in result.text
+        assert mock_llm.call_with_tools.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_unparseable_payload_without_a_completion_signal_is_re_asked(self, mock_llm, mock_functions):
+        mock_llm.call_with_tools.side_effect = [
+            self._recall_then({})[0],
+            self._raw_done("2", None),
+            self._done("3", json.dumps(_DOCUMENT), "tool_calls"),
+        ]
+
+        result = await self._run(mock_llm, mock_functions)
+
+        assert "Quarterly planning is owned by the platform team." in result.text
+        rejection = mock_llm.call_with_tools.await_args_list[2].kwargs["messages"][-1]
+        assert "arguments: not valid JSON" in rejection["content"]
+
     @pytest.mark.asyncio
     async def test_unparseable_string_document_that_is_never_fixed_raises(self, mock_llm, mock_functions):
         """A model that keeps sending garbage still fails the run loudly."""

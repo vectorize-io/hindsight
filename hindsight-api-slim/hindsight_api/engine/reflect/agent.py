@@ -1005,7 +1005,9 @@ async def _run_reflect_agent_inner(
                 return await _forced_final_synthesis(iterations_completed)
             try:
                 return await _process_done_tool(
-                    closing.model_copy(update={"arguments": presenter.resolve(closing.arguments)}),
+                    closing.model_copy(
+                        update={"arguments": presenter.resolve(_done_arguments(closing, reply.finish_reason))}
+                    ),
                     available_memory_ids,
                     available_mental_model_ids,
                     available_observation_ids,
@@ -1442,7 +1444,9 @@ async def _run_reflect_agent_inner(
                 span.set_attribute("hindsight.operation", "reflect_tool_call")
                 try:
                     return await _process_done_tool(
-                        done_call.model_copy(update={"arguments": presenter.resolve(done_call.arguments)}),
+                        done_call.model_copy(
+                            update={"arguments": presenter.resolve(_done_arguments(done_call, result.finish_reason))}
+                        ),
                         available_memory_ids,
                         available_mental_model_ids,
                         available_observation_ids,
@@ -1947,13 +1951,13 @@ async def _rewrite_to_length_budget(
     return _rewrite(rewritten.strip() or answer, None)
 
 
-def _decode_document_argument(raw: str, finish_reason: str | None) -> Any:
-    """Decode a string-encoded ``document`` argument.
+def _decode_json_argument(raw: str, finish_reason: str | None, field: str) -> Any:
+    """Decode a JSON-encoded tool argument: ``done``'s ``document``, or its whole payload.
 
-    A completed generation that is merely malformed (Qwen swapping the closing
-    ``]}`` pairs, #5272) is repaired with ``json_repair``. Repair is gated on the
-    same completed ``finish_reason`` as structured output: json_repair closes an
-    unterminated body by inventing the terminator, so a cut-off document would
+    A completed generation that is merely malformed (Qwen swapping or dropping a
+    closing ``]``/``}``, #5272) is repaired with ``json_repair``. Repair is gated on
+    the same completed ``finish_reason`` as structured output: json_repair closes
+    an unterminated body by inventing the terminator, so a cut-off document would
     come back short and look complete. Anything still unparseable raises
     :class:`DocumentSectionsInvalidError`, so the caller re-asks with the parse
     error instead of failing the run on the first bad emission.
@@ -1967,12 +1971,30 @@ def _decode_document_argument(raw: str, finish_reason: str | None) -> Any:
     except json.JSONDecodeError as exc:
         if finish_reason in _COMPLETED_FINISH_REASONS:
             repaired = repair_json(raw, return_objects=True)
-            if isinstance(repaired, dict) and repaired.get("sections"):
-                logger.warning(f"[REFLECT] repaired a malformed done document ({exc.msg} at char {exc.pos})")
+            if isinstance(repaired, dict) and repaired:
+                logger.warning(f"[REFLECT] repaired malformed done {field} ({exc.msg} at char {exc.pos})")
                 return repaired
         raise DocumentSectionsInvalidError(
-            [f"document: not valid JSON ({exc.msg} at char {exc.pos} of {len(raw)}); check the closing brackets"]
+            [f"{field}: not valid JSON ({exc.msg} at char {exc.pos} of {len(raw)}); check the closing brackets"]
         ) from exc
+
+
+def _done_arguments(done_call: "LLMToolCall", finish_reason: str | None) -> dict[str, Any]:
+    """``done``'s arguments, decoding a payload the provider could not parse.
+
+    Providers keep an unparseable arguments string as ``{"_raw": ...}``. When the
+    error is in the outer payload rather than inside ``document`` (#5272: a block
+    list closed with ``"}`` instead of ``"]}``), nothing else would ever look at it
+    and the run failed as "no answer". Decoded before the presenter resolves the
+    short ids, which live in that same payload.
+    """
+    args = done_call.arguments
+    if set(args) != {"_raw"} or not isinstance(args["_raw"], str):
+        return args
+    decoded = _decode_json_argument(args["_raw"], finish_reason, "arguments")
+    if not isinstance(decoded, dict):
+        raise DocumentSectionsInvalidError(["arguments: expected a JSON object"])
+    return decoded
 
 
 async def _process_done_tool(
@@ -2012,7 +2034,7 @@ async def _process_done_tool(
     document: StructuredDocument | None = None
     raw_document = args.get("document")
     if isinstance(raw_document, str):
-        raw_document = _decode_document_argument(raw_document, finish_reason)
+        raw_document = _decode_json_argument(raw_document, finish_reason, "document")
     if isinstance(raw_document, dict):
         document = document_from_sections(raw_document)
         answer = render_document(document).strip()
