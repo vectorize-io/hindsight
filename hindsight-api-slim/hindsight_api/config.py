@@ -574,7 +574,10 @@ ENV_EMBEDDINGS_LITELLM_DIMENSIONS = "HINDSIGHT_API_EMBEDDINGS_LITELLM_DIMENSIONS
 ENV_RERANKER_LITELLM_API_BASE = "HINDSIGHT_API_RERANKER_LITELLM_API_BASE"
 ENV_RERANKER_LITELLM_API_KEY = "HINDSIGHT_API_RERANKER_LITELLM_API_KEY"
 ENV_RERANKER_LITELLM_MODEL = "HINDSIGHT_API_RERANKER_LITELLM_MODEL"
+# Deprecated alias of ENV_RERANKER_MAX_TOKENS_PER_DOC, folded into it at load time.
 ENV_RERANKER_LITELLM_MAX_TOKENS_PER_DOC = "HINDSIGHT_API_RERANKER_LITELLM_MAX_TOKENS_PER_DOC"
+# Provider-agnostic per-document truncation cap (tokens, see ENV_TOKENIZER_ENCODING).
+ENV_RERANKER_MAX_TOKENS_PER_DOC = "HINDSIGHT_API_RERANKER_MAX_TOKENS_PER_DOC"
 
 # LiteLLM SDK configuration (direct API access, no proxy needed)
 ENV_EMBEDDINGS_LITELLM_SDK_API_KEY = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_KEY"
@@ -1481,7 +1484,10 @@ DEFAULT_TEXT_SEARCH_EXTENSION_PG_SEARCH_FUNCTION_SCHEMA = "paradedb"
 DEFAULT_LITELLM_API_BASE = "http://localhost:4000"
 DEFAULT_EMBEDDINGS_LITELLM_MODEL = "text-embedding-3-small"
 DEFAULT_RERANKER_LITELLM_MODEL = "cohere/rerank-english-v3.0"
-DEFAULT_RERANKER_LITELLM_MAX_TOKENS_PER_DOC: int | None = None
+# Per-document truncation before rerank, applied to every provider. Off by default;
+# set it to the model's context window (or lower, to bound request size on a CPU-only
+# rerank server).
+DEFAULT_RERANKER_MAX_TOKENS_PER_DOC: int | None = None
 
 # LiteLLM SDK defaults
 DEFAULT_EMBEDDINGS_LITELLM_SDK_MODEL = "cohere/embed-english-v3.0"
@@ -2688,6 +2694,8 @@ class RerankerMemberConfig:
 
     index: int
     provider: str
+    # Provider-agnostic per-document token cap; None disables truncation.
+    max_tokens_per_doc: int | None
     # local
     local_model: str
     local_force_cpu: bool
@@ -2721,7 +2729,6 @@ class RerankerMemberConfig:
     litellm_api_base: str
     litellm_api_key: str | None
     litellm_model: str
-    litellm_max_tokens_per_doc: int | None
     litellm_timeout: float
     # litellm-sdk
     litellm_sdk_api_key: str | None
@@ -2841,6 +2848,12 @@ def _parse_reranker_members() -> list[RerankerMemberConfig]:
             RerankerMemberConfig(
                 index=index,
                 provider=provider,
+                # Generic name, falling back to the deprecated LiteLLM-specific alias.
+                max_tokens_per_doc=_member_opt_int(
+                    base,
+                    "MAX_TOKENS_PER_DOC",
+                    _member_opt_int(base, "LITELLM_MAX_TOKENS_PER_DOC", DEFAULT_RERANKER_MAX_TOKENS_PER_DOC),
+                ),
                 local_model=_member_str(base, "LOCAL_MODEL", DEFAULT_RERANKER_LOCAL_MODEL),
                 local_force_cpu=_member_bool(base, "LOCAL_FORCE_CPU", DEFAULT_RERANKER_LOCAL_FORCE_CPU),
                 local_max_concurrent=_member_int(base, "LOCAL_MAX_CONCURRENT", DEFAULT_RERANKER_LOCAL_MAX_CONCURRENT),
@@ -2874,9 +2887,6 @@ def _parse_reranker_members() -> list[RerankerMemberConfig]:
                 litellm_api_base=_member_str(base, "LITELLM_API_BASE", DEFAULT_LITELLM_API_BASE),
                 litellm_api_key=_member_opt_str(base, "LITELLM_API_KEY"),
                 litellm_model=_member_str(base, "LITELLM_MODEL", DEFAULT_RERANKER_LITELLM_MODEL),
-                litellm_max_tokens_per_doc=_member_opt_int(
-                    base, "LITELLM_MAX_TOKENS_PER_DOC", DEFAULT_RERANKER_LITELLM_MAX_TOKENS_PER_DOC
-                ),
                 litellm_timeout=_member_float(base, "LITELLM_TIMEOUT", DEFAULT_RERANKER_LITELLM_TIMEOUT),
                 litellm_sdk_api_key=_member_opt_str(base, "LITELLM_SDK_API_KEY"),
                 litellm_sdk_model=_member_str(base, "LITELLM_SDK_MODEL", DEFAULT_RERANKER_LITELLM_SDK_MODEL),
@@ -3247,6 +3257,8 @@ class HindsightConfig:
 
     # Reranker
     reranker_provider: str
+    # Provider-agnostic per-document token cap; None disables truncation.
+    reranker_max_tokens_per_doc: int | None
     reranker_send_bank_as_header: bool
     reranker_local_model: str
     reranker_local_force_cpu: bool
@@ -3286,7 +3298,6 @@ class HindsightConfig:
     reranker_litellm_api_base: str
     reranker_litellm_api_key: str | None
     reranker_litellm_model: str
-    reranker_litellm_max_tokens_per_doc: int | None
     reranker_litellm_timeout: float
     reranker_litellm_sdk_api_key: str | None
     reranker_litellm_sdk_model: str
@@ -3858,6 +3869,7 @@ class HindsightConfig:
         primary = RerankerMemberConfig(
             index=0,
             provider=self.reranker_provider,
+            max_tokens_per_doc=self.reranker_max_tokens_per_doc,
             local_model=self.reranker_local_model,
             local_force_cpu=self.reranker_local_force_cpu,
             local_max_concurrent=self.reranker_local_max_concurrent,
@@ -3893,7 +3905,6 @@ class HindsightConfig:
             litellm_api_base=self.reranker_litellm_api_base,
             litellm_api_key=self.reranker_litellm_api_key,
             litellm_model=self.reranker_litellm_model,
-            litellm_max_tokens_per_doc=self.reranker_litellm_max_tokens_per_doc,
             litellm_timeout=self.reranker_litellm_timeout,
             litellm_sdk_api_key=self.reranker_litellm_sdk_api_key,
             litellm_sdk_model=self.reranker_litellm_sdk_model,
@@ -4610,6 +4621,10 @@ class HindsightConfig:
             or os.getenv(ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY),
             # Reranker
             reranker_provider=os.getenv(ENV_RERANKER_PROVIDER, DEFAULT_RERANKER_PROVIDER),
+            # Generic name, falling back to the deprecated LiteLLM-specific alias.
+            reranker_max_tokens_per_doc=int(v)
+            if (v := os.getenv(ENV_RERANKER_MAX_TOKENS_PER_DOC) or os.getenv(ENV_RERANKER_LITELLM_MAX_TOKENS_PER_DOC))
+            else DEFAULT_RERANKER_MAX_TOKENS_PER_DOC,
             reranker_send_bank_as_header=os.getenv(
                 ENV_RERANKER_SEND_BANK_AS_HEADER,
                 str(DEFAULT_RERANKER_SEND_BANK_AS_HEADER),
@@ -4708,9 +4723,6 @@ class HindsightConfig:
             or os.getenv(ENV_LITELLM_API_BASE, DEFAULT_LITELLM_API_BASE),
             reranker_litellm_api_key=os.getenv(ENV_RERANKER_LITELLM_API_KEY) or os.getenv(ENV_LITELLM_API_KEY),
             reranker_litellm_model=os.getenv(ENV_RERANKER_LITELLM_MODEL, DEFAULT_RERANKER_LITELLM_MODEL),
-            reranker_litellm_max_tokens_per_doc=int(v)
-            if (v := os.getenv(ENV_RERANKER_LITELLM_MAX_TOKENS_PER_DOC))
-            else DEFAULT_RERANKER_LITELLM_MAX_TOKENS_PER_DOC,
             reranker_litellm_timeout=float(
                 os.getenv(ENV_RERANKER_LITELLM_TIMEOUT, str(DEFAULT_RERANKER_LITELLM_TIMEOUT))
             ),

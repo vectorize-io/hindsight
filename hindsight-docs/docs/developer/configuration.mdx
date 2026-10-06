@@ -1182,6 +1182,7 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `typesafe`, `alibaba`, `google`, `flashrank`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
+| `HINDSIGHT_API_RERANKER_MAX_TOKENS_PER_DOC` | Applies to **every** provider. If set, truncate each document to this many tokens (tiktoken, approximate) before reranking. Set it below the model's context window (e.g. `900` for a 1024-token model), or lower to bound request size when documents can be very long (keeps a CPU-only rerank server from running out of memory). Each fallback member has its own (`HINDSIGHT_API_RERANKER_<n>_MAX_TOKENS_PER_DOC`). Off by default. (Deprecated alias: `HINDSIGHT_API_RERANKER_LITELLM_MAX_TOKENS_PER_DOC`.) | - |
 | `HINDSIGHT_API_RERANKER_MAX_RETRIES` | Retries after the first attempt when a remote rerank call fails transiently (5xx, timeout, connection error, `429` quota). `0` disables retrying. Applies to every remote provider except `tei`, which has its own retry loop; the in-process providers (`local`, `flashrank`, `jina-mlx`, `rrf`) are unaffected. 4xx auth/validation errors are never retried. | `3` |
 | `HINDSIGHT_API_RERANKER_INITIAL_BACKOFF` | Initial backoff in seconds between rerank retries (doubles per attempt, with jitter) | `0.5` |
 | `HINDSIGHT_API_RERANKER_MAX_BACKOFF` | Cap on the backoff between rerank retries, in seconds | `4.0` |
@@ -1215,7 +1216,6 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | `HINDSIGHT_API_RERANKER_LITELLM_SDK_MODEL` | LiteLLM SDK rerank model (e.g., `deepinfra/Qwen3-reranker-8B`) | `cohere/rerank-english-v3.0` |
 | `HINDSIGHT_API_RERANKER_LITELLM_SDK_API_BASE` | Custom API base URL for LiteLLM SDK (optional) | - |
 | `HINDSIGHT_API_RERANKER_LITELLM_SDK_TIMEOUT` | Request timeout for the LiteLLM SDK reranker (seconds). | `60.0` |
-| `HINDSIGHT_API_RERANKER_LITELLM_MAX_TOKENS_PER_DOC` | Truncate documents to this many tokens before sending to the reranker (applies to both `litellm` and `litellm-sdk`). Use for models with small context windows (e.g. set to `900` for a 1024-token limit model). Unset by default (no truncation). | - |
 | `HINDSIGHT_API_RERANKER_ZEROENTROPY_API_KEY` | ZeroEntropy API key for reranking | - |
 | `HINDSIGHT_API_RERANKER_ZEROENTROPY_MODEL` | ZeroEntropy rerank model (`zerank-2`, `zerank-2-small`) | `zerank-2` |
 | `HINDSIGHT_API_RERANKER_ZEROENTROPY_BASE_URL` | Custom base URL for ZeroEntropy-compatible API (e.g., mock server, proxy, or self-hosted deployment) | `https://api.zeroentropy.dev` |
