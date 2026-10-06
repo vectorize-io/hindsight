@@ -21,7 +21,11 @@ from hindsight_api.api.disconnect import (
     _should_monitor,
     get_scope_cancellation_token,
 )
-from hindsight_api.api.http import _CLIENT_CLOSED_REQUEST_STATUS_CODE, run_cancellable_on_disconnect
+from hindsight_api.api.http import (
+    _CLIENT_CLOSED_REQUEST_STATUS_CODE,
+    run_cancellable_on_disconnect,
+    run_task_cancellable_on_disconnect,
+)
 from hindsight_api.cancellation import CancellationToken, OperationCancelledError
 from hindsight_api.models import RequestContext
 
@@ -86,12 +90,21 @@ def test_request_context_raises_when_token_fired():
 # --- _should_monitor path gating ------------------------------------------------
 
 
-def test_should_monitor_only_recall_and_reflect():
-    assert _should_monitor("/v1/default/banks/b/memories/recall") is True
-    assert _should_monitor("/v1/default/banks/b/reflect") is True
-    assert _should_monitor("/v1/default/banks/b/memories") is False
-    assert _should_monitor("/health") is False
-    assert _should_monitor("/v1/default/banks/b/memories/recall/extra") is False
+def _scope(path: str, method: str = "POST") -> dict:
+    return {"type": "http", "path": path, "method": method}
+
+
+def test_should_monitor_recall_reflect_and_retain():
+    assert _should_monitor(_scope("/v1/default/banks/b/memories/recall")) is True
+    assert _should_monitor(_scope("/v1/default/banks/b/reflect")) is True
+    # The retain POST: a sync retain runs inline and must be cancellable (#4526).
+    assert _should_monitor(_scope("/v1/default/banks/b/memories")) is True
+    # Same path, different operation: DELETE clears a bank and is not a retain.
+    assert _should_monitor(_scope("/v1/default/banks/b/memories", method="DELETE")) is False
+    assert _should_monitor(_scope("/health", method="GET")) is False
+    assert _should_monitor(_scope("/v1/default/banks/b/memories/recall/extra")) is False
+    # The upload path stays out: its body is streamed, not a small JSON doc.
+    assert _should_monitor(_scope("/v1/default/banks/b/files/retain")) is False
 
 
 # --- run_cancellable_on_disconnect ----------------------------------------------
@@ -283,3 +296,119 @@ async def test_middleware_completes_normally_when_no_disconnect():
     # monitored path => token attached, request completed 200
     assert isinstance(token_seen["t"], CancellationToken)
     assert any(m.get("status") == 200 for m in sent if m["type"] == "http.response.start")
+
+
+# --- run_task_cancellable_on_disconnect (sync retain, #4526) --------------------
+
+
+async def test_run_task_cancellable_returns_result_when_no_token():
+    async def work() -> str:
+        return "ok"
+
+    result = await run_task_cancellable_on_disconnect(_ScopeRequest({}), work(), operation="retain", bank_id="b1")
+    assert result == "ok"
+
+
+async def test_run_task_cancellable_kills_an_unco_operative_await():
+    """The point of the hard variant: no checkpoint is reached, yet the work stops.
+
+    A sync retain spends its wall time parked on the LLM semaphore and the provider
+    response, so a cooperative checkpoint never gets a turn. The task must be
+    cancelled outright, and its ``finally`` must still run.
+    """
+    token = CancellationToken()
+    req = _ScopeRequest({SCOPE_CANCELLATION_TOKEN: token})
+    unwound = asyncio.Event()
+
+    async def work() -> str:
+        try:
+            await asyncio.sleep(3600)  # one long await, no checkpoints
+            return "committed"
+        finally:
+            unwound.set()
+
+    async def fire_soon():
+        await asyncio.sleep(0.02)
+        token.cancel("client disconnected")
+
+    asyncio.create_task(fire_soon())
+    with pytest.raises(HTTPException) as exc:
+        await asyncio.wait_for(
+            run_task_cancellable_on_disconnect(req, work(), operation="retain", bank_id="b1"),
+            timeout=_TEST_TIMEOUT_SECONDS,
+        )
+    assert exc.value.status_code == _CLIENT_CLOSED_REQUEST_STATUS_CODE
+    assert exc.value.detail == "client disconnected"
+    assert unwound.is_set(), "the cancelled task was abandoned instead of awaited"
+
+
+async def test_run_task_cancellable_propagates_work_errors():
+    token = CancellationToken()
+    req = _ScopeRequest({SCOPE_CANCELLATION_TOKEN: token})
+
+    async def work() -> str:
+        raise ValueError("boom")
+
+    with pytest.raises(ValueError, match="boom"):
+        await run_task_cancellable_on_disconnect(req, work(), operation="retain", bank_id="b1")
+
+
+# --- The whole route, end to end (#4526) ----------------------------------------
+
+
+async def test_sync_retain_route_answers_499_and_stops_the_work(memory, monkeypatch):
+    """A sync retain whose client hangs up must stop, not run to completion.
+
+    Drives the real app at the ASGI layer (the only level where a disconnect can be
+    delivered) with the extraction stubbed out as one long await — the shape of a
+    retain parked on the LLM semaphore, which is where the 1880s run in #4526 sat.
+    """
+    from hindsight_api.api import create_app
+
+    app = create_app(memory, initialize_memory=False)
+    started = asyncio.Event()
+    unwound = asyncio.Event()
+
+    async def never_finishes(*args, **kwargs):
+        started.set()
+        try:
+            await asyncio.sleep(3600)
+        finally:
+            unwound.set()
+
+    monkeypatch.setattr(memory, "retain_batch_async", never_finishes)
+
+    body = b'{"items": [{"content": "Alice works at Google"}], "async": false}'
+    body_sent = False
+
+    async def receive():
+        nonlocal body_sent
+        if not body_sent:
+            body_sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        await started.wait()
+        return {"type": "http.disconnect"}
+
+    messages = []
+
+    async def send(message):
+        messages.append(message)
+
+    path = "/v1/default/banks/disconnect-probe/memories"
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "POST",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode()),
+        ],
+    }
+    await asyncio.wait_for(app(scope, receive, send), timeout=10.0)
+
+    start = next(m for m in messages if m["type"] == "http.response.start")
+    assert start["status"] == _CLIENT_CLOSED_REQUEST_STATUS_CODE
+    assert unwound.is_set(), "the abandoned retain kept running after the client left"

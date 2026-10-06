@@ -15,9 +15,11 @@ the moment ``http.disconnect`` arrives, stashing the token on the ASGI ``scope``
 The route copies that token onto its ``RequestContext`` and the engine checks it
 at stage boundaries — so abandoned work stops instead of running to completion.
 
-It only wraps recall/reflect (small JSON bodies); every other request — uploads,
-MCP streams, etc. — passes straight through untouched, so there is no buffering
-or latency cost elsewhere.
+It only wraps recall, reflect and the retain POST (small-to-moderate JSON
+bodies); every other request — uploads, MCP streams, etc. — passes straight
+through untouched, so there is no buffering or latency cost elsewhere. The pump
+queue is bounded at one message so a monitored request's body is never held in
+memory ahead of the app reading it.
 """
 
 from __future__ import annotations
@@ -41,9 +43,19 @@ Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
 Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]
 
 
-def _should_monitor(path: str) -> bool:
-    """Only the two long-running, abandon-prone read endpoints need monitoring."""
-    return path.endswith("/memories/recall") or path.endswith("/reflect")
+def _should_monitor(scope: Scope) -> bool:
+    """Which requests get a disconnect token: the long-running, abandon-prone ones.
+
+    Recall and reflect are the reads. A synchronous retain (``async: false``) is the
+    write: it runs the whole extraction inline, so an abandoned one keeps its place
+    in the admission queue, then holds an LLM slot for its full run and commits —
+    possibly into a bank deleted while it ran (issue #4526). DELETE shares the same
+    path and is not a retain, hence the method check.
+    """
+    path = scope.get("path", "")
+    if path.endswith("/memories/recall") or path.endswith("/reflect"):
+        return True
+    return path.endswith("/memories") and scope.get("method") == "POST"
 
 
 class ClientDisconnectCancellationMiddleware:
@@ -57,7 +69,7 @@ class ClientDisconnectCancellationMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or not _should_monitor(scope.get("path", "")):
+        if scope["type"] != "http" or not _should_monitor(scope):
             await self.app(scope, receive, send)
             return
 

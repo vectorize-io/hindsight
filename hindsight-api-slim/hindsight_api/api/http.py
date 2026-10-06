@@ -402,6 +402,49 @@ async def run_cancellable_on_disconnect(
         raise HTTPException(status_code=_CLIENT_CLOSED_REQUEST_STATUS_CODE, detail=e.reason) from e
 
 
+async def run_task_cancellable_on_disconnect(
+    http_request: Request,
+    coro: Awaitable[_T],
+    *,
+    operation: str,
+    bank_id: str,
+) -> _T:
+    """Run a coroutine as a task and cancel it outright if the client disconnects.
+
+    The cooperative variant above is the right shape for recall and reflect, whose
+    expensive stages run in worker threads that task cancellation cannot interrupt.
+    A synchronous retain is the opposite shape: almost all of its wall time is spent
+    *awaiting* — queued on the LLM concurrency semaphore, then on the provider's
+    response — so a checkpoint between stages never gets a turn, and only real task
+    cancellation unblocks it. An abandoned sync retain measured 1880s, holding an LLM
+    slot the whole way and committing into a bank that had been deleted meanwhile
+    (issue #4526).
+
+    Cancelling retain mid-flight is a path the pipeline already handles: the worker
+    runs every retain under an absolute ``asyncio.timeout`` ceiling, and the
+    orchestrator's ``finally`` blocks commit what earlier sub-batches produced and
+    stop the in-flight extraction tasks.
+    """
+    token = get_scope_cancellation_token(http_request.scope)
+    if token is None:
+        return await coro
+    task = asyncio.ensure_future(coro)
+    waiter = asyncio.ensure_future(token.wait())
+    try:
+        done, _pending = await asyncio.wait({task, waiter}, return_when=asyncio.FIRST_COMPLETED)
+        if task in done:
+            return task.result()
+        task.cancel()
+        # Awaited, not abandoned: the unwinding task still commits partial work and
+        # tears down its own subtasks, and anything it raises on the way out is the
+        # cancellation, not a fault worth reporting over the 499.
+        await asyncio.gather(task, return_exceptions=True)
+        logger.info(f"[{operation.upper()} CANCELLED] bank={bank_id} reason={token.reason}")
+        raise HTTPException(status_code=_CLIENT_CLOSED_REQUEST_STATUS_CODE, detail=token.reason)
+    finally:
+        waiter.cancel()
+
+
 class EntityIncludeOptions(BaseModel):
     """Options for including entity observations in recall results."""
 
@@ -9959,6 +10002,7 @@ def _register_routes(app: FastAPI):
     async def api_retain(
         bank_id: str,
         request: RetainRequest,
+        http_request: Request,
         request_context: RequestContext = Depends(get_request_context),
         _precheck: None = Depends(precheck_for(PrecheckOperation.RETAIN)),
         _admit: None = Depends(admit_for(PrecheckOperation.RETAIN)),
@@ -10127,9 +10171,11 @@ def _register_routes(app: FastAPI):
                 # Synchronous processing: one batch per strategy group, aggregate results
                 total_items_count = 0
                 total_usage = TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0)
-                with metrics.record_operation("retain", bank_id=bank_id, source="api"):
+
+                async def _retain_groups() -> None:
+                    nonlocal total_items_count, total_usage
                     for group_strategy, contents in strategy_groups.items():
-                        result, usage = await app.state.memory.retain_batch_async(
+                        _result, usage = await app.state.memory.retain_batch_async(
                             bank_id=bank_id,
                             contents=contents,
                             document_tags=request.document_tags,
@@ -10150,6 +10196,19 @@ def _register_routes(app: FastAPI):
                                 output_tokens=total_usage.output_tokens + usage.output_tokens,
                                 total_tokens=total_usage.total_tokens + usage.total_tokens,
                             )
+
+                with metrics.record_operation("retain", bank_id=bank_id, source="api"):
+                    # A sync retain has no operation row and no ack, so nothing else can
+                    # stop it once it starts: without this an abandoned one runs to
+                    # completion, holding an LLM slot and committing work nobody will
+                    # read (issue #4526). The async path is unaffected — it returns
+                    # before any extraction runs, and DELETE /operations/{id} stops it.
+                    await run_task_cancellable_on_disconnect(
+                        http_request,
+                        _retain_groups(),
+                        operation="retain",
+                        bank_id=bank_id,
+                    )
 
                 return RetainResponse.model_validate(
                     {
