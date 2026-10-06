@@ -21,6 +21,14 @@ import pytest
 from hindsight_api.config import clear_config_cache
 from hindsight_api.engine.memory_engine import count_tokens
 from hindsight_api.engine.retain import fact_extraction, orchestrator
+from hindsight_api.extensions import (
+    OperationValidatorExtension,
+    RecallContext,
+    ReflectContext,
+    RetainContext,
+    RetainResult,
+    ValidationResult,
+)
 
 # Sections are separated by blank lines and each is just under
 # retain_chunk_size (3000 chars), so the chunker emits exactly one native chunk
@@ -306,4 +314,107 @@ async def test_oversized_replacement_screens_document_body_once(memory, request_
             f"{len(replacement_scans)} times — once per fallback sub-batch (issue #3282)"
         )
     finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+# ---------------------------------------------------------------------------
+# processed_content_tokens for oversized re-retains
+# ---------------------------------------------------------------------------
+#
+# The tests above prove an oversized re-retain skips unchanged chunks. These prove it SAYS so:
+# RetainResult.processed_content_tokens is what a metering extension charges by, and None means
+# "no dedup signal, charge the full submission". The later sub-batches of an oversized item used
+# to return None unconditionally, so every re-retain of a large, mostly unchanged document was
+# reported as a full one however little extraction it actually did.
+
+
+class _RetainResultCapture(OperationValidatorExtension):
+    """Records each RetainResult handed to the post-retain hook (accepts every operation)."""
+
+    def __init__(self) -> None:
+        self.results: list[RetainResult] = []
+
+    async def validate_retain(self, ctx: RetainContext) -> ValidationResult:
+        return ValidationResult.accept()
+
+    async def validate_recall(self, ctx: RecallContext) -> ValidationResult:
+        return ValidationResult.accept()
+
+    async def validate_reflect(self, ctx: ReflectContext) -> ValidationResult:
+        return ValidationResult.accept()
+
+    async def on_retain_complete(self, result: RetainResult) -> None:
+        self.results.append(result)
+
+
+@pytest.mark.asyncio
+async def test_oversized_identical_reretain_reports_nothing_processed(memory, request_context, monkeypatch):
+    """Re-submitting an oversized document unchanged extracts nothing, and must report 0 — not
+    None, which would charge the whole document again."""
+    bank_id = f"test_oversized_pct_identical_{_ts()}"
+    document_id = "doc-oversized-pct-identical"
+    capture = _RetainResultCapture()
+    memory._operation_validator = capture
+    body = _body()
+    monkeypatch.setenv("HINDSIGHT_API_RETAIN_BATCH_TOKENS", str(_OVERSIZED_BATCH_TOKENS))
+    clear_config_cache()
+    assert count_tokens(body) > _OVERSIZED_BATCH_TOKENS, "premise: the body must be split into sub-batches"
+
+    try:
+        for _ in range(2):
+            await memory.retain_async(
+                bank_id=bank_id,
+                content=body,
+                context="notes",
+                document_id=document_id,
+                request_context=request_context,
+            )
+        assert len(capture.results) == 2
+        assert capture.results[0].processed_content_tokens is None, "a first retain is a full retain"
+        assert capture.results[1].processed_content_tokens == 0, (
+            f"an unchanged oversized re-retain reported processed_content_tokens="
+            f"{capture.results[1].processed_content_tokens!r}; None charges the full "
+            f"{count_tokens(body):,}-token document again"
+        )
+    finally:
+        memory._operation_validator = None
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_oversized_edited_reretain_reports_only_what_was_extracted(memory, request_context, monkeypatch):
+    """An oversized re-retain with one edited section and an appended tail reports the tokens that
+    went to extraction: far less than the submission, and no less than the text extraction saw."""
+    bank_id = f"test_oversized_pct_edited_{_ts()}"
+    document_id = "doc-oversized-pct-edited"
+    edited_idx = 1
+    spy = _ExtractionSpy()
+    capture = _RetainResultCapture()
+    memory._operation_validator = capture
+
+    try:
+        v2 = await _retain_v1_then_v2(
+            memory,
+            request_context,
+            bank_id,
+            document_id,
+            replacement_batch_tokens=_OVERSIZED_BATCH_TOKENS,
+            monkeypatch=monkeypatch,
+            spy=spy,
+            edited_idx=edited_idx,
+        )
+        assert len(capture.results) == 2
+        processed = capture.results[1].processed_content_tokens
+        submitted = count_tokens(v2) + count_tokens("notes")
+
+        assert processed is not None, (
+            f"an oversized re-retain that extracted {spy.extracted_tokens:,} of {submitted:,} tokens "
+            f"reported no dedup signal, so it is charged as a full retain"
+        )
+        assert processed >= spy.extracted_tokens, "it must not under-report what was extracted"
+        assert processed < submitted / 2, (
+            f"reported {processed:,} of {submitted:,} submitted tokens for a one-section edit + tail"
+        )
+    finally:
+        memory._operation_validator = None
         await memory.delete_bank(bank_id, request_context=request_context)
