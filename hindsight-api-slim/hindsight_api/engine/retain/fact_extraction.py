@@ -1983,8 +1983,8 @@ def _shape_repair_message(observed_keys: Collection[str], expected_keys: Sequenc
     time it is built.
 
     Mirrors ``_document_rejection_messages`` in reflect: say what came back, say
-    what was required, ask again on the same prefix. Returns None when there is
-    nothing concrete to report, so a vague scolding is never sent.
+    what the schema allows, ask again on the same prefix. Returns None when there
+    is nothing concrete to report, so a vague scolding is never sent.
     """
     if not observed_keys or not expected_keys:
         return None
