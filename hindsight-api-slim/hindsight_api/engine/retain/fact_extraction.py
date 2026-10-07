@@ -1992,9 +1992,12 @@ def _shape_repair_message(observed_keys: Collection[str], expected_keys: Sequenc
         "Your previous answer was discarded. Every fact in it used key names that are not "
         "part of the output schema, so no fact could be read.\n"
         f"Keys you used: {', '.join(sorted(observed_keys))}\n"
-        f"Keys required on each fact: {', '.join(expected_keys)}\n"
+        # "valid", not "required": the schema's own required set is a subset of these
+        # (entities, occurred_start and from_attachments are optional), and telling the
+        # model every one of them is mandatory invites invented values for the rest.
+        f"Valid keys for each fact: {', '.join(expected_keys)}\n"
         'Answer again with the SAME facts and the SAME content, shaped as {"facts": [{...}, {...}]}, '
-        'using only the required key names above. The statement itself goes in "what".'
+        'using only the key names above. The statement itself goes in "what", which every fact must have.'
     )
 
 
@@ -2418,7 +2421,10 @@ async def _extract_facts_from_chunk(
                     if drifted_keys
                     else ""
                 )
-                required = f" The schema requires: {', '.join(expected_fact_keys)}." if expected_fact_keys else ""
+                # "allows", not "requires": expected_fact_keys is every field on the fact
+                # model, and only a subset of them is mandatory — same reason the retry
+                # correction says "valid keys".
+                required = f" The schema allows: {', '.join(expected_fact_keys)}." if expected_fact_keys else ""
                 raise RuntimeError(
                     f"Fact extraction failed: all {len(raw_facts)} facts returned by the LLM were "
                     f"unusable after {outer_attempts} attempts (wrong shape or missing required fields)."

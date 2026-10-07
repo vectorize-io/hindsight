@@ -104,6 +104,39 @@ def scoped_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iter
     server.stop()
 
 
+@pytest.fixture(scope="session")
+def retrying_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
+    """A server that will actually re-ask the extraction model once.
+
+    ``stub_environment`` pins ``HINDSIGHT_API_LLM_MAX_RETRIES`` to 0 for every other
+    story, because a retry would double the stubbed calls and prove nothing. The
+    schema-drift recovery in #5280 lives *entirely* in the retry — the correction is
+    what the second attempt carries — so with no budget there is no second attempt and
+    the mechanism cannot be observed at all. The budget is server-level (it is not in
+    ``_CONFIGURABLE_FIELDS``), hence a process rather than a bank setting. Scoped to
+    retain, so recall, reflect and consolidation keep the suite's zero-retry rule.
+
+    The worker stays enabled, unlike ``typesafe_server``: the only difference here is
+    how many times a drifted extraction may be re-asked, and a story that never drifts
+    is unaffected by this worker claiming its queued work.
+    """
+    log_path: Path = tmp_path_factory.mktemp("retrying-server") / "server.log"
+    server = start_hindsight_server(
+        stub_url=stub_server.url,
+        log_path=log_path,
+        extra_env={"HINDSIGHT_API_RETAIN_LLM_MAX_RETRIES": "1"},
+    )
+    yield server
+    server.stop()
+
+
+@pytest.fixture
+async def retrying_client(retrying_server) -> AsyncIterator[Hindsight]:
+    client = Hindsight(base_url=retrying_server.url)
+    yield client
+    await client.aclose()
+
+
 @pytest.fixture
 async def typesafe_client(typesafe_server) -> AsyncIterator[Hindsight]:
     client = Hindsight(base_url=typesafe_server.url)
