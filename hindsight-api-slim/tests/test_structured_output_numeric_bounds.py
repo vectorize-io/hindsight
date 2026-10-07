@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from pydantic import BaseModel, Field, ValidationError
 
 from hindsight_api.engine.reflect.delta_ops import DeltaOperationList
@@ -28,15 +29,15 @@ from hindsight_api.engine.structured_output import (
 _BOUND_KEYWORDS = ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf")
 
 
+class _BoundedChild(BaseModel):
+    score: int = Field(default=1, ge=0, le=10)
+
+
 class _Bounded(BaseModel):
     level: int = Field(default=2, ge=1, le=6)
     ratio: float = Field(default=0.5, gt=0.0, lt=1.0)
     step: int = Field(default=2, multiple_of=2)
-    nested: list["_BoundedChild"] = Field(default_factory=list)
-
-
-class _BoundedChild(BaseModel):
-    score: int = Field(default=1, ge=0, le=10)
+    nested: list[_BoundedChild] = Field(default_factory=list)
 
 
 def _keywords_in(schema: dict) -> list[str]:
@@ -84,12 +85,9 @@ class TestBoundsAreStripped:
 
 class TestValidationStillApplies:
     def test_model_still_rejects_an_out_of_range_value(self):
-        try:
+        """The bound left the schema, not the model: the response is still checked."""
+        with pytest.raises(ValidationError):
             _Bounded(level=9)
-        except ValidationError:
-            pass
-        else:
-            raise AssertionError("ge/le must still be enforced when parsing the response")
 
     def test_stripping_does_not_look_like_a_union_rewrite(self):
         """``has_tagged_union`` routes Gemini; a bound must not flip it."""

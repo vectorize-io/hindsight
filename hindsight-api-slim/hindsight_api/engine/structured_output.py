@@ -185,6 +185,11 @@ def has_tagged_union(response_format: type[BaseModel]) -> bool:
     a schema dict (Gemini), so they can keep that native path for every model it
     already handles and only fall back to a serialized schema for the unions it
     cannot accept. Cached because the answer is a property of the class.
+
+    Both sides of the comparison go through ``_strip_numeric_bounds``, so a model
+    that only differs by a dropped ``minimum``/``maximum`` is not mistaken for a
+    union rewrite -- that would push every bounded model off Gemini's native path
+    for no reason.
     """
     return provider_json_schema(response_format) != _strip_numeric_bounds(response_format.model_json_schema())
 
