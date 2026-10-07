@@ -170,13 +170,30 @@ async def test_retry_with_backoff_logs_name_exception_with_empty_str(monkeypatch
         assert "InterfaceError" in line, f"log line dropped the exception class: {line!r}"
 
 
+class _FakeAsyncpgPool:
+    """Raw asyncpg.Pool stand-in for the legacy acquire path."""
+
+    async def acquire(self) -> _FakeConnection:
+        return _FakeConnection()
+
+    async def release(self, conn: _FakeConnection) -> None:
+        conn.released += 1
+
+    def get_size(self) -> int:
+        return 5
+
+    def get_idle_size(self) -> int:
+        return 0
+
+
+@pytest.mark.parametrize("pool_factory", [_FakeBackend, _FakeAsyncpgPool], ids=["backend", "legacy-asyncpg"])
 @pytest.mark.parametrize(
     ("threshold", "warns"),
     [(0.05, True), (0.1, False), (0.0, False)],
     ids=["default-warns", "raised-threshold-silent", "zero-disables"],
 )
 @pytest.mark.asyncio
-async def test_slow_acquire_warning_honours_configured_threshold(monkeypatch, caplog, threshold, warns):
+async def test_slow_acquire_warning_honours_configured_threshold(monkeypatch, caplog, pool_factory, threshold, warns):
     """A 64 ms acquire (a cold TLS connection to Aurora Serverless) warns only above the configured threshold."""
     from types import SimpleNamespace
 
@@ -184,12 +201,12 @@ async def test_slow_acquire_warning_honours_configured_threshold(monkeypatch, ca
     # Swap the module's ``time`` binding, not ``time.time`` itself: logging stamps records with it too.
     monkeypatch.setattr("hindsight_api.engine.db_utils.time", SimpleNamespace(time=lambda: next(clock)))
     monkeypatch.setattr(
-        "hindsight_api.engine.db_utils.get_config",
+        "hindsight_api.engine.db_utils._get_raw_config",
         lambda: SimpleNamespace(db_pool_slow_acquire_threshold_seconds=threshold),
     )
 
     with caplog.at_level(logging.WARNING, logger="hindsight_api.engine.db_utils"):
-        async with acquire_with_retry(_FakeBackend()):
+        async with acquire_with_retry(pool_factory()):
             pass
 
     assert any("Slow acquire" in r.getMessage() for r in caplog.records) is warns

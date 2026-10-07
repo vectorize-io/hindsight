@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
 
-from ..config import get_config
+from ..config import _get_raw_config
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +115,9 @@ async def retry_with_backoff(
 
 def _is_slow_acquire(acquire_time: float) -> bool:
     """Whether an acquire is slow enough to warn about; a threshold of 0 disables the warning."""
-    threshold = get_config().db_pool_slow_acquire_threshold_seconds
+    # The cached raw config, not get_config(): this runs on every acquire, and the
+    # StaticConfigProxy get_config() builds per call costs ~0.3 ms.
+    threshold = _get_raw_config().db_pool_slow_acquire_threshold_seconds
     return threshold > 0 and acquire_time > threshold
 
 
