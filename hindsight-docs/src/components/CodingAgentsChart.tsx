@@ -7,15 +7,14 @@ import styles from './CodingAgentsChart.module.css';
 /**
  * What memory does to a coding agent, from AMB's sdebench dataset.
  *
- * Rendered twice: on the homepage under Benchmarks, and on the coding-agents
- * integration page, which is where the explanation of what it measures lives.
+ * Rendered twice, which is what the `variant` prop is for: inside the
+ * homepage's coding-agents card (`card`), and on the coding-agents integration
+ * page (`full`), which is where the explanation of what it measures lives. It
+ * used to sit in the homepage's own Benchmarks section; it reads better as the
+ * evidence for a path the reader has just been offered than as a second chart
+ * under the accuracy one.
  *
- * It is a section on the page and not part of the hero: sharing the band with
- * the accuracy chart pushed that band past 900px and squeezed this one to half
- * width, where its three labelled marks landed on top of each other. It needs
- * the full column.
- *
- * The accuracy chart in the hero answers "does it retrieve well". This answers the
+ * The retrieval-accuracy chart answers "does it retrieve well". This answers the
  * question a developer evaluating a coding-agent plugin actually has: does it
  * make the agent cheaper and less annoying. Both move at once, so the form has
  * to be two-dimensional — one arrow per agent, from no memory to Hindsight, and

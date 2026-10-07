@@ -7,9 +7,11 @@ import styles from './HomeBenchmarks.module.css';
  * Every benchmark we have a published comparison for, Hindsight against the
  * next-best system on that same dataset.
  *
- * It sits with the sdebench chart (CodingAgentsChart) in one Benchmarks section
- * rather than in the hero: the two belong together, and a band carrying both
- * ran past 900px and stopped reading as a hero at all.
+ * It is a section of its own rather than part of the hero: a band carrying both
+ * this and the product shot ran past 900px and stopped reading as a hero at all.
+ * The sdebench chart (CodingAgentsChart) used to sit beside it here and has
+ * moved into the coding-agents card above, where it answers a path the reader
+ * has just been offered.
  *
  * The runner-up is drawn in grey and left UNNAMED on purpose. It is a different
  * system on almost every row — cognee on LoComo, hybrid-search on three others
