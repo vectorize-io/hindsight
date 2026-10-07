@@ -1013,10 +1013,11 @@ async def _streaming_store_owned_retain(
     ``_store_document_bodies`` (``store_owned``).
 
     Known gaps, tracked for the follow-on phases:
-    * Concurrent same-document ownership/takeover is no longer serialized by a Postgres row lock;
-      the store's atomic replace gives last-writer-wins. A store-side document content-hash CAS is a
-      follow-up. ``append_base_hash`` (strict-append base check) is likewise deferred to that CAS,
-      so an append here does not verify its base — it just does not replace.
+    * Concurrent same-document ownership/takeover is not serialized by a Postgres row lock; the
+      store's atomic replace gives last-writer-wins. The store-side content-hash compare-and-set
+      that guards an append rides the retain SESSION (``RetainDocumentPart.expect_content_hash``),
+      which this sessionless path does not use — so an append here does not verify its base, it
+      just does not replace.
     * The transactional-outbox (webhook delivery) is not emitted here; the intended design is
       at-least-once emission from the store, which replaces the Postgres outbox row.
     """

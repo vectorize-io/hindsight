@@ -894,6 +894,13 @@ class _InMemoryRetainSession(RetainSession):
 
     async def commit(self) -> RetainResult:
         self._store.calls.append("session.commit")
+        # The append precondition, checked for every part BEFORE anything is written: a store's
+        # commit is one atomic entry, so a lost race writes nothing at all.
+        for part in self._parts:
+            if part.expect_content_hash is not None:
+                stored = self._store.documents.get(part.document_id, {}).get("content_hash", "")
+                if stored != part.expect_content_hash:
+                    raise StoreWriteConflict(f"document {part.document_id} moved under this retain")
         unit_ids: dict[str, list[str]] = {}
         for part in self._parts:
             # Session parts carry FactRecord objects and the store's document schema,
