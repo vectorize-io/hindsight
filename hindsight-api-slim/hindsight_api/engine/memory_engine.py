@@ -8792,12 +8792,14 @@ class MemoryEngine(MemoryEngineInterface):
         query = sanitize_text(query) or ""
 
         # Bound the query length at the engine ingress, for every caller (REST,
-        # consolidation, reflect tools, MCP tools, context extension). Consolidation recalls with
-        # the *whole fact text* as the query, so a degenerate extraction (58k words,
-        # 4 distinct) became a 54k-term OR tsquery whose evaluation blew Postgres'
-        # stack depth (SQLSTATE 54001) and wedged the bank's consolidation for a week
-        # (issue #3134). Truncating here keeps every internal caller working on a
-        # bounded query instead of failing.
+        # consolidation, reflect tools, MCP tools, context extension). Consolidation
+        # recalls with the *whole fact text* as the query, so a degenerate extraction
+        # (58k words, 4 distinct) became a 54k-term OR tsquery whose evaluation blew
+        # Postgres' stack depth (SQLSTATE 54001) and wedged the bank's consolidation for
+        # a week (issue #3134). The REST handler used to reject an over-cap query with
+        # HTTP 400 instead (PR #298); that was dropped because clients cut queries by
+        # characters, and code packs enough tokens per character that a 2000-character
+        # prompt from the coding-agents plugin failed recall outright.
         query = _truncate_query_to_token_limit(
             query,
             get_config().recall_max_query_tokens,
