@@ -1,0 +1,20 @@
+{
+  "max": 4,
+  "posts": [
+    {
+      "href": "/blog/2026/10/01/hindsight-hermes-plugin-what-changed",
+      "label": "What Changes Now That Hindsight Is a Hermes Plugin",
+      "cover": "/img/blog/migrate-hindsight-hermes.png"
+    },
+    {
+      "href": "/blog/2026/09/29/version-0-10-2",
+      "label": "What's new in Hindsight 0.10.2",
+      "cover": "/img/blog/version-0-10-2-release.png"
+    },
+    {
+      "href": "/blog/2026/09/03/hindsight-cloud-enterprise-features",
+      "label": "Enterprise Features in Hindsight Cloud",
+      "cover": "/img/blog/hindsight-cloud-enterprise-features.png"
+    }
+  ]
+}

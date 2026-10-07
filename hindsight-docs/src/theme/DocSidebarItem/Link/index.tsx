@@ -71,6 +71,41 @@ export default function LinkWrapper(props: Props): JSX.Element {
   const {item} = props;
   const icon = item.customProps?.icon as string | undefined;
   const iconAfter = item.customProps?.iconAfter as string | undefined;
+  const cover = item.customProps?.cover as string | undefined;
+  const date = item.customProps?.date as string | undefined;
+
+  // Featured blog posts: a small cover thumbnail beside a two-line title, so a few fit stacked.
+  if (cover) {
+    const coverItem = {
+      ...item,
+      label: (
+        <span style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+          <img
+            src={cover}
+            alt=""
+            loading="lazy"
+            style={{width: '64px', aspectRatio: '16 / 9', objectFit: 'cover', borderRadius: '4px', flexShrink: 0}}
+          />
+          <span style={{display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0}}>
+            <span
+              style={{
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
+                overflow: 'hidden',
+                fontSize: '0.95em',
+                lineHeight: 1.3,
+              }}
+            >
+              {item.label}
+            </span>
+            {date && <span style={{fontSize: '0.75em', opacity: 0.55}}>{date}</span>}
+          </span>
+        </span>
+      ),
+    };
+    return <Link {...props} item={coverItem} />;
+  }
 
   if (!icon && !iconAfter) {
     return <Link {...props} />;

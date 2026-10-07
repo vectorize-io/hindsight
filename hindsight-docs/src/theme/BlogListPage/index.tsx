@@ -7,6 +7,7 @@ import {useLocation, useHistory} from '@docusaurus/router';
 import type {Props} from '@theme/BlogListPage';
 import type {PropBlogPostContent} from '@docusaurus/plugin-content-blog';
 import PageHero from '@site/src/components/PageHero';
+import featured from '@site/src/data/featured-posts.json';
 import styles from './styles.module.css';
 
 type Category = {slug: string; label: string; tag: string | null};
@@ -56,7 +57,9 @@ function categoryLabelFor(content: PropBlogPostContent): string | null {
   return match ? match.label : null;
 }
 
-function BlogCard({content}: {content: PropBlogPostContent}) {
+// `animate` is off for the featured copy: the same post also sits in the grid, and two
+// elements sharing a view-transition-name make the browser skip the whole transition.
+function BlogCard({content, animate = true}: {content: PropBlogPostContent; animate?: boolean}) {
   const {metadata, assets} = content;
   const {title, description, date, readingTime, permalink, frontMatter} = metadata;
   const image = assets.image ?? frontMatter.image ?? '/img/blog-default.jpg';
@@ -66,7 +69,7 @@ function BlogCard({content}: {content: PropBlogPostContent}) {
     <Link
       to={permalink}
       className={styles.card}
-      style={{viewTransitionName: cardTransitionName(permalink)}}
+      style={animate ? {viewTransitionName: cardTransitionName(permalink)} : undefined}
     >
       <div className={styles.cardImageWrapper}>
         {image ? (
@@ -150,6 +153,14 @@ export default function BlogListPage({items, metadata}: Props): React.ReactEleme
 
   const visiblePosts = filteredItems.slice(0, visibleCount);
 
+  // Same pins as the docs sidebar, only on the unfiltered view. Guides share this page and match none.
+  const featuredItems =
+    activeCategory.slug === 'all' && !query.trim()
+      ? featured.posts.flatMap(
+          (post) => items.find(({content}) => content.metadata.permalink === post.href) ?? [],
+        )
+      : [];
+
   const selectCategory = (slug: string) => {
     const params = new URLSearchParams();
     if (slug !== 'all') {
@@ -165,6 +176,19 @@ export default function BlogListPage({items, metadata}: Props): React.ReactEleme
     <Layout title={blogTitle} description={blogDescription}>
       <main className={styles.blogPage}>
         <PageHero title={blogTitle} subtitle={blogDescription} />
+
+        {featuredItems.length > 0 && (
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>
+              <h2 className={styles.sectionTitle}>Featured</h2>
+            </div>
+            <div className={styles.grid}>
+              {featuredItems.map(({content: BlogPostContent}) => (
+                <BlogCard key={BlogPostContent.metadata.permalink} content={BlogPostContent} animate={false} />
+              ))}
+            </div>
+          </section>
+        )}
 
         <div className={styles.controls}>
           <nav className={styles.categoryStrip} aria-label="Blog categories">

@@ -4,6 +4,7 @@ import type SidebarType from '@theme/DocRoot/Layout/Sidebar';
 import type {WrapperProps} from '@docusaurus/types';
 import {internalIntegrationsSorted} from '@site/src/lib/integrations';
 import {groupIntegrations} from '@site/src/lib/integration-groups';
+import featured from '@site/src/data/featured-posts.json';
 
 type Props = WrapperProps<typeof SidebarType>;
 
@@ -76,6 +77,50 @@ function withIntegrations(sidebar: Props['sidebar']): Props['sidebar'] {
   return sidebar.flatMap((item) => (isIntegrationsPlaceholder(item) ? integrationItems : [item]));
 }
 
+// "/blog/2026/10/01/slug" -> "Oct 1, 2026"; undefined if the link carries no date.
+function postDate(href: string): string | undefined {
+  const m = href.match(/\/blog\/(\d{4})\/(\d{2})\/(\d{2})\//);
+  if (!m) {
+    return undefined;
+  }
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
+// Pinned blog posts (src/data/featured-posts.json) go first, on every sidebar and version, so they
+// stay in view. The blog index shows the same pins; scripts/check-featured-posts.mjs guards the file.
+const featuredCategory = {
+  type: 'category' as const,
+  label: 'Blog',
+  collapsible: false,
+  collapsed: false,
+  items: [
+    ...featured.posts.map((post) => ({
+      type: 'link' as const,
+      href: post.href,
+      label: post.label,
+      customProps: {cover: post.cover, date: postDate(post.href)},
+    })),
+    {
+      type: 'link' as const,
+      href: '/blog',
+      label: 'All posts',
+      customProps: {iconAfter: 'lu-arrow-up-right'},
+    },
+  ],
+};
+
+function withFeatured(sidebar: Props['sidebar']): Props['sidebar'] {
+  if (!sidebar || featured.posts.length === 0) {
+    return sidebar;
+  }
+  return [featuredCategory, ...sidebar];
+}
+
 export default function SidebarWrapper(props: Props): ReactNode {
-  return <Sidebar {...props} sidebar={withIntegrations(props.sidebar)} />;
+  return <Sidebar {...props} sidebar={withFeatured(withIntegrations(props.sidebar))} />;
 }
