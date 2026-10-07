@@ -44,37 +44,10 @@ from hindsight_api.extensions import (
     BankWriteContext,
     BankWriteOperation,
     OperationValidationError,
-    OperationValidatorExtension,
-    RecallContext,
-    ReflectContext,
-    RetainContext,
-    RetainResult,
     ValidationResult,
 )
 from hindsight_api.webhooks.manager import WebhookManager
-
-
-class _RetainResultCapture(OperationValidatorExtension):
-    """Records each RetainResult the engine reports via on_retain_complete.
-
-    The pre-operation validators are required by the abstract base; they always
-    accept so they don't interfere with the operations under test.
-    """
-
-    def __init__(self) -> None:
-        self.results: list[RetainResult] = []
-
-    async def validate_retain(self, ctx: RetainContext) -> ValidationResult:
-        return ValidationResult.accept()
-
-    async def validate_recall(self, ctx: RecallContext) -> ValidationResult:
-        return ValidationResult.accept()
-
-    async def validate_reflect(self, ctx: ReflectContext) -> ValidationResult:
-        return ValidationResult.accept()
-
-    async def on_retain_complete(self, result: RetainResult) -> None:
-        self.results.append(result)
+from tests.retain_result_capture import RetainResultCapture
 
 
 async def _seed_observation(*, pool, memory, bank_id, source_memory_ids, observation_text):
@@ -1568,7 +1541,7 @@ async def test_import_fires_retain_complete_hook(memory, request_context):
     await _retain(memory, src, "Bob works at Microsoft.", request_context, "doc-2")
     archive = await memory.export_documents_async(src, request_context)
 
-    capture = _RetainResultCapture()
+    capture = RetainResultCapture()
     original_validator = memory._operation_validator
     memory._operation_validator = capture
     try:
@@ -1596,7 +1569,7 @@ async def test_import_fires_retain_complete_hook(memory, request_context):
         await memory.delete_bank(dst, request_context=request_context)
 
 
-class _ImportRejectingValidator(_RetainResultCapture):
+class _ImportRejectingValidator(RetainResultCapture):
     """Rejects bank writes to one bank, the way a bank-scoped API key policy would."""
 
     def __init__(self, forbidden_bank: str) -> None:

@@ -7,47 +7,14 @@ from datetime import datetime, timezone
 
 import pytest
 
-from hindsight_api import RequestContext
 from hindsight_api.engine.memory_engine import Budget
-from hindsight_api.extensions import (
-    OperationValidatorExtension,
-    RecallContext,
-    ReflectContext,
-    RetainContext,
-    RetainResult,
-    ValidationResult,
-)
+from tests.retain_result_capture import RetainResultCapture
 
 logger = logging.getLogger(__name__)
 
 
 def _ts():
     return datetime.now(timezone.utc).timestamp()
-
-
-class _RetainResultCapture(OperationValidatorExtension):
-    """Minimal OperationValidator that records each RetainResult it receives.
-
-    Used by tests to assert on fields the engine sets on RetainResult (e.g.
-    processed_content_tokens), without having to scrape logs or internals.
-    The pre-operation validators must be implemented to satisfy the
-    abstract base class, but they always accept.
-    """
-
-    def __init__(self) -> None:
-        self.results: list[RetainResult] = []
-
-    async def validate_retain(self, ctx: RetainContext) -> ValidationResult:
-        return ValidationResult.accept()
-
-    async def validate_recall(self, ctx: RecallContext) -> ValidationResult:
-        return ValidationResult.accept()
-
-    async def validate_reflect(self, ctx: ReflectContext) -> ValidationResult:
-        return ValidationResult.accept()
-
-    async def on_retain_complete(self, result: RetainResult) -> None:
-        self.results.append(result)
 
 
 # ============================================================
@@ -1006,7 +973,7 @@ async def test_processed_content_tokens_first_retain_is_none(memory, request_con
     """
     bank_id = f"test_pct_first_{_ts()}"
     document_id = "new-doc"
-    capture = _RetainResultCapture()
+    capture = RetainResultCapture()
     memory._operation_validator = capture
 
     try:
@@ -1034,7 +1001,7 @@ async def test_processed_content_tokens_unchanged_resubmit_is_zero(memory, reque
     """
     bank_id = f"test_pct_unchanged_{_ts()}"
     document_id = "conversation-001"
-    capture = _RetainResultCapture()
+    capture = RetainResultCapture()
     memory._operation_validator = capture
     content = "Alice works at Google. Bob works at Microsoft."
 
@@ -1073,7 +1040,7 @@ async def test_processed_content_tokens_appended_reports_delta(memory, request_c
     """
     bank_id = f"test_pct_appended_{_ts()}"
     document_id = "growing-doc"
-    capture = _RetainResultCapture()
+    capture = RetainResultCapture()
     memory._operation_validator = capture
 
     v1 = "Alice works at Google."
@@ -1133,7 +1100,7 @@ async def test_processed_content_tokens_without_document_id_is_none(memory, requ
     and let the caller bill the full submitted payload.
     """
     bank_id = f"test_pct_no_doc_{_ts()}"
-    capture = _RetainResultCapture()
+    capture = RetainResultCapture()
     memory._operation_validator = capture
 
     try:

@@ -21,14 +21,7 @@ import pytest
 from hindsight_api.config import clear_config_cache
 from hindsight_api.engine.memory_engine import count_tokens
 from hindsight_api.engine.retain import fact_extraction, orchestrator
-from hindsight_api.extensions import (
-    OperationValidatorExtension,
-    RecallContext,
-    ReflectContext,
-    RetainContext,
-    RetainResult,
-    ValidationResult,
-)
+from tests.retain_result_capture import RetainResultCapture
 
 # Sections are separated by blank lines and each is just under
 # retain_chunk_size (3000 chars), so the chunker emits exactly one native chunk
@@ -328,32 +321,13 @@ async def test_oversized_replacement_screens_document_body_once(memory, request_
 # reported as a full one however little extraction it actually did.
 
 
-class _RetainResultCapture(OperationValidatorExtension):
-    """Records each RetainResult handed to the post-retain hook (accepts every operation)."""
-
-    def __init__(self) -> None:
-        self.results: list[RetainResult] = []
-
-    async def validate_retain(self, ctx: RetainContext) -> ValidationResult:
-        return ValidationResult.accept()
-
-    async def validate_recall(self, ctx: RecallContext) -> ValidationResult:
-        return ValidationResult.accept()
-
-    async def validate_reflect(self, ctx: ReflectContext) -> ValidationResult:
-        return ValidationResult.accept()
-
-    async def on_retain_complete(self, result: RetainResult) -> None:
-        self.results.append(result)
-
-
 @pytest.mark.asyncio
 async def test_oversized_identical_reretain_reports_nothing_processed(memory, request_context, monkeypatch):
     """Re-submitting an oversized document unchanged extracts nothing, and must report 0 — not
     None, which would charge the whole document again."""
     bank_id = f"test_oversized_pct_identical_{_ts()}"
     document_id = "doc-oversized-pct-identical"
-    capture = _RetainResultCapture()
+    capture = RetainResultCapture()
     memory._operation_validator = capture
     body = _body()
     monkeypatch.setenv("HINDSIGHT_API_RETAIN_BATCH_TOKENS", str(_OVERSIZED_BATCH_TOKENS))
@@ -389,7 +363,7 @@ async def test_oversized_edited_reretain_reports_only_what_was_extracted(memory,
     document_id = "doc-oversized-pct-edited"
     edited_idx = 1
     spy = _ExtractionSpy()
-    capture = _RetainResultCapture()
+    capture = RetainResultCapture()
     memory._operation_validator = capture
 
     try:
