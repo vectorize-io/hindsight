@@ -83,7 +83,6 @@ export default function LinkWrapper(props: Props): JSX.Element {
           <img
             src={cover}
             alt=""
-            loading="lazy"
             style={{width: '64px', aspectRatio: '16 / 9', objectFit: 'cover', borderRadius: '4px', flexShrink: 0}}
           />
           <span style={{display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0}}>
