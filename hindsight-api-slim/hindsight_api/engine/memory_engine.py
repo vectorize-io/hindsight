@@ -7364,6 +7364,20 @@ class MemoryEngine(MemoryEngineInterface):
                     if retain_session is not None:
                         await retain_session.abort()
                     if redo_from is None or attempt == self._APPEND_CONFLICT_ATTEMPTS:
+                        if redo_from is not None:
+                            # Say which turn is being dropped. Silence here reads as an ordinary
+                            # store error, and the operation-level retry that follows re-runs the
+                            # whole submission for a reason nothing recorded.
+                            #
+                            # The document id rides on the content item, same as in
+                            # `_retain_batch_with_append_retry`; the parameter is often None.
+                            doc_label = document_id or next(
+                                (item.get("document_id") for item in redo_from if item.get("document_id")), None
+                            )
+                            logger.warning(
+                                f"Append session for bank {bank_id} document {doc_label} lost its race "
+                                f"{attempt} times; failing so the operation is retried"
+                            )
                         raise
                     logger.info(f"Append session for bank {bank_id} lost its race (attempt {attempt}) — redoing")
                     await asyncio.sleep(random.uniform(0.05, 0.25) * attempt)

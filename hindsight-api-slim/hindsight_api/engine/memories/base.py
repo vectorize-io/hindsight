@@ -1089,8 +1089,10 @@ class MemoriesExtension(Extension, ABC):
     async def put_documents(self, *, bank_id: str, documents: list[dict]) -> None:
         """Store (or replace) several documents in one call.
 
-        Each dict takes :meth:`put_document`'s arguments, ``expect_content_hash`` included. A store
-        that writes the batch as one unit fails all of it when one precondition does not hold.
+        Each dict takes :meth:`put_document`'s arguments, except ``expect_content_hash``: a
+        conditional write is routed as a single-document call instead (see
+        ``flush_document_bodies``), so one document losing its race cannot fail the batch it would
+        otherwise share an entry with. A store need not handle a precondition here.
 
         Default is a loop over :meth:`put_document`, so a store gains nothing by not implementing
         it and no caller has to ask whether it exists. A store whose write is a network round trip

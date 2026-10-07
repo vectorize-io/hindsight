@@ -30,8 +30,8 @@ BERLIN = "Alice moved to Berlin | Involving: Alice"
 CELLO = "Alice plays cello | Involving: Alice"
 
 
-async def _fact_texts(client, bank: str) -> list[str]:
-    memories = await client.memory.list_memories(bank, limit=100)
+async def _fact_texts(client, bank: str, document_id: str | None = None) -> list[str]:
+    memories = await client.memory.list_memories(bank, document_id=document_id, limit=100)
     return sorted(item.text for item in memories.items if item.state == "valid")
 
 
@@ -199,6 +199,13 @@ async def test_reprocessing_an_appended_document_re_extracts_under_that_strategy
 # ---------------------------------------------------------------------------
 
 TURNS = [f"Alice mentioned item number {i}." for i in range(8)]
+# Every turn extracts the same stubbed fact, so the memories UNDER the appended document
+# must all be that one fact, and there must be some. The document text alone misses the
+# other half of the bug: a losing writer used to cascade-delete the winner's units,
+# leaving the full text standing with nothing remembered beneath it. How many units
+# survive dedup is not pinnable here — the queue may fold several turns into one
+# execution — but "only this fact, and at least one of it" is.
+MENTION = "Alice mentioned an item | Involving: Alice"
 
 
 @pytest.fixture
@@ -233,6 +240,8 @@ async def test_queued_appends_to_one_document_keep_every_turn(client, bank_id, s
     document = await client.documents.get_document(bank_id, DOCUMENT_ID)
     missing = [turn for turn in TURNS if turn not in document.original_text]
     assert not missing, f"turns lost: {missing}"
+    remembered = await _fact_texts(client, bank_id, document_id=DOCUMENT_ID)
+    assert remembered and set(remembered) == {MENTION}, remembered
 
 
 async def test_concurrent_synchronous_appends_keep_every_turn(client, bank_id, settled, mentions):
@@ -251,3 +260,5 @@ async def test_concurrent_synchronous_appends_keep_every_turn(client, bank_id, s
     document = await client.documents.get_document(bank_id, DOCUMENT_ID)
     missing = [turn for turn in ["Alice opened the conversation.", *turns] if turn not in document.original_text]
     assert not missing, f"turns lost: {missing}"
+    remembered = await _fact_texts(client, bank_id, document_id=DOCUMENT_ID)
+    assert remembered and set(remembered) == {MENTION}, remembered
