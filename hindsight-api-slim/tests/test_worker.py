@@ -1394,6 +1394,88 @@ class TestWorkerRecovery:
             assert row["status"] == "processing"
 
     @pytest.mark.asyncio
+    async def test_recover_own_tasks_spares_rows_claimed_after_cutoff(self, pool, backend, clean_operations):
+        """Recovery runs while the restarted worker is already claiming under the
+        same id (#5407): rows claimed after startup must stay 'processing', or they
+        would be handed back and run twice. Covers the batch-API path too."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        worker_id = "restarted-worker"
+        cutoff = await pool.fetchval("SELECT now()")
+
+        async def insert(claimed_at_sql: str, metadata: dict) -> uuid.UUID:
+            op_id = uuid.uuid4()
+            await pool.execute(
+                f"""
+                INSERT INTO async_operations
+                    (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at, result_metadata)
+                VALUES ($1, $2, 'test', 'processing', $3::jsonb, $4, {claimed_at_sql}, $5::jsonb)
+                """,
+                op_id,
+                bank_id,
+                json.dumps({"type": "test_task", "bank_id": bank_id}),
+                worker_id,
+                json.dumps(metadata),
+            )
+            return op_id
+
+        stale = await insert(f"'{cutoff.isoformat()}'::timestamptz - interval '1 minute'", {})
+        fresh = await insert(f"'{cutoff.isoformat()}'::timestamptz + interval '1 second'", {})
+        never_stamped = await insert("NULL", {})
+        stale_batch = await insert(f"'{cutoff.isoformat()}'::timestamptz - interval '1 minute'", {"batch_id": "b-old"})
+        fresh_batch = await insert(f"'{cutoff.isoformat()}'::timestamptz + interval '1 second'", {"batch_id": "b-new"})
+
+        poller = WorkerPoller(backend=backend, worker_id=worker_id, executor=lambda x: None)
+        assert await poller.recover_own_tasks(claimed_before=cutoff) == 3
+
+        rows = await pool.fetch("SELECT operation_id, status FROM async_operations WHERE bank_id = $1", bank_id)
+        status = {r["operation_id"]: r["status"] for r in rows}
+        assert status[stale] == "pending"
+        assert status[stale_batch] == "pending"
+        assert status[never_stamped] == "pending"
+        assert status[fresh] == "processing"
+        assert status[fresh_batch] == "processing"
+
+    @pytest.mark.asyncio
+    async def test_run_claims_before_recovery_finishes(self, backend):
+        """A restarting worker must start claiming at once, not after walking every
+        tenant schema (#5407). Recovery runs in the background with the DB start time."""
+        from hindsight_api.worker import WorkerPoller
+
+        poller = WorkerPoller(backend=backend, worker_id="w-bg", executor=lambda x: None, poll_interval_ms=10)
+        recovery_started = asyncio.Event()
+        release_recovery = asyncio.Event()
+        seen_cutoff = []
+
+        async def slow_recovery(claimed_before=None):
+            seen_cutoff.append(claimed_before)
+            recovery_started.set()
+            await release_recovery.wait()
+            return 0
+
+        claimed = asyncio.Event()
+
+        async def claim_batch():
+            claimed.set()
+            return []
+
+        poller.recover_own_tasks = slow_recovery
+        poller.claim_batch = claim_batch
+        run = asyncio.create_task(poller.run())
+        try:
+            await asyncio.wait_for(claimed.wait(), timeout=5)
+            await asyncio.wait_for(recovery_started.wait(), timeout=5)
+            assert not release_recovery.is_set()
+            assert seen_cutoff[0] is not None
+        finally:
+            poller._shutdown.set()
+            await asyncio.wait_for(run, timeout=5)
+        # Leaving run() cancels a recovery that is still going.
+        assert poller._recovery_task is not None and poller._recovery_task.cancelled()
+
+    @pytest.mark.asyncio
     async def test_recover_own_tasks_returns_zero_when_no_stale_tasks(self, pool, backend, clean_operations):
         """Test that recover_own_tasks returns 0 when there are no stale tasks."""
         from hindsight_api.worker import WorkerPoller

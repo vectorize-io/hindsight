@@ -117,6 +117,10 @@ def _current_rss_bytes() -> int | None:
 # about to be marked completed.
 _CANCEL_DRAIN_TIMEOUT = 5.0
 
+# Startup recovery logs a progress line every this many schemas, so a long walk
+# reads as "recovering" rather than "hung".
+_RECOVERY_PROGRESS_EVERY = 1000
+
 
 def _metric_operation_label(operation_type: str | None) -> str:
     if operation_type in _RETAIN_OP_TYPES:
@@ -389,6 +393,9 @@ class WorkerPoller:
         # liveness probe so operators can alert on a poller that stopped making
         # progress; None until the first cycle finishes.
         self._last_poll_at: float | None = None
+        # Startup recovery runs beside the polling loop, not before it: with tens
+        # of thousands of tenant schemas the walk takes minutes (#5407).
+        self._recovery_task: asyncio.Task | None = None
         # Track active tasks locally: operation_id -> ActiveTaskInfo
         self._active_tasks: dict[str, ActiveTaskInfo] = {}
         # Track in-flight tasks by operation type
@@ -1324,7 +1331,7 @@ class WorkerPoller:
         """Ask the process to shut down, through the same path as `kill`."""
         os.kill(os.getpid(), signal.SIGTERM)
 
-    async def _reclaim_own_processing_tasks(self, schema: str | None) -> int:
+    async def _reclaim_own_processing_tasks(self, schema: str | None, *, claimed_before: datetime | None = None) -> int:
         """Reconcile rows still claimed by this worker in one schema.
 
         Rows under the retry budget go back to 'pending'; rows at/over it are
@@ -1337,6 +1344,11 @@ class WorkerPoller:
         the guards stay in one place: startup recovery (`recover_own_tasks`)
         and shutdown release (`release_own_tasks`).
 
+        `claimed_before` leaves alone rows claimed at or after that DB time. Startup
+        recovery runs while this worker is already claiming, and the worker id is
+        stable across restarts (StatefulSet pod names), so without it recovery
+        would hand back rows this run just took and they would execute twice.
+
         Returns:
             Number of rows reset to pending (not including those failed).
         """
@@ -1345,6 +1357,8 @@ class WorkerPoller:
         # Two separate UPDATEs so their row counts are meaningful:
         #   1. Rows under the limit → increment retry_count, reset to pending
         #   2. Rows at/over the limit → move to failed with a clear reason
+        cutoff_filter = "AND (claimed_at IS NULL OR claimed_at < $3)" if claimed_before is not None else ""
+        cutoff_args = [claimed_before] if claimed_before is not None else []
         async with self._backend.acquire() as conn:
             # Rows under the limit: increment retry_count and reset to pending
             result = await conn.execute(
@@ -1355,9 +1369,11 @@ class WorkerPoller:
                 WHERE status = 'processing' AND worker_id = $1
                   AND result_metadata->>'batch_id' IS NULL
                   AND COALESCE(retry_count, 0) < $2
+                  {cutoff_filter}
                 """,
                 self._worker_id,
                 max_retries,
+                *cutoff_args,
             )
             # Rows that exceeded the limit: move to failed. RETURNING gives us
             # the ids so their parent aggregators can be rolled up below — a
@@ -1374,10 +1390,12 @@ class WorkerPoller:
                 WHERE status = 'processing' AND worker_id = $1
                   AND result_metadata->>'batch_id' IS NULL
                   AND COALESCE(retry_count, 0) >= $2
+                  {cutoff_filter}
                 RETURNING operation_id
                 """,
                 self._worker_id,
                 max_retries,
+                *cutoff_args,
             )
 
         # Roll each failed child up to its parent aggregator, one transaction
@@ -1399,7 +1417,7 @@ class WorkerPoller:
             )
         return _updated_row_count(result)
 
-    async def recover_own_tasks(self) -> int:
+    async def recover_own_tasks(self, claimed_before: datetime | None = None) -> int:
         """
         Recover tasks that were assigned to this worker but not completed.
 
@@ -1415,18 +1433,26 @@ class WorkerPoller:
 
         If tenant_extension is configured, recovers across all tenant schemas.
 
+        Args:
+            claimed_before: Only touch rows claimed before this DB time, so it is
+                safe to run while the worker is already claiming. See `run()`.
+
         Returns:
             Number of tasks recovered (reset to pending, not including failed)
         """
         schemas = await self._get_schemas()
         total_count = 0
+        started = time.monotonic()
+        logger.info(f"Worker {self._worker_id} recovering stale tasks across {len(schemas)} schemas")
 
-        for schema in schemas:
+        for i, schema in enumerate(schemas, 1):
+            if i % _RECOVERY_PROGRESS_EVERY == 0:
+                logger.info(f"Worker {self._worker_id} recovery progress: {i}/{len(schemas)} schemas")
             try:
                 # First, recover batch API operations (before resetting worker tasks)
-                total_count += await self._recover_batch_operations(schema)
+                total_count += await self._recover_batch_operations(schema, claimed_before=claimed_before)
 
-                total_count += await self._reclaim_own_processing_tasks(schema)
+                total_count += await self._reclaim_own_processing_tasks(schema, claimed_before=claimed_before)
 
                 # Finalize batch_retain parents that the aggregation left behind
                 # (crash between a child's terminal commit and the parent update,
@@ -1439,8 +1465,10 @@ class WorkerPoller:
                 schema_display = f'"{schema}"' if schema else str(schema)
                 logger.warning(f"Worker {self._worker_id} failed to recover tasks for schema {schema_display}: {e}")
 
-        if total_count > 0:
-            logger.info(f"Worker {self._worker_id} recovered {total_count} stale tasks from previous run")
+        logger.info(
+            f"Worker {self._worker_id} recovered {total_count} stale tasks from previous run "
+            f"({len(schemas)} schemas in {time.monotonic() - started:.1f}s)"
+        )
         return total_count
 
     async def release_own_tasks(self) -> int:
@@ -1454,8 +1482,10 @@ class WorkerPoller:
         it finish. See issue #3228.
 
         Deliberately skips the batch-operation and orphaned-parent passes:
-        those are not scoped to this worker's rows, so they stay a startup
-        concern where no other worker can be mid-flight on them.
+        those are not scoped to this worker's rows, so they stay with startup
+        recovery. That runs beside live claiming, so the batch pass only resets
+        rows claimed before startup and the parent pass re-checks each parent
+        under a row lock.
 
         Returns:
             Number of operations returned to pending.
@@ -1478,7 +1508,7 @@ class WorkerPoller:
                 logger.warning(f"Worker {self._worker_id} failed to release tasks for schema {schema_display}: {e}")
         return total_count
 
-    async def _recover_batch_operations(self, schema: str | None) -> int:
+    async def _recover_batch_operations(self, schema: str | None, *, claimed_before: datetime | None = None) -> int:
         """
         Recover batch API operations that were in-flight when worker crashed.
 
@@ -1487,6 +1517,8 @@ class WorkerPoller:
 
         Args:
             schema: Database schema to recover from
+            claimed_before: Skip rows claimed at or after this DB time (see
+                `_reclaim_own_processing_tasks`)
 
         Returns:
             Number of batch operations recovered
@@ -1496,6 +1528,7 @@ class WorkerPoller:
         try:
             async with self._backend.acquire() as conn:
                 # Find operations with batch_id in metadata (batch API operations)
+                cutoff = "AND (claimed_at IS NULL OR claimed_at < $1)" if claimed_before is not None else ""
                 rows = await conn.fetch(
                     f"""
                     SELECT operation_id, task_payload, result_metadata
@@ -1503,7 +1536,9 @@ class WorkerPoller:
                     WHERE status = 'processing'
                       AND result_metadata ? 'batch_id'
                       AND task_payload IS NOT NULL
-                    """
+                      {cutoff}
+                    """,
+                    *([claimed_before] if claimed_before is not None else []),
                 )
 
             if not rows:
@@ -1528,13 +1563,17 @@ class WorkerPoller:
                 # Mark operation as ready for re-processing
                 # Reset to pending with task_payload intact so worker picks it up again
                 async with self._backend.acquire() as conn:
+                    # Re-check under the UPDATE: another restarting worker may have
+                    # reset and re-claimed this row since the SELECT above.
                     await conn.execute(
                         f"""
                         UPDATE {table}
                         SET status = 'pending', worker_id = NULL, claimed_at = NULL, updated_at = now()
-                        WHERE operation_id = $1
+                        WHERE operation_id = $1 AND status = 'processing'
+                          {"AND (claimed_at IS NULL OR claimed_at < $2)" if claimed_before is not None else ""}
                         """,
                         operation_id,
+                        *([claimed_before] if claimed_before is not None else []),
                     )
 
                 recovered += 1
@@ -1682,9 +1721,33 @@ class WorkerPoller:
 
         Continuously polls for pending tasks, spawns them as background tasks,
         and immediately continues polling (up to slot limits).
-        """
-        await self.recover_own_tasks()
 
+        Stale-task recovery runs in the background so a restart starts claiming
+        within seconds instead of after a walk of every tenant schema (#5407).
+        The DB clock is read first: recovery only touches rows claimed before
+        it, never the ones this run claims meanwhile.
+        """
+        # Read in UTC and tag it: Oracle hands back SYSTIMESTAMP without its zone,
+        # and the backends treat naive timestamps as UTC.
+        async with self._backend.acquire() as conn:
+            started_at = await conn.fetchval("SELECT now() AT TIME ZONE 'UTC'")
+        started_at = started_at.replace(tzinfo=timezone.utc)
+        self._recovery_task = asyncio.create_task(self._run_recovery(started_at))
+        try:
+            await self._poll_loop()
+        finally:
+            if not self._recovery_task.done():
+                self._recovery_task.cancel()
+
+    async def _run_recovery(self, claimed_before: datetime) -> None:
+        try:
+            await self.recover_own_tasks(claimed_before=claimed_before)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(f"Worker {self._worker_id} startup recovery failed")
+
+    async def _poll_loop(self) -> None:
         reservations_str = (
             ", ".join(f"{k}={v}" for k, v in self._slot_reservations.items()) if self._slot_reservations else "none"
         )
@@ -1805,6 +1868,12 @@ class WorkerPoller:
             # or we would hand back a row it is about to complete.
             if cancelled:
                 await asyncio.wait(cancelled, timeout=_CANCEL_DRAIN_TIMEOUT)
+
+        # Stop a startup recovery that is still walking schemas, so it does not
+        # race the release below.
+        if self._recovery_task is not None and not self._recovery_task.done():
+            self._recovery_task.cancel()
+            await asyncio.wait([self._recovery_task], timeout=_CANCEL_DRAIN_TIMEOUT)
 
         # Anything still 'processing' under this worker id is work nobody is
         # running. Hand it back now instead of waiting for a startup recovery
