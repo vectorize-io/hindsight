@@ -790,7 +790,6 @@ async def _append(memory, request_context, bank_id: str, document_id: str, body:
 
 
 @pytest.mark.asyncio
-@pytest.mark.memory_backend_incompatible
 async def test_concurrent_appends_keep_every_turn(memory_stub_emb, request_context):
     """Regression: parallel appends used to drop all but one turn.
 
@@ -798,13 +797,29 @@ async def test_concurrent_appends_keep_every_turn(memory_stub_emb, request_conte
     Before the compare-and-swap, three appends that all read the same base each
     replaced the document with their own version — the last writer won, the
     other two turns were deleted, and all three calls returned success.
+
+    The bank takes retains of OTHER documents while the appends race. Those must
+    not cost an append anything: a precondition that any write to the bank could
+    fail (rather than only a write to this document) made every retry lose again
+    on a busy bank, until the append gave up and its turn was dropped.
+
+    Asserts only on public reads, so it runs against every memories store.
     """
     bank_id = f"test_append_race_{_ts()}"
     document_id = "conversation"
 
     await _append(memory_stub_emb, request_context, bank_id, document_id, "TURN_ONE Alice works at Google.")
 
+    async def other_documents() -> None:
+        for i in range(6):
+            await memory_stub_emb.retain_batch_async(
+                bank_id=bank_id,
+                contents=[{"content": f"Unrelated note {i} about Erin.", "document_id": f"other-{i}"}],
+                request_context=request_context,
+            )
+
     await asyncio.gather(
+        other_documents(),
         _append(memory_stub_emb, request_context, bank_id, document_id, "TURN_TWO Bob works at Microsoft."),
         _append(memory_stub_emb, request_context, bank_id, document_id, "TURN_THREE Carol works at Amazon."),
         _append(memory_stub_emb, request_context, bank_id, document_id, "TURN_FOUR Dave works at Meta."),

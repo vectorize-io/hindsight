@@ -39,7 +39,7 @@ def _acc(meta=True):
                 merged_tags=[],
                 config=None,
                 retain_params=None,
-                expect_watermark=None,
+                expect_content_hash=None,
             )
             if meta
             else None
@@ -53,12 +53,12 @@ class _Recorder:
     def __init__(self):
         self.writes: list[list[str]] = []
         self.offsets: list[int] = []
-        self.watermarks: list[object] = []
+        self.expectations: list[object] = []
 
     async def __call__(self, **kw):
         self.writes.append(list(kw["chunk_texts"]))
         self.offsets.append(kw["chunk_index_offset"])
-        self.watermarks.append(kw["expect_watermark"])
+        self.expectations.append(kw["expect_content_hash"])
 
 
 @pytest.fixture
@@ -140,18 +140,18 @@ async def test_a_large_document_flushes_as_it_grows(recorder):
 
 
 @pytest.mark.asyncio
-async def test_the_append_watermark_rides_only_the_first_write(recorder):
+async def test_the_append_precondition_rides_only_the_first_write(recorder):
     """An append's compare-and-set belongs to the write derived from the stored base."""
     acc = _acc()
-    acc.meta.expect_watermark = 7
+    acc.meta.expect_content_hash = "base-hash"
     big = "y" * (5 * 1024 * 1024)
     for offset in range(4):
         acc.slices[offset] = [big]
         await _flush_document_body(acc, "doc", force=False)
     await flush_document_bodies({"doc": acc})
 
-    assert recorder.watermarks[0] == 7
-    assert all(w is None for w in recorder.watermarks[1:]), (
+    assert recorder.expectations[0] == "base-hash"
+    assert all(w is None for w in recorder.expectations[1:]), (
         "later writes build on what the first wrote, not on the old document"
     )
 

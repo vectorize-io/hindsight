@@ -465,6 +465,11 @@ class RetainDocumentPart:
     #: WHOLE document, and a non-empty list names the chunk ids whose facts go. Only the first part
     #: of a document may carry it — a later one would tombstone its own siblings.
     replace_chunk_ids: list[str] | None = None
+    #: For an append: the content hash the document held when the retain read the base it appends
+    #: to (``""``: it did not exist). The store commits the document's first write only if it still
+    #: holds that, and raises :class:`StoreWriteConflict` otherwise so the append is redone on the
+    #: newer document. ``None`` writes unconditionally (a replace).
+    expect_content_hash: str | None = None
 
 
 @dataclass
@@ -912,15 +917,13 @@ class BankContentCounts:
 class DocumentBase:
     """The stored document an append builds on: its body and the version it was read at.
 
-    ``watermark`` is the token a conditional write compare-and-sets against (see
-    :meth:`MemoriesExtension.put_document`); ``None`` for a store that serializes appends
-    on a row lock instead.
+    ``content_hash`` is the version: a store-owned write compare-and-sets against it (see
+    :meth:`MemoriesExtension.put_document`).
     """
 
     original_text: str | None
     content_hash: str | None
     attachment_filenames: dict[str, str] = field(default_factory=dict)
-    watermark: int | None = None
 
 
 @dataclass
@@ -936,13 +939,12 @@ class ExistingChunk:
 class DocumentChunkState:
     """A stored document's version, body (when asked for) and chunks, as a delta retain diffs them.
 
-    ``watermark`` is the store-state token the delta's write compare-and-sets against (see
-    :meth:`MemoriesExtension.put_document`); ``None`` where the write serializes on a row lock."""
+    ``content_hash`` is the version the delta's write compare-and-sets against (see
+    :meth:`MemoriesExtension.put_document`)."""
 
     content_hash: str | None
     original_text: str | None
     chunks: list[ExistingChunk] = field(default_factory=list)
-    watermark: int | None = None
 
 
 def document_chunk_state(
@@ -953,8 +955,8 @@ def document_chunk_state(
     The record's own chunk hashes, not a download of every chunk's text: they were computed with
     the same ``sha256(chunk.encode()).hexdigest()`` retain compares with. A chunk_id is
     ``build_chunk_id(bank_id, document_id, index)`` by construction, so the record carries none.
-    All of it comes from the ONE record: un-pairing the watermark from the hash is what the
-    compare-and-set exists to prevent.
+    All of it comes from the ONE record, so the chunks diffed and the hash the write is
+    conditional on describe the same version.
     """
     from ..chunk_ids import build_chunk_id
 
@@ -970,7 +972,6 @@ def document_chunk_state(
             )
             for index, chunk_hash in enumerate(rec.get("chunk_hashes") or [])
         ],
-        watermark=rec.get("watermark"),
     )
 
 
@@ -1085,8 +1086,11 @@ class MemoriesExtension(Extension, ABC):
         """
         return ""
 
-    async def put_documents(self, *, bank_id: str, documents: list[dict], expect_watermark: int | None = None) -> None:
+    async def put_documents(self, *, bank_id: str, documents: list[dict]) -> None:
         """Store (or replace) several documents in one call.
+
+        Each dict takes :meth:`put_document`'s arguments, ``expect_content_hash`` included. A store
+        that writes the batch as one unit fails all of it when one precondition does not hold.
 
         Default is a loop over :meth:`put_document`, so a store gains nothing by not implementing
         it and no caller has to ask whether it exists. A store whose write is a network round trip
@@ -1096,7 +1100,7 @@ class MemoriesExtension(Extension, ABC):
         declare is one the engine can never call, and that has shipped twice.
         """
         for d in documents:
-            await self.put_document(bank_id=bank_id, expect_watermark=expect_watermark, **d)
+            await self.put_document(bank_id=bank_id, **d)
 
     async def get_document_records(self, *, bank_id: str, document_ids: list[str]) -> dict[str, dict]:
         """Several documents' metadata in one read, keyed by document_id; absent ones omitted.
@@ -1399,7 +1403,7 @@ class MemoriesExtension(Extension, ABC):
         file_bytes: "bytes | None" = None,
         file_content_type: str = "",
         file_original_name: str = "",
-        expect_watermark: "int | None" = None,
+        expect_content_hash: "str | None" = None,
     ) -> None:
         """Store (or replace) a document's bodies: its extracted text, its ordered chunk texts, and
         optionally the original uploaded file. Idempotent by content — re-ingest re-uploads only
@@ -1409,13 +1413,12 @@ class MemoriesExtension(Extension, ABC):
         document (a retain sub-batch) must send the whole list, not its slice — see
         ``_store_document_bodies``, which restores the prefix before calling this.
 
-        ``expect_watermark`` makes this a compare-and-set: the write is applied only if the store's
-        state is still the one the caller read (the ``watermark`` from
-        :meth:`get_document_record`), and otherwise raises :class:`StoreWriteConflict` having
-        written nothing. This is what makes a read-modify-write — appending onto the stored body —
-        safe against a concurrent one, which without it silently erases the other's turn. ``None``
-        writes unconditionally. A store with no notion of a watermark ignores it, and is expected
-        to serialize such writes some other way."""
+        ``expect_content_hash`` makes this a compare-and-set on THIS document: the write is applied
+        only if the stored document still holds that content hash (``""``: it does not exist), and
+        otherwise raises :class:`StoreWriteConflict` having written nothing. This is what makes a
+        read-modify-write — appending onto the stored body — safe against a concurrent one, which
+        without it silently erases the other's turn. Only a write to this document can fail it, so
+        an append does not race the rest of the bank. ``None`` writes unconditionally."""
         raise NotImplementedError
 
     async def document_content_hash(self, *, bank_id: str, document_id: str) -> "str | None":
@@ -1425,9 +1428,8 @@ class MemoriesExtension(Extension, ABC):
     async def get_document_record(self, *, bank_id: str, document_id: str, include_text: bool = False) -> "dict | None":
         """A document's metadata (and, if asked, its extracted ``original_text``), or ``None``.
 
-        A returned record may carry a ``watermark``: an opaque token for the store state this read
-        observed, to hand back as ``put_document(expect_watermark=...)`` when the write is derived
-        from what was just read. Absent for a store that does not support conditional writes."""
+        Its ``content_hash`` is what a write derived from this read hands back as
+        ``put_document(expect_content_hash=...)``."""
         raise NotImplementedError
 
     async def list_documents(
@@ -3301,7 +3303,6 @@ class MemoriesExtension(Extension, ABC):
             original_text=record.get("original_text"),
             content_hash=record.get("content_hash"),
             attachment_filenames=document_attachment_filenames(record),
-            watermark=record.get("watermark"),
         )
 
     async def document_updated_at(self, *, backend, fq_table, bank_id: str, document_id: str) -> datetime | None:
@@ -3309,7 +3310,7 @@ class MemoriesExtension(Extension, ABC):
 
         ``backend`` is the pool: Postgres acquires a connection for the read. ``None`` here, so the
         check never fires: what serializes writers for a store that owns its documents is its own
-        compare-and-set (``put_document(expect_watermark=...)``)."""
+        compare-and-set (``put_document(expect_content_hash=...)``)."""
         return None
 
     async def recovery_chunk_hashes(
@@ -3327,7 +3328,7 @@ class MemoriesExtension(Extension, ABC):
         (``'__pending__'`` for a new row) — the streaming write's ownership gate.
 
         Here the stored hash, ``None`` if absent, and no lock: there is no row, and a store that
-        owns its documents serializes writers with ``put_document(expect_watermark=...)``."""
+        owns its documents serializes writers with ``put_document(expect_content_hash=...)``."""
         return await self.document_content_hash(bank_id=bank_id, document_id=document_id)
 
     async def lock_pending_document(self, *, conn, fq_table, bank_id: str, document_id: str) -> None:
@@ -3344,7 +3345,7 @@ class MemoriesExtension(Extension, ABC):
     ) -> DocumentChunkState:
         """The document's content_hash (and ``original_text`` when ``include_text``), then its
         chunks — the base a delta retain diffs against. ``backend`` is the pool: Postgres acquires a
-        connection for the two reads. Here ONE record read, which also carries the watermark."""
+        connection for the two reads. Here ONE record read."""
         record = await self.get_document_record(bank_id=bank_id, document_id=document_id, include_text=include_text)
         return document_chunk_state(record, bank_id=bank_id, document_id=document_id, include_text=include_text)
 
@@ -3358,7 +3359,7 @@ class MemoriesExtension(Extension, ABC):
         the pool.
 
         ``None`` here, so the recheck is skipped: it only saves extraction tokens, and the delta
-        write's compare-and-set on the store's watermark is what catches a concurrent writer."""
+        write's compare-and-set on the document's hash is what catches a concurrent writer."""
         return None
 
     async def document_original_text(self, *, conn, fq_table, bank_id: str, document_id: str) -> str | None:

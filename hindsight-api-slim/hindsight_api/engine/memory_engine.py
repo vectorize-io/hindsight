@@ -6965,6 +6965,7 @@ class MemoryEngine(MemoryEngineInterface):
         # and the global config refuses the access rather than let a per-bank override be silently
         # ignored.
         from .memories import get_memories as _get_memories_session
+        from .memories.base import StoreWriteConflict
 
         _store = _get_memories_session()
         retain_session = None
@@ -7327,28 +7328,54 @@ class MemoryEngine(MemoryEngineInterface):
             # The commit is inside the same `try`, so a commit that fails aborts too: it releases
             # whatever the session still buffers instead of leaving it to the garbage collector.
             # This is the shape `transfer/importer.py` already uses around its session.
-            try:
-                sub_batch_outcome = await self._retain_batch_async_internal(
-                    bank_id=bank_id,
-                    contents=contents,
-                    request_context=request_context,
-                    document_id=document_id,
-                    is_first_batch=True,
-                    fact_type_override=fact_type_override,
-                    document_tags=document_tags,
-                    operation_id=operation_id,
-                    strategy=strategy,
-                    outbox_callback=outbox_callback,
-                    outbox_callback_factory=outbox_callback_factory,
-                    retain_session=retain_session,
-                )
-                if retain_session is not None:
-                    async with _retain_timing_mod.timed("store.commit"):
-                        await retain_session.commit()
-            except BaseException:
-                if retain_session is not None:
-                    await retain_session.abort()
-                raise
+            #
+            # An append's session write is a compare-and-set on the document it read, and it can
+            # lose that race at commit — after `_retain_batch_with_append_retry`, which only sees
+            # the pipeline, has returned. Losing it is the same event that retry handles (the
+            # document moved under the append), so it gets the same answer: redo the append on the
+            # newer document, in a fresh session, from a pristine copy of the submission (the
+            # pipeline consumes its input).
+            redo_from = (
+                copy.deepcopy(contents)
+                if retain_session is not None and any(item.get("update_mode") == "append" for item in contents)
+                else None
+            )
+            for attempt in range(1, self._APPEND_CONFLICT_ATTEMPTS + 1):
+                try:
+                    sub_batch_outcome = await self._retain_batch_async_internal(
+                        bank_id=bank_id,
+                        contents=contents,
+                        request_context=request_context,
+                        document_id=document_id,
+                        is_first_batch=True,
+                        fact_type_override=fact_type_override,
+                        document_tags=document_tags,
+                        operation_id=operation_id,
+                        strategy=strategy,
+                        outbox_callback=outbox_callback,
+                        outbox_callback_factory=outbox_callback_factory,
+                        retain_session=retain_session,
+                    )
+                    if retain_session is not None:
+                        async with _retain_timing_mod.timed("store.commit"):
+                            await retain_session.commit()
+                    break
+                except StoreWriteConflict:
+                    if retain_session is not None:
+                        await retain_session.abort()
+                    if redo_from is None or attempt == self._APPEND_CONFLICT_ATTEMPTS:
+                        raise
+                    logger.info(f"Append session for bank {bank_id} lost its race (attempt {attempt}) — redoing")
+                    await asyncio.sleep(random.uniform(0.05, 0.25) * attempt)
+                    contents = copy.deepcopy(redo_from)
+                    # The lost attempt did not complete, so its outbox events must not be
+                    # delivered; the redo records its own.
+                    pending_outbox_callbacks.clear()
+                    retain_session = await _store.begin_retain(bank_id=bank_id, config=_session_config)
+                except BaseException:
+                    if retain_session is not None:
+                        await retain_session.abort()
+                    raise
             result = sub_batch_outcome.memory_ids
             total_usage = sub_batch_outcome.usage
             total_processed_content_tokens = sub_batch_outcome.processed_content_tokens

@@ -513,6 +513,16 @@ logger = logging.getLogger(__name__)
 # can tell "nobody had written this document yet" apart from "we didn't look".
 _APPEND_BASE_ABSENT = "__absent__"
 
+
+def _append_expectation(append_base_hash: str | None) -> str | None:
+    """The content hash an append's first store write must still find stored, for a store that
+    owns its documents: the hash the base read saw, ``""`` when that read found no document, and
+    ``None`` (unconditional) when this is not an append."""
+    if append_base_hash is None:
+        return None
+    return "" if append_base_hash == _APPEND_BASE_ABSENT else append_base_hash
+
+
 RetainOutboxCallback = Callable[[asyncpg.Connection], Awaitable[None]]
 RetainOutboxCallbackFactory = Callable[[list[RetainContentDict]], RetainOutboxCallback | None]
 
@@ -1125,7 +1135,7 @@ async def _delta_store_owned_write(
     existing_by_index: dict,
     changed_indices: list,
     removed_indices: list,
-    doc_watermark_at_load,
+    doc_hash_at_load: str | None,
 ) -> "tuple[bool, list]":
     """A store-owned bank's delta write: ONE `retain`, scoped to the chunks that moved.
 
@@ -1143,13 +1153,12 @@ async def _delta_store_owned_write(
         combined_content = "\n".join([c.get("content", "") for c in contents_dicts])
     retain_params, merged_tags = _build_retain_params(contents_dicts, document_tags)
 
-    # The fence, and it must be this batch's FIRST store write. `expect_watermark` guards on
-    # the namespace's WAL head, and the fact write below MOVES that head — fencing after it
-    # would fence the batch against itself, so a plain sequential append fails with
-    # "required WAL head < 10, but head was 12". Postgres does not need this here because it
-    # locks the `documents` row in PHASE 2; a store-owned bank has no such row, which is why
-    # parallel appends would otherwise plan against the same base and overwrite each other
-    # with every call returning success.
+    # The fence, and it must be this batch's FIRST store write: a compare-and-set on the content
+    # hash this delta was planned against, so the fact write below only happens on top of the
+    # document it was diffed from. Postgres does not need this here because it locks the
+    # `documents` row in PHASE 2; a store-owned bank has no such row, which is why parallel appends
+    # would otherwise plan against the same base and overwrite each other with every call
+    # returning success.
     try:
         await _store_document_bodies(
             bank_id=bank_id,
@@ -1159,7 +1168,7 @@ async def _delta_store_owned_write(
             merged_tags=merged_tags,
             config=config,
             retain_params=retain_params,
-            expect_watermark=doc_watermark_at_load,
+            expect_content_hash=doc_hash_at_load,
         )
     except ConcurrentAppendConflict:
         # `_store_document_bodies` already translates the store's StoreWriteConflict into
@@ -1762,12 +1771,10 @@ async def retain_batch(
     # ``ConcurrentAppendConflict`` and the gate in ``_streaming_retain_batch``.
     # ``_APPEND_BASE_ABSENT`` distinguishes "read a document that wasn't there"
     # from "not an append", which None alone cannot express.
+    #
+    # The same hash is what serializes appends on a store that owns its documents: there is no row
+    # to lock, so the store's write is a compare-and-set on it (``_append_expectation``).
     append_base_hash: str | None = None
-    # The store-side watermark for that same base — the token a conditional write uses to prove
-    # nothing landed in between. The content_hash gate above only covers stores that keep the
-    # document row in Postgres and can lock it; a store that owns the document store has no such
-    # row, so this is what serializes concurrent appends there.
-    append_base_watermark: int | None = None
     is_append = update_mode == "append" and bool(effective_doc_id) and is_first_batch
 
     if is_append:
@@ -1787,9 +1794,6 @@ async def retain_batch(
         # restate them would erase every name the earlier turns gave. (A SQL bank merges them in
         # `sync_document_attachments` instead, so this stays empty there.)
         prior_filenames: dict[str, str] = base.attachment_filenames if base else {}
-        # Read WITH the base, not later: a watermark taken after the read would already include a
-        # writer that beat us, and the guard would pass while the base was stale.
-        append_base_watermark = base.watermark if base else None
         if existing_text:
             # Prepend existing text as a new content item at the beginning.
             #
@@ -1839,7 +1843,7 @@ async def retain_batch(
     # inside each batch TXN (see _run_mini_batch_db_work).
     # A store that owns its documents answers None without a read: it has no SQL `documents` row,
     # and what actually serializes writers for such a bank is its own compare-and-set
-    # (`put_document(expect_watermark=...)`), which is the same thing the comment above defers to
+    # (`put_document(expect_content_hash=...)`), which is the same thing the comment above defers to
     # when it calls this best-effort. `conn` is the pool, so only Postgres acquires a connection.
     from ..memories import get_memories as _get_memories_stale
 
@@ -2020,7 +2024,6 @@ async def retain_batch(
         document_prefetch=document_prefetch,
         progress_callback=progress_callback,
         append_base_hash=append_base_hash,
-        append_base_watermark=append_base_watermark,
         force_reextract=force_reextract,
         attachment_loader=attachment_loader,
         vlm_config=vlm_config,
@@ -2144,7 +2147,7 @@ async def _store_document_bodies(
     content_hash: str | None = None,
     retain_params: dict | None = None,
     chunk_index_offset: int = 0,
-    expect_watermark: int | None = None,
+    expect_content_hash: str | None = None,
     attachment_filenames: dict[str, str] | None = None,
 ) -> None:
     """Route a document's bulky bodies — its extracted text and ordered chunk texts — to the
@@ -2192,11 +2195,12 @@ async def _store_document_bodies(
     if content_hash is None:
         _sanitized = fact_extraction._sanitize_text(combined_content) or ""
         content_hash = hashlib.sha256(_sanitized.encode()).hexdigest()
-    # `expect_watermark` makes this a compare-and-set (the append case: the body being written was
-    # derived from the stored one). The store reports a lost race as `StoreWriteConflict`, which is
-    # exactly the retain-level `ConcurrentAppendConflict` the caller already knows how to redo —
-    # the Postgres path raises it from its own document-row gate. Translating here keeps the two
-    # stores' append semantics the same instead of one of them being last-writer-wins.
+    # `expect_content_hash` makes this a compare-and-set on the document (the append case: the body
+    # being written was derived from the stored one). The store reports a lost race as
+    # `StoreWriteConflict`, which is exactly the retain-level `ConcurrentAppendConflict` the caller
+    # already knows how to redo — the Postgres path raises it from its own document-row gate.
+    # Translating here keeps the two stores' append semantics the same instead of one of them being
+    # last-writer-wins.
     try:
         await store.put_document(
             bank_id=bank_id,
@@ -2208,7 +2212,7 @@ async def _store_document_bodies(
             chunk_texts=list(chunk_texts),
             tags=list(merged_tags or []),
             metadata=document_record_metadata(retain_params, attachment_filenames),
-            expect_watermark=expect_watermark,
+            expect_content_hash=expect_content_hash,
         )
     except StoreWriteConflict as e:
         raise ConcurrentAppendConflict(str(e)) from e
@@ -2240,7 +2244,7 @@ class DocumentBodyMeta:
     merged_tags: list[str] | None
     config: Any
     retain_params: dict | None
-    expect_watermark: int | None
+    expect_content_hash: str | None
     attachment_filenames: dict[str, str] | None = None
 
 
@@ -2320,7 +2324,7 @@ async def _document_body_write_args(acc: DocumentBodyAccumulator, document_id: s
             attachment_filenames=meta.attachment_filenames,
             # The append CAS belongs to the write derived from the stored base, which is the first
             # one this retain issues; later flushes build on what it wrote.
-            expect_watermark=meta.expect_watermark if acc.flushed_bytes == 0 else None,
+            expect_content_hash=meta.expect_content_hash if acc.flushed_bytes == 0 else None,
             # The accumulator holds the document from index 0, so the write needs no offset — it
             # IS the prefix, which is what `put_document` wants.
             chunk_index_offset=0,
@@ -2370,10 +2374,10 @@ async def flush_document_bodies(body_accum: dict[str, DocumentBodyAccumulator]) 
         args = await _document_body_write_args(acc, document_id, force=True)
         if args is None:
             continue
-        # A guarded write cannot share a batch's single precondition (the guard is on the
-        # namespace's WAL head, and a batch carries one), and a bank whose documents live in SQL
-        # has no batch call to make. Both go the single-document route.
-        if args["expect_watermark"] is not None or not store.store_owned_for(args["bank_id"]):
+        # A guarded write goes alone, so a lost race fails only its own document rather than the
+        # batch it would share one entry with; and a bank whose documents live in SQL has no batch
+        # call to make. Both go the single-document route.
+        if args["expect_content_hash"] is not None or not store.store_owned_for(args["bank_id"]):
             await _store_document_bodies(**args)
             continue
         batch.append(args)
@@ -2441,7 +2445,6 @@ async def _streaming_retain_batch(
     document_prefetch: "dict[str, dict] | asyncio.Task | None" = None,
     progress_callback: "Callable[..., Awaitable[None]] | None" = None,
     append_base_hash: str | None = None,
-    append_base_watermark: int | None = None,
     force_reextract: bool = False,
     attachment_loader: "RetainAttachmentLoader | None" = None,
     vlm_config: "LLMConfig | None" = None,
@@ -2590,6 +2593,9 @@ async def _streaming_retain_batch(
                     facts=[],
                     tags=list(merged_tags or []),
                     metadata=document_record_metadata(retain_params, _attachment_filenames_for(contents)),
+                    # The append's base, on the part from the sub-batch that read it; the session
+                    # guards every later write of the document on what it wrote itself.
+                    expect_content_hash=_append_expectation(append_base_hash) if is_first_batch else None,
                 )
             )
     elif body_accum is not None and effective_doc_id and get_memories().store_owned_for(bank_id):
@@ -2610,7 +2616,7 @@ async def _streaming_retain_batch(
                 merged_tags=merged_tags,
                 config=config,
                 retain_params=retain_params,
-                expect_watermark=append_base_watermark,
+                expect_content_hash=_append_expectation(append_base_hash),
                 attachment_filenames=_attachment_filenames_for(contents),
             )
         await _flush_document_body(acc, effective_doc_id, force=False)
@@ -2628,7 +2634,7 @@ async def _streaming_retain_batch(
             # An append derives the new body from the stored one, so its write is conditional on
             # that base still being current. Only the first sub-batch carries it: it is the one
             # that read the base, and the later sub-batches build on what it just wrote.
-            expect_watermark=append_base_watermark if is_first_batch else None,
+            expect_content_hash=_append_expectation(append_base_hash) if is_first_batch else None,
             # `all_pre_chunks` is THIS sub-batch's chunks; the offset is where they sit in the
             # document, and is what lets the store keep the earlier sub-batches' chunks instead of
             # being handed one slice as if it were the whole document. The delta path's two calls
@@ -3703,9 +3709,8 @@ async def _try_delta_retain(
     #     `SELECT content_hash FROM documents ... FOR UPDATE`. A store-owned bank has no such row,
     #     so parallel appends each planned against the same base and overwrote each other — turns
     #     lost silently, every call returning success. Its place is taken by the store's own
-    #     compare-and-set: `put_document(expect_watermark=...)`, which must be the batch's FIRST
-    #     store write, because the guard is on the namespace's WAL head and this batch's own fact
-    #     writes move it.
+    #     compare-and-set: `put_document(expect_content_hash=...)` on the hash this delta planned
+    #     against, made the batch's FIRST store write so the fact writes after it are covered.
     #   * the document write itself. The delta path updates the document through
     #     `upsert_document_metadata`, which is SQL and writes nothing for such a bank, so the record
     #     would keep its pre-delta body. `_store_document_bodies` carries it instead.
@@ -3736,9 +3741,8 @@ async def _try_delta_retain(
     # changed; if it has, we fall back to streaming (which has full protection).
     #
     # A store that owns its documents answers with ONE record read instead of two: it carries the
-    # content hash, the text when asked for it, the chunk hashes, and the watermark the write below
-    # compare-and-sets against — all from the same record, since un-pairing the watermark from the
-    # hash is what the CAS exists to prevent. Such a store's retain also prefetches every
+    # content hash (which the write below compare-and-sets against), the text when asked for it,
+    # and the chunk hashes — all from the same record, so the plan and its precondition agree. Such a store's retain also prefetches every
     # document's record in one read; that answers here when no text is wanted (the prefetch
     # deliberately carries no bodies, so an append still reads its own). Absent from the prefetch
     # means the document does not exist — an answer, not a miss to retry.
@@ -3762,7 +3766,6 @@ async def _try_delta_retain(
             include_text=full_document_body is not None,
         )
     doc_hash_at_load = state.content_hash
-    doc_watermark_at_load = state.watermark  # None for SQL, which serializes on the documents row
     original_text_at_load = state.original_text
     existing_chunks = state.chunks
 
@@ -3915,7 +3918,7 @@ async def _try_delta_retain(
     # avoid burning LLM tokens on work a concurrent request already did.
     #
     # A store that owns its documents answers None without a read (`conn` is the pool), which
-    # skips the recheck: the compare-and-set on its watermark in the write is its backstop.
+    # skips the recheck: the compare-and-set on the document's hash in the write is its backstop.
     recheck_hash = await _delta_store.current_document_hash(
         backend=pool, fq_table=fq_table, bank_id=bank_id, document_id=effective_doc_id
     )
@@ -4035,7 +4038,7 @@ async def _try_delta_retain(
                 existing_by_index=existing_by_index,
                 changed_indices=changed_indices,
                 removed_indices=removed_indices,
-                doc_watermark_at_load=doc_watermark_at_load,
+                doc_hash_at_load=doc_hash_at_load,
             )
             return ok
 
