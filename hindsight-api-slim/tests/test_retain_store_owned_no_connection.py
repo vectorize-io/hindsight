@@ -287,7 +287,7 @@ async def test_a_store_owned_delta_holds_no_connection_and_scopes_its_replace(mo
         existing_by_index={1: SimpleNamespace(chunk_id="b_d1_1")},
         changed_indices=[1],
         removed_indices=[],
-        doc_watermark_at_load=5,
+        doc_hash_at_load="planned-hash",
     )
 
     assert ok is True
@@ -301,16 +301,19 @@ async def test_a_store_owned_delta_holds_no_connection_and_scopes_its_replace(mo
 
 
 async def test_a_store_owned_delta_falls_back_when_the_document_moved(monkeypatch):
-    """The watermark compare-and-set is the fence, and losing it means falling back.
+    """The content-hash compare-and-set is the fence, and losing it means falling back.
 
     `_store_document_bodies` runs FIRST precisely so this is detected before anything is written:
-    it compare-and-sets on the document's watermark, and the fact write would move the WAL head
-    that CAS reads. Fencing after the write would fence the batch against itself.
+    it compare-and-sets on the hash the delta was planned against, so a document that moved is
+    caught before the fact write lands on top of a stale plan.
     """
     calls = []
 
+    fenced_on = []
+
     async def _store_bodies(**kw):
         calls.append("store_bodies")
+        fenced_on.append(kw["expect_content_hash"])
         raise ConcurrentAppendConflict("moved")
 
     async def _insert(*a, **k):
@@ -345,7 +348,7 @@ async def test_a_store_owned_delta_falls_back_when_the_document_moved(monkeypatc
         existing_by_index={1: SimpleNamespace(chunk_id="b_d1_1")},
         changed_indices=[1],
         removed_indices=[],
-        doc_watermark_at_load=5,
+        doc_hash_at_load="planned-hash",
     )
 
     assert ok is False
@@ -353,3 +356,4 @@ async def test_a_store_owned_delta_falls_back_when_the_document_moved(monkeypatc
     # Nothing was written: the fence tripped before the fact write, which is the point of it
     # running first.
     assert calls == ["store_bodies"], calls
+    assert fenced_on == ["planned-hash"], "the fence is conditional on the hash the delta planned against"
