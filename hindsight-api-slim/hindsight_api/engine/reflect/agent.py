@@ -462,6 +462,12 @@ def _is_context_overflow_error(exc: Exception) -> bool:
     )
 
 
+_FRESH_PAGES_GUIDANCE = (
+    "These pages are fresh. If they answer the question, call done now and answer from them alone; "
+    "search further only for a specific detail they lack."
+)
+
+
 def _all_mental_models_are_usable_and_fresh(tool_output: dict[str, Any]) -> bool:
     """Return whether every retrieved mental model is explicitly fresh and has answerable content.
 
@@ -1594,6 +1600,7 @@ async def _run_reflect_agent_inner(
                         f"{result_data}"
                     ) from result_data
                 output, duration_ms = result_data
+                releases_forcing = False
 
                 # Normalize tool name for consistent tracking
                 normalized_tool_name = _normalize_tool_name(tc.name)
@@ -1628,6 +1635,7 @@ async def _run_reflect_agent_inner(
                         and _all_mental_models_are_usable_and_fresh(output)
                     ):
                         forcing_released = True
+                        releases_forcing = True
                         logger.info(
                             f"[REFLECT {reflect_id}] Fresh mental models sufficient on iteration {iteration + 1}; "
                             "releasing forced lower-level retrieval to auto."
@@ -1655,6 +1663,13 @@ async def _run_reflect_agent_inner(
                 # model reads the presented form (see presentation.py); the trace
                 # below keeps the raw output.
                 presented = presenter.present(output)
+                if releases_forcing and isinstance(presented, dict):
+                    # Releasing the forcing only changes tool_choice; the model was
+                    # never told why. qwen3.8-flash kept descending to recall after a
+                    # fresh page had answered, and padded the answer with whatever the
+                    # raw facts added — details the page never stated (#5272). Saying
+                    # it here, on the result it is about, costs one line.
+                    presented = {**presented, "guidance": _FRESH_PAGES_GUIDANCE}
                 tool_outputs[position] = json.dumps(presented, default=str, ensure_ascii=False)
 
                 # Track for logging and context history

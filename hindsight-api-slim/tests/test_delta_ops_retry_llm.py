@@ -60,7 +60,6 @@ async def test_the_model_repairs_a_refused_reply_from_the_correction():
     )
     user_prompt = build_structured_delta_prompt(
         current_document_json=document.model_dump_json(),
-        candidate_markdown="# Team\n\nCarol joined the team as an SRE.",
         supporting_facts=[{"id": "f1", "text": "Carol joined the team as an SRE.", "type": "world", "context": None}],
         source_query="Who is on the team?",
     )

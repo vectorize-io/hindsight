@@ -1142,24 +1142,7 @@ You will be given:
    (1..6) and an ordered list of ``blocks``. Each block has a stable ``id`` and
    a ``text`` field holding one markdown fragment — a paragraph, a list, a
    table, or a fenced code block.
-3. NEW INFORMATION SYNTHESIS (markdown) — UNTRUSTED. Prose written by another
-   model that saw ONLY the supporting facts below. It is a reading aid, not
-   evidence, and it is frequently wrong about what exists: it says things like
-   "no X was found" or "a total of N" when X is merely absent from this batch
-   and N counts only this batch. NEVER edit the document on the strength of a
-   sentence in the synthesis — only the SUPPORTING FACTS justify an operation.
-   A synthesis showing how the new facts
-   relate to the document's topic. Use it to understand context and relevance,
-   but do NOT copy its formatting or wording wholesale.
-   It was written from the SUPPORTING FACTS BELOW AND NOTHING ELSE. It could not
-   see the current document or any earlier fact, so every count, total, list or
-   summary in it describes ONLY the new facts — never the topic as a whole.
-   "A total of 4 customers..." in the synthesis means four in this batch, not
-   four altogether. Such a figure NEVER contradicts a different figure in the
-   document: the document counted what it could see, the synthesis counted what
-   it could see, and the answer is usually the two combined. Likewise the
-   synthesis saying nothing about something is not evidence against it.
-4. SUPPORTING FACTS — observations and facts created since the last refresh.
+3. SUPPORTING FACTS — observations and facts created since the last refresh.
    These are genuinely new — they were NOT available when the current document
    was written.
 
@@ -1199,17 +1182,15 @@ RULES
   SUPPORTING FACTS is NOT thereby wrong, superseded or removed. The facts are one
   batch, not the whole memory — the document was built from facts you cannot see.
   "The batch does not mention X" and "X did not happen" are different statements,
-  and only the second would justify an edit. This applies to the SYNTHESIS too: if
-  it reports that something is absent, unrecorded or not found, that is a
-  statement about the batch, never about the topic.
+  and only the second would justify an edit.
 - **Refutation threshold for removal or overwrite**: you may only remove or
   overwrite existing text when a SUPPORTING FACT explicitly refutes or corrects
   that exact detail, OR is a later-DATED statement about the same facet (a
   status, count, owner or location that has since changed). "Later" is about
   the dates the texts give, never about arrival: facts reach you out of date
   order, and a fact dated before the state the document records is backfilled
-  history — it belongs in the history, not in place of the current state, even
-  when the synthesis calls it current. Failing both tests, keep the
+  history — it belongs in the history, not in place of the current state.
+  Failing both tests, keep the
   existing text: use ``append_block`` / ``insert_block``, or re-emit the block
   with the new detail merged into a cohesive statement that still carries the old
   one. Combining two disjoint sets is a merge, never a replacement.
@@ -1301,7 +1282,7 @@ class FittedDeltaPrompt:
 
     The sections are named for their *slots*, not their contents, because both
     callers reuse this fitter with different material in them: the refresh prompt
-    puts the synthesis in ``candidate`` and the new facts in ``facts``, while the
+    leaves ``candidate`` empty and puts the new facts in ``facts``, while the
     retraction prompt puts the still-supported facts in ``candidate`` and the
     retracted ones in ``facts``.
 
@@ -1398,7 +1379,6 @@ def build_mental_model_refresh_context(name: str, *, delta: bool) -> str:
 def build_structured_delta_prompt(
     *,
     current_document_json: str,
-    candidate_markdown: str,
     supporting_facts: list[dict[str, Any]],
     source_query: str,
     max_output_tokens: int | None = None,
@@ -1409,8 +1389,16 @@ def build_structured_delta_prompt(
     """Build the user prompt for a structured-delta mental model refresh.
 
     The LLM's job is to emit operations against ``current_document_json``;
-    the surrounding ``candidate_markdown`` and ``supporting_facts`` are
-    references for *what new information exists*, not templates to mimic.
+    ``supporting_facts`` say *what new information exists*.
+
+    The refresh's own synthesis is deliberately NOT shown. It is written from the
+    new batch alone, so it reports "no release was deployed" or "a total of 4"
+    about the batch, and the ops call kept reading those as statements about the
+    topic: it overwrote a production release recorded one wave earlier. #4304
+    labelled it UNTRUSTED and added absence-is-not-contradiction rules (5/5 then),
+    but gemini-3.1-flash-lite and qwen3.8-flash both overwrote the release again
+    (0/2). Without the synthesis the same eval went 5/5, with the count case
+    unchanged — the facts carry everything an operation may rest on (#5272).
 
     ``max_output_tokens`` is surfaced in the prompt so the model can keep its
     op list within the provider's response cap. The actual cap is enforced by
@@ -1478,7 +1466,7 @@ def build_structured_delta_prompt(
     fitted = _fit_structured_delta_prompt_parts(
         source_query=source_query,
         current_document_json=current_document_json,
-        candidate_markdown=candidate_markdown,
+        candidate_markdown="",
         facts_block=facts_block,
         budget_hint=budget_hint,
         task_footer=task_footer,
@@ -1487,7 +1475,7 @@ def build_structured_delta_prompt(
     truncation_note = ""
     if fitted.truncated:
         truncation_note = (
-            "\n\n*Note: Document, synthesis, or facts were truncated to fit the model "
+            "\n\n*Note: Document or facts were truncated to fit the model "
             "context window. Prefer minimal, high-leverage operations.*"
         )
 
@@ -1495,8 +1483,6 @@ def build_structured_delta_prompt(
         f"## Topic\n{source_query}\n\n"
         f"## CURRENT DOCUMENT (apply ops to this; copy section and block ids from it verbatim)\n"
         f"```json\n{fitted.document_json}\n```\n\n"
-        f"## NEW INFORMATION SYNTHESIS (context for how new facts relate to the topic)\n"
-        f"```markdown\n{fitted.candidate}\n```\n\n"
         f"## SUPPORTING FACTS (new since last refresh — integrate these)\n{fitted.facts}"
         f"{document_hint}{budget_hint}{truncation_note}\n\n"
         f"{task_footer}"

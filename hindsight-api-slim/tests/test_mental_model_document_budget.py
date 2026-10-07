@@ -24,7 +24,6 @@ from hindsight_api.engine.reflect.prompts import build_structured_delta_prompt
 def _prompt(document_tokens: int, document_budget: int) -> str:
     return build_structured_delta_prompt(
         current_document_json='{"version": 2, "sections": []}',
-        candidate_markdown="candidate",
         supporting_facts=[{"id": "o1", "text": "a new fact", "type": "observation"}],
         source_query="Document the API",
         document_tokens=document_tokens,
@@ -56,7 +55,6 @@ class TestDocumentBudgetPrompt:
     def test_absent_when_the_caller_does_not_pass_a_budget(self):
         prompt = build_structured_delta_prompt(
             current_document_json="{}",
-            candidate_markdown="c",
             supporting_facts=[],
             source_query="q",
         )

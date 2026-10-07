@@ -405,6 +405,38 @@ class TestReflectAgentMocked:
         assert tool_result["role"] == "tool"
         assert tool_result["tool_call_id"] == "1"
         assert "name" not in tool_result
+        # And the model is told why (#5272): releasing tool_choice alone left a
+        # model that kept descending and padded the answer with raw facts.
+        assert "call done now" in json.loads(tool_result["content"])["guidance"]
+
+    @pytest.mark.asyncio
+    async def test_stale_mental_model_gets_no_answer_now_guidance(self, mock_llm, mock_functions):
+        mock_functions["search_mental_models_fn"].return_value = {
+            "mental_models": [{"id": "mm-1", "name": "P", "content": "Old.", "is_stale": True}]
+        }
+        mock_llm.call_with_tools.side_effect = [
+            self._mm_call(),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="2", name="done", arguments={"answer": "Old.", "mental_model_ids": ["mm-1"]})
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            has_mental_models=True,
+            budget="low",
+            max_iterations=5,
+            **mock_functions,
+        )
+
+        tool_result = mock_llm.call_with_tools.await_args_list[1].kwargs["messages"][-1]
+        assert "guidance" not in json.loads(tool_result["content"])
 
     @pytest.mark.asyncio
     async def test_output_language_reaches_the_done_path(self, mock_llm, mock_functions):

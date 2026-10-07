@@ -17,7 +17,6 @@ def test_build_structured_delta_prompt_truncates_huge_document():
     )
     prompt = build_structured_delta_prompt(
         current_document_json=huge_doc,
-        candidate_markdown="short synthesis",
         supporting_facts=[{"id": "1", "text": "new fact", "type": "world"}],
         source_query="topic?",
         max_input_tokens=4000,
@@ -81,7 +80,6 @@ def test_delta_prompt_ends_with_the_date_order_rule():
     """
     prompt = build_structured_delta_prompt(
         current_document_json='{"sections": []}',
-        candidate_markdown="synthesis",
         supporting_facts=[{"id": "1", "text": "new fact", "type": "world"}],
         source_query="topic?",
         max_output_tokens=2000,
@@ -110,3 +108,20 @@ def test_refresh_context_asks_full_refresh_for_dates_and_delta_for_events():
     assert "Do NOT say what is current" not in full
     assert "Do NOT say what is current" in delta
     assert "say since when it has been true" not in delta
+
+
+def test_delta_prompt_carries_no_batch_synthesis():
+    """The ops call sees the document and the new facts, never the batch-only synthesis.
+
+    The synthesis is written from the new batch alone, so "no release was deployed"
+    in it describes the batch — and two models read it as a statement about the
+    topic and overwrote a release recorded one wave earlier, despite the prompt
+    calling it untrusted (#5272). Nothing in the prompt may invite that reading.
+    """
+    prompt = build_structured_delta_prompt(
+        current_document_json='{"sections": []}',
+        supporting_facts=[{"id": "1", "text": "new fact", "type": "world"}],
+        source_query="topic?",
+    )
+    for text in (prompt, STRUCTURED_DELTA_SYSTEM_PROMPT):
+        assert "SYNTHESIS" not in text.upper()
