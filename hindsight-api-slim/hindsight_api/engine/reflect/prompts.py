@@ -1316,8 +1316,7 @@ def _fit_structured_delta_prompt_parts(
         f"## Topic\n{source_query}\n\n"
         f"## CURRENT DOCUMENT (apply ops to this; copy section and block ids from it verbatim)\n"
         f"```json\n\n```\n\n"
-        f"## NEW INFORMATION SYNTHESIS (context for how new facts relate to the topic)\n"
-        f"```markdown\n\n```\n\n"
+        f"## CANDIDATE SLOT (the retraction prompt's still-supported facts)\n\n"
         f"## SUPPORTING FACTS (new since last refresh — integrate these)\n"
         f"{budget_hint}\n\n"
         f"{task_footer}"
@@ -1325,7 +1324,10 @@ def _fit_structured_delta_prompt_parts(
     facts_header = "## SUPPORTING FACTS (new since last refresh — integrate these)\n"
     facts_prefix_tokens = count_prompt_tokens(facts_header)
     reserved_facts = min(4096, max(512, max_input_tokens // 8))
-    doc_budget = max(1024, (max_input_tokens - count_prompt_tokens(fixed) - reserved_facts) * 55 // 100)
+    # The refresh prompt leaves the candidate slot empty (its synthesis is not
+    # sent, #5272), so the document gets the candidate's share as well.
+    doc_share = 55 if candidate_markdown else 85
+    doc_budget = max(1024, (max_input_tokens - count_prompt_tokens(fixed) - reserved_facts) * doc_share // 100)
     cand_budget = max(512, (max_input_tokens - count_prompt_tokens(fixed) - reserved_facts) * 30 // 100)
     facts_budget = max(256, reserved_facts - facts_prefix_tokens)
     doc_json = _truncate_prompt_text(current_document_json, doc_budget)

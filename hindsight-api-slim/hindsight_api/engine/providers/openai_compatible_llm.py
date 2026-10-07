@@ -318,7 +318,7 @@ def _summarize_provider_error_payload(error: Any, max_len: int = 400) -> str:
 # and gateways this provider fronts. Losing the repair there is the cheaper mistake:
 # a JSONDecodeError is loud and the caller can split, while a silently short answer
 # is indistinguishable from a complete one. Same reasoning as #3827.
-_COMPLETED_FINISH_REASONS = frozenset({"stop", "tool_calls", "function_call", "end_turn"})
+COMPLETED_FINISH_REASONS = frozenset({"stop", "tool_calls", "function_call", "end_turn"})
 
 
 def _finish_reason_for_choice(choice: Any) -> Any:
@@ -1392,7 +1392,7 @@ class OpenAICompatibleLLM(LLMInterface):
                             # a provider that omits finish_reason would have a
                             # truncated body repaired into schema-valid partial
                             # data.
-                            if _finish_reason_for_choice(first_choice) not in _COMPLETED_FINISH_REASONS:
+                            if _finish_reason_for_choice(first_choice) not in COMPLETED_FINISH_REASONS:
                                 logger.error(
                                     f"JSON parse error after {attempt + 1} attempts and no "
                                     f"completion signal (finish_reason="
@@ -2071,7 +2071,7 @@ class OpenAICompatibleLLM(LLMInterface):
                             # OpenAI-compatible path above, gated the same
                             # way: only a generation that reported reaching
                             # its own end gets structurally repaired.
-                            if result.get("done_reason") not in _COMPLETED_FINISH_REASONS:
+                            if result.get("done_reason") not in COMPLETED_FINISH_REASONS:
                                 logger.error(
                                     f"Ollama JSON parse error after {attempt + 1} attempts and no "
                                     f"completion signal (done_reason={result.get('done_reason')!r}); "

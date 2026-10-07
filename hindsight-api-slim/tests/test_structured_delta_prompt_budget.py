@@ -125,3 +125,19 @@ def test_delta_prompt_carries_no_batch_synthesis():
     )
     for text in (prompt, STRUCTURED_DELTA_SYSTEM_PROMPT):
         assert "SYNTHESIS" not in text.upper()
+
+
+def test_an_empty_candidate_slot_gives_its_budget_to_the_document():
+    """The refresh no longer sends a synthesis, so its share must not sit unused."""
+    doc = "word " * 20_000
+    kwargs = {
+        "source_query": "q",
+        "current_document_json": doc,
+        "facts_block": "fact",
+        "budget_hint": "",
+        "task_footer": "## Task",
+        "max_input_tokens": 8000,
+    }
+    with_candidate = _fit_structured_delta_prompt_parts(candidate_markdown="surviving facts", **kwargs)
+    without = _fit_structured_delta_prompt_parts(candidate_markdown="", **kwargs)
+    assert len(without.document_json) > len(with_candidate.document_json) * 1.4

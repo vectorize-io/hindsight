@@ -1979,12 +1979,12 @@ def _decode_json_argument(raw: str, finish_reason: str | None, field: str) -> An
     """
     from json_repair import repair_json
 
-    from ..providers.openai_compatible_llm import _COMPLETED_FINISH_REASONS
+    from ..providers.openai_compatible_llm import COMPLETED_FINISH_REASONS
 
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
-        if finish_reason in _COMPLETED_FINISH_REASONS:
+        if finish_reason in COMPLETED_FINISH_REASONS:
             repaired = repair_json(raw, return_objects=True)
             if isinstance(repaired, dict) and repaired:
                 logger.warning(f"[REFLECT] repaired malformed done {field} ({exc.msg} at char {exc.pos})")
@@ -2006,10 +2006,9 @@ def _done_arguments(done_call: "LLMToolCall", finish_reason: str | None) -> dict
     args = done_call.arguments
     if set(args) != {"_raw"} or not isinstance(args["_raw"], str):
         return args
-    decoded = _decode_json_argument(args["_raw"], finish_reason, "arguments")
-    if not isinstance(decoded, dict):
-        raise DocumentSectionsInvalidError(["arguments: expected a JSON object"])
-    return decoded
+    # Repair only ever returns a dict, and a plain parse of what the provider
+    # already failed to parse fails again — so this is a dict or it raised.
+    return _decode_json_argument(args["_raw"], finish_reason, "arguments")
 
 
 async def _process_done_tool(
