@@ -18,6 +18,8 @@ import pytest
 import pytest_asyncio
 
 from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.response_models import TokenUsage
+from hindsight_api.engine.retain.types import RetainBatchResult
 
 
 pytestmark = pytest.mark.xdist_group("op_cancellation_tests")
@@ -395,6 +397,43 @@ class TestRetainCheckpoint:
             config.retain_batch_tokens = original_tokens
 
 
+class _FakeSubBatches:
+    """Stands in for one sub-batch's work, so a write after the caller unwound is observable.
+
+    Item ``i`` of the retain becomes sub-batch ``i`` (``retain_batch_tokens=1``). Sub-batch 0 is
+    the barrier and finishes at once; the others stay in flight long enough for the test to kill
+    the retain under them, and record whether they were cancelled or reached their "write".
+    """
+
+    def __init__(self, in_flight: int, fail_idx: int | None = None) -> None:
+        self._in_flight = in_flight
+        self._fail_idx = fail_idx
+        self.writes: list[int] = []
+        self.started: set[int] = set()
+        self.cancelled: set[int] = set()
+        self.all_in_flight = asyncio.Event()
+
+    async def run(self, **kwargs) -> RetainBatchResult:
+        idx = int(kwargs["contents"][0]["content"].split()[-1].rstrip("."))
+        if idx > 0:
+            self.started.add(idx)
+            if len(self.started) >= self._in_flight:
+                self.all_in_flight.set()
+            try:
+                if idx == self._fail_idx:
+                    await asyncio.sleep(0)
+                    raise RuntimeError("sub-batch failed")
+                await asyncio.sleep(0.5)
+            except asyncio.CancelledError:
+                self.cancelled.add(idx)
+                raise
+        # Stands for the store/DB commit that must not happen after the caller unwound.
+        self.writes.append(idx)
+        return RetainBatchResult(
+            memory_ids=[[] for _ in kwargs["contents"]], usage=TokenUsage(), processed_content_tokens=None
+        )
+
+
 class TestRetainKillStopsInFlightSubBatches:
     """#5372: leaving the sub-batch loop early must stop the sub-batches still in flight.
 
@@ -403,71 +442,51 @@ class TestRetainKillStopsInFlightSubBatches:
     the operation is marked failed — and after the per-document lock is released.
     """
 
-    @staticmethod
-    def _fake_internal(writes: list[int], fail_on_second: bool = False):
-        from hindsight_api.engine.response_models import TokenUsage
-        from hindsight_api.engine.retain.types import RetainBatchResult
-
-        async def _fake(**kwargs) -> RetainBatchResult:
-            idx = int(kwargs["contents"][0]["content"].split()[-1].rstrip("."))
-            if idx > 0:
-                await asyncio.sleep(0.05 if fail_on_second and idx == 1 else 0.6)
-                if fail_on_second and idx == 1:
-                    raise RuntimeError("sub-batch failed")
-            # Stands for the store/DB commit that must not happen after the caller unwound.
-            writes.append(idx)
-            return RetainBatchResult(
-                memory_ids=[[] for _ in kwargs["contents"]], usage=TokenUsage(), processed_content_tokens=None
-            )
-
-        return _fake
-
-    async def _retain(self, memory: MemoryEngine, request_context, *, concurrency: int, fake, timeout: float):
+    async def _retain(self, memory: MemoryEngine, request_context, *, concurrency: int, fake: _FakeSubBatches) -> None:
         from hindsight_api.config import _get_raw_config
 
         bank_id = f"{_BANK_PREFIX}-{uuid.uuid4().hex[:8]}"
         await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
         config = _get_raw_config()
-        saved = (config.retain_batch_tokens, config.retain_subbatch_concurrency)
+        saved_tokens, saved_concurrency = config.retain_batch_tokens, config.retain_subbatch_concurrency
         config.retain_batch_tokens = 1  # one item per sub-batch
         config.retain_subbatch_concurrency = concurrency
         try:
-            with patch.object(memory, "_retain_batch_async_internal", side_effect=fake):
-                async with asyncio.timeout(timeout):
-                    await memory.retain_batch_async(
-                        bank_id=bank_id,
-                        contents=[{"content": f"Memory item {i}."} for i in range(4)],
-                        request_context=request_context,
-                    )
+            with patch.object(memory, "_retain_batch_async_internal", side_effect=fake.run):
+                await memory.retain_batch_async(
+                    bank_id=bank_id,
+                    contents=[{"content": f"Memory item {i}."} for i in range(4)],
+                    request_context=request_context,
+                )
         finally:
-            config.retain_batch_tokens, config.retain_subbatch_concurrency = saved
+            config.retain_batch_tokens = saved_tokens
+            config.retain_subbatch_concurrency = saved_concurrency
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("concurrency", [1, 3])
     async def test_wall_clock_kill_cancels_in_flight_sub_batches(
         self, memory: MemoryEngine, request_context, concurrency: int
     ):
-        writes: list[int] = []
-        with pytest.raises(TimeoutError):
-            await self._retain(
-                memory, request_context, concurrency=concurrency, fake=self._fake_internal(writes), timeout=0.3
-            )
-        written_at_kill = list(writes)
-        assert written_at_kill == [0], "the kill should land after sub-batch 1 and before any other finished"
+        # The loop blocks once `concurrency` sub-batches after the barrier are in flight.
+        fake = _FakeSubBatches(in_flight=concurrency)
+        task = asyncio.create_task(self._retain(memory, request_context, concurrency=concurrency, fake=fake))
+        await asyncio.wait_for(fake.all_in_flight.wait(), timeout=30)
+        # What the worker's `asyncio.timeout(RETAIN_WALL_TIMEOUT)` does at the deadline.
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
         await asyncio.sleep(1.0)  # longer than an in-flight sub-batch takes
-        assert writes == written_at_kill, f"sub-batches wrote after the kill: {writes[len(written_at_kill) :]}"
+        assert fake.writes == [0], f"sub-batches wrote after the kill: {fake.writes[1:]}"
+        assert fake.cancelled == set(range(1, concurrency + 1))
 
     @pytest.mark.asyncio
     async def test_failing_sibling_cancels_the_others(self, memory: MemoryEngine, request_context):
-        writes: list[int] = []
+        # Concurrency 2: sub-batches 1 and 2 are in flight when 1 fails; 3 is never dispatched.
+        fake = _FakeSubBatches(in_flight=2, fail_idx=1)
         with pytest.raises(RuntimeError, match="sub-batch failed"):
-            await self._retain(
-                memory,
-                request_context,
-                concurrency=2,
-                fake=self._fake_internal(writes, fail_on_second=True),
-                timeout=5.0,
-            )
-        written_at_failure = list(writes)
+            await self._retain(memory, request_context, concurrency=2, fake=fake)
+
         await asyncio.sleep(1.0)
-        assert writes == written_at_failure, f"sub-batches wrote after the failure: {writes[len(written_at_failure) :]}"
+        assert fake.writes == [0], f"sub-batches wrote after the failure: {fake.writes[1:]}"
+        assert fake.cancelled == {2}
