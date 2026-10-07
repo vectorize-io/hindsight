@@ -1,3 +1,4 @@
+import type { NextRequest } from "next/server";
 import { describe, expect, it, vi } from "vitest";
 
 const { recallMemories } = vi.hoisted(() => ({
@@ -28,7 +29,7 @@ describe("POST /api/recall", () => {
         include: { source_facts: { max_tokens: 100 } },
       }),
     });
-    const response = await POST(request as never);
+    const response = await POST(request as unknown as NextRequest);
 
     expect(recallMemories.mock.calls[0][0].body.include).toEqual({
       source_facts: { max_tokens: 100 },
