@@ -143,6 +143,8 @@ jobs:
           figures:
             - 'hindsight-docs/figures/**'
             - 'scripts/docs_skill_figures.py'
+            # The Giotto pin lives here: a new Giotto can stop a figure from drawing.
+            - 'hindsight-docs/package.json'
           docker:
             - 'docker/**'
           helm:

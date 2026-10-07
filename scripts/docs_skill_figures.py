@@ -15,6 +15,7 @@ fails if a figure no longer reads cleanly (CI runs this).
 import json
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 FIGURES = Path(__file__).resolve().parent.parent / "hindsight-docs" / "figures"
@@ -23,20 +24,40 @@ FIGURE_IMPORT = re.compile(r"^import Figure from '@site/src/components/Figure';\
 FIGURE = re.compile(r"<Figure doc=\{(\w+)\} />")
 
 
+@dataclass
+class Scene:
+    label: str
+    says: list[str]
+
+
+@dataclass
+class FigureDoc:
+    """The parts of a Giotto diagram the skill shows: its title and each scene's narration."""
+
+    title: str
+    scenes: list[Scene]
+
+    @classmethod
+    def load(cls, figure_file: Path) -> "FigureDoc":
+        raw = json.loads(figure_file.read_text())
+        scenes = [
+            Scene(label=sc.get("label", ""), says=[b["say"] for b in sc.get("beats", []) if b.get("say")])
+            for sc in raw.get("scenes", [])
+        ]
+        return cls(title=raw.get("title") or figure_file.stem, scenes=scenes)
+
+
 def figure_to_markdown(figure_file: Path) -> str:
     """The figure's title and, per scene, its narration as a numbered list."""
-    doc = json.loads(figure_file.read_text())
-    scenes = doc.get("scenes", [])
-    if not scenes:
+    figure = FigureDoc.load(figure_file)
+    if not figure.scenes:
         raise SystemExit(f"{figure_file}: no scenes to narrate")
-    title = doc.get("title") or figure_file.stem
-    lines = [f"**Figure: {title}.** An animated diagram on the docs site; its narration, step by step:", ""]
-    for scene in scenes:
-        says = [beat["say"] for beat in scene.get("beats", []) if beat.get("say")]
-        if not says:
-            raise SystemExit(f"{figure_file}: scene {scene.get('label')!r} has no narration (`say`) to show")
-        lines.append(f"- **{scene.get('label', '')}**")
-        lines += [f"  {n}. {say}" for n, say in enumerate(says, 1)]
+    lines = [f"**Figure: {figure.title}.** An animated diagram on the docs site; its narration, step by step:", ""]
+    for scene in figure.scenes:
+        if not scene.says:
+            raise SystemExit(f"{figure_file}: scene {scene.label!r} has no narration (`say`) to show")
+        lines.append(f"- **{scene.label}**")
+        lines += [f"  {n}. {say}" for n, say in enumerate(scene.says, 1)]
     return "\n".join(lines)
 
 

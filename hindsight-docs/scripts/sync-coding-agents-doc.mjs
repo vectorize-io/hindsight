@@ -16,8 +16,8 @@
  *     PRODUCTION — so a new asset shows as broken locally and in previews until it is deployed,
  *     which is exactly when you are trying to look at it.
  *   - A `<!-- figure: coding-agents -->` line becomes the interactive figure (`<Figure>`, a Giotto
- *     diagram from hindsight-docs/figures), imported at the top. The README keeps an invisible comment there, since a
- *     React component renders on neither GitHub nor npm.
+ *     diagram from hindsight-docs/figures), imported at the top. The README keeps an invisible
+ *     comment there, since a React component renders on neither GitHub nor npm.
  *   - The `skill:begin` / `skill:end` markers are dropped. They tell the integration's
  *     scripts/build-skill.mjs which regions the companion skill copies; MDX has no HTML comments,
  *     so leaving them in would fail the docs build outright.
