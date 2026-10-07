@@ -537,6 +537,7 @@ class MCPMiddleware:
                 ),
             )
         except AuthenticationError:
+            # Expected on unauthenticated requests: auth rejects them later anyway.
             logger.debug("Bank alias resolution skipped for %r: not authenticated", bank_id)
         except Exception:
             logger.warning("Bank alias resolution failed for %r; using it as-is", bank_id, exc_info=True)
