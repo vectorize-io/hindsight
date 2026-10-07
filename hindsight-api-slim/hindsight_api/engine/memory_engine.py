@@ -677,6 +677,7 @@ from .reflect.tools import (
     tool_search_mental_models,
     tool_search_observations,
 )
+from .remote_retry import is_transient_remote_error
 from .response_models import (
     VALID_RECALL_FACT_TYPES,
     ConsolidationStrategiesPreview,
@@ -4515,9 +4516,11 @@ class MemoryEngine(MemoryEngineInterface):
             # row except the prose error_message (#3274).
             await self._write_refresh_failure_metadata(task_dict.get("operation_id"), e)
             raise
-        except OperationCancelledError:
-            # Not a failed refresh: the caller went away. It records no outcome and
-            # no history, exactly like the deferral above.
+        except (OperationCancelledError, ProviderRateLimitResetError):
+            # Not a failed refresh: the caller went away, or the provider said when its
+            # quota reopens and the worker parks the operation until then. Neither
+            # records an outcome or history, exactly like the deferral above — and
+            # neither may pause automatic refresh (#5394).
             raise
         except Exception as e:
             # Anything else that escaped the refresh — a provider error the reflect
@@ -4542,6 +4545,9 @@ class MemoryEngine(MemoryEngineInterface):
                 outcome="refresh_failed_error",
                 failure_reason="unexpected_error",
                 error_message=f"{type(e).__name__}: {e}",
+                # A provider that is down or rate-limited will answer later; only a
+                # failure that would repeat on the same prompt pauses (#5394).
+                pause_automatic=not is_transient_remote_error(e),
             )
             raise
         if refreshed is None:
@@ -18841,6 +18847,7 @@ class MemoryEngine(MemoryEngineInterface):
         outcome: "RefreshOperationOutcome",
         failure_reason: "RefreshFailureReason",
         error_message: str,
+        pause_automatic: bool = True,
     ) -> None:
         """Record a refusal to write: stamp the model, and add a row to its history.
 
@@ -18853,6 +18860,10 @@ class MemoryEngine(MemoryEngineInterface):
         leaves ``last_refreshed_at`` behind, so the model still looks stale and the
         scheduler used to queue the same doomed refresh every tick, paying the LLM
         each time (#4532). See ``_automatic_refresh_paused``.
+
+        ``pause_automatic=False`` writes the history row but not the stamp: a
+        transient provider failure (429, 5xx, timeout) is not the same doomed prompt,
+        and pausing on it froze pages for days after a rate limit had lifted (#5394).
 
         Best-effort by design — the refresh has already failed and is about to
         raise; losing either write must not also swallow that exception, and the
@@ -18873,12 +18884,13 @@ class MemoryEngine(MemoryEngineInterface):
                 # Stamp first, on its own statement: it is the one that stops the
                 # automatic triggers, so it must land even if the audit row below
                 # (optional, and capped) cannot be written.
-                await conn.execute(
-                    f"UPDATE {fq_table('mental_models')} SET last_refresh_failed_at = now() "
-                    "WHERE bank_id = $1 AND id = $2",
-                    bank_id,
-                    mental_model_id,
-                )
+                if pause_automatic:
+                    await conn.execute(
+                        f"UPDATE {fq_table('mental_models')} SET last_refresh_failed_at = now() "
+                        "WHERE bank_id = $1 AND id = $2",
+                        bank_id,
+                        mental_model_id,
+                    )
                 if config.enable_mental_model_history:
                     await self._insert_mental_model_history_row(
                         conn,

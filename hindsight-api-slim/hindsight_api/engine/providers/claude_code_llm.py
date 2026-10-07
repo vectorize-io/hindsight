@@ -10,10 +10,13 @@ configured as the API key, and otherwise with the host's `claude auth login`.
 import asyncio
 import json
 import logging
+import re
 import tempfile
 import time
 from contextlib import AbstractAsyncContextManager, nullcontext
+from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import ValidationError
 
@@ -23,6 +26,7 @@ from hindsight_api.engine.llm_interface import (
     LLMToolChoice,
     LLMToolChoiceMode,
     ProviderContentPolicyError,
+    ProviderRateLimitResetError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences
@@ -108,16 +112,65 @@ def _result_error_detail(message: Any) -> str:
 _POLICY_REFUSAL_MARKER = "anthropic.com/legal/aup"
 
 
+#: The reset clause of a subscription limit, e.g. "You've hit your session limit ·
+#: resets 12:20am (UTC)" or "... · resets Oct 9, 5pm (Europe/Rome)".
+_LIMIT_RESET_RE = re.compile(
+    r"\blimit\b.*?\bresets\s+(?:(?P<month>[A-Z][a-z]{2})\s+(?P<day>\d{1,2}),?\s+(?:at\s+)?)?"
+    r"(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<ampm>am|pm)\s*\((?P<tz>[^)]+)\)",
+    re.IGNORECASE,
+)
+
+
+def _limit_reset_at(text: str, now: datetime) -> datetime | None:
+    """When a subscription limit named in ``text`` reopens, or None if it names none.
+
+    The CLI prints a wall-clock time in a named zone, with a date only when it is not
+    within the next day, so a bare time means its next occurrence after ``now``.
+    """
+    match = _LIMIT_RESET_RE.search(text)
+    if match is None:
+        return None
+    try:
+        tz = ZoneInfo(match["tz"].strip())
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+    hour = int(match["hour"]) % 12 + (12 if match["ampm"].lower() == "pm" else 0)
+    minute = int(match["minute"] or 0)
+    local_now = now.astimezone(tz)
+    try:
+        if match["month"]:
+            month = datetime.strptime(match["month"].title(), "%b").month
+            reset = local_now.replace(
+                month=month, day=int(match["day"]), hour=hour, minute=minute, second=0, microsecond=0
+            )
+            if reset <= local_now:
+                reset = reset.replace(year=reset.year + 1)
+        else:
+            reset = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if reset <= local_now:
+                reset += timedelta(days=1)
+    except ValueError:
+        return None
+    return reset.astimezone(UTC)
+
+
 def _result_error(message: Any) -> Exception:
     """Build the exception for an ``is_error`` ResultMessage.
 
     A content-policy refusal is permanent, so it gets its own type: the retry
     loops below re-raise it untouched instead of replaying the same prompt, and
     the worker fails the task rather than rescheduling it.
+
+    A subscription limit with a reset time becomes the engine's defer signal, so
+    the worker parks the task until the limit lifts instead of failing it — a
+    failed knowledge-page refresh used to pause that page for good (#5394).
     """
     text = _result_error_detail(message)
     if _POLICY_REFUSAL_MARKER in text.lower():
         return ProviderContentPolicyError(text)
+    retry_at = _limit_reset_at(text, datetime.now(UTC))
+    if retry_at is not None:
+        return ProviderRateLimitResetError(retry_at=retry_at, message=text)
     return RuntimeError(text)
 
 
@@ -430,10 +483,11 @@ class ClaudeCodeLLM(LLMInterface):
                 # instead of burning quota on identical calls (#1412).
                 raise
 
-            except ProviderContentPolicyError:
+            except (ProviderContentPolicyError, ProviderRateLimitResetError):
                 # Content-policy refusal: the model declined this exact content,
                 # so every replay earns the same refusal. Raise immediately
-                # instead of spending the full retry budget on it (#3690).
+                # instead of spending the full retry budget on it (#3690). A
+                # subscription limit will not lift within the backoff either (#5394).
                 raise
 
             except Exception as e:
@@ -722,8 +776,8 @@ class ClaudeCodeLLM(LLMInterface):
                     output_tokens=estimated_output,
                 )
 
-            except ProviderContentPolicyError:
-                # Permanent refusal — see the same guard in call() (#3690).
+            except (ProviderContentPolicyError, ProviderRateLimitResetError):
+                # Permanent refusal or subscription limit — see the same guard in call().
                 raise
 
             except Exception as e:

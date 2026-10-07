@@ -10,10 +10,12 @@ monkeypatched.
 import asyncio
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from hindsight_api.api.http import MentalModelTrigger
+from hindsight_api.engine.llm_interface import ProviderContentPolicyError, ProviderRateLimitResetError
 from hindsight_api.engine.maintenance import MaintenanceLoop
 from hindsight_api.engine.memory_engine import MemoryEngine
 
@@ -356,6 +358,64 @@ async def test_failed_model_is_not_requeued_until_a_refresh_succeeds(
     async with memory._pool.acquire() as conn:
         await conn.execute("UPDATE mental_models SET last_refreshed_at = now() WHERE id = $1", mm_id)
     assert await memory._automatic_refresh_paused(bank, mm_id) is False
+
+
+class _ProviderStatusError(Exception):
+    """A provider SDK error carrying an HTTP status, like openai's APIStatusError."""
+
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"provider answered {status_code}")
+        self.status_code = status_code
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        _ProviderStatusError(429),
+        _ProviderStatusError(503),
+        ProviderRateLimitResetError(retry_at=datetime.now(UTC) + timedelta(hours=1), message="session limit"),
+    ],
+    ids=["rate-limit", "provider-down", "quota-reset"],
+)
+async def test_a_temporary_provider_failure_does_not_pause_automatic_refresh(
+    memory: MemoryEngine, request_context, monkeypatch, error
+):
+    """#5394: one refresh that hit a rate or session limit paused the page for good,
+    and pages stayed frozen for days after the limit lifted. A temporary failure must
+    leave the next automatic trigger free to run it."""
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
+        await _insert_fact(conn, bank)
+
+    async def _fail(**kwargs):
+        raise error
+
+    monkeypatch.setattr(memory, "refresh_mental_model", _fail)
+    with pytest.raises(type(error)):
+        await memory._handle_refresh_mental_model({"bank_id": bank, "mental_model_id": mm_id})
+    assert await memory._automatic_refresh_paused(bank, mm_id) is False
+
+    _stall_worker(memory, monkeypatch)
+    await MaintenanceLoop(memory)._run_scheduled_mm_refresh()
+    assert await _count_refresh_ops(memory, bank) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_deterministic_refresh_failure_still_pauses(memory: MemoryEngine, request_context, monkeypatch):
+    """#4532 holds for failures that would repeat on the same prompt."""
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
+
+    async def _fail(**kwargs):
+        raise ProviderContentPolicyError("declined")
+
+    monkeypatch.setattr(memory, "refresh_mental_model", _fail)
+    with pytest.raises(ProviderContentPolicyError):
+        await memory._handle_refresh_mental_model({"bank_id": bank, "mental_model_id": mm_id})
+    assert await memory._automatic_refresh_paused(bank, mm_id) is True
 
 
 @pytest.mark.asyncio
