@@ -82,6 +82,9 @@ class StubbedReply:
     reasoning_tokens: int = 0
     """Opt-in OpenAI reasoning tokens, included in completion_tokens on the wire."""
 
+    error_status: int | None = None
+    """When set, the stub answers with a provider error at this HTTP status instead."""
+
 
 @dataclass(frozen=True)
 class ToolCall:
@@ -143,6 +146,16 @@ class RuleBuilder:
             lambda _request: _assistant_message(
                 body, visible_tokens=visible_tokens, reasoning_tokens=reasoning_tokens
             )
+        )
+
+    def fails_with_status(self, status: int) -> LLMStub:
+        """Answer with a provider error at ``status`` — a 429 or a 5xx, say.
+
+        For stories about how the server treats a provider that is down or
+        rate-limited, which no successful reply can stand in for.
+        """
+        return self._register(
+            lambda _request: StubbedReply(message={}, finish_reason="error", error_status=status)
         )
 
     def returns_text(self, text: str) -> LLMStub:

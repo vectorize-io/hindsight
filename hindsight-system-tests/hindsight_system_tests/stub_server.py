@@ -73,6 +73,11 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
         if held is not None:
             await held.park()
 
+        if reply.error_status is not None:
+            return _provider_error(
+                f"stub provider error {reply.error_status}", code="stub_error", status=reply.error_status
+            )
+
         return JSONResponse(
             {
                 "id": "chatcmpl-stub",
@@ -200,9 +205,9 @@ def _usage(
     return usage
 
 
-def _provider_error(message: str, *, code: str) -> JSONResponse:
+def _provider_error(message: str, *, code: str, status: int = 400) -> JSONResponse:
     """The error envelope OpenAI-compatible clients expect, so the SDK parses it."""
     return JSONResponse(
-        status_code=400,
+        status_code=status,
         content={"error": {"message": message, "type": "invalid_request_error", "code": code, "param": None}},
     )

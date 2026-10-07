@@ -26,7 +26,7 @@ from typing import Any
 
 import pytest
 
-from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO
+from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, ProviderRateLimitResetError
 
 
 @dataclass
@@ -314,7 +314,9 @@ async def test_call_pins_configured_model(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_genuine_error_without_tool_calls_still_raises(monkeypatch):
-    """An error ResultMessage with nothing collected must still surface (issue #2702)."""
+    """An error ResultMessage with nothing collected must still surface (issue #2702).
+
+    A limit with a reset time surfaces as the worker's defer signal (#5394)."""
 
     class _FakeClient:
         def __init__(self, options: _FakeOptions) -> None:
@@ -339,7 +341,7 @@ async def test_genuine_error_without_tool_calls_still_raises(monkeypatch):
     _install_fake_sdk(monkeypatch, _FakeClient)
 
     provider = _instantiate_provider()
-    with pytest.raises(RuntimeError, match="weekly limit"):
+    with pytest.raises(ProviderRateLimitResetError, match="weekly limit"):
         await provider.call_with_tools(
             messages=[{"role": "user", "content": "hi"}],
             tools=[_RECALL_TOOL],

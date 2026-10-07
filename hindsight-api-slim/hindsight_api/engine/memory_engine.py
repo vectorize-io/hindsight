@@ -23232,6 +23232,9 @@ class MemoryEngine(MemoryEngineInterface):
         and fails the same way, forever, on the caller's LLM bill (#4532). It stays
         paused until a refresh succeeds, which only an explicit one can do now: that
         moves ``last_refreshed_at`` past ``last_refresh_failed_at``.
+
+        A temporary provider failure (rate limit, 5xx, quota reset) never sets
+        ``last_refresh_failed_at``, so it does not pause anything (#5394).
         """
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:

@@ -9,6 +9,11 @@ each time. One install spent its whole balance overnight while idle (#4532).
 The contract: once a refresh fails, the automatic triggers leave that model
 alone. A refresh someone asks for still runs, and when it succeeds the automatic
 ones resume.
+
+Except when the failure was the provider being out for a while — a rate limit, a
+5xx. Pausing on those froze every page in a bank for days after a subscription's
+session limit had already reset, while new memory kept arriving (#5394). The next
+automatic trigger must run them.
 """
 
 from __future__ import annotations
@@ -77,3 +82,38 @@ async def test_a_failed_refresh_is_not_retried_by_every_consolidation(client, ll
 
     await _retain(client, llm, bank_id, "Alice visited Paris")
     assert await _refreshes(client, bank_id) == baseline + 3
+
+
+async def test_a_refresh_failed_by_a_rate_limit_runs_again_on_the_next_consolidation(
+    client, llm, bank_id, settled
+):
+    reflect_loop(llm, answer=ANSWER)
+    await _retain(client, llm, bank_id, "Alice moved to Berlin")
+    created = await client.mental_models.create_mental_model(
+        bank_id,
+        {
+            "name": "Housing",
+            "source_query": "Where does Alice live?",
+            "trigger": {"refresh_after_consolidation": True},
+        },
+    )
+    await settled(bank_id)
+    model = created.mental_model_id
+    baseline = await _refreshes(client, bank_id)
+
+    # The next consolidation triggers a refresh, and the provider rate-limits it.
+    llm.reset()
+    llm.on_step("reflect").fails_with_status(429)
+    await _retain(client, llm, bank_id, "Alice bought a bike")
+    assert await _refreshes(client, bank_id) == baseline + 1
+    assert await _refreshes(client, bank_id, status="failed") == 1
+    history = await client.mental_models.get_mental_model_history(bank_id, model)
+    assert history[0]["kind"] == "refresh_failed"
+
+    # The limit has lifted. The next consolidation refreshes the model on its own.
+    llm.reset()
+    reflect_loop(llm, answer=ANSWER)
+    await _retain(client, llm, bank_id, "Alice started a new job")
+    assert await _refreshes(client, bank_id) == baseline + 2
+    assert await _refreshes(client, bank_id, status="failed") == 1
+    assert (await client.mental_models.get_mental_model(bank_id, model, detail="full")).content.strip() == ANSWER
