@@ -2022,6 +2022,31 @@ jobs:
       # composes cleanly with the `-n 8 --dist loadgroup` baked into addopts.
       run: uv run --with pytest-split pytest tests -v -m "not hs_llm_mat and not hs_llm_core" --splits 3 --group ${{ matrix.shard }}
 
+    # The eight workers share one embedded Postgres, so this job's two recurring
+    # red shapes are both lock contention: `deadlock detected`, whose own message
+    # ends "See server log for query details", and a pile of unrelated tests all
+    # failing `Timeout (>300.0s)` in the same second behind one AccessExclusiveLock.
+    # Neither is diagnosable from the pytest output alone, and the server log used
+    # to die with the runner — which is why this class has been re-diagnosed by
+    # inference in #3406, #3543, #4407 and #4414. Keep the log instead.
+    # Copied into the workspace first: `upload-artifact` globs but does not expand
+    # `~`, so pointing it at the pg0 instance dir uploads nothing.
+    - name: Collect Postgres server log
+      if: failure()
+      run: |
+        mkdir -p pg-server-log
+        cp -r ~/.pg0/instances/*/data/log/. pg-server-log/ 2>/dev/null || true
+        ls -la pg-server-log/ || true
+
+    - name: Upload Postgres server log on failure
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: pg-server-log-shard-${{ matrix.shard }}
+        path: pg-server-log/
+        if-no-files-found: warn
+        retention-days: 7
+
   test-api-llm-core:
     needs: [detect-changes]
     if: >-

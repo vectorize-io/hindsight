@@ -279,10 +279,24 @@ def pg0_db_url(db_url, tmp_path_factory, worker_id):
             # Bump max_connections so 8 xdist workers * pool_max_size=15 fits well
             # under the cap (postgres default is 100, which is easy to exhaust now
             # that consolidation_llm_parallelism=4 increases peak conns per op).
+            # `log_lock_waits` is what makes a red CI run readable. Eight workers share
+            # this one server, so a single statement holding AccessExclusiveLock (a
+            # TRUNCATE, a non-concurrent index drop) stalls every other worker until
+            # pytest-timeout kills them all at once — seven unrelated tests failing with
+            # `Timeout (>300.0s)` in the same second, which looks like seven bugs and is
+            # one lock. With this on, the server names the blocker and the blocked
+            # statement, and `deadlock detected`'s "See server log for query details"
+            # finally has a log to see (CI uploads it on failure; see test.yml).
             pg0 = EmbeddedPostgres(
                 name=pg0_instance_name,
                 port=pg0_instance_port,
-                config={"max_connections": "300"},
+                config={
+                    "max_connections": "300",
+                    "log_lock_waits": "on",
+                    # Report a wait well before pytest-timeout's 300s, so the log shows
+                    # the stall building rather than only the corpses.
+                    "deadlock_timeout": "1s",
+                },
             )
 
             # Run ensure_running in a new event loop
@@ -322,18 +336,34 @@ def _cleanup_stale_test_data(db_url: str) -> None:
     (3 per bank × thousands of test banks = tens of thousands of indexes).
     This eventually causes 'out of shared memory' errors because PostgreSQL
     tracks all indexes in shared lock tables.
+
+    Every statement here is best-effort — it only removes residue from EARLIER
+    runs, so skipping any of it costs nothing this run. What it must never do is
+    wait: ``DROP INDEX`` and ``TRUNCATE`` take AccessExclusiveLock on tables the
+    other seven xdist workers are using, and a lock request that queues puts every
+    later reader behind it, up to pytest-timeout's 300s. ``lock_timeout`` makes
+    such a request fail in 2s instead, and the per-statement ``except``es below turn
+    that into a skip. Without it one unlucky overlap fails a dozen unrelated tests
+    at once.
     """
     import asyncpg
 
     async def _do_cleanup():
         conn = await asyncpg.connect(db_url)
         try:
+            await conn.execute("SET lock_timeout = '2s'")
             idx_rows = await conn.fetch(
                 "SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname LIKE 'idx_mu_emb_%'"
             )
-            if idx_rows:
-                for row in idx_rows:
+            for row in idx_rows:
+                try:
                     await conn.execute(f'DROP INDEX IF EXISTS public."{row["indexname"]}"')
+                except Exception:
+                    # Same bargain as the truncates below: a drop that cannot get the
+                    # lock within `lock_timeout` is residue left for the next run, not a
+                    # reason to fail this one. Unguarded it would raise out of a
+                    # session-scoped fixture and error every test on this worker.
+                    pass
 
             # Truncate test data in dependency order
             for table in [
