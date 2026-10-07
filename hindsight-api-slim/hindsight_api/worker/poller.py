@@ -13,6 +13,7 @@ import io
 import json
 import logging
 import os
+import signal
 import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable
@@ -193,6 +194,14 @@ logger = logging.getLogger(__name__)
 
 # Progress logging interval in seconds
 PROGRESS_LOG_INTERVAL = 30
+
+# How long a final status write ('completed', 'failed', retry, defer) is retried
+# before the worker gives up and shuts itself down (issue #5377). Long enough to
+# ride out a Postgres primary failover. The status must not be lost: requeueing
+# reruns work that already ran (and may not be idempotent), and dropping it
+# leaves the row 'processing' forever under a worker that is still alive.
+TERMINAL_WRITE_DEADLINE_S = 300.0
+TERMINAL_WRITE_MAX_BACKOFF_S = 30.0
 
 # Stuck-task stack-dump thresholds (seconds). Each task gets one stack dump
 # per threshold its current stage crosses without making progress.
@@ -1208,8 +1217,6 @@ class WorkerPoller:
                 task.task_dict["_schema"] = task.schema
             await self._run_executor(task, task_type, holder)
             logger.debug(f"Task {task.operation_id} execution finished")
-            await self._mark_all_completed(task)
-            terminal_success = True
         except _WallTimeoutExceeded as e:
             # The executor has already been cancelled; all that's left is to say so
             # clearly. Handled apart from the generic branch below so the operator
@@ -1219,15 +1226,19 @@ class WorkerPoller:
             stage = holder.stage if holder is not None else "unknown"
             message = e.describe(task_type, stage)
             logger.error(f"Task {task.operation_id} timed out: {message}")
-            await self._mark_all_failed(task, message)
+            await self._write_terminal(task, "failed", lambda: self._mark_all_failed(task, message))
             await self._notify_wall_timeout(task, message)
             terminal_success = False
         except DeferOperation as e:
             # Deferral is not a terminal outcome — do not record a completion.
-            await self._defer_all(task, e.exec_date, e.reason)
+            defer = e
+            await self._write_terminal(task, "deferred", lambda: self._defer_all(task, defer.exec_date, defer.reason))
         except RetryTaskAt as e:
             # Retry is not a terminal outcome — do not record a completion.
-            await self._schedule_retry_all(task, e.retry_at, str(e))
+            retry = e
+            await self._write_terminal(
+                task, "retry", lambda: self._schedule_retry_all(task, retry.retry_at, str(retry))
+            )
         except Exception as e:
             # A store refusing the write because its own indexing is behind is backpressure, not a
             # failure: it clears itself as the fold catches up and says nothing about the payload.
@@ -1243,28 +1254,20 @@ class WorkerPoller:
                     retry_at,
                     str(e)[:200],
                 )
-                await self._defer_all(task, retry_at, f"store backpressure: {str(e)[:400]}")
+                reason = f"store backpressure: {str(e)[:400]}"
+                await self._write_terminal(task, "deferred", lambda: self._defer_all(task, retry_at, reason))
                 return
             # exc_info rather than print_exc(): the stderr copy carries no task id
             # and is the first thing lost to log rotation (issue #3218).
             error_message = format_task_error(e)
             logger.error(f"Task {task.operation_id} failed: {error_message}", exc_info=True)
-            try:
-                await self._mark_all_failed(task, error_message)
-            except Exception:
-                # Marking a task failed is itself a DB write, and it can fail
-                # (pool exhausted, connection reset, statement timeout). Without
-                # this rescue the row stays 'processing' under a worker that has
-                # already forgotten it: _cleanup_task drops it from _active_tasks,
-                # recover_own_tasks only runs at startup, and no dead-worker logic
-                # applies because the worker is alive. See issue #3228.
-                logger.exception(f"Could not mark task {task.operation_id} failed; reconciling it for re-claim")
-                for operation_id in task.all_operation_ids:
-                    try:
-                        await self._reclaim_own_processing_tasks(task.schema, operation_id=operation_id)
-                    except Exception:
-                        logger.exception(f"Could not reconcile task {operation_id}; it stays 'processing'")
+            await self._write_terminal(task, "failed", lambda: self._mark_all_failed(task, error_message))
             terminal_success = False
+        else:
+            # Outside the except clauses on purpose: the work already ran, so a
+            # failing 'completed' write must never be turned into 'failed'.
+            if await self._write_terminal(task, "completed", lambda: self._mark_all_completed(task)):
+                terminal_success = True
 
         # Record the metric outside the executor's exception scope so a metrics
         # reporting failure can never be mistaken for a task failure and flip terminal state.
@@ -1276,7 +1279,52 @@ class WorkerPoller:
             except Exception:
                 logger.warning(f"Failed to record worker operation metric for {task.operation_id}", exc_info=True)
 
-    async def _reclaim_own_processing_tasks(self, schema: str | None, *, operation_id: str | None = None) -> int:
+    async def _write_terminal(self, task: ClaimedTask, status: str, write: Callable[[], Awaitable[None]]) -> bool:
+        """Run a final status write, retrying until it lands or the deadline passes.
+
+        The write is a DB call and fails exactly when the DB is unwell (pool
+        exhausted, connection reset, primary failover). Giving up leaves the row
+        'processing' under a worker that has already forgotten it, and nothing
+        reclaims it while the worker is alive (issues #3228, #5377). So retry
+        with backoff; if the DB is still unreachable at the deadline, shut the
+        worker down: on restart `recover_own_tasks` hands the row back.
+
+        Previously (#3228) a failed 'failed' write fell back to a one-shot
+        requeue of the row, which hit the same dead DB and gave up, and a failed
+        'completed' write fell into the failure path, so finished work could be
+        recorded as 'failed'. Requeueing is also the wrong goal: it reruns work
+        that already ran.
+
+        Returns True if the write landed.
+        """
+        deadline = time.monotonic() + TERMINAL_WRITE_DEADLINE_S
+        delay = 1.0
+        while True:
+            try:
+                await write()
+                return True
+            except Exception as e:
+                if time.monotonic() + delay > deadline:
+                    logger.critical(
+                        f"Could not mark task {task.operation_id} {status} for {TERMINAL_WRITE_DEADLINE_S:.0f}s "
+                        f"({format_task_error(e)}); shutting worker {self._worker_id} down so the task is "
+                        f"recovered on restart",
+                        exc_info=True,
+                    )
+                    self._exit_process()
+                    return False
+                logger.warning(
+                    f"Could not mark task {task.operation_id} {status} ({format_task_error(e)}); "
+                    f"retrying in {delay:.0f}s"
+                )
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, TERMINAL_WRITE_MAX_BACKOFF_S)
+
+    def _exit_process(self) -> None:
+        """Ask the process to shut down, through the same path as `kill`."""
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    async def _reclaim_own_processing_tasks(self, schema: str | None) -> int:
         """Reconcile rows still claimed by this worker in one schema.
 
         Rows under the retry budget go back to 'pending'; rows at/over it are
@@ -1286,9 +1334,8 @@ class WorkerPoller:
         `_recover_batch_operations` resets them without spending a retry.
 
         Every caller that reconciles this worker's own rows goes through here so
-        the guards stay in one place: startup recovery (`recover_own_tasks`),
-        shutdown release (`release_own_tasks`), and the single-operation rescue
-        when a terminal write itself fails (`operation_id` set).
+        the guards stay in one place: startup recovery (`recover_own_tasks`)
+        and shutdown release (`release_own_tasks`).
 
         Returns:
             Number of rows reset to pending (not including those failed).
@@ -1298,8 +1345,6 @@ class WorkerPoller:
         # Two separate UPDATEs so their row counts are meaningful:
         #   1. Rows under the limit → increment retry_count, reset to pending
         #   2. Rows at/over the limit → move to failed with a clear reason
-        op_filter = "AND operation_id = $3" if operation_id is not None else ""
-        op_args = [operation_id] if operation_id is not None else []
         async with self._backend.acquire() as conn:
             # Rows under the limit: increment retry_count and reset to pending
             result = await conn.execute(
@@ -1310,11 +1355,9 @@ class WorkerPoller:
                 WHERE status = 'processing' AND worker_id = $1
                   AND result_metadata->>'batch_id' IS NULL
                   AND COALESCE(retry_count, 0) < $2
-                  {op_filter}
                 """,
                 self._worker_id,
                 max_retries,
-                *op_args,
             )
             # Rows that exceeded the limit: move to failed. RETURNING gives us
             # the ids so their parent aggregators can be rolled up below — a
@@ -1331,12 +1374,10 @@ class WorkerPoller:
                 WHERE status = 'processing' AND worker_id = $1
                   AND result_metadata->>'batch_id' IS NULL
                   AND COALESCE(retry_count, 0) >= $2
-                  {op_filter}
                 RETURNING operation_id
                 """,
                 self._worker_id,
                 max_retries,
-                *op_args,
             )
 
         # Roll each failed child up to its parent aggregator, one transaction
