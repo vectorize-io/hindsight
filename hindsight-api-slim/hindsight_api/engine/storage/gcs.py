@@ -85,7 +85,8 @@ class GCSFileStorage(ObstoreFileStorage):
         # download whose export succeeded. Escaping ``%`` makes the path decode back to
         # the literal name, and the signature is computed over that same path.
         #
-        # GCS only: the S3 signer already escapes ``%`` (pre-escaping there would
-        # double-encode), which tests/test_file_storage_s3.py checks against a real
-        # S3 server.
+        # GCS only: obstore's S3 and Azure signers already escape ``%`` (pre-escaping
+        # there would double-encode). tests/test_file_storage_signed_urls.py signs with
+        # all three and asserts the path decodes to the stored key, so a sibling that
+        # regresses -- or a fourth backend that arrives -- fails there.
         return await super().get_download_url(key.replace("%", "%25"), expires_in)

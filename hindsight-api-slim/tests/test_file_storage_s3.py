@@ -19,6 +19,8 @@ import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from hindsight_api.engine.storage import key_segment
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -249,9 +251,10 @@ async def test_s3_download_url_fetches_keys_with_encoded_segments(s3_storage, ba
     ``%``. The URL has to address that literal name: if the ``%`` reaches the store
     unescaped it is decoded as an escape sequence and the request names a different
     object, failing with NoSuchKey.
-    """
-    from hindsight_api.engine.storage import key_segment
 
+    tests/test_file_storage_signed_urls.py pins the same contract offline for all three
+    obstore backends; this one proves it against a running S3 server.
+    """
     content = b"PK\x03\x04 export archive bytes"
     key = f"tenants/tenant_test/banks/{key_segment(bank_id)}/exports/{uuid.uuid4()}/transfer.zip"
     await s3_storage.store(file_data=content, key=key)
