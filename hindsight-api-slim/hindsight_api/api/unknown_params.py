@@ -40,6 +40,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.routing import APIRoute, request_response
 from pydantic import BaseModel
 
+from ..extensions.tenant import AuthenticationError
 from .observability import SCOPE_IGNORED_PARAMS, SCOPE_RESOLVED_ALIAS
 
 logger = logging.getLogger(__name__)
@@ -159,6 +160,10 @@ class UnknownParamsRoute(APIRoute):
             return
         try:
             canonical = await resolver(request, bank_id)
+        except AuthenticationError:
+            # Expected on unauthenticated requests: auth rejects them later anyway.
+            logger.debug("Bank alias resolution skipped for %r: not authenticated", bank_id)
+            return
         except Exception:  # noqa: BLE001
             logger.warning("Bank alias resolution failed for %r; using it as-is", bank_id, exc_info=True)
             return

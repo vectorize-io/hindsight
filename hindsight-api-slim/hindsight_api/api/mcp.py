@@ -536,6 +536,8 @@ class MCPMiddleware:
                     extra_headers=dict(passthrough_headers),
                 ),
             )
+        except AuthenticationError:
+            logger.debug("Bank alias resolution skipped for %r: not authenticated", bank_id)
         except Exception:
             logger.warning("Bank alias resolution failed for %r; using it as-is", bank_id, exc_info=True)
 
