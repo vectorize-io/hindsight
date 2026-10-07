@@ -67,6 +67,18 @@ async def test_http_recall_zero_cap_accepts_a_long_query(api_client, monkeypatch
     assert response.status_code == 200, response.text
 
 
+async def test_http_recall_truncates_an_over_cap_query(api_client):
+    """An over-cap query is cut to the cap, not rejected with HTTP 400. Code packs more
+    tokens per character than prose, so a client cutting by characters can't stay under."""
+    await api_client.put("/v1/default/banks/over-cap-test", json={})
+    response = await api_client.post(
+        "/v1/default/banks/over-cap-test/memories/recall",
+        json={"query": "alpha beta gamma delta " * 500},
+    )
+
+    assert response.status_code == 200, response.text
+
+
 def test_degenerate_repetition_stays_far_below_the_tsquery_stack_cliff():
     """The reported input: 58k words, 4 distinct, OR-joined into one tsquery.
 

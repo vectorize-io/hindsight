@@ -1688,10 +1688,8 @@ from .storage import bank_storage_prefix
 def _truncate_query_to_token_limit(query: str, max_query_tokens: int, log_prefix: str = "") -> str:
     """Bound a recall query to ``max_query_tokens`` tokens (``0`` disables the cap).
 
-    Truncation, not rejection: this runs on the path every *internal* caller takes
-    (consolidation, reflect tools, MCP tools, the context extension), and those must
-    degrade to a shorter query rather than fail. The REST handler keeps its own HTTP
-    400 for client-supplied queries.
+    Truncation, not rejection: every caller (REST, consolidation, reflect tools, MCP
+    tools, the context extension) degrades to a shorter query rather than failing.
     """
     # A token is never shorter than one character, so a query of at most
     # `max_query_tokens` characters cannot exceed the cap — skip tokenizing it.
@@ -8793,10 +8791,8 @@ class MemoryEngine(MemoryEngineInterface):
         # here protects every sink that the query flows into.
         query = sanitize_text(query) or ""
 
-        # Bound the query length at the engine ingress. The REST handler rejects an
-        # over-long query with HTTP 400 (PR #298), but that check only guards the one
-        # public entry point: consolidation, the reflect tools, the MCP tools and the
-        # context extension all call this method directly. Consolidation recalls with
+        # Bound the query length at the engine ingress, for every caller (REST,
+        # consolidation, reflect tools, MCP tools, context extension). Consolidation recalls with
         # the *whole fact text* as the query, so a degenerate extraction (58k words,
         # 4 distinct) became a 54k-term OR tsquery whose evaluation blew Postgres'
         # stack depth (SQLSTATE 54001) and wedged the bank's consolidation for a week

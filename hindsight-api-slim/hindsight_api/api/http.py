@@ -282,7 +282,6 @@ def _parse_tag_groups_query(raw: str | None, tags: list[str] | None) -> list[Tag
 
 from hindsight_api.engine.structured_output import validate_response_schema
 from hindsight_api.engine.time_filter import DocumentTimeField, MemoryTimeField
-from hindsight_api.engine.token_encoding import count_tokens
 from hindsight_api.extensions import HttpExtension, OperationValidationError, load_extension
 from hindsight_api.liveness import LivenessResponse, liveness_response
 from hindsight_api.metrics import (
@@ -6137,16 +6136,6 @@ def _register_routes(app: FastAPI):
                 metrics.record_recall_phase("deps_total", max(0.0, _deps_done - _deps_t0))
             if _deps_done:
                 metrics.record_recall_phase("body_parse", max(0.0, handler_start - _deps_done))
-
-        # Validate query length to prevent expensive operations on oversized queries
-        max_query_tokens = get_config().recall_max_query_tokens
-        if max_query_tokens > 0:  # 0 (or negative) disables the cap
-            query_tokens = count_tokens(request.query)
-            if query_tokens > max_query_tokens:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Query too long: {query_tokens} tokens exceeds maximum of {max_query_tokens}. Please shorten your query.",
-                )
 
         try:
             # Default to all fact types if not specified
