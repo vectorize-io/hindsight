@@ -143,6 +143,29 @@
   border: 2px solid var(--hca-accent);
 }
 
+/* The card variant: roughly half the width, so the type has to grow in viewBox
+   units to come out the same size on screen. Same reason as the narrow-screen
+   block below, different trigger. */
+.compact {
+  margin: 0;
+}
+
+.compact .axis,
+.compact .axisTitle,
+.compact .valueBefore,
+.compact .valueAfter {
+  font-size: 15px;
+}
+
+.compact .label {
+  font-size: 16px;
+}
+
+.compact .caption {
+  margin-top: 0.35rem;
+  font-size: 0.74rem;
+}
+
 @media (max-width: 900px) {
   .head {
     flex-direction: column;

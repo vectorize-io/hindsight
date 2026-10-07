@@ -1,10 +1,14 @@
 import React, {type ReactNode} from 'react';
 import Link from '@docusaurus/Link';
+import clsx from 'clsx';
 import {LuArrowUpRight} from 'react-icons/lu';
-import styles from './HomeCodingAgents.module.css';
+import styles from './CodingAgentsChart.module.css';
 
 /**
  * What memory does to a coding agent, from AMB's sdebench dataset.
+ *
+ * Rendered twice: on the homepage under Benchmarks, and on the coding-agents
+ * integration page, which is where the explanation of what it measures lives.
  *
  * It is a section on the page and not part of the hero: sharing the band with
  * the accuracy chart pushed that band past 900px and squeezed this one to half
@@ -57,37 +61,58 @@ const AGENTS: {
   },
 ];
 
-// Wide and short. Squeezed into half the proof row this chart's three labelled
-// marks landed on top of each other; given the full width it has room for the
-// names, the values and both axis captions without a single hand-placed offset.
-const W = 940;
-const H = 270;
-const PLOT = {left: 60, right: 860, top: 34, bottom: 196};
+/**
+ * Two shapes for two homes.
+ *
+ * `full` is wide and short, for a full content column: squeezed narrower, the
+ * three labelled marks land on top of each other.
+ *
+ * `card` is squarer, for the homepage's coding-agents card — roughly half the
+ * width, so the plot has to give up aspect ratio rather than legibility. The
+ * type does not shrink with it (see `.compact` in the stylesheet).
+ */
+const GEOMETRY = {
+  full: {W: 940, H: 270, PLOT: {left: 60, right: 860, top: 34, bottom: 196}},
+  card: {W: 560, H: 286, PLOT: {left: 56, right: 520, top: 40, bottom: 216}},
+};
 
 // Cost on a log scale, as AMB plots it: the spread is multiplicative.
 const COST = {min: 0.24, max: 0.72};
 const FIXES_MAX = 1.5;
 
-const lx = (c: number) =>
-  PLOT.left +
-  ((Math.log(c) - Math.log(COST.min)) / (Math.log(COST.max) - Math.log(COST.min))) *
-    (PLOT.right - PLOT.left);
-
-// Inverted: fewer corrections is better, so fewer is higher up.
-const ly = (f: number) => PLOT.top + (f / FIXES_MAX) * (PLOT.bottom - PLOT.top);
-
 const CHIP = 26;
 
-export default function HomeCodingAgents(): ReactNode {
+export default function CodingAgentsChart({
+  title = 'Coding agents',
+  variant = 'full',
+}: {
+  title?: string;
+  /** `card` drops the heading, the "Full results" link and the caption: it is
+      rendered inside a card that is itself a link, and a nested <a> is invalid. */
+  variant?: keyof typeof GEOMETRY;
+}): ReactNode {
+  const {W, H, PLOT} = GEOMETRY[variant];
+  const compact = variant === 'card';
+
+  const lx = (c: number) =>
+    PLOT.left +
+    ((Math.log(c) - Math.log(COST.min)) / (Math.log(COST.max) - Math.log(COST.min))) *
+      (PLOT.right - PLOT.left);
+
+  // Inverted: fewer corrections is better, so fewer is higher up.
+  const ly = (f: number) => PLOT.top + (f / FIXES_MAX) * (PLOT.bottom - PLOT.top);
+
   return (
-    <section className={styles.section}>
-      <div className={styles.head}>
-        <h3 className={styles.title}>Coding agents</h3>
-        <Link className={styles.more} to="https://agentmemorybenchmark.ai/dataset/sdebench">
-          Full results
-          <LuArrowUpRight size={14} />
-        </Link>
-      </div>
+    <section className={clsx(styles.section, compact && styles.compact)}>
+      {!compact && (
+        <div className={styles.head}>
+          <h3 className={styles.title}>{title}</h3>
+          <Link className={styles.more} to="https://agentmemorybenchmark.ai/dataset/sdebench">
+            Full results
+            <LuArrowUpRight size={14} />
+          </Link>
+        </div>
+      )}
 
       <figure className={styles.figure}>
     <svg
@@ -197,8 +222,8 @@ export default function HomeCodingAgents(): ReactNode {
             <i className={styles.keyBefore} /> no memory
             <i className={styles.keyAfter} /> with Hindsight
           </span>
-          Every agent solves 60–61 of the 61 tasks either way — memory changes
-          what it costs to get there. Mean of 3 runs.
+          {!compact &&
+            'Every agent solves 60–61 of the 61 tasks either way — memory changes what it costs to get there. Mean of 3 runs.'}
         </figcaption>
       </figure>
 

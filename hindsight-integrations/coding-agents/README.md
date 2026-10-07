@@ -16,6 +16,33 @@ in front of the agent at the moment it starts working, and keeps a curated set o
 
 [View Changelog →](https://hindsight.vectorize.io/changelog/integrations/coding-agents)
 
+## Does it work?
+
+[AMB's sdebench](https://agentmemorybenchmark.ai/dataset/sdebench) is the measurement: a coding
+agent over 61 real repository tasks, three runs each, with and without memory.
+
+Accuracy is not what moves — every run solves 60–61 of the 61 either way. These are tasks a good
+agent can already do. What memory changes is how much it costs you to get there: how often you have
+to stop and correct the agent, and what the tokens cost.
+
+<!-- figure: coding-agents-benchmark -->
+
+| Agent       | Corrections / task | Cost / task         |
+| ----------- | ------------------ | ------------------- |
+| Claude Code | 0.85 → **0.36**    | $0.445 → **$0.338** |
+| Codex CLI   | 1.34 → **0.47**    | $0.577 → **$0.276** |
+| opencode    | 1.20 → **0.80**    | $0.634 → **$0.553** |
+
+No memory → with Hindsight, mean of 3 runs. Corrections reproduce the labels AMB prints on its own
+chart; cost is derived from the same per-run table.
+
+Both numbers move together, and that is the mechanism rather than a coincidence. A correction is a
+round trip: the agent guesses a project-specific decision wrong, you stop it, you explain, it redoes
+the work. Every one of those costs a turn of tokens and a turn of your attention. Handing the agent
+the decision _before_ it starts — the rounding rule, the retry allowlist, the tie-break policy that
+was settled in a commit message or a conversation months ago — removes the guess, and the round trip
+with it.
+
 ## Install
 
 <!-- skill:begin title="Install / update" -->

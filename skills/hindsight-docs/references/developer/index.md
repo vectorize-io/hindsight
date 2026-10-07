@@ -6,11 +6,20 @@
 
 <HomeHero />
 
+{/* The router, directly under the hero. Three kinds of visitor land here — one
+    who has never heard of agent memory, one looking for the coding-agent
+    plugin, one looking for the Hermes/OpenClaw plugin — and only the first was
+    served by opening on prose. This used to sit under "How It Works", four
+    screens down, which is past where the other two had already left. */}
+<HomeFlow />
+
 ## Benchmarks
 
 <HomeBenchmarks />
 
-<HomeCodingAgents />
+{/* Retrieval accuracy only. The coding-agent chart opens inside the coding-agents
+    card above, where it is evidence for a path the reader has just been shown,
+    and is explained in full on /sdks/integrations/coding-agents. */}
 
 ## Why Hindsight?
 
@@ -32,15 +41,6 @@ Hindsight solves these problems with a memory system designed specifically for A
 <SkillBanner />
 
 ## How It Works
-
-{/* The one-glance version. The interactive figure further down explains the
-    pipeline; this answers the question that comes before it — how does my
-    agent, or my app, actually talk to this. */}
-<HomeFlow />
-
-{/* Both charts in one place: retrieval accuracy and what memory does to a
-    coding agent are the same question asked twice, and splitting them across
-    the page made neither land. */}
 
 ### Memory Types
 
@@ -154,7 +154,18 @@ behind them. Play it, or step through it at your own pace.
 
 ## Integrations
 
-Browse all supported integrations in the Integrations Hub.
+**Coding agents** — [one install](../sdks/integrations/coding-agents.md) wires 20+
+harnesses (Claude Code, Codex CLI, Cursor CLI, opencode, Copilot CLI and more) to
+a per-repo memory bank.
+
+**Personal agents** — [Hermes](../sdks/integrations/hermes.md) and
+[OpenClaw](../sdks/integrations/openclaw.md) install Hindsight as their memory
+provider: every turn recalls what matters before answering and retains what was
+said afterwards. The Hermes desktop app configures it
+[in Settings](../sdks/integrations/hermes-desktop.md), no terminal.
+
+Everything else — frameworks, MCP servers, tools — is in the
+Integrations Hub.
 
 ## Next Steps
 

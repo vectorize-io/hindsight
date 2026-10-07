@@ -7,7 +7,7 @@ import styles from './HomeBenchmarks.module.css';
  * Every benchmark we have a published comparison for, Hindsight against the
  * next-best system on that same dataset.
  *
- * It sits with the sdebench chart (HomeCodingAgents) in one Benchmarks section
+ * It sits with the sdebench chart (CodingAgentsChart) in one Benchmarks section
  * rather than in the hero: the two belong together, and a band carrying both
  * ran past 900px and stopped reading as a hero at all.
  *

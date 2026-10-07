@@ -3,12 +3,12 @@
    container-less and this sits directly underneath. */
 .flow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.15fr) auto minmax(0, 0.7fr);
+  grid-template-columns: minmax(0, 2.5fr) auto minmax(0, 1fr) auto minmax(0, 0.72fr);
   /* Not stretch: the columns have genuinely different content heights, and
      stretching left the short ones with dead space at the bottom. */
   align-items: center;
   gap: 0.5rem;
-  margin: 0 0 2.5rem;
+  margin: 0 0 3rem;
 }
 
 /* ── Sources ──────────────────────────────────────────────────────────────*/
@@ -19,6 +19,7 @@
 }
 
 .flow .source {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
@@ -27,12 +28,139 @@
   background: var(--ifm-background-surface-color);
   border: 1px solid var(--ifm-color-emphasis-200);
   border-radius: 0.7rem;
-  transition: border-color 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.2s ease;
 }
 
-.flow .source:hover {
+.flow .source:hover,
+.flow .source:focus-within {
   text-decoration: none;
   border-color: var(--ifm-color-primary);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.06);
+}
+
+/* ── What each card opens ─────────────────────────────────────────────────
+   The card itself grows: the panel is in the card's own flow, so nothing is
+   covered up and the diagram simply re-lays out around it. Collapsed with a
+   0fr→1fr grid row rather than max-height — no magic number to keep in sync,
+   and the three cards hold very different things. */
+.reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 0.35s ease, opacity 0.25s ease, margin-top 0.35s ease;
+}
+
+.reveal > * {
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* focus-within as well as hover: a keyboard tabs into the card's links and must
+   get the same thing a pointer does. */
+.flow .source:hover .reveal,
+.flow .source:focus-within .reveal {
+  grid-template-rows: 1fr;
+  margin-top: 0.4rem;
+  opacity: 1;
+}
+
+/* The line under whatever the card opened. It sits inside the card's own <a>,
+   which is why the colour has to be forced. */
+.flow .revealNote {
+  display: block;
+  margin-top: 0.45rem;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: var(--ifm-color-emphasis-600) !important;
+}
+
+/* The assistant exchange. Two bubbles, the question narrow and the answer wide,
+   so it reads as a conversation without drawing an avatar for either side. */
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.chat .ask,
+.chat .reply {
+  padding: 0.45rem 0.65rem;
+  border-radius: 0.6rem;
+}
+
+.chat .ask {
+  align-self: flex-end;
+  max-width: 85%;
+  color: var(--ifm-font-color-base);
+  background: var(--ifm-color-emphasis-200);
+  border-bottom-right-radius: 0.2rem;
+}
+
+.chat .reply {
+  align-self: flex-start;
+  color: var(--ifm-font-color-base);
+  background: var(--hindsight-active-surface);
+  border: 1px solid rgba(0, 116, 217, 0.25);
+  border-bottom-left-radius: 0.2rem;
+}
+
+/* The three calls. Not a Docusaurus code block — this is inside a card that is
+   itself a link, and the full block brings a copy button and a toolbar with it. */
+.flow .code {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.74rem;
+  line-height: 1.7;
+  background: var(--ifm-background-color);
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-radius: 0.5rem;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.flow .code code {
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--ifm-color-emphasis-800);
+}
+
+/* ── Personal agents ──────────────────────────────────────────────────────
+   Two names and two arrows. The boxed chips this replaced made a two-item list
+   look like a toolbar. */
+.assistants {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.1rem;
+  margin-top: 0.1rem;
+}
+
+.flow .assistant {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ifm-font-color-base) !important;
+}
+
+.flow .assistant img {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
+[data-theme='dark'] .flow .assistant img {
+  padding: 1px;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 4px;
+}
+
+.flow .assistant:hover {
+  text-decoration: none;
+  color: var(--ifm-color-primary) !important;
 }
 
 .sourceLabel {
@@ -65,8 +193,15 @@
 }
 
 .sourceNote {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
   font-size: 0.78rem;
   color: var(--ifm-color-emphasis-600);
+}
+
+.flow a.source .sourceNote {
+  color: var(--ifm-color-primary);
 }
 
 /* ── Connectors ───────────────────────────────────────────────────────────
@@ -265,6 +400,17 @@
 /* ── Narrow screens ───────────────────────────────────────────────────────
    Five columns become one, and the connectors turn a quarter so the flow still
    reads in order. */
+/* No pointer, no reveal — so there is nothing to reveal: every card is open.
+   Covers touch at any width, and the stacked narrow layout below. */
+@media (hover: none), (max-width: 996px) {
+  /* Nothing to hover, so every card is simply open. */
+  .reveal {
+    grid-template-rows: 1fr;
+    margin-top: 0.4rem;
+    opacity: 1;
+  }
+}
+
 @media (max-width: 996px) {
   .flow {
     grid-template-columns: 1fr;
@@ -282,5 +428,11 @@
     top: auto;
     bottom: 0;
     transform: translateX(50%) rotate(135deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    transition: none;
   }
 }
