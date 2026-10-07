@@ -7271,7 +7271,12 @@ class MemoryEngine(MemoryEngineInterface):
                 if leftover:
                     # ponytail: bounded so a sub-batch that swallows its cancel cannot wedge the kill;
                     # one that outlives this is logged, not awaited.
-                    _, stuck = await asyncio.wait(leftover, timeout=_SUBBATCH_CANCEL_SETTLE_SECONDS)
+                    settled, stuck = await asyncio.wait(leftover, timeout=_SUBBATCH_CANCEL_SETTLE_SECONDS)
+                    # Retrieve what a slice raised while unwinding, so asyncio does not log
+                    # "Task exception was never retrieved"; the error that ended the loop wins.
+                    for t in settled:
+                        if not t.cancelled():
+                            t.exception()
                     if stuck:
                         logger.warning(
                             f"[BATCH_RETAIN] bank={bank_id} {len(stuck)} sub-batch(es) still running "
