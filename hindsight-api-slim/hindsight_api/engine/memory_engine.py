@@ -369,6 +369,11 @@ _VALIDATE_SQL_SCHEMAS = True
 _CONSOLIDATION_RETRY_BACKOFF_BASE_SECONDS = 5
 _CONSOLIDATION_RETRY_BACKOFF_MAX_SECONDS = 1800  # 30 min cap
 
+# How long a killed or failed chunked retain waits for its in-flight sub-batches to
+# honour cancel (#5372). A cancelled sub-batch rolls its transaction back promptly;
+# the bound only matters for one stuck in code that ignores cancellation.
+_SUBBATCH_CANCEL_SETTLE_SECONDS = 30
+
 # Upper bound on the per-bank LLM connectivity probe so a hung provider can't wedge
 # the request. The probe is a deliberate, non-polled action (POST .../health/llm).
 _LLM_PROBE_TIMEOUT_SECONDS = 10.0
@@ -7253,6 +7258,25 @@ class MemoryEngine(MemoryEngineInterface):
                             raise r
                         collected.append(r)
             finally:
+                # Stop every sub-batch still in flight before anything else (#5372). This loop is
+                # left early in two ways the cooperative check above never sees: the worker's
+                # wall-clock kill (RETAIN_WALL_TIMEOUT) cancels us mid-`asyncio.wait`, and a sibling
+                # raising at `t.result()` exits with the others still running. Before this, those
+                # tasks kept extracting and committed facts minutes after the operation was marked
+                # failed — and after the per-document lock that `failed` releases, so a queued
+                # successor ran alongside them on the same document.
+                leftover = [t for t in pending if not t.done()]
+                for t in leftover:
+                    t.cancel()
+                if leftover:
+                    # ponytail: bounded so a sub-batch that swallows its cancel cannot wedge the kill;
+                    # one that outlives this is logged, not awaited.
+                    _, stuck = await asyncio.wait(leftover, timeout=_SUBBATCH_CANCEL_SETTLE_SECONDS)
+                    if stuck:
+                        logger.warning(
+                            f"[BATCH_RETAIN] bank={bank_id} {len(stuck)} sub-batch(es) still running "
+                            f"{_SUBBATCH_CANCEL_SETTLE_SECONDS}s after cancel"
+                        )
                 # In a `finally` so a failed sub-batch still writes what its siblings accumulated.
                 # Otherwise the last slices since the previous doubling are lost, and for a document
                 # that never reached a flush that is the whole body — leaving memories with no
