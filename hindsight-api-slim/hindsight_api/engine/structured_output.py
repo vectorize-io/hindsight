@@ -117,20 +117,62 @@ def _strip_ref_siblings(node: Any) -> Any:
     return node
 
 
+# Numeric bound keywords Pydantic emits for ``Field(ge=/le=/gt=/lt=/multiple_of=)``.
+# They buy nothing on the wire: no backend we target enforces them for us, and the
+# bounds stay on the Pydantic model, which validates the response after it comes
+# back. What they do buy is a hard 400 on backends that validate a structured-output
+# schema against an allowlist -- Bedrock Converse rejects the request with "For
+# 'integer' type, properties maximum, minimum are not supported" (issue #5275, which
+# paused 60 of 131 mental models on a live deployment), and OpenAI errors on any
+# unsupported keyword under ``strict``. The two offenders today are the ``level``
+# fields of ``reflect/delta_ops.py`` and ``reflect/structured_doc.py``, but stripping
+# here rather than at each model keeps the next bounded field from reopening this.
+#
+# ``maxItems`` / ``minItems`` / ``pattern`` are deliberately NOT stripped: consolidation
+# and retain emit those on purpose, gated on HINDSIGHT_API_LLM_SUPPORTS_MAX_ITEMS and
+# HINDSIGHT_API_LLM_SUPPORTS_STRING_PATTERN, because a backend that accepts them does
+# grammar-enforce them.
+_NUMERIC_BOUND_KEYWORDS = frozenset({"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf"})
+
+
+def _strip_numeric_bounds(node: Any) -> Any:
+    """Drop numeric bound keywords from every subschema in the tree.
+
+    Only a schema node's own keywords are dropped; the keys of a name map
+    (``properties`` and friends) are user-controlled, so a property literally
+    called ``minimum`` survives.
+    """
+    if isinstance(node, dict):
+        return {
+            key: (
+                {name: _strip_numeric_bounds(sub) for name, sub in value.items()}
+                if key in _SUBSCHEMA_NAME_MAPS and isinstance(value, dict)
+                else _strip_numeric_bounds(value)
+            )
+            for key, value in node.items()
+            if key not in _NUMERIC_BOUND_KEYWORDS
+        }
+    if isinstance(node, list):
+        return [_strip_numeric_bounds(item) for item in node]
+    return node
+
+
 def strict_json_schema(response_format: type[BaseModel]) -> dict[str, Any]:
     """Serialize a typed response model directly into OpenAI's strict subset."""
     schema = response_format.model_json_schema(schema_generator=OpenAIStrictSchemaGenerator)
-    return _strip_ref_siblings(schema)
+    return _strip_numeric_bounds(_strip_ref_siblings(schema))
 
 
 def provider_json_schema(response_format: type[BaseModel]) -> dict[str, Any]:
     """Serialize a response model for a provider that is not using the strict subset.
 
     Same output as ``model_json_schema()`` for every model without a discriminated
-    union; for one that has a union, the union is rendered as ``anyOf`` so the
-    schema is transportable (see ``UnionSafeSchemaGenerator``).
+    union or a numeric bound; for one that has a union, the union is rendered as
+    ``anyOf`` so the schema is transportable (see ``UnionSafeSchemaGenerator``), and
+    numeric bounds are dropped (see ``_strip_numeric_bounds``).
     """
-    return response_format.model_json_schema(schema_generator=UnionSafeSchemaGenerator)
+    schema = response_format.model_json_schema(schema_generator=UnionSafeSchemaGenerator)
+    return _strip_numeric_bounds(schema)
 
 
 # Bounded: consolidation builds a fresh response model per batch (its schema pins
@@ -144,7 +186,7 @@ def has_tagged_union(response_format: type[BaseModel]) -> bool:
     already handles and only fall back to a serialized schema for the unions it
     cannot accept. Cached because the answer is a property of the class.
     """
-    return provider_json_schema(response_format) != response_format.model_json_schema()
+    return provider_json_schema(response_format) != _strip_numeric_bounds(response_format.model_json_schema())
 
 
 # Types the structured-output extractor knows how to build a Pydantic field for
