@@ -1439,7 +1439,7 @@ class TestWorkerRecovery:
         assert status[fresh_batch] == "processing"
 
     @pytest.mark.asyncio
-    async def test_run_claims_before_recovery_finishes(self, backend):
+    async def test_run_claims_before_recovery_finishes(self, pool, backend):
         """A restarting worker must start claiming at once, not after walking every
         tenant schema (#5407). Recovery runs in the background with the DB start time."""
         from hindsight_api.worker import WorkerPoller
@@ -1468,7 +1468,10 @@ class TestWorkerRecovery:
             await asyncio.wait_for(claimed.wait(), timeout=5)
             await asyncio.wait_for(recovery_started.wait(), timeout=5)
             assert not release_recovery.is_set()
-            assert seen_cutoff[0] is not None
+            # A UTC-tagged DB time, comparable with timestamptz columns.
+            db_now = await pool.fetchval("SELECT now()")
+            assert seen_cutoff[0].tzinfo is not None
+            assert abs((db_now - seen_cutoff[0]).total_seconds()) < 60
         finally:
             poller._shutdown.set()
             await asyncio.wait_for(run, timeout=5)

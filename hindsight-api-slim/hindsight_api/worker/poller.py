@@ -1565,7 +1565,7 @@ class WorkerPoller:
                 async with self._backend.acquire() as conn:
                     # Re-check under the UPDATE: another restarting worker may have
                     # reset and re-claimed this row since the SELECT above.
-                    await conn.execute(
+                    result = await conn.execute(
                         f"""
                         UPDATE {table}
                         SET status = 'pending', worker_id = NULL, claimed_at = NULL, updated_at = now()
@@ -1576,6 +1576,8 @@ class WorkerPoller:
                         *([claimed_before] if claimed_before is not None else []),
                     )
 
+                if not _updated_row_count(result):
+                    continue
                 recovered += 1
                 logger.info(f"Batch operation {operation_id} reset to pending for re-processing")
 
