@@ -866,3 +866,72 @@ async def test_retain_through_chain_uses_each_members_own_retry_budget(retain_co
     assert len(facts) == 1
     assert primary._provider_impl.call.call_args.kwargs["max_retries"] == 0
     assert terminal._provider_impl.call.call_args.kwargs["max_retries"] == 2
+
+
+def _vendor_schema_fact(index: int) -> dict:
+    """A fact in the shape #5280's relay-served model invented: subject/predicate/object."""
+    return {"type": "action", "subject": "Alice", "predicate": "visited", "object": f"Paris {index}"}
+
+
+@pytest.mark.asyncio
+async def test_drifted_keys_are_named_back_to_the_model_on_retry():
+    """Issue #5280.
+
+    A model answering in its own schema keeps answering in it: the shape is stable
+    across attempts, so a bare re-ask cannot converge. Each retry must carry a
+    corrective user turn naming the keys the model used and the keys the schema
+    requires — and it must be a USER turn, because the endpoints that silently drop
+    ``response_format`` also drop or truncate the system message, so nothing added
+    to the system prompt would reach the model.
+
+    The first request must NOT carry it: the correction costs input tokens, and the
+    happy path must pay nothing.
+    """
+    from hindsight_api.engine.retain.fact_extraction import (
+        FactExtractionResponseNoCausal,
+        _extract_facts_from_chunk,
+    )
+
+    config = _make_config(llm_max_retries=1, retain_llm_max_retries=None)
+    llm_config = _make_llm_config(mock_response={"facts": [_vendor_schema_fact(1), _vendor_schema_fact(2)]})
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=FactExtractionResponseNoCausal),
+    ):
+        with pytest.raises(RuntimeError) as excinfo:
+            await _extract_facts_from_chunk(
+                chunk="Alice visited Paris in 2023.",
+                chunk_index=0,
+                total_chunks=1,
+                event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+                context="travel notes",
+                llm_config=llm_config,
+                config=config,
+                agent_name="test-agent",
+            )
+
+    assert llm_config.call.call_count == 2
+
+    def user_turns(call):
+        return [m for m in call.kwargs["messages"] if m["role"] == "user"]
+
+    # First attempt: just the chunk. No correction, no extra tokens.
+    assert len(user_turns(llm_config.call.call_args_list[0])) == 1
+
+    # Retry: the chunk plus one corrective user turn, naming both key sets.
+    retry_users = user_turns(llm_config.call.call_args_list[1])
+    assert len(retry_users) == 2
+    correction = retry_users[1]["content"]
+    for used in ("subject", "predicate", "object"):
+        assert used in correction
+    for required in ("what", "when", "where", "who", "why"):
+        assert required in correction
+    # It must not land in the system turn, which the offending endpoints drop.
+    systems = [m for m in llm_config.call.call_args_list[1].kwargs["messages"] if m["role"] == "system"]
+    assert all("subject" not in m["content"] for m in systems)
+
+    # And the final error names the offending shape, not just the absent field.
+    detail = str(excinfo.value)
+    assert "subject, predicate, object, type" in detail or "object, predicate, subject, type" in detail
+    assert "what" in detail

@@ -9,10 +9,10 @@ import asyncio
 import json
 import logging
 import re
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
@@ -1959,6 +1959,45 @@ def _build_request_body(batch_impl, config, prompt: str, user_message: str, resp
     return request_body
 
 
+def _expected_fact_keys(response_schema: Any) -> list[str]:
+    """The per-fact key names the configured schema declares.
+
+    Read off the response model instead of hardcoded, so a mode that swaps the
+    fact class (verbose, verbatim) or a taxonomy-built ``create_model`` cannot
+    leave the repair re-ask below naming fields the model is not allowed to send.
+    """
+    facts_field = getattr(response_schema, "model_fields", {}).get("facts")
+    args = get_args(getattr(facts_field, "annotation", None))
+    fields = getattr(args[0], "model_fields", None) if args else None
+    return list(fields) if fields else []
+
+
+def _shape_repair_message(observed_keys: Collection[str], expected_keys: Sequence[str]) -> str | None:
+    """The corrective turn for a model that answered in its own schema (#5280).
+
+    Sent ONLY on a retry, and only as a user turn. Both matter: an endpoint that
+    accepts ``response_format`` and silently drops it leaves the model with
+    nothing to follow, and the ones observed doing that also drop or truncate the
+    system turn — so a prompt-side fix never reaches the model while this does.
+    Costs nothing on the happy path, because an attempt has already failed by the
+    time it is built.
+
+    Mirrors ``_document_rejection_messages`` in reflect: say what came back, say
+    what was required, ask again on the same prefix. Returns None when there is
+    nothing concrete to report, so a vague scolding is never sent.
+    """
+    if not observed_keys or not expected_keys:
+        return None
+    return (
+        "Your previous answer was discarded. Every fact in it used key names that are not "
+        "part of the output schema, so no fact could be read.\n"
+        f"Keys you used: {', '.join(sorted(observed_keys))}\n"
+        f"Keys required on each fact: {', '.join(expected_keys)}\n"
+        'Answer again with the SAME facts and the SAME content, shaped as {"facts": [{...}, {...}]}, '
+        'using only the required key names above. The statement itself goes in "what".'
+    )
+
+
 def _coerce_fact_response(response: Any) -> dict[str, Any] | None:
     """Accept the schema wrapper, or a recoverable top-level facts array."""
     if isinstance(response, dict):
@@ -2055,6 +2094,11 @@ async def _extract_facts_from_chunk(
     last_error: Exception | None = None
 
     usage = TokenUsage()  # Track cumulative usage across retries
+    # The corrective turn for the NEXT attempt, when this one was discarded for
+    # using the wrong key names (#5280). None on the first attempt, so the happy
+    # path pays nothing.
+    repair_hint: str | None = None
+    expected_fact_keys = _expected_fact_keys(response_schema)
     for attempt in range(outer_attempts):
         try:
             initial_backoff = (
@@ -2066,8 +2110,17 @@ async def _extract_facts_from_chunk(
                 config.retain_llm_max_backoff if config.retain_llm_max_backoff is not None else config.llm_max_backoff
             )
 
+            messages: list[dict[str, Any]] = [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": user_content},
+            ]
+            if repair_hint is not None:
+                # A separate turn rather than an edit to user_content, which may be a
+                # multi-part attachment payload.
+                messages.append({"role": "user", "content": repair_hint})
+
             call_kwargs: dict[str, Any] = dict(
-                messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_content}],
+                messages=messages,
                 response_format=response_schema,
                 scope="retain_extract_facts",
                 temperature=config.llm_temperature_retain,
@@ -2087,6 +2140,10 @@ async def _extract_facts_from_chunk(
             # Lenient parsing of facts from raw JSON
             chunk_facts = []
             has_malformed_facts = False
+            # Keys the model actually put on the facts it sent, for the repair re-ask
+            # and the final error. Collected per attempt, not cumulatively: the
+            # correction must describe the answer it is correcting.
+            drifted_keys: set[str] = set()
 
             # Handle malformed LLM responses
             coerced_response_json = _coerce_fact_response(extraction_response_json)
@@ -2159,6 +2216,7 @@ async def _extract_facts_from_chunk(
                         # cannot improve — skip it as quietly as before.
                         if not any(key in llm_fact for key in ("what", "factual_core", "text")):
                             has_malformed_facts = True
+                            drifted_keys.update(llm_fact.keys())
                         continue
 
                 # Critical field: fact_type — "assistant" maps to "experience", everything else is "world".
@@ -2332,6 +2390,12 @@ async def _extract_facts_from_chunk(
                 logger.warning(
                     f"Got {len(raw_facts) - len(chunk_facts)} malformed facts out of {len(raw_facts)} on attempt {attempt + 1}/{outer_attempts}. Retrying..."
                 )
+                # Tell the next attempt what was wrong with this one. Without it a model
+                # whose output shape is stable re-sends the same keys every attempt and
+                # the loop cannot converge — four identical discards, then a 500 (#5280).
+                repair_hint = _shape_repair_message(drifted_keys, expected_fact_keys)
+                if repair_hint is not None:
+                    logger.warning(f"Re-asking with the required fact keys; model used: {sorted(drifted_keys)}")
                 continue
 
             # Every fact the model returned was unusable, on every attempt. Raise
@@ -2343,11 +2407,49 @@ async def _extract_facts_from_chunk(
             # (#3708). A model that legitimately returns `"facts": []` never lands here:
             # nothing was dropped, so has_malformed_facts stays False.
             if has_malformed_facts and not chunk_facts:
+                # Name the keys the model DID send. Without them the message reports only
+                # the field that was missing, which tells an operator nothing about why —
+                # and the raw response is not in the log either (#5280). With them, a
+                # relay that silently drops response_format (or the system turn) is one
+                # read away: the keys will be the model's own invention, and the input
+                # token count will be far below the system prompt's size.
+                observed = (
+                    f" The model's facts used these keys instead: {', '.join(sorted(drifted_keys))}."
+                    if drifted_keys
+                    else ""
+                )
+                required = f" The schema requires: {', '.join(expected_fact_keys)}." if expected_fact_keys else ""
                 raise RuntimeError(
                     f"Fact extraction failed: all {len(raw_facts)} facts returned by the LLM were "
-                    f"unusable after {outer_attempts} attempts (wrong shape or missing required fields). "
+                    f"unusable after {outer_attempts} attempts (wrong shape or missing required fields)."
+                    f"{observed}{required} "
                     f"Model '{llm_config.model}' may not honour the extraction schema — consider enabling "
-                    f"HINDSIGHT_API_LLM_STRICT_SCHEMA_RETAIN or using a model with strict schema support."
+                    f"HINDSIGHT_API_LLM_STRICT_SCHEMA_RETAIN or using a model with strict schema support. "
+                    f"If the endpoint is an OpenAI-compatible relay, check that it forwards "
+                    f"response_format AND the system message: this call sent "
+                    f"{usage.input_tokens} input tokens in total."
+                )
+
+            # Retries are exhausted and SOME facts parsed, so the raise above does not
+            # fire — but the rest were dropped for drifting their key names, and the
+            # caller gets no signal at all. Say so loudly; a chunk that lost most of its
+            # facts is a schema problem, not thin content.
+            # ponytail: log-only. The streaming path has no extraction-error channel
+            # (RetainExtractionErrors is batch-only), so surfacing this on the operation
+            # needs a signature change through extract_facts_from_text; do that if an
+            # operator ever needs it in the API rather than the log.
+            if has_malformed_facts and len(chunk_facts) < len(raw_facts):
+                # ``has_malformed_facts`` also covers a non-dict entry and a fact the Fact
+                # model rejected, where no drifted keys were seen — so only name them when
+                # there are some, and otherwise say nothing about the cause.
+                cause = (
+                    f"; the rest used keys outside the schema ({', '.join(sorted(drifted_keys))})"
+                    if drifted_keys
+                    else "; the rest were malformed"
+                )
+                logger.error(
+                    f"Fact extraction kept {len(chunk_facts)}/{len(raw_facts)} facts for chunk "
+                    f"{chunk_index + 1}/{total_chunks} after {outer_attempts} attempts{cause}"
                 )
 
             return chunk_facts, usage
@@ -3067,7 +3169,13 @@ async def extract_facts_from_contents_batch_api(
                 # HINDSIGHT_API_FAIL_ON_EXTRACTION_ERRORS can escalate it to a failure.
                 # A key that is present but empty/"N/A" stays a quiet skip.
                 if not any(key in llm_fact for key in ("what", "factual_core", "text")):
-                    message = f"{custom_id}: fact {i} has no 'what'/'factual_core'/'text' field"
+                    # Name the keys the model used instead. The batch path cannot re-ask a
+                    # single request, so this message is the only thing an operator gets —
+                    # it has to carry the offending shape, not just the absent field (#5280).
+                    message = (
+                        f"{custom_id}: fact {i} has no 'what'/'factual_core'/'text' field; "
+                        f"keys present: {', '.join(sorted(llm_fact.keys()))}"
+                    )
                     logger.warning(message)
                     extraction_errors.add(message)
                 continue

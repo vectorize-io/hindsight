@@ -397,7 +397,11 @@ async def test_batch_api_records_schema_drifted_facts_as_extraction_errors(
     assert len(recorded) == 1
     # Only the fact with no text key at all is an error; the empty 'what' is not.
     assert recorded[0].count == 1
-    assert recorded[0].sample == ["chunk_0: fact 0 has no 'what'/'factual_core'/'text' field"]
+    # The message names the keys the model DID send (#5280): the batch path cannot
+    # re-ask, so this string is all an operator gets to recognise schema drift.
+    assert recorded[0].sample == [
+        "chunk_0: fact 0 has no 'what'/'factual_core'/'text' field; keys present: fact_type, when, who"
+    ]
 
 
 @pytest.mark.asyncio
