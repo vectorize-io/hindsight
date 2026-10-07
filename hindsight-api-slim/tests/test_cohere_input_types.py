@@ -6,12 +6,19 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from hindsight_api.config import DEFAULT_EMBEDDINGS_MAX_CONCURRENT_REQUESTS
 from hindsight_api.engine.aiohttp_session import LoopLocal
 from hindsight_api.engine.embeddings import CohereEmbeddings
 
 
 def _backend(output_dimensions: int | None, input_type: str = "search_document") -> CohereEmbeddings:
     backend = CohereEmbeddings(api_key="test", output_dimensions=output_dimensions, input_type=input_type)
+    # What `_with_request_concurrency` gives every remote provider. Constructing the backend
+    # directly skips the factory and leaves the base class's sequential default of 1, which is a
+    # semaphore of one in-flight request — the concurrency test below then deadlocks waiting for a
+    # second request that can never start, and it would be testing a bound it set itself rather
+    # than how a deployed Cohere backend behaves.
+    backend.max_concurrent_requests = DEFAULT_EMBEDDINGS_MAX_CONCURRENT_REQUESTS
     response = SimpleNamespace(embeddings=[[0.1, 0.2]])
     if output_dimensions is not None:
         response.embeddings = SimpleNamespace(float_=[[0.1, 0.2]])
