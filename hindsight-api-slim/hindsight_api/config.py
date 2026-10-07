@@ -916,6 +916,7 @@ ENV_DB_POOL_MIN_SIZE = "HINDSIGHT_API_DB_POOL_MIN_SIZE"
 ENV_DB_POOL_MAX_SIZE = "HINDSIGHT_API_DB_POOL_MAX_SIZE"
 ENV_DB_COMMAND_TIMEOUT = "HINDSIGHT_API_DB_COMMAND_TIMEOUT"
 ENV_DB_ACQUIRE_TIMEOUT = "HINDSIGHT_API_DB_ACQUIRE_TIMEOUT"
+ENV_DB_POOL_SLOW_ACQUIRE_THRESHOLD_SECONDS = "HINDSIGHT_API_DB_POOL_SLOW_ACQUIRE_THRESHOLD_SECONDS"
 ENV_DB_STATEMENT_TIMEOUT = "HINDSIGHT_API_DB_STATEMENT_TIMEOUT"
 ENV_DB_MAX_PARALLEL_WORKERS_PER_GATHER = "HINDSIGHT_API_DB_MAX_PARALLEL_WORKERS_PER_GATHER"
 ENV_DB_SESSION_SETUP_ON_ACQUIRE = "HINDSIGHT_API_DB_SESSION_SETUP_ON_ACQUIRE"
@@ -1809,6 +1810,7 @@ DEFAULT_DB_POOL_MIN_SIZE = 5
 DEFAULT_DB_POOL_MAX_SIZE = 100
 DEFAULT_DB_COMMAND_TIMEOUT = 60  # seconds
 DEFAULT_DB_ACQUIRE_TIMEOUT = 30  # seconds
+DEFAULT_DB_POOL_SLOW_ACQUIRE_THRESHOLD_SECONDS = 0.05  # 0 disables the warning
 DEFAULT_DB_STATEMENT_TIMEOUT = 600  # seconds (Postgres statement_timeout applied on every pool connection; 0 disables)
 # Optional cap on Postgres planner parallelism for this process's pool
 # connections (SET max_parallel_workers_per_gather). None leaves the server
@@ -3535,6 +3537,7 @@ class HindsightConfig:
     db_pool_max_size: int
     db_command_timeout: int
     db_acquire_timeout: int
+    db_pool_slow_acquire_threshold_seconds: float
     db_statement_timeout: int
     db_max_parallel_workers_per_gather: int | None
     db_session_setup_on_acquire: bool
@@ -5113,6 +5116,11 @@ class HindsightConfig:
             db_pool_max_size=int(os.getenv(ENV_DB_POOL_MAX_SIZE, str(DEFAULT_DB_POOL_MAX_SIZE))),
             db_command_timeout=int(os.getenv(ENV_DB_COMMAND_TIMEOUT, str(DEFAULT_DB_COMMAND_TIMEOUT))),
             db_acquire_timeout=int(os.getenv(ENV_DB_ACQUIRE_TIMEOUT, str(DEFAULT_DB_ACQUIRE_TIMEOUT))),
+            db_pool_slow_acquire_threshold_seconds=float(
+                os.getenv(
+                    ENV_DB_POOL_SLOW_ACQUIRE_THRESHOLD_SECONDS, str(DEFAULT_DB_POOL_SLOW_ACQUIRE_THRESHOLD_SECONDS)
+                )
+            ),
             db_statement_timeout=int(os.getenv(ENV_DB_STATEMENT_TIMEOUT, str(DEFAULT_DB_STATEMENT_TIMEOUT))),
             db_max_parallel_workers_per_gather=_parse_optional_non_negative_int(
                 ENV_DB_MAX_PARALLEL_WORKERS_PER_GATHER,

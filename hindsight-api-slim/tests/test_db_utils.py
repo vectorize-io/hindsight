@@ -168,3 +168,28 @@ async def test_retry_with_backoff_logs_name_exception_with_empty_str(monkeypatch
     assert op_lines, "the retry path logged nothing at all"
     for line in op_lines:
         assert "InterfaceError" in line, f"log line dropped the exception class: {line!r}"
+
+
+@pytest.mark.parametrize(
+    ("threshold", "warns"),
+    [(0.05, True), (0.1, False), (0.0, False)],
+    ids=["default-warns", "raised-threshold-silent", "zero-disables"],
+)
+@pytest.mark.asyncio
+async def test_slow_acquire_warning_honours_configured_threshold(monkeypatch, caplog, threshold, warns):
+    """A 64 ms acquire (a cold TLS connection to Aurora Serverless) warns only above the configured threshold."""
+    from types import SimpleNamespace
+
+    clock = iter([100.0, 100.064])
+    # Swap the module's ``time`` binding, not ``time.time`` itself: logging stamps records with it too.
+    monkeypatch.setattr("hindsight_api.engine.db_utils.time", SimpleNamespace(time=lambda: next(clock)))
+    monkeypatch.setattr(
+        "hindsight_api.engine.db_utils.get_config",
+        lambda: SimpleNamespace(db_pool_slow_acquire_threshold_seconds=threshold),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="hindsight_api.engine.db_utils"):
+        async with acquire_with_retry(_FakeBackend()):
+            pass
+
+    assert any("Slow acquire" in r.getMessage() for r in caplog.records) is warns
