@@ -1,0 +1,1376 @@
+{
+  "title": "What Hindsight Does",
+  "speed": 2200,
+  "elements": [
+    {
+      "id": "agent",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Your AI Agent"
+        }
+      ],
+      "minCardHeight": 148,
+      "width": 196
+    },
+    {
+      "id": "retain",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Retain"
+        },
+        {
+          "type": "subtitle",
+          "text": "LLM extraction"
+        }
+      ]
+    },
+    {
+      "id": "semantic",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Semantic"
+        },
+        {
+          "type": "subtitle",
+          "text": "by meaning"
+        }
+      ]
+    },
+    {
+      "id": "keyword",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Keyword"
+        },
+        {
+          "type": "subtitle",
+          "text": "exact words"
+        }
+      ]
+    },
+    {
+      "id": "graph",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Graph"
+        },
+        {
+          "type": "subtitle",
+          "text": "via entities"
+        }
+      ]
+    },
+    {
+      "id": "temporal",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Temporal"
+        },
+        {
+          "type": "subtitle",
+          "text": "by time"
+        }
+      ]
+    },
+    {
+      "id": "recall",
+      "type": "group",
+      "label": {
+        "title": "Recall"
+      },
+      "children": [
+        "semantic",
+        "keyword",
+        "graph",
+        "temporal"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 10,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "reflect",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Reflect"
+        },
+        {
+          "type": "subtitle",
+          "text": "agent loop"
+        }
+      ],
+      "minCardHeight": 103,
+      "width": 200
+    },
+    {
+      "id": "api",
+      "type": "group",
+      "label": {
+        "title": "Hindsight API"
+      },
+      "children": [
+        "retain",
+        "recall",
+        "reflect"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 24,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "docs",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Documents"
+        }
+      ]
+    },
+    {
+      "id": "chunks",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Chunks"
+        }
+      ]
+    },
+    {
+      "id": "sources",
+      "type": "group",
+      "label": {
+        "title": "Sources"
+      },
+      "children": [
+        "docs",
+        "chunks"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 40,
+        "align": "center"
+      }
+    },
+    {
+      "id": "vectors",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Vectors"
+        }
+      ],
+      "minCardHeight": 28
+    },
+    {
+      "id": "fulltext",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Full text"
+        }
+      ],
+      "minCardHeight": 28
+    },
+    {
+      "id": "egraph",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Entity graph"
+        }
+      ],
+      "minCardHeight": 73
+    },
+    {
+      "id": "time",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Dates"
+        }
+      ],
+      "minCardHeight": 28
+    },
+    {
+      "id": "indexes",
+      "type": "group",
+      "label": {
+        "title": "Indexes"
+      },
+      "children": [
+        "vectors",
+        "fulltext",
+        "egraph",
+        "time"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 10,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "facts",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Facts"
+        },
+        {
+          "type": "subtitle",
+          "text": "world · experience"
+        }
+      ],
+      "minCardHeight": 163,
+      "width": 200
+    },
+    {
+      "id": "obs",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Observations"
+        },
+        {
+          "type": "subtitle",
+          "text": "consolidated beliefs"
+        }
+      ],
+      "minCardHeight": 118,
+      "width": 200
+    },
+    {
+      "id": "g1",
+      "type": "group",
+      "children": [
+        "facts",
+        "obs"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 40,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "memories",
+      "type": "group",
+      "label": {
+        "title": "Memories"
+      },
+      "children": [
+        "indexes",
+        "g1"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 48,
+        "align": "center"
+      }
+    },
+    {
+      "id": "mm",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Mental Models"
+        }
+      ]
+    },
+    {
+      "id": "kp",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Knowledge Pages"
+        }
+      ]
+    },
+    {
+      "id": "synth",
+      "type": "group",
+      "label": {
+        "title": "Synthesized"
+      },
+      "children": [
+        "mm",
+        "kp"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 40,
+        "align": "center"
+      }
+    },
+    {
+      "id": "bank",
+      "type": "group",
+      "label": {
+        "title": "Memory Bank"
+      },
+      "children": [
+        "sources",
+        "memories",
+        "synth"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 36,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "consolidate",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Consolidation"
+        },
+        {
+          "type": "subtitle",
+          "text": "facts → observations"
+        }
+      ]
+    },
+    {
+      "id": "refresh",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Refresh"
+        },
+        {
+          "type": "subtitle",
+          "text": "observations → pages"
+        }
+      ]
+    },
+    {
+      "id": "g2",
+      "type": "group",
+      "label": {
+        "title": "Hindsight Worker"
+      },
+      "children": [
+        "consolidate",
+        "refresh"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 100,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "g0",
+      "type": "group",
+      "children": [
+        "agent",
+        "api",
+        "bank",
+        "g2"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 40,
+        "align": "center"
+      }
+    },
+    {
+      "id": "call-retain",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "agent"
+      },
+      "end": {
+        "id": "retain"
+      },
+      "label": {
+        "text": "retain()"
+      }
+    },
+    {
+      "id": "call-recall",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "agent"
+      },
+      "end": {
+        "id": "recall"
+      },
+      "label": {
+        "text": "recall()"
+      }
+    },
+    {
+      "id": "call-reflect",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "agent"
+      },
+      "end": {
+        "id": "reflect"
+      },
+      "label": {
+        "text": "reflect()"
+      }
+    },
+    {
+      "id": "retain-docs",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "retain"
+      },
+      "end": {
+        "id": "docs"
+      }
+    },
+    {
+      "id": "docs->chunks",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "docs"
+      },
+      "end": {
+        "id": "chunks"
+      }
+    },
+    {
+      "id": "extract",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "chunks"
+      },
+      "end": {
+        "id": "facts"
+      },
+      "label": {
+        "text": "extract"
+      }
+    },
+    {
+      "id": "s-idx",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "semantic"
+      },
+      "end": {
+        "id": "vectors"
+      }
+    },
+    {
+      "id": "k-idx",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "keyword"
+      },
+      "end": {
+        "id": "fulltext"
+      }
+    },
+    {
+      "id": "g-idx",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "graph"
+      },
+      "end": {
+        "id": "egraph"
+      }
+    },
+    {
+      "id": "t-idx",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "temporal"
+      },
+      "end": {
+        "id": "time"
+      }
+    },
+    {
+      "id": "to-facts",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "indexes"
+      },
+      "end": {
+        "id": "facts"
+      }
+    },
+    {
+      "id": "to-obs",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "indexes"
+      },
+      "end": {
+        "id": "obs"
+      }
+    },
+    {
+      "id": "reflect-recall",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "reflect"
+      },
+      "end": {
+        "id": "recall"
+      }
+    },
+    {
+      "id": "reflect-synth",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "reflect"
+      },
+      "end": {
+        "id": "synth"
+      }
+    },
+    {
+      "id": "expand",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "reflect"
+      },
+      "end": {
+        "id": "sources"
+      },
+      "label": {
+        "text": "expand"
+      },
+      "quiet": true
+    },
+    {
+      "id": "new-facts",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "facts"
+      },
+      "end": {
+        "id": "consolidate"
+      },
+      "label": {
+        "text": "new facts"
+      }
+    },
+    {
+      "id": "write-obs",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "consolidate"
+      },
+      "end": {
+        "id": "obs"
+      }
+    },
+    {
+      "id": "trigger",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "consolidate"
+      },
+      "end": {
+        "id": "refresh"
+      },
+      "label": {
+        "text": "when done"
+      }
+    },
+    {
+      "id": "rewrite",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "refresh"
+      },
+      "end": {
+        "id": "synth"
+      },
+      "label": {
+        "text": "rewrite"
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "label": "retain()",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "call-retain",
+            "data": "the conversation"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "user",
+                "tone": "gray",
+                "text": "“Alice joined Google in March, she loves the research team.”"
+              },
+              {
+                "tag": "agent",
+                "tone": "gray",
+                "text": "“Noted, I’ll suggest her for the ML project.”"
+              }
+            ]
+          },
+          "say": "Your agent sends what happened: a conversation, a document, a transcript."
+        },
+        {
+          "edges": "retain-docs",
+          "show": {
+            "docs": [
+              {
+                "tag": "chat",
+                "tone": "gray",
+                "text": "Sep 22",
+                "meta": "2 messages"
+              }
+            ]
+          },
+          "say": "The original text is stored as a document."
+        },
+        {
+          "edges": "docs->chunks",
+          "show": {
+            "chunks": [
+              {
+                "tag": "#1",
+                "tone": "gray",
+                "text": "“Alice joined Google in March, she loves…”"
+              }
+            ]
+          },
+          "say": "It is split into chunks, so the exact passage can be handed back later."
+        },
+        {
+          "edges": "extract",
+          "light": [
+            "retain"
+          ],
+          "show": {
+            "facts": [
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "Alice works at Microsoft",
+                "meta": "Jan 2025"
+              },
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "Alice joined Google",
+                "meta": "Mar 2026",
+                "mark": "new"
+              },
+              {
+                "tag": "experience",
+                "tone": "purple",
+                "text": "I suggested Alice for the ML project",
+                "mark": "new"
+              }
+            ]
+          },
+          "say": "An LLM pulls out facts: world facts about others, and experience facts about what the agent itself did. The bank already knew Alice worked at Microsoft.",
+          "ms": 3200
+        },
+        {
+          "show": {
+            "vectors": [
+              {
+                "text": "2 embeddings"
+              }
+            ],
+            "fulltext": [
+              {
+                "text": "alice · google · research",
+                "mono": true
+              }
+            ],
+            "egraph": [
+              {
+                "type": "graph",
+                "nodes": [
+                  "Alice",
+                  "Google",
+                  "ML project"
+                ],
+                "links": [
+                  [
+                    "Alice",
+                    "Google"
+                  ],
+                  [
+                    "Alice",
+                    "ML project"
+                  ]
+                ],
+                "lit": []
+              }
+            ],
+            "time": [
+              {
+                "text": "Mar 2026 · Sep 2026"
+              }
+            ]
+          },
+          "say": "Each fact is indexed four ways: by meaning, by its words, by the entities it links, and by when it happened.",
+          "ms": 3200
+        },
+        {
+          "edges": {
+            "edge": "call-retain",
+            "back": true,
+            "data": "✓ stored"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "user",
+                "tone": "gray",
+                "text": "“Alice joined Google in March, she loves the research team.”"
+              },
+              {
+                "tag": "agent",
+                "tone": "gray",
+                "text": "“Noted, I’ll suggest her for the ML project.”"
+              },
+              {
+                "tag": "result",
+                "tone": "green",
+                "text": "stored",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "retain() is done. The rest happens in the background.",
+          "ms": 1800
+        },
+        {
+          "edges": "new-facts",
+          "show": {
+            "consolidate": [
+              {
+                "text": "2 new facts"
+              },
+              {
+                "tag": "conflict",
+                "tone": "orange",
+                "text": "Microsoft vs Google"
+              }
+            ],
+            "obs": [
+              {
+                "text": "Alice works at Microsoft",
+                "meta": "1 source",
+                "mark": "conflict"
+              }
+            ]
+          },
+          "say": "Consolidation picks up the new facts and checks them against the observations the bank already holds. One disagrees: Microsoft or Google?",
+          "ms": 3000
+        },
+        {
+          "edges": "write-obs",
+          "show": {
+            "obs": [
+              {
+                "text": "Alice works at Google, on the research team",
+                "meta": "2 sources",
+                "mark": "updated"
+              },
+              {
+                "tag": "resolved",
+                "tone": "orange",
+                "text": "Microsoft (Jan 2025) → Google (Mar 2026)"
+              }
+            ],
+            "consolidate": [
+              {
+                "text": "2 new facts"
+              },
+              {
+                "tag": "resolved",
+                "tone": "green",
+                "text": "state change: update, keep history"
+              }
+            ]
+          },
+          "say": "It updates that observation instead of adding a second one: Alice moved from Microsoft to Google in March. Both facts stay as its sources, so the history is kept.",
+          "ms": 3800
+        },
+        {
+          "edges": "trigger",
+          "show": {
+            "refresh": [
+              {
+                "text": "new memories in scope"
+              },
+              {
+                "text": "2 pages now stale"
+              }
+            ]
+          },
+          "say": "When consolidation finishes, it queues a refresh for every mental model and page set to refresh after it that now has new memories…"
+        },
+        {
+          "edges": "rewrite",
+          "show": {
+            "mm": [
+              {
+                "tag": "model",
+                "tone": "orange",
+                "text": "Team overview",
+                "meta": "+ Alice",
+                "mark": "↻"
+              }
+            ],
+            "kp": [
+              {
+                "tag": "page",
+                "tone": "orange",
+                "text": "People / Alice.md",
+                "mark": "↻"
+              }
+            ]
+          },
+          "say": "…and each one re-runs its question through reflect and is rewritten.",
+          "ms": 3000
+        }
+      ]
+    },
+    {
+      "label": "recall()",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "call-recall",
+            "data": "“Where does Alice work?”"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "query",
+                "tone": "gray",
+                "text": "“Where does Alice work?”"
+              }
+            ]
+          },
+          "say": "recall() finds the memories that matter for a query."
+        },
+        {
+          "edges": [
+            {
+              "edge": "s-idx",
+              "data": "≈ works at"
+            },
+            {
+              "edge": "k-idx",
+              "data": "“Alice”"
+            },
+            {
+              "edge": "g-idx",
+              "data": "Alice → Google"
+            }
+          ],
+          "show": {
+            "vectors": [
+              {
+                "text": "“joined Google”",
+                "meta": "0.82",
+                "mark": "✓"
+              }
+            ],
+            "fulltext": [
+              {
+                "text": "“alice” · “work”",
+                "meta": "4 hits",
+                "mark": "✓"
+              }
+            ],
+            "egraph": [
+              {
+                "type": "graph",
+                "nodes": [
+                  "Alice",
+                  "Google",
+                  "ML project"
+                ],
+                "links": [
+                  [
+                    "Alice",
+                    "Google"
+                  ],
+                  [
+                    "Alice",
+                    "ML project"
+                  ]
+                ],
+                "lit": [
+                  "Alice",
+                  "Google"
+                ]
+              }
+            ],
+            "time": [
+              {
+                "text": "no date in query",
+                "meta": "skipped"
+              }
+            ]
+          },
+          "say": "Searches run at once, each through its own index: meaning, exact words and the entity graph. The time search only joins when the query names a date.",
+          "ms": 3400
+        },
+        {
+          "edges": [
+            {
+              "edge": "to-facts",
+              "data": "facts"
+            },
+            {
+              "edge": "to-obs",
+              "data": "observations"
+            }
+          ],
+          "show": {
+            "facts": [
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "Alice joined Google",
+                "meta": "Mar 2026",
+                "mark": "✓"
+              },
+              {
+                "tag": "experience",
+                "tone": "purple",
+                "text": "I suggested Alice for the ML project",
+                "mark": "✓"
+              },
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "Alice works at Microsoft",
+                "meta": "Jan 2025"
+              }
+            ],
+            "obs": [
+              {
+                "text": "Alice works at Google, on the research team",
+                "meta": "2 sources",
+                "mark": "✓"
+              },
+              {
+                "tag": "resolved",
+                "tone": "orange",
+                "text": "Microsoft (Jan 2025) → Google (Mar 2026)"
+              }
+            ]
+          },
+          "say": "The same indexes cover facts and observations, so both come back. They are merged and reranked; the old Microsoft fact falls below the cut.",
+          "ms": 3200
+        },
+        {
+          "edges": {
+            "edge": "call-recall",
+            "back": true,
+            "data": "3 memories, ranked"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "query",
+                "tone": "gray",
+                "text": "“Where does Alice work?”"
+              },
+              {
+                "tag": "1",
+                "tone": "green",
+                "text": "Alice works at Google, research team"
+              },
+              {
+                "tag": "2",
+                "tone": "green",
+                "text": "Alice joined Google",
+                "meta": "Mar 2026"
+              },
+              {
+                "tag": "3",
+                "tone": "green",
+                "text": "I suggested Alice for ML"
+              }
+            ]
+          },
+          "say": "The agent gets ranked memories it can put straight into its prompt.",
+          "ms": 3200
+        }
+      ]
+    },
+    {
+      "label": "reflect()",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "call-reflect",
+            "data": "“Is Alice a good fit…?”"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "question",
+                "tone": "gray",
+                "text": "“Is Alice a good fit for the ML project?”"
+              }
+            ]
+          },
+          "say": "reflect() answers a question by reasoning over everything in the bank."
+        },
+        {
+          "edges": {
+            "edge": "reflect-synth",
+            "data": "search_mental_models"
+          },
+          "show": {
+            "reflect": [
+              {
+                "text": "1. search_mental_models",
+                "mono": true,
+                "mark": "✓"
+              }
+            ],
+            "mm": [
+              {
+                "tag": "model",
+                "tone": "orange",
+                "text": "Team overview",
+                "meta": "Alice: research, ML",
+                "mark": "✓"
+              }
+            ],
+            "kp": [
+              {
+                "tag": "page",
+                "tone": "orange",
+                "text": "People / Alice.md",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "An agent loop decides what to look up. It starts with the most refined knowledge: mental models and knowledge pages.",
+          "ms": 3000
+        },
+        {
+          "edges": {
+            "edge": "reflect-recall",
+            "data": "search_observations"
+          },
+          "show": {
+            "reflect": [
+              {
+                "text": "1. search_mental_models",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "2. search_observations",
+                "mono": true,
+                "mark": "…"
+              }
+            ]
+          },
+          "say": "Then observations, searched through the same indexes as recall. If new facts are still waiting to be consolidated, they are marked stale.",
+          "ms": 1800
+        },
+        {
+          "edges": [
+            "s-idx",
+            "k-idx",
+            "g-idx"
+          ],
+          "ms": 1400
+        },
+        {
+          "edges": "to-obs",
+          "show": {
+            "reflect": [
+              {
+                "text": "1. search_mental_models",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "2. search_observations",
+                "mono": true,
+                "mark": "✓"
+              }
+            ],
+            "obs": [
+              {
+                "text": "Alice works at Google, on the research team",
+                "meta": "up to date",
+                "mark": "cited"
+              },
+              {
+                "tag": "resolved",
+                "tone": "orange",
+                "text": "Microsoft (Jan 2025) → Google (Mar 2026)"
+              }
+            ]
+          },
+          "ms": 2400
+        },
+        {
+          "edges": {
+            "edge": "reflect-recall",
+            "data": "recall(\"Alice\")"
+          },
+          "show": {
+            "reflect": [
+              {
+                "text": "1. search_mental_models",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "2. search_observations",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "3. recall",
+                "mono": true,
+                "mark": "…"
+              }
+            ]
+          },
+          "say": "Then raw facts through recall, for the details the summaries leave out.",
+          "ms": 1800
+        },
+        {
+          "edges": [
+            "s-idx",
+            "k-idx",
+            "g-idx"
+          ],
+          "show": {
+            "egraph": [
+              {
+                "type": "graph",
+                "nodes": [
+                  "Alice",
+                  "Google",
+                  "ML project"
+                ],
+                "links": [
+                  [
+                    "Alice",
+                    "Google"
+                  ],
+                  [
+                    "Alice",
+                    "ML project"
+                  ]
+                ],
+                "lit": [
+                  "Alice",
+                  "ML project"
+                ]
+              }
+            ]
+          },
+          "ms": 1800
+        },
+        {
+          "edges": "to-facts",
+          "show": {
+            "reflect": [
+              {
+                "text": "1. search_mental_models",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "2. search_observations",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "3. recall",
+                "mono": true,
+                "mark": "✓"
+              }
+            ],
+            "facts": [
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "Alice joined Google",
+                "meta": "Mar 2026",
+                "mark": "cited"
+              },
+              {
+                "tag": "experience",
+                "tone": "purple",
+                "text": "I suggested Alice for the ML project",
+                "mark": "cited"
+              }
+            ]
+          },
+          "ms": 2400
+        },
+        {
+          "edges": {
+            "edge": "expand",
+            "data": "expand → chunk"
+          },
+          "show": {
+            "reflect": [
+              {
+                "text": "1. search_mental_models",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "2. search_observations",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "3. recall",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "4. expand",
+                "mono": true,
+                "mark": "✓"
+              }
+            ],
+            "chunks": [
+              {
+                "tag": "#1",
+                "tone": "gray",
+                "text": "“…she loves the research team.”",
+                "mark": "read"
+              }
+            ]
+          },
+          "say": "When it needs the exact wording, it opens the chunk or document a fact came from.",
+          "ms": 2800
+        },
+        {
+          "show": {
+            "reflect": [
+              {
+                "text": "1. search_mental_models",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "2. search_observations",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "3. recall",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "4. expand",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "5. done",
+                "mono": true,
+                "meta": "3 sources",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "It stops when it has enough evidence, and writes an answer shaped by the bank’s mission and disposition. It can only cite what it found.",
+          "ms": 2600
+        },
+        {
+          "edges": {
+            "edge": "call-reflect",
+            "back": true,
+            "data": "answer + 3 sources"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "question",
+                "tone": "gray",
+                "text": "“Is Alice a good fit for the ML project?”"
+              },
+              {
+                "tag": "answer",
+                "tone": "green",
+                "text": "“Yes. She joined Google’s research team in March, loves it, and I already suggested her.”",
+                "meta": "3 sources"
+              }
+            ]
+          },
+          "say": "The answer comes back with the memories it is based on.",
+          "ms": 3200
+        }
+      ]
+    }
+  ]
+}

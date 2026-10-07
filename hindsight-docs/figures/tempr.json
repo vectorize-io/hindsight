@@ -1,0 +1,675 @@
+{
+  "title": "Multi-Strategy Retrieval (TEMPR)",
+  "speed": 2200,
+  "elements": [
+    {
+      "id": "agent",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Your AI Agent"
+        }
+      ],
+      "minCardHeight": 133,
+      "width": 180
+    },
+    {
+      "id": "semantic",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Semantic"
+        },
+        {
+          "type": "subtitle",
+          "text": "by meaning"
+        }
+      ]
+    },
+    {
+      "id": "keyword",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Keyword"
+        },
+        {
+          "type": "subtitle",
+          "text": "exact words (BM25)"
+        }
+      ]
+    },
+    {
+      "id": "graph",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Graph"
+        },
+        {
+          "type": "subtitle",
+          "text": "via entities"
+        }
+      ]
+    },
+    {
+      "id": "temporal",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Temporal"
+        },
+        {
+          "type": "subtitle",
+          "text": "by time"
+        }
+      ]
+    },
+    {
+      "id": "recall",
+      "type": "group",
+      "label": {
+        "title": "Recall · 4 arms in parallel"
+      },
+      "children": [
+        "semantic",
+        "keyword",
+        "graph",
+        "temporal"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 10,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "vectors",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Vectors"
+        }
+      ],
+      "minCardHeight": 28
+    },
+    {
+      "id": "fulltext",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Full text"
+        }
+      ],
+      "minCardHeight": 28
+    },
+    {
+      "id": "egraph",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Entity graph"
+        }
+      ],
+      "minCardHeight": 73
+    },
+    {
+      "id": "time",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Dates"
+        }
+      ],
+      "minCardHeight": 28
+    },
+    {
+      "id": "indexes",
+      "type": "group",
+      "label": {
+        "title": "Indexes"
+      },
+      "children": [
+        "vectors",
+        "fulltext",
+        "egraph",
+        "time"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 10,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "units",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Memories"
+        },
+        {
+          "type": "subtitle",
+          "text": "world · experience · observation"
+        }
+      ],
+      "minCardHeight": 193,
+      "width": 196
+    },
+    {
+      "id": "rrf",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "RRF fusion"
+        },
+        {
+          "type": "subtitle",
+          "text": "Σ 1 / (60 + rank)"
+        }
+      ],
+      "minCardHeight": 73,
+      "width": 196
+    },
+    {
+      "id": "rerank",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Cross-encoder"
+        },
+        {
+          "type": "subtitle",
+          "text": "reads query + memory"
+        }
+      ],
+      "minCardHeight": 73,
+      "width": 196
+    },
+    {
+      "id": "boosts",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Boosts"
+        },
+        {
+          "type": "subtitle",
+          "text": "recency · time · proof"
+        }
+      ],
+      "minCardHeight": 73,
+      "width": 196
+    },
+    {
+      "id": "budget",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Token budget"
+        },
+        {
+          "type": "subtitle",
+          "text": "max_tokens"
+        }
+      ],
+      "minCardHeight": 73,
+      "width": 196
+    },
+    {
+      "id": "ranking",
+      "type": "group",
+      "label": {
+        "title": "Ranking"
+      },
+      "children": [
+        "rrf",
+        "rerank",
+        "boosts",
+        "budget"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 24,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "g0",
+      "type": "group",
+      "children": [
+        "agent",
+        "recall",
+        "indexes",
+        "units",
+        "ranking"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 32,
+        "align": "center"
+      }
+    },
+    {
+      "id": "call",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "agent"
+      },
+      "end": {
+        "id": "recall"
+      },
+      "label": {
+        "text": "recall()"
+      }
+    },
+    {
+      "id": "s-idx",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "semantic"
+      },
+      "end": {
+        "id": "vectors"
+      }
+    },
+    {
+      "id": "k-idx",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "keyword"
+      },
+      "end": {
+        "id": "fulltext"
+      }
+    },
+    {
+      "id": "g-idx",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "graph"
+      },
+      "end": {
+        "id": "egraph"
+      }
+    },
+    {
+      "id": "t-idx",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "temporal"
+      },
+      "end": {
+        "id": "time"
+      }
+    },
+    {
+      "id": "lookup",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "indexes"
+      },
+      "end": {
+        "id": "units"
+      },
+      "label": {
+        "text": "point to"
+      }
+    },
+    {
+      "id": "lists",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "units"
+      },
+      "end": {
+        "id": "rrf"
+      },
+      "label": {
+        "text": "4 ranked lists"
+      }
+    },
+    {
+      "id": "rrf->rerank",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "rrf"
+      },
+      "end": {
+        "id": "rerank"
+      }
+    },
+    {
+      "id": "rerank->boosts",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "rerank"
+      },
+      "end": {
+        "id": "boosts"
+      }
+    },
+    {
+      "id": "boosts->budget",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "boosts"
+      },
+      "end": {
+        "id": "budget"
+      }
+    },
+    {
+      "id": "results",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "budget"
+      },
+      "end": {
+        "id": "agent"
+      },
+      "quiet": true,
+      "around": "below"
+    }
+  ],
+  "scenes": [
+    {
+      "label": "recall()",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "call",
+            "data": "“What did Alice do in March 2026?”"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "query",
+                "tone": "gray",
+                "text": "“What did Alice do in March 2026?”"
+              }
+            ]
+          },
+          "say": "recall() gets a query. Nothing is decided yet about which kind of search fits it best, so every arm that applies runs."
+        },
+        {
+          "edges": [
+            {
+              "edge": "s-idx",
+              "data": "≈ “joined”, “moved”"
+            },
+            {
+              "edge": "k-idx",
+              "data": "“Alice”"
+            },
+            {
+              "edge": "g-idx",
+              "data": "Alice → …"
+            },
+            {
+              "edge": "t-idx",
+              "data": "Mar 2026"
+            }
+          ],
+          "show": {
+            "vectors": [
+              {
+                "text": "nearest by meaning",
+                "mark": "✓"
+              }
+            ],
+            "fulltext": [
+              {
+                "text": "“alice”: 4 hits",
+                "mono": true,
+                "mark": "✓"
+              }
+            ],
+            "egraph": [
+              {
+                "type": "graph",
+                "nodes": [
+                  "Alice",
+                  "Google",
+                  "ML project",
+                  "Microsoft"
+                ],
+                "links": [
+                  [
+                    "Alice",
+                    "Google"
+                  ],
+                  [
+                    "Alice",
+                    "ML project"
+                  ],
+                  [
+                    "Alice",
+                    "Microsoft"
+                  ]
+                ],
+                "lit": [
+                  "Alice",
+                  "Google",
+                  "ML project",
+                  "Microsoft"
+                ]
+              }
+            ],
+            "time": [
+              {
+                "text": "Mar 1 – Mar 31, 2026",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "Each arm searches its own index: meaning (vectors), exact words (BM25), the entity graph, and time. “March 2026” becomes a date range; a query with no date skips the time arm.",
+          "ms": 3600
+        },
+        {
+          "edges": {
+            "edge": "lookup",
+            "data": "same memories"
+          },
+          "show": {
+            "units": [
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "Alice joined Google",
+                "meta": "Mar 2026",
+                "mark": "4/4"
+              },
+              {
+                "tag": "observation",
+                "tone": "green",
+                "text": "Alice works at Google, research team",
+                "mark": "3/4"
+              },
+              {
+                "tag": "experience",
+                "tone": "purple",
+                "text": "I suggested Alice for ML",
+                "meta": "Mar 2026",
+                "mark": "3/4"
+              },
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "Alice works at Microsoft",
+                "meta": "Jan 2025",
+                "mark": "2/4"
+              }
+            ]
+          },
+          "say": "All four point into the same memories. Each arm returns its own ranked list, and facts and observations compete in every one. The mark shows how many arms found each.",
+          "ms": 3600
+        },
+        {
+          "edges": "lists",
+          "show": {
+            "rrf": [
+              {
+                "text": "joined Google",
+                "meta": "0.066"
+              },
+              {
+                "text": "works at Google",
+                "meta": "0.048"
+              },
+              {
+                "text": "suggested for ML",
+                "meta": "0.047"
+              },
+              {
+                "text": "Microsoft",
+                "meta": "0.031"
+              }
+            ]
+          },
+          "say": "RRF fusion merges the lists by rank, not raw score: a memory found near the top by several arms beats one found by a single arm.",
+          "ms": 3000
+        },
+        {
+          "edges": "rrf->rerank",
+          "show": {
+            "rerank": [
+              {
+                "text": "joined Google",
+                "meta": "0.86"
+              },
+              {
+                "text": "works at Google",
+                "meta": "0.84"
+              },
+              {
+                "text": "suggested for ML",
+                "meta": "0.66"
+              },
+              {
+                "text": "Microsoft",
+                "meta": "0.21"
+              }
+            ]
+          },
+          "say": "The top candidates (up to 300) go to a cross-encoder, which reads the query and each memory together and scores how well they match.",
+          "ms": 3000
+        },
+        {
+          "edges": "rerank->boosts",
+          "show": {
+            "boosts": [
+              {
+                "text": "joined Google",
+                "meta": "×1.09",
+                "mark": "0.94"
+              },
+              {
+                "text": "works at Google",
+                "meta": "×1.05",
+                "mark": "0.88"
+              },
+              {
+                "text": "suggested for ML",
+                "meta": "×1.07",
+                "mark": "0.71"
+              },
+              {
+                "text": "Microsoft",
+                "meta": "×0.83",
+                "mark": "0.17"
+              }
+            ]
+          },
+          "say": "Small multiplicative boosts nudge the score: recent memories, memories inside the asked time range, and observations backed by more evidence.",
+          "ms": 3200
+        },
+        {
+          "edges": "boosts->budget",
+          "show": {
+            "budget": [
+              {
+                "text": "joined Google",
+                "mark": "✓"
+              },
+              {
+                "text": "works at Google",
+                "mark": "✓"
+              },
+              {
+                "text": "suggested for ML",
+                "mark": "✓"
+              },
+              {
+                "text": "Microsoft",
+                "meta": "over budget",
+                "mark": "✗"
+              }
+            ]
+          },
+          "say": "Results are packed best-first until max_tokens is used up. Only the memory text counts toward the budget.",
+          "ms": 3000
+        },
+        {
+          "edges": {
+            "edge": "results",
+            "data": "3 memories, ranked"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "query",
+                "tone": "gray",
+                "text": "“What did Alice do in March 2026?”"
+              },
+              {
+                "tag": "1",
+                "tone": "green",
+                "text": "Alice joined Google",
+                "meta": "Mar 2026"
+              },
+              {
+                "tag": "2",
+                "tone": "green",
+                "text": "Alice works at Google, research team"
+              },
+              {
+                "tag": "3",
+                "tone": "green",
+                "text": "I suggested Alice for ML"
+              }
+            ]
+          },
+          "say": "The agent gets a short, ranked list it can put straight into its prompt.",
+          "ms": 3200
+        }
+      ]
+    }
+  ]
+}

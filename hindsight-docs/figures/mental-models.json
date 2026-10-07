@@ -1,0 +1,639 @@
+{
+  "title": "Mental Models",
+  "speed": 2200,
+  "elements": [
+    {
+      "id": "app",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Your App"
+        }
+      ],
+      "minCardHeight": 103,
+      "width": 200
+    },
+    {
+      "id": "api",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Mental Models API"
+        },
+        {
+          "type": "subtitle",
+          "text": "create · read"
+        }
+      ]
+    },
+    {
+      "id": "trigger",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Trigger"
+        },
+        {
+          "type": "subtitle",
+          "text": "after consolidation, or cron"
+        }
+      ],
+      "minCardHeight": 43,
+      "width": 200
+    },
+    {
+      "id": "reflect",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Reflect"
+        },
+        {
+          "type": "subtitle",
+          "text": "answers the question"
+        }
+      ],
+      "minCardHeight": 58,
+      "width": 200
+    },
+    {
+      "id": "g2",
+      "type": "group",
+      "label": {
+        "title": "Hindsight Worker"
+      },
+      "children": [
+        "trigger",
+        "reflect"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 32,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "g1",
+      "type": "group",
+      "label": {
+        "title": "Hindsight",
+        "logo": "/img/logo.png"
+      },
+      "children": [
+        "api",
+        "g2"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 32,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "obs",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Observations"
+        }
+      ],
+      "minCardHeight": 103,
+      "width": 200
+    },
+    {
+      "id": "facts",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Facts"
+        }
+      ],
+      "minCardHeight": 73,
+      "width": 190
+    },
+    {
+      "id": "sources",
+      "type": "group",
+      "label": {
+        "title": "Reads"
+      },
+      "children": [
+        "obs",
+        "facts"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 24,
+        "align": "center"
+      }
+    },
+    {
+      "id": "mm",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Mental model"
+        },
+        {
+          "type": "subtitle",
+          "text": "Team overview"
+        }
+      ],
+      "minCardHeight": 133,
+      "width": 200
+    },
+    {
+      "id": "hist",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "History"
+        },
+        {
+          "type": "subtitle",
+          "text": "previous versions"
+        }
+      ],
+      "minCardHeight": 43,
+      "width": 190
+    },
+    {
+      "id": "g4",
+      "type": "group",
+      "label": {
+        "title": "Writes"
+      },
+      "children": [
+        "mm",
+        "hist"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 24,
+        "align": "center"
+      }
+    },
+    {
+      "id": "g3",
+      "type": "group",
+      "label": {
+        "title": "Memory Bank"
+      },
+      "children": [
+        "sources",
+        "g4"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 32,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "g0",
+      "type": "group",
+      "children": [
+        "app",
+        "g1",
+        "g3"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 40,
+        "align": "center"
+      }
+    },
+    {
+      "id": "call",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "app"
+      },
+      "end": {
+        "id": "api"
+      }
+    },
+    {
+      "id": "build",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "api"
+      },
+      "end": {
+        "id": "reflect"
+      },
+      "label": {
+        "text": "first build"
+      },
+      "quiet": true
+    },
+    {
+      "id": "read-src",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "reflect"
+      },
+      "end": {
+        "id": "sources"
+      }
+    },
+    {
+      "id": "write",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "reflect"
+      },
+      "end": {
+        "id": "mm"
+      },
+      "label": {
+        "text": "write"
+      }
+    },
+    {
+      "id": "version",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "mm"
+      },
+      "end": {
+        "id": "hist"
+      }
+    },
+    {
+      "id": "changed",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "sources"
+      },
+      "end": {
+        "id": "trigger"
+      },
+      "label": {
+        "text": "changed in scope"
+      }
+    },
+    {
+      "id": "refresh",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "trigger"
+      },
+      "end": {
+        "id": "reflect"
+      },
+      "label": {
+        "text": "refresh"
+      }
+    },
+    {
+      "id": "read",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "api"
+      },
+      "end": {
+        "id": "mm"
+      },
+      "label": {
+        "text": "read"
+      },
+      "quiet": true
+    }
+  ],
+  "scenes": [
+    {
+      "label": "create",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "call",
+            "data": "source question"
+          },
+          "show": {
+            "app": [
+              {
+                "tag": "question",
+                "tone": "gray",
+                "text": "“Who is on the team and what does each person work on?”"
+              },
+              {
+                "tag": "trigger",
+                "tone": "gray",
+                "text": "refresh after consolidation",
+                "meta": "delta mode"
+              }
+            ]
+          },
+          "say": "You define the question once, plus how it should stay current."
+        },
+        {
+          "edges": {
+            "edge": "build",
+            "data": "build it"
+          },
+          "show": {
+            "reflect": [
+              {
+                "text": "reflect over this bank",
+                "meta": "in the model’s tag scope"
+              }
+            ]
+          },
+          "say": "Hindsight writes the answer with reflect, in the background. Tags limit which memories it may read."
+        },
+        {
+          "edges": {
+            "edge": "read-src",
+            "data": "observations + facts"
+          },
+          "show": {
+            "obs": [
+              {
+                "text": "Bob runs the retrieval evals",
+                "meta": "4 sources",
+                "mark": "✓"
+              },
+              {
+                "text": "Carol moved to ML to fine-tune the ranker",
+                "meta": "3 sources",
+                "mark": "✓"
+              }
+            ],
+            "facts": [
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "Carol moved to the ML team",
+                "meta": "Feb 2026",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "It reads consolidated observations first, and raw facts to check details.",
+          "ms": 2800
+        },
+        {
+          "edges": {
+            "edge": "write",
+            "data": "document v1"
+          },
+          "show": {
+            "mm": [
+              {
+                "tag": "research",
+                "tone": "blue",
+                "text": "Bob: retrieval evals"
+              },
+              {
+                "tag": "ml team",
+                "tone": "purple",
+                "text": "Carol: ranker fine-tuning"
+              },
+              {
+                "text": "based on 2 observations, 1 fact",
+                "meta": "v1"
+              }
+            ]
+          },
+          "say": "The answer is stored as a document, together with the evidence it was built from.",
+          "ms": 3000
+        }
+      ]
+    },
+    {
+      "label": "stay current",
+      "caption": "",
+      "beats": [
+        {
+          "show": {
+            "obs": [
+              {
+                "text": "Bob runs the retrieval evals",
+                "meta": "4 sources"
+              },
+              {
+                "text": "Carol moved to ML to fine-tune the ranker",
+                "meta": "3 sources"
+              },
+              {
+                "text": "Alice joined the research team",
+                "meta": "2 sources",
+                "mark": "new"
+              }
+            ],
+            "mm": [
+              {
+                "tag": "research",
+                "tone": "blue",
+                "text": "Bob: retrieval evals"
+              },
+              {
+                "tag": "ml team",
+                "tone": "purple",
+                "text": "Carol: ranker fine-tuning"
+              },
+              {
+                "text": "based on 2 observations, 1 fact",
+                "meta": "v1"
+              }
+            ]
+          },
+          "say": "The bank keeps learning. Consolidation writes a new observation inside this model’s scope.",
+          "ms": 2800
+        },
+        {
+          "edges": {
+            "edge": "changed",
+            "data": "newer than v1"
+          },
+          "show": {
+            "trigger": [
+              {
+                "tag": "stale",
+                "tone": "orange",
+                "text": "in-scope memory newer than the last one v1 read"
+              }
+            ]
+          },
+          "say": "The trigger checks first: is there a memory in this model’s scope newer than the newest one its last refresh read? Activity elsewhere in the bank does not count.",
+          "ms": 3200
+        },
+        {
+          "edges": {
+            "edge": "refresh",
+            "data": "refresh"
+          },
+          "show": {
+            "reflect": [
+              {
+                "text": "read only what is new since v1"
+              }
+            ]
+          },
+          "say": "In delta mode the refresh reads only the memories that arrived since the last one."
+        },
+        {
+          "edges": {
+            "edge": "read-src",
+            "data": "what’s new"
+          },
+          "show": {
+            "obs": [
+              {
+                "text": "Bob runs the retrieval evals",
+                "meta": "4 sources"
+              },
+              {
+                "text": "Carol moved to ML to fine-tune the ranker",
+                "meta": "3 sources"
+              },
+              {
+                "text": "Alice joined the research team",
+                "meta": "2 sources",
+                "mark": "✓"
+              }
+            ]
+          }
+        },
+        {
+          "edges": [
+            {
+              "edge": "write",
+              "data": "append_block → Research"
+            },
+            {
+              "edge": "version",
+              "data": "v1"
+            }
+          ],
+          "show": {
+            "reflect": [
+              {
+                "tag": "edit",
+                "tone": "green",
+                "text": "append_block",
+                "meta": "Research",
+                "mono": true
+              }
+            ],
+            "mm": [
+              {
+                "tag": "research",
+                "tone": "blue",
+                "text": "Bob: retrieval evals",
+                "mark": "same"
+              },
+              {
+                "tag": "research",
+                "tone": "blue",
+                "text": "Alice: joined in March",
+                "mark": "added"
+              },
+              {
+                "tag": "ml team",
+                "tone": "purple",
+                "text": "Carol: ranker fine-tuning",
+                "mark": "same"
+              },
+              {
+                "text": "evidence: 3 observations, 1 fact",
+                "meta": "v2"
+              }
+            ],
+            "hist": [
+              {
+                "tag": "v1",
+                "tone": "gray",
+                "text": "Bob, Carol"
+              }
+            ]
+          },
+          "say": "Instead of rewriting, it applies edits: one bullet added to Research. Everything else is copied through untouched, and the old version goes to history.",
+          "ms": 3800
+        }
+      ]
+    },
+    {
+      "label": "read",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "call",
+            "data": "get “Team overview”"
+          },
+          "show": {
+            "app": [
+              {
+                "tag": "read",
+                "tone": "gray",
+                "text": "Team overview"
+              }
+            ]
+          },
+          "say": "When your app needs the answer, it asks for the model by id."
+        },
+        {
+          "edges": {
+            "edge": "read",
+            "data": "database read"
+          },
+          "say": "That is a database read: no retrieval, no LLM call, no waiting."
+        },
+        {
+          "edges": [
+            {
+              "edge": "read",
+              "back": true,
+              "data": "v2 · fresh"
+            }
+          ],
+          "ms": 1600
+        },
+        {
+          "edges": {
+            "edge": "call",
+            "back": true,
+            "data": "the document"
+          },
+          "show": {
+            "app": [
+              {
+                "tag": "read",
+                "tone": "gray",
+                "text": "Team overview"
+              },
+              {
+                "tag": "answer",
+                "tone": "green",
+                "text": "Research: Bob, Alice · ML: Carol",
+                "meta": "fresh",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "Everyone asking gets the same document. Reflect reads mental models first too, and trusts one only while it is fresh.",
+          "ms": 3400
+        }
+      ]
+    }
+  ]
+}

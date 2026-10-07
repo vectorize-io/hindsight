@@ -11,8 +11,8 @@ import HomeFlow from '@site/src/components/HomeFlow';
 import HomeBenchmarks from '@site/src/components/HomeBenchmarks';
 import HomeCodingAgents from '@site/src/components/HomeCodingAgents';
 import SkillBanner from '@site/src/components/SkillBanner';
-import {Flow} from '@vectorize-io/interfig';
-import whatHindsightDoes from '@vectorize-io/interfig/figures/what-hindsight-does';
+import Figure from '@site/src/components/Figure';
+import whatHindsightDoes from '@site/figures/what-hindsight-does.json';
 
 {/* The page's own `# Overview` H1 is suppressed via hide_title: this is the site
     root, and the hero's headline is the H1 a visitor and a crawler should see.
@@ -139,7 +139,7 @@ Everything above, end to end and in motion: what a document turns into on the
 way in, what each of the three operations touches, and what the worker changes
 behind them. Play it, or step through it at your own pace.
 
-<Flow {...whatHindsightDoes.props} />
+<Figure doc={whatHindsightDoes} />
 
 ## Integrations
 

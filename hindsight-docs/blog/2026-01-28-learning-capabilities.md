@@ -12,9 +12,9 @@ Today we're releasing Hindsight 0.4.0, which introduces two powerful learning ca
 
 <!-- truncate -->
 
-import {Flow} from '@vectorize-io/interfig';
-import observations from '@vectorize-io/interfig/figures/observations';
-import mentalModelsApi from '@vectorize-io/interfig/figures/mental-models-api';
+import Figure from '@site/src/components/Figure';
+import observations from '@site/figures/observations.json';
+import mentalModelsApi from '@site/figures/mental-models-api.json';
 
 ## Two Levels of Learning
 
@@ -62,7 +62,7 @@ After every `retain()` call, Hindsight's consolidation engine runs automatically
 3. **Synthesizes observations** that capture higher-order insights
 4. **Tracks evidence** linking each observation to its supporting facts
 
-<Flow {...observations.props} />
+<Figure doc={observations} />
 
 ### Evidence-Based Evolution
 
@@ -104,7 +104,7 @@ While observations are created automatically, **mental models** give you explici
 
 Mental models are **saved reflect responses** that you curate for your memory bank. When you create a mental model, Hindsight runs a reflect operation with your source query and stores the result. During future reflect calls, these pre-computed summaries are checked first.
 
-<Flow {...mentalModelsApi.props} />
+<Figure doc={mentalModelsApi} />
 
 ### Why Use Mental Models?
 

@@ -1,0 +1,1109 @@
+{
+  "title": "Coding Agents",
+  "speed": 2200,
+  "elements": [
+    {
+      "id": "agent",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Claude Code"
+        },
+        {
+          "type": "subtitle",
+          "text": "~/src/payments-api"
+        }
+      ],
+      "width": 220
+    },
+    {
+      "id": "git",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Git history"
+        }
+      ],
+      "width": 220
+    },
+    {
+      "id": "sessions",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Past sessions"
+        },
+        {
+          "type": "subtitle",
+          "text": "the agent’s own transcripts"
+        }
+      ],
+      "width": 220
+    },
+    {
+      "id": "g1",
+      "type": "group",
+      "label": {
+        "title": "Your machine"
+      },
+      "children": [
+        "agent",
+        "git",
+        "sessions"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 16,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "start",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "SessionStart hook"
+        }
+      ]
+    },
+    {
+      "id": "deepen",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "deepen"
+        },
+        {
+          "type": "subtitle",
+          "text": "background backfill"
+        }
+      ]
+    },
+    {
+      "id": "prompt",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Prompt hook"
+        },
+        {
+          "type": "subtitle",
+          "text": "autoInject"
+        }
+      ]
+    },
+    {
+      "id": "tools",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "MCP tools"
+        }
+      ],
+      "width": 220
+    },
+    {
+      "id": "stop",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Stop hook"
+        },
+        {
+          "type": "subtitle",
+          "text": "after every reply"
+        }
+      ]
+    },
+    {
+      "id": "g2",
+      "type": "group",
+      "label": {
+        "title": "Hindsight plugin"
+      },
+      "children": [
+        "start",
+        "deepen",
+        "prompt",
+        "tools",
+        "stop"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 14,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "docs",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Documents"
+        }
+      ],
+      "width": 220
+    },
+    {
+      "id": "facts",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Facts"
+        }
+      ],
+      "width": 220
+    },
+    {
+      "id": "obs",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Observations"
+        },
+        {
+          "type": "subtitle",
+          "text": "one shared scope per repo"
+        }
+      ],
+      "width": 220
+    },
+    {
+      "id": "memories",
+      "type": "group",
+      "label": {
+        "title": "Memories"
+      },
+      "children": [
+        "facts",
+        "obs"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 20,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "pages",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Knowledge pages"
+        }
+      ],
+      "width": 220
+    },
+    {
+      "id": "bank",
+      "type": "group",
+      "label": {
+        "title": "Bank · coding-agent::payments-api"
+      },
+      "children": [
+        "docs",
+        "memories",
+        "pages"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 28,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "extract",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Extraction"
+        },
+        {
+          "type": "subtitle",
+          "text": "LLM"
+        }
+      ]
+    },
+    {
+      "id": "consolidate",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Consolidation"
+        }
+      ]
+    },
+    {
+      "id": "refresh",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Page refresh"
+        },
+        {
+          "type": "subtitle",
+          "text": "hourly, delta"
+        }
+      ]
+    },
+    {
+      "id": "g3",
+      "type": "group",
+      "label": {
+        "title": "Hindsight server"
+      },
+      "children": [
+        "extract",
+        "consolidate",
+        "refresh"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 60,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "g0",
+      "type": "group",
+      "children": [
+        "g1",
+        "g2",
+        "bank",
+        "g3"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 40,
+        "align": "center"
+      }
+    },
+    {
+      "id": "on-start",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "agent"
+      },
+      "end": {
+        "id": "start"
+      },
+      "label": {
+        "text": "session starts"
+      }
+    },
+    {
+      "id": "on-prompt",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "agent"
+      },
+      "end": {
+        "id": "prompt"
+      },
+      "label": {
+        "text": "each prompt"
+      }
+    },
+    {
+      "id": "on-tool",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "agent"
+      },
+      "end": {
+        "id": "tools"
+      },
+      "label": {
+        "text": "tool call"
+      }
+    },
+    {
+      "id": "on-stop",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "agent"
+      },
+      "end": {
+        "id": "stop"
+      },
+      "label": {
+        "text": "reply done"
+      }
+    },
+    {
+      "id": "spawn",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "start"
+      },
+      "end": {
+        "id": "deepen"
+      },
+      "label": {
+        "text": "spawns"
+      }
+    },
+    {
+      "id": "read-git",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "git"
+      },
+      "end": {
+        "id": "deepen"
+      }
+    },
+    {
+      "id": "read-sessions",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "sessions"
+      },
+      "end": {
+        "id": "deepen"
+      }
+    },
+    {
+      "id": "backfill",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "deepen"
+      },
+      "end": {
+        "id": "docs"
+      },
+      "label": {
+        "text": "retain"
+      }
+    },
+    {
+      "id": "seed-pages",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "deepen"
+      },
+      "end": {
+        "id": "pages"
+      },
+      "label": {
+        "text": "create pages"
+      },
+      "quiet": true
+    },
+    {
+      "id": "inject",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "prompt"
+      },
+      "end": {
+        "id": "memories"
+      },
+      "label": {
+        "text": "reflect"
+      },
+      "quiet": true
+    },
+    {
+      "id": "search",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "tools"
+      },
+      "end": {
+        "id": "pages"
+      },
+      "label": {
+        "text": "search"
+      }
+    },
+    {
+      "id": "writeback",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "stop"
+      },
+      "end": {
+        "id": "docs"
+      },
+      "label": {
+        "text": "append"
+      }
+    },
+    {
+      "id": "to-extract",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "docs"
+      },
+      "end": {
+        "id": "extract"
+      }
+    },
+    {
+      "id": "to-facts",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "extract"
+      },
+      "end": {
+        "id": "facts"
+      }
+    },
+    {
+      "id": "to-consolidate",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "facts"
+      },
+      "end": {
+        "id": "consolidate"
+      }
+    },
+    {
+      "id": "to-obs",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "consolidate"
+      },
+      "end": {
+        "id": "obs"
+      }
+    },
+    {
+      "id": "to-refresh",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "memories"
+      },
+      "end": {
+        "id": "refresh"
+      }
+    },
+    {
+      "id": "to-pages",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "refresh"
+      },
+      "end": {
+        "id": "pages"
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "label": "first session",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "on-start",
+            "data": "SessionStart"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "shell",
+                "tone": "gray",
+                "text": "cd payments-api && claude",
+                "mono": true
+              }
+            ]
+          },
+          "say": "You open a session in a repo. There is no setup command: the plugin’s SessionStart hook does the work."
+        },
+        {
+          "show": {
+            "start": [
+              {
+                "tag": "bank",
+                "tone": "gray",
+                "text": "coding-agent::payments-api",
+                "mono": true
+              },
+              {
+                "text": "no git documents yet",
+                "mark": "cold"
+              }
+            ]
+          },
+          "say": "It picks the repo’s bank — one per repository, shared by every agent and every worktree — and finds it empty.",
+          "ms": 3000
+        },
+        {
+          "edges": {
+            "edge": "spawn",
+            "data": "detached"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "shell",
+                "tone": "gray",
+                "text": "cd payments-api && claude",
+                "mono": true
+              },
+              {
+                "tag": "banner",
+                "tone": "green",
+                "text": "Hindsight is learning this repo"
+              }
+            ],
+            "start": [
+              {
+                "tag": "bank",
+                "tone": "gray",
+                "text": "coding-agent::payments-api",
+                "mono": true
+              },
+              {
+                "text": "no git documents yet",
+                "mark": "cold"
+              },
+              {
+                "text": "cold → codebase survey",
+                "meta": "headless agent"
+              }
+            ],
+            "deepen": [
+              {
+                "text": "1. configure the bank + create pages"
+              },
+              {
+                "text": "2. import past sessions"
+              },
+              {
+                "text": "3. seed the commit history"
+              }
+            ]
+          },
+          "say": "Every session start launches the backfill in the background; it only does what is missing, so the session is never blocked. A cold bank also gets a codebase survey by a headless agent (re-run every 20 commits).",
+          "ms": 3400
+        },
+        {
+          "edges": {
+            "edge": "seed-pages",
+            "data": "5 pages"
+          },
+          "show": {
+            "pages": [
+              {
+                "text": "Component map",
+                "meta": "empty"
+              },
+              {
+                "text": "Core concepts",
+                "meta": "empty"
+              },
+              {
+                "text": "Conventions and patterns",
+                "meta": "empty"
+              },
+              {
+                "text": "Key decisions and rationale",
+                "meta": "empty"
+              },
+              {
+                "text": "Initiatives and enhancements",
+                "meta": "empty"
+              }
+            ]
+          },
+          "say": "Its first job configures the bank and creates the repo’s knowledge pages, each a question about this project. They start empty."
+        },
+        {
+          "edges": [
+            {
+              "edge": "read-sessions",
+              "data": "14 sessions"
+            },
+            {
+              "edge": "read-git",
+              "data": "last 300 commits"
+            }
+          ],
+          "show": {
+            "sessions": [
+              {
+                "text": "14 earlier sessions in this repo",
+                "meta": "one document each"
+              }
+            ],
+            "git": [
+              {
+                "tag": "a1b2c3d",
+                "tone": "gray",
+                "text": "Use banker’s rounding for invoice totals"
+              },
+              {
+                "tag": "9e8f7a6",
+                "tone": "gray",
+                "text": "Never round line items, only the total"
+              }
+            ]
+          },
+          "say": "It reads the agent’s own past conversations in this repo, and the commit messages of the last 300 commits.",
+          "ms": 2800
+        },
+        {
+          "edges": {
+            "edge": "backfill",
+            "data": "retain"
+          },
+          "show": {
+            "docs": [
+              {
+                "tag": "chat:…",
+                "tone": "gray",
+                "text": "14 conversations",
+                "meta": "source:chat"
+              },
+              {
+                "tag": "gitlog:payments-api",
+                "tone": "gray",
+                "text": "all 300 commit messages, one document",
+                "meta": "source:git"
+              }
+            ]
+          },
+          "say": "Each conversation becomes one document (skipped if already there); the commit history becomes one document, replaced when HEAD moves. Full diffs are opt-in (gitIngest: \"full\").",
+          "ms": 3600
+        },
+        {
+          "edges": "to-extract",
+          "ms": 1300
+        },
+        {
+          "edges": "to-facts",
+          "show": {
+            "facts": [
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "Invoice totals use banker’s rounding (half-even)",
+                "meta": "knowledge:decision"
+              },
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "Line items are never rounded, only the total",
+                "meta": "knowledge:convention"
+              }
+            ]
+          },
+          "say": "The server extracts facts and labels the durable ones for the page they belong to: a decision, a convention, a component…",
+          "ms": 3200
+        },
+        {
+          "edges": "to-consolidate",
+          "ms": 1300
+        },
+        {
+          "edges": "to-obs",
+          "show": {
+            "obs": [
+              {
+                "text": "Money is rounded once, half-even, on the invoice total",
+                "meta": "2 sources"
+              }
+            ]
+          },
+          "say": "Consolidation merges them into observations — one set per repo, whichever agent wrote the facts."
+        },
+        {
+          "edges": "to-refresh",
+          "ms": 1300
+        },
+        {
+          "edges": "to-pages",
+          "show": {
+            "pages": [
+              {
+                "text": "Component map"
+              },
+              {
+                "text": "Core concepts"
+              },
+              {
+                "text": "Conventions and patterns"
+              },
+              {
+                "text": "Key decisions and rationale",
+                "meta": "“Rounding: half-even, total only”",
+                "mark": "↻"
+              },
+              {
+                "text": "Initiatives and enhancements"
+              }
+            ]
+          },
+          "say": "Each page is written from the memories labelled for it, and keeps itself current on an hourly schedule (each page on its own minute, only when something changed).",
+          "ms": 3200
+        }
+      ]
+    },
+    {
+      "label": "first prompt",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "on-prompt",
+            "data": "UserPromptSubmit"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "prompt",
+                "tone": "gray",
+                "text": "“Invoice totals are off by a cent. Fix the rounding.”"
+              }
+            ]
+          },
+          "say": "On the first prompt of a session, the prompt hook fetches memory for the task at hand. (A session on an existing bank also got the page roster and a tool guide at start.)"
+        },
+        {
+          "edges": {
+            "edge": "inject",
+            "data": "reflect · budget low"
+          },
+          "show": {
+            "prompt": [
+              {
+                "tag": "autoInject",
+                "tone": "gray",
+                "text": "reflect",
+                "meta": "default",
+                "mark": "✓"
+              },
+              {
+                "text": "pages · recall · none",
+                "meta": "cheaper options"
+              }
+            ],
+            "obs": [
+              {
+                "text": "Money is rounded once, half-even, on the invoice total",
+                "meta": "2 sources",
+                "mark": "✓"
+              }
+            ],
+            "facts": [
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "Invoice totals use banker’s rounding (half-even)",
+                "meta": "knowledge:decision",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "By default it runs one bounded reflect over the bank. \"pages\" searches the knowledge pages and \"recall\" recalls memories instead — both retrieval-only.",
+          "ms": 3400
+        },
+        {
+          "edges": {
+            "edge": "on-prompt",
+            "back": true,
+            "data": "injected context"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "prompt",
+                "tone": "gray",
+                "text": "“Invoice totals are off by a cent. Fix the rounding.”"
+              },
+              {
+                "tag": "injected",
+                "tone": "green",
+                "text": "Round once, half-even, on the invoice total — decided in a1b2c3d. Never round line items."
+              },
+              {
+                "tag": "notice",
+                "tone": "gray",
+                "text": "Hindsight · goal: recall this repo’s past decisions about “Invoice totals…”"
+              }
+            ]
+          },
+          "say": "The answer lands in the agent’s context before it starts, once per session. On a bank with no history or pages yet, it waits for the second prompt instead.",
+          "ms": 3400
+        }
+      ]
+    },
+    {
+      "label": "while working",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "on-tool",
+            "data": "search_knowledge_pages(\"rounding\")"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "prompt",
+                "tone": "gray",
+                "text": "“Invoice totals are off by a cent. Fix the rounding.”"
+              },
+              {
+                "tag": "tool",
+                "tone": "gray",
+                "text": "hindsight_search_knowledge_pages(\"rounding\")",
+                "mono": true
+              }
+            ],
+            "tools": [
+              {
+                "text": "hindsight_search_knowledge_pages",
+                "mono": true
+              },
+              {
+                "text": "hindsight_list / read_knowledge_page",
+                "mono": true
+              },
+              {
+                "text": "hindsight_reflect",
+                "mono": true
+              },
+              {
+                "text": "hindsight_capture_initiative",
+                "mono": true
+              },
+              {
+                "text": "hindsight_ingest_document",
+                "mono": true
+              },
+              {
+                "text": "hindsight_sync_status · _diagnose",
+                "mono": true
+              }
+            ]
+          },
+          "say": "Mid-task the agent pulls memory itself through MCP tools. Pages are not pushed every turn; the page roster and tool guide are re-injected every 10 turns.",
+          "ms": 3200
+        },
+        {
+          "edges": {
+            "edge": "search",
+            "data": "full text + semantic"
+          },
+          "show": {
+            "pages": [
+              {
+                "text": "Key decisions and rationale",
+                "meta": "§ Money rounding",
+                "mark": "✓"
+              },
+              {
+                "text": "Conventions and patterns",
+                "meta": "§ Money",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "Page search ranks the pages and returns a snippet of each — fast, and visible as a tool call. hindsight_read_knowledge_page opens one in full.",
+          "ms": 2800
+        },
+        {
+          "edges": {
+            "edge": "on-tool",
+            "back": true,
+            "data": "2 pages"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "prompt",
+                "tone": "gray",
+                "text": "“Invoice totals are off by a cent. Fix the rounding.”"
+              },
+              {
+                "tag": "tool",
+                "tone": "gray",
+                "text": "hindsight_search_knowledge_pages(\"rounding\")",
+                "mono": true
+              },
+              {
+                "tag": "result",
+                "tone": "green",
+                "text": "Key decisions and rationale · Conventions and patterns"
+              }
+            ]
+          },
+          "say": "hindsight_reflect goes deeper when pages are not enough; capture_initiative turns a new plan into its own page.",
+          "ms": 2800
+        }
+      ]
+    },
+    {
+      "label": "each reply",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "on-stop",
+            "data": "Stop"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "prompt",
+                "tone": "gray",
+                "text": "“Invoice totals are off by a cent. Fix the rounding.”"
+              },
+              {
+                "tag": "reply",
+                "tone": "gray",
+                "text": "Moved rounding to InvoiceTotal.finalize(); line items stay exact."
+              }
+            ],
+            "stop": [
+              {
+                "text": "2 new turns since the last write"
+              },
+              {
+                "text": "injected memory stripped",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "Every time the agent finishes a reply, the Stop hook reads the transcript and takes the turns it has not written yet.",
+          "ms": 3000
+        },
+        {
+          "edges": {
+            "edge": "writeback",
+            "data": "append"
+          },
+          "show": {
+            "docs": [
+              {
+                "tag": "conversation:7f3e…",
+                "tone": "gray",
+                "text": "this session",
+                "meta": "source:chat · harness:claude-code",
+                "mark": "+2 turns"
+              },
+              {
+                "tag": "gitlog:payments-api",
+                "tone": "gray",
+                "text": "all 300 commit messages, one document",
+                "meta": "source:git"
+              }
+            ]
+          },
+          "say": "They are appended to the session’s document (its first reply created it), tagged with the agent that wrote it — that is where the control plane’s agent logo comes from.",
+          "ms": 3400
+        },
+        {
+          "edges": "to-extract",
+          "ms": 1300
+        },
+        {
+          "edges": "to-facts",
+          "show": {
+            "facts": [
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "Invoice totals use banker’s rounding (half-even)",
+                "meta": "knowledge:decision"
+              },
+              {
+                "tag": "experience",
+                "tone": "purple",
+                "text": "I moved rounding into InvoiceTotal.finalize()",
+                "meta": "knowledge:decision",
+                "mark": "new"
+              }
+            ]
+          },
+          "say": "The new turns are extracted like everything else…"
+        },
+        {
+          "edges": "to-consolidate",
+          "ms": 1300
+        },
+        {
+          "edges": "to-obs",
+          "show": {
+            "obs": [
+              {
+                "text": "Money is rounded once, half-even, in InvoiceTotal.finalize()",
+                "meta": "3 sources",
+                "mark": "updated"
+              }
+            ]
+          },
+          "say": "…consolidated into the repo’s beliefs…"
+        },
+        {
+          "edges": "to-refresh",
+          "ms": 1300
+        },
+        {
+          "edges": "to-pages",
+          "show": {
+            "pages": [
+              {
+                "text": "Component map"
+              },
+              {
+                "text": "Core concepts"
+              },
+              {
+                "text": "Conventions and patterns"
+              },
+              {
+                "text": "Key decisions and rationale",
+                "meta": "+ rounding lives in finalize()",
+                "mark": "↻"
+              },
+              {
+                "text": "Initiatives and enhancements"
+              }
+            ]
+          },
+          "say": "…and the next scheduled refresh edits the page, so the next session starts from it.",
+          "ms": 3200
+        }
+      ]
+    }
+  ]
+}

@@ -2,8 +2,8 @@
 sidebar_position: 2
 ---
 
-import {Flow} from '@vectorize-io/interfig';
-import retainFigure from '@vectorize-io/interfig/figures/retain';
+import Figure from '@site/src/components/Figure';
+import retainFigure from '@site/figures/retain.json';
 
 # Retain: How Hindsight Stores Memories
 
@@ -11,7 +11,7 @@ When you call `retain()`, Hindsight transforms conversations and documents into 
 
 ## What Retain Does
 
-<Flow {...retainFigure.props} />
+<Figure doc={retainFigure} />
 
 ---
 

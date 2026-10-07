@@ -1,0 +1,611 @@
+{
+  "title": "Observation Consolidation",
+  "speed": 2200,
+  "elements": [
+    {
+      "id": "facts",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Facts"
+        },
+        {
+          "type": "subtitle",
+          "text": "from retain"
+        }
+      ],
+      "minCardHeight": 73,
+      "width": 200
+    },
+    {
+      "id": "find",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Find related"
+        },
+        {
+          "type": "subtitle",
+          "text": "observations in the same tag scope"
+        }
+      ],
+      "minCardHeight": 43,
+      "width": 210
+    },
+    {
+      "id": "llm",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "LLM decides"
+        },
+        {
+          "type": "subtitle",
+          "text": "create · update · delete"
+        }
+      ],
+      "minCardHeight": 43,
+      "width": 210
+    },
+    {
+      "id": "dedup",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Near-duplicate check"
+        },
+        {
+          "type": "subtitle",
+          "text": "merge or keep"
+        }
+      ],
+      "minCardHeight": 43,
+      "width": 210
+    },
+    {
+      "id": "g1",
+      "type": "group",
+      "label": {
+        "title": "Hindsight Worker · Consolidation"
+      },
+      "children": [
+        "find",
+        "llm",
+        "dedup"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 36,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "obs",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Observations"
+        },
+        {
+          "type": "subtitle",
+          "text": "one belief per facet"
+        }
+      ],
+      "minCardHeight": 133,
+      "width": 230
+    },
+    {
+      "id": "history",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Observation history"
+        },
+        {
+          "type": "subtitle",
+          "text": "previous versions"
+        }
+      ],
+      "minCardHeight": 103,
+      "width": 230
+    },
+    {
+      "id": "g2",
+      "type": "group",
+      "label": {
+        "title": "Memory Bank"
+      },
+      "children": [
+        "obs",
+        "history"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 36,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "g0",
+      "type": "group",
+      "children": [
+        "facts",
+        "g1",
+        "g2"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 40,
+        "align": "center"
+      }
+    },
+    {
+      "id": "in",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "facts"
+      },
+      "end": {
+        "id": "find"
+      },
+      "label": {
+        "text": "new facts"
+      }
+    },
+    {
+      "id": "search",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "find"
+      },
+      "end": {
+        "id": "obs"
+      },
+      "label": {
+        "text": "recall"
+      }
+    },
+    {
+      "id": "find->llm",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "find"
+      },
+      "end": {
+        "id": "llm"
+      }
+    },
+    {
+      "id": "llm->dedup",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "llm"
+      },
+      "end": {
+        "id": "dedup"
+      }
+    },
+    {
+      "id": "write",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "dedup"
+      },
+      "end": {
+        "id": "obs"
+      },
+      "label": {
+        "text": "write"
+      }
+    },
+    {
+      "id": "snapshot",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "dedup"
+      },
+      "end": {
+        "id": "history"
+      },
+      "label": {
+        "text": "old text"
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "label": "refine",
+      "caption": "",
+      "beats": [
+        {
+          "show": {
+            "facts": [
+              {
+                "tag": "new fact",
+                "tone": "green",
+                "text": "User praises React’s component model",
+                "meta": "week 2"
+              }
+            ],
+            "obs": [
+              {
+                "text": "User prefers React for frontend development",
+                "meta": "1 source",
+                "mark": "stale"
+              }
+            ]
+          },
+          "say": "A new fact lands. Until it is consolidated, observation searches are flagged stale, so reflect checks them against the raw facts.",
+          "ms": 3200
+        },
+        {
+          "edges": {
+            "edge": "in",
+            "data": "“praises React’s component model”"
+          },
+          "show": {
+            "find": [
+              {
+                "text": "search observations for this fact"
+              }
+            ]
+          },
+          "say": "Consolidation runs in the background after retain. For each new fact it recalls related observations, only within the same tag scope."
+        },
+        {
+          "edges": {
+            "edge": "search",
+            "data": "recall"
+          }
+        },
+        {
+          "edges": {
+            "edge": "search",
+            "back": true,
+            "data": "1 related"
+          },
+          "show": {
+            "find": [
+              {
+                "text": "1 related",
+                "meta": "React preference",
+                "mark": "✓"
+              }
+            ]
+          }
+        },
+        {
+          "edges": "find->llm",
+          "show": {
+            "llm": [
+              {
+                "tag": "update",
+                "tone": "blue",
+                "text": "same facet, more evidence"
+              }
+            ]
+          },
+          "say": "One LLM call sees the new facts next to those observations and decides, facet by facet: create, update or delete.",
+          "ms": 2800
+        },
+        {
+          "edges": "llm->dedup",
+          "show": {
+            "dedup": [
+              {
+                "text": "no near-identical observation",
+                "mark": "keep"
+              }
+            ]
+          },
+          "say": "Before anything is written, each new or rewritten observation is compared with its closest neighbours. Only a near-identical one gets a merge-or-keep check."
+        },
+        {
+          "edges": [
+            {
+              "edge": "write",
+              "data": "rewrite + 1 source"
+            },
+            {
+              "edge": "snapshot",
+              "data": "v1"
+            }
+          ],
+          "show": {
+            "obs": [
+              {
+                "text": "User is enthusiastic about React, especially its component model",
+                "meta": "2 sources",
+                "mark": "updated"
+              }
+            ],
+            "history": [
+              {
+                "tag": "v1",
+                "tone": "gray",
+                "text": "User prefers React for frontend development"
+              }
+            ]
+          },
+          "say": "The observation is rewritten with the fact attached as evidence, so its proof count goes up. The previous wording is kept in history.",
+          "ms": 3200
+        },
+        {
+          "show": {
+            "obs": [
+              {
+                "text": "User is enthusiastic about React, especially its component model",
+                "meta": "2 sources",
+                "mark": "fresh"
+              }
+            ]
+          },
+          "say": "The same write marks the fact consolidated, so the observation is fresh again.",
+          "ms": 2000
+        }
+      ]
+    },
+    {
+      "label": "contradict",
+      "caption": "",
+      "beats": [
+        {
+          "show": {
+            "facts": [
+              {
+                "tag": "new fact",
+                "tone": "green",
+                "text": "User switched to Vue and won’t use React anymore",
+                "meta": "week 3"
+              }
+            ],
+            "obs": [
+              {
+                "text": "User is enthusiastic about React, especially its component model",
+                "meta": "2 sources",
+                "mark": "stale"
+              }
+            ],
+            "history": [
+              {
+                "tag": "v1",
+                "tone": "gray",
+                "text": "User prefers React for frontend development"
+              }
+            ]
+          },
+          "say": "Now a fact that contradicts what the bank believes.",
+          "ms": 2400
+        },
+        {
+          "edges": {
+            "edge": "in",
+            "data": "“switched to Vue”"
+          }
+        },
+        {
+          "edges": {
+            "edge": "search",
+            "data": "recall"
+          }
+        },
+        {
+          "edges": {
+            "edge": "search",
+            "back": true,
+            "data": "1 related"
+          },
+          "show": {
+            "find": [
+              {
+                "text": "1 related",
+                "meta": "React enthusiasm",
+                "mark": "✓"
+              }
+            ]
+          }
+        },
+        {
+          "edges": "find->llm",
+          "show": {
+            "llm": [
+              {
+                "tag": "update",
+                "tone": "orange",
+                "text": "state change: keep the story"
+              }
+            ]
+          },
+          "say": "A change of state is not a reason to delete. The LLM updates the belief so it records what changed, with dates when it has them.",
+          "ms": 3000
+        },
+        {
+          "edges": "llm->dedup",
+          "show": {
+            "dedup": [
+              {
+                "text": "no near-identical observation",
+                "mark": "keep"
+              }
+            ]
+          }
+        },
+        {
+          "edges": [
+            {
+              "edge": "write",
+              "data": "rewrite + 1 source"
+            },
+            {
+              "edge": "snapshot",
+              "data": "v2"
+            }
+          ],
+          "show": {
+            "obs": [
+              {
+                "text": "User was a React enthusiast who liked its component model, but has now switched to Vue",
+                "meta": "3 sources",
+                "mark": "updated"
+              }
+            ],
+            "history": [
+              {
+                "tag": "v1",
+                "tone": "gray",
+                "text": "User prefers React for frontend development"
+              },
+              {
+                "tag": "v2",
+                "tone": "gray",
+                "text": "User is enthusiastic about React, especially its component model"
+              }
+            ]
+          },
+          "say": "The observation now tells the whole journey, not just “prefers Vue”. It rests on all three facts, and both older versions stay in history.",
+          "ms": 3600
+        },
+        {
+          "show": {
+            "obs": [
+              {
+                "text": "User was a React enthusiast who liked its component model, but has now switched to Vue",
+                "meta": "3 sources",
+                "mark": "fresh"
+              }
+            ]
+          },
+          "ms": 2000
+        }
+      ]
+    },
+    {
+      "label": "something new",
+      "caption": "",
+      "beats": [
+        {
+          "show": {
+            "facts": [
+              {
+                "tag": "new fact",
+                "tone": "green",
+                "text": "User deploys their apps on Fly.io",
+                "meta": "week 3"
+              }
+            ],
+            "obs": [
+              {
+                "text": "User was a React enthusiast who liked its component model, but has now switched to Vue",
+                "meta": "3 sources",
+                "mark": "stale"
+              }
+            ],
+            "history": [
+              {
+                "tag": "v1",
+                "tone": "gray",
+                "text": "User prefers React for frontend development"
+              },
+              {
+                "tag": "v2",
+                "tone": "gray",
+                "text": "User is enthusiastic about React, especially its component model"
+              }
+            ]
+          },
+          "say": "A fact about something the bank has no belief on yet.",
+          "ms": 2400
+        },
+        {
+          "edges": {
+            "edge": "in",
+            "data": "“deploys on Fly.io”"
+          }
+        },
+        {
+          "edges": {
+            "edge": "search",
+            "data": "recall"
+          }
+        },
+        {
+          "edges": {
+            "edge": "search",
+            "back": true,
+            "data": "nothing related"
+          },
+          "show": {
+            "find": [
+              {
+                "text": "no related observation",
+                "mark": "—"
+              }
+            ]
+          }
+        },
+        {
+          "edges": "find->llm",
+          "show": {
+            "llm": [
+              {
+                "tag": "create",
+                "tone": "green",
+                "text": "new facet, nothing to update"
+              }
+            ]
+          },
+          "say": "Nothing covers this facet, so the LLM creates a new observation instead of bending an unrelated one.",
+          "ms": 2800
+        },
+        {
+          "edges": "llm->dedup",
+          "show": {
+            "dedup": [
+              {
+                "text": "closest: the React/Vue belief",
+                "meta": "not near-identical",
+                "mark": "keep"
+              }
+            ]
+          },
+          "say": "The near-duplicate check keeps it: different facets stay separate observations.",
+          "ms": 2800
+        },
+        {
+          "edges": {
+            "edge": "write",
+            "data": "new observation"
+          },
+          "show": {
+            "obs": [
+              {
+                "text": "User was a React enthusiast who liked its component model, but has now switched to Vue",
+                "meta": "3 sources",
+                "mark": "fresh"
+              },
+              {
+                "text": "User deploys their apps on Fly.io",
+                "meta": "1 source",
+                "mark": "new"
+              }
+            ]
+          },
+          "say": "The new observation starts with one source. It will gain evidence as more facts repeat it.",
+          "ms": 2800
+        }
+      ]
+    }
+  ]
+}

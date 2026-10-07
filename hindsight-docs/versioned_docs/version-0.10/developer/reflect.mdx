@@ -2,8 +2,8 @@
 sidebar_position: 4
 ---
 
-import {Flow} from '@vectorize-io/interfig';
-import reflectLoop from '@vectorize-io/interfig/figures/reflect';
+import Figure from '@site/src/components/Figure';
+import reflectLoop from '@site/figures/reflect.json';
 import CodeSnippet from '@site/src/components/CodeSnippet';
 import memoryBanksPy from '!!raw-loader!@site/examples/api/memory-banks.py';
 
@@ -11,7 +11,7 @@ import memoryBanksPy from '!!raw-loader!@site/examples/api/memory-banks.py';
 
 When you call `reflect()`, Hindsight runs an **agentic loop** that autonomously gathers evidence and reasons through the lens of the bank's disposition to generate contextual responses.
 
-<Flow {...reflectLoop.props} />
+<Figure doc={reflectLoop} />
 
 ---
 

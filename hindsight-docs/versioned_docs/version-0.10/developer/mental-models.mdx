@@ -2,8 +2,8 @@
 sidebar_position: 6
 ---
 
-import {Flow} from '@vectorize-io/interfig';
-import mentalModelsFigure from '@vectorize-io/interfig/figures/mental-models';
+import Figure from '@site/src/components/Figure';
+import mentalModelsFigure from '@site/figures/mental-models.json';
 
 # Mental Models
 
@@ -11,7 +11,7 @@ A **mental model** is a standing answer to a question about a bank. You define t
 
 Where [observations](./observations) are produced automatically and are atomic — one belief at a time — a mental model is deliberately curated: you decide which questions deserve a permanent, always-current answer.
 
-<Flow {...mentalModelsFigure.props} />
+<Figure doc={mentalModelsFigure} />
 
 ---
 

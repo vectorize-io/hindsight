@@ -1,0 +1,762 @@
+{
+  "title": "Mental Models (API)",
+  "speed": 2200,
+  "elements": [
+    {
+      "id": "app",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Your App"
+        }
+      ],
+      "minCardHeight": 178,
+      "width": 200
+    },
+    {
+      "id": "mmapi",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Mental models API"
+        },
+        {
+          "type": "subtitle",
+          "text": "create · get · refresh"
+        }
+      ],
+      "minCardHeight": 43
+    },
+    {
+      "id": "reflect",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Reflect"
+        },
+        {
+          "type": "subtitle",
+          "text": "agent loop"
+        }
+      ],
+      "minCardHeight": 58,
+      "width": 196
+    },
+    {
+      "id": "g1",
+      "type": "group",
+      "label": {
+        "title": "Hindsight API"
+      },
+      "children": [
+        "mmapi",
+        "reflect"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 60,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "consolidate",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Consolidation"
+        },
+        {
+          "type": "subtitle",
+          "text": "facts → observations"
+        }
+      ],
+      "minCardHeight": 43
+    },
+    {
+      "id": "refresh",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Refresh"
+        },
+        {
+          "type": "subtitle",
+          "text": "reflect on the source query"
+        }
+      ],
+      "minCardHeight": 103,
+      "width": 196
+    },
+    {
+      "id": "g2",
+      "type": "group",
+      "label": {
+        "title": "Hindsight Worker"
+      },
+      "children": [
+        "consolidate",
+        "refresh"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 40,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "facts",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Facts"
+        },
+        {
+          "type": "subtitle",
+          "text": "world · experience"
+        }
+      ],
+      "minCardHeight": 103,
+      "width": 196
+    },
+    {
+      "id": "obs",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Observations"
+        }
+      ],
+      "minCardHeight": 103,
+      "width": 196
+    },
+    {
+      "id": "mm",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Mental Models"
+        }
+      ],
+      "minCardHeight": 178,
+      "width": 210
+    },
+    {
+      "id": "bank",
+      "type": "group",
+      "label": {
+        "title": "Memory Bank"
+      },
+      "children": [
+        "facts",
+        "obs",
+        "mm"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 28,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "g0",
+      "type": "group",
+      "children": [
+        "app",
+        "g1",
+        "g2",
+        "bank"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 40,
+        "align": "center"
+      }
+    },
+    {
+      "id": "create",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "app"
+      },
+      "end": {
+        "id": "mmapi"
+      },
+      "label": {
+        "text": "create"
+      }
+    },
+    {
+      "id": "ask",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "app"
+      },
+      "end": {
+        "id": "reflect"
+      },
+      "label": {
+        "text": "reflect"
+      }
+    },
+    {
+      "id": "queue",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "mmapi"
+      },
+      "end": {
+        "id": "refresh"
+      },
+      "label": {
+        "text": "queue refresh"
+      }
+    },
+    {
+      "id": "new-facts",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "facts"
+      },
+      "end": {
+        "id": "consolidate"
+      },
+      "label": {
+        "text": "new facts"
+      }
+    },
+    {
+      "id": "write-obs",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "consolidate"
+      },
+      "end": {
+        "id": "obs"
+      }
+    },
+    {
+      "id": "trigger",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "consolidate"
+      },
+      "end": {
+        "id": "refresh"
+      },
+      "label": {
+        "text": "trigger"
+      }
+    },
+    {
+      "id": "read-obs",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "refresh"
+      },
+      "end": {
+        "id": "obs"
+      }
+    },
+    {
+      "id": "read-facts",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "refresh"
+      },
+      "end": {
+        "id": "facts"
+      }
+    },
+    {
+      "id": "write",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "refresh"
+      },
+      "end": {
+        "id": "mm"
+      },
+      "label": {
+        "text": "write"
+      }
+    },
+    {
+      "id": "search-mm",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "reflect"
+      },
+      "end": {
+        "id": "mm"
+      },
+      "label": {
+        "text": "search_mental_models"
+      },
+      "quiet": true
+    }
+  ],
+  "scenes": [
+    {
+      "label": "create()",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "create",
+            "data": "POST /mental-models"
+          },
+          "show": {
+            "app": [
+              {
+                "tag": "create",
+                "tone": "gray",
+                "text": "Team overview"
+              },
+              {
+                "tag": "source query",
+                "tone": "gray",
+                "text": "“Who is on the team and what do they work on?”"
+              },
+              {
+                "tag": "trigger",
+                "tone": "gray",
+                "text": "refresh after consolidation",
+                "meta": "delta"
+              }
+            ]
+          },
+          "say": "You create a mental model: a name, the question it answers, and when it should refresh."
+        },
+        {
+          "show": {
+            "mmapi": [
+              {
+                "text": "Team overview saved"
+              },
+              {
+                "text": "content: not yet",
+                "meta": "async"
+              }
+            ]
+          },
+          "say": "The API saves it right away. Its content does not exist yet."
+        },
+        {
+          "edges": [
+            {
+              "edge": "queue",
+              "data": "refresh task"
+            },
+            {
+              "edge": "create",
+              "back": true,
+              "data": "operation_id"
+            }
+          ],
+          "show": {
+            "app": [
+              {
+                "tag": "create",
+                "tone": "gray",
+                "text": "Team overview"
+              },
+              {
+                "tag": "source query",
+                "tone": "gray",
+                "text": "“Who is on the team and what do they work on?”"
+              },
+              {
+                "tag": "trigger",
+                "tone": "gray",
+                "text": "refresh after consolidation",
+                "meta": "delta"
+              },
+              {
+                "tag": "response",
+                "tone": "green",
+                "text": "operation queued",
+                "mark": "…"
+              }
+            ]
+          },
+          "say": "The content is written in the background. The response is an operation id you can poll."
+        },
+        {
+          "edges": {
+            "edge": "read-obs",
+            "data": "search_observations"
+          },
+          "show": {
+            "refresh": [
+              {
+                "text": "reflect on the source query"
+              },
+              {
+                "text": "1. search_observations",
+                "mono": true,
+                "mark": "✓"
+              }
+            ],
+            "obs": [
+              {
+                "text": "Alice: research team at Google",
+                "meta": "3 sources",
+                "mark": "✓"
+              },
+              {
+                "text": "Bob leads the ML project",
+                "meta": "2 sources",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "A refresh is a reflect run on the source query. It reads observations first…",
+          "ms": 2800
+        },
+        {
+          "edges": {
+            "edge": "read-facts",
+            "data": "recall"
+          },
+          "show": {
+            "refresh": [
+              {
+                "text": "reflect on the source query"
+              },
+              {
+                "text": "1. search_observations",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "2. recall",
+                "mono": true,
+                "mark": "✓"
+              }
+            ],
+            "facts": [
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "Alice joined Google",
+                "meta": "Mar 2026",
+                "mark": "✓"
+              },
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "Bob leads the ML project",
+                "meta": "Feb 2026",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "…then raw facts, to check the details."
+        },
+        {
+          "edges": {
+            "edge": "write",
+            "data": "content"
+          },
+          "show": {
+            "refresh": [
+              {
+                "text": "reflect on the source query"
+              },
+              {
+                "text": "1. search_observations",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "2. recall",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "3. write document",
+                "mono": true,
+                "mark": "✓"
+              }
+            ],
+            "mm": [
+              {
+                "tag": "team overview",
+                "tone": "orange",
+                "text": "refreshed just now",
+                "mark": "new"
+              },
+              {
+                "text": "• Alice: research team, Google"
+              },
+              {
+                "text": "• Bob: leads the ML project"
+              }
+            ]
+          },
+          "say": "It writes the document and stores it with the memories it is based on.",
+          "ms": 3000
+        }
+      ]
+    },
+    {
+      "label": "auto refresh",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "new-facts",
+            "data": "new fact"
+          },
+          "show": {
+            "app": [
+              {
+                "tag": "retain",
+                "tone": "gray",
+                "text": "“Carol joined the ML project this week.”"
+              }
+            ],
+            "facts": [
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "Carol joined the ML project",
+                "meta": "Sep 2026",
+                "mark": "new"
+              }
+            ],
+            "consolidate": [
+              {
+                "text": "1 new fact"
+              },
+              {
+                "text": "merge into beliefs"
+              }
+            ]
+          },
+          "say": "Later, your agent retains a new fact. Consolidation picks it up.",
+          "ms": 2800
+        },
+        {
+          "edges": "write-obs",
+          "show": {
+            "obs": [
+              {
+                "text": "Alice: research team at Google",
+                "meta": "3 sources"
+              },
+              {
+                "text": "Bob leads the ML project",
+                "meta": "2 sources"
+              },
+              {
+                "text": "Carol works on the ML project",
+                "meta": "1 source",
+                "mark": "new"
+              }
+            ]
+          },
+          "say": "It writes an observation about Carol."
+        },
+        {
+          "edges": {
+            "edge": "trigger",
+            "data": "refresh_after_consolidation"
+          },
+          "show": {
+            "refresh": [
+              {
+                "text": "scope changed since last refresh",
+                "mark": "stale"
+              },
+              {
+                "text": "delta: read only what is new"
+              }
+            ]
+          },
+          "say": "Before queueing a refresh, consolidation checks that the model’s scope holds a memory newer than the last one it read. If not, no refresh runs and no LLM is spent.",
+          "ms": 3200
+        },
+        {
+          "edges": {
+            "edge": "read-obs",
+            "data": "since last refresh"
+          },
+          "show": {
+            "refresh": [
+              {
+                "text": "scope changed since last refresh",
+                "mark": "stale"
+              },
+              {
+                "text": "delta: read only what is new"
+              },
+              {
+                "text": "append_block",
+                "mono": true,
+                "meta": "Carol",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "In delta mode it reads only the new memories, and answers with small edits instead of a rewrite.",
+          "ms": 2800
+        },
+        {
+          "edges": {
+            "edge": "write",
+            "data": "append_block"
+          },
+          "show": {
+            "mm": [
+              {
+                "tag": "team overview",
+                "tone": "orange",
+                "text": "refreshed just now",
+                "mark": "↻"
+              },
+              {
+                "text": "• Alice: research team, Google",
+                "mark": "="
+              },
+              {
+                "text": "• Bob: leads the ML project",
+                "mark": "="
+              },
+              {
+                "text": "• Carol: joined the ML project",
+                "mark": "new"
+              }
+            ]
+          },
+          "say": "Lines no edit touches are copied byte for byte. Only Carol’s line is added.",
+          "ms": 3000
+        }
+      ]
+    },
+    {
+      "label": "reflect()",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "ask",
+            "data": "“Who works on the ML project?”"
+          },
+          "show": {
+            "app": [
+              {
+                "tag": "question",
+                "tone": "gray",
+                "text": "“Who works on the ML project?”"
+              }
+            ]
+          },
+          "say": "Now your agent asks a question."
+        },
+        {
+          "edges": {
+            "edge": "search-mm",
+            "data": "search_mental_models"
+          },
+          "show": {
+            "reflect": [
+              {
+                "text": "1. search_mental_models",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "Team overview",
+                "meta": "fresh"
+              }
+            ],
+            "mm": [
+              {
+                "tag": "team overview",
+                "tone": "orange",
+                "text": "matched by meaning",
+                "mark": "fresh"
+              },
+              {
+                "text": "• Alice: research team, Google"
+              },
+              {
+                "text": "• Bob: leads the ML project"
+              },
+              {
+                "text": "• Carol: joined the ML project"
+              }
+            ]
+          },
+          "say": "Reflect searches mental models first, by meaning. Team overview matches, and it is up to date.",
+          "ms": 3000
+        },
+        {
+          "show": {
+            "reflect": [
+              {
+                "text": "1. search_mental_models",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "Team overview",
+                "meta": "fresh"
+              },
+              {
+                "text": "2. done",
+                "mono": true,
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "It covers the question, so the agent can answer from it. If it were stale or off topic, the agent would go on to observations and raw facts.",
+          "ms": 3200
+        },
+        {
+          "edges": {
+            "edge": "ask",
+            "back": true,
+            "data": "answer"
+          },
+          "show": {
+            "app": [
+              {
+                "tag": "question",
+                "tone": "gray",
+                "text": "“Who works on the ML project?”"
+              },
+              {
+                "tag": "answer",
+                "tone": "green",
+                "text": "“Bob leads it, and Carol just joined.”",
+                "meta": "from Team overview"
+              }
+            ]
+          },
+          "say": "The answer comes back, citing the mental model it used.",
+          "ms": 3000
+        }
+      ]
+    }
+  ]
+}

@@ -7,8 +7,8 @@ description: "One Hindsight memory plugin for coding agents — per-repo memory 
 {/* GENERATED from hindsight-integrations/coding-agents/README.md — edit that file, then run
     node hindsight-docs/scripts/sync-coding-agents-doc.mjs */}
 
-import {Flow} from '@vectorize-io/interfig';
-import codingAgents from '@vectorize-io/interfig/figures/coding-agents';
+import Figure from '@site/src/components/Figure';
+import codingAgents from '@site/figures/coding-agents.json';
 
 Long-term project memory for **coding agents**, backed by [Hindsight](https://vectorize.io/hindsight).
 One package, several agents: a shared reflect-and-inject core with a thin entry point per agent
@@ -22,7 +22,7 @@ tie-break policy. Those decisions live in git history and past conversations. Th
 in front of the agent at the moment it starts working, and keeps a curated set of **knowledge pages**
 (architecture, conventions, in-flight initiatives) that future sessions start from.
 
-<Flow {...codingAgents.props} />
+<Figure doc={codingAgents} />
 
 [View Changelog →](/changelog/integrations/coding-agents)
 

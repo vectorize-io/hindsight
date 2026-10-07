@@ -1,0 +1,626 @@
+{
+  "title": "Refresh modes: full vs delta",
+  "speed": 2200,
+  "elements": [
+    {
+      "id": "cfg",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Mental model"
+        },
+        {
+          "type": "subtitle",
+          "text": "its config"
+        }
+      ],
+      "width": 200
+    },
+    {
+      "id": "reflect",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Reflect"
+        },
+        {
+          "type": "subtitle",
+          "text": "on the source query"
+        }
+      ],
+      "width": 196
+    },
+    {
+      "id": "ops",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Delta edit"
+        },
+        {
+          "type": "subtitle",
+          "text": "LLM emits operations"
+        }
+      ],
+      "width": 196
+    },
+    {
+      "id": "g1",
+      "type": "group",
+      "label": {
+        "title": "Hindsight Worker · Refresh"
+      },
+      "children": [
+        "reflect",
+        "ops"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 48,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "mem",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Memories"
+        },
+        {
+          "type": "subtitle",
+          "text": "in the model’s scope"
+        }
+      ],
+      "width": 220
+    },
+    {
+      "id": "doc",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Team overview"
+        },
+        {
+          "type": "subtitle",
+          "text": "the stored document"
+        }
+      ],
+      "width": 220
+    },
+    {
+      "id": "g2",
+      "type": "group",
+      "label": {
+        "title": "Memory Bank"
+      },
+      "children": [
+        "mem",
+        "doc"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 36,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "g0",
+      "type": "group",
+      "children": [
+        "cfg",
+        "g1",
+        "g2"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 44,
+        "align": "center"
+      }
+    },
+    {
+      "id": "go",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "cfg"
+      },
+      "end": {
+        "id": "reflect"
+      },
+      "label": {
+        "text": "refresh"
+      }
+    },
+    {
+      "id": "read",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "reflect"
+      },
+      "end": {
+        "id": "mem"
+      },
+      "label": {
+        "text": "read"
+      }
+    },
+    {
+      "id": "draft",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "reflect"
+      },
+      "end": {
+        "id": "ops"
+      },
+      "label": {
+        "text": "new findings"
+      }
+    },
+    {
+      "id": "baseline",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "doc"
+      },
+      "end": {
+        "id": "ops"
+      },
+      "label": {
+        "text": "current sections"
+      },
+      "quiet": true
+    },
+    {
+      "id": "apply",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "ops"
+      },
+      "end": {
+        "id": "doc"
+      },
+      "label": {
+        "text": "apply"
+      }
+    },
+    {
+      "id": "rewrite",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "reflect"
+      },
+      "end": {
+        "id": "doc"
+      },
+      "label": {
+        "text": "rewrite"
+      },
+      "quiet": true
+    }
+  ],
+  "scenes": [
+    {
+      "label": "full",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "go",
+            "data": "mode: full"
+          },
+          "show": {
+            "cfg": [
+              {
+                "tag": "mental model",
+                "tone": "gray",
+                "text": "Team overview"
+              },
+              {
+                "tag": "source query",
+                "tone": "gray",
+                "text": "“Who is on the team and what do they work on?”"
+              },
+              {
+                "tag": "trigger.mode",
+                "tone": "gray",
+                "text": "\"full\"  (default)",
+                "mono": true
+              }
+            ],
+            "doc": [
+              {
+                "tag": "people",
+                "tone": "orange",
+                "text": "Alice: research team, Google"
+              },
+              {
+                "tag": "research",
+                "tone": "orange",
+                "text": "Retrieval quality study"
+              },
+              {
+                "tag": "ml project",
+                "tone": "orange",
+                "text": "Bob leads it"
+              }
+            ]
+          },
+          "say": "Full is the default. Every refresh writes the whole document again."
+        },
+        {
+          "edges": {
+            "edge": "read",
+            "data": "whole scope"
+          },
+          "show": {
+            "mem": [
+              {
+                "tag": "jan",
+                "tone": "gray",
+                "text": "Alice: research team at Google",
+                "mark": "read"
+              },
+              {
+                "tag": "feb",
+                "tone": "gray",
+                "text": "Bob leads the ML project",
+                "mark": "read"
+              },
+              {
+                "tag": "sep",
+                "tone": "blue",
+                "text": "Carol joined the ML project",
+                "mark": "read"
+              }
+            ],
+            "reflect": [
+              {
+                "text": "window: all of its scope"
+              },
+              {
+                "text": "3 memories read"
+              }
+            ]
+          },
+          "say": "It reads everything in the model’s scope, old and new."
+        },
+        {
+          "edges": {
+            "edge": "rewrite",
+            "data": "new document"
+          },
+          "show": {
+            "doc": [
+              {
+                "tag": "people",
+                "tone": "orange",
+                "text": "Alice works in Google’s research group",
+                "mark": "rewritten"
+              },
+              {
+                "tag": "research",
+                "tone": "orange",
+                "text": "A study of retrieval quality",
+                "mark": "rewritten"
+              },
+              {
+                "tag": "ml project",
+                "tone": "orange",
+                "text": "Led by Bob, with Carol",
+                "mark": "rewritten"
+              }
+            ]
+          },
+          "say": "The LLM writes a fresh document. Carol is in, but untouched sections come back reworded too, and small drifts add up over many refreshes.",
+          "ms": 3600
+        }
+      ]
+    },
+    {
+      "label": "delta",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "go",
+            "data": "mode: delta"
+          },
+          "show": {
+            "cfg": [
+              {
+                "tag": "mental model",
+                "tone": "gray",
+                "text": "Team overview"
+              },
+              {
+                "tag": "source query",
+                "tone": "gray",
+                "text": "“Who is on the team and what do they work on?”"
+              },
+              {
+                "tag": "trigger.mode",
+                "tone": "gray",
+                "text": "\"delta\"",
+                "mono": true
+              }
+            ],
+            "doc": [
+              {
+                "tag": "people",
+                "tone": "orange",
+                "text": "Alice: research team, Google"
+              },
+              {
+                "tag": "research",
+                "tone": "orange",
+                "text": "Retrieval quality study"
+              },
+              {
+                "tag": "ml project",
+                "tone": "orange",
+                "text": "Bob leads it"
+              }
+            ]
+          },
+          "say": "Delta edits the document instead of rewriting it."
+        },
+        {
+          "edges": {
+            "edge": "read",
+            "data": "since Feb"
+          },
+          "show": {
+            "mem": [
+              {
+                "tag": "jan",
+                "tone": "gray",
+                "text": "Alice: research team at Google",
+                "mark": "seen"
+              },
+              {
+                "tag": "feb",
+                "tone": "gray",
+                "text": "Bob leads the ML project",
+                "mark": "seen"
+              },
+              {
+                "tag": "sep",
+                "tone": "blue",
+                "text": "Carol joined the ML project",
+                "mark": "new"
+              },
+              {
+                "text": "last_memory_seen_at = Feb",
+                "mono": true
+              }
+            ],
+            "reflect": [
+              {
+                "text": "window: since last_memory_seen_at"
+              },
+              {
+                "text": "1 new memory read"
+              }
+            ]
+          },
+          "say": "It only reads memories newer than the last one the previous refresh saw.",
+          "ms": 3000
+        },
+        {
+          "edges": [
+            {
+              "edge": "draft",
+              "data": "Carol joined ML"
+            },
+            {
+              "edge": "baseline",
+              "data": "3 sections"
+            }
+          ],
+          "show": {
+            "ops": [
+              {
+                "text": "append_block",
+                "mono": true,
+                "meta": "ML project"
+              },
+              {
+                "text": "“Carol joined the ML project.”"
+              }
+            ]
+          },
+          "say": "A second LLM call compares the new findings with the current sections and answers with edit operations, not a document.",
+          "ms": 3200
+        },
+        {
+          "edges": {
+            "edge": "apply",
+            "data": "1 operation"
+          },
+          "show": {
+            "doc": [
+              {
+                "tag": "people",
+                "tone": "orange",
+                "text": "Alice: research team, Google",
+                "mark": "="
+              },
+              {
+                "tag": "research",
+                "tone": "orange",
+                "text": "Retrieval quality study",
+                "mark": "="
+              },
+              {
+                "tag": "ml project",
+                "tone": "orange",
+                "text": "Bob leads it",
+                "mark": "="
+              },
+              {
+                "text": "+ Carol joined the ML project",
+                "mark": "new"
+              }
+            ],
+            "mem": [
+              {
+                "tag": "jan",
+                "tone": "gray",
+                "text": "Alice: research team at Google"
+              },
+              {
+                "tag": "feb",
+                "tone": "gray",
+                "text": "Bob leads the ML project"
+              },
+              {
+                "tag": "sep",
+                "tone": "blue",
+                "text": "Carol joined the ML project"
+              },
+              {
+                "text": "last_memory_seen_at = Sep",
+                "mono": true
+              }
+            ]
+          },
+          "say": "The operation is applied. Every section it does not touch is copied through byte for byte, and the watermark moves to Sep.",
+          "ms": 3600
+        }
+      ]
+    },
+    {
+      "label": "delta falls back",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "go",
+            "data": "mode: delta"
+          },
+          "show": {
+            "cfg": [
+              {
+                "tag": "mental model",
+                "tone": "gray",
+                "text": "Team overview"
+              },
+              {
+                "tag": "source query",
+                "tone": "gray",
+                "text": "“Who works on what, and since when?”  ← edited"
+              },
+              {
+                "tag": "trigger.mode",
+                "tone": "gray",
+                "text": "\"delta\"",
+                "mono": true
+              }
+            ],
+            "doc": [
+              {
+                "tag": "people",
+                "tone": "orange",
+                "text": "Alice: research team, Google"
+              },
+              {
+                "tag": "research",
+                "tone": "orange",
+                "text": "Retrieval quality study"
+              },
+              {
+                "tag": "ml project",
+                "tone": "orange",
+                "text": "Bob leads it"
+              }
+            ]
+          },
+          "say": "Delta needs something stable to edit. Here the source query was changed."
+        },
+        {
+          "show": {
+            "reflect": [
+              {
+                "text": "fallback: full",
+                "mark": "!"
+              },
+              {
+                "text": "source_query_changed",
+                "mono": true
+              }
+            ]
+          },
+          "say": "The topic moved, so the old structure may no longer fit. The refresh falls back to a full rewrite. The same happens when the model has no content yet.",
+          "ms": 3200
+        },
+        {
+          "edges": [
+            {
+              "edge": "read",
+              "data": "whole scope"
+            }
+          ],
+          "show": {
+            "mem": [
+              {
+                "tag": "jan",
+                "tone": "gray",
+                "text": "Alice: research team at Google",
+                "mark": "read"
+              },
+              {
+                "tag": "feb",
+                "tone": "gray",
+                "text": "Bob leads the ML project",
+                "mark": "read"
+              },
+              {
+                "tag": "sep",
+                "tone": "blue",
+                "text": "Carol joined the ML project",
+                "mark": "read"
+              }
+            ]
+          },
+          "say": "It reads the whole scope, like full mode…"
+        },
+        {
+          "edges": {
+            "edge": "rewrite",
+            "data": "new document"
+          },
+          "show": {
+            "doc": [
+              {
+                "tag": "people",
+                "tone": "orange",
+                "text": "Alice since Jan, Bob since Feb, Carol since Sep",
+                "mark": "rewritten"
+              },
+              {
+                "tag": "work",
+                "tone": "orange",
+                "text": "Research: Alice · ML: Bob, Carol",
+                "mark": "rewritten"
+              }
+            ]
+          },
+          "say": "…and writes a new document for the new question. The next refresh can edit this one in delta mode again.",
+          "ms": 3400
+        }
+      ]
+    }
+  ]
+}

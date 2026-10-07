@@ -1,0 +1,750 @@
+{
+  "title": "Reflect Agent Loop",
+  "speed": 2200,
+  "elements": [
+    {
+      "id": "agent",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Your AI Agent"
+        }
+      ],
+      "minCardHeight": 133,
+      "width": 200
+    },
+    {
+      "id": "mission",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Mission"
+        }
+      ],
+      "minCardHeight": 43
+    },
+    {
+      "id": "disposition",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Disposition"
+        }
+      ],
+      "minCardHeight": 28
+    },
+    {
+      "id": "directives",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Directives"
+        }
+      ],
+      "minCardHeight": 28
+    },
+    {
+      "id": "config",
+      "type": "group",
+      "label": {
+        "title": "Bank config"
+      },
+      "children": [
+        "mission",
+        "disposition",
+        "directives"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 8,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "g1",
+      "type": "group",
+      "children": [
+        "agent",
+        "config"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 28,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "loop",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Agent loop"
+        },
+        {
+          "type": "subtitle",
+          "text": "LLM picks the next tool"
+        }
+      ],
+      "minCardHeight": 133,
+      "width": 210
+    },
+    {
+      "id": "answer",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Answer"
+        },
+        {
+          "type": "subtitle",
+          "text": "final synthesis"
+        }
+      ],
+      "minCardHeight": 103,
+      "width": 210
+    },
+    {
+      "id": "reflect",
+      "type": "group",
+      "label": {
+        "title": "Reflect"
+      },
+      "children": [
+        "loop",
+        "answer"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 40,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "t-mm",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "search_mental_models"
+        }
+      ]
+    },
+    {
+      "id": "t-obs",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "search_observations"
+        }
+      ]
+    },
+    {
+      "id": "t-recall",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "recall"
+        },
+        {
+          "type": "subtitle",
+          "text": "4-way search"
+        }
+      ]
+    },
+    {
+      "id": "t-expand",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "expand"
+        },
+        {
+          "type": "subtitle",
+          "text": "memory → chunk → document"
+        }
+      ]
+    },
+    {
+      "id": "tools",
+      "type": "group",
+      "label": {
+        "title": "Tools"
+      },
+      "children": [
+        "t-mm",
+        "t-obs",
+        "t-recall",
+        "t-expand"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 72,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "mm",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Mental Models"
+        }
+      ],
+      "minCardHeight": 58,
+      "width": 196
+    },
+    {
+      "id": "obs",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Observations"
+        }
+      ],
+      "minCardHeight": 88,
+      "width": 196
+    },
+    {
+      "id": "facts",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Facts"
+        },
+        {
+          "type": "subtitle",
+          "text": "world · experience"
+        }
+      ],
+      "minCardHeight": 118,
+      "width": 196
+    },
+    {
+      "id": "chunks",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Chunks & documents"
+        }
+      ],
+      "minCardHeight": 43,
+      "width": 196
+    },
+    {
+      "id": "bank",
+      "type": "group",
+      "label": {
+        "title": "Memory Bank"
+      },
+      "children": [
+        "mm",
+        "obs",
+        "facts",
+        "chunks"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 12,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "g0",
+      "type": "group",
+      "children": [
+        "g1",
+        "reflect",
+        "tools",
+        "bank"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 40,
+        "align": "center"
+      }
+    },
+    {
+      "id": "ask",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "agent"
+      },
+      "end": {
+        "id": "loop"
+      },
+      "label": {
+        "text": "reflect()"
+      }
+    },
+    {
+      "id": "shape",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "config"
+      },
+      "end": {
+        "id": "loop"
+      },
+      "label": {
+        "text": "instructions"
+      }
+    },
+    {
+      "id": "c-mm",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "loop"
+      },
+      "end": {
+        "id": "t-mm"
+      }
+    },
+    {
+      "id": "c-obs",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "loop"
+      },
+      "end": {
+        "id": "t-obs"
+      }
+    },
+    {
+      "id": "c-recall",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "loop"
+      },
+      "end": {
+        "id": "t-recall"
+      }
+    },
+    {
+      "id": "c-expand",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "loop"
+      },
+      "end": {
+        "id": "t-expand"
+      }
+    },
+    {
+      "id": "r-mm",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "t-mm"
+      },
+      "end": {
+        "id": "mm"
+      }
+    },
+    {
+      "id": "r-obs",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "t-obs"
+      },
+      "end": {
+        "id": "obs"
+      }
+    },
+    {
+      "id": "r-recall",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "t-recall"
+      },
+      "end": {
+        "id": "facts"
+      }
+    },
+    {
+      "id": "r-expand",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "t-expand"
+      },
+      "end": {
+        "id": "chunks"
+      }
+    },
+    {
+      "id": "done",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "loop"
+      },
+      "end": {
+        "id": "answer"
+      },
+      "label": {
+        "text": "done"
+      }
+    },
+    {
+      "id": "reply",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "answer"
+      },
+      "end": {
+        "id": "agent"
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "label": "reflect()",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "ask",
+            "data": "“Should Alice join the ML project?”"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "question",
+                "tone": "gray",
+                "text": "“Should Alice join the ML project?”"
+              }
+            ]
+          },
+          "say": "reflect() gets a question that needs reasoning, not just lookup."
+        },
+        {
+          "edges": {
+            "edge": "shape",
+            "data": "mission · disposition · directives"
+          },
+          "show": {
+            "mission": [
+              {
+                "text": "Help the team staff projects well"
+              }
+            ],
+            "disposition": [
+              {
+                "text": "skepticism 4 · empathy 3"
+              }
+            ],
+            "directives": [
+              {
+                "text": "Never share salaries"
+              }
+            ],
+            "loop": [
+              {
+                "tag": "plan",
+                "tone": "gray",
+                "text": "start from the most refined knowledge"
+              }
+            ]
+          },
+          "say": "The bank’s mission, disposition and directives go into the agent’s instructions before it looks anything up.",
+          "ms": 3000
+        },
+        {
+          "edges": {
+            "edge": "c-mm",
+            "data": "“Alice ML project”"
+          },
+          "show": {
+            "loop": [
+              {
+                "tag": "iteration",
+                "tone": "gray",
+                "text": "1 of 10 max"
+              },
+              {
+                "text": "1. search_mental_models",
+                "mono": true,
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "Each turn is one tool call. Retrieval starts at the top, with mental models: curated summaries kept up to date."
+        },
+        {
+          "edges": "r-mm",
+          "show": {
+            "mm": [
+              {
+                "tag": "model",
+                "tone": "orange",
+                "text": "Team overview: Alice, research",
+                "mark": "fresh"
+              }
+            ]
+          },
+          "say": "A fresh mental model can be enough to answer. This one covers the team, not the ML project, so the agent keeps looking.",
+          "ms": 2400
+        },
+        {
+          "edges": {
+            "edge": "c-obs",
+            "data": "“Alice”"
+          },
+          "show": {
+            "loop": [
+              {
+                "tag": "iteration",
+                "tone": "gray",
+                "text": "2 of 10 max"
+              },
+              {
+                "text": "1. search_mental_models",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "2. search_observations",
+                "mono": true,
+                "mark": "stale"
+              }
+            ]
+          },
+          "say": "Then observations: beliefs consolidated from many facts.",
+          "ms": 1800
+        },
+        {
+          "edges": "r-obs",
+          "show": {
+            "obs": [
+              {
+                "text": "Alice works at Google, research team",
+                "meta": "3 sources"
+              },
+              {
+                "tag": "stale",
+                "tone": "orange",
+                "text": "newer facts not consolidated"
+              }
+            ]
+          },
+          "say": "The result is flagged stale: the bank has facts not yet consolidated into observations. So the agent must check the raw facts.",
+          "ms": 3000
+        },
+        {
+          "edges": {
+            "edge": "c-recall",
+            "data": "recall(\"Alice ML\")"
+          },
+          "show": {
+            "loop": [
+              {
+                "tag": "iteration",
+                "tone": "gray",
+                "text": "3 of 10 max"
+              },
+              {
+                "text": "1. search_mental_models",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "2. search_observations",
+                "mono": true,
+                "mark": "stale"
+              },
+              {
+                "text": "3. recall",
+                "mono": true,
+                "meta": "verify",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "recall() runs the full four-way search over raw facts: the ground truth.",
+          "ms": 1800
+        },
+        {
+          "edges": "r-recall",
+          "show": {
+            "facts": [
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "Alice asked to join the ML project",
+                "meta": "Sep 2026",
+                "mark": "new"
+              },
+              {
+                "tag": "experience",
+                "tone": "purple",
+                "text": "I suggested Alice for ML",
+                "meta": "Apr 2026"
+              }
+            ]
+          },
+          "say": "The newer fact is what the stale observation was missing: Alice asked to move to ML herself.",
+          "ms": 3000
+        },
+        {
+          "edges": {
+            "edge": "c-expand",
+            "data": "expand → document"
+          },
+          "show": {
+            "loop": [
+              {
+                "tag": "iteration",
+                "tone": "gray",
+                "text": "4 of 10 max"
+              },
+              {
+                "text": "1. search_mental_models",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "2. search_observations",
+                "mono": true,
+                "mark": "stale"
+              },
+              {
+                "text": "3. recall",
+                "mono": true,
+                "meta": "verify",
+                "mark": "✓"
+              },
+              {
+                "text": "4. expand",
+                "mono": true,
+                "mark": "✓"
+              }
+            ]
+          },
+          "ms": 1800
+        },
+        {
+          "edges": "r-expand",
+          "show": {
+            "chunks": [
+              {
+                "tag": "doc",
+                "tone": "gray",
+                "text": "Sep 1:1 notes: “I’d love to work on the ML side.”",
+                "mark": "read"
+              }
+            ]
+          },
+          "say": "recall already returns the chunk each fact came from. expand goes further: the whole source document, for the full context.",
+          "ms": 2600
+        },
+        {
+          "edges": {
+            "edge": "done",
+            "data": "done"
+          },
+          "show": {
+            "loop": [
+              {
+                "tag": "iteration",
+                "tone": "gray",
+                "text": "5 of 10 max"
+              },
+              {
+                "text": "1. search_mental_models",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "2. search_observations",
+                "mono": true,
+                "mark": "stale"
+              },
+              {
+                "text": "3. recall",
+                "mono": true,
+                "meta": "verify",
+                "mark": "✓"
+              },
+              {
+                "text": "4. expand",
+                "mono": true,
+                "mark": "✓"
+              },
+              {
+                "text": "5. done",
+                "mono": true,
+                "mark": "✓"
+              }
+            ],
+            "answer": [
+              {
+                "text": "model · team overview",
+                "mark": "✓"
+              },
+              {
+                "text": "observation · alice-google",
+                "mark": "✓"
+              },
+              {
+                "text": "fact · ml-request",
+                "mark": "✓"
+              },
+              {
+                "text": "fact · 7f3a",
+                "meta": "never retrieved",
+                "mark": "✗"
+              }
+            ]
+          },
+          "say": "The agent calls done. Every cited ID is checked against what it actually retrieved; anything else is dropped. It must gather evidence first, and stops after 10 iterations at most.",
+          "ms": 3800
+        },
+        {
+          "edges": {
+            "edge": "reply",
+            "data": "answer + 3 sources"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "question",
+                "tone": "gray",
+                "text": "“Should Alice join the ML project?”"
+              },
+              {
+                "tag": "answer",
+                "tone": "green",
+                "text": "“Yes. She is on Google’s research team and asked to join ML in September.”",
+                "meta": "3 sources"
+              }
+            ]
+          },
+          "say": "The answer follows the directives and the bank’s disposition, and comes back with the memories it is based on.",
+          "ms": 3200
+        }
+      ]
+    }
+  ]
+}

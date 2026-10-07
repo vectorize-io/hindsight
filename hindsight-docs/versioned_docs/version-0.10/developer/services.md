@@ -1,11 +1,11 @@
-import {Flow} from '@vectorize-io/interfig';
-import services from '@vectorize-io/interfig/figures/services';
+import Figure from '@site/src/components/Figure';
+import services from '@site/figures/services.json';
 
 # Services
 
 Hindsight consists of three services that can run together or separately depending on your deployment needs.
 
-<Flow {...services.props} />
+<Figure doc={services} />
 
 ## API Service
 

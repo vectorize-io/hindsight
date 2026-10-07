@@ -1,0 +1,825 @@
+{
+  "title": "Services",
+  "speed": 1900,
+  "elements": [
+    {
+      "id": "app",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Your app"
+        },
+        {
+          "type": "subtitle",
+          "text": "SDK or MCP client"
+        }
+      ],
+      "width": 190
+    },
+    {
+      "id": "cp",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Control Plane"
+        },
+        {
+          "type": "subtitle",
+          "text": "web UI · :9999"
+        }
+      ],
+      "width": 190
+    },
+    {
+      "id": "g1",
+      "type": "group",
+      "label": {
+        "title": "Clients"
+      },
+      "children": [
+        "app",
+        "cp"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 28,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "http",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "HTTP API"
+        },
+        {
+          "type": "subtitle",
+          "text": "REST · /mcp · :8888"
+        }
+      ],
+      "width": 190
+    },
+    {
+      "id": "iworker",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Internal worker"
+        },
+        {
+          "type": "subtitle",
+          "text": "on by default"
+        }
+      ],
+      "width": 190
+    },
+    {
+      "id": "api",
+      "type": "group",
+      "label": {
+        "title": "hindsight-api"
+      },
+      "children": [
+        "http",
+        "iworker"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 28,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "mem",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Memory banks"
+        },
+        {
+          "type": "subtitle",
+          "text": "facts · observations · models"
+        }
+      ],
+      "width": 200
+    },
+    {
+      "id": "ops",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "async_operations"
+        },
+        {
+          "type": "subtitle",
+          "text": "the task queue"
+        }
+      ],
+      "width": 200
+    },
+    {
+      "id": "pg",
+      "type": "group",
+      "label": {
+        "title": "PostgreSQL"
+      },
+      "children": [
+        "mem",
+        "ops"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 28,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "w1",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "worker-1"
+        }
+      ]
+    },
+    {
+      "id": "w2",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "worker-2"
+        }
+      ]
+    },
+    {
+      "id": "workers",
+      "type": "group",
+      "label": {
+        "title": "hindsight-worker × N"
+      },
+      "children": [
+        "w1",
+        "w2"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 16,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "llm",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "LLM"
+        },
+        {
+          "type": "subtitle",
+          "text": "OpenAI, Anthropic, …"
+        }
+      ]
+    },
+    {
+      "id": "emb",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Embeddings · reranker"
+        },
+        {
+          "type": "subtitle",
+          "text": "local or remote"
+        }
+      ]
+    },
+    {
+      "id": "models",
+      "type": "group",
+      "label": {
+        "title": "Model providers"
+      },
+      "children": [
+        "llm",
+        "emb"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 16,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "g2",
+      "type": "group",
+      "children": [
+        "workers",
+        "models"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 36,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "g0",
+      "type": "group",
+      "children": [
+        "g1",
+        "api",
+        "pg",
+        "g2"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 48,
+        "align": "center"
+      }
+    },
+    {
+      "id": "app-http",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "app"
+      },
+      "end": {
+        "id": "http"
+      },
+      "label": {
+        "text": "request"
+      }
+    },
+    {
+      "id": "cp-http",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "cp"
+      },
+      "end": {
+        "id": "http"
+      },
+      "label": {
+        "text": "SDK"
+      }
+    },
+    {
+      "id": "http-mem",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "http"
+      },
+      "end": {
+        "id": "mem"
+      }
+    },
+    {
+      "id": "http-ops",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "http"
+      },
+      "end": {
+        "id": "ops"
+      },
+      "label": {
+        "text": "enqueue"
+      }
+    },
+    {
+      "id": "http-emb",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "http"
+      },
+      "end": {
+        "id": "models"
+      },
+      "quiet": true
+    },
+    {
+      "id": "claim-iw",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "ops"
+      },
+      "end": {
+        "id": "iworker"
+      },
+      "label": {
+        "text": "claim"
+      },
+      "quiet": true
+    },
+    {
+      "id": "claim-w1",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "ops"
+      },
+      "end": {
+        "id": "w1"
+      },
+      "label": {
+        "text": "claim"
+      }
+    },
+    {
+      "id": "claim-w2",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "ops"
+      },
+      "end": {
+        "id": "w2"
+      }
+    },
+    {
+      "id": "w-models",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "workers"
+      },
+      "end": {
+        "id": "models"
+      }
+    },
+    {
+      "id": "w-mem",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "workers"
+      },
+      "end": {
+        "id": "mem"
+      },
+      "quiet": true
+    },
+    {
+      "id": "iw-mem",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "iworker"
+      },
+      "end": {
+        "id": "mem"
+      },
+      "quiet": true
+    }
+  ],
+  "scenes": [
+    {
+      "label": "retain · async",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "app-http",
+            "data": "retain(async=true)"
+          },
+          "show": {
+            "app": [
+              {
+                "tag": "retain",
+                "tone": "gray",
+                "text": "“Alice joined Google in March.”",
+                "meta": "async=true"
+              }
+            ]
+          },
+          "say": "A retain is slow work: an LLM has to read it. With async=true the API does not do it in the request."
+        },
+        {
+          "edges": {
+            "edge": "http-ops",
+            "data": "op_7f3 · pending"
+          },
+          "show": {
+            "ops": [
+              {
+                "tag": "retain",
+                "tone": "orange",
+                "text": "op_7f3",
+                "meta": "pending"
+              }
+            ]
+          },
+          "say": "It writes a task row into async_operations — the queue is just a table in the same database."
+        },
+        {
+          "edges": {
+            "edge": "app-http",
+            "back": true,
+            "data": "{ operation_id }"
+          },
+          "show": {
+            "app": [
+              {
+                "tag": "retain",
+                "tone": "gray",
+                "text": "“Alice joined Google in March.”",
+                "meta": "async=true"
+              },
+              {
+                "tag": "accepted",
+                "tone": "green",
+                "text": "op_7f3"
+              }
+            ]
+          },
+          "say": "And answers right away with the operation id."
+        },
+        {
+          "edges": [
+            {
+              "edge": "claim-w1",
+              "data": "FOR UPDATE SKIP LOCKED"
+            }
+          ],
+          "show": {
+            "ops": [
+              {
+                "tag": "retain",
+                "tone": "orange",
+                "text": "op_7f3",
+                "meta": "processing · worker-1"
+              }
+            ],
+            "w1": [
+              {
+                "text": "retain op_7f3",
+                "mono": true,
+                "mark": "…"
+              }
+            ],
+            "w2": [
+              {
+                "text": "row locked, skips it",
+                "meta": "idle"
+              }
+            ]
+          },
+          "say": "Every worker polls the table (every 500 ms). The claim locks the row, so exactly one worker gets it — the others skip it.",
+          "ms": 2800
+        },
+        {
+          "edges": {
+            "edge": "w-models",
+            "data": "extract · embed"
+          },
+          "show": {
+            "llm": [
+              {
+                "text": "extract facts"
+              }
+            ],
+            "emb": [
+              {
+                "text": "embed 1 fact"
+              }
+            ]
+          },
+          "say": "The worker calls the LLM to extract facts and embeds them."
+        },
+        {
+          "edges": {
+            "edge": "w-mem",
+            "data": "1 fact"
+          },
+          "show": {
+            "mem": [
+              {
+                "tag": "world",
+                "text": "Alice joined Google",
+                "meta": "Mar 2026",
+                "mark": "new"
+              }
+            ]
+          },
+          "say": "Then writes them to the bank."
+        },
+        {
+          "edges": {
+            "edge": "claim-w1",
+            "back": true,
+            "data": "completed"
+          },
+          "show": {
+            "ops": [
+              {
+                "tag": "retain",
+                "tone": "orange",
+                "text": "op_7f3",
+                "meta": "completed",
+                "mark": "✓"
+              },
+              {
+                "tag": "consolidation",
+                "tone": "orange",
+                "text": "op_8a1",
+                "meta": "pending"
+              }
+            ],
+            "w1": [
+              {
+                "text": "retain op_7f3",
+                "mono": true,
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "The task is marked completed. New facts queue their own follow-up: consolidation (when auto-consolidation is on), plus graph and index upkeep.",
+          "ms": 2800
+        },
+        {
+          "edges": {
+            "edge": "cp-http",
+            "data": "operation status"
+          },
+          "show": {
+            "cp": [
+              {
+                "text": "op_7f3",
+                "meta": "completed",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "The Control Plane talks to the same API, so you can watch the operation there."
+        }
+      ]
+    },
+    {
+      "label": "background",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "claim-w2",
+            "data": "consolidation"
+          },
+          "show": {
+            "ops": [
+              {
+                "tag": "consolidation",
+                "tone": "orange",
+                "text": "op_8a1",
+                "meta": "processing · worker-2"
+              }
+            ],
+            "w2": [
+              {
+                "text": "consolidation op_8a1",
+                "mono": true,
+                "mark": "…"
+              }
+            ]
+          },
+          "say": "Background work goes through the same queue. This time worker-2 wins the claim."
+        },
+        {
+          "edges": {
+            "edge": "w-models",
+            "data": "consolidate"
+          },
+          "show": {
+            "llm": [
+              {
+                "text": "merge facts into observations"
+              }
+            ]
+          },
+          "say": "Consolidation asks the LLM to merge new facts into observations."
+        },
+        {
+          "edges": {
+            "edge": "w-mem",
+            "data": "observation"
+          },
+          "show": {
+            "mem": [
+              {
+                "tag": "observation",
+                "tone": "green",
+                "text": "Alice works at Google",
+                "meta": "1 source",
+                "mark": "new"
+              }
+            ]
+          }
+        },
+        {
+          "edges": {
+            "edge": "claim-w2",
+            "back": true,
+            "data": "refresh queued"
+          },
+          "show": {
+            "ops": [
+              {
+                "tag": "consolidation",
+                "tone": "orange",
+                "text": "op_8a1",
+                "meta": "completed",
+                "mark": "✓"
+              },
+              {
+                "tag": "refresh_mental_model",
+                "tone": "orange",
+                "text": "op_9c4",
+                "meta": "pending"
+              }
+            ],
+            "w2": [
+              {
+                "text": "consolidation op_8a1",
+                "mono": true,
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "Mental models that refresh after consolidation — and are now stale — get a refresh task of their own.",
+          "ms": 2600
+        },
+        {
+          "edges": {
+            "edge": "claim-iw",
+            "data": "claim"
+          },
+          "show": {
+            "ops": [
+              {
+                "tag": "refresh_mental_model",
+                "tone": "orange",
+                "text": "op_9c4",
+                "meta": "processing · api"
+              }
+            ],
+            "iworker": [
+              {
+                "text": "refresh_mental_model op_9c4",
+                "mono": true,
+                "mark": "…"
+              }
+            ]
+          },
+          "say": "The API’s internal worker claims from the same table. Set HINDSIGHT_API_WORKER_ENABLED=false and only dedicated workers do.",
+          "ms": 3000
+        },
+        {
+          "edges": {
+            "edge": "iw-mem",
+            "data": "rewrite model"
+          },
+          "show": {
+            "mem": [
+              {
+                "tag": "observation",
+                "tone": "green",
+                "text": "Alice works at Google",
+                "meta": "1 source"
+              },
+              {
+                "tag": "model",
+                "tone": "orange",
+                "text": "Team overview",
+                "mark": "↻"
+              }
+            ],
+            "iworker": [
+              {
+                "text": "refresh_mental_model op_9c4",
+                "mono": true,
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "Any worker can run any task: they share the package, the image and the database, so you add more to scale.",
+          "ms": 3000
+        }
+      ]
+    },
+    {
+      "label": "recall · sync",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "app-http",
+            "data": "recall()"
+          },
+          "show": {
+            "app": [
+              {
+                "tag": "recall",
+                "tone": "gray",
+                "text": "“Where does Alice work?”"
+              }
+            ]
+          },
+          "say": "Later, a recall. Like reflect and any read, it is answered inside the API process. Nothing is queued."
+        },
+        {
+          "edges": {
+            "edge": "http-emb",
+            "data": "embed the query"
+          },
+          "show": {
+            "http": [
+              {
+                "text": "recall",
+                "meta": "bank alice-team",
+                "mono": true
+              }
+            ],
+            "emb": [
+              {
+                "text": "query → vector"
+              }
+            ]
+          },
+          "say": "The query is embedded — by a model loaded in the process itself, or a remote embeddings service."
+        },
+        {
+          "edges": {
+            "edge": "http-mem",
+            "data": "4-way search"
+          },
+          "show": {
+            "mem": [
+              {
+                "tag": "world",
+                "text": "Alice joined Google",
+                "meta": "Mar 2026",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "The four searches run as queries against PostgreSQL, where every bank lives."
+        },
+        {
+          "edges": {
+            "edge": "http-emb",
+            "data": "rerank"
+          },
+          "show": {
+            "emb": [
+              {
+                "text": "query → vector"
+              },
+              {
+                "text": "cross-encoder rerank"
+              }
+            ]
+          },
+          "say": "Candidates are reranked by the cross-encoder, local or remote like the embeddings."
+        },
+        {
+          "edges": {
+            "edge": "app-http",
+            "back": true,
+            "data": "ranked memories"
+          },
+          "show": {
+            "app": [
+              {
+                "tag": "recall",
+                "tone": "gray",
+                "text": "“Where does Alice work?”"
+              },
+              {
+                "tag": "result",
+                "tone": "green",
+                "text": "Alice joined Google",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "The API keeps no state of its own, so you can run as many copies as you like behind a load balancer."
+        }
+      ]
+    }
+  ]
+}

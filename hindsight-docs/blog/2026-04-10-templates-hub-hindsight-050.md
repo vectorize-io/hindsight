@@ -14,8 +14,8 @@ Every team that uses long-term memory eventually runs into the same problem: the
 
 <!-- truncate -->
 
-import {Flow} from '@vectorize-io/interfig';
-import templates from '@vectorize-io/interfig/figures/templates';
+import Figure from '@site/src/components/Figure';
+import templates from '@site/figures/templates.json';
 
 ## TL;DR
 
@@ -55,7 +55,7 @@ That means the memory behavior for an agent can now be treated like configuratio
 
 At a high level, the workflow looks like this:
 
-<Flow {...templates.props} />
+<Figure doc={templates} />
 
 The new Templates Hub adds a discoverable front end to that workflow. Instead of starting from an empty bank, you can begin with a known-good template and adjust from there.
 

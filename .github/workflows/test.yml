@@ -22,7 +22,7 @@ jobs:
       clients-rust: ${{ steps.filter.outputs.clients-rust }}
       clients-go: ${{ steps.filter.outputs.clients-go }}
       control-plane: ${{ steps.filter.outputs.control-plane }}
-      interfig: ${{ steps.filter.outputs.interfig }}
+      figures: ${{ steps.filter.outputs.figures }}
       cli: ${{ steps.filter.outputs.cli }}
       docker: ${{ steps.filter.outputs.docker }}
       helm: ${{ steps.filter.outputs.helm }}
@@ -140,8 +140,8 @@ jobs:
             # Same reason as clients-rust above: the CLI compiles against the
             # progenitor-generated client, so an OpenAPI change alone can break it.
             - 'hindsight-docs/static/openapi.json'
-          interfig:
-            - 'hindsight-interfig/**'
+          figures:
+            - 'hindsight-docs/figures/**'
             - 'scripts/docs_skill_figures.py'
           docker:
             - 'docker/**'
@@ -1549,9 +1549,9 @@ jobs:
           exit 1
         fi
 
-  test-interfig:
+  test-figures:
     needs: [detect-changes]
-    if: needs.detect-changes.outputs.interfig == 'true'
+    if: needs.detect-changes.outputs.figures == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -1560,25 +1560,20 @@ jobs:
       with:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
-    # Node 22 runs the .ts tests directly (type stripping); the docs build compiles the figures themselves.
     - name: Set up Node.js
       uses: actions/setup-node@v6
       with:
         node-version: '22'
-        cache: 'npm'
-        cache-dependency-path: package-lock.json
 
-    - name: Install dependencies
-      run: npm ci --workspace=@vectorize-io/interfig
-
-    - name: Typecheck (library and figures)
-      run: npm run typecheck --workspace=@vectorize-io/interfig
-
-    - name: Check formatting
-      run: npm run format:check --workspace=@vectorize-io/interfig
-
-    - name: Test
-      run: npm test --workspace=@vectorize-io/interfig
+    # The docs figures are Giotto diagrams; export each one with the Giotto the docs pin, so a
+    # figure that no longer draws fails here instead of in the browser.
+    - name: Export every figure
+      run: |
+        PIN=$(node -p "require('./hindsight-docs/package.json').dependencies.giotto")
+        for f in hindsight-docs/figures/*.json; do
+          echo "$f"
+          npx --yes --package "$PIN" giotto export "$f" /tmp/figure.svg
+        done
 
     # The docs skill turns each figure into its narration by reading the figure files.
     - name: Check every figure renders as text for the docs skill
@@ -5804,7 +5799,7 @@ jobs:
       - test-google-adk-integration
       - test-roo-code-integration
       - build-control-plane
-      - test-interfig
+      - test-figures
       - build-docs
       - test-rust-cli
       - lint-helm-chart

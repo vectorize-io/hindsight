@@ -2,8 +2,8 @@
 sidebar_position: 7
 ---
 
-import {Flow} from '@vectorize-io/interfig';
-import knowledgePagesFigure from '@vectorize-io/interfig/figures/knowledge-pages';
+import Figure from '@site/src/components/Figure';
+import knowledgePagesFigure from '@site/figures/knowledge-pages.json';
 
 # Knowledge Pages
 
@@ -11,7 +11,7 @@ import knowledgePagesFigure from '@vectorize-io/interfig/figures/knowledge-pages
 
 The shape is a wiki. The engine underneath is memory.
 
-<Flow {...knowledgePagesFigure.props} />
+<Figure doc={knowledgePagesFigure} />
 
 ---
 

@@ -1,0 +1,701 @@
+{
+  "title": "Multilingual Support",
+  "speed": 2200,
+  "elements": [
+    {
+      "id": "agent",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Your AI Agent"
+        }
+      ],
+      "minCardHeight": 148,
+      "width": 200
+    },
+    {
+      "id": "retain",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Retain"
+        },
+        {
+          "type": "subtitle",
+          "text": "LLM extraction"
+        }
+      ],
+      "minCardHeight": 58,
+      "width": 210
+    },
+    {
+      "id": "recall",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Recall"
+        },
+        {
+          "type": "subtitle",
+          "text": "search"
+        }
+      ],
+      "minCardHeight": 43,
+      "width": 210
+    },
+    {
+      "id": "reflect",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Reflect"
+        },
+        {
+          "type": "subtitle",
+          "text": "agent loop"
+        }
+      ],
+      "minCardHeight": 58,
+      "width": 210
+    },
+    {
+      "id": "g1",
+      "type": "group",
+      "label": {
+        "title": "Hindsight API"
+      },
+      "children": [
+        "retain",
+        "recall",
+        "reflect"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 24,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "vectors",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Vectors"
+        },
+        {
+          "type": "subtitle",
+          "text": "embedding model"
+        }
+      ],
+      "minCardHeight": 58
+    },
+    {
+      "id": "fulltext",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Full text"
+        },
+        {
+          "type": "subtitle",
+          "text": "tokenizer"
+        }
+      ],
+      "minCardHeight": 58
+    },
+    {
+      "id": "indexes",
+      "type": "group",
+      "label": {
+        "title": "Indexes"
+      },
+      "children": [
+        "vectors",
+        "fulltext"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 12,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "facts",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Facts"
+        }
+      ],
+      "minCardHeight": 103,
+      "width": 250
+    },
+    {
+      "id": "entities",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Entities"
+        },
+        {
+          "type": "subtitle",
+          "text": "names as written"
+        }
+      ],
+      "minCardHeight": 73,
+      "width": 250
+    },
+    {
+      "id": "g3",
+      "type": "group",
+      "children": [
+        "facts",
+        "entities"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 24,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "g2",
+      "type": "group",
+      "label": {
+        "title": "Memory Bank"
+      },
+      "children": [
+        "indexes",
+        "g3"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 40,
+        "align": "center"
+      }
+    },
+    {
+      "id": "g0",
+      "type": "group",
+      "children": [
+        "agent",
+        "g1",
+        "g2"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 40,
+        "align": "center"
+      }
+    },
+    {
+      "id": "call-retain",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "agent"
+      },
+      "end": {
+        "id": "retain"
+      },
+      "label": {
+        "text": "retain()"
+      }
+    },
+    {
+      "id": "call-recall",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "agent"
+      },
+      "end": {
+        "id": "recall"
+      },
+      "label": {
+        "text": "recall()"
+      }
+    },
+    {
+      "id": "call-reflect",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "agent"
+      },
+      "end": {
+        "id": "reflect"
+      },
+      "label": {
+        "text": "reflect()"
+      }
+    },
+    {
+      "id": "r-facts",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "retain"
+      },
+      "end": {
+        "id": "facts"
+      },
+      "quiet": true
+    },
+    {
+      "id": "r-ent",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "retain"
+      },
+      "end": {
+        "id": "entities"
+      },
+      "quiet": true
+    },
+    {
+      "id": "r-idx",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "retain"
+      },
+      "end": {
+        "id": "indexes"
+      },
+      "label": {
+        "text": "index"
+      }
+    },
+    {
+      "id": "q-vec",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "recall"
+      },
+      "end": {
+        "id": "vectors"
+      }
+    },
+    {
+      "id": "q-ft",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "recall"
+      },
+      "end": {
+        "id": "fulltext"
+      }
+    },
+    {
+      "id": "idx-facts",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "indexes"
+      },
+      "end": {
+        "id": "facts"
+      },
+      "label": {
+        "text": "point to"
+      }
+    },
+    {
+      "id": "reflect-recall",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "reflect"
+      },
+      "end": {
+        "id": "recall"
+      },
+      "label": {
+        "text": "uses"
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "label": "retain()",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "call-retain",
+            "data": "Chinese content"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "content",
+                "tone": "gray",
+                "text": "“王芳在Google北京办公室工作，她是一名高级产品经理。之前她在Microsoft和Amazon工作过。”"
+              },
+              {
+                "tag": "context",
+                "tone": "gray",
+                "text": "员工资料"
+              }
+            ]
+          },
+          "say": "Your agent retains Chinese text that mentions English company names."
+        },
+        {
+          "show": {
+            "retain": [
+              {
+                "text": "Input language: Chinese"
+              },
+              {
+                "text": "Write facts in Chinese",
+                "mark": "✓"
+              },
+              {
+                "text": "Never translate names",
+                "mark": "✓"
+              }
+            ]
+          },
+          "light": [
+            "retain"
+          ],
+          "say": "There is no separate language detector. The LLM is told to write facts in the language of the input, and to keep names as they are.",
+          "ms": 3400
+        },
+        {
+          "edges": [
+            "r-facts",
+            "r-ent"
+          ],
+          "show": {
+            "facts": [
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "王芳在Google北京办公室工作，担任高级产品经理",
+                "mark": "new"
+              },
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "王芳曾在Microsoft和Amazon工作过",
+                "mark": "new"
+              }
+            ],
+            "entities": [
+              {
+                "type": "graph",
+                "nodes": [
+                  "王芳",
+                  "Google",
+                  "Microsoft",
+                  "Amazon"
+                ],
+                "links": [
+                  [
+                    "王芳",
+                    "Google"
+                  ],
+                  [
+                    "王芳",
+                    "Microsoft"
+                  ],
+                  [
+                    "王芳",
+                    "Amazon"
+                  ]
+                ],
+                "lit": [
+                  "王芳",
+                  "Google",
+                  "Microsoft",
+                  "Amazon"
+                ]
+              }
+            ]
+          },
+          "say": "Facts are stored in Chinese. 王芳 stays 王芳, not “Wang Fang”, and Google stays Google.",
+          "ms": 3400
+        },
+        {
+          "edges": "r-idx",
+          "show": {
+            "vectors": [
+              {
+                "text": "bge-m3",
+                "mono": true,
+                "meta": "100+ languages",
+                "mark": "✓"
+              }
+            ],
+            "fulltext": [
+              {
+                "text": "pgroonga",
+                "mono": true,
+                "meta": "splits Chinese text",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "Indexing is where language matters. The default embedding model and keyword index are English-only; pick a multilingual model and a tokenizer that can split Chinese.",
+          "ms": 3800
+        },
+        {
+          "edges": {
+            "edge": "call-retain",
+            "back": true,
+            "data": "✓ 2 facts"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "content",
+                "tone": "gray",
+                "text": "“王芳在Google北京办公室工作，她是一名高级产品经理。之前她在Microsoft和Amazon工作过。”"
+              },
+              {
+                "tag": "context",
+                "tone": "gray",
+                "text": "员工资料"
+              },
+              {
+                "tag": "result",
+                "tone": "green",
+                "text": "2 facts stored",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "Stored, in the language it came in.",
+          "ms": 1800
+        }
+      ]
+    },
+    {
+      "label": "recall()",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "call-recall",
+            "data": "“王芳在哪里工作？”"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "query",
+                "tone": "gray",
+                "text": "“王芳在哪里工作？”"
+              }
+            ]
+          },
+          "say": "A query in Chinese."
+        },
+        {
+          "edges": [
+            {
+              "edge": "q-vec",
+              "data": "≈ 在哪里工作"
+            },
+            {
+              "edge": "q-ft",
+              "data": "“王芳”"
+            }
+          ],
+          "show": {
+            "vectors": [
+              {
+                "text": "matches by meaning",
+                "meta": "工作 ≈ 担任",
+                "mark": "✓"
+              }
+            ],
+            "fulltext": [
+              {
+                "text": "matches the name",
+                "meta": "王芳 in 2 facts",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "The multilingual embeddings match by meaning; the tokenizer lets the exact name 王芳 match as a word.",
+          "ms": 3200
+        },
+        {
+          "edges": "idx-facts",
+          "show": {
+            "facts": [
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "王芳在Google北京办公室工作，担任高级产品经理",
+                "mark": "✓"
+              },
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "王芳曾在Microsoft和Amazon工作过",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "Both point to the Chinese facts. The reranker that then orders them is English-only by default too, so pick a multilingual one.",
+          "ms": 2000
+        },
+        {
+          "edges": {
+            "edge": "call-recall",
+            "back": true,
+            "data": "2 facts"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "query",
+                "tone": "gray",
+                "text": "“王芳在哪里工作？”"
+              },
+              {
+                "tag": "1",
+                "tone": "green",
+                "text": "王芳在Google北京办公室工作，担任高级产品经理"
+              },
+              {
+                "tag": "2",
+                "tone": "green",
+                "text": "王芳曾在Microsoft和Amazon工作过"
+              }
+            ]
+          },
+          "say": "The facts come back exactly as stored. Nothing was translated on the way.",
+          "ms": 2800
+        }
+      ]
+    },
+    {
+      "label": "reflect()",
+      "caption": "",
+      "beats": [
+        {
+          "edges": {
+            "edge": "call-reflect",
+            "data": "“王芳有哪些工作经历？”"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "question",
+                "tone": "gray",
+                "text": "“王芳有哪些工作经历？”"
+              }
+            ]
+          },
+          "say": "A question in Chinese."
+        },
+        {
+          "edges": {
+            "edge": "reflect-recall",
+            "data": "recall"
+          },
+          "show": {
+            "reflect": [
+              {
+                "text": "Question language: Chinese"
+              },
+              {
+                "text": "searching…"
+              }
+            ]
+          },
+          "say": "Reflect searches the bank like before…"
+        },
+        {
+          "edges": [
+            "q-vec",
+            "q-ft"
+          ],
+          "ms": 1600,
+          "say": "…through the same indexes…"
+        },
+        {
+          "edges": "idx-facts",
+          "show": {
+            "facts": [
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "王芳在Google北京办公室工作，担任高级产品经理",
+                "mark": "cited"
+              },
+              {
+                "tag": "world",
+                "tone": "blue",
+                "text": "王芳曾在Microsoft和Amazon工作过",
+                "mark": "cited"
+              }
+            ]
+          },
+          "ms": 2000,
+          "say": "…and finds both facts."
+        },
+        {
+          "show": {
+            "reflect": [
+              {
+                "text": "Question language: Chinese"
+              },
+              {
+                "text": "2 facts cited"
+              },
+              {
+                "text": "Answer in Chinese",
+                "mark": "✓"
+              }
+            ]
+          },
+          "light": [
+            "reflect"
+          ],
+          "say": "The answer is written in the language of the question.",
+          "ms": 2400
+        },
+        {
+          "edges": {
+            "edge": "call-reflect",
+            "back": true,
+            "data": "answer in Chinese"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "question",
+                "tone": "gray",
+                "text": "“王芳有哪些工作经历？”"
+              },
+              {
+                "tag": "answer",
+                "tone": "green",
+                "text": "“王芳目前在Google北京办公室担任高级产品经理，之前在Microsoft和Amazon工作过。”"
+              }
+            ]
+          },
+          "say": "To force one language everywhere instead, set HINDSIGHT_API_LLM_OUTPUT_LANGUAGE.",
+          "ms": 3200
+        }
+      ]
+    }
+  ]
+}

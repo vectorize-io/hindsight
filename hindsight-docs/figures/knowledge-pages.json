@@ -1,0 +1,773 @@
+{
+  "title": "Knowledge Pages",
+  "speed": 1466.6666666666667,
+  "elements": [
+    {
+      "id": "tools",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Your Team’s Tools"
+        },
+        {
+          "type": "subtitle",
+          "text": "send what happens"
+        }
+      ],
+      "minCardHeight": 58,
+      "width": 250
+    },
+    {
+      "id": "app",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Another Client"
+        },
+        {
+          "type": "subtitle",
+          "text": "an agent, a teammate"
+        }
+      ],
+      "minCardHeight": 58,
+      "width": 250
+    },
+    {
+      "id": "g1",
+      "type": "group",
+      "label": {
+        "title": "You"
+      },
+      "children": [
+        "tools",
+        "app"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 380,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "retain",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Retain"
+        },
+        {
+          "type": "subtitle",
+          "text": "takes in what you send"
+        }
+      ],
+      "width": 200
+    },
+    {
+      "id": "page",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Deploying the API"
+        },
+        {
+          "type": "subtitle",
+          "text": "a knowledge page"
+        }
+      ],
+      "minCardHeight": 238,
+      "width": 390
+    },
+    {
+      "id": "api",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Search"
+        },
+        {
+          "type": "subtitle",
+          "text": "finds the right page"
+        }
+      ],
+      "width": 200
+    },
+    {
+      "id": "g3",
+      "type": "group",
+      "children": [
+        "retain",
+        "page",
+        "api"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 56,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "mem",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "New memories"
+        },
+        {
+          "type": "subtitle",
+          "text": "memory bank"
+        }
+      ],
+      "minCardHeight": 58,
+      "width": 310
+    },
+    {
+      "id": "consolidate",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Consolidation"
+        },
+        {
+          "type": "subtitle",
+          "text": "learns"
+        }
+      ],
+      "minCardHeight": 28,
+      "width": 310
+    },
+    {
+      "id": "obs",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Observations"
+        },
+        {
+          "type": "subtitle",
+          "text": "what it believes"
+        }
+      ],
+      "minCardHeight": 73,
+      "width": 310
+    },
+    {
+      "id": "refresh",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Refresh"
+        },
+        {
+          "type": "subtitle",
+          "text": "rewrites pages"
+        }
+      ],
+      "minCardHeight": 58,
+      "width": 310
+    },
+    {
+      "id": "g4",
+      "type": "group",
+      "children": [
+        "mem",
+        "consolidate",
+        "obs",
+        "refresh"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 44,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "g2",
+      "type": "group",
+      "label": {
+        "title": "Hindsight",
+        "logo": "/img/logo.png"
+      },
+      "children": [
+        "g3",
+        "g4"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 60,
+        "align": "center"
+      }
+    },
+    {
+      "id": "g0",
+      "type": "group",
+      "children": [
+        "g1",
+        "g2"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 64,
+        "align": "center"
+      }
+    },
+    {
+      "id": "send",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "tools"
+      },
+      "end": {
+        "id": "retain"
+      },
+      "label": {
+        "text": "retain"
+      }
+    },
+    {
+      "id": "store",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "retain"
+      },
+      "end": {
+        "id": "mem"
+      }
+    },
+    {
+      "id": "learn",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "mem"
+      },
+      "end": {
+        "id": "consolidate"
+      }
+    },
+    {
+      "id": "believe",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "consolidate"
+      },
+      "end": {
+        "id": "obs"
+      }
+    },
+    {
+      "id": "changed",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "obs"
+      },
+      "end": {
+        "id": "refresh"
+      }
+    },
+    {
+      "id": "write",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "refresh"
+      },
+      "end": {
+        "id": "page"
+      },
+      "label": {
+        "text": "update"
+      }
+    },
+    {
+      "id": "ask",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "app"
+      },
+      "end": {
+        "id": "api"
+      },
+      "label": {
+        "text": "ask"
+      }
+    },
+    {
+      "id": "find",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "api"
+      },
+      "end": {
+        "id": "page"
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "label": "knowledge pages",
+      "caption": "",
+      "beats": [
+        {
+          "show": {
+            "tools": [
+              {
+                "tag": "every day",
+                "tone": "gray",
+                "text": "chat, incidents, code changes"
+              }
+            ],
+            "mem": [
+              {
+                "tag": "doc",
+                "tone": "purple",
+                "text": "Deploy runbook, v3"
+              },
+              {
+                "tag": "slack",
+                "tone": "purple",
+                "text": "“Prod needs a sign-off from on-call”"
+              },
+              {
+                "tag": "incident",
+                "tone": "purple",
+                "text": "July: a slow database change broke the release"
+              }
+            ],
+            "consolidate": [
+              {
+                "tag": "done",
+                "tone": "green",
+                "text": "everything learned"
+              }
+            ],
+            "obs": [
+              {
+                "text": "Merging to main ships the API",
+                "meta": "6 sources"
+              },
+              {
+                "text": "Production needs a sign-off",
+                "meta": "4 sources"
+              },
+              {
+                "text": "Keep database changes small",
+                "meta": "2 sources"
+              }
+            ],
+            "refresh": [
+              {
+                "tag": "idle",
+                "tone": "gray",
+                "text": "every page up to date"
+              }
+            ],
+            "page": [
+              {
+                "tag": "up to date",
+                "tone": "green",
+                "text": ""
+              },
+              {
+                "text": "**# Deploying the API**"
+              },
+              {
+                "text": "**## How a release ships**"
+              },
+              {
+                "text": "• Merging to main builds and ships the API"
+              },
+              {
+                "text": "• Production needs a sign-off"
+              },
+              {
+                "text": "**## Database changes**"
+              },
+              {
+                "text": "• They run before new traffic arrives"
+              },
+              {
+                "text": "• Keep them small: a slow one broke July’s release"
+              },
+              {
+                "text": "**## Rolling back**"
+              },
+              {
+                "text": "• Redeploy the previous version"
+              },
+              {
+                "text": "",
+                "meta": "written by Hindsight from what the bank believes"
+              }
+            ],
+            "app": [
+              {
+                "tag": "waiting",
+                "tone": "gray",
+                "text": "will ask about deploys later"
+              }
+            ]
+          },
+          "say": "Hindsight keeps a wiki for your team. This page on deploys is written from what the bank knows.",
+          "ms": 2400
+        },
+        {
+          "edges": {
+            "edge": "send",
+            "data": "what happened"
+          },
+          "show": {
+            "tools": [
+              {
+                "tag": "incident",
+                "tone": "purple",
+                "text": "A release hung 20 min: it went live before the database was ready"
+              },
+              {
+                "tag": "slack",
+                "tone": "purple",
+                "text": "“We ship to 10% of users first now”"
+              },
+              {
+                "tag": "code change",
+                "tone": "purple",
+                "text": "Wait for database changes before going live"
+              }
+            ]
+          },
+          "say": "Then something happens. Your tools send it to Hindsight: an incident, a Slack thread, a code change.",
+          "ms": 2533.3333333333335
+        },
+        {
+          "edges": "store",
+          "show": {
+            "mem": [
+              {
+                "tag": "incident",
+                "tone": "purple",
+                "text": "A release hung 20 min: it went live before the database was ready"
+              },
+              {
+                "tag": "slack",
+                "tone": "purple",
+                "text": "“We ship to 10% of users first now”"
+              },
+              {
+                "tag": "code change",
+                "tone": "purple",
+                "text": "Wait for database changes before going live"
+              }
+            ]
+          },
+          "say": "Hindsight stores it as new memories.",
+          "ms": 1733.3333333333333
+        },
+        {
+          "edges": {
+            "edge": "learn",
+            "data": "what’s new"
+          },
+          "show": {
+            "consolidate": [
+              {
+                "tag": "learned",
+                "tone": "orange",
+                "text": "1 new · 1 corrected"
+              }
+            ]
+          },
+          "say": "It learns from them…",
+          "ms": 1600
+        },
+        {
+          "edges": "believe",
+          "show": {
+            "obs": [
+              {
+                "text": "Merging to main ships the API",
+                "meta": "6 sources"
+              },
+              {
+                "text": "Production needs a sign-off",
+                "meta": "4 sources"
+              },
+              {
+                "text": "Releases wait for database changes",
+                "meta": "3 sources",
+                "mark": "corrected"
+              },
+              {
+                "text": "Production goes to 10% of users first",
+                "meta": "2 sources",
+                "mark": "new"
+              }
+            ]
+          },
+          "say": "…adds what is new, and corrects what is no longer true.",
+          "ms": 2133.3333333333335
+        },
+        {
+          "edges": {
+            "edge": "changed",
+            "data": "what changed"
+          },
+          "show": {
+            "refresh": [
+              {
+                "tag": "updating",
+                "tone": "orange",
+                "text": "Deploying the API"
+              }
+            ],
+            "page": [
+              {
+                "tag": "out of date",
+                "tone": "orange",
+                "text": ""
+              },
+              {
+                "text": "**# Deploying the API**"
+              },
+              {
+                "text": "**## How a release ships**"
+              },
+              {
+                "text": "• Merging to main builds and ships the API"
+              },
+              {
+                "text": "• Production needs a sign-off"
+              },
+              {
+                "text": "**## Database changes**"
+              },
+              {
+                "text": "• They run before new traffic arrives"
+              },
+              {
+                "text": "• Keep them small: a slow one broke July’s release"
+              },
+              {
+                "text": "**## Rolling back**"
+              },
+              {
+                "text": "• Redeploy the previous version"
+              },
+              {
+                "text": "",
+                "meta": "written by Hindsight from what the bank believes"
+              }
+            ]
+          },
+          "say": "The page on deploys is now out of date, so Hindsight updates it.",
+          "ms": 2000
+        },
+        {
+          "edges": {
+            "edge": "write",
+            "data": "3 changes"
+          },
+          "show": {
+            "refresh": [
+              {
+                "tag": "added",
+                "tone": "green",
+                "text": "the 10% rollout"
+              },
+              {
+                "tag": "fixed",
+                "tone": "green",
+                "text": "the database advice"
+              },
+              {
+                "tag": "added",
+                "tone": "green",
+                "text": "an incidents section"
+              }
+            ],
+            "page": [
+              {
+                "tag": "just updated",
+                "tone": "green",
+                "text": ""
+              },
+              {
+                "text": "**# Deploying the API**"
+              },
+              {
+                "text": "**## How a release ships**"
+              },
+              {
+                "text": "• Merging to main builds and ships the API"
+              },
+              {
+                "text": "• Production needs a sign-off"
+              },
+              {
+                "tag": "+",
+                "tone": "green",
+                "text": "• It goes to 10% of users for 15 min first"
+              },
+              {
+                "text": "**## Database changes**"
+              },
+              {
+                "text": "• They run before new traffic arrives"
+              },
+              {
+                "tag": "−",
+                "tone": "red",
+                "text": "• Keep them small: a slow one broke July’s release",
+                "meta": "removed"
+              },
+              {
+                "tag": "+",
+                "tone": "green",
+                "text": "• Releases wait until database changes finish"
+              },
+              {
+                "text": "**## Rolling back**"
+              },
+              {
+                "text": "• Redeploy the previous version"
+              },
+              {
+                "tag": "+",
+                "tone": "green",
+                "text": "**## Incidents**"
+              },
+              {
+                "tag": "+",
+                "tone": "green",
+                "text": "• Sep 24: a release hung 20 min, went live too early"
+              },
+              {
+                "text": "",
+                "meta": "only what changed; the rest is untouched"
+              }
+            ]
+          },
+          "say": "Only what changed: the old advice is crossed out, the new facts land where they belong.",
+          "ms": 3733.3333333333335
+        },
+        {
+          "edges": {
+            "edge": "ask",
+            "data": "“Why did the release hang?”"
+          },
+          "show": {
+            "app": [
+              {
+                "tag": "question",
+                "tone": "gray",
+                "text": "“Why did the release hang?”"
+              }
+            ],
+            "page": [
+              {
+                "tag": "up to date",
+                "tone": "green",
+                "text": ""
+              },
+              {
+                "text": "**# Deploying the API**"
+              },
+              {
+                "text": "**## How a release ships**"
+              },
+              {
+                "text": "• Merging to main builds and ships the API"
+              },
+              {
+                "text": "• Production needs a sign-off"
+              },
+              {
+                "text": "• It goes to 10% of users for 15 min first"
+              },
+              {
+                "text": "**## Database changes**"
+              },
+              {
+                "text": "• They run before new traffic arrives"
+              },
+              {
+                "text": "• Releases wait until database changes finish"
+              },
+              {
+                "text": "**## Rolling back**"
+              },
+              {
+                "text": "• Redeploy the previous version"
+              },
+              {
+                "text": "**## Incidents**"
+              },
+              {
+                "text": "• Sep 24: a release hung 20 min, went live too early"
+              },
+              {
+                "text": "",
+                "meta": "up to date"
+              }
+            ]
+          },
+          "say": "Later, another client asks: an AI agent, or a teammate.",
+          "ms": 2000
+        },
+        {
+          "edges": {
+            "edge": "find",
+            "data": "search"
+          },
+          "say": "Hindsight finds the page, already written and up to date.",
+          "ms": 1733.3333333333333
+        },
+        {
+          "edges": {
+            "edge": "find",
+            "back": true,
+            "data": "the page"
+          },
+          "ms": 1333.3333333333333
+        },
+        {
+          "edges": {
+            "edge": "ask",
+            "back": true,
+            "data": "the answer"
+          },
+          "show": {
+            "app": [
+              {
+                "tag": "question",
+                "tone": "gray",
+                "text": "“Why did the release hang?”"
+              },
+              {
+                "tag": "answer",
+                "tone": "green",
+                "text": "It went live before the database was ready. Releases now wait for it.",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "The answer already includes what just happened. Nobody had to update the wiki.",
+          "ms": 2800
+        }
+      ]
+    }
+  ]
+}

@@ -6,14 +6,14 @@ import CodeSnippet from '@site/src/components/CodeSnippet';
 import recallPy from '!!raw-loader!@site/examples/api/recall.py';
 import memoryBanksPy from '!!raw-loader!@site/examples/api/memory-banks.py';
 import observationsPy from '!!raw-loader!@site/examples/api/observations.py';
-import {Flow} from '@vectorize-io/interfig';
-import observationsFigure from '@vectorize-io/interfig/figures/observations';
+import Figure from '@site/src/components/Figure';
+import observationsFigure from '@site/figures/observations.json';
 
 # Observations: Knowledge Consolidation
 
 After memories are retained, Hindsight automatically consolidates related facts into **observations** — deduplicated, evidence-grounded beliefs the bank has built up from multiple memories. Each observation tracks its supporting evidence (with exact quotes) and a proof count, and is refined rather than overwritten when new evidence arrives.
 
-<Flow {...observationsFigure.props} />
+<Figure doc={observationsFigure} />
 
 ---
 

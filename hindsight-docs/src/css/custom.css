@@ -1823,11 +1823,16 @@ html.docs-wrapper article strong {
   }
 }
 
-/* interfig figures (hindsight-interfig): follow the site colors */
-.interfig {
+/* Giotto figures (<giotto-player>): follow the site colors */
+:root {
   --fig-accent: var(--ifm-color-primary);
+  --fig-fg: #1c1e21;
+  --fig-muted: #6b7280;
+  --fig-bg: #ffffff;
+  --fig-surface: #ffffff;
+  --fig-border: #d0d7de;
 }
-[data-theme='dark'] .interfig {
+[data-theme='dark'] {
   --fig-fg: #e3e3e3;
   --fig-muted: #9aa0a6;
   --fig-bg: #1b1b1d;

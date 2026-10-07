@@ -2,14 +2,14 @@
 sidebar_position: 3
 ---
 
-import {Flow} from '@vectorize-io/interfig';
-import tempr from '@vectorize-io/interfig/figures/tempr';
+import Figure from '@site/src/components/Figure';
+import tempr from '@site/figures/tempr.json';
 
 # Recall: How Hindsight Retrieves Memories
 
 When you call `recall()`, Hindsight uses multiple search strategies in parallel to find the most relevant memories, regardless of how you phrase your query.
 
-<Flow {...tempr.props} />
+<Figure doc={tempr} />
 
 ---
 

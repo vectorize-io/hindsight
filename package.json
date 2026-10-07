@@ -5,7 +5,6 @@
     "hindsight-clients/typescript",
     "hindsight-control-plane",
     "hindsight-docs",
-    "hindsight-interfig",
     "hindsight-all-npm",
     "hindsight-tools/hindsight-agent-sdk"
   ],
