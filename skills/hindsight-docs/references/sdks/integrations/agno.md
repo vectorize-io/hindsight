@@ -3,6 +3,8 @@
 
 Persistent memory tools for [Agno](https://github.com/agno-agi/agno) agents via Hindsight. Give your agents long-term memory with retain, recall, and reflect — using Agno's native Toolkit pattern.
 
+[View Changelog →](../../changelog/integrations/agno.md)
+
 ## Features
 
 - **Native Toolkit** - Extends Agno's `Toolkit` base class, just like `Mem0Tools`
