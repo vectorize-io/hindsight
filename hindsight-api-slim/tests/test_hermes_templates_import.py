@@ -72,7 +72,8 @@ async def test_reapply_is_idempotent(api_client):
     assert set(first["mental_models_created"]) == ids
 
     second = (await api_client.post(f"/v1/default/banks/{bank_id}/import", json=manifest)).json()
-    assert set(second["mental_models_updated"]) == ids
+    assert second["mental_models_updated"] == []  # unchanged models are skipped, not regenerated (#5271)
+    assert second["operation_ids"] == []
     assert second["mental_models_created"] == []
 
     # No duplicates: still exactly the same set of models.
