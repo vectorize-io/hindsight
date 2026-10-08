@@ -262,7 +262,11 @@ const config: Config = {
         isCloseable: false,
       },
     }),
-    image: 'img/logo.png',
+    image: 'img/social-card.png',
+    // Fallback for pages with no description of their own; a page's own one wins.
+    metadata: [
+      {name: 'description', content: 'State of the art long-term memory for your agents. Hindsight gives AI agents memory that learns across sessions.'},
+    ],
     colorMode: {
       defaultMode: 'dark',
       respectPrefersColorScheme: true,
