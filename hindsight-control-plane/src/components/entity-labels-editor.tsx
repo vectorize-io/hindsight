@@ -267,14 +267,21 @@ function MapFieldsEditor({
           </div>
         );
       })}
-      <button
-        type="button"
-        onClick={addField}
-        className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
-      >
-        <Plus className="h-3 w-3" />
-        {t("addField")}
-      </button>
+      {/* "+field" only makes sense inside a Map's nested editor. At the top
+          (isRoot) level each label is a single field and the label-level
+          onChange keeps only the first field, so a root "+field" silently drops
+          what it adds — a dead button. Hide it there; add more structure by
+          switching the type to Map (nested "+field") or adding another label. */}
+      {!isRoot && (
+        <button
+          type="button"
+          onClick={addField}
+          className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+        >
+          <Plus className="h-3 w-3" />
+          {t("addField")}
+        </button>
+      )}
     </div>
   );
 }
