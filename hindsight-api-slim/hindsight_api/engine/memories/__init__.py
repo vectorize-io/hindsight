@@ -10,7 +10,8 @@ this behaves like every other extension point. Unset (the normal case) means
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 
 from .base import (
     DOC_META_ATTACHMENT_FILENAMES,
