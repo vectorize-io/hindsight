@@ -37,76 +37,86 @@ const REPO = 'https://github.com/vectorize-io/hindsight';
  */
 export default function HomeHero(): ReactNode {
   const stars = useGitHubStars();
-  const video = useRef<HTMLVideoElement>(null);
+  const band = useRef<HTMLDivElement>(null);
 
-  /* The clip autoplays in the markup so it still works before (or without) JS,
-     and anyone who has asked their OS to stop animation gets it stopped on the
-     first frame instead. Deciding in an effect rather than rendering `autoPlay`
-     conditionally keeps the no-JS path intact — the alternative shows everyone
-     else a still image until hydration. */
+  /* The band runs the full width of the window, above the doc sidebar — the
+     screenshot is the point of it and the sidebar's 300px made it a thumbnail.
+     The sidebar is a sibling of <main>, so CSS alone cannot push it below
+     something nested inside main: this reports the height it has to clear —
+     the hero plus everything else marked .hs-full-bleed under it, since those
+     run edge to edge too. Measured rather than hard-coded because the content
+     rewraps with the viewport. The page itself is matched in custom.css by the
+     doc-id class the theme already puts on <html>. */
   useEffect(() => {
-    const el = video.current;
-    if (el && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      el.pause();
-      el.currentTime = 0;
-    }
+    const el = band.current;
+    if (!el) return;
+    const root = document.documentElement;
+    const bleeds = [...document.querySelectorAll('.hs-full-bleed')];
+    const sync = () => {
+      const last = bleeds[bleeds.length - 1] ?? el;
+      const height =
+        last.getBoundingClientRect().bottom - el.getBoundingClientRect().top;
+      root.style.setProperty('--hs-hero-height', `${Math.round(height)}px`);
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    bleeds.forEach((b) => ro.observe(b));
+    return () => {
+      ro.disconnect();
+      root.style.removeProperty('--hs-hero-height');
+    };
   }, []);
 
   return (
-    <div className={clsx('hs-hero-band', styles.hero)}>
-      <div className={styles.inner}>
-        <h1 className={styles.title}>
-          Agent Memory <span className={styles.titleAccent}>That Learns</span>
-        </h1>
+    <div
+      ref={band}
+      className={clsx('hs-hero-band', 'hs-full-bleed', styles.hero)}
+    >
+      <div className={styles.grid}>
+        <div className={styles.copy}>
+          <h1 className={styles.title}>
+            Agent Memory <span className={styles.titleAccent}>That Learns</span>
+          </h1>
 
-        <p className={styles.subtitle}>
-          State of the art long-term memory for your agents.
-        </p>
+          <p className={styles.subtitle}>
+            State of the art long-term memory for your agents.
+          </p>
 
-        <div className={styles.ctas}>
-          <Link className={styles.primary} to={SIGNUP}>
-            Start free on Cloud
-            <LuArrowRight size={16} />
-          </Link>
-          <Link className={styles.ghost} to={REPO}>
-            <LuStar size={14} />
-            {stars && <span className={styles.starCount}>{stars}</span>}
-            on GitHub
+          <div className={styles.ctas}>
+            <Link className={styles.primary} to={SIGNUP}>
+              Start free on Cloud
+              <LuArrowRight size={16} />
+            </Link>
+            <Link className={styles.ghost} to={REPO}>
+              <LuStar size={14} />
+              {stars && <span className={styles.starCount}>{stars}</span>}
+              on GitHub
+              <LuArrowUpRight size={13} />
+            </Link>
+          </div>
+
+          <p className={styles.credit}>
+            $5 of free credit when you sign up with GitHub
+          </p>
+
+          <Link className={styles.paper} to="https://arxiv.org/abs/2512.12818">
+            Read the paper
             <LuArrowUpRight size={13} />
           </Link>
         </div>
 
-        <p className={styles.credit}>$5 of free credit when you sign up with GitHub</p>
-
-
-
-      </div>
-
-      {/* The band shows the product, not a chart. Hindsight is a server most
-          people meet through an API, so the one thing the hero can say that
-          prose cannot is that there is a UI, and that a bank is a graph you can
-          actually look at. The benchmarks are a section of their own below —
-          two charts up here is what made this band 900px tall and unreadable. */}
-      <div className={styles.shot}>
-        <ZoomableMedia>
-          <video
-            ref={video}
-            src="/img/memory-graph.mp4"
-            poster="/img/memory-graph.jpg"
-            aria-label="The Hindsight control plane showing a memory bank as a force-directed graph: 172 memories and 5,364 links between them, coloured by semantic, temporal, entity and causal relationships."
-            autoPlay
-            loop
-            muted
-            playsInline
-          />
-        </ZoomableMedia>
-      </div>
-
-      <div className={styles.inner}>
-        <Link className={styles.paper} to="https://arxiv.org/abs/2512.12818">
-          Read the paper
-          <LuArrowUpRight size={13} />
-        </Link>
+        {/* The band shows the product, not a chart. Hindsight is a server most
+            people meet through an API, so the one thing the hero can say that
+            prose cannot is that there is a UI, and that a bank is a graph you
+            can actually look at. */}
+        <div className={styles.shot}>
+          <ZoomableMedia>
+            <img
+              src="/img/hindsight-ui.webp"
+              alt="The Hindsight control plane showing a memory bank's observations as a constellation: 162 memories and 7,143 links between them, coloured by semantic, temporal, entity and causal relationships."
+            />
+          </ZoomableMedia>
+        </div>
       </div>
     </div>
   );

@@ -1844,3 +1844,47 @@ html.docs-wrapper article strong {
 html.blog-post-page {
   scroll-behavior: smooth;
 }
+
+/* ── Full-width hero above the doc sidebar ───────────────────────────────
+   Matched on the doc-id class the theme puts on <html> for the overview page;
+   HomeHero only reports the height. Every block marked .hs-full-bleed widens
+   out of <main> across the sidebar's column, and the sidebar — a sibling of
+   <main>, so it cannot be moved from inside it — drops below them by the
+   height reported in --hs-hero-height. The docs chrome then starts underneath
+   it instead of squeezing it into 1140px.
+   Below 997px the sidebar is a drawer and <main> is already full width, so
+   none of this applies. */
+@media (min-width: 997px) {
+  /* A close-enough starting value so the sidebar is not drawn at the top for
+     one frame before the measured height lands. */
+  html.docs-doc-id-developer\/index {
+    --hs-hero-height: 32rem;
+  }
+
+  html.docs-doc-id-developer\/index .hs-full-bleed {
+    width: calc(
+      100% + var(--doc-sidebar-width) + 2 * var(--ifm-spacing-horizontal)
+    );
+    margin-left: calc(
+      -1 * (var(--doc-sidebar-width) + var(--ifm-spacing-horizontal))
+    );
+    /* Keeps the content on the same 1240px centre line as the hero's grid
+       while the surface itself reaches the window edges. Percentages in
+       padding resolve against <main>, not the widened box, so the gutter is
+       worked out from the same width as above. */
+    padding-inline: max(
+      1.5rem,
+      calc(
+        (
+            100% + var(--doc-sidebar-width) + 2 *
+              var(--ifm-spacing-horizontal) - 1240px
+          ) / 2
+      )
+    );
+  }
+
+  /* Keeps the theme's own pull under the navbar; only the hero is added. */
+  html.docs-doc-id-developer\/index .theme-doc-sidebar-container {
+    margin-top: calc(var(--hs-hero-height, 0px) - var(--ifm-navbar-height));
+  }
+}

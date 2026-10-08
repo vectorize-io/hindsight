@@ -19,13 +19,6 @@ import whatHindsightDoes from '@site/figures/what-hindsight-does.json';
 
 <HomeHero />
 
-{/* The router, directly under the hero. Three kinds of visitor land here — one
-    who has never heard of agent memory, one looking for the coding-agent
-    plugin, one looking for the Hermes/OpenClaw plugin — and only the first was
-    served by opening on prose. This used to sit under "How It Works", four
-    screens down, which is past where the other two had already left. */}
-<HomeFlow />
-
 ## Benchmarks
 
 <HomeBenchmarks />
@@ -54,6 +47,13 @@ Hindsight solves these problems with a memory system designed specifically for A
 <SkillBanner />
 
 ## How It Works
+
+{/* The router: three kinds of visitor land on this page — one who has never
+    heard of agent memory, one looking for the coding-agent plugin, one looking
+    for the Hermes/OpenClaw plugin — and this is where each of them can see
+    their own path. It opens "How It Works" because the cards answer "what does
+    this look like for me" before the sections below answer "how". */}
+<HomeFlow />
 
 ### Memory Types
 
