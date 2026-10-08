@@ -1809,8 +1809,8 @@ class WorkerPoller:
         The DB clock is read first: recovery only touches rows claimed before
         it, never the ones this run claims meanwhile.
         """
-        # Read in UTC and tag it: Oracle hands back SYSTIMESTAMP without its zone,
-        # and the backends treat naive timestamps as UTC.
+        # Read in UTC and tag it: Oracle hands back SYS_EXTRACT_UTC(SYSTIMESTAMP), a naive
+        # UTC timestamp, and the backends treat naive timestamps as UTC.
         try:
             async with self._backend.acquire() as conn:
                 started_at = await conn.fetchval("SELECT now() AT TIME ZONE 'UTC'")
