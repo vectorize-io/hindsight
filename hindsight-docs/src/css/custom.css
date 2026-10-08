@@ -1861,25 +1861,32 @@ html.blog-post-page {
     --hs-hero-height: 32rem;
   }
 
+  /* Lets the block below measure <main> itself (100cqw). Its own 100% is the
+     doc column, which stops at --ifm-container-width and is centred inside
+     <main> on wide windows — widening by the sidebar alone then leaves the
+     band short of both window edges. */
+  html.docs-doc-id-developer\/index main {
+    container-type: inline-size;
+  }
+
   html.docs-doc-id-developer\/index .hs-full-bleed {
-    width: calc(
-      100% + var(--doc-sidebar-width) + 2 * var(--ifm-spacing-horizontal)
-    );
+    width: calc(100cqw + var(--doc-sidebar-width));
+    /* Back to the window's left edge: the sidebar, the column's centring gap
+       inside <main> (zero until <main> outgrows the column), and the column's
+       own padding. */
     margin-left: calc(
-      -1 * (var(--doc-sidebar-width) + var(--ifm-spacing-horizontal))
+      -1 *
+        (
+          var(--doc-sidebar-width) +
+            max(0px, (100cqw - var(--ifm-container-width)) / 2) +
+            var(--ifm-spacing-horizontal)
+        )
     );
     /* Keeps the content on the same 1240px centre line as the hero's grid
-       while the surface itself reaches the window edges. Percentages in
-       padding resolve against <main>, not the widened box, so the gutter is
-       worked out from the same width as above. */
+       while the surface itself reaches the window edges. */
     padding-inline: max(
       1.5rem,
-      calc(
-        (
-            100% + var(--doc-sidebar-width) + 2 *
-              var(--ifm-spacing-horizontal) - 1240px
-          ) / 2
-      )
+      calc((100cqw + var(--doc-sidebar-width) - 1240px) / 2)
     );
   }
 
