@@ -10,7 +10,7 @@ this behaves like every other extension point. Unset (the normal case) means
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from .base import (
     DOC_META_ATTACHMENT_FILENAMES,
@@ -70,6 +70,33 @@ def get_memories() -> MemoriesExtension:
     if _memories is None:
         _memories = create_memories()
     return _memories
+
+
+_bank_gone_check: Callable[[str], Awaitable[None]] | None = None
+
+
+def set_bank_gone_check(check: Callable[[str], Awaitable[None]] | None) -> None:
+    """Install the engine's uncached "is this bank gone?" check. Set by the engine at startup."""
+    global _bank_gone_check
+    _bank_gone_check = check
+
+
+async def raise_if_bank_gone(bank_id: str) -> None:
+    """For a store that owns its storage: call this after a call found no storage for `bank_id`.
+
+    Raises the 404 the engine's existence guard gives when the bank no longer exists, and returns
+    when it does -- the store then re-raises its own error, because a live bank with no storage is
+    a real fault, not a missing bank.
+
+    The guard reads a per-process cache, and a delete invalidates only the process that served it,
+    so another process lets a request for a deleted bank through to the store until its entry
+    expires. A store whose storage the delete already dropped then fails, on whichever call the
+    request makes first. Asking HERE, from the one place that sees every such failure, is what
+    covers every caller at once -- routes, tools and background work alike -- and costs nothing on
+    a call that succeeds. With no engine installed (a bare store in a test) this is a no-op.
+    """
+    if _bank_gone_check is not None:
+        await _bank_gone_check(bank_id)
 
 
 _sql_memories: PostgresMemories | None = None

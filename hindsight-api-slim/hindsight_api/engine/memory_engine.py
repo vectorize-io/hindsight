@@ -5741,8 +5741,11 @@ class MemoryEngine(MemoryEngineInterface):
             client, …) once at startup. The default Postgres store treats this as
             a no-op; a store that owns an external service builds its client here
             so the first request does not race an uninitialized handle."""
-            from .memories import get_memories
+            from .memories import get_memories, set_bank_gone_check
 
+            # A store that owns its storage asks this after a call found no storage for a bank, so
+            # a request let through by a stale existence cache answers 404 rather than failing.
+            set_bank_gone_check(self._raise_if_bank_deleted)
             await get_memories().initialize()
 
         async def verify_llm():
@@ -6248,8 +6251,9 @@ class MemoryEngine(MemoryEngineInterface):
         # Release the memories store's own resources (client/pool). No-op for the
         # default Postgres store; symmetric with init_memories() at startup.
         try:
-            from .memories import get_memories
+            from .memories import get_memories, set_bank_gone_check
 
+            set_bank_gone_check(None)
             await get_memories().shutdown()
         except Exception as e:
             logger.warning(f"Error shutting down memories store: {e}")

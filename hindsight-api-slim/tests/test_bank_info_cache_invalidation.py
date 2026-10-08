@@ -307,3 +307,68 @@ async def test_a_recall_of_an_existing_empty_bank_still_answers_empty(memory: Me
 
     result = await memory.recall_async(bank_id=bank_id, query=_QUERY, request_context=request_context)
     assert result.results == []
+
+
+@pytest.mark.asyncio
+async def test_the_bank_gone_check_404s_a_deleted_bank_and_passes_a_live_one(
+    memory: MemoryEngine, request_context, monkeypatch
+):
+    """A store that owns its storage calls `raise_if_bank_gone` after a call found no storage for a
+    bank. It must raise the guard's 404 for a bank another process deleted -- and drop the stale
+    entry -- and return for a bank that exists, so the store re-raises a real fault as itself."""
+    from hindsight_api.engine.memories import raise_if_bank_gone
+    from hindsight_api.engine.retain import bank_utils
+    from hindsight_api.extensions import OperationValidationError
+
+    live = _bank("cache_gone_live")
+    await memory.ensure_bank_profile(live, request_context=request_context)
+    await raise_if_bank_gone(live)
+
+    gone = _bank("cache_gone_deleted")
+    await memory.ensure_bank_profile(gone, request_context=request_context)
+    await _delete_as_another_process(memory, gone, request_context, monkeypatch)
+    with pytest.raises(OperationValidationError) as exc_info:
+        await raise_if_bank_gone(gone)
+    assert exc_info.value.status_code == 404
+
+    backend = await memory._get_backend()
+    assert await bank_utils.get_bank_profile_if_exists(backend, gone) is None, "the stale entry survived the 404"
+
+
+@pytest.mark.asyncio
+async def test_no_bank_read_route_500s_on_a_bank_deleted_by_another_process(
+    memory: MemoryEngine, api_client, request_context, monkeypatch
+):
+    """Every bank-scoped GET, on a process whose existence cache still holds a bank another
+    process deleted. The guard lets each request through; what it meets in the store differs by
+    route and by store, and none of it may be a 500 -- a store that owns its storage has already
+    dropped the bank's, and fails every call that reaches it.
+
+    Enumerated from the app rather than listed, so a route added later is covered without
+    anyone remembering this test. Extra path parameters get a random id: the property is about
+    the bank, and an unknown memory or document is a 404 of its own."""
+    bank_id = _bank("cache_routes_deleted")
+    await _retain_one(memory, bank_id, request_context)
+    await _delete_as_another_process(memory, bank_id, request_context, monkeypatch)
+
+    app = api_client._transport.app
+    paths = sorted(
+        {
+            route.path
+            for route in app.routes
+            if "GET" in getattr(route, "methods", ()) and "{bank_id}" in getattr(route, "path", "")
+        }
+    )
+    assert paths, "the setup found no bank-scoped GET routes"
+
+    failed = []
+    for path in paths:
+        url = path.replace("{bank_id}", bank_id)
+        while "{" in url:
+            start = url.index("{")
+            url = url[:start] + str(uuid.uuid4()) + url[url.index("}", start) + 1 :]
+        resp = await api_client.get(url)
+        if resp.status_code >= 500:
+            failed.append(f"{path} -> {resp.status_code} {resp.text[:200]}")
+
+    assert not failed, "bank routes answered a deleted bank with a server error:\n" + "\n".join(failed)
