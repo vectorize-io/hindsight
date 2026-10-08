@@ -111,7 +111,7 @@ export default function HomeHero(): ReactNode {
             can actually look at — so it is the control plane's own graph view
             running here, hoverable, rather than a screenshot of it. */}
         <div className={styles.shot}>
-          <MemoryConstellation height={420} />
+          <MemoryConstellation />
         </div>
       </div>
     </div>

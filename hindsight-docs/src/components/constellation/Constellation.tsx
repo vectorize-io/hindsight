@@ -196,6 +196,7 @@ function useIsDarkMode() {
   const [isDark, setIsDark] = useState(false);
 
   useEffect(() => {
+    // Docs-only: Docusaurus marks dark mode with data-theme on <html>, not a "dark" class.
     const check = () => setIsDark(document.documentElement.dataset.theme === "dark");
     check();
     const obs = new MutationObserver(check);
@@ -216,8 +217,9 @@ function useIsDarkMode() {
 /**
  * The control-plane copy of this component reads these from next-intl
  * (`src/messages/en.json` → "constellation"). The docs site has no i18n
- * runtime, so the same keys live here and `t()` is a two-line lookup, which
- * keeps the rest of the file identical to the control plane's and re-syncable.
+ * runtime, so the same keys live here and `t()` is a two-line lookup. The rest
+ * of the file stays the control plane's; every other difference is marked
+ * "Docs-only" so a re-sync from hindsight-control-plane can carry them over.
  */
 const STRINGS: Record<string, string> = {
   instructions: "Scroll to zoom \u00b7 Drag to pan \u00b7 Hover to explore \u00b7 Click to select",
@@ -259,6 +261,9 @@ const LINK_TYPE_COLORS: Record<string, string> = {
 };
 
 const DEFAULT_NODE_COLOR = "#0074d9";
+
+/** Docs-only: the control plane serves its logo at /logo.png, the docs site at /img/logo.png. */
+const LOGO_URL = "/img/logo.png";
 
 function toolbarBtnStyle(isDark: boolean): CSSProperties {
   return {
@@ -958,7 +963,7 @@ export function Constellation({
       }
     }
 
-    // HUD. Both the stats line and the instructions below are drawn at a fixed
+    // HUD. Docs-only guard: the stats line and the instructions below are drawn at a fixed
     // 12px inset with no measurement, so on a narrow canvas the stats run into
     // the legend on the right and the instructions run under the toolbar. They
     // are decoration — the field reads fine without them — so a canvas this
@@ -1422,7 +1427,7 @@ export function Constellation({
   const logoDataUrlRef = useRef<string | null>(null);
   useEffect(() => {
     let cancelled = false;
-    loadDataUrl("/logo.png")
+    loadDataUrl(LOGO_URL)
       .then((url) => {
         if (!cancelled) logoDataUrlRef.current = url;
       })
@@ -1577,7 +1582,7 @@ export function Constellation({
     let logo = logoDataUrlRef.current;
     if (!logo) {
       try {
-        logo = await loadDataUrl("/logo.png");
+        logo = await loadDataUrl(LOGO_URL);
         logoDataUrlRef.current = logo;
       } catch {
         logo = null;

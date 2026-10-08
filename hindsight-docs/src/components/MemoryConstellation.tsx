@@ -12,9 +12,8 @@ import type {GraphLink, GraphNode} from './constellation/graph-data';
  * you can actually look at — had to be taken on faith. This is the same
  * component the control plane renders (src/components/constellation/
  * Constellation.tsx is a near-copy of hindsight-control-plane/src/components/
- * constellation.tsx: the control plane's next-intl lookup is a local string
- * table, and dark mode reads Docusaurus's `data-theme` instead of a `dark`
- * class), called the way the control plane's Memories view calls it — one flat
+ * constellation.tsx; its docs-only changes are marked "Docs-only" there),
+ * called the way the control plane's Memories view calls it — one flat
  * field, coloured by when each memory was mentioned, sized by how many facts
  * back it — over a synthetic bank rather than a real one.
  *
@@ -53,29 +52,34 @@ const linkColor = (link: GraphLink) => {
   return '#0074d9';
 };
 
-export default function MemoryConstellation({
-  height = 460,
-}: {
-  height?: number;
-}): ReactNode {
+/** Matches the screenshot this replaced, so the hero keeps its proportions. */
+const HEIGHT = 420;
+
+export default function MemoryConstellation(): ReactNode {
   return (
-    /* Canvas-only component: it measures the DOM and reads devicePixelRatio on
-       mount, so there is nothing for the static build to render. */
-    <BrowserOnly fallback={<div style={{height}} />}>
-      {() => (
-        <Constellation
-          data={BANK}
-          height={height}
-          nodeColorFn={nodeColor}
-          linkColorFn={linkColor}
-          nodeSizeFn={sourceFactsSize}
-          sizeLegendLabel="source facts"
-          nodeHeatFn={recencyHeat}
-          heatLegendLabel="recency · mentioned"
-          heatLegendEndpoints={[day(MIN_T), day(MAX_T)]}
-          allowFullscreen={false}
-        />
-      )}
-    </BrowserOnly>
+    /* The canvas has no text of its own, so the wrapper carries the name the
+       screenshot's alt text used to. Canvas-only component: it measures the DOM
+       and reads devicePixelRatio on mount, so there is nothing for the static
+       build to render. */
+    <div
+      role="figure"
+      aria-label={`A sample Hindsight memory bank drawn as a constellation: ${BANK.nodes.length} memories and ${BANK.links.length} semantic, temporal, entity and causal links between them, coloured by when each was mentioned.`}>
+      <BrowserOnly fallback={<div style={{height: HEIGHT}} />}>
+        {() => (
+          <Constellation
+            data={BANK}
+            height={HEIGHT}
+            nodeColorFn={nodeColor}
+            linkColorFn={linkColor}
+            nodeSizeFn={sourceFactsSize}
+            sizeLegendLabel="source facts"
+            nodeHeatFn={recencyHeat}
+            heatLegendLabel="recency · mentioned"
+            heatLegendEndpoints={[day(MIN_T), day(MAX_T)]}
+            allowFullscreen={false}
+          />
+        )}
+      </BrowserOnly>
+    </div>
   );
 }
