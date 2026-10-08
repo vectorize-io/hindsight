@@ -710,6 +710,12 @@ class TestOracleQueryRewriter:
         assert "SYSTIMESTAMP" in query
         assert "NOW()" not in query
 
+    def test_now_at_utc_to_sys_extract_utc(self):
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle("SELECT now() AT TIME ZONE 'UTC'")
+        assert query == "SELECT SYS_EXTRACT_UTC(SYSTIMESTAMP)"
+
     def test_gen_random_uuid(self):
         from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
 

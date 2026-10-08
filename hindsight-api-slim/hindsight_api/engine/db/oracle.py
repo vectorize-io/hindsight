@@ -437,6 +437,9 @@ def _rewrite_pg_to_oracle(query: str) -> RewriteResult:
     if re.match(r"\s*SET\s+SESSION\s+CHARACTERISTICS\b", query, re.IGNORECASE):
         return RewriteResult("SELECT 1 FROM DUAL", False, None)
 
+    # NOW() AT TIME ZONE 'UTC' → SYS_EXTRACT_UTC(SYSTIMESTAMP): the literal translation is a
+    # named-region TIMESTAMP WITH TIME ZONE, which the thin driver cannot decode (DPY-3022).
+    query = re.sub(r"\bNOW\(\)\s+AT\s+TIME\s+ZONE\s+'UTC'", "SYS_EXTRACT_UTC(SYSTIMESTAMP)", query, flags=re.IGNORECASE)
     # NOW() → SYSTIMESTAMP
     query = re.sub(r"\bNOW\(\)", "SYSTIMESTAMP", query, flags=re.IGNORECASE)
     # gen_random_uuid() → SYS_GUID()
