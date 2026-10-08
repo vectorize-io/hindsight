@@ -2,7 +2,7 @@ import React, {type ReactNode, useEffect, useRef} from 'react';
 import Link from '@docusaurus/Link';
 import clsx from 'clsx';
 import {LuArrowRight, LuArrowUpRight, LuStar} from 'react-icons/lu';
-import ZoomableMedia from './ZoomableMedia';
+import MemoryConstellation from './MemoryConstellation';
 import {useGitHubStars} from './useGitHubStars';
 import styles from './HomeHero.module.css';
 
@@ -21,7 +21,7 @@ const REPO = 'https://github.com/vectorize-io/hindsight';
  * too; they are a section of their own below, because a band carrying both
  * charts ran past 900px and stopped reading as a hero at all.
  *
- * Everything is deliberately container-less apart from the screenshot — the
+ * Everything is deliberately container-less apart from the graph — the
  * navbar and sidebar already supply all the chrome this page can carry. An
  * earlier draft had glowing cards behind an aurora and a promo pill, which read
  * as a landing-page template rather than an infrastructure project.
@@ -40,7 +40,7 @@ export default function HomeHero(): ReactNode {
   const band = useRef<HTMLDivElement>(null);
 
   /* The band runs the full width of the window, above the doc sidebar — the
-     screenshot is the point of it and the sidebar's 300px made it a thumbnail.
+     graph is the point of it and the sidebar's 300px made it a thumbnail.
      The sidebar is a sibling of <main>, so CSS alone cannot push it below
      something nested inside main: this reports the height it has to clear —
      the hero plus everything else marked .hs-full-bleed under it, since those
@@ -108,14 +108,10 @@ export default function HomeHero(): ReactNode {
         {/* The band shows the product, not a chart. Hindsight is a server most
             people meet through an API, so the one thing the hero can say that
             prose cannot is that there is a UI, and that a bank is a graph you
-            can actually look at. */}
+            can actually look at — so it is the control plane's own graph view
+            running here, hoverable, rather than a screenshot of it. */}
         <div className={styles.shot}>
-          <ZoomableMedia>
-            <img
-              src="/img/hindsight-ui.webp"
-              alt="The Hindsight control plane showing a memory bank's observations as a constellation: 162 memories and 7,143 links between them, coloured by semantic, temporal, entity and causal relationships."
-            />
-          </ZoomableMedia>
+          <MemoryConstellation height={420} />
         </div>
       </div>
     </div>

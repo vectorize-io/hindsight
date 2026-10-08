@@ -11,7 +11,7 @@
 
 /* ── Two columns ──────────────────────────────────────────────────────────
    Copy left, product right — the claim and the proof of it read together
-   instead of the screenshot being something you scroll to. */
+   instead of the graph being something you scroll to. */
 .grid {
   position: relative;
   z-index: 2;
@@ -82,9 +82,10 @@
   min-width: 0;
   border-radius: 0.75rem;
   overflow: hidden;
-  /* Lifts the dark screenshot off the dark band — without it the two merge and
-     the UI stops reading as a separate surface. */
-  box-shadow: 0 20px 60px -20px rgba(0, 0, 0, 0.8);
+  /* Lifts the graph off the band — without it the two merge and the UI stops
+     reading as a separate surface. Kept soft: it frames the graph, it is not
+     the point. */
+  box-shadow: 0 12px 36px -16px rgba(0, 0, 0, 0.5);
   border: 1px solid var(--hs-band-line);
 }
 
@@ -164,7 +165,7 @@
 
 /* ── Narrow screens ───────────────────────────────────────────────────────*/
 /* One column below the point where 1fr/1.15fr leaves the headline too narrow
-   to break well; the screenshot then sits under the copy, full width. */
+   to break well; the graph then sits under the copy, full width. */
 @media (max-width: 996px) {
   .grid {
     grid-template-columns: minmax(0, 1fr);
