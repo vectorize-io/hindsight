@@ -33,7 +33,9 @@ export default function BlogPostItemHeader(): ReactNode {
             By {names.join(', ')}
           </span>
         )}
-        <BlogPostItemHeaderInfo className="hs-blog-header__info" />
+        <div className="hs-blog-header__info">
+          <BlogPostItemHeaderInfo />
+        </div>
       </div>
     </header>
   );

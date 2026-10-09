@@ -1686,6 +1686,7 @@ html.blog-post-page article h3 {
   letter-spacing: -0.015em;
 }
 
+/* !important: undoes the site-wide gradient title rule, which is !important. */
 html.blog-post-page article h1 {
   font-weight: 500;
   line-height: 1.15;
@@ -1733,7 +1734,8 @@ html.blog-post-page article p.hs-blog-header__description {
   object-fit: cover;
 }
 
-.hs-blog-header__info.hs-blog-header__info {
+/* !important: upstream Info carries Infima's margin-vert--md, which is !important. */
+.hs-blog-header__info > div {
   margin: 0 !important;
   font-size: inherit;
   color: inherit;
@@ -1866,19 +1868,10 @@ html.blog-post-page article h2 {
   animation-duration: 200ms;
 }
 
-/* On mobile the single-post 2.5rem Space Grotesk title was overwhelming —
-   use the body (paragraph) font at a calmer size instead. */
+/* On mobile the 2.5rem title was overwhelming — a calmer size instead. */
 @media (max-width: 640px) {
-  html.blog-post-page article h1,
-  html.blog-post-page article h2,
-  html.blog-post-page article h3 {
-    font-family: var(--ifm-font-family-base);
-  }
-
   html.blog-post-page article h1 {
-    font-size: 1.5rem;
-    font-weight: 700;
-    line-height: 1.3;
+    font-size: 1.75rem;
   }
 
   html.blog-post-page article h2 {
