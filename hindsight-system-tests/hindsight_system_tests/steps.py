@@ -38,6 +38,9 @@ STEP_ANCHORS: dict[str, str] = {
     # caller's token budget. Anchored separately because a story about the budget
     # is about this call, not the one that wrote the answer.
     "reflect_trim": "Rewrite the user's text so it fits within the requested token budget.",
+    # Fast reflect's first call rewrites the request into one search query (or answers
+    # that there is nothing to search). Tool-less, so it never matches `reflect`.
+    "reflect_fast_query": "You write search queries for a memory bank.",
     "connection_probe": "Say 'ok'",
 }
 

@@ -976,6 +976,11 @@ _CUT_INSTRUCTIONS = (
     "Count a candidate as relevant only if it helps answer the question."
 )
 
+_SUFFICIENCY_INSTRUCTIONS = (
+    "Does the evidence above answer the question? Judge only what the evidence states, "
+    "not what could be guessed from it."
+)
+
 _OPTION_KEY_OVERHEAD = 7  # JSON envelope overhead per choice option: '"c249": "' + comma/newline
 _LISTING_ITEM_OVERHEAD = 10  # Formatting overhead per item in cut listing: "[1] ...\n\n"
 _MAX_QUERY_TOKENS = 2_000  # Defensive ceiling on query tokens in reranker
@@ -1023,6 +1028,11 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
     # How many of the ranked candidates the cut question is shown. The cut only ever
     # keeps a handful, so a longer list costs tokens to no purpose.
     SHORTLIST = 12
+
+    # The fewest candidates a cut may keep, by rank. 0 for recall, where the cut is
+    # the whole point; fast reflect raises it, because the cut's levels jump from five
+    # to ten and it picked five for a question whose answer was a count over seven.
+    MIN_KEEP = 0
 
     # Context window safety limit for Jev /v1/systemone.
     # Single question context limit is 32k. A defensive safety margin (26k vs 32k)
@@ -1199,6 +1209,55 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         ranked_finalists = await self._rank_once(query, effective_docs, finalists)
         return ranked_finalists + rest
 
+    # Ordered verdicts for the reflect sufficiency question; only the last one ends
+    # retrieval. "Partly" is its own level so a half-answer keeps searching.
+    SUFFICIENCY_LEVELS = [
+        "The evidence does not answer the question",
+        "The evidence answers part of the question; something it asks is missing",
+        "The evidence fully answers the question",
+    ]
+
+    async def evidence_is_sufficient(self, query: str, evidence: str) -> bool:
+        """Whether ``evidence`` already answers ``query``: one Score question.
+
+        Used by fast reflect to skip the LLM turns that would otherwise decide to keep
+        searching. A Score, not a yes/no Choice, for the reason the cut uses one: the
+        levels are ordered, and "partly" must not be rounded up to "yes".
+        """
+        overhead = (
+            count_tokens(_SUFFICIENCY_INSTRUCTIONS) + sum(count_tokens(level) for level in self.SUFFICIENCY_LEVELS) + 50
+        )
+        prefix = f"Question: {query}\n\nEvidence:\n"
+        budget = max(100, self.MAX_QUESTION_TOKENS - overhead - count_tokens(prefix))
+        if count_tokens(evidence) > budget:
+            # ponytail: keeps the head of the evidence; the agent's own results come
+            # first (pages, then observations, then facts), so the tail is raw facts.
+            evidence = truncate_to_tokens(evidence, budget).text
+        result = await self._ask(
+            {
+                "state": f"{prefix}{evidence}",
+                "model": self.model,
+                "questions": {
+                    "sufficient": {
+                        "type": "score",
+                        "instructions": _SUFFICIENCY_INSTRUCTIONS,
+                        "criteria": self.SUFFICIENCY_LEVELS,
+                    }
+                },
+            }
+        )
+        answer = result["answers"]["sufficient"]
+        # The most likely level, not the rounded expected score: an expected 1.43 is "partly" when
+        # rounded, though "fully" was the likeliest verdict at 0.54 (sde-bench boltons-budget), and
+        # every such rounding cost two LLM turns. The score is the fallback for a reply without
+        # per-level probabilities.
+        probabilities = answer.get("probabilities")
+        if probabilities:
+            level = int(max(probabilities, key=lambda key: float(probabilities[key])))
+        else:
+            level = round(float(answer["score"]))
+        return level >= len(self.SUFFICIENCY_LEVELS) - 1
+
     async def _cut(self, query: str, docs: list[str], order: list[int]) -> int:
         """How many of the ranked candidates are relevant, as the model sees it."""
         shortlist = order[: self.SHORTLIST]
@@ -1252,6 +1311,7 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
 
         order = await self._rank(query, docs, indices)
         keep = await self._cut(query, docs, order) if self.prunes_candidates else len(order)
+        keep = max(keep, min(self.MIN_KEEP, len(order)))
         # Positions, not confidences — see the class docstring. Descending from 1.0 so
         # the caller's ordering is preserved, and 0.0 for everything past the cut,
         # which is how prunes_candidates marks a candidate to leave out.
