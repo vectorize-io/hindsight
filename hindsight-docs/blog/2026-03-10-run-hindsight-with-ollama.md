@@ -1,5 +1,6 @@
 ---
 title: "Run Hindsight with Ollama: Local AI Memory, No API Keys Needed"
+description: "Run Hindsight on your own machine with Ollama: no API keys, no cloud costs, and no data leaving your computer."
 authors: [hindsight]
 date: 2026-03-10T12:00
 tags: [ollama, tutorial, python, memory, local, privacy, hindsight, llm, open-source]

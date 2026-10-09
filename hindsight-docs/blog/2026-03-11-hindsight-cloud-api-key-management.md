@@ -1,5 +1,6 @@
 ---
 title: "What's New in Hindsight Cloud: Programmatic API Key Management"
+description: "Hindsight Cloud keys can now create, list and revoke child keys limited to specific banks, straight from the API."
 authors: [benfrank241]
 date: 2026-03-11T12:00
 tags: [hindsight-cloud, release, api]

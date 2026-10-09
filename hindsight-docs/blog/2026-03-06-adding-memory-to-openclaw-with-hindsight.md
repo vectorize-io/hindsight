@@ -1,5 +1,6 @@
 ---
 title: "How to Add Persistent Memory to OpenClaw with Hindsight"
+description: "OpenClaw only remembers what the agent chooses to save. The Hindsight plugin saves every conversation and brings back the right context before each reply."
 authors: [benfrank241]
 date: 2026-03-06T12:00
 tags: [openclaw, memory, agents, persistent-memory, knowledge-graph, tutorial]

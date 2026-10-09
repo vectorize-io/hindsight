@@ -1,5 +1,6 @@
 ---
 title: "OpenClaude: Build a Claude Code Agent with Long-Term Memory — and Take It Everywhere"
+description: "Run Claude Code on Telegram and connect it to Hindsight, so the agent you talk to from your phone remembers your past conversations."
 authors: [fabioscarsi, nicoloboschi]
 date: 2026-03-23T12:00
 tags: [claude-code, telegram, hindsight, memory, mcp, agents, tutorial]

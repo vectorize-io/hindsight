@@ -1,5 +1,6 @@
 ---
 title: "Give the Only Self-Improving AI Agent (Hermes) a Memory Upgrade It Deserves"
+description: "Swap Hermes Agent's file-based memory for Hindsight with one pip install. This plugin is now deprecated in favour of the Hermes plugin catalog."
 authors: [benfrank241]
 date: 2026-03-17T12:00
 tags: [hermes, agents, python, memory, tutorial, plugin]

@@ -1,5 +1,6 @@
 ---
 title: "Why Your AWS Strands Agent Keeps Starting From Scratch (And How to Stop It)"
+description: "AWS Strands agents start cold every session. hindsight-strands adds memory tools and loads relevant memories before the agent starts."
 authors: [benfrank241]
 date: 2026-03-25T12:00
 tags: [strands, aws, agents, python, memory, tutorial]

@@ -1,6 +1,7 @@
 ---
 slug: learning-capabilities
 title: "Agent memory that learns: observations and mental models"
+description: "Hindsight 0.4.0 adds two ways for agents to learn: observations that merge facts on their own, and mental models you write and keep up to date."
 authors: [nicoloboschi]
 image: /img/reflect-operation.webp
 date: 2026-01-28T12:00

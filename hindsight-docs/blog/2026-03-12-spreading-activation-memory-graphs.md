@@ -1,5 +1,6 @@
 ---
 title: "How We Built Time-Aware Spreading Activation for Memory Graphs"
+description: "How Hindsight answers questions about a period of time by walking from that window to the events around it, instead of just filtering by date."
 authors: [chrislatimer]
 date: 2026-03-12T12:00
 tags: [retrieval, graph, temporal, spreading-activation, memory, deep-dive]

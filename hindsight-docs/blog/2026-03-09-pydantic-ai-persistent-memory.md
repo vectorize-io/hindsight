@@ -1,5 +1,6 @@
 ---
 title: "Pydantic AI Persistent Memory: Add It in 5 Lines of Code"
+description: "Pydantic AI agents start from scratch on every run. hindsight-pydantic-ai adds long-term memory in five lines of Python."
 authors: [benfrank241]
 date: 2026-03-09T12:00
 tags: [memory, openai, anthropic, gemini, python, rust, agents, rag, vector, pydantic-ai, knowledge-graph, tutorial]

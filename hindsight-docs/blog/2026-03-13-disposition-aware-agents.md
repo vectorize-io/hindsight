@@ -1,5 +1,6 @@
 ---
 title: "How We Built Disposition-Aware Agents That Actually Think Differently"
+description: "Three numbers, skepticism, literalism and empathy, change how a Hindsight agent reasons, without pages of extra prompt text."
 authors: [chrislatimer]
 date: 2026-03-13T12:00
 tags: [disposition, personality, skepticism, empathy, reflect, agents, deep-dive]

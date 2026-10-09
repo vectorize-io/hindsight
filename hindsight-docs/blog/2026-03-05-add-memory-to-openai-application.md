@@ -1,5 +1,6 @@
 ---
 title: "Give Your OpenAI App a Memory in 5 Minutes"
+description: "Build a chatbot on the OpenAI SDK that remembers its users across restarts, using three Hindsight calls and no vector database."
 authors: [benfrank241]
 date: 2026-03-05T12:00
 tags: [memory, openai, python, docker, rag, llm, vector, embedding, tutorial]

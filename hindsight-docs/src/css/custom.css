@@ -1678,6 +1678,73 @@ html.docs-wrapper article strong {
 
 /* ===== Blog Styling ===== */
 
+/* Blog headings: plain text, no gradient or display font. */
+html.blog-post-page article h1,
+html.blog-post-page article h2,
+html.blog-post-page article h3 {
+  font-family: var(--ifm-font-family-base);
+  letter-spacing: -0.015em;
+}
+
+html.blog-post-page article h1 {
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+  margin-bottom: 1rem;
+  background-image: none !important;
+  -webkit-text-fill-color: currentColor !important;
+  color: var(--ifm-heading-color) !important;
+}
+
+/* Post header: subtitle, then a "By <author>" / date row over a hairline
+   (src/theme/BlogPostItem/Header). */
+html.blog-post-page article p.hs-blog-header__description {
+  font-family: var(--ifm-font-family-base);
+  font-size: 1.15rem;
+  line-height: 1.6;
+  letter-spacing: normal;
+  color: var(--ifm-color-emphasis-700);
+  margin: 0 0 1.75rem;
+}
+
+.hs-blog-header__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding-bottom: 1rem;
+  margin-bottom: 2rem;
+  border-bottom: 1px solid var(--ifm-toc-border-color);
+  font-size: 0.85rem;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.hs-blog-header__authors {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.hs-blog-header__avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.hs-blog-header__info.hs-blog-header__info {
+  margin: 0 !important;
+  font-size: inherit;
+  color: inherit;
+}
+
+html.blog-post-page article h2 {
+  border-bottom: none;
+  padding-bottom: 0;
+  margin-top: 2.5rem;
+}
+
 /* Blog author text visible in light mode */
 [class*="blogPostAuthor"],
 [class*="blogPostAuthor"] *,

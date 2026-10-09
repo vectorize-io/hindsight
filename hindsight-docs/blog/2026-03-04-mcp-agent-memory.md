@@ -1,5 +1,6 @@
 ---
 title: "The Open-Source MCP Memory Server Your AI Agent Is Missing"
+description: "Run Hindsight with one Docker command and give any MCP client a memory it can store to, search, and reason over."
 authors: [benfrank241]
 
 date: 2026-03-04T12:00

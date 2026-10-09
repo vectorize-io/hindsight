@@ -1,5 +1,6 @@
 ---
 title: "What's New in Hindsight Cloud: Document File Upload"
+description: "Hindsight Cloud now takes PDFs, Word, PowerPoint, Excel, images and text files, and turns them into memories your agents can recall."
 authors: [benfrank241]
 date: 2026-03-09T12:00
 tags: [hindsight-cloud, release, memory]
