@@ -10,15 +10,37 @@ the banks your other agents (Claude Code, ChatGPT, Hermes, OpenClaw) already wri
 
 ## Install
 
-1. In Grok Bot, select **Connect apps** below the message box to open the **Marketplace**.
-   Search for **Hindsight**, open it and select **Add**.
-2. Grok Bot asks you to connect Hindsight. Sign in on Hindsight's own page and choose the
-   organization to authorize. This is OAuth: there is no API key to copy or paste.
-3. Ask any Bot to "set up Hindsight memory". The `memory-setup` skill checks the
-   connection and creates the banks below. Name the Bot first: its name becomes its
-   bank id, so a Bot still called "Grok Bot" is asked for a name before setup continues.
+This plugin is not in the Grok Bot or Cursor marketplace yet. The listing is still in
+review. Until it is approved, set it up by hand.
 
-The same plugin works in Cursor: install it from the Cursor Marketplace.
+### Grok Bot
+
+Paste [`connect-prompt.md`](connect-prompt.md) to any Bot. It tells the Bot to add
+Hindsight as a custom connector, walks it through the OAuth sign-in, and then carries
+the same rules the skills carry: which bank to write to, when to recall, how to hand
+work to another Bot, and which tools never to call.
+
+Name the Bot first. Its name becomes its bank id, so a Bot still called "Grok Bot" is
+asked for a name before setup continues.
+
+### Cursor
+
+Copy this directory into Cursor's local plugin folder, then reload:
+
+```bash
+git clone https://github.com/vectorize-io/hindsight
+mkdir -p ~/.cursor/plugins/local
+cp -r hindsight/hindsight-integrations/grok-bot ~/.cursor/plugins/local/hindsight
+```
+
+Restart Cursor, or run **Developer: Reload Window**. Cursor then loads the plugin's MCP
+server and its skills from the copied folder.
+
+### After the marketplace listing lands
+
+Installing from the marketplace will replace both paths above: search for **Hindsight**
+under **Connect apps** in Grok Bot, or find it in the Cursor marketplace. This README
+will be updated when that happens.
 
 ## Configuration
 
