@@ -74,6 +74,13 @@ from ..response_models import LLMCallResult
 logger = logging.getLogger(__name__)
 
 
+class RetryableResponsesError(Exception):
+    """A transient failure a subclass detected outside an HTTP status (e.g. mid-stream).
+
+    ``_run_with_retries`` backs off and retries it like a connection error.
+    """
+
+
 def _tools_to_responses(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert chat/completions tool schemas to the flattened Responses shape.
 
@@ -345,6 +352,14 @@ class OpenAIResponsesLLM(LLMInterface):
             tool_calls=tool_calls_dict,
         )
 
+    async def _create_response(self, params: dict[str, Any]) -> Any:
+        """Send one Responses request and return the final response object.
+
+        The hook subclasses override to change transport (``chatgpt-plan`` streams
+        and swaps the bearer token per call); everything around it stays shared.
+        """
+        return await self._client.responses.create(**params)
+
     async def _run_with_retries(
         self,
         params: dict[str, Any],
@@ -372,7 +387,7 @@ class OpenAIResponsesLLM(LLMInterface):
                     # Wall-clock cap: the SDK's timeout is per phase and its read timeout restarts
                     # on every byte, so an upstream trickling keep-alive whitespace never trips it
                     # and the call pins its worker slot forever (#4763).
-                    response = await asyncio.wait_for(self._client.responses.create(**params), timeout=self.timeout)
+                    response = await asyncio.wait_for(self._create_response(params), timeout=self.timeout)
                 usage = self._extract_usage(response)
                 stash_response_usage(
                     LLMResponseUsage(
@@ -396,7 +411,7 @@ class OpenAIResponsesLLM(LLMInterface):
                     continue
                 raise
 
-            except (APIConnectionError, TimeoutError) as e:
+            except (APIConnectionError, TimeoutError, RetryableResponsesError) as e:
                 last_exception = e
                 status_code = getattr(e, "status_code", None) or getattr(
                     getattr(e, "response", None), "status_code", None

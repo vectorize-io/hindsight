@@ -89,6 +89,7 @@ Browse all supported integrations in the Integrations Hub.
 - OpenRouter
 - Requesty
 - OpenAI Codex
+- ChatGPT Plan
 - Claude Code
 - Cursor
 - GitHub Copilot

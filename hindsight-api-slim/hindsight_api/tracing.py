@@ -142,6 +142,7 @@ PROVIDER_NAME_MAPPING = {
     "ollama-cloud": "ollama",
     "lmstudio": "lmstudio",
     "openai-codex": "openai",
+    "chatgpt-plan": "openai",
     "claude-code": "anthropic",
     "cursor": "cursor",
     "github-copilot": "github",

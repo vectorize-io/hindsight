@@ -312,6 +312,78 @@ For automation, the Copilot SDK also accepts `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`,
 
 ---
 
+### ChatGPT Plan Setup (Sign in with ChatGPT)
+
+The `chatgpt-plan` provider runs Hindsight's LLM calls on your ChatGPT plan through
+OpenAI's documented [Sign in with ChatGPT flow for open-source apps](https://developers.openai.com/siwc/token-sharing-open-source).
+Hindsight registers itself as its own OAuth client on first sign-in, and every call goes to the public
+`https://api.openai.com/v1/responses` endpoint with your OAuth access token. It does not use an API key.
+
+How it differs from `openai-codex`: that provider reuses the Codex CLI's sign-in and calls ChatGPT's private
+`chatgpt.com/backend-api/codex` endpoint. `chatgpt-plan` uses the supported route and keeps its own
+credentials, so it never shares or rotates the Codex CLI's tokens.
+
+**Prerequisites:**
+- A ChatGPT plan that allows plan usage in third-party apps
+- A browser on the machine where you run the login
+
+**Setup on a machine with a browser (for example a laptop):**
+
+1. **Sign in:**
+   ```bash
+   python -m hindsight_api.engine.providers.chatgpt_plan_auth login
+   ```
+   This opens your browser and waits for the callback on `http://127.0.0.1:1455/auth/callback`
+   (`--port` changes the port; `--no-browser` prints the URL instead). Approve the request, including
+   use of your ChatGPT plan. The command validates the ID token and the granted scopes, then writes
+   `~/.hindsight/chatgpt-plan/credentials.json` (mode `0600`) next to this host's `host_id`.
+
+2. **Configure Hindsight:**
+   ```bash
+   export HINDSIGHT_API_LLM_PROVIDER=chatgpt-plan
+   # export HINDSIGHT_API_LLM_MODEL=gpt-6-luna       # the default
+   # export HINDSIGHT_API_LLM_REASONING_EFFORT=medium  # sent as reasoning.effort
+   ```
+
+3. **Check the stored session** (prints account, client id, scopes and expiry, never token values):
+   ```bash
+   python -m hindsight_api.engine.providers.chatgpt_plan_auth status
+   ```
+
+**Self-hosted server or VM (no browser):** the `127.0.0.1` callback reaches the machine running the
+browser, so sign in on your laptop and move the credential file to the server.
+
+1. On the laptop: run `login` as above.
+2. Copy the file over SSH and import it on the server as the user that runs Hindsight (add
+   `--home <dir>` before `import` if the server sets `HINDSIGHT_API_LLM_CHATGPT_PLAN_HOME`).
+   `import` keeps the server's own `host_id` (creating one on first use) instead of the laptop's:
+   ```bash
+   scp ~/.hindsight/chatgpt-plan/credentials.json server:/tmp/chatgpt-plan.json
+   ssh server 'python -m hindsight_api.engine.providers.chatgpt_plan_auth import /tmp/chatgpt-plan.json && rm /tmp/chatgpt-plan.json'
+   ```
+3. On the laptop, delete `~/.hindsight/chatgpt-plan/credentials.json`. Do not run `logout` there:
+   refresh tokens rotate, so after the copy only the server should use and refresh this session, and
+   revoking it from the laptop can end the server's session too.
+
+The server then owns refreshes. Sign in again on the laptop later if you also want Hindsight there.
+
+**Important notes:**
+- Access tokens last one hour and are refreshed automatically (five minutes before expiry, and once on
+  an HTTP 401). Refresh tokens rotate; refreshes take a file lock and re-read the file first, so
+  several Hindsight processes can share one credential directory.
+- When the refresh token is no longer valid, calls fail with the `login` command to run.
+- On ChatGPT Plus, the five-hour usage limit is shared with every other app that uses your plan,
+  including Codex. When the limit is reached, Hindsight defers retain and consolidation work and
+  retries it 30 minutes later instead of failing it. Review usage and per-app limits at
+  [ChatGPT Settings → Usage](https://chatgpt.com/settings/usage).
+- The route is a preview: Hindsight sends `store: false` and `stream: true`, omits fields it rejects
+  (`temperature`, `max_output_tokens`, `user`, and others), and sends system prompts as developer
+  messages.
+- `logout` revokes the session and clears local tokens but keeps the client registration and host id
+  for the next `login`.
+- `HINDSIGHT_API_LLM_CHATGPT_PLAN_HOME` relocates the credential directory. Use one directory per
+  ChatGPT account.
+
 ### OpenAI Codex Setup (ChatGPT Plus/Pro)
 
 Use your ChatGPT Plus or Pro subscription for Hindsight without separate OpenAI Platform API costs.

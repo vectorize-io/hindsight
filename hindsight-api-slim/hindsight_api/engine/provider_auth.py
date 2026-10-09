@@ -14,6 +14,7 @@ _PROVIDERS_WITHOUT_API_KEY = frozenset(
         "lmstudio",
         "llamacpp",
         "openai-codex",
+        "chatgpt-plan",
         "claude-code",
         "cursor",
         "github-copilot",

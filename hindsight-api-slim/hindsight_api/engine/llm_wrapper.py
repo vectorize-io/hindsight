@@ -774,6 +774,21 @@ def create_llm_provider(
             timeout=timeout,
         )
 
+    elif provider_lower == "chatgpt-plan":
+        # The public Responses API billed to a ChatGPT plan through OpenAI's
+        # Sign in with ChatGPT flow (credentials from chatgpt_plan_auth login).
+        from hindsight_api.engine.providers.chatgpt_plan_llm import ChatGPTPlanLLM
+
+        return ChatGPTPlanLLM(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
+            timeout=timeout,
+        )
+
     elif provider_lower == "openai-responses":
         # OpenAI Responses API (/v1/responses). Unlike chat/completions, it
         # supports reasoning + function tools together, so reflect's tool loop
@@ -984,6 +999,7 @@ class LLMProvider:
             "llamacpp",
             "vertexai",
             "openai-codex",
+            "chatgpt-plan",
             "claude-code",
             "cursor",
             "github-copilot",
