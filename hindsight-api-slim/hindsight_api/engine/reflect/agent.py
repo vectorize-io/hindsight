@@ -20,6 +20,7 @@ from ...config import DEFAULT_RECALL_CHUNKS_MAX_TOKENS, DEFAULT_RECALL_MAX_TOKEN
 from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
 from ..llm_trace import LLMQueueWait, reset_queue_wait_sink, set_queue_wait_sink
 from ..llm_transport import describe_llm_error
+from ..response_models import LLMToolCall, LLMToolCallResult
 from .models import (
     DirectiveInfo,
     LengthRewrite,
@@ -33,6 +34,7 @@ from .presentation import ToolResultPresenter
 from .prompts import (
     _SPLIT_SYNTHESIS_WARN_CHUNKS,
     CLAIMS_SYSTEM_PROMPT,
+    FAST_SEARCH_QUERY_SYSTEM_PROMPT,
     _extract_directive_rules,
     build_agent_user_prompt,
     build_chunk_claims_prompt,
@@ -143,9 +145,17 @@ def _build_directives_applied(directives: list[dict[str, Any]] | None) -> list[D
 
 if TYPE_CHECKING:
     from ..llm_wrapper import AnyLLMProvider
-    from ..response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+    from ..response_models import TokenUsage
 
 logger = logging.getLogger(__name__)
+
+# What the fast query rewrite replies when the request asks for nothing a memory bank could
+# answer ("yes", "thanks", "go ahead"): reflect then returns an empty answer without searching.
+_FAST_NOTHING_TO_SEARCH = "NONE"
+
+# Fast reflect's first recall, when the decision model will prune it: wide enough that a decision
+# the fused order ranks low still reaches the decision model, which re-ranks and cuts it.
+_FAST_RECALL_MAX_TOKENS = 8192
 
 DEFAULT_MAX_ITERATIONS = 10
 _COMPACTED_TOOL_RESULT = "[Earlier tool result omitted to fit the context budget; it is kept for the final answer.]"
@@ -613,6 +623,9 @@ async def _run_reflect_agent_inner(
     store_document_text: bool = True,
     answer_as_document: bool = False,
     tool_token_limits: ReflectToolTokenLimits | None = None,
+    fast: bool = False,
+    evidence_is_sufficient_fn: Callable[[str, str], Awaitable[bool]] | None = None,
+    prune_evidence_fn: Callable[[str, list[str]], Awaitable[list[bool]]] | None = None,
     *,
     reflect_id: str,
     provider_impl: Any,
@@ -648,6 +661,15 @@ async def _run_reflect_agent_inner(
             uncapped-by-default config (``reflect_max_completion_tokens``).
         response_schema: Optional JSON Schema for structured output in final response
         directives: Optional list of directive mental models to inject as hard rules
+        fast: Fast mode. The first retrieval layers run in parallel with the question
+            as their query, instead of one LLM turn each writing a query, and
+            ``evidence_is_sufficient_fn`` (a decision model) may end retrieval there.
+        evidence_is_sufficient_fn: (question, evidence) -> whether the evidence already
+            answers the question. Only consulted in fast mode, once, after the first
+            retrieval; without it fast mode hands over to ordinary ``auto`` turns.
+        prune_evidence_fn: (question, candidate texts) -> keep flag per candidate. In
+            fast mode the first retrieval's observations, facts and chunks are pruned
+            with it before the model (or the sufficiency check) reads them.
 
     Returns:
         ReflectAgentResult with final answer and metadata
@@ -843,6 +865,9 @@ async def _run_reflect_agent_inner(
         )
         total_llm_ms = sum(c["duration_ms"] for c in llm_trace)
         total_tools_ms = sum(t["duration_ms"] for t in tool_trace_summary)
+        # Neither an LLM/decision call nor a tool: prompt building, presentation, token
+        # counting, cache work. Parallel tools overlap, so this can go negative.
+        other_ms = elapsed_ms - total_llm_ms - total_tools_ms
 
         answer_preview = answer[:100] + "..." if len(answer) > 100 else answer
         mode = "forced" if forced else "done"
@@ -852,6 +877,8 @@ async def _run_reflect_agent_inner(
             f"iterations={iterations} | "
             f"llm=[{llm_summary}] ({total_llm_ms}ms) | "
             f"tools=[{tools_summary}] ({total_tools_ms}ms) | "
+            f"other={other_ms}ms | "
+            f"tokens=in:{total_input_tokens},out:{total_output_tokens} | "
             f"answer='{answer_preview}' | "
             f"total={elapsed_ms}ms"
         )
@@ -870,15 +897,20 @@ async def _run_reflect_agent_inner(
         """
         nonlocal total_input_tokens, total_output_tokens, total_cached_tokens, total_thoughts_tokens
         llm_start = time.time()
-        call_result = await llm_config.call(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            scope="reflect",
-            temperature=get_config().llm_temperature_reflect if temperature is None else temperature,
-            max_completion_tokens=completion_cap,
-        )
+        queue_wait = LLMQueueWait()
+        queue_token = set_queue_wait_sink(queue_wait)
+        try:
+            call_result = await llm_config.call(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                scope="reflect",
+                temperature=get_config().llm_temperature_reflect if temperature is None else temperature,
+                max_completion_tokens=completion_cap,
+            )
+        finally:
+            reset_queue_wait_sink(queue_token)
         response = call_result.content
         usage = call_result.usage
         llm_duration = int((time.time() - llm_start) * 1000)
@@ -890,6 +922,7 @@ async def _run_reflect_agent_inner(
             {
                 "scope": trace_scope,
                 "duration_ms": llm_duration,
+                "queued_ms": int(queue_wait.seconds * 1000),
                 "input_tokens": usage.input_tokens,
                 "output_tokens": usage.output_tokens,
             }
@@ -953,6 +986,8 @@ async def _run_reflect_agent_inner(
         if not messages or messages[-1].get("role") != "tool":
             return None
         llm_start = time.time()
+        queue_wait = LLMQueueWait()
+        queue_token = set_queue_wait_sink(queue_wait)
         try:
             result = await llm_config.call_with_tools(
                 messages=[
@@ -971,6 +1006,8 @@ async def _run_reflect_agent_inner(
         except Exception as e:
             logger.warning(f"[REFLECT {reflect_id}] closing done call failed, using the standalone prompt: {e}")
             return None
+        finally:
+            reset_queue_wait_sink(queue_token)
         total_input_tokens += result.input_tokens
         total_output_tokens += result.output_tokens
         total_cached_tokens += getattr(result, "cached_tokens", 0) or 0
@@ -983,6 +1020,7 @@ async def _run_reflect_agent_inner(
                 # be able to tell which path produced the answer.
                 "scope": "closing_done",
                 "duration_ms": int((time.time() - llm_start) * 1000),
+                "queued_ms": int(queue_wait.seconds * 1000),
                 "input_tokens": result.input_tokens,
                 "output_tokens": result.output_tokens,
             }
@@ -1162,6 +1200,72 @@ async def _run_reflect_agent_inner(
             directives_applied=directives_applied,
         )
 
+    async def _decision_says_sufficient(evidence: str, trace_scope: str) -> bool:
+        """The decision model's verdict on ``evidence``; False when it errors.
+
+        The decision model only ever saves LLM turns, and without its verdict the agent
+        turns still answer, so its outage must not fail reflect.
+        """
+        assert evidence_is_sufficient_fn is not None
+        decision_start = time.time()
+        try:
+            # Judged against the request itself, not the distilled search query: that query is
+            # a retrieval aid and can ask for more than the request does ("implementation logic
+            # and policy"), which read as "partly answered" on evidence the request was happy with.
+            return await evidence_is_sufficient_fn(query, evidence)
+        except OperationCancelledError:
+            raise
+        except Exception as e:
+            # From here on the LLM decides when to stop, as in agent mode: a decision model that
+            # refuses the question (an endpoint without this question type answers 400) would
+            # otherwise read as "not enough" every round, and the loop would run to its limit.
+            nonlocal decision_model_failed
+            decision_model_failed = True
+            logger.warning(f"[REFLECT {reflect_id}] Fast mode: decision model failed, using agent turns: {e}")
+            return False
+        finally:
+            llm_trace.append({"scope": trace_scope, "duration_ms": int((time.time() - decision_start) * 1000)})
+
+    async def _timed_prune(tool_results: list[Any]) -> list[Any]:
+        """Fast mode's first retrieval, pruned by the decision model when there is one."""
+        if prune_evidence_fn is None:
+            return tool_results
+        prune_start = time.time()
+        # Ranked against the request itself, not the distilled query: the request says what to
+        # prefer ("decisions, never the current implementation"), and pruning on the short query
+        # kept the later commit that undid a decision as readily as the decision (sde-bench
+        # dedupe-history), so the answer reported the decision as superseded.
+        pruned = await _prune_fast_batch(query, tool_results, prune_evidence_fn, reflect_id)
+        llm_trace.append({"scope": "fast_prune", "duration_ms": int((time.time() - prune_start) * 1000)})
+        return pruned
+
+    # Whether the pages alone answered fast mode's first retrieval, and whether the batch that
+    # just landed was a fast round (all layers at once, pruned) that the decision model judges.
+    fast_pages_answered = False
+    fast_round_landed = False
+    decision_model_failed = False
+
+    def _fast_batch(search_query: str, id_prefix: str) -> LLMToolCallResult:
+        """Fast mode's retrieval round: every forced layer at once, with one query.
+
+        Recall hands the decision model a wider slice than the default to cut down from: the
+        fact that states a decision can rank low (63 of 95 for sde-bench csvquote-history's in
+        fused order), and the model keeps what bears on the question.
+        """
+
+        def _arguments(tool: str) -> dict[str, Any]:
+            arguments: dict[str, Any] = {"query": search_query, "reason": "fast mode"}
+            if tool == "recall" and prune_evidence_fn is not None:
+                arguments["max_tokens"] = _FAST_RECALL_MAX_TOKENS
+            return arguments
+
+        return LLMToolCallResult(
+            tool_calls=[
+                LLMToolCall(id=f"{id_prefix}{tool}", name=tool, arguments=_arguments(tool)) for tool in forced_sequence
+            ],
+            finish_reason="tool_calls",
+        )
+
     consecutive_errors = 0
     # When a forced ``search_mental_models`` returns fresh, usable models on a
     # low/mid-budget call, we stop forcing the lower retrieval layers for the
@@ -1197,6 +1301,19 @@ async def _run_reflect_agent_inner(
         # (issue #2122). Raises OperationCancelledError when fired.
         if cancel_check is not None:
             cancel_check()
+
+        # Fast mode, after the parallel first retrieval: a decision model judges whether
+        # that evidence already answers the question. Yes ends retrieval here, so the
+        # only LLM call left is the answer itself; no hands over to ordinary ``auto``
+        # turns, where the LLM writes follow-up queries from what it has read.
+        if fast and iteration == 1 and fast_pages_answered:
+            return await _finish(iteration)
+        if fast_round_landed and evidence_is_sufficient_fn is not None and not decision_model_failed:
+            fast_round_landed = False
+            evidence = "\n\n".join(m["content"] for m in messages if m.get("role") == "tool")
+            if await _decision_says_sufficient(evidence, "fast_sufficiency"):
+                logger.info(f"[REFLECT {reflect_id}] Fast mode: the first retrieval answers the question.")
+                return await _finish(iteration)
 
         # Determine tool_choice for this iteration.
         # Force the full hierarchical retrieval path (only for enabled tools) before allowing auto.
@@ -1274,82 +1391,113 @@ async def _run_reflect_agent_inner(
             await _resolve_pending_cache()
 
         call_msg_count = len(messages)
-        # Time spent waiting on LLM concurrency permits is collected separately so a
-        # long `agent_N` entry can be read as "the provider was slow" and nothing
-        # else -- see llm_trace.set_queue_wait_sink (#3881).
-        queue_wait = LLMQueueWait()
-        queue_token = set_queue_wait_sink(queue_wait)
-        try:
-            ct_kwargs: dict[str, Any] = dict(
-                messages=messages,
-                tools=tools,
-                scope="reflect_tool_call",
-                tool_choice=iter_tool_choice,
-                temperature=get_config().llm_temperature_reflect,
-                # Same uncapped-by-default ceiling the synthesis calls use. Left
-                # unset this fell through to the provider's own default, which on
-                # Anthropic truncated long ``done`` payloads before the answer
-                # field was written (#4437).
-                max_completion_tokens=synthesis_max_completion_tokens,
+        fast_round = False
+        if fast and iteration == 0 and forced_sequence:
+            # Fast mode: every forced layer at once, with one query. In agent mode each of
+            # these is a full LLM round trip whose only output is a search string.
+            #
+            # Every request is rewritten into one search query first. It used to be only the
+            # long ones (over 80 tokens): a plugin wraps the developer's goal in ~2k characters
+            # of rendering rules, and searching with all of it found nothing (sde-bench
+            # boltons-budget). The same call now also spots a request with nothing to look up
+            # ("yes", "thanks"), which then returns at once instead of paying for a retrieval.
+            distilled = (
+                (await _tracked_llm_call(query, "fast_query", FAST_SEARCH_QUERY_SYSTEM_PROMPT, None, temperature=0.0))
+                .strip()
+                .strip('"')
             )
-            if incremental_caching and iter_tool_choice is LLM_TOOL_CHOICE_AUTO and rolling_cache_name is not None:
-                ct_kwargs["cached_prefix"] = rolling_cache_name
-                ct_kwargs["cached_prefix_message_count"] = rolling_cache_boundary
-            result = await llm_config.call_with_tools(**ct_kwargs)
-            llm_duration = int((time.time() - llm_start) * 1000)
-            queued_ms = int(queue_wait.seconds * 1000)
-            consecutive_errors = 0
-            total_input_tokens += result.input_tokens
-            total_output_tokens += result.output_tokens
-            total_cached_tokens += getattr(result, "cached_tokens", 0) or 0
-            total_thoughts_tokens += getattr(result, "thoughts_tokens", 0) or 0
-            llm_trace.append(
-                {
-                    "scope": f"agent_{iteration + 1}",
-                    "duration_ms": llm_duration,
-                    "queued_ms": queued_ms,
-                    "input_tokens": result.input_tokens,
-                    "output_tokens": result.output_tokens,
-                }
-            )
-
-        except OperationCancelledError:
-            # A cancellation is not a provider failure: never retried, never
-            # synthesized around, and it must reach the HTTP layer as itself so a
-            # client disconnect stays a 499 (issue #2122).
-            raise
-        except Exception as e:
-            err_duration = int((time.time() - llm_start) * 1000)
-            queued_ms = int(queue_wait.seconds * 1000)
-            consecutive_errors += 1
-            logger.warning(
-                f"[REFLECT {reflect_id}] LLM error on iteration {iteration + 1}: {describe_llm_error(e)} "
-                f"({err_duration}ms, {queued_ms}ms queued)"
-            )
-            llm_trace.append(
-                {"scope": f"agent_{iteration + 1}_err", "duration_ms": err_duration, "queued_ms": queued_ms}
-            )
-            # Context overflow errors must never be retried — retrying would only make them worse.
-            # Skip straight to final synthesis with whatever evidence we have: the
-            # prompt was too big for the model, which is a budgeting problem, not a
-            # broken dependency, and the evidence gathered so far is intact.
-            if _is_context_overflow_error(e):
-                logger.warning(
-                    f"[REFLECT {reflect_id}] Context window exceeded on iteration {iteration + 1}, "
-                    "forcing final synthesis from gathered evidence."
+            # A document is never "nothing": a refresh must not store an empty page.
+            if distilled == _FAST_NOTHING_TO_SEARCH and not answer_as_document:
+                logger.info(f"[REFLECT {reflect_id}] Fast mode: nothing to search for; empty answer.")
+                return ReflectAgentResult(
+                    text="",
+                    iterations=0,
+                    tools_called=0,
+                    tool_trace=tool_trace,
+                    llm_trace=_get_llm_trace(),
+                    usage=_get_usage(),
+                    directives_applied=directives_applied,
                 )
-                return await _forced_final_synthesis(iteration + 1)
-            # Any other error: retry (capped, so a persistently failing provider does
-            # not hang the run), then give up. Synthesizing an answer here instead
-            # would be built on an evidence set the failed turn never finished
-            # gathering, and callers cannot tell that from a complete one (#2894).
-            # The provider's own retries (429/5xx) already ran inside the call.
-            if iteration < max_iterations - 1 and consecutive_errors < 2:
-                continue
-            raise
+            result = _fast_batch(distilled or query, "fast_")
+            fast_round = True
+            forced_steps_done = len(forced_sequence) - 1  # the increment below completes the sequence
+        else:
+            # Time spent waiting on LLM concurrency permits is collected separately so a
+            # long `agent_N` entry can be read as "the provider was slow" and nothing
+            # else -- see llm_trace.set_queue_wait_sink (#3881).
+            queue_wait = LLMQueueWait()
+            queue_token = set_queue_wait_sink(queue_wait)
+            try:
+                ct_kwargs: dict[str, Any] = dict(
+                    messages=messages,
+                    tools=tools,
+                    scope="reflect_tool_call",
+                    tool_choice=iter_tool_choice,
+                    temperature=get_config().llm_temperature_reflect,
+                    # Same uncapped-by-default ceiling the synthesis calls use. Left
+                    # unset this fell through to the provider's own default, which on
+                    # Anthropic truncated long ``done`` payloads before the answer
+                    # field was written (#4437).
+                    max_completion_tokens=synthesis_max_completion_tokens,
+                )
+                if incremental_caching and iter_tool_choice is LLM_TOOL_CHOICE_AUTO and rolling_cache_name is not None:
+                    ct_kwargs["cached_prefix"] = rolling_cache_name
+                    ct_kwargs["cached_prefix_message_count"] = rolling_cache_boundary
+                result = await llm_config.call_with_tools(**ct_kwargs)
+                llm_duration = int((time.time() - llm_start) * 1000)
+                queued_ms = int(queue_wait.seconds * 1000)
+                consecutive_errors = 0
+                total_input_tokens += result.input_tokens
+                total_output_tokens += result.output_tokens
+                total_cached_tokens += getattr(result, "cached_tokens", 0) or 0
+                total_thoughts_tokens += getattr(result, "thoughts_tokens", 0) or 0
+                llm_trace.append(
+                    {
+                        "scope": f"agent_{iteration + 1}",
+                        "duration_ms": llm_duration,
+                        "queued_ms": queued_ms,
+                        "input_tokens": result.input_tokens,
+                        "output_tokens": result.output_tokens,
+                    }
+                )
 
-        finally:
-            reset_queue_wait_sink(queue_token)
+            except OperationCancelledError:
+                # A cancellation is not a provider failure: never retried, never
+                # synthesized around, and it must reach the HTTP layer as itself so a
+                # client disconnect stays a 499 (issue #2122).
+                raise
+            except Exception as e:
+                err_duration = int((time.time() - llm_start) * 1000)
+                queued_ms = int(queue_wait.seconds * 1000)
+                consecutive_errors += 1
+                logger.warning(
+                    f"[REFLECT {reflect_id}] LLM error on iteration {iteration + 1}: {describe_llm_error(e)} "
+                    f"({err_duration}ms, {queued_ms}ms queued)"
+                )
+                llm_trace.append(
+                    {"scope": f"agent_{iteration + 1}_err", "duration_ms": err_duration, "queued_ms": queued_ms}
+                )
+                # Context overflow errors must never be retried — retrying would only make them worse.
+                # Skip straight to final synthesis with whatever evidence we have: the
+                # prompt was too big for the model, which is a budgeting problem, not a
+                # broken dependency, and the evidence gathered so far is intact.
+                if _is_context_overflow_error(e):
+                    logger.warning(
+                        f"[REFLECT {reflect_id}] Context window exceeded on iteration {iteration + 1}, "
+                        "forcing final synthesis from gathered evidence."
+                    )
+                    return await _forced_final_synthesis(iteration + 1)
+                # Any other error: retry (capped, so a persistently failing provider does
+                # not hang the run), then give up. Synthesizing an answer here instead
+                # would be built on an evidence set the failed turn never finished
+                # gathering, and callers cannot tell that from a complete one (#2894).
+                # The provider's own retries (429/5xx) already ran inside the call.
+                if iteration < max_iterations - 1 and consecutive_errors < 2:
+                    continue
+                raise
+
+            finally:
+                reset_queue_wait_sink(queue_token)
 
         # No tool calls this turn.
         if not result.tool_calls:
@@ -1487,6 +1635,29 @@ async def _run_reflect_agent_inner(
                     messages.extend(_document_rejection_messages(done_call, exc))
                     continue
 
+        # Fast mode after a "not enough" verdict: the LLM wrote its next search, and that query
+        # runs as another fast round (every layer at once, pruned, judged again) rather than as
+        # the one search it asked for. The LLM picks what to look for; the decision model, not
+        # the LLM, decides when the evidence is enough.
+        if (
+            fast
+            and iteration > 0
+            and evidence_is_sufficient_fn is not None
+            and not decision_model_failed
+            and forced_sequence
+        ):
+            follow_up = next(
+                (
+                    tc
+                    for tc in result.tool_calls
+                    if _normalize_tool_name(tc.name) in forced_sequence and tc.arguments.get("query")
+                ),
+                None,
+            )
+            if follow_up is not None:
+                result = _fast_batch(str(follow_up.arguments["query"]), f"fast{iteration + 1}_")
+                fast_round = True
+
         # Execute other tools in parallel (exclude done tool in all its format variants)
         other_tools = [tc for tc in result.tool_calls if not _is_done_tool(tc.name)]
         if other_tools:
@@ -1578,8 +1749,43 @@ async def _run_reflect_agent_inner(
                 )
                 for tc in other_tools
             ]
+            # Fast mode's first batch keeps the searches' own cross-encoder order. It once ran
+            # them on fused (RRF) order instead, since the decision model cuts the list straight
+            # after: ~2s faster, but the decision model then only cut, it never re-ordered, and
+            # the answer read the evidence in fused order. On the sde-bench commit-history tasks
+            # that put a later "simplify" commit last, and the answer narrated it as replacing the
+            # decision before it: 10/30 correct, against 19/30 reranked (agent mode: 21/30).
             tool_results = await asyncio.gather(*tool_tasks, return_exceptions=True)
             total_tools_called += len(other_tools)
+
+            if (
+                fast
+                and iteration == 0
+                and (budget or "low").lower() != "high"
+                and evidence_is_sufficient_fn is not None
+                and (pages := _fresh_usable_pages(other_tools, tool_results)) is not None
+            ):
+                # Raw facts next to a page invite the answer to mix in what the page already
+                # superseded, so pages that answer on their own are read alone. "Fresh" is not
+                # "on topic": a coding bank's pages describe the code, and hiding the facts
+                # behind them on freshness alone hid the one decision that mattered
+                # (sde-bench boltons-budget). The decision model reads the pages first.
+                # The pruning runs alongside the pages' verdict rather than after it: both are
+                # decision-model calls, and pruning work thrown away when the pages answer costs
+                # less than waiting for one before starting the other.
+                pages_answer, pruned = await asyncio.gather(
+                    _decision_says_sufficient(json.dumps(pages, default=str), "fast_pages_sufficiency"),
+                    _timed_prune(tool_results),
+                )
+                if pages_answer:
+                    logger.info(f"[REFLECT {reflect_id}] Fast mode: the pages answer; lower layers not shown.")
+                    tool_results = _hide_lower_layers(other_tools, tool_results)
+                    fast_pages_answered = True
+                else:
+                    tool_results = pruned
+            elif fast_round:
+                tool_results = await _timed_prune(tool_results)
+            fast_round_landed = fast_round
 
             # Process results and add to messages
             for position, tc, result_data in zip(allowed_positions, other_tools, tool_results):
@@ -1727,6 +1933,98 @@ async def _run_reflect_agent_inner(
         f"Reflect exhausted its {max_iterations} iteration(s) without producing an answer "
         f"({total_tools_called} tool call(s) made)."
     )
+
+
+def _fresh_usable_pages(tool_calls: list["LLMToolCall"], tool_results: list[Any]) -> dict[str, Any] | None:
+    """The page search's output when every page in it is fresh and has text, else None."""
+    pages = next(
+        (
+            result[0]
+            for tc, result in zip(tool_calls, tool_results)
+            if _normalize_tool_name(tc.name) == "search_mental_models" and isinstance(result, tuple)
+        ),
+        None,
+    )
+    if isinstance(pages, dict) and pages.get("mental_models") and _all_mental_models_are_usable_and_fresh(pages):
+        return pages
+    return None
+
+
+def _hide_lower_layers(tool_calls: list["LLMToolCall"], tool_results: list[Any]) -> list[Any]:
+    """Replace the observation and recall results with empty ones."""
+    empty = {"search_observations": {"observations": []}, "recall": {"memories": []}}
+    return [
+        (empty[_normalize_tool_name(tc.name)], result[1])
+        if _normalize_tool_name(tc.name) in empty and isinstance(result, tuple)
+        else result
+        for tc, result in zip(tool_calls, tool_results)
+    ]
+
+
+def _evidence_line(item: dict[str, Any]) -> str:
+    """One fact or observation as the decision model reads it: its date, then its text."""
+    when = item.get("occurred_start") or item.get("mentioned_at")
+    return f"[{when}] {item.get('text', '')}" if when else str(item.get("text", ""))
+
+
+async def _prune_fast_batch(
+    query: str,
+    tool_results: list[Any],
+    prune_evidence_fn: Callable[[str, list[str]], Awaitable[list[bool]]],
+    reflect_id: str,
+) -> list[Any]:
+    """Drop the observations, facts and chunks the decision model judges irrelevant.
+
+    One pool across the whole first retrieval, so the model weighs a fact against an
+    observation saying the same thing. Mental-model pages are left whole: they are
+    few, curated, and already the first thing the answer should read. Source facts
+    survive only under an observation that survived. Results the model did not
+    produce (errors, exceptions) pass through untouched, and so does everything when
+    the decision model fails: pruning only ever saves tokens.
+    """
+    # (result index, list key, item key) for every candidate, in retrieval order.
+    slots: list[tuple[int, str, str]] = []
+    texts: list[str] = []
+    for i, output in enumerate(tool_results):
+        if not isinstance(output, tuple) or not isinstance(output[0], dict) or "error" in output[0]:
+            continue
+        data = output[0]
+        for key in ("observations", "memories"):
+            for item in data.get(key) or []:
+                if isinstance(item, dict) and "id" in item:
+                    slots.append((i, key, str(item["id"])))
+                    texts.append(_evidence_line(item))
+        for chunk_id, chunk in (data.get("chunks") or {}).items():
+            slots.append((i, "chunks", str(chunk_id)))
+            texts.append(str(chunk.get("chunk_text", "")) if isinstance(chunk, dict) else str(chunk))
+    if len(texts) < 2:
+        return tool_results
+    try:
+        keep_flags = await prune_evidence_fn(query, texts)
+    except OperationCancelledError:
+        raise
+    except Exception as e:
+        logger.warning(f"[REFLECT {reflect_id}] Fast mode: pruning failed, keeping all evidence: {e}")
+        return tool_results
+
+    kept = {slot for slot, keep in zip(slots, keep_flags) if keep}
+    logger.info(f"[REFLECT {reflect_id}] Fast mode: kept {len(kept)}/{len(slots)} evidence items.")
+    pruned: list[Any] = []
+    for i, output in enumerate(tool_results):
+        if not isinstance(output, tuple) or not isinstance(output[0], dict) or "error" in output[0]:
+            pruned.append(output)
+            continue
+        data = dict(output[0])
+        for key in ("observations", "memories"):
+            if key in data:
+                data[key] = [item for item in data[key] if (i, key, str(item.get("id"))) in kept]
+        if "chunks" in data:
+            data["chunks"] = {cid: c for cid, c in data["chunks"].items() if (i, "chunks", str(cid)) in kept}
+        if "source_facts" in data:
+            cited = {str(fid) for obs in data.get("observations", []) for fid in obs.get("source_fact_ids") or []}
+            data["source_facts"] = {fid: f for fid, f in data["source_facts"].items() if str(fid) in cited}
+        pruned.append((data, output[1]))
+    return pruned
 
 
 def _unique_tool_call_ids(tool_calls: list["LLMToolCall"], already_emitted: set[str]) -> list[str]:

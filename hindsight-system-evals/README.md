@@ -148,6 +148,38 @@ rank the sources. The ways an operator can state the precedence with no new conf
 `HINDSIGHT_EVAL_SOURCE_STRATEGY`. It uses `hindsight_system_evals/sources.py`,
 not the shared corpus.
 
+**`test_09` — a coding agent's first-prompt reflect, in both reflect modes.** The only suite on
+banks shaped like a coding agent's: six sde-bench tasks as the coding-agents plugin ingests
+them — each task repo's history, the chat or commit where the decision was made, 140 decoy
+developer conversations, and the pages the plugin wrote about the code. Decisions recorded in
+chats, in commits (with a later commit that broke them), and amended after the fact. It sends
+the plugin's own first-prompt request (`buildReflectQuery`: the developer's goal wrapped in ~2k
+characters of rendering rules) in `agent` and `fast` reflect mode on each bank, interleaved,
+`HINDSIGHT_EVAL_CODING_REFLECT_REPEATS` times each (default 2). Graded as rates over every run:
+fast mode must report the task's recorded decision as often as agent mode, less one; answer
+"the bank holds no decision" no more often than agent mode; and be faster (median) with fewer
+LLM calls.
+
+Behind it: fast reflect passed every suite above and still injected "the bank holds no
+decision" on sde-bench, in 14s against agent mode's 7-10s. The wrapped prompt was the search
+query, fresh pages about the code hid the facts, and the decision model's "partly" was a
+rounding of a "fully". Then, once fast: the distilled search query asked for "implementation
+logic" and surfaced the commit that broke each history task's decision. None of that shows on
+short questions over an on-topic corpus. The speed check needs a decision model
+(`HINDSIGHT_EVAL_SET_RERANKER_TYPESAFE_API_KEY`); without one only the answers are graded.
+
+The banks are `fixtures/coding-agent-banks/<task>.zip`, with each task's bug report and
+recorded policy in `manifest.json` there. Rebuild them on purpose, against a server you keep
+up, with sde-bench's own setup (`SDE_HSCODING_PLUGIN_DIR` at a built plugin,
+`SDEBENCH_BOLTONS_HOST` at a boltons clone, `OMB_ANSWER_LLM`/`OMB_JUDGE_LLM` set to a provider
+you have a key for):
+
+```bash
+uv run run-amb --api-url http://localhost:8888 --dataset sdebench --split boltons \
+  --memory hindsight-coding -- --mode coding --query-id <task> --skip-answer
+# then export bank sde-coding-<task> with export_bank into fixtures/coding-agent-banks/
+```
+
 **`test_08` — ranked retrieval on BEIR.** The only suite graded against labels
 nobody here wrote, and the only one that makes **no model call**. It records a
 *baseline*: what this pipeline scores on a public IR benchmark, and on what.
