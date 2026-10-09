@@ -149,13 +149,23 @@ A hook runs regardless of what the model thinks. A skill has to be noticed and c
 
 ## Getting connected
 
-Install from the Grok Bot Marketplace: open **Connect apps**, search for **Hindsight**, select **Add**, complete the OAuth flow, then ask any Bot to "set up Hindsight memory".
+The marketplace listing is still in review, so for now this is a manual setup. Two paths.
 
-There is nothing to configure. The MCP endpoint is `https://api.hindsight.vectorize.io/mcp`, and Grok Bot runs OAuth against it with discovery, dynamic client registration and PKCE.
+**In Grok Bot**, paste the [connect prompt](https://github.com/vectorize-io/hindsight/blob/main/hindsight-integrations/grok-bot/connect-prompt.md) to any Bot. It asks the Bot to add Hindsight as a custom connector, walks the OAuth sign-in, and then carries the same rules the skills carry: which bank to write to, when to recall, how to hand work to another Bot, and which tools never to call.
 
-Name the Bot first. `memory-setup` refuses to continue while a Bot is still called "Grok Bot", because the name becomes the bank id: every unnamed Bot would derive `grok-bot::grok-bot` and share one personal bank, and renaming later strands whatever is stored under the old id.
+**In Cursor**, copy the plugin into the local plugin folder and reload the window:
 
-The same plugin installs from the Cursor Marketplace, where Cursor agents get per-project banks named after the open workspace folder.
+```bash
+git clone https://github.com/vectorize-io/hindsight
+mkdir -p ~/.cursor/plugins/local
+cp -r hindsight/hindsight-integrations/grok-bot ~/.cursor/plugins/local/hindsight
+```
+
+Either way there is nothing to configure. The MCP endpoint is `https://api.hindsight.vectorize.io/mcp`, and the OAuth flow runs against it with discovery, dynamic client registration and PKCE. No API key.
+
+Name the Bot first. Setup refuses to continue while a Bot is still called "Grok Bot", because the name becomes the bank id: every unnamed Bot would derive `grok-bot::grok-bot` and share one personal bank, and renaming later strands whatever is stored under the old id.
+
+Once the listing is approved both paths collapse into searching for Hindsight under Connect apps, or finding it in the Cursor marketplace.
 
 ### What the plugin will not do
 
