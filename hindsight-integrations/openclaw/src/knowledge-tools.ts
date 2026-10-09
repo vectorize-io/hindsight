@@ -62,8 +62,6 @@ export const TOOL_NAMES = [
   "agent_knowledge_ingest",
 ] as const;
 
-export type KnowledgeToolName = (typeof TOOL_NAMES)[number];
-
 // ── Helpers ────────────────────────────────────────────
 
 function ok(data: unknown): KnowledgeToolResult {
@@ -112,8 +110,7 @@ function parseChunkMaxTokens(input: unknown): number | undefined {
 /**
  * Create the full set of agent_knowledge_* tools for a given bank.
  *
- * Returns harness-agnostic tool definitions. Each harness adapter
- * wraps these into its native tool format.
+ * index.ts wraps these into OpenClaw's registerTool format.
  */
 export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): KnowledgeTool[] {
   const client = new HindsightClient({
