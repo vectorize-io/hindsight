@@ -3435,7 +3435,8 @@ class MemoryEngine(MemoryEngineInterface):
 
             outside = sorted(t for t in label_tags if not tags_writable([t], write_scope))
             raise OperationValidationError(
-                f"Retain strategy '{strategy or 'default'}' can tag memories {', '.join(outside)}, which you can't write",
+                f"Retain strategy '{strategy or 'default'}' can tag memories "
+                f"{', '.join(outside)}, which you can't write",
                 status_code=403,
             )
 

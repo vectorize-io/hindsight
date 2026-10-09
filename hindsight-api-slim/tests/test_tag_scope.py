@@ -782,7 +782,9 @@ _UNSCOPED_BY_DESIGN = {
     "get_entity_state": "returns the entity with no observations",
     "export_knowledge_base": "built from list_knowledge_nodes / get_knowledge_page, which apply the scope",
     "_knowledge_read_filter": "computes the knowledge-tree scope filter itself",
-    "authorize_bank_template_import_write": "only inside bank_template_import_authorization, which refuses scoped callers",
+    "authorize_bank_template_import_write": (
+        "only inside bank_template_import_authorization, which refuses scoped callers"
+    ),
     # Queued on the caller's behalf after every retain and delete (failures are only logged),
     # so refusing scoped callers would silently skip maintenance after their writes. They
     # drain the bank's own queues and return nothing.
