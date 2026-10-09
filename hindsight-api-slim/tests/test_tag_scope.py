@@ -7,7 +7,9 @@ memories, her document, its text and her mental models out of Dan's reach, while
 showing him the shared rule.
 """
 
+import ast
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +18,7 @@ from hindsight_api.engine.reflect.tools import tool_expand, tool_read_mental_mod
 from hindsight_api.engine.schema import fq_store_table_explicit
 from hindsight_api.engine.search.tags import TagGroupLeaf, tags_satisfy_groups, tags_writable
 from hindsight_api.extensions import (
+    BankReadOperation,
     OperationValidationError,
     OperationValidatorExtension,
     TagScopeContext,
@@ -649,3 +652,187 @@ async def test_the_default_template_applies_whole_when_a_scoped_caller_creates_t
     finally:
         memory._operation_validator = original
         await memory.delete_bank(bank_id, request_context=admin)
+
+
+@pytest.mark.asyncio
+async def test_bank_wide_reads_and_writes_are_refused_to_a_scoped_caller(memory, scoped_bank):
+    """Operations answered for, or acting on, the whole bank ignore the caller's tag scope, so a
+    scoped caller is refused them (403) instead of being shown or allowed bank-wide effects:
+    statistics, operations, webhooks and their deliveries (which carry memory content), aliases,
+    the audit log and LLM request log (every caller's payloads), the mission, a
+    synchronous consolidation run, and bank template import."""
+    dan = RequestContext(api_key="dan")
+    admin = RequestContext()
+    some_id = str(uuid.uuid4())
+    hook = uuid.uuid4()
+    attempts = {
+        "stats": lambda: memory.get_bank_stats(scoped_bank, request_context=dan),
+        "freshness": lambda: memory.get_bank_freshness(scoped_bank, request_context=dan),
+        "operations": lambda: memory.list_operations(scoped_bank, request_context=dan),
+        "webhooks": lambda: memory.list_webhooks(scoped_bank, request_context=dan),
+        "webhook deliveries": lambda: memory.list_webhook_deliveries(
+            scoped_bank, hook, limit=10, cursor=None, request_context=dan
+        ),
+        "create webhook": lambda: memory.create_webhook(
+            scoped_bank,
+            webhook_id=hook,
+            url="https://example.com/hook",
+            secret=None,
+            event_types=["retain.completed"],
+            enabled=True,
+            http_config_json="{}",
+            request_context=dan,
+        ),
+        "update webhook": lambda: memory.update_webhook(
+            scoped_bank, hook, set_clauses=["url = $1"], params=["https://example.org/x"], request_context=dan
+        ),
+        "delete webhook": lambda: memory.delete_webhook(scoped_bank, hook, request_context=dan),
+        "create alias": lambda: memory.create_bank_alias(scoped_bank, "dans-alias", request_context=dan),
+        "alias primary": lambda: memory.set_bank_alias_primary(scoped_bank, "dans-alias", True, request_context=dan),
+        "delete alias": lambda: memory.delete_bank_alias(scoped_bank, "dans-alias", request_context=dan),
+        "cancel operation": lambda: memory.cancel_operation(scoped_bank, some_id, request_context=dan),
+        "retry operation": lambda: memory.retry_operation(scoped_bank, some_id, request_context=dan),
+        "delete operation": lambda: memory.delete_operation(scoped_bank, some_id, request_context=dan),
+        "audit log": lambda: memory.list_audit_logs(scoped_bank, request_context=dan),
+        "audit log stats": lambda: memory.audit_log_stats(scoped_bank, request_context=dan),
+        "llm requests": lambda: memory.list_llm_requests(scoped_bank, request_context=dan),
+        "llm request stats": lambda: memory.llm_request_stats(scoped_bank, request_context=dan),
+        "set mission": lambda: memory.set_bank_mission(scoped_bank, "x", request_context=dan),
+        "merge mission": lambda: memory.merge_bank_mission(scoped_bank, "x", request_context=dan),
+        "run consolidation": lambda: memory.run_consolidation(scoped_bank, request_context=dan),
+    }
+    not_refused = {}
+    for name, attempt in attempts.items():
+        try:
+            await attempt()
+            not_refused[name] = "allowed"
+        except OperationValidationError as e:
+            if e.status_code != 403 or "tag-scoped caller" not in e.reason:
+                not_refused[name] = f"{e.status_code}: {e.reason}"
+    assert not_refused == {}
+
+    with pytest.raises(OperationValidationError) as e:
+        async with memory.bank_template_import_authorization(
+            scoped_bank,
+            config_updates={},
+            bank_writes=[],
+            mental_model_ids=[],
+            bank_exists=True,
+            request_context=dan,
+        ):
+            pass
+    assert e.value.status_code == 403
+
+    # An unscoped caller is not affected.
+    await memory.get_bank_stats(scoped_bank, request_context=admin)
+    assert await memory.list_audit_logs(scoped_bank, request_context=admin) is not None
+    assert await memory.list_llm_requests(scoped_bank, request_context=admin) is not None
+
+
+@pytest.mark.asyncio
+async def test_reflect_works_where_bank_statistics_are_refused(memory, scoped_bank):
+    """Reflect reads the bank's freshness only for itself, under its own authorization, so a
+    deployment that refuses bank-wide statistics to scoped callers must not break their
+    reflect. (It used to: reflect went through the public freshness read.)"""
+    validator = memory._operation_validator
+    seen: list = []
+
+    async def validate_bank_read(ctx):
+        seen.append(ctx.operation)
+        if ctx.operation == BankReadOperation.GET_BANK_STATS and ctx.request_context.api_key in validator.scopes:
+            return ValidationResult.reject("bank-wide statistics refused", status_code=403)
+        return ValidationResult.accept()
+
+    validator.validate_bank_read = validate_bank_read
+    dan = RequestContext(api_key="dan")
+    result = await memory.reflect_async(bank_id=scoped_bank, query="What are the rules?", request_context=dan)
+    assert result.text is not None
+    assert BankReadOperation.GET_BANK_STATS not in seen
+
+
+@pytest.mark.asyncio
+async def test_dry_run_extract_refuses_labels_the_caller_cannot_write(memory, scoped_bank):
+    """Previewing extraction with entity labels that could add an unwritable tag is refused,
+    exactly as retaining with them is: nothing is stored either way, but the preview would
+    spend the bank's LLM budget on a path retain refuses."""
+    memory._operation_validator.writes = {"dan": ["user:dan", "topic:*"]}
+    labels = [{"key": "kind", "type": "value", "tag": True, "values": [{"value": "rule"}]}]
+    dan = RequestContext(api_key="dan")
+    with pytest.raises(OperationValidationError) as e:
+        await memory.extract_dry_run(
+            scoped_bank, "Every ad says payroll software.", overrides={"entity_labels": labels}, request_context=dan
+        )
+    assert e.value.status_code == 403 and "kind:rule" in e.value.reason
+
+    # Labels within the write scope preview fine, and an unscoped caller is not affected.
+    own = [{"key": "topic", "type": "value", "tag": True, "values": [{"value": "ads"}]}]
+    await memory.extract_dry_run(scoped_bank, "x", overrides={"entity_labels": own}, request_context=dan)
+    await memory.extract_dry_run(
+        scoped_bank, "x", overrides={"entity_labels": labels}, request_context=RequestContext()
+    )
+
+
+# Methods that validate a bank read or write but need no scope handling of their own:
+# bank settings that carry no memory content, or helpers whose callers apply the scope.
+_UNSCOPED_BY_DESIGN = {
+    "_authorize_bank_profile_read": "bank profile (name, mission, disposition): settings, no memory content",
+    "_authorize_bank_config_read": "bank config: settings, no memory content",
+    "list_bank_aliases": "alias names: settings, no memory content",
+    "check_bank_llm": "probes the bank's LLM connectivity; returns status only",
+    "get_entity_state": "returns the entity with no observations",
+    "export_knowledge_base": "built from list_knowledge_nodes / get_knowledge_page, which apply the scope",
+    "_knowledge_read_filter": "computes the knowledge-tree scope filter itself",
+    "authorize_bank_template_import_write": "only inside bank_template_import_authorization, which refuses scoped callers",
+    # Queued on the caller's behalf after every retain and delete (failures are only logged),
+    # so refusing scoped callers would silently skip maintenance after their writes. They
+    # drain the bank's own queues and return nothing.
+    "submit_async_graph_maintenance": "queued after every write, including a scoped caller's; returns no data",
+    "submit_async_vector_index_maintenance": "queued after every write, including a scoped caller's; returns no data",
+}
+_SCOPE_HANDLING = {
+    "_tag_scope",
+    "_write_tag_scope",
+    "_authorize_bank_read",
+    "_refuse_bank_wide_if_scoped",
+    "_refuse_unwritable",
+    "_refuse_unwritable_label_tags",
+    "_require_writable",
+    "_check_retain_writes",
+    "_memory_in_tag_scope",
+    "_document_in_tag_scope",
+    "_require_knowledge_subtree_writable",
+    "_require_knowledge_nodes_in_tag_scope",
+    "_directive_writable",
+    "_knowledge_read_filter",
+}
+
+
+def test_every_validated_bank_operation_takes_a_stance_on_scoped_callers():
+    """Deny by default: every MemoryEngine method that validates a bank read or write either
+    handles the caller's tag scope (narrows to it, or refuses scoped callers) or is listed in
+    _UNSCOPED_BY_DESIGN with a reason. A new bank-wide operation that forgets both fails here,
+    instead of silently answering a scoped caller for the whole bank."""
+    import hindsight_api.engine.memory_engine as engine_module
+
+    tree = ast.parse(Path(engine_module.__file__).read_text())
+    engine = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MemoryEngine")
+    unhandled = []
+    for fn in engine.body:
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        attrs = {n.attr for n in ast.walk(fn) if isinstance(n, ast.Attribute)}
+        if not attrs & {"validate_bank_read", "validate_bank_write"}:
+            continue
+        if attrs & _SCOPE_HANDLING or fn.name in _UNSCOPED_BY_DESIGN:
+            continue
+        unhandled.append(fn.name)
+    assert unhandled == [], (
+        "These validate a bank operation without handling a tag-scoped caller; narrow to the "
+        f"scope, refuse with _refuse_bank_wide_if_scoped, or justify in _UNSCOPED_BY_DESIGN: {unhandled}"
+    )
+    stale = [
+        name
+        for name in _UNSCOPED_BY_DESIGN
+        if not any(isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and fn.name == name for fn in engine.body)
+    ]
+    assert stale == [], f"_UNSCOPED_BY_DESIGN names methods that no longer exist: {stale}"

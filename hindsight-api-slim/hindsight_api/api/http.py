@@ -8781,6 +8781,9 @@ def _register_routes(app: FastAPI):
             profile = await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
             if profile is None:
                 raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
+            # The template carries the bank's whole config: an admin export, not narrowed
+            # to a tag scope, so scoped callers are refused like the full bank export.
+            await app.state.memory._refuse_bank_wide_if_scoped(bank_id, request_context, "export the bank template")
 
             # Get bank-specific config overrides (not the fully resolved config,
             # so the template only contains what was explicitly set on this bank)

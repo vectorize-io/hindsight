@@ -3411,6 +3411,29 @@ class MemoryEngine(MemoryEngineInterface):
                 ):
                     raise OperationValidationError(f"Cannot write to document '{document_id}'", status_code=403)
 
+    async def _refuse_unwritable_label_tags(
+        self,
+        bank_id: str,
+        request_context: "RequestContext",
+        entity_labels: Any,
+        strategy: str | None,
+    ) -> None:
+        """Refuse (403) when entity labels with ``tag: true`` could add a tag the caller can't write."""
+        write_scope = await self._write_tag_scope(bank_id, request_context)
+        if write_scope is None:
+            return
+        from .retain.entity_labels import label_tag_candidates
+
+        label_tags = label_tag_candidates(entity_labels)
+        if label_tags and not tags_writable(label_tags, write_scope):
+            from hindsight_api.extensions import OperationValidationError
+
+            outside = sorted(t for t in label_tags if not tags_writable([t], write_scope))
+            raise OperationValidationError(
+                f"Retain strategy '{strategy or 'default'}' can tag memories {', '.join(outside)}, which you can't write",
+                status_code=403,
+            )
+
     async def _visible_knowledge_node_ids(self, conn: Any, bank_id: str, tag_scope: list[TagGroup]) -> set[str]:
         """Ids of the knowledge-tree nodes a caller confined to ``tag_scope`` may see."""
         rows = await conn.fetch(
@@ -12497,6 +12520,8 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.RUN_CONSOLIDATION, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        # A bank-wide write, not narrowed to a tag scope: refuse scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "run consolidation on the bank")
 
         from .consolidation import run_consolidation_job
 
@@ -12988,6 +13013,12 @@ class MemoryEngine(MemoryEngineInterface):
                     f"Unsupported extraction override '{key}'. Allowed: {sorted(self._EXTRACTION_OVERRIDE_FIELDS)}"
                 )
             setattr(resolved_config, key, value)
+        # The same strategy check retain makes (see _check_retain_writes): a caller who
+        # couldn't retain with these entity labels may not preview them either. The
+        # preview stores nothing, but it spends the bank's LLM budget on a path retain
+        # refuses and shows how the labels would tag the caller's text. Checked after the
+        # overrides, which can change the labels.
+        await self._refuse_unwritable_label_tags(bank_id, request_context, resolved_config.entity_labels, strategy)
 
         canonical = validate_and_canonicalize_content(
             content,
@@ -13741,6 +13772,8 @@ class MemoryEngine(MemoryEngineInterface):
         """
         if await self.get_bank_profile(bank_id, request_context=request_context) is None:
             return None
+        # Every caller's requests, unscoped: refuse tag-scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "read the bank's LLM requests")
 
         from .schema import _is_oracle  # noqa: PLC0415
 
@@ -13861,6 +13894,8 @@ class MemoryEngine(MemoryEngineInterface):
         """
         if await self.get_bank_profile(bank_id, request_context=request_context) is None:
             return None
+        # Every caller's requests, unscoped: refuse tag-scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "read the bank's LLM requests")
 
         now = datetime.now(timezone.utc)
         trunc = "day"
@@ -13970,6 +14005,8 @@ class MemoryEngine(MemoryEngineInterface):
 
         if await self.get_bank_profile(bank_id, request_context=request_context) is None:
             return None
+        # Every caller's actions, payloads included, unscoped: refuse tag-scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "read the bank's audit log")
 
         where_clauses = ["bank_id = $1"]
         params: list[Any] = [bank_id]
@@ -14049,6 +14086,8 @@ class MemoryEngine(MemoryEngineInterface):
 
         if await self.get_bank_profile(bank_id, request_context=request_context) is None:
             return None
+        # Every caller's actions, payloads included, unscoped: refuse tag-scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "read the bank's audit log")
 
         now = datetime.now(timezone.utc)
         trunc = "day"
@@ -14496,6 +14535,8 @@ class MemoryEngine(MemoryEngineInterface):
         from hindsight_api.config_resolver import ValidatedBankConfigUpdate
 
         await self._authenticate_tenant(request_context)
+        # A template rewrites bank-wide config, models and directives: whole-bank.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "import a bank template")
         normalized_updates = (
             await self._validate_bank_config_updates(
                 bank_id,
@@ -14980,6 +15021,8 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.SET_BANK_MISSION, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        # A bank-wide write, not narrowed to a tag scope: refuse scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "change the bank's mission")
 
         await self._ensure_bank_exists(bank_id, request_context)
         await self._get_backend()
@@ -15023,6 +15066,8 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.GET_BANK_PROFILE, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx_read))
+        # A bank-wide write, not narrowed to a tag scope: refuse scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "change the bank's mission")
 
         await self._ensure_bank_exists(bank_id, request_context)
         await self._get_backend()
@@ -15311,7 +15356,9 @@ class MemoryEngine(MemoryEngineInterface):
         # Pull only the consolidation freshness — get_bank_stats also computes
         # link aggregations that reflect() does not use and which can take many
         # seconds on large banks.
-        freshness = await self.get_bank_freshness(bank_id, request_context=request_context)
+        # Internal read: reflect is already authorized (validate_reflect + the caller's
+        # scope); the public get_bank_freshness is a bank-wide read scoped callers can't make.
+        freshness = await self._bank_freshness(bank_id)
         last_consolidated_at = freshness.get("last_consolidated_at")
         pending_consolidation = freshness.get("pending_consolidation", 0)
         # Resolved once for the whole reflect: a mental model refreshed at or
@@ -16142,6 +16189,8 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.GET_BANK_STATS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        # Answered for the whole bank, not narrowed to a tag scope: refuse scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "read the bank's statistics")
         await self._require_bank_exists(bank_id)
 
         return await self._cached_bank_stats(bank_id, force_refresh=force_refresh)
@@ -16250,7 +16299,19 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.GET_BANK_STATS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        # Answered for the whole bank, not narrowed to a tag scope: refuse scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "read the bank's statistics")
+        return await self._bank_freshness(bank_id)
 
+    async def _bank_freshness(self, bank_id: str) -> dict[str, Any]:
+        """``get_bank_freshness`` without the authorization, for callers that already
+        authorized the request themselves.
+
+        reflect() is one: it reads freshness only to decide how stale its own sources are,
+        under its own ``validate_reflect`` and the caller's tag scope. Routing it through
+        the public method made a scoped caller's reflect hit the bank-wide statistics
+        check and be refused, though reflect itself is narrowed to the scope.
+        """
         # The current reflect() caller reads last_consolidated_at,
         # pending_consolidation and last_memory_write_at, but `failed` is part of
         # this method's published contract (see interface.get_bank_freshness) so
@@ -20553,6 +20614,8 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.CREATE_BANK_ALIAS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        # Answered for the whole bank, not narrowed to a tag scope: refuse scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "change the bank's aliases")
         await self._require_bank_exists(bank_id)
         from . import bank_aliases
 
@@ -20590,6 +20653,8 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.CREATE_BANK_ALIAS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        # Answered for the whole bank, not narrowed to a tag scope: refuse scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "change the bank's aliases")
         await self._require_bank_exists(bank_id)
         from . import bank_aliases
 
@@ -20620,6 +20685,8 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.DELETE_BANK_ALIAS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        # Answered for the whole bank, not narrowed to a tag scope: refuse scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "change the bank's aliases")
         await self._require_bank_exists(bank_id)
         from . import bank_aliases
 
@@ -21042,6 +21109,8 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.LIST_OPERATIONS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        # Answered for the whole bank, not narrowed to a tag scope: refuse scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "list the bank's operations")
         await self._require_bank_exists(bank_id)
         backend = await self._get_backend()
 
@@ -21317,6 +21386,8 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.CANCEL_OPERATION, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        # Answered for the whole bank, not narrowed to a tag scope: refuse scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "cancel the bank's operations")
         backend = await self._get_backend()
 
         op_uuid = uuid.UUID(operation_id)
@@ -21392,6 +21463,8 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.RETRY_OPERATION, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        # Answered for the whole bank, not narrowed to a tag scope: refuse scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "retry the bank's operations")
         backend = await self._get_backend()
 
         op_uuid = uuid.UUID(operation_id)
@@ -21529,6 +21602,8 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.DELETE_OPERATION, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        # Answered for the whole bank, not narrowed to a tag scope: refuse scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "delete the bank's operations")
         backend = await self._get_backend()
 
         op_uuid = uuid.UUID(operation_id)
@@ -21751,6 +21826,8 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.CREATE_WEBHOOK, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        # Answered for the whole bank, not narrowed to a tag scope: refuse scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "change the bank's webhooks")
 
         backend = await self._get_backend()
 
@@ -21804,6 +21881,8 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.LIST_WEBHOOKS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        # Answered for the whole bank, not narrowed to a tag scope: refuse scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "list the bank's webhooks")
         await self._require_bank_exists(bank_id)
 
         backend = await self._get_backend()
@@ -21851,6 +21930,8 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.UPDATE_WEBHOOK, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        # Answered for the whole bank, not narrowed to a tag scope: refuse scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "change the bank's webhooks")
 
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -21883,6 +21964,8 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.DELETE_WEBHOOK, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        # Answered for the whole bank, not narrowed to a tag scope: refuse scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "change the bank's webhooks")
 
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -21919,6 +22002,8 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.LIST_WEBHOOK_DELIVERIES, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        # Answered for the whole bank, not narrowed to a tag scope: refuse scoped callers.
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "read the bank's webhook deliveries")
 
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
