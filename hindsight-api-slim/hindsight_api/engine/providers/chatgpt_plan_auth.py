@@ -52,13 +52,13 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlencode, urlparse
 
 import aiohttp
 import jwt
 from aiohttp import web
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, BeforeValidator, ConfigDict, ValidationError
 
 from ...config import get_config
 from ..aiohttp_session import LoopLocalSession, per_phase_timeout
@@ -119,6 +119,31 @@ class ChatGPTPlanLoginRequiredError(ChatGPTPlanAuthError):
     """Only a new interactive login can restore service."""
 
 
+def _lenient_float(value: Any) -> float | None:
+    """Numbers (or numeric strings) pass; anything else becomes None instead of failing validation."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _lenient_str(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+# Optional fields from OpenAI's token endpoint (or a hand-edited file) are parsed
+# leniently: a malformed one must not discard a response whose access and refresh
+# tokens are valid, because the refresh token it replaces is already spent.
+_OptFloat = Annotated[float | None, BeforeValidator(_lenient_float)]
+_OptStr = Annotated[str | None, BeforeValidator(_lenient_str)]
+
+
 class ChatGPTPlanCredential(BaseModel):
     """The stored credential record (OpenAI's documented local format, plus bookkeeping)."""
 
@@ -132,10 +157,10 @@ class ChatGPTPlanCredential(BaseModel):
     id_token: str | None = None
     access_token: str | None = None
     refresh_token: str | None = None
-    token_type: str | None = None
-    expires_in: float | None = None
+    token_type: _OptStr = None
+    expires_in: _OptFloat = None
     # Not specified beyond its name in OpenAI's token reference; honored only as unix seconds.
-    earliest_refresh_at: float | None = None
+    earliest_refresh_at: _OptFloat = None
     scopes: list[str] = []
     saved_at: str | None = None
     # Error code of the refresh that invalidated this session, if any.
@@ -156,12 +181,12 @@ class _TokenResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     access_token: str
-    refresh_token: str | None = None
-    id_token: str | None = None
-    token_type: str | None = None
-    expires_in: float | None = None
-    earliest_refresh_at: float | None = None
-    scope: str | None = None
+    refresh_token: _OptStr = None
+    id_token: _OptStr = None
+    token_type: _OptStr = None
+    expires_in: _OptFloat = None
+    earliest_refresh_at: _OptFloat = None
+    scope: _OptStr = None
 
 
 @dataclass(frozen=True)
@@ -319,7 +344,11 @@ def needs_refresh(credential: ChatGPTPlanCredential, now: float | None = None) -
 
 async def _post_form(session: aiohttp.ClientSession, url: str, form: dict[str, str]) -> _HttpReply:
     try:
-        async with session.post(url, data=form, headers={"Accept": "application/json"}) as response:
+        # No redirects: aiohttp re-sends a POST body on 307/308, which would hand a
+        # code or refresh token to wherever the redirect points.
+        async with session.post(
+            url, data=form, headers={"Accept": "application/json"}, allow_redirects=False
+        ) as response:
             status = response.status
             text = await response.text(errors="replace")
     except (aiohttp.ClientError, TimeoutError) as exc:
@@ -332,7 +361,7 @@ async def _post_form(session: aiohttp.ClientSession, url: str, form: dict[str, s
 
 async def _get_json(session: aiohttp.ClientSession, url: str, what: str) -> dict[str, Any]:
     try:
-        async with session.get(url, headers={"Accept": "application/json"}) as response:
+        async with session.get(url, headers={"Accept": "application/json"}, allow_redirects=False) as response:
             status = response.status
             payload = await response.json(content_type=None)
     except (aiohttp.ClientError, TimeoutError, json.JSONDecodeError) as exc:
@@ -408,8 +437,13 @@ def build_authorize_url(
     code_challenge: str,
     id_token_hint: str | None = None,
     login_hint: str | None = None,
+    prompt: str | None = None,
 ) -> str:
-    """Authorization URL. ``agent_name_hint`` goes only on a first registration."""
+    """Authorization URL. ``agent_name_hint`` goes only on a first registration.
+
+    ``prompt="consent"`` re-asks for consent, which is how a user who declined
+    ChatGPT plan usage turns it on later (OpenAI's errors-and-recovery guide).
+    """
     params = {
         "client_id": client_id,
         "ext_agent_host_id": host_id,
@@ -428,12 +462,19 @@ def build_authorize_url(
         params["id_token_hint"] = id_token_hint
     if login_hint:
         params["login_hint"] = login_hint
+    if prompt:
+        params["prompt"] = prompt
     return f"{AUTHORIZE_URL}?{urlencode(params)}"
+
+
+def _state_matches(received: str, expected: str) -> bool:
+    # Bytes, because compare_digest raises TypeError on non-ASCII str input.
+    return secrets.compare_digest(received.encode(), expected.encode())
 
 
 def parse_callback(query: dict[str, str], *, expected_state: str, pending_client_id: str) -> CallbackResult:
     """Validate the loopback callback's query parameters."""
-    if not secrets.compare_digest(query.get("state", ""), expected_state):
+    if not _state_matches(query.get("state", ""), expected_state):
         raise ChatGPTPlanAuthError("Sign-in callback state did not match; aborting.")
     error = query.get("error")
     if error:
@@ -523,12 +564,20 @@ def build_credential(
     )
 
 
-async def _start_callback_listener(port: int, timeout: float) -> Callable[[], Awaitable[dict[str, str]]]:
-    """Start the loopback listener on 127.0.0.1; return a waiter for the callback query."""
+async def _start_callback_listener(
+    port: int, timeout: float, expected_state: str
+) -> Callable[[], Awaitable[dict[str, str]]]:
+    """Start the loopback listener on 127.0.0.1; return a waiter for the callback query.
+
+    Only a request carrying this attempt's ``state`` completes the wait, so a stray
+    or forged request to the port cannot abort a pending sign-in.
+    """
     loop = asyncio.get_running_loop()
     received: asyncio.Future[dict[str, str]] = loop.create_future()
 
     async def handle(request: web.Request) -> web.Response:
+        if not _state_matches(request.query.get("state", ""), expected_state):
+            return web.Response(status=400, text="Unexpected sign-in response.", content_type="text/plain")
         if not received.done():
             received.set_result(dict(request.query))
         return web.Response(
@@ -561,13 +610,15 @@ async def login(
     port: int = DEFAULT_CALLBACK_PORT,
     open_browser: Callable[[str], Any] | None = webbrowser.open,
     out: Callable[[str], None] = _print_now,
+    enable_plan_usage: bool = False,
 ) -> ChatGPTPlanCredential:
     """Run the interactive sign-in and write the credential file.
 
-    ``open_browser=None`` prints the URL instead (``--no-browser``); in that case
-    ``id_token_hint`` is left out so no token lands in terminal scrollback.
+    ``open_browser=None`` prints the URL instead (``--no-browser``). A printed URL
+    never carries ``id_token_hint``, so no token lands in terminal scrollback.
     Re-running against an existing record reuses its issued ``client_id`` and
-    requires the same ChatGPT account.
+    requires the same ChatGPT account. Consent is requested again when the stored
+    grant lacks plan usage (the user declined it before) or ``enable_plan_usage``.
     """
     path = home / CREDENTIAL_FILE
     host_id = load_or_create_host_id(home)
@@ -579,20 +630,24 @@ async def login(
     pkce = new_pkce()
     state, nonce = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     redirect_uri = redirect_uri_for(port)
-    url = build_authorize_url(
-        client_id=client_id,
-        host_id=host_id,
-        redirect_uri=redirect_uri,
-        state=state,
-        nonce=nonce,
-        code_challenge=pkce.challenge,
-        id_token_hint=existing.id_token if open_browser is not None else None,
-        login_hint=existing.email,
-    )
+    declined_before = bool(existing.client_id and existing.scopes and not existing.has_plan_scope)
 
-    wait = await _start_callback_listener(port, _LOGIN_TIMEOUT_SECONDS)
-    if open_browser is None or not open_browser(url):
-        out(f"Open this URL in a browser on this machine to continue:\n\n{url}\n")
+    def authorize_url(id_token_hint: str | None) -> str:
+        return build_authorize_url(
+            client_id=client_id,
+            host_id=host_id,
+            redirect_uri=redirect_uri,
+            state=state,
+            nonce=nonce,
+            code_challenge=pkce.challenge,
+            id_token_hint=id_token_hint,
+            login_hint=existing.email,
+            prompt="consent" if (enable_plan_usage or declined_before) and client_id != DYNAMIC_CLIENT_ID else None,
+        )
+
+    wait = await _start_callback_listener(port, _LOGIN_TIMEOUT_SECONDS, state)
+    if open_browser is None or not open_browser(authorize_url(existing.id_token)):
+        out(f"Open this URL in a browser on this machine to continue:\n\n{authorize_url(None)}\n")
     else:
         out("Opened your browser to sign in with ChatGPT. Waiting for the callback...")
     try:
@@ -759,10 +814,12 @@ class ChatGPTPlanAuth:
                     "refresh_token": None,
                     "last_auth_error": reply.error_code,
                 }
-                if reply.error_code == "invalid_client":
-                    # The registration itself is gone; the next login must register anew.
-                    cleared["client_id"] = None
                 self._persist(current.model_copy(update=cleared), replaces=current)
+                if reply.error_code == "invalid_client":
+                    raise ChatGPTPlanLoginRequiredError(
+                        f"OpenAI rejected this app registration (invalid_client, client {current.client_id}). "
+                        f"To register again, delete {self.path} and run `{LOGIN_COMMAND}`."
+                    )
                 raise ChatGPTPlanLoginRequiredError(
                     f"ChatGPT plan refresh token is no longer usable ({reply.error_code}). Run `{LOGIN_COMMAND}`."
                 )
@@ -828,30 +885,36 @@ async def _revoke(session: aiohttp.ClientSession, credential: ChatGPTPlanCredent
     return False
 
 
-async def logout(home: Path, out: Callable[[str], None] = print) -> bool:
-    """Revoke the session, then clear tokens locally. Returns whether revocation was confirmed.
+async def logout(home: Path, out: Callable[[str], None] = print, *, revoke: bool = True) -> bool:
+    """Revoke the session (unless ``revoke=False``), then clear tokens locally.
 
-    The issued client id, account identity and host id are kept for a later sign-in.
+    Returns whether revocation was confirmed. The issued client id, account
+    identity, granted scopes and host id are kept for a later sign-in. Revocation
+    runs before taking the store lock so its retries never hold up a server's
+    refresh. ``revoke=False`` is for a laptop whose credentials were moved to a
+    server: it must stop using its copy without ending the server's session.
     """
     path = home / CREDENTIAL_FILE
+    credential = read_credential(path)
+    confirmed = False
+    if revoke and credential.is_active:
+        async with aiohttp.ClientSession(timeout=per_phase_timeout(_HTTP_TIMEOUT_SECONDS)) as session:
+            confirmed = await _revoke(session, credential)
     async with oauth_store_lock(path, timeout_seconds=_LOCK_TIMEOUT_SECONDS, label=_LOCK_LABEL):
-        credential = read_credential(path)
-        confirmed = False
-        if credential.is_active:
-            async with aiohttp.ClientSession(timeout=per_phase_timeout(_HTTP_TIMEOUT_SECONDS)) as session:
-                confirmed = await _revoke(session, credential)
-        cleared = credential.model_copy(
+        current = read_credential(path)
+        cleared = current.model_copy(
             update={
                 "access_token": None,
                 "refresh_token": None,
                 "id_token": None,
                 "expires_in": None,
                 "earliest_refresh_at": None,
-                "scopes": [],
             }
         )
         write_credential(path, cleared)
-    if confirmed:
+    if not revoke:
+        out("Cleared the local tokens without revoking the session.")
+    elif confirmed:
         out("Signed out; the session was revoked.")
     else:
         out(
@@ -861,7 +924,9 @@ async def logout(home: Path, out: Callable[[str], None] = print) -> bool:
     return confirmed
 
 
-async def import_credential(home: Path, source: Path, out: Callable[[str], None] = print) -> None:
+async def import_credential(
+    home: Path, source: Path, out: Callable[[str], None] = print, *, force: bool = False
+) -> None:
     """Install a credential file made on another machine, keeping this host's own host id.
 
     Written under the store lock so a running server's in-flight refresh cannot
@@ -873,6 +938,17 @@ async def import_credential(home: Path, source: Path, out: Callable[[str], None]
     host_id = load_or_create_host_id(home)
     path = home / CREDENTIAL_FILE
     async with oauth_store_lock(path, timeout_seconds=_LOCK_TIMEOUT_SECONDS, label=_LOCK_LABEL):
+        existing: ChatGPTPlanCredential | None = None
+        with contextlib.suppress(ChatGPTPlanLoginRequiredError):
+            existing = read_credential(path)
+        if existing is not None and not force:
+            for field in ("subject", "client_id"):
+                old, new = getattr(existing, field), getattr(imported, field)
+                if old and old != new:
+                    raise ChatGPTPlanAuthError(
+                        f"{path} belongs to a different registration ({field} differs). "
+                        "Use a separate --home per account, or pass --force to replace it."
+                    )
         write_credential(path, imported.model_copy(update={"ext_agent_host_id": host_id}))
     out(
         f"Imported credentials for {imported.email or imported.subject} into {home / CREDENTIAL_FILE} "
@@ -918,35 +994,49 @@ def main(argv: list[str] | None = None) -> int:
     login_parser = sub.add_parser("login", help="Sign in with ChatGPT in a browser on this machine.")
     login_parser.add_argument("--port", type=int, default=DEFAULT_CALLBACK_PORT, help="Loopback callback port.")
     login_parser.add_argument("--no-browser", action="store_true", help="Print the sign-in URL instead of opening it.")
+    login_parser.add_argument(
+        "--enable-plan-usage", action="store_true", help="Ask for consent again, to allow ChatGPT plan usage."
+    )
     sub.add_parser("status", help="Show the stored account, client, scopes and expiry (no token values).")
-    sub.add_parser("logout", help="Revoke the session and clear local tokens.")
+    logout_parser = sub.add_parser("logout", help="Revoke the session and clear local tokens.")
+    logout_parser.add_argument(
+        "--local-only",
+        action="store_true",
+        help="Clear local tokens without revoking (after moving the credentials to another host).",
+    )
     import_parser = sub.add_parser("import", help="Install a credential file made on another machine.")
     import_parser.add_argument("source", type=Path)
+    import_parser.add_argument("--force", action="store_true", help="Replace a different account's registration.")
     args = parser.parse_args(argv)
     home: Path = args.home.expanduser() if args.home else default_home()
 
     try:
         if args.command == "login":
             credential = asyncio.run(
-                login(home, port=args.port, open_browser=None if args.no_browser else webbrowser.open)
+                login(
+                    home,
+                    port=args.port,
+                    open_browser=None if args.no_browser else webbrowser.open,
+                    enable_plan_usage=args.enable_plan_usage,
+                )
             )
             print(f"Signed in as {credential.email or credential.subject}; saved {home / CREDENTIAL_FILE}.")
             if not credential.has_plan_scope:
                 print(
                     f"ChatGPT plan usage was not granted ({PLAN_SCOPE} missing); the chatgpt-plan provider "
-                    "will refuse to run. Sign in again and allow plan usage.",
+                    "will refuse to run. Run login --enable-plan-usage and allow plan usage.",
                     file=sys.stderr,
                 )
                 return 1
         elif args.command == "status":
             print("\n".join(status_lines(home)))
         elif args.command == "logout":
-            asyncio.run(logout(home))
+            asyncio.run(logout(home, revoke=not args.local_only))
         elif args.command == "import":
             if args.source.expanduser().resolve() == (home / CREDENTIAL_FILE).resolve():
                 print("Source is already the local credential file.", file=sys.stderr)
                 return 1
-            asyncio.run(import_credential(home, args.source.expanduser()))
+            asyncio.run(import_credential(home, args.source.expanduser(), force=args.force))
     except ChatGPTPlanAuthError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

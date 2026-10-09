@@ -184,14 +184,14 @@ class ChatGPTPlanLLM(OpenAIResponsesLLM):
             timeout=timeout,
             extra_body=extra_body,
         )
+        # Drop the OpenAI-Organization / OpenAI-Project headers the SDK would add from
+        # OPENAI_ORG_ID / OPENAI_PROJECT_ID: those name an API-key org, not this grant.
+        self._client.organization = None
+        self._client.project = None
 
     def _supports_reasoning_model(self) -> bool:
         # Every model a ChatGPT plan serves here is a reasoning model.
         return True
-
-    async def cleanup(self) -> None:
-        await super().cleanup()
-        await self._auth.close()
 
     async def _create_response(self, params: dict[str, Any]) -> Any:
         body = _plan_request_body(params)
@@ -199,7 +199,11 @@ class ChatGPTPlanLLM(OpenAIResponsesLLM):
             token = await self._auth.get_access_token()
             try:
                 return await self._stream(body, token)
-            except AuthenticationError:
+            except AuthenticationError as e:
+                # A ChatGPT plan code means the token was accepted but plan usage was
+                # refused; rotating the refresh token would not change that.
+                if str(getattr(e, "code", None) or "").startswith(("subscription_sharing_", "chatpass_")):
+                    raise
                 logger.info("ChatGPT plan request returned 401; refreshing the access token once")
                 await self._auth.refresh(rejected_token=token)
                 return await self._stream(body, await self._auth.get_access_token())
@@ -242,7 +246,10 @@ class ChatGPTPlanLLM(OpenAIResponsesLLM):
 
     async def _consume(self, body: dict[str, Any], token: str, label: str) -> Any:
         done_items: list[Any] = []
-        async with await self._client.with_options(api_key=token).responses.create(**body) as stream:
+        # The bearer goes per request on the one shared client: with_options() would
+        # build a client copy each call and re-read OPENAI_ORG_ID / OPENAI_PROJECT_ID.
+        headers = {**(body.get("extra_headers") or {}), "Authorization": f"Bearer {token}"}
+        async with await self._client.responses.create(**{**body, "extra_headers": headers}) as stream:
             async for event in stream:
                 kind = getattr(event, "type", None)
                 if kind == "response.output_item.done":

@@ -283,9 +283,23 @@ def _issuer_handler(key: Any, jwks: dict[str, Any], seen: dict[str, Any], *, sco
     return handler
 
 
-async def _drive_login(tmp_path, point_auth_at, rsa_jwks, *, scope: str) -> tuple[dict[str, Any], dict[str, Any]]:
+async def _drive_login(
+    tmp_path,
+    point_auth_at,
+    rsa_jwks,
+    *,
+    scope: str,
+    browser_opens: bool = True,
+    stray_states: tuple[str, ...] = (),
+    enable_plan_usage: bool = False,
+) -> tuple[Any, dict[str, Any]]:
+    """Run ``auth.login`` with a fake browser that answers the loopback callback.
+
+    ``stray_states`` are sent to the callback first (each must get a 400 and leave
+    the login waiting); the printed lines are collected in ``seen["printed"]``.
+    """
     key, jwks = rsa_jwks
-    seen: dict[str, Any] = {}
+    seen: dict[str, Any] = {"printed": [], "stray_statuses": []}
     port = _free_port()
     async with stub_server(_issuer_handler(key, jwks, seen, scope=scope)) as base:
         point_auth_at(base)
@@ -297,14 +311,23 @@ async def _drive_login(tmp_path, point_auth_at, rsa_jwks, *, scope: str) -> tupl
 
             async def hit() -> None:
                 async with aiohttp.ClientSession() as s:
+                    for stray in stray_states:
+                        async with s.get(q["redirect_uri"], params={"code": "x", "state": stray}) as r:
+                            seen["stray_statuses"].append(r.status)
                     await s.get(
                         q["redirect_uri"], params={"code": "c1", "state": q["state"], "client_id": ISSUED_CLIENT_ID}
                     )
 
             seen["task"] = asyncio.get_running_loop().create_task(hit())
-            return True
+            return browser_opens
 
-        credential = await auth.login(tmp_path, port=port, open_browser=browser, out=lambda _line: None)
+        credential = await auth.login(
+            tmp_path,
+            port=port,
+            open_browser=browser,
+            out=seen["printed"].append,
+            enable_plan_usage=enable_plan_usage,
+        )
         await seen["task"]
     return credential, seen
 
@@ -505,17 +528,14 @@ async def test_terminal_refresh_error_requires_login_and_clears_tokens(tmp_path,
     async with stub_server(_refresh_handler({}, status=400, body={"error": code})) as base:
         point_auth_at(base)
         manager = auth.ChatGPTPlanAuth.from_home(tmp_path)
-        with pytest.raises(auth.ChatGPTPlanLoginRequiredError, match=code):
+        match = "delete .* and run" if code == "invalid_client" else code
+        with pytest.raises(auth.ChatGPTPlanLoginRequiredError, match=match):
             await manager.get_access_token()
         await manager.close()
     stored = json.loads(path.read_text())
     assert "refresh_token" not in stored and "access_token" not in stored
     assert stored["last_auth_error"] == code
-    if code == "invalid_client":
-        # The registration itself is dead: the next login must register a new client.
-        assert "client_id" not in stored
-    else:
-        assert stored["client_id"] == ISSUED_CLIENT_ID  # registration kept for re-login
+    assert stored["client_id"] == ISSUED_CLIENT_ID  # registration kept; invalid_client says how to re-register
 
 
 async def test_terminal_error_does_not_clear_a_grant_written_meanwhile(tmp_path, point_auth_at):
@@ -639,6 +659,7 @@ class _Upstream:
         self.replies = replies
         self.requests: list[dict[str, Any]] = []
         self.auth_headers: list[str] = []
+        self.headers: list[dict[str, str]] = []
         self.refresh_forms: list[dict[str, Any]] = []
 
     async def handler(self, request: web.Request) -> web.StreamResponse:
@@ -655,6 +676,7 @@ class _Upstream:
         assert request.path.endswith("/responses")
         self.requests.append(await request.json())
         self.auth_headers.append(request.headers.get("Authorization", ""))
+        self.headers.append(dict(request.headers))
         status, body = self.replies.pop(0) if len(self.replies) > 1 else self.replies[0]
         if status == -1:
             response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
@@ -885,3 +907,161 @@ def test_missing_credentials_fail_with_login_command(tmp_path, monkeypatch):
             )
     finally:
         clear_config_cache()
+
+
+# ---------------------------------------------------------------------------
+# Review follow-ups
+# ---------------------------------------------------------------------------
+
+
+async def test_refresh_with_malformed_optional_fields_still_persists_rotation(tmp_path, point_auth_at):
+    path = _write(tmp_path, _credential(access_token=_fake_access_token(time.time() + 10)))
+    body = {
+        "access_token": _fake_access_token(time.time() + 3600, marker="new"),
+        "refresh_token": "rt-2",
+        "expires_in": "soon",
+        "earliest_refresh_at": "2026-10-09T00:00:00Z",
+        "token_type": 7,
+        "scope": auth.REQUESTED_SCOPE,
+    }
+    async with stub_server(_refresh_handler({}, body=body)) as base:
+        point_auth_at(base)
+        manager = auth.ChatGPTPlanAuth.from_home(tmp_path)
+        token = await manager.get_access_token()
+        await manager.close()
+    stored = auth.read_credential(path)
+    assert stored.access_token == token == body["access_token"]
+    assert stored.refresh_token == "rt-2"
+    assert stored.earliest_refresh_at is None and stored.expires_in is None
+
+
+async def test_login_after_declined_plan_usage_requests_consent(tmp_path, point_auth_at, rsa_jwks):
+    _write(tmp_path, _credential(scopes=["email", "offline_access", "openid", "profile", "resource.invoke"]))
+    credential, seen = await _drive_login(tmp_path, point_auth_at, rsa_jwks, scope=auth.REQUESTED_SCOPE)
+    assert seen["authorize"]["prompt"] == "consent"
+    assert seen["authorize"]["client_id"] == ISSUED_CLIENT_ID
+    assert seen["authorize"]["scope"] == auth.REQUESTED_SCOPE
+    assert "agent_name_hint" not in seen["authorize"]
+    assert credential.has_plan_scope
+
+
+async def test_ordinary_reauth_does_not_force_consent(tmp_path, point_auth_at, rsa_jwks):
+    _write(tmp_path, _credential())
+    _, seen = await _drive_login(tmp_path, point_auth_at, rsa_jwks, scope=auth.REQUESTED_SCOPE)
+    assert "prompt" not in seen["authorize"]
+
+
+async def test_enable_plan_usage_flag_requests_consent(tmp_path, point_auth_at, rsa_jwks):
+    _write(tmp_path, _credential())
+    _, seen = await _drive_login(tmp_path, point_auth_at, rsa_jwks, scope=auth.REQUESTED_SCOPE, enable_plan_usage=True)
+    assert seen["authorize"]["prompt"] == "consent"
+
+
+async def test_printed_url_never_carries_id_token_hint(tmp_path, point_auth_at, rsa_jwks):
+    _write(tmp_path, _credential(id_token="secret.id.token"))
+    _, seen = await _drive_login(tmp_path, point_auth_at, rsa_jwks, scope=auth.REQUESTED_SCOPE, browser_opens=False)
+    assert seen["authorize"]["id_token_hint"] == "secret.id.token"  # the browser got the hint
+    printed = "\n".join(seen["printed"])
+    assert "Open this URL" in printed
+    assert "id_token_hint" not in printed and "secret.id.token" not in printed
+
+
+async def test_stray_callbacks_do_not_abort_pending_login(tmp_path, point_auth_at, rsa_jwks):
+    credential, seen = await _drive_login(
+        tmp_path, point_auth_at, rsa_jwks, scope=auth.REQUESTED_SCOPE, stray_states=("wrong", "\u00e9t\u00e9")
+    )
+    assert seen["stray_statuses"] == [400, 400]
+    assert credential.client_id == ISSUED_CLIENT_ID
+
+
+def test_parse_callback_rejects_non_ascii_state_without_type_error():
+    with pytest.raises(auth.ChatGPTPlanAuthError, match="state"):
+        auth.parse_callback({"code": "c", "state": "\u00e9"}, expected_state="s", pending_client_id=ISSUED_CLIENT_ID)
+
+
+async def test_token_post_does_not_follow_redirects(tmp_path, point_auth_at):
+    _write(tmp_path, _credential(access_token=_fake_access_token(time.time() - 10)))
+    hits: list[str] = []
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        hits.append(request.path)
+        if request.path == "/api/accounts/oauth/token":
+            raise web.HTTPTemporaryRedirect("/elsewhere")
+        return web.json_response({"access_token": "leaked"})
+
+    async with stub_server(handler) as base:
+        point_auth_at(base)
+        manager = auth.ChatGPTPlanAuth.from_home(tmp_path)
+        with pytest.raises(auth.ChatGPTPlanAuthError, match="HTTP 307") as excinfo:
+            await manager.get_access_token()
+        assert not isinstance(excinfo.value, auth.ChatGPTPlanLoginRequiredError)
+        await manager.close()
+    assert hits == ["/api/accounts/oauth/token"]
+
+
+async def test_import_refuses_a_different_registration_unless_forced(tmp_path):
+    home = tmp_path / "server"
+    _write(home, _credential(subject="someone-else", client_id="oaiapp_other"))
+    source = tmp_path / "laptop.json"
+    source.write_text(json.dumps(_credential()))
+    with pytest.raises(auth.ChatGPTPlanAuthError, match="different registration"):
+        await auth.import_credential(home, source, out=lambda _line: None)
+    assert auth.read_credential(home / auth.CREDENTIAL_FILE).subject == "someone-else"
+    await auth.import_credential(home, source, out=lambda _line: None, force=True)
+    assert auth.read_credential(home / auth.CREDENTIAL_FILE).subject == "user-sub"
+
+
+async def test_logout_local_only_does_not_revoke(tmp_path, point_auth_at):
+    path = _write(tmp_path, _credential())
+    hits: list[str] = []
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        hits.append(request.path)
+        return web.Response(status=500)
+
+    async with stub_server(handler) as base:
+        point_auth_at(base)
+        assert not await auth.logout(tmp_path, out=lambda _line: None, revoke=False)
+    assert hits == []
+    stored = auth.read_credential(path)
+    assert not stored.is_active and stored.client_id == ISSUED_CLIENT_ID
+    assert stored.has_plan_scope  # the grant record is kept, so the next login is an ordinary reauth
+
+
+async def test_401_then_401_raises_after_exactly_one_refresh(make_llm):
+    upstream = _Upstream([(401, {"detail": "rejected"})])
+    llm = await make_llm(upstream)
+    with pytest.raises(Exception, match="rejected"):
+        await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=3, initial_backoff=0.01)
+    assert len(upstream.refresh_forms) == 1
+    assert len(upstream.requests) == 2
+
+
+async def test_401_with_plan_code_does_not_refresh(make_llm):
+    body = {"error": {"code": "subscription_sharing_invalid_user", "message": "bad user", "type": "x"}}
+    upstream = _Upstream([(401, body)])
+    llm = await make_llm(upstream)
+    with pytest.raises(ChatGPTPlanRequestError, match="subscription_sharing_invalid_user"):
+        await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=3, initial_backoff=0.01)
+    assert upstream.refresh_forms == []
+    assert len(upstream.requests) == 1
+
+
+async def test_openai_org_and_project_env_are_not_sent(make_llm, monkeypatch):
+    monkeypatch.setenv("OPENAI_ORG_ID", "org-from-env")
+    monkeypatch.setenv("OPENAI_PROJECT_ID", "proj-from-env")
+    upstream = _Upstream([(200, _completed())])
+    llm = await make_llm(upstream)
+    await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
+    sent = {k.lower() for k in upstream.headers[0]}
+    assert "openai-organization" not in sent and "openai-project" not in sent
+
+
+async def test_provider_cleanup_keeps_shared_manager_usable(make_llm):
+    upstream = _Upstream([(401, {"detail": "rejected"}), (200, _completed())])
+    first = await make_llm(upstream)
+    second = await make_llm(upstream)
+    await first.cleanup()
+    result = await second.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
+    assert result.content == "hello"
+    assert len(upstream.refresh_forms) == 1

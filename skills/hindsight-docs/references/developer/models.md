@@ -413,6 +413,7 @@ credentials, so it never shares or rotates the Codex CLI's tokens.
    (`--port` changes the port; `--no-browser` prints the URL instead). Approve the request, including
    use of your ChatGPT plan. The command validates the ID token and the granted scopes, then writes
    `~/.hindsight/chatgpt-plan/credentials.json` (mode `0600`) next to this host's `host_id`.
+   If you declined plan usage, run `login --enable-plan-usage` to be asked again.
 
 2. **Configure Hindsight:**
    ```bash
@@ -437,9 +438,14 @@ browser, so sign in on your laptop and move the credential file to the server.
    scp ~/.hindsight/chatgpt-plan/credentials.json server:/tmp/chatgpt-plan.json
    ssh server 'python -m hindsight_api.engine.providers.chatgpt_plan_auth import /tmp/chatgpt-plan.json && rm /tmp/chatgpt-plan.json'
    ```
-3. On the laptop, delete `~/.hindsight/chatgpt-plan/credentials.json`. Do not run `logout` there:
-   refresh tokens rotate, so after the copy only the server should use and refresh this session, and
-   revoking it from the laptop can end the server's session too.
+3. On the laptop, stop using that copy without revoking it:
+   ```bash
+   python -m hindsight_api.engine.providers.chatgpt_plan_auth logout --local-only
+   ```
+   Refresh tokens rotate, so after the copy only the server may use and refresh this session. A plain
+   `logout` would revoke it and end the server's session too. `--local-only` clears the laptop's
+   tokens but keeps its client registration for a later `login`. `import` refuses to replace a
+   different account's registration on the server unless you pass `--force`.
 
 The server then owns refreshes. Sign in again on the laptop later if you also want Hindsight there.
 
@@ -456,7 +462,7 @@ The server then owns refreshes. Sign in again on the laptop later if you also wa
   (`temperature`, `max_output_tokens`, `user`, and others), and sends system prompts as developer
   messages.
 - `logout` revokes the session and clears local tokens but keeps the client registration and host id
-  for the next `login`.
+  for the next `login`. `logout --local-only` clears the tokens without revoking.
 - `HINDSIGHT_API_LLM_CHATGPT_PLAN_HOME` relocates the credential directory. Use one directory per
   ChatGPT account. The directory must be writable, because each refresh writes the rotated token
   back; in a container, mount a writable volume there. If a write fails, the process keeps the new
