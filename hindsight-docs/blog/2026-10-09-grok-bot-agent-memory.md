@@ -1,23 +1,23 @@
 ---
-title: "Agent Memory That Survives the Run"
+title: "Grok Bot Can Read What Your Other AI Tools Already Learned"
 authors: [benfrank241]
 slug: "2026/10/09/grok-bot-agent-memory"
 date: 2026-10-09T12:00
 tags: [hindsight, grok-bot, xai, cursor, agent-memory, multi-agent, mcp, integrations]
-description: "Grok Bot has no plugin lifecycle hooks, so memory is driven by skills. That changes how a Bot remembers, and it lets a scheduled routine read its own last run."
+description: "Claude Code already knows your repo. ChatGPT already knows your preferences. With Hindsight, a Grok Bot can read those banks instead of making you explain it all again."
 image: /img/blog/grok-bot-agent-memory.png
 hide_table_of_contents: true
 ---
 
-![A scheduled routine that reads its own last run instead of starting from zero every night](/img/blog/grok-bot-agent-memory.png)
+![A Grok Bot reading the memory banks that Claude Code, ChatGPT and your other tools already wrote](/img/blog/grok-bot-agent-memory.png)
 
-A nightly routine wakes up, checks the same dashboard it checked yesterday, researches the same competitors, and produces another report. It does not remember what it found last time. It does not know which leads were already investigated, which sources turned out to be unreliable, or which changes actually matter. Tomorrow it will do much the same thing again.
+You spent three weeks with Claude Code in a repository. It knows why the retry logic looks the way it does, which migration broke staging in August, and that you do not want another abstraction layer.
 
-The problem is not that the agent cannot do the work. It is that every run starts from zero.
+Then you open a Grok Bot to draft a release note about that work, and you start from nothing.
 
-Now put a team of Bots alongside that routine. One researches a customer, another investigates a technical issue, a third prepares a report. Each can do useful work, but the conclusions one Bot reaches are not automatically available to the others.
+So you explain the project again. You paste the same background you pasted into ChatGPT last month. The context exists. It just does not travel.
 
-These are two different kinds of forgetting: one between Bots, the other between runs. Both get expensive once agents are expected to do useful work over time.
+That is the gap this integration closes. A Grok Bot connected to Hindsight can read the memory banks your other AI tools have already written, so the work of explaining yourself happens once instead of once per tool.
 
 <!-- truncate -->
 
@@ -31,227 +31,181 @@ This post is only about the first one.
 
 ## TL;DR
 
-- **Two kinds of forgetting.** One Bot cannot see what another worked out, and a scheduled routine starts every run from zero. The second is the one nobody talks about.
-- **Skills instead of hooks.** In Grok Bot a plugin's hooks never run. Memory is driven by six skills whose descriptions have to be good enough that the model reaches for them.
-- **Memory that survives a run.** A routine recalls its last run before working and records this one after, including when nothing changed.
-- **Handoffs through shared memory**, with tags, and with explicit limits on what a handoff is allowed to ask of the Bot that picks it up.
-- **OAuth, no API key.** Install from the Grok Bot Marketplace, authorize, then ask any Bot to set up memory.
-- **The same plugin installs into Cursor**, with per-project banks alongside the per-Bot and shared ones.
+- **Your other tools' memory is readable from a Grok Bot.** Banks written by Claude Code, ChatGPT, Hermes or OpenClaw are available to a Bot that needs them.
+- **Reading is one-directional.** A Bot writes to its own bank and the shared one. Everything else is read only.
+- **The Bot finds the bank itself.** `list_banks` plus a judgement call in the `memory-context` skill, not a path you hardcode.
+- **Be clear-eyed about the grant.** The OAuth connection reaches every bank in the organisation you authorise. The read-only discipline is a convention in a skill, not a server-side permission.
+- **Memory also travels two other ways:** between Bots through tagged handoffs, and between runs of a scheduled routine.
+- **No hooks.** Grok Bot runs no plugin lifecycle hooks, so all of this is driven by skills the model chooses to use.
 
-## Two kinds of forgetting
+## What a Bot can actually read
 
-It is easy to describe agent memory as a way for an AI to remember previous conversations. That is useful, but it misses two problems that appear once agents are part of a larger workflow.
+Hindsight stores memory in banks. This integration puts four kinds in reach.
 
-### Forgetting between Bots
+| Bank | Holds | The Bot can |
+|---|---|---|
+| `grok-bot::<bot-name>` | What one Bot learns in its own work | read and write |
+| `cursor::<project-name>` | What a Cursor agent learns in one project | read and write |
+| `grok-bot::shared` | What every Bot should know, handoffs, the "About the user" profile | read and write |
+| Your other banks | Memory written by Claude Code, ChatGPT, Hermes, OpenClaw and anything else pointed at Hindsight | read only |
 
-Suppose you have a Bot that researches companies and another that prepares sales briefs.
+That last row is the interesting one, and it is the reason this integration is worth more than a per-product memory feature.
 
-The researcher discovers that a prospect recently changed its product strategy. It finds the announcement, locates the original source, and works out why the change matters. The sales Bot then prepares a brief about the same company.
+A coding agent working in a repository builds a bank about that repository: the decisions, the dead ends, the things that broke. None of that was written for a Grok Bot. But when you ask a Bot to summarise the quarter's engineering work, or to draft a changelog, or to answer a question about why something is built the way it is, that bank is exactly what it needs.
 
-Without shared memory the second Bot repeats the research. It might reach the same conclusion, but it could also miss the source, overlook a detail, or spend its time reconstructing work that was already done.
+The Bot does not need write access to be useful there. It needs to be able to look.
 
-The Bots do not need to share their whole conversation histories. They need a way to make useful findings available to the right colleagues, with enough context to understand what those findings mean.
+## How the Bot finds the right bank
 
-### Forgetting between runs
+This is the part that makes it practical rather than theoretical, and it is worth being precise about because there is no configuration step where you list the banks a Bot may read.
 
-The second problem is less visible.
+The `memory-context` skill opens with the premise: earlier runs, other Bots and the user's other AI tools may already know things that matter for this task, so check before you start rather than after.
 
-A routine has a schedule, but each execution is still a new run. Consider a nightly competitor-monitoring routine. On Monday it finds three product announcements. On Tuesday, one more. On Wednesday, none at all.
+What the Bot does:
 
-Without memory, Wednesday's run has no record of what Monday and Tuesday turned up. It repeats searches, revisits the same sources, and produces a report that makes previously known information look new.
+1. Writes one short query describing what it needs, for example "decisions about the Q3 vendor shortlist" rather than the user's whole message.
+2. Calls `recall` with that query on its own bank and on `grok-bot::shared`.
+3. **If the task touches anything about the user outside this Bot's own work**, their preferences, the people in their life, their projects, codebases or documents, it also calls `recall` on the matching banks from `list_banks`.
+4. At the start of a conversation, reads the "About the user" mental model on `grok-bot::shared`.
 
-The routine has a schedule. It does not have a history it can use.
+Step 3 is the cross-tool path. There is no mapping file. The Bot lists the banks available on the connection, decides which ones look relevant to the task in front of it, and recalls against those.
 
-A routine without memory does the same work every night and never notices what changed.
+That is a judgement call made by a model, which is both the appealing part and the honest limitation. It means a Bot asked about your codebase can reach a bank written by a coding agent without anyone wiring the two together. It also means the Bot can pick the wrong bank, or miss a relevant one, in a way a hardcoded mapping would not.
 
-## What the plugin is
+The skill keeps the behaviour proportionate on purpose: one or two recalls per task, not one per step.
 
-The integration connects Grok Bot to Hindsight over the Model Context Protocol.
+## One direction only
 
-Install it from the Grok Bot Marketplace: open **Connect apps**, search for **Hindsight**, select **Add**, complete the OAuth flow, then ask any Bot to "set up Hindsight memory".
+A Bot writes to its own bank and to `grok-bot::shared`. Your other tools' banks are read only, and `memory-setup` states it plainly: read these when a task touches that work, never write to them.
 
-There is no API key. The MCP endpoint is `https://api.hindsight.vectorize.io/mcp`, and Grok Bot runs OAuth against it with discovery, dynamic client registration and PKCE. There is nothing to configure in the plugin itself.
+This asymmetry is deliberate, and it is the right default. Your Claude Code bank is built from work in a repository, with its own notion of what counts as a fact worth keeping. A Grok Bot drafting a release note should benefit from that and should not get to edit it. One-way reading gives you the value of shared context without a second writer quietly reshaping a bank another tool depends on.
 
-The same plugin installs from the Cursor Marketplace, where Cursor agents get per-project memory.
+The same rule applies between Bots. One Bot never writes into another Bot's `grok-bot::` bank; those are read only to it as well. Work that needs to reach another Bot goes through the shared bank as a handoff.
 
-Memory is organised into four kinds of bank:
+### What the grant actually covers
 
-| Bank | Holds |
-|---|---|
-| `grok-bot::<bot-name>` | What one Bot learns in its own work |
-| `cursor::<project-name>` | What a Cursor agent learns in one project |
-| `grok-bot::shared` | What every Bot should know, handoffs, and the "About the user" profile |
-| Your other banks | Memory from your other AI tools, read only |
+Worth stating clearly rather than leaving implied, because it is the thing a careful reader will want to know.
 
-Bank ids come from names, lowercased with spaces turned into hyphens. A Bot named "Sales Researcher" uses `grok-bot::sales-researcher`.
+The plugin connects to Hindsight Cloud's MCP server and Grok Bot runs OAuth against it. There is no API key to paste. But **the connection reaches every bank in the organisation you authorise.** That is how cross-tool reading works at all.
+
+So the read-only rule above is a convention encoded in the skills, not a permission boundary enforced by the server. The skills say to read other banks and never write to them, and a model that follows its skills will do exactly that. A model that ignores them is limited by whatever the OAuth grant actually allows, which is the whole organisation.
+
+If that is more than you want to extend, authorise an organisation that contains only the banks you are happy for Bots to see. Do not rely on the skill text as an access control, and back it with real permissions wherever the difference matters.
+
+## What this looks like in practice
+
+Three cases where the cross-tool read earns its keep.
+
+**Pairing a Bot with an agent that already knows you.** The pairing we see most is Grok Bot alongside Hermes. Hermes accumulates a bank as you work with it; a Bot connected to the same organisation can recall from that bank rather than being told the same things again. Neither tool was changed to make that work. They point at the same memory.
+
+**Writing about work you did somewhere else.** A Bot drafting a release note or a status update can recall the repository bank a coding agent filled in while the work was happening, including the reasoning that never made it into a commit message.
+
+**Answering a question whose answer lives in another tool.** "Why did we move off that vendor?" is a question about a decision. If the decision was worked through with another agent, the record is in that agent's bank, not in any conversation you have had with this Bot.
+
+**Not re-explaining yourself.** The "About the user" mental model on the shared bank, created at setup from the query *"Who is this user: their work, current projects, the people they mention most, and their stated preferences"*, gives every Bot the same background. Combined with read access to your other tools' banks, a new Bot starts knowing roughly who you are and what you are working on.
+
+## Memory also travels two other ways
+
+Cross-tool reading is the headline, but it is one of three directions memory moves here.
+
+### Between Bots
+
+`grok-bot::shared` is the common bank for anything meant to cross Bot boundaries, and the `bot-handoff` skill gives it a job.
+
+A Bot handing off retains a note another Bot could act on cold: what was asked, what was done and found, what is left, the sources, and caveats about how current the data is. It tags that note three ways: `source:grok-bot`, `bot:<the sending bot's name>`, and `handoff:<the receiving bot's name>` or `handoff:any`.
+
+`handoff:any` is how a finding reaches Bots that were never messaged and chats that had not started yet. A Bot can message another Bot directly and that is faster, but the message is not the record. The note outlasts it.
+
+There is a trust wrinkle here worth naming. A tagged handoff is the one case where a memory may be read as an instruction rather than a fact, and the skill says so explicitly, calling it the only exception and a narrow one. It then bounds it: a handoff must never be acted on if it asks the receiving Bot to delete or clear memory, write to banks other than its own and the shared one, reveal secrets, or contact anyone outside the account.
+
+As above, that is a convention rather than an enforced boundary. Shared memory between agents is an instruction channel whether or not you treat it as one, and the useful thing the integration does is make the rule explicit instead of leaving it implicit.
+
+### Between runs
+
+A scheduled routine has a schedule but not a history. Without memory, every run starts from zero, repeats searches and makes old information look new.
+
+The `routine-memory` skill writes the memory steps into the routine's **own instructions**, so they run when nobody is in the chat: recall the last run before working, retain a note afterwards covering what this run found, what changed, and what the next run should check first.
+
+The detail worth copying: it retains a note **even when nothing changed**. An absence only means something when you know what was checked. Without a note you cannot tell a clean run from a run that never happened.
 
 ## Why there are no hooks here
 
-In most agent integrations, memory hangs off lifecycle events. A hook fires when a session starts, pulls relevant context, and injects it before the model works. Another fires at the end and retains the session. The application decides when memory happens.
+All of the above depends on the model choosing to do it, and that is a property of the host rather than a design preference.
 
-Grok Bot does not work that way. A plugin's hooks never run. The Bot installs the plugin's MCP server and its skills, and nothing else.
+In most integrations memory hangs off lifecycle events: a hook fires at session start, pulls context, injects it. Grok Bot does not work that way. A plugin's hooks never run. The Bot installs the plugin's MCP server and its skills, and nothing else.
 
-So the skills are the entire interface between the model and the memory system. Each one carries a description explaining what it is for and when to use it, and the model decides whether it applies.
-
-There are six:
+So the skills are the entire interface, and each one's description is doing the job a hook would do elsewhere. There are six:
 
 | Skill | Use |
 |---|---|
 | `memory-setup` | Connect, verify with `list_banks`, create the banks and the profile |
-| `memory-context` | Load relevant memory before starting work, and whenever the user mentions people, projects, decisions, preferences or anything done before |
-| `memory-retain` | Save what was learned when a task finishes, or when you discover something a later run or another Bot would need |
-| `memory-reflect` | Answer questions about history, habits and past decisions by reasoning over memory: what was decided, how something is usually done, what changed over time |
-| `routine-memory` | Write recall and retain steps into a routine's own instructions, and run them at the start and end of each execution |
+| `memory-context` | Load relevant memory before starting work, including from your other tools' banks |
+| `memory-retain` | Save what was learned when a task finishes |
+| `memory-reflect` | Answer questions about history, habits and past decisions by reasoning over memory |
+| `routine-memory` | Put recall and retain steps into a routine's own instructions |
 | `bot-handoff` | Keep a durable record of work passed between Bots |
 
-This is a real architectural difference, and it cuts both ways.
+A hook runs regardless of what the model thinks. A skill has to be noticed and chosen. That makes the behaviour flexible and the guarantee weaker, and it is the honest frame for everything above: skills make the memory available and guide its use. They do not guarantee every relevant recall happens.
 
-A hook runs regardless of what the model thinks. A skill has to be noticed, understood, and chosen. That makes the behaviour more flexible and the guarantee weaker.
+## Getting connected
 
-The reason to build it this way is simply that the host decides which mechanisms exist. Designing around hooks that never fire would leave memory disconnected from the work. Describing the behaviour to the model is what is actually available.
+Install from the Grok Bot Marketplace: open **Connect apps**, search for **Hindsight**, select **Add**, complete the OAuth flow, then ask any Bot to "set up Hindsight memory".
 
-Worth stating plainly, because it governs everything below: skills make memory available and guide its use. They do not guarantee that every relevant memory operation happens.
+There is nothing to configure. The MCP endpoint is `https://api.hindsight.vectorize.io/mcp`, and Grok Bot runs OAuth against it with discovery, dynamic client registration and PKCE.
 
-## Setup starts with the Bot's name
+Name the Bot first. `memory-setup` refuses to continue while a Bot is still called "Grok Bot", because the name becomes the bank id: every unnamed Bot would derive `grok-bot::grok-bot` and share one personal bank, and renaming later strands whatever is stored under the old id.
 
-There is a small check in `memory-setup` that explains the whole naming scheme: it refuses to continue while a Bot is still called "Grok Bot".
+The same plugin installs from the Cursor Marketplace, where Cursor agents get per-project banks named after the open workspace folder.
 
-The reason is that the name becomes the bank id. Every Bot left on the default name would derive `grok-bot::grok-bot` and quietly share one personal bank. Renaming later moves the derived id, which strands whatever is already stored under the old one.
+### What the plugin will not do
 
-Requiring a real name first makes ownership explicit before anything is written.
+The skills never call `delete_bank`, `clear_memories`, `invalidate_memory`, `delete_document` or `delete_mental_model`. If something should be removed, the Bot says so and you do it from the Hindsight dashboard.
 
-Setup also creates a mental model called "About the user" on `grok-bot::shared`, built from this source query:
-
-> Who is this user: their work, current projects, the people they mention most, and their stated preferences
-
-That gives the fleet shared background instead of making each Bot rebuild it.
-
-## Routines that read their own last run
-
-This is where memory becomes more than a shared notebook.
-
-A recurring routine has two jobs: do its task, and leave enough behind that the next execution can continue intelligently.
-
-The `routine-memory` skill writes the memory steps into the routine's **own instructions**, so they run when nobody is in the chat. In practice that means a first step along the lines of "recall the last run of this routine and use it", and a last step that retains a note covering what this run found, what changed, and what the next run should check first.
-
-**Run one** establishes the baseline. The routine recalls whatever exists, does its work, and retains a note: which sources it checked, what it found, what is still open.
-
-**Run two** starts by recalling that note. It can skip what was handled, pick up what was left open, and compare new findings against what is already known. Memory does not replace checking current sources. Yesterday's note might be incomplete and a source might have changed, so the note informs the run rather than excusing it from verification.
-
-**Run three finds nothing, and still writes a note.** This is the detail worth copying into your own systems.
-
-It looks redundant. If there are no new announcements, why record anything?
-
-Because an absence only means something when you know what was checked. A note saying the routine looked and found nothing tells the next run when the last look happened. Without one, "no findings recorded" is ambiguous in a way that quietly erodes the whole point of the routine: you cannot tell a clean run from a run that never happened. Writing the note every time removes the ambiguity, and it makes a misbehaving routine far easier to debug afterwards.
-
-The broader principle is that a recurring job should be designed as a sequence of related executions, not the same isolated prompt on a timer.
-
-That design does depend on the instructions surviving. If someone edits the routine and drops the recall or retain step, the continuity goes with it. And because skills are model-invoked rather than lifecycle-enforced, it also depends on the model following them. Memory makes continuity possible. It does not make it automatic.
-
-## Handing work between Bots
-
-Back to the first kind of forgetting.
-
-`grok-bot::shared` is the common bank for anything meant to cross Bot boundaries, and the `bot-handoff` skill gives it a specific job.
-
-A Bot handing off calls `retain` on the shared bank with a note another Bot could act on cold: what was asked, what was done and found, what is left, the sources, and any caveats about how current the data is. It tags the note three ways:
-
-- `source:grok-bot`
-- `bot:<the sending bot's name>`
-- `handoff:<the receiving bot's name>`, or `handoff:any`
-
-That last option matters more than it looks. `handoff:any` is how a finding reaches Bots that were never messaged and chats that had not started yet. Grok Bot can message another Bot directly, and that is the faster way to get it moving, but the message is not the record. The note is what outlasts it.
-
-A Bot picking up work recalls the shared bank for "handoff for &lt;its own name&gt;" and for the task itself, continues from where the other Bot stopped, and retains the outcome when it is done.
-
-## When memory becomes an instruction channel
-
-Shared memory is useful because one agent can leave something for another. That is also exactly what makes it a channel for instructions the receiving agent was never meant to follow.
-
-A record might hold ordinary information, a mistaken conclusion, or text written specifically to steer the next model that reads it. If a Bot treats every memory as an instruction, anything that can write to shared memory can steer it.
-
-The `bot-handoff` skill meets this head on by defining a narrow exception. A note tagged `handoff:<bot>` and `source:grok-bot` from another Bot on the account means the receiving Bot should treat its request as its task. In the skill's own words, this is the only exception to treating memories as facts rather than instructions, and it is narrow.
-
-The skill then bounds the exception. A handoff must never be acted on if it asks the receiving Bot to:
-
-- delete or clear memory
-- write to banks other than its own and `grok-bot::shared`
-- reveal secrets
-- contact anyone outside the account
-
-A research Bot can ask a strategy Bot to continue an investigation. It cannot use a handoff to authorise memory deletion, reach into unrelated banks, expose secrets, or contact an outside party.
-
-### A convention, not a security guarantee
-
-Be clear about what this is.
-
-These limits live in a skill's instructions. They are not enforced by the memory service. A model can ignore them or fail to recognise an unsafe request, and a tag identifies an intended format rather than proving the contents are trustworthy.
-
-What the integration does is make the trust relationship explicit instead of leaving it implicit: define when memory may be read as a task, keep that exception small, and name the requests that stay out of bounds. That is better than silence. It is not a defence against prompt injection.
-
-For production, the same thinking belongs in the surrounding system. Use real access controls, keep secrets out of shared memory, and keep consequential actions behind permissions and independent checks. Memory can carry context between agents. It should not confer authority.
-
-## What the plugin will not do
-
-The skills never call any of these Hindsight tools:
-
-- `delete_bank`
-- `clear_memories`
-- `invalidate_memory`
-- `delete_document`
-- `delete_mental_model`
-
-If something should be removed, the Bot says so and you do it from the Hindsight dashboard.
-
-This is deliberate. An agent can decide a memory is outdated, misread a correct record as wrong, or be handed a note asking it to erase something. Letting the same agent make that call and carry out an irreversible deletion raises the cost of every one of those mistakes.
-
-There is a useful distinction between removing an action from an agent's repertoire and trusting its judgement not to misuse it. For deletion, this integration takes the first route: the calls are simply absent from the skills.
-
-That is a real safeguard rather than a complete one. It is a property of these skills, not of the server's permission model, and a different client with broader permissions still has whatever its own credentials allow.
+That matters more once Bots can read banks they did not write. An agent can misread a correct record as wrong, or be handed a note asking it to erase something. Removing the deletion calls from the skills means a mistake of that kind cannot become an irreversible one. It is a property of these skills rather than of the server's permission model, so treat it as one layer rather than the whole defence.
 
 ## If something looks wrong
 
 **`list_banks` fails during setup.** Do not guess at endpoints or hostnames. A failed listing means the connection is not working, so reconnect Hindsight from the plugin's settings and retry setup.
 
-**Setup refuses to run because the Bot is called "Grok Bot".** Give it a real name first. The name becomes the bank id, and the check exists so that unnamed Bots do not all converge on the same one.
+**The Bot is not reading your other tools' banks.** Step 3 of `memory-context` is conditional: the Bot reaches for other banks when the task touches the user's wider work. If a question looks purely local to the Bot, it will not go looking. Say what you are after, as in "check what the coding agent recorded about this repo", and confirm the bank you expect is actually visible in `list_banks`.
 
-**A Bot is trying to write to another Bot's bank.** It should not. A Bot writes to its own bank and to `grok-bot::shared`; everything else is read only. Cross-Bot work goes through a tagged handoff, not a direct write. If you see otherwise, check the active skills and the actual server-side permissions rather than assuming the skill rules are enforced.
+**Setup refuses to run because the Bot is called "Grok Bot".** Give it a real name first. The name becomes the bank id.
+
+**A Bot is trying to write to another Bot's bank, or to a bank from another tool.** It should not. Writes go to its own bank and `grok-bot::shared`; everything else is read only. Check the active skills and the actual server-side permissions rather than assuming the skill rules are enforced.
 
 **A self-hosted endpoint will not connect.** Grok Bot needs a public HTTPS MCP endpoint with OAuth 2.1 discovery and dynamic client registration. An endpoint that works locally without those is not enough. Put `cloudflare-oauth-proxy` in front of your instance, check it with `hindsight-muse-preflight` from the `meta-muse` integration, then change the `url` in `mcp.json`.
 
-**A routine keeps repeating old work.** Read the routine's instructions. The recall and retain steps have to be in the routine itself, and an edit can easily drop them. Then confirm the notes are landing in the bank you expect.
-
-**A handoff contains a request that looks unsafe.** Treat it as a trust problem rather than a formatting one. The tags describe an intended format; they do not prove the note is safe or that its author was. Respect the handoff boundaries, refuse what is out of bounds, and deal with the underlying memory from the dashboard.
+**A routine keeps repeating old work.** Read the routine's instructions. The recall and retain steps have to be in the routine itself, and an edit can easily drop them.
 
 ## FAQ
 
-**How is this different from giving every Bot its own bank?**
+**Which of my other tools' banks can a Bot read?**
 
-Isolation alone does not buy continuity. A Bot with a private bank still forgets what it did in last night's scheduled run, and two Bots with separate memory still have no way to pass a task between them. What is specific here is that memory is invoked by the model rather than a lifecycle, and that a routine's instructions carry the memory behaviour across executions.
-
-**What happens if I rename a Bot?**
-
-The bank id is derived from the name, so renaming changes the bank the integration looks for. Existing memories do not follow automatically. Check the old bank before renaming an established Bot and move anything worth keeping deliberately. This is also why setup will not proceed on the default name.
-
-**Can a Bot write to another Bot's bank?**
-
-Not under the integration's rules. A Bot writes to its own bank and `grok-bot::shared`. Other banks are read only, and cross-Bot work goes through a tagged handoff. Those are skill-level rules, so back them with server-side permissions in any deployment that matters.
+Every bank in the organisation you authorised. There is no per-bank allowlist in the plugin, so the scope of what a Bot can see is decided by which organisation you connect, not by configuration inside Grok Bot.
 
 **Can Grok Bot write to my Claude Code bank?**
 
-No. Your other tools' banks are readable but not writable from here. A Bot can benefit from what Claude Code or ChatGPT already recorded, and anything new goes into its own bank or the shared one.
+No, and this is the asymmetry the integration is built on. Other tools' banks are readable but not writable. Anything the Bot learns goes into its own bank or the shared one.
+
+**How does a Bot know which bank belongs to which tool?**
+
+It lists the banks on the connection and judges from their ids and names which look relevant to the task. Bank ids are conventional and readable, which is what makes that judgement possible. There is no registry mapping tools to banks.
+
+**Does that mean it sometimes reads the wrong bank, or misses one?**
+
+Yes. It is a model making a relevance call rather than following a mapping. Naming banks clearly helps, and asking for what you want directly helps more.
+
+**Can a Bot write to another Bot's bank?**
+
+No. A Bot writes to its own bank and `grok-bot::shared`. Cross-Bot work goes through a tagged handoff in the shared bank.
+
+**What happens if I rename a Bot?**
+
+The bank id is derived from the name, so renaming changes the bank the integration looks for and existing memories do not follow automatically. Check the old bank before renaming an established Bot.
 
 **Does this work with self-hosted Hindsight?**
 
-Yes, if the endpoint satisfies the OAuth requirements: publicly reachable HTTPS, OAuth 2.1 discovery, and dynamic client registration. Use `cloudflare-oauth-proxy`, verify with `hindsight-muse-preflight`, and update the `url` in `mcp.json`.
-
-**What happens if I delete a Bot?**
-
-Deleting a Bot and deleting its memory are separate things. The naming convention ties a Bot to a bank, but removing the Bot does not remove or migrate the bank. Look at what is in it first, especially anything that exists nowhere else, and do any deletion from the dashboard.
-
-**Will every Bot always remember everything?**
-
-No, and that is not the goal. Memory gives a Bot somewhere to put what it learns and a way to find it later. The model still has to pick the right skill, write a useful recall query, and judge what is worth keeping. Verify memory when accuracy matters, particularly where findings are old or conflict.
+Yes, if the endpoint is publicly reachable over HTTPS and supports OAuth 2.1 discovery and dynamic client registration. Use `cloudflare-oauth-proxy`, verify with `hindsight-muse-preflight`, and update the `url` in `mcp.json`.
 
 ## Learn more
 
@@ -260,6 +214,6 @@ No, and that is not the goal. Memory gives a Bot somewhere to put what it learns
 - [One Bank or Many? A Field Guide to Structuring Agent Memory](https://hindsight.vectorize.io/blog/2026/07/16/bank-strategy-agent-memory) for deciding what belongs in a separate bank in the first place.
 - [The integration itself](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/grok-bot) for the six skills, the manifests and the tests.
 
-An agent's work should not disappear when its conversation ends, and a routine should not rediscover its own history every night.
+Most agent memory features are built so a product can remember you inside itself. That is useful and it is also where most of them stop.
 
-Grok Bot gets there through skills rather than hooks, which makes the memory available without making it automatic. What you get is not a guarantee that an agent does the right thing. It is a record that carries forward, so the next run knows what the last one already did.
+The more valuable thing is a Bot that can read what you already worked out somewhere else, because the context you built with one tool was never really about that tool. It was about your work.
