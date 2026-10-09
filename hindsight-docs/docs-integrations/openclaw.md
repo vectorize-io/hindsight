@@ -86,8 +86,6 @@ The plugin will automatically capture conversations after each turn and inject r
 
 **Auto-Recall:** Before each agent response, relevant memories are automatically injected into the context (up to 1024 tokens by default). The agent uses past context without needing to call tools.
 
-**Manual Knowledge Tools:** When `enableKnowledgeTools` is enabled, the plugin exposes `agent_knowledge_*` tools for explicit memory lookup, deliberate reflection, document ingest, and knowledge-page management. Use `agent_knowledge_recall` for ordinary lookup and `agent_knowledge_reflect` only when you want Hindsight to synthesize an answer from memories. Automatic injection still uses `recallMaxTokens` and optionally `recallTopK` for a post-response count cap.
-
 **Feedback Loop Prevention:** The plugin automatically strips injected memory tags (`<hindsight_memories>`) before storing conversations. This prevents recalled memories from being re-extracted as new facts, which would cause exponential memory growth and duplicate entries.
 
 Traditional memory systems give agents a `search_memory` tool - but models don't use it consistently. Auto-recall solves this by injecting memories automatically before every turn.
@@ -153,12 +151,7 @@ Optional settings in `~/.openclaw/openclaw.json`:
 - `retainEveryNTurns` - Retain every Nth turn (default: `1` = every turn). Values > 1 enable chunked retention.
 - `senderPrefixPattern` - Regex matching a human display-name prefix that some channels prepend to the user's text (e.g. `Alice: today weather?`). Supply the name part only — `Alice|Bob` or `[A-Za-z ]{1,20}` — the `:` separator and anchoring are added by the plugin. When set, the prefix is stripped from both the recall query and the retained transcript, so the sender's name no longer pollutes vector search or get extracted as a fact. Unset (default) strips nothing; an invalid regex is ignored.
 - `retainOverlapTurns` - Extra prior turns included when chunked retention fires (default: `0`).
-- `enableKnowledgeTools` - Register `agent_knowledge_*` tools for explicit agent-driven lookup, reflection, ingest, and knowledge-page management (default: `false`).
 - `debug` - Enable debug logging (default: `false`).
-
-When using `agent_knowledge_recall` manually, pass `max_tokens` to control how much memory text the recall response may contain. The tool has no `max_results` parameter — to cap the number of automatically injected memories, use `recallTopK` on auto-recall instead. When the answer needs verbatim wording or an exact number rather than an extracted fact, pass `include_chunks: true` to also get the raw source text those memories came from, and `max_chunk_tokens` to bound it (default `8192`).
-
-When using `agent_knowledge_reflect`, keep the default conservative settings unless you intentionally need a deeper synthesis: `budget` defaults to `low`, `max_tokens` defaults to `1024`, and `fact_types` defaults to `world`, `experience`, and `observation`. Reflect calls can be more expensive than recall because they retrieve memories and then call the configured Reflect LLM to generate an answer. For production banks, set a finite bank-level `reflect_source_facts_max_tokens` value (for example `4096` or `8192`) instead of leaving it unlimited, so ad-hoc reflection cannot pull an unbounded amount of source facts into the LLM context.
 
 ### Memory Isolation
 

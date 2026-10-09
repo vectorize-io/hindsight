@@ -2,7 +2,6 @@ import type {
   MoltbotPluginAPI,
   PluginConfig,
   PluginHookAgentContext,
-  PluginToolContext,
   MemoryResult,
   RetainRequest,
 } from "./types.js";
@@ -22,7 +21,6 @@ import { configureLogger, setApiLogger, stopLogger } from "./logger.js";
 import { mkdirSync } from "fs";
 import { createRequire } from "module";
 import { homedir } from "os";
-import { createKnowledgeTools, TOOL_NAMES } from "./knowledge-tools.js";
 import {
   applyConfiguredBankDefaults,
   hasConfiguredBankDefaults,
@@ -30,31 +28,6 @@ import {
   normalizeEntityLabels,
   normalizeRetainExtractionMode,
 } from "./bank-defaults.js";
-
-/**
- * Structured payload for a knowledge tool result.
- *
- * The SDK returns the payload only as JSON text in `content[0].text`. OpenClaw's
- * Code Mode hands a tool result's `details` (and nothing else) to the guest as the
- * structured value, so `details: {}` made every knowledge tool look empty there
- * (#4308). Parse the text back into an object; a non-object payload is wrapped and
- * unparseable text yields `{}` as before.
- */
-export function knowledgeToolDetails(result: unknown): Record<string, unknown> {
-  const content = (result as { content?: unknown })?.content;
-  const first = Array.isArray(content) ? (content[0] as { text?: unknown } | undefined) : undefined;
-  const text = first?.text;
-  if (typeof text !== "string") return {};
-  try {
-    const parsed: unknown = JSON.parse(text);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-    return { result: parsed };
-  } catch {
-    return {};
-  }
-}
 
 function loadPackageVersion(): string {
   try {
@@ -1620,91 +1593,6 @@ export function deriveBankId(
   return pluginConfig.bankIdPrefix ? `${pluginConfig.bankIdPrefix}-${baseBankId}` : baseBankId;
 }
 
-function usesUserScopedBanking(pluginConfig: PluginConfig): boolean {
-  if (usesStaticBank(pluginConfig)) {
-    return false;
-  }
-  const granularity = pluginConfig.dynamicBankGranularity?.length
-    ? pluginConfig.dynamicBankGranularity
-    : DEFAULT_DYNAMIC_BANK_GRANULARITY;
-  return granularity.includes("user");
-}
-
-export interface KnowledgeToolBankResolution {
-  bankId: string;
-  resolvedCtx: PluginHookAgentContext | undefined;
-  identityError?: string;
-}
-
-/**
- * Resolve the Hindsight bank for knowledge tools using the same identity path as
- * auto-recall/retain. When user-scoped dynamic banking is enabled, unresolved
- * identity must not silently route to the shared default or anonymous bank.
- */
-export function resolveBankIdForKnowledgeTools(
-  toolCtx: PluginToolContext,
-  pluginConfig: PluginConfig
-): KnowledgeToolBankResolution {
-  const hookCtx: PluginHookAgentContext = {
-    agentId: toolCtx.agentId,
-    sessionKey: toolCtx.sessionKey,
-    workspaceDir: toolCtx.workspaceDir,
-  };
-
-  // An explicitly mapped agent needs no identity resolution: its bank does not
-  // depend on the sender, so the user-scoped guards below must not reject it. (#3890)
-  const mappedBankId = mappedBankIdForAgent(hookCtx, pluginConfig);
-  if (mappedBankId) {
-    return { bankId: mappedBankId, resolvedCtx: undefined };
-  }
-
-  if (usesStaticBank(pluginConfig)) {
-    return { bankId: getStaticBankId(pluginConfig), resolvedCtx: undefined };
-  }
-
-  const { resolvedCtx, skipReason } = resolveAndCacheIdentity({
-    sessionKey: toolCtx.sessionKey,
-    ctx: hookCtx,
-    pluginConfig,
-  });
-  const { reason: identityReason } = getIdentitySkipReason(resolvedCtx, pluginConfig);
-  const effectiveSkip = skipReason ?? identityReason;
-  const bankId = deriveBankId(resolvedCtx, pluginConfig);
-
-  if (usesUserScopedBanking(pluginConfig)) {
-    const userSegment = resolvedCtx?.senderId || "anonymous";
-    if (effectiveSkip) {
-      return {
-        bankId,
-        resolvedCtx,
-        identityError:
-          `Hindsight knowledge tools skipped: ${formatIdentitySkipReason(effectiveSkip)}. ` +
-          "Knowledge tools use the same per-user memory bank as auto-recall/retain.",
-      };
-    }
-    if (userSegment === "anonymous") {
-      return {
-        bankId,
-        resolvedCtx,
-        identityError:
-          "Hindsight knowledge tools skipped: missing stable sender identity. " +
-          "Knowledge tools use the same per-user memory bank as auto-recall/retain.",
-      };
-    }
-    if (bankId === getDefaultBankId(pluginConfig)) {
-      return {
-        bankId,
-        resolvedCtx,
-        identityError:
-          "Hindsight knowledge tools skipped: could not resolve per-user memory bank. " +
-          "Knowledge tools use the same per-user memory bank as auto-recall/retain.",
-      };
-    }
-  }
-
-  return { bankId, resolvedCtx };
-}
-
 /**
  * Render the event window a memory carries. `mentioned_at` says when the fact
  * was stated; `occurred_start`/`occurred_end` say when the event itself
@@ -2256,7 +2144,6 @@ export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
       typeof config.retainQueueFlushIntervalMs === "number" && config.retainQueueFlushIntervalMs > 0
         ? config.retainQueueFlushIntervalMs
         : undefined,
-    enableKnowledgeTools: config.enableKnowledgeTools === true,
     senderPrefixPattern,
   };
 }
@@ -3344,55 +3231,6 @@ ${memoriesFormatted}
     });
     debug("[Hindsight] Hooks registered");
     log.info("agent hooks registered");
-
-    // Register knowledge tools (opt-in via enableKnowledgeTools config flag)
-    if (pluginConfig.enableKnowledgeTools && typeof api.registerTool === "function") {
-      try {
-        const apiUrl = (() => {
-          const ext = detectExternalApi(pluginConfig);
-          return ext?.apiUrl || `http://localhost:${pluginConfig.apiPort || 9077}`;
-        })();
-        const apiToken = pluginConfig.hindsightApiToken || undefined;
-
-        // Factory: called per session with agent context, returns tools scoped to that bank.
-        // Identity is resolved the same way as auto-recall/retain so PluginToolContext
-        // (which lacks senderId/messageProvider) still routes to the per-user bank.
-        const factory = (ctx: PluginToolContext) => {
-          const resolution = resolveBankIdForKnowledgeTools(ctx, pluginConfig);
-          const tools = createKnowledgeTools({
-            apiUrl,
-            apiToken,
-            bankId: resolution.bankId,
-          });
-          return tools.map((t) => ({
-            name: t.name,
-            label: t.label,
-            description: t.description,
-            parameters: t.parameters,
-            async execute(_id: string, params: Record<string, unknown>) {
-              if (resolution.identityError) {
-                return {
-                  content: [{ type: "text", text: resolution.identityError }],
-                  details: { error: resolution.identityError },
-                };
-              }
-              const config = currentPluginConfig || pluginConfig;
-              await ensureBankDefaultsApplied(resolution.bankId, config);
-              const result = await t.execute(params);
-              return { ...result, details: knowledgeToolDetails(result) };
-            },
-          }));
-        };
-
-        api.registerTool(factory, {
-          names: [...TOOL_NAMES],
-          optional: false,
-        });
-        log.info("knowledge tools registered");
-      } catch (err) {
-        log.warn(`knowledge tools registration failed: ${err}`);
-      }
-    }
   } catch (error) {
     log.error("plugin loading error", error);
     if (error instanceof Error) {

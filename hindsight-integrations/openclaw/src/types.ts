@@ -16,24 +16,12 @@ export interface MoltbotPluginAPI {
     event: string,
     handler: (event: any, ctx?: any) => void | Promise<void | PluginPromptHookResult>
   ): void;
-  // Register a tool or tool factory for agents
-  registerTool?(
-    factory: (ctx: PluginToolContext) => any | any[] | null | undefined,
-    opts?: { name?: string; names?: string[]; optional?: boolean }
-  ): void;
   // OpenClaw framework logger — handles coloring/formatting consistently across plugins
   logger: {
     info(msg: string): void;
     warn(msg: string): void;
     error(msg: string): void;
   };
-}
-
-export interface PluginToolContext {
-  config?: MoltbotConfig;
-  agentId?: string;
-  sessionKey?: string;
-  workspaceDir?: string;
 }
 
 export interface MoltbotConfig {
@@ -102,6 +90,9 @@ export interface PluginConfig {
    */
   entityLabels?: unknown;
   embedPort?: number;
+  // Deprecated and ignored: the agent_knowledge_* tools were removed. Kept so
+  // existing configs that set it still pass the strict manifest schema.
+  enableKnowledgeTools?: boolean;
   daemonIdleTimeout?: number; // Seconds before daemon shuts down (0 = never)
   embedVersion?: string; // hindsight-embed version (default: "latest")
   embedPackagePath?: string; // Local path to hindsight package (e.g. '/path/to/hindsight')
@@ -149,7 +140,6 @@ export interface PluginConfig {
   retainQueuePath?: string; // Path to JSONL file for buffering failed retains. Default: ~/.openclaw/data/hindsight-retain-queue.jsonl
   retainQueueMaxAgeMs?: number; // Max age in ms for queued items. -1 = keep forever (default: -1)
   retainQueueFlushIntervalMs?: number; // How often to attempt flushing the queue in ms. Default: 60000 (1 min)
-  enableKnowledgeTools?: boolean; // Register agent_knowledge_* tools. Default: false. Set to true by the self-driving-agents CLI.
   /**
    * Regex source matching a human display-name prefix that some channels
    * prepend to user text ("Alice: today weather?"). Supply the name part only

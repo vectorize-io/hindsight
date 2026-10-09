@@ -131,7 +131,6 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `statelessSessionPatterns` | `[]`                           | Session key glob patterns for read-only sessions — retain is always skipped; recall is skipped when `skipStatelessSessions` is `true` (e.g. `["agent:*:subagent:**", "agent:*:heartbeat:**"]`)                                                                                                                   |
 | `skipStatelessSessions`    | `true`                         | When `true`, sessions matching `statelessSessionPatterns` also skip recall. Set to `false` to allow recall but still skip retain.                                                                                                                                                                                |
 | `debugPerfTiming`          | `false`                        | Emit one info-level perf line per `before_prompt_build` (recall path) and `agent_end` (retain path) so you can spot whether latency is in the plugin or upstream. Off by default. Format: `perf: <hook> hook_total=Xms <hook-specific fields>`. Safe in production — uses the existing logger.                   |
-| `enableKnowledgeTools`     | `false`                        | Register `agent_knowledge_*` tools for explicit agent-driven lookup, reflection, ingest, and knowledge-page management. Set automatically by the self-driving-agents CLI.                                                                                                                                        |
 
 ### Per-agent bank mapping
 
@@ -154,7 +153,7 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 Details worth knowing:
 
 - **Mapped names are used verbatim.** `bankIdPrefix` is not applied, because you named the bank yourself.
-- **Retain, recall and the knowledge tools all follow the map** — they resolve the bank through the same path.
+- **Retain and recall both follow the map** — they resolve the bank through the same path.
 - **Bank defaults still apply.** A mapped bank is stamped with the configured missions, extraction mode, entity labels and so on when it is first used, exactly like a derived bank.
 - **Agent ids match exactly** — the lookup is case-sensitive and not fuzzy, so `Inbound` is not `inbound`. Keys are trimmed, values too.
 - **Mapped agents are exempt from the sender/surface skips.** A session whose sender cannot be resolved, or whose dispatch surface differs from the session's provider, is normally skipped rather than routed into a bank keyed by the wrong thing. A mapped agent's bank depends on neither, so those sessions are retained as intended. Operational sessions (`cron`, `heartbeat`, `subagent`, `temp:`) are still skipped for mapped agents, exactly as before.
@@ -185,14 +184,6 @@ When `dynamicBankId` is enabled (default), OpenClaw derives a separate Hindsight
 ```
 
 Unset options are not sent — existing behaviour is unchanged when you only configure missions (as before). Each bank is configured at most once per gateway process.
-
-### Manual Knowledge Tools
-
-When `enableKnowledgeTools` is enabled, the plugin registers explicit `agent_knowledge_*` tools in addition to automatic recall. Use `agent_knowledge_recall` for ordinary memory lookup. Use `agent_knowledge_reflect` only for deliberate synthesis, retrospectives, or long-term preference/pattern questions; it retrieves memories and then calls the configured Reflect LLM to generate an answer.
-
-Knowledge tools resolve the same dynamic memory bank as auto-recall and auto-retain: the plugin runs the shared identity-resolution path (`resolveAndCacheIdentity`) from the tool session context before deriving the bank ID. With user-scoped dynamic banking (`dynamicBankGranularity` includes `"user"`), tools target the per-user bank for that session; if sender identity cannot be resolved, tool execution returns a clear error instead of querying the shared `openclaw` default or an `anonymous` fallback bank. Configured bank defaults (missions, extraction mode, entity labels, etc.) are applied on first knowledge-tool use, matching `getClientForContext` behavior.
-
-`agent_knowledge_reflect` uses conservative defaults: `budget: "low"`, `max_tokens: 1024`, and `fact_types: ["world", "experience", "observation"]`. Production deployments should also set a finite bank-level `reflect_source_facts_max_tokens` value, such as `4096` or `8192`, rather than leaving reflection source facts unlimited.
 
 ### Session pattern filtering
 

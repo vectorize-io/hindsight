@@ -4,7 +4,6 @@ import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
-  knowledgeToolDetails,
   normalizeAgentBankMap,
   stripMemoryTags,
   extractRecallQuery,
@@ -30,7 +29,6 @@ import {
   getIdentitySkipReason,
   isEphemeralOperationalText,
   deriveBankId,
-  resolveBankIdForKnowledgeTools,
   normalizeRetainTags,
   extractInlineRetainTags,
   stripInlineRetainTags,
@@ -1925,28 +1923,6 @@ describe("getPluginConfig — retainQueue whitelist (#1443)", () => {
   });
 });
 
-describe("getPluginConfig — enableKnowledgeTools whitelist", () => {
-  // Regression: the field was declared on PluginConfig and read at the
-  // tool-registration site, but never copied through getPluginConfig, so the
-  // runtime value was always undefined and the agent_knowledge_* tools never
-  // registered (live since the feature was first added on Apr 29 2026).
-  it("passes enableKnowledgeTools=true through when set", () => {
-    const cfg = getPluginConfig(makeApi({ enableKnowledgeTools: true }));
-    expect(cfg.enableKnowledgeTools).toBe(true);
-  });
-
-  it("defaults to false when not set or set to a non-boolean truthy value", () => {
-    expect(getPluginConfig(makeApi({})).enableKnowledgeTools).toBe(false);
-    expect(getPluginConfig(makeApi({ enableKnowledgeTools: false })).enableKnowledgeTools).toBe(
-      false
-    );
-    expect(getPluginConfig(makeApi({ enableKnowledgeTools: "true" })).enableKnowledgeTools).toBe(
-      false
-    );
-    expect(getPluginConfig(makeApi({ enableKnowledgeTools: 1 })).enableKnowledgeTools).toBe(false);
-  });
-});
-
 describe("getPluginConfig — preferObservations (#2977)", () => {
   it("passes preferObservations=true through when set", () => {
     expect(getPluginConfig(makeApi({ preferObservations: true })).preferObservations).toBe(true);
@@ -2152,88 +2128,6 @@ describe("getPluginConfig — retainContext", () => {
     expect(openclawManifest.configSchema?.properties?.retainContext?.default).toBe(
       DEFAULT_RETAIN_CONTEXT
     );
-  });
-});
-
-// ---------------------------------------------------------------------------
-// resolveBankIdForKnowledgeTools — dynamic user-scoped banking (#2441)
-// ---------------------------------------------------------------------------
-
-describe("resolveBankIdForKnowledgeTools", () => {
-  const userScopedConfig: PluginConfig = {
-    dynamicBankGranularity: ["user"],
-    bankIdPrefix: "nemoclaw_intel",
-  };
-
-  it("routes msteams direct sessions to the per-user bank, not shared defaults", () => {
-    const userId = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
-    const resolution = resolveBankIdForKnowledgeTools(
-      {
-        agentId: "nemoclaw",
-        sessionKey: `agent:nemoclaw:msteams:direct:${userId}`,
-      },
-      userScopedConfig
-    );
-
-    expect(resolution.identityError).toBeUndefined();
-    expect(resolution.bankId).toBe(`nemoclaw_intel-${userId}`);
-    expect(resolution.bankId).not.toBe("openclaw");
-    expect(resolution.bankId).not.toBe("nemoclaw_intel-openclaw");
-    expect(resolution.bankId).not.toBe("nemoclaw_intel-anonymous");
-  });
-
-  it("does not silently fall back to shared/default bank when user identity is missing", () => {
-    const resolution = resolveBankIdForKnowledgeTools(
-      {
-        agentId: "nemoclaw",
-        sessionKey: "agent:nemoclaw:msteams:group:19:general@thread.tacv2",
-      },
-      userScopedConfig
-    );
-
-    expect(resolution.identityError).toMatch(/missing stable sender identity/);
-    expect(resolution.bankId).not.toBe("openclaw");
-    expect(resolution.bankId).not.toBe("nemoclaw_intel-openclaw");
-    expect(resolution.bankId).toBe("nemoclaw_intel-anonymous");
-  });
-
-  it("uses static bankId when dynamicBankId is false", () => {
-    const resolution = resolveBankIdForKnowledgeTools(
-      { sessionKey: "agent:nemoclaw:main" },
-      { dynamicBankId: false, bankId: "shared-team-memory" }
-    );
-
-    expect(resolution.identityError).toBeUndefined();
-    expect(resolution.bankId).toBe("shared-team-memory");
-  });
-
-  it("routes a mapped agent to its bank without requiring sender identity (#3890)", () => {
-    // The group session below has no resolvable sender, which is exactly the case
-    // the user-scoped guard rejects. A mapped agent's bank does not depend on the
-    // sender, so the guard must not fire for it.
-    const resolution = resolveBankIdForKnowledgeTools(
-      {
-        agentId: "inbound",
-        sessionKey: "agent:inbound:msteams:group:19:general@thread.tacv2",
-      },
-      { ...userScopedConfig, agentBankMap: { inbound: "ps-technology" } }
-    );
-
-    expect(resolution.identityError).toBeUndefined();
-    expect(resolution.bankId).toBe("ps-technology");
-  });
-
-  it("still guards an unmapped agent under the same config (#3890)", () => {
-    const resolution = resolveBankIdForKnowledgeTools(
-      {
-        agentId: "nemoclaw",
-        sessionKey: "agent:nemoclaw:msteams:group:19:general@thread.tacv2",
-      },
-      { ...userScopedConfig, agentBankMap: { inbound: "ps-technology" } }
-    );
-
-    expect(resolution.identityError).toMatch(/missing stable sender identity/);
-    expect(resolution.bankId).not.toBe("ps-technology");
   });
 });
 
@@ -2555,32 +2449,5 @@ describe("sessionEndMessagesFromTranscript", () => {
     sessionEndMessagesFromTranscript(sessionEndEvent("/tmp/whatever.jsonl"), read);
 
     expect(seen).toEqual(["main"]);
-  });
-});
-
-describe("knowledgeToolDetails — Code Mode structured result (#4308)", () => {
-  it("parses the SDK's JSON text payload into details", () => {
-    const result = {
-      content: [
-        { type: "text", text: JSON.stringify({ results: [{ id: "m1", text: "fact" }] }, null, 2) },
-      ],
-    };
-    expect(knowledgeToolDetails(result)).toEqual({ results: [{ id: "m1", text: "fact" }] });
-  });
-
-  it("wraps a non-object payload so the guest still receives it", () => {
-    expect(knowledgeToolDetails({ content: [{ type: "text", text: "[1,2]" }] })).toEqual({
-      result: [1, 2],
-    });
-    expect(knowledgeToolDetails({ content: [{ type: "text", text: '"ok"' }] })).toEqual({
-      result: "ok",
-    });
-  });
-
-  it("falls back to an empty object for missing or unparseable text", () => {
-    expect(knowledgeToolDetails({ content: [{ type: "text", text: "not json" }] })).toEqual({});
-    expect(knowledgeToolDetails({ content: [] })).toEqual({});
-    expect(knowledgeToolDetails({})).toEqual({});
-    expect(knowledgeToolDetails(undefined)).toEqual({});
   });
 });

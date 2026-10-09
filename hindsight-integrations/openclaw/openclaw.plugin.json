@@ -16,18 +16,6 @@
       ]
     }
   },
-  "contracts": {
-    "tools": [
-      "agent_knowledge_list_pages",
-      "agent_knowledge_get_page",
-      "agent_knowledge_create_page",
-      "agent_knowledge_update_page",
-      "agent_knowledge_delete_page",
-      "agent_knowledge_recall",
-      "agent_knowledge_reflect",
-      "agent_knowledge_ingest"
-    ]
-  },
   "configSchema": {
     "type": "object",
     "properties": {
@@ -359,7 +347,7 @@
       },
       "enableKnowledgeTools": {
         "type": "boolean",
-        "description": "Register agent_knowledge_* tools for explicit lookup, reflection, ingest, and knowledge-page management. Set automatically by the self-driving-agents CLI.",
+        "description": "Deprecated and ignored: the agent_knowledge_* tools were removed",
         "default": false
       },
       "senderPrefixPattern": {
@@ -584,7 +572,7 @@
     },
     "enableKnowledgeTools": {
       "label": "Enable Knowledge Tools",
-      "placeholder": "false (default) — enable agent_knowledge_* tools, including reflect"
+      "placeholder": "deprecated, ignored"
     },
     "retainQueuePath": {
       "label": "Retain Queue File Path",
