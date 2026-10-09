@@ -3418,14 +3418,19 @@ class MemoryEngine(MemoryEngineInterface):
         entity_labels: Any,
         strategy: str | None,
     ) -> None:
-        """Refuse (403) when entity labels with ``tag: true`` could add a tag the caller can't write."""
-        write_scope = await self._write_tag_scope(bank_id, request_context)
-        if write_scope is None:
-            return
+        """Refuse (403) when entity labels with ``tag: true`` could add a tag the caller can't write.
+
+        The labels are read first and the caller's write scope only when some label could
+        add a tag, so a dry run with no tagging labels still touches no validator hook
+        (a deployment that meters through the validator must not see one).
+        """
         from .retain.entity_labels import label_tag_candidates
 
         label_tags = label_tag_candidates(entity_labels)
-        if label_tags and not tags_writable(label_tags, write_scope):
+        if not label_tags:
+            return
+        write_scope = await self._write_tag_scope(bank_id, request_context)
+        if write_scope is not None and not tags_writable(label_tags, write_scope):
             from hindsight_api.extensions import OperationValidationError
 
             outside = sorted(t for t in label_tags if not tags_writable([t], write_scope))
@@ -13018,7 +13023,9 @@ class MemoryEngine(MemoryEngineInterface):
         # preview stores nothing, but it spends the bank's LLM budget on a path retain
         # refuses and shows how the labels would tag the caller's text. Checked after the
         # overrides, which can change the labels.
-        await self._refuse_unwritable_label_tags(bank_id, request_context, resolved_config.entity_labels, strategy)
+        await self._refuse_unwritable_label_tags(
+            bank_id, request_context, getattr(resolved_config, "entity_labels", None), strategy
+        )
 
         canonical = validate_and_canonicalize_content(
             content,
