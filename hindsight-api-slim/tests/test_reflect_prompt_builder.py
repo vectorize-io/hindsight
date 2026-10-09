@@ -71,6 +71,8 @@ Every memory and observation carries temporal fields in the JSON tool result:
 
 When facts about the SAME facet conflict — counts, statuses, ownership, location, presence, etc. — the fact with the LATEST `mentioned_at` is authoritative. Later statements SUPERSEDE earlier ones. Do NOT average, sum, or favor an explicitly-dated fact over a more recent one.
 
+A DECISION is different from a state. When the record holds a decision with its rationale (what was decided and why) and a later record changes the same thing WITHOUT stating a reason that overturns that decision (a refactor, a 'simplification', a cleanup, a performance change), the later record does NOT supersede the decision: report the decision as the standing one, and report the later change as a departure from it. Only a later record that itself decides, with its own rationale, replaces an earlier decision.
+
 Example: three count facts come back from recall:
   - 'Team has 2 engineers' (mentioned_at=T1)
   - 'Team now has 1 engineer' (mentioned_at=T2, occurred_start=2026-05-25)

@@ -595,7 +595,7 @@ def validate_sql_schema(sql: str) -> None:
                         )
 
 
-from .cross_encoder import RANK_SCORE_PROVIDERS, CrossEncoderModel
+from .cross_encoder import RANK_SCORE_PROVIDERS, CrossEncoderModel, TypeSafeCrossEncoder
 from .embeddings import Embeddings, create_embeddings_from_env
 from .interface import BankConfigState, BankTemplateImportWrite, MemoryEngineInterface
 
@@ -3001,6 +3001,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Initialize cross-encoder reranker (cached for performance)
         self._cross_encoder_reranker = CrossEncoderReranker(cross_encoder=cross_encoder)
+        self._fast_reflect_decision_model: TypeSafeCrossEncoder | None = None
 
         # Initialize task backend.
         # All backends use BrokerTaskBackend + WorkerPoller for async background execution.
@@ -15142,6 +15143,39 @@ class MemoryEngine(MemoryEngineInterface):
             return self._reflect_llm_config
         return override
 
+    def _reflect_decision_model(self) -> TypeSafeCrossEncoder | None:
+        """The decision model fast reflect asks "is this enough?", or None without a key.
+
+        Built from the TypeSafe reranker settings, whichever reranker recall uses, and
+        once per engine so its connection pool is shared across reflects.
+        """
+        if self._fast_reflect_decision_model is None:
+            config = get_config()
+            if not config.reranker_typesafe_api_key:
+                return None
+            model = TypeSafeCrossEncoder(
+                api_key=config.reranker_typesafe_api_key,
+                model=config.reranker_typesafe_model,
+                base_url=config.reranker_typesafe_base_url,
+                timeout=config.reranker_typesafe_timeout,
+                max_concurrent=config.reranker_typesafe_max_concurrent,
+                prune_candidates=True,
+            )
+            # The recall cut keeps at most 12; a reflect answer can need more (a count
+            # over seven customers is seven facts plus the observations about them).
+            # The floor guards the cut's coarse levels: on that count it kept five.
+            model.SHORTLIST = 25
+            model.MIN_KEEP = 15
+            self._fast_reflect_decision_model = model
+        return self._fast_reflect_decision_model
+
+    async def _prune_reflect_evidence(self, query: str, texts: list[str]) -> list[bool]:
+        """Keep flags for fast reflect's first retrieval: ranked and cut by the decision model."""
+        model = self._reflect_decision_model()
+        assert model is not None  # only wired when a decision model is configured
+        scores = await model.predict([(query, text) for text in texts])
+        return [score > 0.0 for score in scores]
+
     def _llm_for_reflect_operation(self, operation_label: str) -> "LLMConfig | MultiLLMProvider":
         """Pick the LLM for a reflect-pipeline run: interactive, or background refresh.
 
@@ -15223,6 +15257,13 @@ class MemoryEngine(MemoryEngineInterface):
                 - structured_output: Parsed structured output when response_schema was
                   provided, else None
         """
+        # Wall-clock marks for the timeline log line at the end: where one reflect's time
+        # went, setup to post-processing, so a slow reflect points at its step.
+        _timeline: list[tuple[str, float]] = [("entry", time.monotonic())]
+
+        def _mark(step: str) -> None:
+            _timeline.append((step, time.monotonic()))
+
         # Sanitize at ingress so lone UTF-16 surrogates in the question/context cannot
         # crash logging, recall's embedder, or the reflect LLM call (see issue #1875).
         query = sanitize_text(query) or ""
@@ -15286,13 +15327,16 @@ class MemoryEngine(MemoryEngineInterface):
         logger.info(f"[REFLECT {reflect_id}] Starting agentic reflect for query: {query[:50]}...{tags_info}")
 
         # Get bank profile for agent identity
+        _mark("validate")
         profile = await self.ensure_bank_profile(bank_id, request_context=request_context)
+        _mark("profile")
 
         # NOTE: Mental models are NOT pre-loaded to keep the initial prompt small.
         # The agent can call lookup() to list available models if needed.
         # This is critical for banks with many mental models to avoid huge prompts.
 
         resolved_reflect_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+        _mark("config")
 
         # Compute max iterations based on budget
         config = get_config()
@@ -15303,6 +15347,7 @@ class MemoryEngine(MemoryEngineInterface):
         max_iterations = max(1, int(base_max_iterations * budget_multipliers.get(effective_budget, 1.0)))
         max_context_tokens = config.reflect_max_context_tokens
         wall_timeout = config.reflect_wall_timeout
+        fast_reflect = getattr(resolved_reflect_config, "reflect_mode", None) == "fast"
 
         # Run agentic loop - acquire connections only when needed for DB operations
         # (not held during LLM calls which can be slow)
@@ -15312,6 +15357,7 @@ class MemoryEngine(MemoryEngineInterface):
         # link aggregations that reflect() does not use and which can take many
         # seconds on large banks.
         freshness = await self.get_bank_freshness(bank_id, request_context=request_context)
+        _mark("freshness")
         last_consolidated_at = freshness.get("last_consolidated_at")
         pending_consolidation = freshness.get("pending_consolidation", 0)
         # Resolved once for the whole reflect: a mental model refreshed at or
@@ -15516,6 +15562,7 @@ class MemoryEngine(MemoryEngineInterface):
             has_mental_models = mental_model_count > 0
             if has_mental_models:
                 logger.info(f"[REFLECT {reflect_id}] Bank has {mental_model_count} mental models")
+        _mark("directives_and_pages")
 
         # Run the agent with parent span for reflect operation (skip if called from another operation)
         if not _skip_span:
@@ -15554,6 +15601,15 @@ class MemoryEngine(MemoryEngineInterface):
                         store_document_text=config_dict.get("store_document_text", DEFAULT_STORE_DOCUMENT_TEXT),
                         answer_as_document=answer_as_document,
                         tool_token_limits=tool_token_limits,
+                        fast=fast_reflect,
+                        evidence_is_sufficient_fn=(
+                            decision_model.evidence_is_sufficient
+                            if fast_reflect and (decision_model := self._reflect_decision_model())
+                            else None
+                        ),
+                        prune_evidence_fn=(
+                            self._prune_reflect_evidence if fast_reflect and self._reflect_decision_model() else None
+                        ),
                     ),
                     timeout=wall_timeout,
                 )
@@ -15571,6 +15627,7 @@ class MemoryEngine(MemoryEngineInterface):
                     f"Consider reducing the budget or simplifying the query."
                 )
 
+            _mark("agent")
             total_time = time.time() - reflect_start
             logger.info(
                 "[REFLECT %s] Complete: %d chars, %d iterations, %d tool calls | %.3fs",
@@ -15784,6 +15841,15 @@ class MemoryEngine(MemoryEngineInterface):
                 except Exception as e:
                     logger.warning(f"Post-reflect hook error (non-fatal): {e}")
 
+            _mark("post")
+            logger.info(
+                "[REFLECT %s] timeline | %s | total=%dms",
+                reflect_id,
+                " ".join(
+                    f"{step}={int((at - before) * 1000)}ms" for (_, before), (step, at) in zip(_timeline, _timeline[1:])
+                ),
+                int((_timeline[-1][1] - _timeline[0][1]) * 1000),
+            )
             return result
         finally:
             if span_context:
