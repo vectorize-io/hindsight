@@ -1,0 +1,380 @@
+{
+  "title": "Memlake: Failover",
+  "speed": 2600,
+  "elements": [
+    {
+      "id": "root",
+      "type": "group",
+      "x": 0,
+      "y": 0,
+      "children": [
+        "col-left",
+        "col-bucket",
+        "col-bg"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 56,
+        "align": "start"
+      }
+    },
+    {
+      "id": "hs",
+      "type": "rectangle",
+      "tone": "blue",
+      "content": [
+        {
+          "type": "title",
+          "text": "Hindsight API"
+        },
+        {
+          "type": "chips",
+          "items": [
+            "retain",
+            "recall",
+            "reflect"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "col-servers",
+      "type": "group",
+      "label": {
+        "title": "Memlake servers"
+      },
+      "children": [
+        "sB",
+        "sA"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 24,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "sA",
+      "type": "rectangle",
+      "tone": "red",
+      "content": [
+        {
+          "type": "title",
+          "text": "Server A"
+        },
+        {
+          "type": "chips",
+          "items": [
+            "gone"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sB",
+      "type": "rectangle",
+      "tone": "gray",
+      "content": [
+        {
+          "type": "title",
+          "text": "Server B"
+        },
+        {
+          "type": "chips",
+          "items": [
+            "RAM cache",
+            "NVMe cache"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "col-bucket",
+      "type": "group",
+      "label": {
+        "title": "Your bucket · tenant / bank"
+      },
+      "children": [
+        "log",
+        "segs",
+        "manifest"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 28,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "log",
+      "type": "rectangle",
+      "tone": "orange",
+      "content": [
+        {
+          "type": "title",
+          "text": "Log"
+        },
+        {
+          "type": "text",
+          "text": "one object per write"
+        }
+      ]
+    },
+    {
+      "id": "segs",
+      "type": "rectangle",
+      "tone": "green",
+      "content": [
+        {
+          "type": "title",
+          "text": "Segments"
+        },
+        {
+          "type": "text",
+          "text": "immutable indexes"
+        }
+      ]
+    },
+    {
+      "id": "manifest",
+      "type": "rectangle",
+      "tone": "purple",
+      "content": [
+        {
+          "type": "title",
+          "text": "Manifest + head"
+        },
+        {
+          "type": "text",
+          "text": "the only objects that change"
+        }
+      ]
+    },
+    {
+      "id": "col-bg",
+      "type": "group",
+      "label": {
+        "title": "Background"
+      },
+      "children": [
+        "arch",
+        "backup",
+        "idx"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 36,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "idx",
+      "type": "rectangle",
+      "tone": "gray",
+      "content": [
+        {
+          "type": "title",
+          "text": "Indexer"
+        },
+        {
+          "type": "text",
+          "text": "log → segments"
+        }
+      ]
+    },
+    {
+      "id": "arch",
+      "type": "rectangle",
+      "tone": "gray",
+      "content": [
+        {
+          "type": "title",
+          "text": "Archiver"
+        },
+        {
+          "type": "text",
+          "text": "continuous backups"
+        }
+      ]
+    },
+    {
+      "id": "backup",
+      "type": "cylinder",
+      "tone": "gray",
+      "label": {
+        "title": "Backup bucket",
+        "lines": [
+          "another account"
+        ]
+      }
+    },
+    {
+      "id": "hs-sB",
+      "type": "arrow",
+      "start": {
+        "id": "hs"
+      },
+      "end": {
+        "id": "sB"
+      },
+      "route": "curved",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "sB-segs",
+      "type": "arrow",
+      "start": {
+        "id": "sB"
+      },
+      "end": {
+        "id": "segs"
+      },
+      "route": "curved"
+    },
+    {
+      "id": "sB-manifest",
+      "type": "arrow",
+      "start": {
+        "id": "sB"
+      },
+      "end": {
+        "id": "manifest"
+      },
+      "route": "curved",
+      "quiet": true
+    },
+    {
+      "id": "idx-log",
+      "type": "arrow",
+      "start": {
+        "id": "log"
+      },
+      "end": {
+        "id": "idx"
+      },
+      "route": "curved",
+      "quiet": true
+    },
+    {
+      "id": "idx-segs",
+      "type": "arrow",
+      "start": {
+        "id": "idx"
+      },
+      "end": {
+        "id": "segs"
+      },
+      "route": "curved",
+      "quiet": true
+    },
+    {
+      "id": "idx-manifest",
+      "type": "arrow",
+      "start": {
+        "id": "idx"
+      },
+      "end": {
+        "id": "manifest"
+      },
+      "route": "curved",
+      "quiet": true
+    },
+    {
+      "id": "arch-log",
+      "type": "arrow",
+      "start": {
+        "id": "log"
+      },
+      "end": {
+        "id": "arch"
+      },
+      "route": "curved",
+      "quiet": true
+    },
+    {
+      "id": "arch-backup",
+      "type": "arrow",
+      "start": {
+        "id": "arch"
+      },
+      "end": {
+        "id": "backup"
+      },
+      "route": "curved",
+      "quiet": true
+    },
+    {
+      "id": "col-left",
+      "type": "group",
+      "children": [
+        "hs",
+        "col-servers"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 44,
+        "align": "stretch"
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "label": "Failover",
+      "beats": [
+        {
+          "say": "A server disappears. It held a cache — never data.",
+          "ms": 2400,
+          "light": [
+            "sA"
+          ]
+        },
+        {
+          "edges": {
+            "edge": "hs-sB",
+            "data": "recall(query)"
+          },
+          "say": "Its banks move to another server. No handover, no replica to promote."
+        },
+        {
+          "edges": [
+            {
+              "edge": "sB-manifest",
+              "data": "latest head?"
+            },
+            {
+              "edge": "sB-segs",
+              "data": "ranged reads"
+            }
+          ],
+          "show": {
+            "sB": [
+              {
+                "tag": "cache",
+                "tone": "orange",
+                "text": "warming from the bucket"
+              }
+            ]
+          },
+          "say": "It reads the same bucket, and its cache warms as it serves.",
+          "ms": 3000
+        },
+        {
+          "edges": {
+            "edge": "hs-sB",
+            "back": true,
+            "data": "top memories"
+          },
+          "light": [
+            "sB"
+          ],
+          "say": "Every acknowledged write is still there: it was never on the lost server."
+        }
+      ]
+    }
+  ],
+  "view": {
+    "width": 1280,
+    "height": 760
+  }
+}

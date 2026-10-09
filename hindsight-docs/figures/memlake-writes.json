@@ -1,0 +1,451 @@
+{
+ "title": "Memlake: Writes",
+ "speed": 2600,
+ "elements": [
+  {
+   "id": "root",
+   "type": "group",
+   "x": 0,
+   "y": 0,
+   "children": [
+    "col-left",
+    "col-bucket",
+    "col-bg"
+   ],
+   "layout": {
+    "direction": "row",
+    "gap": 56,
+    "align": "start"
+   }
+  },
+  {
+   "id": "hs",
+   "type": "rectangle",
+   "tone": "blue",
+   "content": [
+    {
+     "type": "title",
+     "text": "Hindsight API"
+    },
+    {
+     "type": "chips",
+     "items": [
+      "retain",
+      "recall",
+      "reflect"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "col-servers",
+   "type": "group",
+   "label": {
+    "title": "Memlake servers"
+   },
+   "children": [
+    "sA",
+    "sB"
+   ],
+   "layout": {
+    "direction": "column",
+    "gap": 24,
+    "align": "stretch"
+   }
+  },
+  {
+   "id": "sA",
+   "type": "rectangle",
+   "tone": "gray",
+   "content": [
+    {
+     "type": "title",
+     "text": "Server A"
+    },
+    {
+     "type": "chips",
+     "items": [
+      "RAM cache",
+      "NVMe cache"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "sB",
+   "type": "rectangle",
+   "tone": "gray",
+   "content": [
+    {
+     "type": "title",
+     "text": "Server B"
+    },
+    {
+     "type": "chips",
+     "items": [
+      "RAM cache",
+      "NVMe cache"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "col-bucket",
+   "type": "group",
+   "label": {
+    "title": "Your bucket \u00b7 tenant / bank"
+   },
+   "children": [
+    "log",
+    "segs",
+    "manifest"
+   ],
+   "layout": {
+    "direction": "column",
+    "gap": 28,
+    "align": "stretch"
+   }
+  },
+  {
+   "id": "log",
+   "type": "rectangle",
+   "tone": "orange",
+   "content": [
+    {
+     "type": "title",
+     "text": "Log"
+    },
+    {
+     "type": "text",
+     "text": "one object per write"
+    }
+   ]
+  },
+  {
+   "id": "segs",
+   "type": "rectangle",
+   "tone": "green",
+   "content": [
+    {
+     "type": "title",
+     "text": "Segments"
+    },
+    {
+     "type": "text",
+     "text": "immutable indexes"
+    }
+   ]
+  },
+  {
+   "id": "manifest",
+   "type": "rectangle",
+   "tone": "purple",
+   "content": [
+    {
+     "type": "title",
+     "text": "Manifest + head"
+    },
+    {
+     "type": "text",
+     "text": "the only objects that change"
+    }
+   ]
+  },
+  {
+   "id": "col-bg",
+   "type": "group",
+   "label": {
+    "title": "Background"
+   },
+   "children": [
+    "arch",
+    "backup",
+    "idx"
+   ],
+   "layout": {
+    "direction": "column",
+    "gap": 36,
+    "align": "stretch"
+   }
+  },
+  {
+   "id": "idx",
+   "type": "rectangle",
+   "tone": "gray",
+   "content": [
+    {
+     "type": "title",
+     "text": "Indexer"
+    },
+    {
+     "type": "text",
+     "text": "log \u2192 segments"
+    }
+   ]
+  },
+  {
+   "id": "arch",
+   "type": "rectangle",
+   "tone": "gray",
+   "content": [
+    {
+     "type": "title",
+     "text": "Archiver"
+    },
+    {
+     "type": "text",
+     "text": "continuous backups"
+    }
+   ]
+  },
+  {
+   "id": "backup",
+   "type": "cylinder",
+   "tone": "gray",
+   "label": {
+    "title": "Backup bucket",
+    "lines": [
+     "another account"
+    ]
+   }
+  },
+  {
+   "id": "hs-sA",
+   "type": "arrow",
+   "start": {
+    "id": "hs"
+   },
+   "end": {
+    "id": "sA"
+   },
+   "route": "curved",
+   "fromSide": "bottom",
+   "toSide": "top"
+  },
+  {
+   "id": "hs-sB",
+   "type": "arrow",
+   "start": {
+    "id": "hs"
+   },
+   "end": {
+    "id": "sB"
+   },
+   "route": "curved",
+   "quiet": true
+  },
+  {
+   "id": "sA-log",
+   "type": "arrow",
+   "start": {
+    "id": "sA"
+   },
+   "end": {
+    "id": "log"
+   },
+   "route": "curved",
+   "quiet": true
+  },
+  {
+   "id": "sA-segs",
+   "type": "arrow",
+   "start": {
+    "id": "sA"
+   },
+   "end": {
+    "id": "segs"
+   },
+   "route": "curved"
+  },
+  {
+   "id": "sA-manifest",
+   "type": "arrow",
+   "start": {
+    "id": "sA"
+   },
+   "end": {
+    "id": "manifest"
+   },
+   "route": "curved",
+   "quiet": true
+  },
+  {
+   "id": "sB-segs",
+   "type": "arrow",
+   "start": {
+    "id": "sB"
+   },
+   "end": {
+    "id": "segs"
+   },
+   "route": "curved"
+  },
+  {
+   "id": "sB-manifest",
+   "type": "arrow",
+   "start": {
+    "id": "sB"
+   },
+   "end": {
+    "id": "manifest"
+   },
+   "route": "curved",
+   "quiet": true
+  },
+  {
+   "id": "idx-log",
+   "type": "arrow",
+   "start": {
+    "id": "log"
+   },
+   "end": {
+    "id": "idx"
+   },
+   "route": "curved",
+   "quiet": true
+  },
+  {
+   "id": "idx-segs",
+   "type": "arrow",
+   "start": {
+    "id": "idx"
+   },
+   "end": {
+    "id": "segs"
+   },
+   "route": "curved",
+   "quiet": true
+  },
+  {
+   "id": "idx-manifest",
+   "type": "arrow",
+   "start": {
+    "id": "idx"
+   },
+   "end": {
+    "id": "manifest"
+   },
+   "route": "curved",
+   "quiet": true
+  },
+  {
+   "id": "arch-log",
+   "type": "arrow",
+   "start": {
+    "id": "log"
+   },
+   "end": {
+    "id": "arch"
+   },
+   "route": "curved",
+   "quiet": true
+  },
+  {
+   "id": "arch-backup",
+   "type": "arrow",
+   "start": {
+    "id": "arch"
+   },
+   "end": {
+    "id": "backup"
+   },
+   "route": "curved",
+   "quiet": true
+  },
+  {
+   "id": "col-left",
+   "type": "group",
+   "children": [
+    "hs",
+    "col-servers"
+   ],
+   "layout": {
+    "direction": "column",
+    "gap": 44,
+    "align": "stretch"
+   }
+  }
+ ],
+ "scenes": [
+  {
+   "label": "Writes",
+   "beats": [
+    {
+     "edges": {
+      "edge": "hs-sA",
+      "data": "retain(doc)"
+     },
+     "show": {
+      "hs": [
+       {
+        "tag": "retain",
+        "tone": "blue",
+        "text": "new facts + entities + replace old"
+       }
+      ]
+     },
+     "say": "Hindsight retains a document: replace its old facts, write the new ones, register new entities \u2014 one write."
+    },
+    {
+     "edges": {
+      "edge": "sA-log",
+      "data": "PUT wal/43 \u00b7 if-none-match"
+     },
+     "show": {
+      "log": [
+       {
+        "tag": "wal/41",
+        "tone": "orange",
+        "text": "indexed"
+       },
+       {
+        "tag": "wal/42",
+        "tone": "orange",
+        "text": "committed"
+       },
+       {
+        "tag": "wal/43",
+        "tone": "green",
+        "text": "claimed \u00b7 durable"
+       }
+      ]
+     },
+     "say": "The server claims the next log slot with a conditional create. Two writers can never take the same slot.",
+     "ms": 3200
+    },
+    {
+     "edges": {
+      "edge": "sA-manifest",
+      "data": "head \u2192 43 \u00b7 if-match"
+     },
+     "show": {
+      "manifest": [
+       {
+        "tag": "head",
+        "tone": "purple",
+        "text": "43"
+       }
+      ]
+     },
+     "say": "Once the entry is durable, the head pointer moves forward \u2014 another conditional write."
+    },
+    {
+     "edges": {
+      "edge": "hs-sA",
+      "back": true,
+      "data": "\u2713 saved"
+     },
+     "light": [
+      "log",
+      "manifest"
+     ],
+     "say": "Only then is the write acknowledged. It's already searchable \u2014 no waiting for an indexer."
+    }
+   ]
+  }
+ ],
+ "view": {
+  "width": 1280,
+  "height": 760
+ }
+}

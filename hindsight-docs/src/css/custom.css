@@ -1955,3 +1955,20 @@ html.blog-post-page {
     margin-top: calc(var(--hs-hero-height, 0px) - var(--ifm-navbar-height));
   }
 }
+
+/* Blog posts: visuals wrapped in .post-wide grow into the empty right gutter on desktop,
+   so diagrams and charts render near 1:1 and their text matches the body. */
+.post-wide {
+  margin: 1.5rem 0 2rem;
+}
+.post-wide img,
+.post-wide giotto-player {
+  display: block;
+  width: 100%;
+}
+@media (min-width: 997px) {
+  .post-wide {
+    width: calc(100% + clamp(0px, 100vw - 1000px, 260px));
+    max-width: none;
+  }
+}

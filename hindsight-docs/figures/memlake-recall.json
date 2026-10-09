@@ -1,0 +1,482 @@
+{
+ "title": "Memlake: Recall",
+ "speed": 2600,
+ "elements": [
+  {
+   "id": "root",
+   "type": "group",
+   "x": 0,
+   "y": 0,
+   "children": [
+    "col-left",
+    "col-bucket",
+    "col-bg"
+   ],
+   "layout": {
+    "direction": "row",
+    "gap": 56,
+    "align": "start"
+   }
+  },
+  {
+   "id": "hs",
+   "type": "rectangle",
+   "tone": "blue",
+   "content": [
+    {
+     "type": "title",
+     "text": "Hindsight API"
+    },
+    {
+     "type": "chips",
+     "items": [
+      "retain",
+      "recall",
+      "reflect"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "col-servers",
+   "type": "group",
+   "label": {
+    "title": "Memlake servers"
+   },
+   "children": [
+    "sA",
+    "sB"
+   ],
+   "layout": {
+    "direction": "column",
+    "gap": 24,
+    "align": "stretch"
+   }
+  },
+  {
+   "id": "sA",
+   "type": "rectangle",
+   "tone": "gray",
+   "content": [
+    {
+     "type": "title",
+     "text": "Server A"
+    },
+    {
+     "type": "chips",
+     "items": [
+      "RAM cache",
+      "NVMe cache"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "sB",
+   "type": "rectangle",
+   "tone": "gray",
+   "content": [
+    {
+     "type": "title",
+     "text": "Server B"
+    },
+    {
+     "type": "chips",
+     "items": [
+      "RAM cache",
+      "NVMe cache"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "col-bucket",
+   "type": "group",
+   "label": {
+    "title": "Your bucket \u00b7 tenant / bank"
+   },
+   "children": [
+    "log",
+    "segs",
+    "manifest"
+   ],
+   "layout": {
+    "direction": "column",
+    "gap": 28,
+    "align": "stretch"
+   }
+  },
+  {
+   "id": "log",
+   "type": "rectangle",
+   "tone": "orange",
+   "content": [
+    {
+     "type": "title",
+     "text": "Log"
+    },
+    {
+     "type": "text",
+     "text": "one object per write"
+    }
+   ]
+  },
+  {
+   "id": "segs",
+   "type": "rectangle",
+   "tone": "green",
+   "content": [
+    {
+     "type": "title",
+     "text": "Segments"
+    },
+    {
+     "type": "text",
+     "text": "immutable indexes"
+    }
+   ]
+  },
+  {
+   "id": "manifest",
+   "type": "rectangle",
+   "tone": "purple",
+   "content": [
+    {
+     "type": "title",
+     "text": "Manifest + head"
+    },
+    {
+     "type": "text",
+     "text": "the only objects that change"
+    }
+   ]
+  },
+  {
+   "id": "col-bg",
+   "type": "group",
+   "label": {
+    "title": "Background"
+   },
+   "children": [
+    "arch",
+    "backup",
+    "idx"
+   ],
+   "layout": {
+    "direction": "column",
+    "gap": 36,
+    "align": "stretch"
+   }
+  },
+  {
+   "id": "idx",
+   "type": "rectangle",
+   "tone": "gray",
+   "content": [
+    {
+     "type": "title",
+     "text": "Indexer"
+    },
+    {
+     "type": "text",
+     "text": "log \u2192 segments"
+    }
+   ]
+  },
+  {
+   "id": "arch",
+   "type": "rectangle",
+   "tone": "gray",
+   "content": [
+    {
+     "type": "title",
+     "text": "Archiver"
+    },
+    {
+     "type": "text",
+     "text": "continuous backups"
+    }
+   ]
+  },
+  {
+   "id": "backup",
+   "type": "cylinder",
+   "tone": "gray",
+   "label": {
+    "title": "Backup bucket",
+    "lines": [
+     "another account"
+    ]
+   }
+  },
+  {
+   "id": "hs-sA",
+   "type": "arrow",
+   "start": {
+    "id": "hs"
+   },
+   "end": {
+    "id": "sA"
+   },
+   "route": "curved",
+   "fromSide": "bottom",
+   "toSide": "top"
+  },
+  {
+   "id": "hs-sB",
+   "type": "arrow",
+   "start": {
+    "id": "hs"
+   },
+   "end": {
+    "id": "sB"
+   },
+   "route": "curved",
+   "quiet": true
+  },
+  {
+   "id": "sA-log",
+   "type": "arrow",
+   "start": {
+    "id": "sA"
+   },
+   "end": {
+    "id": "log"
+   },
+   "route": "curved",
+   "quiet": true
+  },
+  {
+   "id": "sA-segs",
+   "type": "arrow",
+   "start": {
+    "id": "sA"
+   },
+   "end": {
+    "id": "segs"
+   },
+   "route": "curved"
+  },
+  {
+   "id": "sA-manifest",
+   "type": "arrow",
+   "start": {
+    "id": "sA"
+   },
+   "end": {
+    "id": "manifest"
+   },
+   "route": "curved",
+   "quiet": true
+  },
+  {
+   "id": "sB-segs",
+   "type": "arrow",
+   "start": {
+    "id": "sB"
+   },
+   "end": {
+    "id": "segs"
+   },
+   "route": "curved"
+  },
+  {
+   "id": "sB-manifest",
+   "type": "arrow",
+   "start": {
+    "id": "sB"
+   },
+   "end": {
+    "id": "manifest"
+   },
+   "route": "curved",
+   "quiet": true
+  },
+  {
+   "id": "idx-log",
+   "type": "arrow",
+   "start": {
+    "id": "log"
+   },
+   "end": {
+    "id": "idx"
+   },
+   "route": "curved",
+   "quiet": true
+  },
+  {
+   "id": "idx-segs",
+   "type": "arrow",
+   "start": {
+    "id": "idx"
+   },
+   "end": {
+    "id": "segs"
+   },
+   "route": "curved",
+   "quiet": true
+  },
+  {
+   "id": "idx-manifest",
+   "type": "arrow",
+   "start": {
+    "id": "idx"
+   },
+   "end": {
+    "id": "manifest"
+   },
+   "route": "curved",
+   "quiet": true
+  },
+  {
+   "id": "arch-log",
+   "type": "arrow",
+   "start": {
+    "id": "log"
+   },
+   "end": {
+    "id": "arch"
+   },
+   "route": "curved",
+   "quiet": true
+  },
+  {
+   "id": "arch-backup",
+   "type": "arrow",
+   "start": {
+    "id": "arch"
+   },
+   "end": {
+    "id": "backup"
+   },
+   "route": "curved",
+   "quiet": true
+  },
+  {
+   "id": "col-left",
+   "type": "group",
+   "children": [
+    "hs",
+    "col-servers"
+   ],
+   "layout": {
+    "direction": "column",
+    "gap": 44,
+    "align": "stretch"
+   }
+  }
+ ],
+ "scenes": [
+  {
+   "label": "Recall",
+   "beats": [
+    {
+     "edges": {
+      "edge": "hs-sA",
+      "data": "recall(query)"
+     },
+     "show": {
+      "hs": [
+       {
+        "tag": "recall",
+        "tone": "blue",
+        "text": "+ ranking policy: fusion \u00b7 rerank \u00b7 budget"
+       }
+      ]
+     },
+     "say": "Hindsight sends a recall, with its ranking policy attached."
+    },
+    {
+     "edges": {
+      "edge": "sA-manifest",
+      "data": "latest head?"
+     },
+     "say": "The server checks for the latest writes \u2014 the one request a warm query always makes."
+    },
+    {
+     "edges": [
+      {
+       "edge": "sA-segs",
+       "data": "ranged reads"
+      },
+      {
+       "edge": "sA-log",
+       "data": "unindexed tail"
+      }
+     ],
+     "show": {
+      "sA": [
+       {
+        "tag": "cache",
+        "tone": "green",
+        "text": "segment blocks: hit"
+       },
+       {
+        "tag": "tail",
+        "tone": "orange",
+        "text": "wal/43 scanned"
+       }
+      ]
+     },
+     "say": "It reads only the blocks it needs \u2014 mostly from its cache \u2014 and scans the part of the log not yet indexed.",
+     "ms": 3200
+    },
+    {
+     "show": {
+      "sA": [
+       {
+        "tag": "vector",
+        "tone": "blue",
+        "text": "meaning"
+       },
+       {
+        "tag": "keyword",
+        "tone": "blue",
+        "text": "BM25"
+       },
+       {
+        "tag": "graph",
+        "tone": "blue",
+        "text": "entities \u00b7 links"
+       },
+       {
+        "tag": "time",
+        "tone": "blue",
+        "text": "window"
+       }
+      ]
+     },
+     "light": [
+      "sA"
+     ],
+     "say": "Four searches run over the same memories at once\u2026",
+     "ms": 2800
+    },
+    {
+     "show": {
+      "sA": [
+       {
+        "tag": "ranked",
+        "tone": "green",
+        "text": "fused \u00b7 reranked \u00b7 within budget"
+       }
+      ]
+     },
+     "say": "\u2026then Hindsight's ranking policy is applied next to the data."
+    },
+    {
+     "edges": {
+      "edge": "hs-sA",
+      "back": true,
+      "data": "top memories"
+     },
+     "say": "Only the memories that make the cut leave the server."
+    }
+   ]
+  }
+ ],
+ "view": {
+  "width": 1280,
+  "height": 760
+ }
+}
