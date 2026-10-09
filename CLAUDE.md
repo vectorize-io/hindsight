@@ -119,7 +119,6 @@ uv run run-amb --dataset longmemeval --split s -- --category single-session-user
 - **hindsight-system-evals/**: End-to-end quality evaluation suites scored by independent LLM judges against real providers
 - **hindsight-integration-tests/**: E2E and integration test suites requiring a running server (live API or docker-compose)
 - **hindsight-extensions/**: Server extension slots (tenancy/auth, HTTP endpoints, MCP tools, operation validators, memory defense)
-- **hindsight-tools/**: Published agent tools SDK (`@vectorize-io/hindsight-agent-sdk`, harness-agnostic agent knowledge tools)
 - **hindsight-dev/**: Development tools and benchmarks
 
 ### Core Engine (hindsight-api-slim/hindsight_api/engine/)

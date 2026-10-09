@@ -48,7 +48,6 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.2.0",
-    "@vectorize-io/hindsight-agent-sdk": "^0.1.0",
     "@vectorize-io/hindsight-all": "^0.6.2",
     "@vectorize-io/hindsight-client": "^0.8.6"
   },

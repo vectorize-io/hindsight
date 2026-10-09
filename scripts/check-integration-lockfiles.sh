@@ -69,24 +69,19 @@ for name, info in data.get("packages", {}).items():
     resolved = info.get("resolved", "")
     link = info.get("link")
 
-    # Packages under hindsight-tools/ are monorepo workspace deps that
-    # aren't published yet.  The CI build pre-builds them before running
-    # openclaw, so workspace resolution is expected and safe.
-    is_tools_pkg = resolved.startswith(("../../hindsight-tools/", "file:../../hindsight-tools/"))
-
-    if link is True and not is_tools_pkg:
+    if link is True:
         # Workspace symlink, no registry URL. This is the bug that broke
         # the openclaw 0.6.0 release — npm had resolved a registry-ranged
         # dep to a workspace symlink because `npm install` was run from
         # the monorepo root.
         bad.append(f"{name}: (link=true — workspace symlink)")
-    elif not resolved and not is_tools_pkg:
+    elif not resolved:
         # Empty resolved on a non-link entry shouldn't happen, but flag
         # it anyway rather than silently accepting it.
         bad.append(f"{name}: (no `resolved` URL)")
-    elif resolved.startswith("file:") and not is_tools_pkg:
+    elif resolved.startswith("file:"):
         bad.append(f"{name}: {resolved}")
-    elif resolved.startswith(("../", "./")) and not is_tools_pkg:
+    elif resolved.startswith(("../", "./")):
         bad.append(f"{name}: {resolved}")
 
 if bad:

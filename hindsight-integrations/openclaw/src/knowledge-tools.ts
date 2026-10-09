@@ -1,5 +1,5 @@
 /**
- * Hindsight Agent SDK — harness-agnostic knowledge tools.
+ * Knowledge tools (agent_knowledge_*) the plugin registers with OpenClaw.
  *
  * Provides agent_knowledge_* tool definitions that any harness can register.
  * Uses @vectorize-io/hindsight-client for all API calls.
@@ -119,14 +119,14 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
   const client = new HindsightClient({
     baseUrl: opts.apiUrl,
     apiKey: opts.apiToken,
-    userAgent: "hindsight-agent-sdk/0.1.0",
+    userAgent: "hindsight-openclaw",
   });
   const lowLevel = createClient(
     createConfig({
       baseUrl: opts.apiUrl,
       headers: {
         ...(opts.apiToken ? { Authorization: `Bearer ${opts.apiToken}` } : {}),
-        "User-Agent": "hindsight-agent-sdk/0.1.0",
+        "User-Agent": "hindsight-openclaw",
       },
     })
   );

@@ -22,7 +22,7 @@ import { configureLogger, setApiLogger, stopLogger } from "./logger.js";
 import { mkdirSync } from "fs";
 import { createRequire } from "module";
 import { homedir } from "os";
-import { createKnowledgeTools, TOOL_NAMES } from "@vectorize-io/hindsight-agent-sdk";
+import { createKnowledgeTools, TOOL_NAMES } from "./knowledge-tools.js";
 import {
   applyConfiguredBankDefaults,
   hasConfiguredBankDefaults,

@@ -37,13 +37,12 @@ describe("published manifest", () => {
   });
 
   it("keeps the runtime dependencies the plugin needs at runtime", () => {
-    // The counterpart risk: stripping too much. These four are imported by
+    // The counterpart risk: stripping too much. These three are imported by
     // dist/ and must survive into the published manifest.
     const stripped = strippedFields();
     expect(stripped.has("dependencies")).toBe(false);
     expect(Object.keys(manifest.dependencies).sort()).toEqual([
       "@clack/prompts",
-      "@vectorize-io/hindsight-agent-sdk",
       "@vectorize-io/hindsight-all",
       "@vectorize-io/hindsight-client",
     ]);

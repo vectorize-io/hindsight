@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createKnowledgeTools, TOOL_NAMES } from "../src/index.js";
-import type { KnowledgeTool } from "../src/index.js";
+import { createKnowledgeTools, TOOL_NAMES } from "./knowledge-tools.js";
+import type { KnowledgeTool } from "./knowledge-tools.js";
 
 // Mock fetch globally — the SDK uses @vectorize-io/hindsight-client which calls fetch.
 // The generated client passes a Request object (not a plain URL string).

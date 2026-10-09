@@ -87,7 +87,6 @@ jobs:
       integrations-obsidian: ${{ steps.filter.outputs.integrations-obsidian }}
       integrations-omo: ${{ steps.filter.outputs.integrations-omo }}
       integrations-haystack: ${{ steps.filter.outputs.integrations-haystack }}
-      tools-agent-sdk: ${{ steps.filter.outputs.tools-agent-sdk }}
       integrations-roo-code: ${{ steps.filter.outputs.integrations-roo-code }}
       dev: ${{ steps.filter.outputs.dev }}
       ci: ${{ steps.filter.outputs.ci }}
@@ -298,8 +297,6 @@ jobs:
             - 'hindsight-integrations/obsidian/**'
           integrations-omo:
             - 'hindsight-integrations/omo/**'
-          tools-agent-sdk:
-            - 'hindsight-tools/hindsight-agent-sdk/**'
           integrations-roo-code:
             - 'hindsight-integrations/roo-code/**'
           dev:
@@ -513,8 +510,6 @@ jobs:
     - name: Build hindsight-all-npm (openclaw dep)
       run: npm run build --workspace=hindsight-all-npm
 
-    - name: Build hindsight-agent-sdk (openclaw dep)
-      run: npm run build --workspace=hindsight-tools/hindsight-agent-sdk
 
     - name: Install openclaw dependencies
       working-directory: ./hindsight-integrations/openclaw
@@ -579,8 +574,6 @@ jobs:
     - name: Build hindsight-all-npm (openclaw dep)
       run: npm run build --workspace=hindsight-all-npm
 
-    - name: Build hindsight-agent-sdk (openclaw dep)
-      run: npm run build --workspace=hindsight-tools/hindsight-agent-sdk
 
     - name: Install openclaw dependencies
       working-directory: ./hindsight-integrations/openclaw
@@ -1152,39 +1145,6 @@ jobs:
     - name: Run tests
       working-directory: ./hindsight-integrations/zapier
       run: npm test
-
-  test-hindsight-agent-sdk:
-    needs: [detect-changes]
-    if: >-
-      (github.event_name == 'workflow_dispatch' ||
-      needs.detect-changes.outputs.tools-agent-sdk == 'true' ||
-      needs.detect-changes.outputs.ci == 'true')
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-    - uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha || '' }}
-
-    - name: Set up Node.js
-      uses: actions/setup-node@v6
-      with:
-        node-version: '22'
-        cache: 'npm'
-        cache-dependency-path: package-lock.json
-
-    - name: Install root workspace dependencies
-      run: npm ci
-
-    - name: Build hindsight-client (agent-sdk dep)
-      run: npm run build --workspace=hindsight-clients/typescript
-
-    - name: Run tests
-      run: npm test --workspace=hindsight-tools/hindsight-agent-sdk
-
-    - name: Build
-      run: npm run build --workspace=hindsight-tools/hindsight-agent-sdk
 
   test-cloudflare-oauth-proxy-integration:
     needs: [detect-changes]
@@ -3465,8 +3425,6 @@ jobs:
     - name: Build hindsight-all-npm (openclaw dep)
       run: npm run build --workspace=hindsight-all-npm
 
-    - name: Build hindsight-agent-sdk (openclaw dep)
-      run: npm run build --workspace=hindsight-tools/hindsight-agent-sdk
 
     - name: Install openclaw integration dependencies
       working-directory: ./hindsight-integrations/openclaw
@@ -5873,7 +5831,6 @@ jobs:
       - verify-embed-control-center-bundle
       - test-hermes-compat
       - test-hindsight-all
-      - test-hindsight-agent-sdk
       - test-claude-agent-sdk-integration
       - test-doc-examples
       - test-upgrade

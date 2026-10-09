@@ -93,18 +93,17 @@ jobs:
       run: ./scripts/check-integration-lockfiles.sh
 
     # Some integrations depend on workspace packages (hindsight-client,
-    # hindsight-all, hindsight-agent-sdk) via file: refs. Install from root
+    # hindsight-all) via file: refs. Install from root
     # so npm resolves them, then build the workspace deps before the integration.
     - name: Install root workspace dependencies
       if: steps.type.outputs.type == 'typescript'
       run: npm ci
 
-    - name: Build workspace deps (hindsight-client, hindsight-all, hindsight-agent-sdk)
+    - name: Build workspace deps (hindsight-client, hindsight-all)
       if: steps.type.outputs.type == 'typescript'
       run: |
         npm run build --workspace=hindsight-clients/typescript
         npm run build --workspace=hindsight-all-npm
-        npm run build --workspace=hindsight-tools/hindsight-agent-sdk
 
     - name: Install integration dependencies
       if: steps.type.outputs.type == 'typescript'
