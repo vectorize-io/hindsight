@@ -12,7 +12,7 @@ const umamiWebsiteId = process.env.UMAMI_WEBSITE_ID;
 // points at the thing we want people to do, not off-site. The paper used to live
 // here and now sits in the homepage hero, which is where a visitor who wants
 // evidence is already looking.
-const ANNOUNCEMENT_BAR = 'New: <strong>Introducing Hindsight Memlake</strong>, serving 100M memories at &lt;100ms p99 on object storage. <a href="/blog/2026/10/08/memlake">Read the post →</a>';
+const ANNOUNCEMENT_BAR = 'New: <strong>Introducing Hindsight Memlake</strong>, serving 100M memories at &lt;100ms p99 on object storage. <a href="/blog/2026/10/13/memlake">Read the post →</a>';
 
 const config: Config = {
   title: 'Hindsight',
