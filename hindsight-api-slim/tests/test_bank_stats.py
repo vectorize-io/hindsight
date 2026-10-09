@@ -377,7 +377,7 @@ async def test_reflect_uses_freshness_not_bank_stats(memory, test_bank_id):
 
     Counts calls to `_compute_bank_stats` (the heavy loader) during a reflect
     invocation; it must stay at zero — reflect should route through
-    `get_bank_freshness` instead.
+    the freshness read (`_bank_freshness`) instead.
     """
     from hindsight_api.extensions import RequestContext
 
