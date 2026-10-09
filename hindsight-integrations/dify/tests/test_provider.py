@@ -8,6 +8,7 @@ import pytest
 from dify_plugin.errors.tool import ToolProviderCredentialValidationError
 
 from provider.hindsight import HindsightProvider
+from tools._client import USER_AGENT
 
 
 def _provider() -> HindsightProvider:
@@ -24,13 +25,14 @@ class TestValidateCredentials:
         with patch("provider.hindsight.requests.get") as mock_get:
             mock_get.return_value = MagicMock(status_code=200)
             _provider()._validate_credentials({"api_url": "https://api.example.com", "api_key": "hsk_x"})
-            assert mock_get.call_args.kwargs["headers"] == {"Authorization": "Bearer hsk_x"}
+            headers = mock_get.call_args.kwargs["headers"]
+            assert headers == {"User-Agent": USER_AGENT, "Authorization": "Bearer hsk_x"}
 
     def test_health_ok_without_key(self):
         with patch("provider.hindsight.requests.get") as mock_get:
             mock_get.return_value = MagicMock(status_code=200)
             _provider()._validate_credentials({"api_url": "http://localhost:8888"})
-            assert mock_get.call_args.kwargs["headers"] == {}
+            assert mock_get.call_args.kwargs["headers"] == {"User-Agent": USER_AGENT}
 
     def test_401_raises_with_key_message(self):
         with patch("provider.hindsight.requests.get") as mock_get:

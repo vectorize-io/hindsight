@@ -87,6 +87,7 @@ class TestResolveClient:
         with patch("hindsight_pipecat.memory.Hindsight") as MockHindsight:
             _resolve_client(None, "http://localhost:8888", None)
             MockHindsight.assert_called_once()
+            assert MockHindsight.call_args.kwargs["user_agent"].startswith("hindsight-pipecat/")
 
     def test_raises_when_no_url(self) -> None:
         with pytest.raises(HindsightPipecatError, match="No Hindsight API URL"):

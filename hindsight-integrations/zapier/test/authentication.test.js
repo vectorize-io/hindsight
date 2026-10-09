@@ -15,7 +15,10 @@ describe("authentication", () => {
 
   it("tests the credential against GET /v1/default/banks with a Bearer header", async () => {
     const scope = nock("https://api.example.com", {
-      reqheaders: { authorization: "Bearer hsk_test" },
+      reqheaders: {
+        authorization: "Bearer hsk_test",
+        "user-agent": /^hindsight-zapier\/\d+\.\d+\.\d+ Zapier$/,
+      },
     })
       .get("/v1/default/banks")
       .query({ limit: 1 })

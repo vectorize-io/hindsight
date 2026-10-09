@@ -72,3 +72,10 @@ class TestDocumentIdIsUniquePerRetain:
         src = open("scripts/retain.py").read()
         assert 'document_id = f"{session_id}-{int(time.time() * 1000)}"' in src
         assert "document_id = session_id" not in src
+
+
+def test_client_sends_plugin_user_agent():
+    from lib.client import USER_AGENT, HindsightClient
+
+    assert USER_AGENT != "hindsight-cursor/0.0.0"
+    assert HindsightClient("http://hs.test")._headers()["User-Agent"] == USER_AGENT

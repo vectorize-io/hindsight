@@ -2,9 +2,24 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Any
 
 from hindsight_client import Hindsight
+
+
+def _plugin_version() -> str:
+    """Read the version from manifest.yaml — the plugin ships as a zip, not a pip package."""
+    try:
+        text = (Path(__file__).resolve().parent.parent / "manifest.yaml").read_text()
+    except OSError:
+        return "0.0.0"
+    match = re.search(r"^version:\s*['\"]?([^'\"\s]+)", text, re.MULTILINE)
+    return match.group(1) if match else "0.0.0"
+
+
+USER_AGENT = f"hindsight-dify/{_plugin_version()}"
 
 
 def build_client(credentials: dict[str, Any]) -> Hindsight:
@@ -12,7 +27,7 @@ def build_client(credentials: dict[str, Any]) -> Hindsight:
     api_url = (credentials.get("api_url") or "").rstrip("/")
     api_key = credentials.get("api_key") or None
 
-    kwargs: dict[str, Any] = {"base_url": api_url, "timeout": 30.0}
+    kwargs: dict[str, Any] = {"base_url": api_url, "timeout": 30.0, "user_agent": USER_AGENT}
     if api_key:
         kwargs["api_key"] = api_key
     return Hindsight(**kwargs)

@@ -450,3 +450,18 @@ def test_retain_strategy_is_exposed_as_a_setting(provider):
     instance, _ = provider()
     keys = {option["key"] for option in instance.get_config_schema()}
     assert "retain_strategy" in keys
+
+
+def test_version_probe_sends_plugin_user_agent(monkeypatch):
+    import urllib.request
+
+    sent = {}
+
+    def fake_urlopen(req, timeout):
+        sent.update(req.headers)
+        raise OSError("offline")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    plugin._fetch_hindsight_api_version("http://hs.test")
+    assert sent["User-agent"] == plugin._USER_AGENT
+    assert plugin._USER_AGENT != "hindsight-hermes/0.0.0"

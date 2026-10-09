@@ -17,6 +17,7 @@
  * ```
  */
 
+import { createRequire } from "node:module";
 import type { Plugin } from "@opencode-ai/plugin";
 import { HindsightClient } from "@vectorize-io/hindsight-client";
 import { loadConfig } from "./config.js";
@@ -24,6 +25,17 @@ import { deriveBankId } from "./bank.js";
 import { createTools } from "./tools.js";
 import { createHooks, type PluginState } from "./hooks.js";
 import { Logger, type OpencodeLogClient } from "./logger.js";
+
+function loadPackageVersion(): string {
+  try {
+    const pkg = createRequire(import.meta.url)("../package.json") as { version?: string };
+    return pkg.version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
+const USER_AGENT = `hindsight-opencode/${loadPackageVersion()}`;
 
 // Module-level state persists across sessions (plugin is instantiated per session,
 // but the module is loaded once per OpenCode server process).
@@ -52,6 +64,7 @@ const HindsightPlugin: Plugin = async (input, options) => {
   const client = new HindsightClient({
     baseUrl: config.hindsightApiUrl!,
     apiKey: config.hindsightApiToken || undefined,
+    userAgent: USER_AGENT,
   });
 
   const bankId = deriveBankId(config, input.directory);

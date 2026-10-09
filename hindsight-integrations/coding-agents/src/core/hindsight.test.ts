@@ -399,6 +399,13 @@ describe("HindsightClient credential refresh", () => {
     return { calls, fetchMock };
   }
 
+  it("identifies itself with the integration's User-Agent", async () => {
+    const { fetchMock } = server(() => undefined);
+    await new HindsightClient({ apiUrl: "http://x", bank: "b" }).req("GET", "http://x/thing");
+    const ua = new Headers(fetchMock.mock.calls[0][1].headers).get("User-Agent");
+    expect(ua).toMatch(/^hindsight-coding-agents\/\d+\.\d+\.\d+/);
+  });
+
   it("recovers from a rotated credential without restarting the host", async () => {
     const { calls } = server(() => "new-key");
     let onDisk = "old-key";

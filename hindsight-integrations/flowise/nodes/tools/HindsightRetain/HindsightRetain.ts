@@ -5,6 +5,10 @@ import { z } from "zod";
 import { ICommonObject, INode, INodeData, INodeParams } from "../../../src/Interface";
 import { getBaseClasses, getCredentialData, getCredentialParam } from "../../../src/utils";
 
+// Each node dir is copied into Flowise on its own, so there is no shared module or
+// package.json to read a version from.
+const USER_AGENT = "hindsight-flowise";
+
 const RetainSchema = z.object({
   bankId: z.string().describe("The Hindsight memory bank to retain content into."),
   content: z
@@ -69,6 +73,7 @@ class HindsightRetain_Tools implements INode {
     const client = new HindsightClient({
       baseUrl: apiUrl,
       ...(apiKey ? { apiKey } : {}),
+      userAgent: USER_AGENT,
     });
 
     return new DynamicStructuredTool({

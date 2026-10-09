@@ -15,7 +15,7 @@ from hindsight_smolagents import (
     reset_config,
 )
 from hindsight_smolagents.errors import HindsightError
-from hindsight_smolagents.tools import _resolve_client
+from hindsight_smolagents.tools import _USER_AGENT, _resolve_client
 
 
 # ---------------------------------------------------------------------------
@@ -77,41 +77,47 @@ class TestResolveClient:
         with patch("hindsight_smolagents.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             _resolve_client(None, "http://localhost:8888", None)
-            mock_cls.assert_called_once_with(base_url="http://localhost:8888", timeout=30.0)
+            mock_cls.assert_called_once_with(base_url="http://localhost:8888", timeout=30.0, user_agent=_USER_AGENT)
 
     def test_creates_client_with_api_key(self):
         with patch("hindsight_smolagents.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             _resolve_client(None, "http://localhost:8888", "my-key")
-            mock_cls.assert_called_once_with(base_url="http://localhost:8888", timeout=30.0, api_key="my-key")
+            mock_cls.assert_called_once_with(
+                base_url="http://localhost:8888", timeout=30.0, user_agent=_USER_AGENT, api_key="my-key"
+            )
 
     def test_falls_back_to_global_config_url(self):
         configure(hindsight_api_url="http://config:8888")
         with patch("hindsight_smolagents.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             _resolve_client(None, None, None)
-            mock_cls.assert_called_once_with(base_url="http://config:8888", timeout=30.0)
+            mock_cls.assert_called_once_with(base_url="http://config:8888", timeout=30.0, user_agent=_USER_AGENT)
 
     def test_falls_back_to_global_config_api_key(self):
         configure(hindsight_api_url="http://config:8888", api_key="config-key")
         with patch("hindsight_smolagents.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             _resolve_client(None, None, None)
-            mock_cls.assert_called_once_with(base_url="http://config:8888", timeout=30.0, api_key="config-key")
+            mock_cls.assert_called_once_with(
+                base_url="http://config:8888", timeout=30.0, user_agent=_USER_AGENT, api_key="config-key"
+            )
 
     def test_explicit_url_overrides_config(self):
         configure(hindsight_api_url="http://config:8888")
         with patch("hindsight_smolagents.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             _resolve_client(None, "http://explicit:9999", None)
-            mock_cls.assert_called_once_with(base_url="http://explicit:9999", timeout=30.0)
+            mock_cls.assert_called_once_with(base_url="http://explicit:9999", timeout=30.0, user_agent=_USER_AGENT)
 
     def test_explicit_api_key_overrides_config(self):
         configure(hindsight_api_url="http://config:8888", api_key="config-key")
         with patch("hindsight_smolagents.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             _resolve_client(None, None, "explicit-key")
-            mock_cls.assert_called_once_with(base_url="http://config:8888", timeout=30.0, api_key="explicit-key")
+            mock_cls.assert_called_once_with(
+                base_url="http://config:8888", timeout=30.0, user_agent=_USER_AGENT, api_key="explicit-key"
+            )
 
     def test_raises_without_url_or_config(self):
         with pytest.raises(HindsightError, match="No Hindsight API URL"):
@@ -172,7 +178,7 @@ class TestToolConstruction:
             mock_cls.return_value = _mock_client()
             tool = HindsightRetainTool(bank_id="test")
             assert tool.name == "hindsight_retain"
-            mock_cls.assert_called_once_with(base_url="http://localhost:8888", timeout=30.0)
+            mock_cls.assert_called_once_with(base_url="http://localhost:8888", timeout=30.0, user_agent=_USER_AGENT)
 
     def test_api_key_passed_to_client(self):
         with patch("hindsight_smolagents.tools.Hindsight") as mock_cls:
@@ -185,6 +191,7 @@ class TestToolConstruction:
             mock_cls.assert_called_once_with(
                 base_url="http://localhost:8888",
                 timeout=30.0,
+                user_agent=_USER_AGENT,
                 api_key="secret",
             )
 

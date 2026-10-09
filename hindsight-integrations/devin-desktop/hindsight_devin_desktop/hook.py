@@ -26,11 +26,18 @@ import os
 import sys
 import time
 import urllib.request
+from importlib import metadata
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 from . import devin_local
 from .project import project_bank_id
+
+try:
+    _VERSION = metadata.version("hindsight-devin-desktop")
+except metadata.PackageNotFoundError:
+    _VERSION = "0.0.0"
+_USER_AGENT = f"hindsight-devin-desktop/{_VERSION}"
 
 RECALL_QUERY = "Key architecture, decisions, conventions, and the user's preferences and coding style for this work."
 MAX_TOKENS = 1024
@@ -89,6 +96,7 @@ def _mcp(url: str, token: Optional[str], payload: dict, session: Optional[str]) 
     req = urllib.request.Request(url, data=json.dumps(payload).encode(), method="POST")
     req.add_header("Content-Type", "application/json")
     req.add_header("Accept", "application/json, text/event-stream")
+    req.add_header("User-Agent", _USER_AGENT)
     if token:
         req.add_header("Authorization", f"Bearer {token}")
     if session:

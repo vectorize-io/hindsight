@@ -3,14 +3,22 @@
 /**
  * Request/response middleware shared by every operation.
  *
- * `addBearerHeader` injects the Hindsight API key on every outbound request so
- * individual operations don't have to. `handleHttpError` turns non-2xx
- * responses into typed Zapier errors with a useful message.
+ * `addBearerHeader` injects the Hindsight API key and the integration's
+ * User-Agent on every outbound request so individual operations don't have to.
+ * `handleHttpError` turns non-2xx responses into typed Zapier errors with a
+ * useful message.
  */
 
+const { version } = require("./package.json");
+
+// Keep "Zapier" in the value: the platform uses it to tell z.request() traffic
+// apart and would otherwise log every request twice.
+const USER_AGENT = `hindsight-zapier/${version} Zapier`;
+
 const addBearerHeader = (request, z, bundle) => {
+  request.headers = request.headers || {};
+  request.headers["user-agent"] = USER_AGENT;
   if (bundle.authData && bundle.authData.apiKey) {
-    request.headers = request.headers || {};
     request.headers.Authorization = `Bearer ${bundle.authData.apiKey}`;
   }
   return request;
