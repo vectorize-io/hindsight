@@ -194,7 +194,7 @@ def test_parse_callback_rules():
         auth.parse_callback({**ok, "client_id": "oaiapp_other"}, expected_state="s", pending_client_id=ISSUED_CLIENT_ID)
 
 
-def test_host_id_is_created_once_and_import_keeps_it(tmp_path):
+async def test_host_id_is_created_once_and_import_keeps_it(tmp_path):
     home = tmp_path / "vm"
     host_id = auth.load_or_create_host_id(home)
     assert host_id.startswith("urn:uuid:")
@@ -203,7 +203,7 @@ def test_host_id_is_created_once_and_import_keeps_it(tmp_path):
 
     source = tmp_path / "laptop.json"
     source.write_text(json.dumps(_credential()))
-    auth.import_credential(home, source, out=lambda _line: None)
+    await auth.import_credential(home, source, out=lambda _line: None)
     imported = auth.read_credential(home / auth.CREDENTIAL_FILE)
     assert imported.ext_agent_host_id == host_id
     assert imported.refresh_token == "rt-1"
@@ -510,8 +510,29 @@ async def test_terminal_refresh_error_requires_login_and_clears_tokens(tmp_path,
         await manager.close()
     stored = json.loads(path.read_text())
     assert "refresh_token" not in stored and "access_token" not in stored
-    assert stored["client_id"] == ISSUED_CLIENT_ID  # registration kept for re-login
     assert stored["last_auth_error"] == code
+    if code == "invalid_client":
+        # The registration itself is dead: the next login must register a new client.
+        assert "client_id" not in stored
+    else:
+        assert stored["client_id"] == ISSUED_CLIENT_ID  # registration kept for re-login
+
+
+async def test_terminal_error_does_not_clear_a_grant_written_meanwhile(tmp_path, point_auth_at):
+    """Without a working lock another writer may have stored a newer grant; it must survive."""
+    path = _write(tmp_path, _credential(access_token=_fake_access_token(time.time() - 10)))
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        await request.post()
+        _write(tmp_path, _credential(refresh_token="rt-other-writer"))
+        return web.json_response({"error": "refresh_token_reused"}, status=400)
+
+    async with stub_server(handler) as base:
+        point_auth_at(base)
+        manager = auth.ChatGPTPlanAuth.from_home(tmp_path)
+        assert await manager.get_access_token()
+        await manager.close()
+    assert json.loads(path.read_text())["refresh_token"] == "rt-other-writer"
 
 
 async def test_transient_refresh_error_keeps_tokens(tmp_path, point_auth_at):
@@ -635,6 +656,14 @@ class _Upstream:
         self.requests.append(await request.json())
         self.auth_headers.append(request.headers.get("Authorization", ""))
         status, body = self.replies.pop(0) if len(self.replies) > 1 else self.replies[0]
+        if status == -1:
+            response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+            response.enable_chunked_encoding()
+            await response.prepare(request)
+            await response.write(b"event: response.created\ndata: {")
+            assert request.transport is not None
+            request.transport.close()
+            return response
         if isinstance(body, dict):
             return web.json_response(body, status=status)
         return web.Response(status=status, body=body, content_type="text/event-stream")
@@ -793,6 +822,39 @@ async def test_401_refreshes_once_and_retries(make_llm):
     assert result.content == "hello"
     assert len(upstream.refresh_forms) == 1
     assert upstream.auth_headers[0] != upstream.auth_headers[1]
+
+
+async def test_non_transient_stream_failure_is_not_retried(make_llm):
+    upstream = _Upstream([(200, _failed("context_length_exceeded"))])
+    llm = await make_llm(upstream)
+    with pytest.raises(ChatGPTPlanRequestError, match="context_length_exceeded"):
+        await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=3, initial_backoff=0.01)
+    assert len(upstream.requests) == 1
+
+
+async def test_bare_error_payload_in_stream_defers(make_llm):
+    """A ``{"error": {...}}`` stream payload (raised by the SDK as a bare APIError) still maps to a defer."""
+    payload = {"error": {"code": "subscription_sharing_usage_limit_exceeded", "message": "limit"}}
+    upstream = _Upstream([(200, f"event: error\ndata: {json.dumps(payload)}\n\n".encode())])
+    llm = await make_llm(upstream)
+    with pytest.raises(ProviderRateLimitResetError):
+        await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=3, initial_backoff=0.01)
+    assert len(upstream.requests) == 1
+
+
+async def test_connection_dropped_mid_stream_is_retried(make_llm):
+    upstream = _Upstream([(-1, b""), (200, _completed())])
+    llm = await make_llm(upstream)
+    result = await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=1, initial_backoff=0.01)
+    assert result.content == "hello"
+    assert len(upstream.requests) == 2
+
+
+async def test_providers_for_one_home_share_a_manager(make_llm):
+    upstream = _Upstream([(200, _completed())])
+    first = await make_llm(upstream)
+    second = await make_llm(upstream)
+    assert first._auth is second._auth
 
 
 async def test_admission_403_is_not_retried(make_llm):

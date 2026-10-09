@@ -23,7 +23,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from openai import APIStatusError, AuthenticationError
+from openai import APIConnectionError, APIError, APIStatusError, AuthenticationError
 
 from hindsight_api.engine.llm_interface import ProviderRateLimitResetError
 from hindsight_api.engine.providers.chatgpt_plan_auth import (
@@ -35,6 +35,7 @@ from hindsight_api.engine.providers.chatgpt_plan_auth import (
 )
 from hindsight_api.engine.providers.openai_compatible_llm import _rate_limit_retry_at
 from hindsight_api.engine.providers.openai_responses_llm import OpenAIResponsesLLM, RetryableResponsesError
+from hindsight_api.engine.remote_retry import is_transient_remote_error
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,18 @@ _NON_RETRYABLE_CODES = frozenset(
     }
 )
 
+# Failure codes inside a stream that a later attempt can clear. Any other code (an
+# invalid or too-long prompt, a policy refusal) fails the same way every time, and
+# retrying it would only spend the user's shared plan quota.
+_TRANSIENT_STREAM_CODES = frozenset(
+    {
+        "subscription_sharing_usage_unavailable",
+        "subscription_sharing_user_unavailable",
+        "server_error",
+        "rate_limit_exceeded",
+    }
+)
+
 # A usage-limit error carries no reset time and OpenAI says not to infer one, so
 # deferred work comes back after this pause (or a later Retry-After, if sent).
 USAGE_LIMIT_DEFER_SECONDS = 30 * 60
@@ -112,11 +125,24 @@ def _plan_error(
     return None
 
 
+def _stream_failure(code: str | None, message: str, param: str | None, *, label: str) -> Exception:
+    """Exception for a failure reported inside the stream (``response.failed`` / ``error``)."""
+    mapped = _plan_error(code, message, param, label=label)
+    if mapped is not None:
+        return mapped
+    if code is None or code in _TRANSIENT_STREAM_CODES:
+        return RetryableResponsesError(f"ChatGPT plan response failed ({label}, code={code}): {message}")
+    return ChatGPTPlanRequestError(f"ChatGPT plan response failed ({label}, code={code}): {message}")
+
+
 def _plan_request_body(params: dict[str, Any]) -> dict[str, Any]:
     """Adapt a built Responses request to the ChatGPT plan route's preview limits."""
     body = {k: v for k, v in params.items() if k not in _UNSUPPORTED_FIELDS}
     if isinstance(body.get("extra_body"), dict):
-        body["extra_body"] = {k: v for k, v in body["extra_body"].items() if k not in _UNSUPPORTED_FIELDS}
+        # ``store``/``stream`` too: the route requires the values forced below.
+        body["extra_body"] = {
+            k: v for k, v in body["extra_body"].items() if k not in _UNSUPPORTED_FIELDS and k not in ("store", "stream")
+        }
     body["input"] = [
         {**item, "role": "developer"} if isinstance(item, dict) and item.get("role") == "system" else item
         for item in body.get("input", [])
@@ -143,7 +169,7 @@ class ChatGPTPlanLLM(OpenAIResponsesLLM):
         # Loaded first: the parent requires an api_key, and a missing login should
         # fail at startup with the command that fixes it.
         try:
-            self._auth = ChatGPTPlanAuth.from_home(default_home())
+            self._auth = ChatGPTPlanAuth.shared(default_home())
         except ChatGPTPlanAuthError as e:
             raise RuntimeError(f"chatgpt-plan provider unavailable: {e}") from e
         if model.startswith("openai/"):
@@ -192,10 +218,29 @@ class ChatGPTPlanLLM(OpenAIResponsesLLM):
             if mapped is not None:
                 raise mapped from e
             raise
+        except APIConnectionError:
+            raise
+        except APIError as e:
+            # The SDK raises a bare APIError for a stream event whose payload is
+            # ``{"error": {...}}`` rather than a typed ``error`` event.
+            label = f"{self.provider}/{self.model}"
+            raise _stream_failure(getattr(e, "code", None), e.message, getattr(e, "param", None), label=label) from e
 
     async def _stream(self, body: dict[str, Any], token: str) -> Any:
         """Stream one request to its terminal event and return the final ``Response``."""
         label = f"{self.provider}/{self.model}"
+        try:
+            return await self._consume(body, token, label)
+        except (APIError, RetryableResponsesError, ChatGPTPlanRequestError, ProviderRateLimitResetError):
+            raise
+        except Exception as e:
+            # A connection dropped mid-stream surfaces as a raw transport error: the SDK
+            # only wraps failures that happen while sending the request.
+            if is_transient_remote_error(e):
+                raise RetryableResponsesError(f"ChatGPT plan stream interrupted ({label}): {type(e).__name__}") from e
+            raise
+
+    async def _consume(self, body: dict[str, Any], token: str, label: str) -> Any:
         done_items: list[Any] = []
         async with await self._client.with_options(api_key=token).responses.create(**body) as stream:
             async for event in stream:
@@ -215,12 +260,10 @@ class ChatGPTPlanLLM(OpenAIResponsesLLM):
                     raise ChatGPTPlanRequestError(f"ChatGPT plan response incomplete ({label}): {reason}")
                 elif kind in ("response.failed", "error"):
                     error = event.response.error if kind == "response.failed" else event
-                    code = getattr(error, "code", None)
-                    message = getattr(error, "message", "") or ""
-                    mapped = _plan_error(code, message, getattr(error, "param", None), label=label)
-                    if mapped is not None:
-                        raise mapped
-                    # subscription_sharing_usage_unavailable / user_unavailable and
-                    # unknown server-side failures: back off and retry.
-                    raise RetryableResponsesError(f"ChatGPT plan response failed ({label}, code={code}): {message}")
+                    raise _stream_failure(
+                        getattr(error, "code", None),
+                        getattr(error, "message", "") or "",
+                        getattr(error, "param", None),
+                        label=label,
+                    )
         raise RetryableResponsesError(f"ChatGPT plan stream ended without response.completed ({label})")

@@ -44,6 +44,7 @@ import os
 import secrets
 import sys
 import tempfile
+import threading
 import time
 import uuid
 import webbrowser
@@ -642,11 +643,24 @@ async def login(
 
 
 class ChatGPTPlanAuth:
-    """Supplies a fresh access token and serializes rotating refreshes across processes."""
+    """Supplies a fresh access token and serializes rotating refreshes across processes.
+
+    One instance per credential file per process (see :meth:`shared`): Hindsight
+    builds a provider per operation and per multi-LLM member, and if each had its
+    own manager, a rotation one of them could only keep in memory would leave the
+    others refreshing with the spent token.
+    """
+
+    _shared: dict[Path, ChatGPTPlanAuth] = {}
+    # Guards ``_shared`` only (await-free); instances are reachable from several loops.
+    _shared_lock = threading.Lock()
 
     def __init__(self, path: Path, credential: ChatGPTPlanCredential) -> None:
         self.path = path
         self._credential = credential
+        # Refresh token the file still holds after a rotation we could not write;
+        # while the file shows it, memory is newer than the file.
+        self._unwritten_over: str | None = None
         self._http = LoopLocalSession(timeout=per_phase_timeout(_HTTP_TIMEOUT_SECONDS))
 
     @classmethod
@@ -664,6 +678,14 @@ class ChatGPTPlanAuth:
             )
         return cls(path, credential)
 
+    @classmethod
+    def shared(cls, home: Path) -> ChatGPTPlanAuth:
+        """The process-wide manager for ``home``; the file is validated on every call."""
+        fresh = cls.from_home(home)
+        key = fresh.path.expanduser().resolve(strict=False)
+        with cls._shared_lock:
+            return cls._shared.setdefault(key, fresh)
+
     async def get_access_token(self) -> str:
         if needs_refresh(self._credential):
             await self.refresh()
@@ -672,7 +694,7 @@ class ChatGPTPlanAuth:
             raise ChatGPTPlanLoginRequiredError(f"No ChatGPT plan access token available. Run `{LOGIN_COMMAND}`.")
         return token
 
-    def _persist(self, credential: ChatGPTPlanCredential) -> None:
+    def _persist(self, credential: ChatGPTPlanCredential, *, replaces: ChatGPTPlanCredential) -> None:
         """Adopt ``credential`` in memory first, then write it.
 
         Memory comes first because after a successful rotation the old refresh token
@@ -682,7 +704,9 @@ class ChatGPTPlanAuth:
         self._credential = credential
         try:
             write_credential(self.path, credential)
+            self._unwritten_over = None
         except OSError as exc:
+            self._unwritten_over = replaces.refresh_token
             logger.warning(
                 f"Could not write ChatGPT plan credentials to {self.path} ({type(exc).__name__}); "
                 "continuing with the in-memory token set. Other processes will not see it."
@@ -692,12 +716,16 @@ class ChatGPTPlanAuth:
         """Rotate the token set unless another holder of the lock already did.
 
         ``rejected_token`` is the access token the API just refused (reactive
-        refresh); a fresh on-disk token equal to it is not reused.
+        refresh); a fresh on-disk token equal to it is not reused. Shielded: a
+        caller cancelled (request timeout, shutdown) after OpenAI rotated the
+        refresh token must not abandon the new set before it is stored.
         """
+        await asyncio.shield(self._refresh(rejected_token))
+
+    async def _refresh(self, rejected_token: str | None) -> None:
         async with oauth_store_lock(self.path, timeout_seconds=_LOCK_TIMEOUT_SECONDS, label=_LOCK_LABEL):
             current = read_credential(self.path)
-            # A rotation this process could not write is newer than the file.
-            if self._credential.saved_at and (current.saved_at or "") < self._credential.saved_at:
+            if self._unwritten_over is not None and current.refresh_token == self._unwritten_over:
                 current = self._credential
             self._credential = current
             if current.access_token and current.access_token != rejected_token and not needs_refresh(current):
@@ -719,11 +747,22 @@ class ChatGPTPlanAuth:
                 },
             )
             if reply.status != 200 and reply.error_code in TERMINAL_REFRESH_ERROR_CODES:
-                self._persist(
-                    current.model_copy(
-                        update={"access_token": None, "refresh_token": None, "last_auth_error": reply.error_code}
-                    )
-                )
+                # Where the lock cannot hold (no fcntl, a store shared across hosts),
+                # another writer may have stored a newer grant meanwhile: keep that one.
+                with contextlib.suppress(ChatGPTPlanLoginRequiredError):
+                    latest = read_credential(self.path)
+                    if latest.is_active and latest.refresh_token != current.refresh_token:
+                        self._credential = latest
+                        return
+                cleared: dict[str, Any] = {
+                    "access_token": None,
+                    "refresh_token": None,
+                    "last_auth_error": reply.error_code,
+                }
+                if reply.error_code == "invalid_client":
+                    # The registration itself is gone; the next login must register anew.
+                    cleared["client_id"] = None
+                self._persist(current.model_copy(update=cleared), replaces=current)
                 raise ChatGPTPlanLoginRequiredError(
                     f"ChatGPT plan refresh token is no longer usable ({reply.error_code}). Run `{LOGIN_COMMAND}`."
                 )
@@ -743,7 +782,7 @@ class ChatGPTPlanAuth:
                     "last_auth_error": None,
                 }
             )
-            self._persist(refreshed)
+            self._persist(refreshed, replaces=current)
             logger.info("ChatGPT plan access token refreshed")
             if not refreshed.has_plan_scope:
                 raise ChatGPTPlanLoginRequiredError(
@@ -761,11 +800,16 @@ class ChatGPTPlanAuth:
 
 async def _revoke(session: aiohttp.ClientSession, credential: ChatGPTPlanCredential) -> bool:
     """Revoke the refresh token; retry network failures and 5xx a few times. True on HTTP 200."""
+    try:
+        endpoint = (await discover(session)).revocation_endpoint
+    except ChatGPTPlanAuthError:
+        return False
+    if not endpoint:
+        return False
     for attempt in range(3):
+        if attempt:
+            await asyncio.sleep(2**attempt)
         try:
-            endpoint = (await discover(session)).revocation_endpoint
-            if not endpoint:
-                return False
             reply = await _post_form(
                 session,
                 endpoint,
@@ -781,7 +825,6 @@ async def _revoke(session: aiohttp.ClientSession, credential: ChatGPTPlanCredent
             return True
         if 0 < reply.status < 500:
             return False
-        await asyncio.sleep(2**attempt)
     return False
 
 
@@ -818,13 +861,19 @@ async def logout(home: Path, out: Callable[[str], None] = print) -> bool:
     return confirmed
 
 
-def import_credential(home: Path, source: Path, out: Callable[[str], None] = print) -> None:
-    """Install a credential file made on another machine, keeping this host's own host id."""
+async def import_credential(home: Path, source: Path, out: Callable[[str], None] = print) -> None:
+    """Install a credential file made on another machine, keeping this host's own host id.
+
+    Written under the store lock so a running server's in-flight refresh cannot
+    overwrite the import with the session it was rotating.
+    """
     imported = read_credential(source)
     if not imported.is_active:
         raise ChatGPTPlanAuthError(f"{source} is not an active chatgpt-plan credential file.")
     host_id = load_or_create_host_id(home)
-    write_credential(home / CREDENTIAL_FILE, imported.model_copy(update={"ext_agent_host_id": host_id}))
+    path = home / CREDENTIAL_FILE
+    async with oauth_store_lock(path, timeout_seconds=_LOCK_TIMEOUT_SECONDS, label=_LOCK_LABEL):
+        write_credential(path, imported.model_copy(update={"ext_agent_host_id": host_id}))
     out(
         f"Imported credentials for {imported.email or imported.subject} into {home / CREDENTIAL_FILE} "
         f"(host id {host_id}). This host now owns refreshes: delete the source copy and do not use or log out "
@@ -897,7 +946,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.source.expanduser().resolve() == (home / CREDENTIAL_FILE).resolve():
                 print("Source is already the local credential file.", file=sys.stderr)
                 return 1
-            import_credential(home, args.source.expanduser())
+            asyncio.run(import_credential(home, args.source.expanduser()))
     except ChatGPTPlanAuthError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

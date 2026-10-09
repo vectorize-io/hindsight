@@ -1228,6 +1228,9 @@ DEFAULT_LLM_SEND_BANK_AS_USER = False  # Opt-in: tag provider calls with user=<b
 # Codex credentials directory (None = CODEX_HOME, else ~/.codex)
 DEFAULT_LLM_CODEX_HOME = None
 
+# chatgpt-plan credentials directory (None = ~/.hindsight/chatgpt-plan)
+DEFAULT_LLM_CHATGPT_PLAN_HOME = None
+
 # Vertex AI defaults
 DEFAULT_LLM_VERTEXAI_PROJECT_ID = None  # Required for Vertex AI
 DEFAULT_LLM_VERTEXAI_REGION = "us-central1"
@@ -4414,7 +4417,7 @@ class HindsightConfig:
             llm_litellmrouter_config=_parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG),
             # Codex (ChatGPT OAuth) credentials directory
             llm_codex_home=os.getenv(ENV_LLM_CODEX_HOME) or DEFAULT_LLM_CODEX_HOME,
-            llm_chatgpt_plan_home=os.getenv(ENV_LLM_CHATGPT_PLAN_HOME, "").strip() or None,
+            llm_chatgpt_plan_home=os.getenv(ENV_LLM_CHATGPT_PLAN_HOME, "").strip() or DEFAULT_LLM_CHATGPT_PLAN_HOME,
             # Vertex AI
             llm_vertexai_project_id=os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID) or DEFAULT_LLM_VERTEXAI_PROJECT_ID,
             llm_vertexai_region=os.getenv(ENV_LLM_VERTEXAI_REGION, DEFAULT_LLM_VERTEXAI_REGION),
