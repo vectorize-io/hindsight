@@ -22,11 +22,18 @@ import os
 import re
 import sys
 from dataclasses import dataclass, field
+from importlib import metadata
 from typing import Any
 from urllib.parse import urlsplit
 
 import aiohttp
 from pydantic import BaseModel, ValidationError
+
+try:
+    _VERSION = metadata.version("hindsight-meta-muse")
+except metadata.PackageNotFoundError:
+    _VERSION = "0.0.0"
+USER_AGENT = f"hindsight-meta-muse/{_VERSION}"
 
 # The tools the connect prompt tells Muse to call. The root URL (multi-bank) and a
 # bank-scoped URL (/mcp/<bank>/) both expose these, unless a bank's MCP tool allowlist drops one.
@@ -268,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
 
     async def _run() -> PreflightReport:
         timeout = aiohttp.ClientTimeout(total=30)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with aiohttp.ClientSession(timeout=timeout, headers={"User-Agent": USER_AGENT}) as session:
             return await run_preflight(args.url, token, session)
 
     report = asyncio.run(_run())
