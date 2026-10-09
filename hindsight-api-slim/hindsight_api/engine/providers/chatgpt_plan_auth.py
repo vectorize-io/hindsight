@@ -564,6 +564,64 @@ def build_credential(
     )
 
 
+# The callback URL carries the authorization code, so the page loads nothing external
+# and sends no referrer.
+_CALLBACK_PAGE_HEADERS = {
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
+}
+
+_CALLBACK_PAGE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hindsight</title>
+<style>
+  :root {{ --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #5d6676; --border: #e3e6eb;
+           --accent: {accent_light}; }}
+  @media (prefers-color-scheme: dark) {{
+    :root {{ --bg: #111318; --card: #1a1d24; --text: #e8eaef; --muted: #9aa3b2; --border: #2a2e37;
+             --accent: {accent_dark}; }}
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px;
+         background: var(--bg); color: var(--text);
+         font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
+  main {{ width: 100%; max-width: 380px; padding: 32px 28px; text-align: center;
+         background: var(--card); border: 1px solid var(--border); border-radius: 14px; }}
+  .mark {{ width: 48px; height: 48px; margin: 0 auto 16px; border-radius: 50%;
+          display: grid; place-items: center; color: #fff; background: var(--accent);
+          font-size: 24px; font-weight: 600; }}
+  h1 {{ margin: 0 0 8px; font-size: 19px; font-weight: 600; }}
+  p {{ margin: 0; color: var(--muted); }}
+  .brand {{ margin-top: 24px; font-size: 12px; letter-spacing: .04em; color: var(--muted); }}
+</style>
+</head>
+<body>
+<main>
+  <div class="mark" aria-hidden="true">{symbol}</div>
+  <h1>{heading}</h1>
+  <p>{body}</p>
+  <div class="brand">HINDSIGHT · SIGN IN WITH CHATGPT</div>
+</main>
+</body>
+</html>
+"""
+
+
+def _callback_page(*, ok: bool, heading: str, body: str) -> str:
+    """Render the page the browser lands on after the loopback redirect."""
+    return _CALLBACK_PAGE.format(
+        accent_light="#1f8a5b" if ok else "#b4462f",
+        accent_dark="#2fa36f" if ok else "#d0573c",
+        symbol="✓" if ok else "!",
+        heading=heading,
+        body=body,
+    )
+
+
 async def _start_callback_listener(
     port: int, timeout: float, expected_state: str
 ) -> Callable[[], Awaitable[dict[str, str]]]:
@@ -580,10 +638,19 @@ async def _start_callback_listener(
             return web.Response(status=400, text="Unexpected sign-in response.", content_type="text/plain")
         if not received.done():
             received.set_result(dict(request.query))
-        return web.Response(
-            text="Hindsight received the sign-in response. You can close this tab and return to the terminal.",
-            content_type="text/plain",
-        )
+        if request.query.get("error"):
+            page = _callback_page(
+                ok=False,
+                heading="Sign-in not completed",
+                body="ChatGPT plan usage was not granted. Check the terminal for details.",
+            )
+        else:
+            page = _callback_page(
+                ok=True,
+                heading="Sign-in received",
+                body="Hindsight is finishing setup in your terminal. You can close this tab.",
+            )
+        return web.Response(text=page, content_type="text/html", headers=_CALLBACK_PAGE_HEADERS)
 
     app = web.Application()
     app.router.add_get(CALLBACK_PATH, handle)

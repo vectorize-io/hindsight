@@ -974,6 +974,25 @@ async def test_stray_callbacks_do_not_abort_pending_login(tmp_path, point_auth_a
     assert credential.client_id == ISSUED_CLIENT_ID
 
 
+@pytest.mark.parametrize(
+    ("query", "heading"),
+    [({"code": "c"}, "Sign-in received"), ({"error": "access_denied"}, "Sign-in not completed")],
+)
+async def test_callback_page_is_self_contained_html(query, heading):
+    port = _free_port()
+    wait = await auth._start_callback_listener(port, timeout=5, expected_state="s1")
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"http://127.0.0.1:{port}{auth.CALLBACK_PATH}", params={**query, "state": "s1"}) as resp:
+            page = await resp.text()
+            assert resp.status == 200
+            assert resp.content_type == "text/html"
+            assert resp.headers["Content-Security-Policy"].startswith("default-src 'none'")
+            assert resp.headers["Referrer-Policy"] == "no-referrer"
+    assert heading in page
+    assert "http" not in page  # nothing loaded from elsewhere
+    assert (await wait())["state"] == "s1"
+
+
 def test_parse_callback_rejects_non_ascii_state_without_type_error():
     with pytest.raises(auth.ChatGPTPlanAuthError, match="state"):
         auth.parse_callback({"code": "c", "state": "\u00e9"}, expected_state="s", pending_client_id=ISSUED_CLIENT_ID)
