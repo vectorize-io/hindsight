@@ -382,7 +382,9 @@ The server then owns refreshes. Sign in again on the laptop later if you also wa
 - `logout` revokes the session and clears local tokens but keeps the client registration and host id
   for the next `login`.
 - `HINDSIGHT_API_LLM_CHATGPT_PLAN_HOME` relocates the credential directory. Use one directory per
-  ChatGPT account.
+  ChatGPT account. The directory must be writable, because each refresh writes the rotated token
+  back; in a container, mount a writable volume there. If a write fails, the process keeps the new
+  tokens in memory, but other processes and restarts will not see them.
 
 ### OpenAI Codex Setup (ChatGPT Plus/Pro)
 

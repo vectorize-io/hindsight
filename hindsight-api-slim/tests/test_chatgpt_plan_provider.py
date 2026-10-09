@@ -74,7 +74,7 @@ def _credential(**overrides: Any) -> dict[str, Any]:
 def _write(home: Path, cred: dict[str, Any]) -> Path:
     home.mkdir(parents=True, exist_ok=True)
     path = home / auth.CREDENTIAL_FILE
-    auth.write_credential(path, cred)
+    auth.write_credential(path, auth.ChatGPTPlanCredential.model_validate(cred))
     return path
 
 
@@ -125,7 +125,8 @@ def point_auth_at(monkeypatch):
 
 
 def test_authorize_url_first_registration():
-    verifier, challenge = auth.new_pkce()
+    pkce = auth.new_pkce()
+    verifier, challenge = pkce.verifier, pkce.challenge
     url = auth.build_authorize_url(
         client_id=auth.DYNAMIC_CLIENT_ID,
         host_id="urn:uuid:h",
@@ -176,8 +177,7 @@ def test_authorize_url_reauth_uses_issued_client_and_hints():
 def test_parse_callback_rules():
     ok = {"code": "c", "state": "s", "client_id": ISSUED_CLIENT_ID}
     assert auth.parse_callback(ok, expected_state="s", pending_client_id=auth.DYNAMIC_CLIENT_ID) == (
-        "c",
-        ISSUED_CLIENT_ID,
+        auth.CallbackResult(code="c", client_id=ISSUED_CLIENT_ID)
     )
     with pytest.raises(auth.ChatGPTPlanAuthError, match="state"):
         auth.parse_callback({**ok, "state": "x"}, expected_state="s", pending_client_id=auth.DYNAMIC_CLIENT_ID)
@@ -188,9 +188,8 @@ def test_parse_callback_rules():
     with pytest.raises(auth.ChatGPTPlanAuthError, match="incomplete"):
         auth.parse_callback({"code": "c", "state": "s"}, expected_state="s", pending_client_id=auth.DYNAMIC_CLIENT_ID)
     # Reauthorization: a missing client_id keeps the pending one; a different one is rejected.
-    assert auth.parse_callback({"code": "c", "state": "s"}, expected_state="s", pending_client_id=ISSUED_CLIENT_ID)[
-        1
-    ] == (ISSUED_CLIENT_ID)
+    reauth = auth.parse_callback({"code": "c", "state": "s"}, expected_state="s", pending_client_id=ISSUED_CLIENT_ID)
+    assert reauth.client_id == ISSUED_CLIENT_ID
     with pytest.raises(auth.ChatGPTPlanAuthError, match="different client_id"):
         auth.parse_callback({**ok, "client_id": "oaiapp_other"}, expected_state="s", pending_client_id=ISSUED_CLIENT_ID)
 
@@ -206,8 +205,8 @@ def test_host_id_is_created_once_and_import_keeps_it(tmp_path):
     source.write_text(json.dumps(_credential()))
     auth.import_credential(home, source, out=lambda _line: None)
     imported = auth.read_credential(home / auth.CREDENTIAL_FILE)
-    assert imported["ext_agent_host_id"] == host_id
-    assert imported["refresh_token"] == "rt-1"
+    assert imported.ext_agent_host_id == host_id
+    assert imported.refresh_token == "rt-1"
     assert (home / auth.HOST_ID_FILE).read_text().strip() == host_id
     assert stat.S_IMODE((home / auth.CREDENTIAL_FILE).stat().st_mode) == 0o600
 
@@ -217,7 +216,8 @@ def test_status_never_prints_tokens(tmp_path):
     text = "\n".join(auth.status_lines(tmp_path))
     assert "user@example.com" in text and ISSUED_CLIENT_ID in text
     assert "rt-1" not in text and "id.token.value" not in text
-    assert _credential()["access_token"].split(".")[1] not in text
+    stored_token = auth.read_credential(tmp_path / auth.CREDENTIAL_FILE).access_token
+    assert stored_token and stored_token not in text
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +228,7 @@ def test_status_never_prints_tokens(tmp_path):
 def test_validate_id_token_accepts_valid_token(rsa_jwks):
     key, jwks = rsa_jwks
     claims = auth.validate_id_token(_id_token(key), jwks=jwks, client_id=ISSUED_CLIENT_ID, nonce="n-1")
-    assert claims["sub"] == "user-sub"
+    assert claims.sub == "user-sub" and claims.email == "user@example.com"
 
 
 @pytest.mark.parametrize(
@@ -328,21 +328,64 @@ async def test_login_registers_exchanges_and_saves(tmp_path, point_auth_at, rsa_
     path = tmp_path / auth.CREDENTIAL_FILE
     stored = json.loads(path.read_text())
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert stored == credential
+    assert stored == json.loads(credential.model_dump_json(exclude_none=True))
     assert stored["client_id"] == ISSUED_CLIENT_ID
     assert stored["subject"] == "user-sub"
     assert stored["ext_agent_host_id"] == host_id
     assert stored["refresh_token"] == "rt-new"
-    assert auth.has_plan_scope(stored)
+    assert credential.has_plan_scope
     auth.ChatGPTPlanAuth.from_home(tmp_path)  # usable for inference
+
+
+async def test_login_keeps_issued_client_id_when_exchange_fails(tmp_path, point_auth_at, rsa_jwks):
+    """A failed first registration must not leave the next login registering a second client."""
+    port = _free_port()
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        return web.json_response({"error": "invalid_grant"}, status=400)
+
+    async with stub_server(handler) as base:
+        point_auth_at(base)
+        task: dict[str, Any] = {}
+
+        def browser(url: str) -> bool:
+            q = {k: v[0] for k, v in parse_qs(urlparse(url).query).items()}
+
+            async def hit() -> None:
+                async with aiohttp.ClientSession() as s:
+                    await s.get(
+                        q["redirect_uri"], params={"code": "c", "state": q["state"], "client_id": ISSUED_CLIENT_ID}
+                    )
+
+            task["t"] = asyncio.get_running_loop().create_task(hit())
+            return True
+
+        with pytest.raises(auth.ChatGPTPlanAuthError, match="Code exchange failed"):
+            await auth.login(tmp_path, port=port, open_browser=browser, out=lambda _line: None)
+        await task["t"]
+    stored = auth.read_credential(tmp_path / auth.CREDENTIAL_FILE)
+    assert stored.client_id == ISSUED_CLIENT_ID and not stored.is_active
+
+
+def test_cli_status_import_and_no_browser_url(tmp_path, capsys, monkeypatch):
+    home = tmp_path / "server"
+    assert auth.main(["--home", str(home), "status"]) == 1
+    assert "No ChatGPT plan credentials" in capsys.readouterr().err
+
+    source = tmp_path / "laptop.json"
+    source.write_text(json.dumps(_credential()))
+    assert auth.main(["--home", str(home), "import", str(source)]) == 0
+    assert auth.main(["--home", str(home), "status"]) == 0
+    out = capsys.readouterr().out
+    assert "Plan usage enabled: yes" in out and "rt-1" not in out
 
 
 async def test_login_without_plan_scope_keeps_sign_in_but_disables_inference(tmp_path, point_auth_at, rsa_jwks):
     credential, _ = await _drive_login(
         tmp_path, point_auth_at, rsa_jwks, scope="openid profile email offline_access resource.invoke"
     )
-    assert credential["client_id"] == ISSUED_CLIENT_ID
-    assert not auth.has_plan_scope(credential)
+    assert credential.client_id == ISSUED_CLIENT_ID
+    assert not credential.has_plan_scope
     with pytest.raises(auth.ChatGPTPlanLoginRequiredError, match="not enabled"):
         auth.ChatGPTPlanAuth.from_home(tmp_path)
 
@@ -435,6 +478,27 @@ async def test_reactive_refresh_replaces_rejected_but_unexpired_token(tmp_path, 
     assert len(seen["forms"]) == 1
 
 
+async def test_rotation_survives_unwritable_store(tmp_path, point_auth_at, monkeypatch):
+    """The old refresh token is spent once OpenAI rotates it, so a failed write must not lose the new set."""
+    _write(tmp_path, _credential(access_token=_fake_access_token(time.time() + 10)))
+    seen: dict[str, Any] = {}
+
+    def fail(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError(30, "Read-only file system")
+
+    async with stub_server(_refresh_handler(seen)) as base:
+        point_auth_at(base)
+        manager = auth.ChatGPTPlanAuth.from_home(tmp_path)
+        monkeypatch.setattr(auth, "write_credential", fail)
+        token = await manager.get_access_token()
+        assert "new" in base64.urlsafe_b64decode(token.split(".")[1] + "==").decode()
+        assert await manager.get_access_token() == token
+        # A reactive refresh must send the rotated refresh token, not the spent one on disk.
+        await manager.refresh(rejected_token=token)
+        await manager.close()
+    assert [f["refresh_token"] for f in seen["forms"]] == ["rt-1", "rt-2"]
+
+
 @pytest.mark.parametrize("code", sorted(auth.TERMINAL_REFRESH_ERROR_CODES))
 async def test_terminal_refresh_error_requires_login_and_clears_tokens(tmp_path, point_auth_at, code):
     path = _write(tmp_path, _credential(access_token=_fake_access_token(time.time() - 10)))
@@ -447,7 +511,7 @@ async def test_terminal_refresh_error_requires_login_and_clears_tokens(tmp_path,
     stored = json.loads(path.read_text())
     assert "refresh_token" not in stored and "access_token" not in stored
     assert stored["client_id"] == ISSUED_CLIENT_ID  # registration kept for re-login
-    assert stored["last_auth_error"]["code"] == code
+    assert stored["last_auth_error"] == code
 
 
 async def test_transient_refresh_error_keeps_tokens(tmp_path, point_auth_at):
@@ -647,7 +711,8 @@ async def test_call_streams_to_completion_and_shapes_request(make_llm):
     assert body["input"][0] == {"role": "developer", "content": "be brief"}
     assert body["reasoning"] == {"effort": "high"}
     assert body["model"] == "gpt-6-luna"
-    assert upstream.auth_headers[0] == f"Bearer {_credential()['access_token']}"
+    stored_token = auth.read_credential(llm._auth.path).access_token
+    assert upstream.auth_headers[0] == f"Bearer {stored_token}"
 
 
 async def test_call_with_tools_parses_function_calls(make_llm):
