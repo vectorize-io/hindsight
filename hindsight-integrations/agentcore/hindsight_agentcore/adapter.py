@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from importlib import metadata
 from typing import Any, Awaitable, Callable
 
 from .bank import BankResolver, TurnContext, default_bank_resolver
@@ -35,6 +36,12 @@ from .config import get_config
 from .errors import BankResolutionError
 
 logger = logging.getLogger(__name__)
+
+try:
+    _VERSION = metadata.version("hindsight-agentcore")
+except metadata.PackageNotFoundError:
+    _VERSION = "0.0.0"
+_USER_AGENT = f"hindsight-agentcore/{_VERSION}"
 
 
 @dataclass
@@ -317,6 +324,7 @@ class HindsightRuntimeAdapter:
                 base_url=self._api_url,
                 api_key=self._api_key,
                 timeout=self._timeout,
+                user_agent=_USER_AGENT,
             )
         return self._client
 

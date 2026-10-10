@@ -48,6 +48,7 @@ describe("HindsightPlugin", () => {
     expect(HindsightClient).toHaveBeenCalledWith({
       baseUrl: DEFAULT_HINDSIGHT_API_URL,
       apiKey: undefined,
+      userAgent: expect.stringMatching(/^hindsight-opencode\/\d+\.\d+\.\d+$/),
     });
     // Full tool + hook surface still returned — the plugin doesn't disable
     // itself just because the URL was left at its default.
@@ -65,6 +66,7 @@ describe("HindsightPlugin", () => {
     expect(HindsightClient).toHaveBeenCalledWith({
       baseUrl: "http://localhost:8888",
       apiKey: undefined,
+      userAgent: expect.stringMatching(/^hindsight-opencode\/\d+\.\d+\.\d+$/),
     });
 
     expect(result.tool).toBeDefined();
@@ -85,6 +87,7 @@ describe("HindsightPlugin", () => {
     expect(HindsightClient).toHaveBeenCalledWith({
       baseUrl: "http://localhost:8888",
       apiKey: "my-token",
+      userAgent: expect.stringMatching(/^hindsight-opencode\/\d+\.\d+\.\d+$/),
     });
   });
 
@@ -98,6 +101,7 @@ describe("HindsightPlugin", () => {
     expect(HindsightClient).toHaveBeenCalledWith({
       baseUrl: "http://example.com",
       apiKey: undefined,
+      userAgent: expect.stringMatching(/^hindsight-opencode\/\d+\.\d+\.\d+$/),
     });
   });
 });

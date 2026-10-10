@@ -32,6 +32,11 @@ describe("HindsightApi credentials", () => {
     expect(props.headers?.Authorization).toContain("Bearer");
   });
 
+  it("identifies every request as coming from the n8n integration", () => {
+    const props = cred.authenticate.properties as { headers?: Record<string, string> };
+    expect(props.headers?.["User-Agent"]).toBe("hindsight-n8n");
+  });
+
   it("tests against /health", () => {
     expect(cred.test.request.url).toBe("/health");
     expect(cred.test.request.method).toBe("GET");

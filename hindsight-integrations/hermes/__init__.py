@@ -86,6 +86,21 @@ _EXTRA_BANK_COOLDOWN = 300.0
 _RETAIN_CONTEXT_DEFAULT = "conversation between Hermes Agent and the User"
 
 
+def _plugin_version() -> str:
+    """Read the version from plugin.yaml — Hermes loads this directory, not a pip package."""
+    try:
+        text = (Path(__file__).resolve().parent / "plugin.yaml").read_text()
+    except OSError:
+        return "0.0.0"
+    for line in text.splitlines():
+        if line.startswith("version:"):
+            return line.split(":", 1)[1].strip().strip("'\"") or "0.0.0"
+    return "0.0.0"
+
+
+_USER_AGENT = f"hindsight-hermes/{_plugin_version()}"
+
+
 def _scoped_setting(name: str, default: str = "") -> str:
     """Profile-scoped read of a retain SHAPING value, with the provider's own default on a miss.
 
@@ -163,7 +178,10 @@ def _fetch_hindsight_api_version(api_url: str, api_key: str | None = None, timeo
     if not api_url:
         return None
     url = api_url.rstrip("/") + "/version"
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {api_key}"} if api_key else {})
+    headers = {"User-Agent": _USER_AGENT}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
             data = json.loads(resp.read().decode("utf-8", errors="replace"))
@@ -802,7 +820,11 @@ class HindsightMemoryProvider(MemoryProvider):
     def _new_cloud_client(self):
         from hindsight_client import Hindsight
 
-        kwargs = {"base_url": self._api_url, "timeout": float(self._timeout or _DEFAULT_TIMEOUT)}
+        kwargs = {
+            "base_url": self._api_url,
+            "timeout": float(self._timeout or _DEFAULT_TIMEOUT),
+            "user_agent": _USER_AGENT,
+        }
         if self._api_key:
             kwargs["api_key"] = self._api_key
         logger.debug(

@@ -21,8 +21,12 @@ import {
   pageTriggerPatch,
   type RetainExtractionMode,
 } from "./missions";
+import { version as PKG_VERSION } from "../../package.json";
 import { pool, semverGte, sleep } from "./util";
 import type { RetainStamp } from "./retain-stamp";
+
+/** Sent on every request so the server can tell which integration is calling. */
+export const USER_AGENT = `hindsight-coding-agents/${PKG_VERSION}`;
 
 /** One node of GET /knowledge-base/tree. Only the fields this client reads. */
 export interface KnowledgeNode {
@@ -359,6 +363,7 @@ export class HindsightClient {
     const h: Record<string, string> = {
       "Content-Type": "application/json",
       "Accept-Encoding": "identity",
+      "User-Agent": USER_AGENT,
     };
     if (this.token) h["Authorization"] = `Bearer ${this.token}`;
     return h;

@@ -11,6 +11,8 @@ import requests
 from dify_plugin import ToolProvider
 from dify_plugin.errors.tool import ToolProviderCredentialValidationError
 
+from tools._client import USER_AGENT
+
 
 class HindsightProvider(ToolProvider):
     """Tool provider for Hindsight memory."""
@@ -21,7 +23,9 @@ class HindsightProvider(ToolProvider):
             raise ToolProviderCredentialValidationError("API URL is required.")
 
         api_key = credentials.get("api_key") or ""
-        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        headers = {"User-Agent": USER_AGENT}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
 
         try:
             resp = requests.get(f"{api_url}/health", headers=headers, timeout=10)

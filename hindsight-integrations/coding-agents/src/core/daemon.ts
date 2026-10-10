@@ -40,6 +40,7 @@ import { execFileSync, spawn as realSpawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config";
+import { USER_AGENT } from "./hindsight";
 import { diag } from "./diag";
 import { log } from "./log";
 
@@ -54,7 +55,10 @@ export const DAEMON_WAIT_RETAIN_MS = 40_000;
 /** Probe a base URL's /health. Never throws — an unreachable server is just "not running". */
 export async function isServerHealthy(baseUrl: string, timeoutMs = 2_000): Promise<boolean> {
   try {
-    const res = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(timeoutMs) });
+    const res = await fetch(`${baseUrl}/health`, {
+      headers: { "User-Agent": USER_AGENT },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
     return res.ok;
   } catch {
     return false;

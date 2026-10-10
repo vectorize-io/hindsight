@@ -36,6 +36,7 @@ describe("HindsightRestClient.recall", () => {
     expect(url).toBe("https://api.hindsight.vectorize.io/v1/default/banks/bank-1/memories/recall");
     expect(init.method).toBe("POST");
     expect(init.headers["Authorization"]).toBe("Bearer hsk_k");
+    expect(init.headers["User-Agent"]).toMatch(/^hindsight-eve\/\d+\.\d+\.\d+$/);
     expect(JSON.parse(init.body)).toEqual({ query: "preferences", budget: "low", max_tokens: 512 });
   });
 

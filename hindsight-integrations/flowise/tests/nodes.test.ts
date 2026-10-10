@@ -5,13 +5,16 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 const mockRetain = vi.fn();
 const mockRecall = vi.fn();
 const mockReflect = vi.fn();
+const clientOpts: unknown[] = [];
 
 vi.mock("@vectorize-io/hindsight-client", () => ({
   HindsightClient: class {
     retain = mockRetain;
     recall = mockRecall;
     reflect = mockReflect;
-    constructor(_opts: unknown) {}
+    constructor(opts: unknown) {
+      clientOpts.push(opts);
+    }
   },
 }));
 
@@ -50,6 +53,12 @@ describe("HindsightRetain node", () => {
     expect(tool.name).toBe("hindsight_retain");
     expect(typeof tool.func).toBe("function");
     expect(tool.schema).toBeDefined();
+  });
+
+  it("identifies itself to the API with the integration's User-Agent", async () => {
+    const credential = JSON.stringify({ apiUrl: "http://127.0.0.1:8888" });
+    await node.init({ credential, inputs: {} }, "", {});
+    expect(clientOpts.at(-1)).toMatchObject({ userAgent: "hindsight-flowise" });
   });
 
   it("forwards retain calls to the client with bankId, content, and tags", async () => {

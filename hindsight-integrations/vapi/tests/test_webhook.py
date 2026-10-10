@@ -63,6 +63,7 @@ class TestResolveClient:
         with patch("hindsight_vapi.webhook.Hindsight") as mock_cls:
             _resolve_client(None, "http://localhost:8888", None)
             mock_cls.assert_called_once()
+            assert mock_cls.call_args.kwargs["user_agent"].startswith("hindsight-vapi/")
 
     def test_raises_when_no_url(self) -> None:
         with pytest.raises(HindsightVapiError, match="No Hindsight API URL"):

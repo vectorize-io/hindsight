@@ -41,6 +41,10 @@ export class HindsightApi implements ICredentialType {
     properties: {
       headers: {
         Authorization: '={{ $credentials.apiKey ? "Bearer " + $credentials.apiKey : "" }}',
+        // Applied to every request made with this credential, so the node needs no header of
+        // its own. No version: the source and compiled files sit at different depths from
+        // package.json, so there is no single relative path to read it from.
+        "User-Agent": "hindsight-n8n",
       },
     },
   };

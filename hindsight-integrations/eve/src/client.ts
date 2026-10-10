@@ -9,6 +9,19 @@
  *   reflect: POST /v1/default/banks/{bank}/reflect
  */
 
+import { createRequire } from "node:module";
+
+function loadPackageVersion(): string {
+  try {
+    const pkg = createRequire(import.meta.url)("../package.json") as { version?: string };
+    return pkg.version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
+const USER_AGENT = `hindsight-eve/${loadPackageVersion()}`;
+
 export type RecallBudget = "low" | "mid" | "high";
 
 /** One memory returned by recall. The content lives in `text`. */
@@ -120,7 +133,10 @@ export class HindsightRestClient {
   }
 
   private headers(): Record<string, string> {
-    const h: Record<string, string> = { "Content-Type": "application/json" };
+    const h: Record<string, string> = {
+      "Content-Type": "application/json",
+      "User-Agent": USER_AGENT,
+    };
     if (this.token) h["Authorization"] = `Bearer ${this.token}`;
     return h;
   }

@@ -163,3 +163,18 @@ def test_main_recall_never_raises(tmp_path, monkeypatch):
 
     monkeypatch.setattr(hook, "_recall", boom)
     assert hook.main(["recall"]) == 0
+
+
+def test_mcp_sends_integration_user_agent(monkeypatch):
+    sent = {}
+
+    def fake_urlopen(req, timeout):
+        sent.update(req.headers)
+        raise OSError("offline")
+
+    monkeypatch.setattr(hook.urllib.request, "urlopen", fake_urlopen)
+    try:
+        hook._mcp("http://hs.test/mcp", None, {}, None)
+    except OSError:
+        pass
+    assert sent["User-agent"].startswith("hindsight-devin-desktop/")

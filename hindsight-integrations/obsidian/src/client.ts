@@ -9,6 +9,10 @@
 
 import type { Transport, TransportResponse } from "./transport";
 import type { ReflectOptions, ReflectResponse, RetainOptions } from "./types";
+// Inlined by esbuild: the installed plugin ships main.js without a package.json.
+import { version } from "../package.json";
+
+const USER_AGENT = `hindsight-obsidian/${version}`;
 
 /**
  * Encode a vault-relative document id for use in a URL `:path` segment:
@@ -33,7 +37,10 @@ export class HindsightClient {
   }
 
   private headers(): Record<string, string> {
-    const h: Record<string, string> = { "Content-Type": "application/json" };
+    const h: Record<string, string> = {
+      "Content-Type": "application/json",
+      "User-Agent": USER_AGENT,
+    };
     if (this.token) h["Authorization"] = `Bearer ${this.token}`;
     return h;
   }

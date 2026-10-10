@@ -228,6 +228,7 @@ describe("agent.run.started", () => {
     const recallCall = fetchMock.mock.calls.find(([url]: [string]) => url.includes("recall"));
     expect(recallCall).toBeDefined();
     expect(recallCall?.[0]).toContain("paperclip%3A%3Aco-1%3A%3Aag-1");
+    expect(recallCall?.[1]?.headers["User-Agent"]).toMatch(/^hindsight-paperclip\/\d+\.\d+\.\d+$/);
 
     const recallBody = JSON.parse(recallCall?.[1]?.body as string) as { query: string };
     expect(recallBody.query).toContain("Refactor auth module");

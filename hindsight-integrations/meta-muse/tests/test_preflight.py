@@ -16,6 +16,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
+from hindsight_meta_muse import preflight
 from hindsight_meta_muse.preflight import PreflightReport, run_preflight
 
 GOOD_TOKEN = "good-token"
@@ -195,3 +196,21 @@ async def test_rejected_token_fails(http: aiohttp.ClientSession) -> None:
     report = await _run(FakeHindsight(), http, "wrong-token")
 
     assert _failed(report) == ["MCP initialize succeeds with the token"]
+
+
+def test_cli_session_sends_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+    real_session = aiohttp.ClientSession
+
+    def recording_session(**kwargs: object) -> aiohttp.ClientSession:
+        seen.update(kwargs)
+        return real_session(**kwargs)
+
+    async def no_checks(url: str, token: str | None, session: aiohttp.ClientSession) -> PreflightReport:
+        return PreflightReport()
+
+    monkeypatch.setattr(preflight.aiohttp, "ClientSession", recording_session)
+    monkeypatch.setattr(preflight, "run_preflight", no_checks)
+    assert preflight.main(["http://hs.test/mcp"]) == 0
+    assert seen["headers"] == {"User-Agent": preflight.USER_AGENT}
+    assert preflight.USER_AGENT.startswith("hindsight-meta-muse/")
