@@ -2524,24 +2524,24 @@ class TestConcurrentWorkers:
         # worker's claims down to our bank — parallel test files may contribute
         # other pending rows that these workers legitimately pick up.
         workers_claimed: dict[str, list[str]] = {"worker-1": [], "worker-2": [], "worker-3": []}
+        pollers = {
+            worker_id: WorkerPoller(backend=backend, worker_id=worker_id, executor=lambda x: None)
+            for worker_id in workers_claimed
+        }
 
         async def claim_for_worker(worker_id: str):
-            poller = WorkerPoller(
-                backend=backend,
-                worker_id=worker_id,
-                executor=lambda x: None,
-            )
-            claimed = await poller.claim_batch()
-            workers_claimed[worker_id] = [
+            claimed = await pollers[worker_id].claim_batch()
+            workers_claimed[worker_id] += [
                 task.operation_id for task in claimed if task.task_dict.get("bank_id") == bank_id
             ]
 
-        # Run all workers concurrently
-        await asyncio.gather(
-            claim_for_worker("worker-1"),
-            claim_for_worker("worker-2"),
-            claim_for_worker("worker-3"),
-        )
+        # Poll all workers concurrently, a few cycles. One cycle need not drain everything: a
+        # candidate lost to SKIP LOCKED makes a claim return fewer rows than are free, and the next
+        # poll takes it (see _claim_shared_tasks). Asserting on a single cycle failed in CI with 9/10.
+        for _ in range(5):
+            await asyncio.gather(*(claim_for_worker(worker_id) for worker_id in workers_claimed))
+            if sum(len(claimed) for claimed in workers_claimed.values()) >= 10:
+                break
 
         # Verify no duplicates - each task claimed by exactly one worker
         all_claimed = workers_claimed["worker-1"] + workers_claimed["worker-2"] + workers_claimed["worker-3"]
