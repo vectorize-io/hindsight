@@ -14,10 +14,10 @@ def _retain_item(fake: FakeClient, index: int = 0) -> dict:
     return fake.retains[index]["items"][0]
 
 
-def _turns_of(fake: FakeClient, index: int = 0) -> list[list[str]]:
-    """Message texts per turn in one retain. Content is ``"[" + ",".join(turns) + "]"``
-    where each turn is itself a JSON array, so the whole payload is a list of turns."""
-    return [[m["content"] for m in turn] for turn in json.loads(_retain_item(fake, index)["content"])]
+def _messages_of(fake: FakeClient, index: int = 0) -> list[str]:
+    """Message texts in one retain. Content is one flat JSON array of messages (#5262):
+    a list of per-turn lists would keep the server from chunking by turn."""
+    return [m["content"] for m in json.loads(_retain_item(fake, index)["content"])]
 
 
 def test_sync_turn_retains_the_turn(provider):
@@ -32,8 +32,7 @@ def test_sync_turn_retains_the_turn(provider):
     item = _retain_item(fake)
     assert item["update_mode"] == "append"
     assert "hermes" in item["tags"] and "session:session-1" in item["tags"]
-    messages = json.loads(item["content"][1:-1])
-    assert [m["content"] for m in messages] == ["User: what is my name?", "Assistant: Ada."]
+    assert _messages_of(fake) == ["User: what is my name?", "Assistant: Ada."]
 
 
 def test_retain_every_n_turns_buffers_then_ships_the_batch(provider):
@@ -45,6 +44,17 @@ def test_retain_every_n_turns_buffers_then_ships_the_batch(provider):
 
     assert len(fake.retains) == 1
     assert _retain_item(fake)["metadata"]["message_count"] == "4"
+
+
+def test_shutdown_flushes_turns_below_the_retain_cadence(provider):
+    """#5493: turns waiting for the next every-N retain must not die with the process."""
+    instance, fake = provider({"retain_every_n_turns": 3})
+    instance.sync_turn("one", "1")
+    instance.sync_turn("two", "2")
+    instance.shutdown()
+
+    assert len(fake.retains) == 1
+    assert _messages_of(fake) == ["User: one", "Assistant: 1", "User: two", "Assistant: 2"]
 
 
 def test_auto_retain_off_stores_nothing(provider):
@@ -221,6 +231,28 @@ def test_session_switch_starts_a_new_document(provider):
     assert [call["document_id"] for call in fake.retains] == ["session-1", "session-2"]
 
 
+def test_session_switch_follows_a_session_bank_template(provider):
+    """#4824: a {session} bank template names one bank per session, so a switch moves
+    writes to the new session's bank."""
+    instance, fake = provider({"bank_id_template": "hermes-{session}"})
+    instance.sync_turn("one", "1")
+    instance.on_session_switch("session-2")
+    instance.sync_turn("two", "2")
+    instance.shutdown()
+
+    assert [call["bank_id"] for call in fake.retains] == ["hermes-session-1", "hermes-session-2"]
+
+
+def test_a_session_named_as_its_own_parent_gets_no_parent_tag(provider):
+    """#5422: in-place compaction reports the session as its own parent; tagging it would
+    flip the document's tag set and re-consolidate it from scratch."""
+    instance, fake = provider({}, parent_session_id="session-1")
+    instance.sync_turn("one", "1")
+    instance.shutdown()
+
+    assert _retain_item(fake)["tags"] == ["session:session-1"]
+
+
 def test_register_exposes_the_provider_to_hermes():
     registered = []
     plugin.register(type("Ctx", (), {"register_memory_provider": lambda _self, p: registered.append(p)})())
@@ -244,8 +276,8 @@ def test_append_mode_drops_retained_turns_from_the_buffer(provider):
     instance.shutdown()
 
     # Each retain still carries only its own un-retained tail, never a replay.
-    assert _turns_of(fake, 0) == [["User: one", "Assistant: 1"]]
-    assert _turns_of(fake, 1) == [["User: two", "Assistant: 2"]]
+    assert _messages_of(fake, 0) == ["User: one", "Assistant: 1"]
+    assert _messages_of(fake, 1) == ["User: two", "Assistant: 2"]
 
 
 def test_overwrite_mode_keeps_every_turn(provider, monkeypatch):
@@ -262,7 +294,9 @@ def test_overwrite_mode_keeps_every_turn(provider, monkeypatch):
     instance.shutdown()
 
     # The second retain resends the whole session, which is what overwrite means.
-    assert _turns_of(fake, 1) == [["User: one", "Assistant: 1"], ["User: two", "Assistant: 2"]]
+    assert _messages_of(fake, 1) == ["User: one", "Assistant: 1", "User: two", "Assistant: 2"]
+    # Shutdown on a cadence boundary sends nothing more: every turn already went out.
+    assert len(fake.retains) == 2
 
 
 def test_root_warning_goes_through_the_hosts_warning_callback(provider, monkeypatch):

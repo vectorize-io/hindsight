@@ -640,7 +640,7 @@ class HindsightMemoryProvider(MemoryProvider):
             },
             {
                 "key": "observation_scopes",
-                "description": "How observations are scoped during consolidation: 'combined' (default — one pass over all tags), 'per_tag' (one isolated observation per tag), 'all_combinations' (every tag subset — expensive), or a JSON list of tag-lists for explicit custom scopes. Empty uses Hindsight's 'combined' default.",
+                "description": "How observations are scoped during consolidation: 'combined' (default — one pass over all tags), 'per_tag' (one isolated observation per tag), 'all_combinations' (every tag subset — expensive), 'shared' (one untagged scope, so observations merge across sessions), or a JSON list of tag-lists for explicit custom scopes. Empty uses Hindsight's 'combined' default.",
                 "default": "",
             },
             {
@@ -1190,6 +1190,18 @@ class HindsightMemoryProvider(MemoryProvider):
                 ordered.append(bank)
         return ordered
 
+    def _resolve_template_bank(self) -> str:
+        return _resolve_bank_id_template(
+            self._bank_id_template,
+            fallback=self._static_bank_id,
+            profile=self._agent_identity,
+            workspace=self._agent_workspace,
+            project=self._project,
+            platform=self._platform,
+            user=self._user_id,
+            session=self._session_id,
+        )
+
     def _apply_connection_settings(self, cfg: dict) -> None:
         """Endpoint, bank and mode selectors from *cfg* (env fallbacks where documented)."""
         self._api_key = _cloud_api_key(cfg)
@@ -1220,16 +1232,7 @@ class HindsightMemoryProvider(MemoryProvider):
         if cwd_bank:
             self._bank_id, self._bank_source = cwd_bank, "repository config"
         else:
-            self._bank_id = _resolve_bank_id_template(
-                self._bank_id_template,
-                fallback=self._static_bank_id,
-                profile=self._agent_identity,
-                workspace=self._agent_workspace,
-                project=self._project,
-                platform=self._platform,
-                user=self._user_id,
-                session=self._session_id,
-            )
+            self._bank_id = self._resolve_template_bank()
             self._bank_source = "template" if self._bank_id_template else "bank_id"
         # Multi-bank write/recall (optional, default off): the deduped ordered
         # set used for write fan-out and prioritized recall merge.
@@ -1635,16 +1638,27 @@ class HindsightMemoryProvider(MemoryProvider):
     ) -> Callable[[], None]:
         """Writer job shipping *turns* as one document. Inputs are snapshotted NOW: the
         writer runs after later sync_turn() calls mutate _session_turns/_turn_index/_session_id."""
-        content = "[" + ",".join(turns) + "]"
+        # One flat message array: the server only chunks by turn (and merges appends)
+        # when the document is a list of messages, not a list of per-turn lists.
+        content = json.dumps([message for turn in turns for message in json.loads(turn)], ensure_ascii=False)
         metadata = self._build_metadata(message_count=len(turns) * 2, turn_index=self._turn_index)
-        lineage = (("session", self._session_id), ("parent", self._parent_session_id))
+        occurred_at = _event_timestamp()
+        # A session named as its own parent (in-place compaction) is no lineage; tagging it
+        # would flip the document's tag set and re-consolidate it from scratch.
+        parent = self._parent_session_id if self._parent_session_id != self._session_id else ""
+        lineage = (("session", self._session_id), ("parent", parent))
         tags = [f"{kind}:{sid}" for kind, sid in lineage if sid] or None
         bank_ids = list(self._write_bank_ids)
         retain_async, retain_context = self._retain_async, self._retain_context
 
         def _job() -> None:
             item = self._build_retain_kwargs(
-                content, context=retain_context, metadata=metadata, tags=tags, update_mode=update_mode
+                content,
+                context=retain_context,
+                metadata=metadata,
+                tags=tags,
+                occurred_at=occurred_at,
+                update_mode=update_mode,
             )
 
             def _write(bank_id: str) -> None:
@@ -1821,6 +1835,25 @@ class HindsightMemoryProvider(MemoryProvider):
 
     # -- session lifecycle -------------------------------------------------------
 
+    def _flush_buffered_turns(self, label: str) -> None:
+        """Queue the buffered turns under the CURRENT session/document ids."""
+        if not self._session_turns or self._shutting_down.is_set():
+            return
+        document_id, update_mode = self._resolve_retain_target(self._document_id)
+        job = self._make_turn_retain_job(
+            list(self._session_turns), document_id=document_id, update_mode=update_mode, label=label, track_ops=False
+        )
+
+        def _flush() -> None:
+            try:
+                job()
+            except Exception as e:
+                logger.warning("Hindsight %s failed: %s", label, e, exc_info=True)
+
+        # Same writer queue as sync_turn: FIFO behind queued retains, no two threads
+        # racing aretain_batch on one document, shutdown drain intact.
+        self._enqueue_retain(_flush)
+
     def on_session_switch(
         self, new_session_id: str, *, parent_session_id: str = "", reset: bool = False, **kwargs
     ) -> None:
@@ -1846,26 +1879,7 @@ class HindsightMemoryProvider(MemoryProvider):
 
         # 1. Flush buffered turns under the OLD identifiers, resolved BEFORE the
         # rotation (legacy: per-process unique; >=0.5.0: session-scoped + append).
-        if self._session_turns:
-            old_document_id, old_update_mode = self._resolve_retain_target(self._document_id)
-            job = self._make_turn_retain_job(
-                list(self._session_turns),
-                document_id=old_document_id,
-                update_mode=old_update_mode,
-                label="flush-on-switch",
-                track_ops=False,
-            )
-
-            def _flush():
-                try:
-                    job()
-                except Exception as e:
-                    logger.warning("Hindsight flush-on-switch failed: %s", e, exc_info=True)
-
-            # Same writer queue as sync_turn: FIFO behind queued old-session retains,
-            # no two threads racing aretain_batch on one document, shutdown drain intact.
-            if not self._shutting_down.is_set():
-                self._enqueue_retain(_flush)
+        self._flush_buffered_turns("flush-on-switch")
 
         # 2. Drain the old session's in-flight prefetch and drop its result.
         self._join_prefetch(3.0)
@@ -1876,6 +1890,10 @@ class HindsightMemoryProvider(MemoryProvider):
         if parent_session_id:
             self._parent_session_id = str(parent_session_id).strip()
         self._session_id, self._document_id = new_id, _mint_document_id(new_id)
+        # A {session} bank template names a bank per session: follow the switch.
+        if self._bank_source == "template" and "session" in _template_fields(self._bank_id_template):
+            self._bank_id = self._resolve_template_bank()
+            self._write_bank_ids = self._build_write_bank_ids()
         self._session_turns = []
         self._turn_counter = self._turn_index = self._last_retained_turn_count = 0
         logger.debug(
@@ -1898,6 +1916,10 @@ class HindsightMemoryProvider(MemoryProvider):
 
     def shutdown(self) -> None:
         logger.debug("Hindsight shutdown: stopping writer + waiting for background threads")
+        # Ship turns still waiting for the retain_every_n_turns cadence. Skipped on a
+        # cadence boundary: overwrite mode keeps every turn buffered, all already sent.
+        if self._turn_counter % self._retain_every_n_turns:
+            self._flush_buffered_turns("flush-on-shutdown")
         # Stop accepting retain jobs first so late sync_turn() calls are dropped.
         self._shutting_down.set()
         # The writer finishes in-flight work then exits on the sentinel; the
