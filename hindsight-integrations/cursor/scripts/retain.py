@@ -37,7 +37,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lib.bank import derive_bank_id, ensure_bank_mission
 from lib.client import HindsightClient
-from lib.config import debug_log, load_config
+from lib.config import debug_log, load_config, read_hook_input
 from lib.content import (
     prepare_retention_transcript,
     slice_last_turns_by_user_boundary,
@@ -165,8 +165,8 @@ def main():
 
     # Read hook input from stdin
     try:
-        hook_input = json.load(sys.stdin)
-    except (json.JSONDecodeError, EOFError):
+        hook_input = read_hook_input()
+    except ValueError:
         print("[Hindsight] Failed to read hook input", file=sys.stderr)
         return
 

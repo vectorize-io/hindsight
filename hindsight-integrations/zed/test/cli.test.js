@@ -45,10 +45,9 @@ test("init writes settings, rule, and scaffolds config", () => {
 
     const settings = JSON.parse(readFileSync(join(dir, "settings.json"), "utf-8"));
     const server = settings.context_servers[SERVER_NAME];
-    assert.equal(server.command, "npx");
-    assert.ok(server.args.includes("mcp-remote"));
-    assert.ok(server.args.some((a) => a.includes("/mcp/proj/")));
-    assert.ok(server.args.includes("Authorization: Bearer tok"));
+    assert.ok(server.url.endsWith("/mcp/proj/"));
+    assert.deepEqual(server.headers, { Authorization: "Bearer tok" });
+    assert.equal(server.command, undefined);
 
     assert.ok(readFileSync(join(dir, "AGENTS.md"), "utf-8").includes(BEGIN_MARKER));
 
@@ -65,7 +64,7 @@ test("init --print-only writes nothing", () => {
   try {
     const { code, out } = run(["init", "--print-only", "--bank-id", "zed", ...paths(dir)]);
     assert.equal(code, 0);
-    assert.ok(out.includes("mcp-remote"));
+    assert.ok(out.includes("/mcp/"));
     assert.ok(out.includes("recall"));
     assert.equal(existsSync(join(dir, "settings.json")), false);
     assert.equal(existsSync(join(dir, "AGENTS.md")), false);
@@ -109,7 +108,7 @@ test("init on a JSONC settings file prints the manual snippet, leaves it untouch
     writeFileSync(settingsPath, '{\n  // keep me\n  "theme": "one"\n}\n');
     const { out } = run(["init", "--api-token", "tok", ...paths(dir)]);
     assert.ok(out.includes("has comments"));
-    assert.ok(out.includes("mcp-remote"));
+    assert.ok(out.includes("/mcp/"));
     assert.ok(readFileSync(settingsPath, "utf-8").includes("// keep me"));
   } finally {
     rmSync(dir, { recursive: true, force: true });

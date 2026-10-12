@@ -28,8 +28,9 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lib.bank import derive_bank_id, ensure_bank_mission
+from lib.bank import workspace_root as get_workspace_root
 from lib.client import HindsightClient
-from lib.config import debug_log, load_config
+from lib.config import debug_log, load_config, read_hook_input
 from lib.content import format_current_time, format_memories
 from lib.daemon import get_api_url
 from lib.rules_file import (
@@ -100,8 +101,8 @@ def main():
 
     # Read hook input from stdin
     try:
-        hook_input = json.load(sys.stdin)
-    except (json.JSONDecodeError, EOFError):
+        hook_input = read_hook_input()
+    except ValueError:
         print("[Hindsight] Failed to read hook input", file=sys.stderr)
         _write_recall_status("error", reason="bad_stdin")
         return
@@ -112,8 +113,7 @@ def main():
     # nothing, the workspace ends up with no rules file rather than carrying
     # stale memories from a previous session. See lib/rules_file.py for the
     # upstream Cursor bug this works around.
-    workspace_roots = hook_input.get("workspace_roots") or []
-    workspace_root = workspace_roots[0] if workspace_roots else ""
+    workspace_root = get_workspace_root(hook_input)
     if workspace_root and config.get("useRulesFileFallback", True):
         rotate_session_rules(workspace_root, debug_fn=lambda m: debug_log(config, m))
 

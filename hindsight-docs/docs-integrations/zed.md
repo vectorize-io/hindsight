@@ -17,11 +17,11 @@ Zed has no pre-prompt hook, but it supports two things this integration uses:
 - **MCP context servers:** Zed runs MCP servers configured under `context_servers` in `settings.json` and surfaces their tools in the Agent Panel. `hindsight-zed` registers the Hindsight MCP server there, giving the agent `recall` / `retain` / `reflect` tools.
 - **A global instructions file** (`~/.config/zed/AGENTS.md`) that Zed includes in every conversation. The integration adds a small rule there telling the agent to recall first and retain what it learns.
 
-Zed doesn't yet have native HTTP-MCP transport, so the server is connected through the [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) stdio bridge (run via `npx`), which means Node.js must be installed.
+Zed connects to the Hindsight MCP endpoint natively by URL (with your API key as a Bearer header), so no bridge process runs.
 
 ## Setup
 
-`hindsight-zed` is a zero-dependency Node CLI — Node.js is the only requirement (already needed for the `mcp-remote` bridge). Run it straight from npm with `npx`:
+`hindsight-zed` is a zero-dependency Node CLI — Node.js is only needed to run this setup tool. Run it straight from npm with `npx`:
 
 ```bash
 npx @vectorize-io/hindsight-zed init --api-token YOUR_HINDSIGHT_API_KEY --bank-id my-memory

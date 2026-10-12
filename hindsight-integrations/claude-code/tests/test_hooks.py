@@ -648,6 +648,58 @@ class TestRetainHook:
         assert "more stuff" in captured_calls[1]["items"][0]["content"]
         assert "hello" not in captured_calls[1]["items"][0]["content"]
 
+    def test_full_session_delta_keeps_every_new_turn(self, monkeypatch, tmp_path):
+        """A later chunk keeps the whole new slice, not just the part after the
+        last role=user entry (tool results are role=user too)."""
+        first = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "world"}]
+        transcript = make_transcript_file(tmp_path, first)
+        hook_input = make_hook_input(transcript_path=transcript, session_id="sess-delta-full")
+        captured_calls = []
+
+        def capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                captured_calls.append(json.loads(req.data.decode()))
+            return FakeHTTPResponse({})
+
+        _run_hook("retain", hook_input, monkeypatch, tmp_path, urlopen_side_effect=capture)
+
+        grown = first + [
+            {"role": "user", "content": "second question"},
+            {"role": "assistant", "content": "second answer"},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "tool output"}]},
+            {"role": "assistant", "content": "third answer"},
+        ]
+        make_transcript_file(tmp_path, grown)
+        _run_hook("retain", hook_input, monkeypatch, tmp_path, urlopen_side_effect=capture)
+
+        content = captured_calls[1]["items"][0]["content"]
+        assert "second question" in content
+        assert "second answer" in content
+        assert "third answer" in content
+
+    def test_retain_sends_transcript_timestamp(self, monkeypatch, tmp_path):
+        """The retain item is dated by the newest transcript entry, not left to default to now."""
+        f = tmp_path / "transcript.jsonl"
+        entries = [
+            {"type": "user", "timestamp": "2024-03-01T10:00:00.000Z", "message": {"role": "user", "content": "hi"}},
+            {
+                "type": "assistant",
+                "timestamp": "2024-03-01T10:00:05.000Z",
+                "message": {"role": "assistant", "content": "hello there"},
+            },
+        ]
+        f.write_text("\n".join(json.dumps(e) for e in entries))
+        captured = {}
+
+        def capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                captured["body"] = json.loads(req.data.decode())
+            return FakeHTTPResponse({})
+
+        _run_hook("retain", make_hook_input(transcript_path=str(f)), monkeypatch, tmp_path, urlopen_side_effect=capture)
+
+        assert captured["body"]["items"][0]["timestamp"] == "2024-03-01T10:00:05.000Z"
+
     def test_full_session_skips_when_transcript_has_no_new_messages(self, monkeypatch, tmp_path):
         messages = [
             {"role": "user", "content": "hello"},

@@ -7,8 +7,8 @@
  * (via the rule) to use them automatically. There is no background process.
  */
 
-import { writeFileSync, mkdirSync, existsSync, statSync } from "node:fs";
-import { dirname, join, delimiter } from "node:path";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { parseArgs } from "node:util";
 
 import { VERSION } from "./version.js";
@@ -64,23 +64,6 @@ function scaffoldConfig(cfg, path) {
   writeFileSync(path, JSON.stringify(data, null, 2) + "\n", "utf-8");
 }
 
-/** Whether `cmd` resolves on PATH (mirrors Python's `shutil.which`). */
-function commandExists(cmd) {
-  const dirs = (process.env.PATH || "").split(delimiter).filter(Boolean);
-  const exts = process.platform === "win32" ? [".exe", ".cmd", ".bat", ""] : [""];
-  for (const dir of dirs) {
-    for (const ext of exts) {
-      const candidate = join(dir, cmd + ext);
-      try {
-        if (existsSync(candidate) && statSync(candidate).isFile()) return true;
-      } catch {
-        // ignore unreadable PATH entries
-      }
-    }
-  }
-  return false;
-}
-
 function cmdInit(values) {
   const cfg = resolveConfig(values);
   const settingsPath = values["settings-path"] || defaultSettingsPath();
@@ -112,11 +95,6 @@ function cmdInit(values) {
     );
   }
   console.log(`  Wrote recall/retain rule to ${outcome.rulesPath}`);
-
-  if (!commandExists("npx")) {
-    console.log("\n  warning: `npx` (Node.js) was not found on PATH. Zed runs the MCP");
-    console.log("  bridge via `npx mcp-remote`, so install Node.js for the server to start.");
-  }
 
   console.log("\nDone. Restart Zed, open the Agent Panel, and the `hindsight` MCP server");
   console.log("should show a green dot. Memory recall/retain then happen automatically.");

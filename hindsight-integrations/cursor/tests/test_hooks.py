@@ -14,11 +14,16 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 
+def _stdin(hook_input: dict, prefix: bytes = b"") -> io.TextIOWrapper:
+    """A stdin stand-in with a byte buffer, like the real one hooks read from."""
+    return io.TextIOWrapper(io.BytesIO(prefix + json.dumps(hook_input).encode("utf-8")))
+
+
 class TestSessionStartHook:
     def test_skips_when_auto_recall_disabled(self, monkeypatch, capsys):
         monkeypatch.setenv("CURSOR_PLUGIN_ROOT", "/nonexistent")
         monkeypatch.setenv("HINDSIGHT_AUTO_RECALL", "false")
-        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"workspace_roots": ["/tmp/test"]})))
+        monkeypatch.setattr("sys.stdin", _stdin({"workspace_roots": ["/tmp/test"]}))
 
         import session_start
 
@@ -37,7 +42,7 @@ class TestSessionStartHook:
         }
 
         hook_input = {"workspace_roots": ["/tmp/test-project"], "cwd": "/tmp/test-project"}
-        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
+        monkeypatch.setattr("sys.stdin", _stdin(hook_input))
 
         import session_start
 
@@ -64,7 +69,7 @@ class TestSessionStartHook:
         mock_client.recall.return_value = {"results": []}
 
         hook_input = {"workspace_roots": ["/tmp/test-project"]}
-        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
+        monkeypatch.setattr("sys.stdin", _stdin(hook_input))
 
         import session_start
 
@@ -87,7 +92,7 @@ class TestSessionStartHook:
         mock_client.recall.return_value = {"results": [{"text": "Uses FastAPI", "type": "world"}]}
 
         hook_input = {"workspace_roots": ["/home/user/projects/my-app"]}
-        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
+        monkeypatch.setattr("sys.stdin", _stdin(hook_input))
 
         import session_start
 
@@ -113,7 +118,7 @@ class TestSessionStartHook:
         mock_client.recall.return_value = {"results": []}
 
         hook_input = {"workspace_roots": ["/tmp/test"]}
-        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
+        monkeypatch.setattr("sys.stdin", _stdin(hook_input))
 
         import session_start
 
@@ -137,7 +142,7 @@ class TestRetainHook:
     def test_skips_when_auto_retain_disabled(self, monkeypatch, capsys):
         monkeypatch.setenv("CURSOR_PLUGIN_ROOT", "/nonexistent")
         monkeypatch.setenv("HINDSIGHT_AUTO_RETAIN", "false")
-        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"conversation_id": "c1"})))
+        monkeypatch.setattr("sys.stdin", _stdin({"conversation_id": "c1"}))
 
         import retain
 
@@ -147,12 +152,40 @@ class TestRetainHook:
         output = capsys.readouterr()
         assert output.out == ""
 
+    def test_accepts_bom_prefixed_stdin(self, monkeypatch, tmp_path, capsys):
+        """Cursor on Windows prefixes hook stdin with a UTF-8 BOM."""
+        monkeypatch.setenv("CURSOR_PLUGIN_ROOT", "/nonexistent")
+        monkeypatch.setenv("CURSOR_PLUGIN_DATA", str(tmp_path / "data"))
+        monkeypatch.setenv("HINDSIGHT_RETAIN_EVERY_N_TURNS", "1")
+        transcript_path = tmp_path / "transcript.jsonl"
+        transcript_path.write_text(
+            json.dumps({"role": "user", "content": "Build a React app"})
+            + "\n"
+            + json.dumps({"role": "assistant", "content": "Sure, creating it now."})
+        )
+        hook_input = {"conversation_id": "c-bom", "transcript_path": str(transcript_path)}
+        monkeypatch.setattr("sys.stdin", _stdin(hook_input, prefix=b"\xef\xbb\xbf"))
+        mock_client = MagicMock()
+
+        import retain
+
+        importlib.reload(retain)
+        with (
+            patch.object(retain, "get_api_url", return_value="http://localhost:8888"),
+            patch.object(retain, "HindsightClient", return_value=mock_client),
+            patch.object(retain, "ensure_bank_mission"),
+        ):
+            retain.main()
+
+        assert "Failed to read hook input" not in capsys.readouterr().err
+        mock_client.retain.assert_called_once()
+
     def test_skips_empty_transcript(self, monkeypatch, capsys):
         monkeypatch.setenv("CURSOR_PLUGIN_ROOT", "/nonexistent")
         monkeypatch.setenv("HINDSIGHT_API_URL", "http://localhost:8888")
 
         hook_input = {"conversation_id": "c1", "transcript_path": "/nonexistent/transcript.jsonl"}
-        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
+        monkeypatch.setattr("sys.stdin", _stdin(hook_input))
 
         import retain
 
@@ -234,7 +267,7 @@ class TestRetainHook:
             "transcript_path": str(transcript_path),
             "cwd": "/tmp/test",
         }
-        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
+        monkeypatch.setattr("sys.stdin", _stdin(hook_input))
         monkeypatch.setenv("CURSOR_PLUGIN_DATA", str(tmp_path / "data"))
 
         import retain
@@ -274,7 +307,7 @@ class TestRetainTriggers:
     def _run(self, monkeypatch, tmp_path, hook_input, mock_client):
         monkeypatch.setenv("CURSOR_PLUGIN_ROOT", "/nonexistent")
         monkeypatch.setenv("CURSOR_PLUGIN_DATA", str(tmp_path / "data"))
-        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
+        monkeypatch.setattr("sys.stdin", _stdin(hook_input))
 
         import retain
 

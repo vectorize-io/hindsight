@@ -157,3 +157,12 @@ def debug_log(config: dict, *args):
     """Log to stderr if debug mode is enabled."""
     if config.get("debug"):
         print("[Hindsight]", *args, file=sys.stderr)
+
+
+def read_hook_input() -> dict:
+    """Parse the hook JSON from stdin.
+
+    Cursor on Windows prefixes hook stdin with a UTF-8 BOM, which plain
+    ``json.load`` rejects; ``utf-8-sig`` drops it when present.
+    """
+    return json.loads(sys.stdin.buffer.read().decode("utf-8-sig"))

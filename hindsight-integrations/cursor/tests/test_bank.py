@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from lib.bank import derive_bank_id, DEFAULT_BANK_NAME
+from lib.bank import DEFAULT_BANK_NAME, derive_bank_id, workspace_root
 
 
 class TestDeriveBankId:
@@ -87,6 +87,19 @@ class TestDeriveBankId:
         }
         result = derive_bank_id({}, config)
         assert result == "unknown"
+
+    def test_dynamic_mode_project_from_workspace_roots(self):
+        """sessionStart sends workspace_roots and no cwd; Windows roots look like /C:/..."""
+        config = {"dynamicBankId": True, "dynamicBankGranularity": ["project"], "agentName": "cursor"}
+        assert derive_bank_id({"workspace_roots": ["/home/u/research"]}, config) == "research"
+        assert derive_bank_id({"workspace_roots": ["/C:/Users/u/research"]}, config) == "research"
+        # cwd still wins when present
+        assert derive_bank_id({"cwd": "/a/other", "workspace_roots": ["/b/research"]}, config) == "other"
+
+    def test_workspace_root_strips_windows_leading_slash(self):
+        assert workspace_root({"workspace_roots": ["/C:/Users/u/research"]}) == "C:/Users/u/research"
+        assert workspace_root({"workspace_roots": ["/home/u/research"]}) == "/home/u/research"
+        assert workspace_root({}) == ""
 
     def test_dynamic_mode_channel_user(self, monkeypatch):
         monkeypatch.setenv("HINDSIGHT_CHANNEL_ID", "slack-general")

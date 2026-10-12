@@ -123,6 +123,7 @@ class HindsightClient:
         context: Optional[str] = None,
         metadata: Optional[dict] = None,
         tags: Optional[list] = None,
+        timestamp: Optional[str] = None,
         timeout: int = 15,
     ) -> dict:
         """Retain content into a bank's memory.
@@ -141,6 +142,8 @@ class HindsightClient:
             item["context"] = context
         if tags:
             item["tags"] = tags
+        if timestamp:
+            item["timestamp"] = timestamp
         body = {
             "items": [item],
             "async": True,

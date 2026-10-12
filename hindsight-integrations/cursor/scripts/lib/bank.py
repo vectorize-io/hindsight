@@ -5,6 +5,7 @@ the Cursor session context.
 """
 
 import os
+import re
 import sys
 import urllib.parse
 
@@ -13,6 +14,19 @@ from .state import read_state, write_state
 DEFAULT_BANK_NAME = "cursor"
 
 VALID_FIELDS = {"agent", "project", "session", "channel", "user"}
+
+
+def workspace_root(hook_input: dict) -> str:
+    """First entry of Cursor's ``workspace_roots``, as a usable local path.
+
+    On Windows Cursor sends roots as ``/C:/Users/...``; the leading slash makes
+    that a path that does not exist, so drop it.
+    """
+    roots = hook_input.get("workspace_roots") or []
+    root = roots[0] if roots else ""
+    if re.match(r"^/[A-Za-z]:", root):
+        root = root[1:]
+    return root
 
 
 def derive_bank_id(hook_input: dict, config: dict) -> str:
@@ -39,7 +53,8 @@ def derive_bank_id(hook_input: dict, config: dict) -> str:
                 file=sys.stderr,
             )
 
-    cwd = hook_input.get("cwd", "")
+    # sessionStart sends only workspace_roots, no cwd.
+    cwd = hook_input.get("cwd") or workspace_root(hook_input)
     session_id = hook_input.get("conversation_id") or hook_input.get("session_id", "")
     agent_name = config.get("agentName", "cursor")
     channel_id = os.environ.get("HINDSIGHT_CHANNEL_ID", "")

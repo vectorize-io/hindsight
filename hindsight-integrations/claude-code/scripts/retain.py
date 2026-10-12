@@ -58,6 +58,10 @@ def read_transcript(transcript_path: str) -> list:
                     if entry.get("type") in ("user", "assistant"):
                         msg = entry.get("message", {})
                         if isinstance(msg, dict) and msg.get("role"):
+                            # Carry the entry's time so the retain is dated by
+                            # when the conversation happened, not when it was sent.
+                            if entry.get("timestamp"):
+                                msg = {**msg, "timestamp": entry["timestamp"]}
                             messages.append(msg)
                     # Flat format (testing / future compatibility)
                     elif "role" in entry and "content" in entry:
@@ -92,7 +96,6 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
     # Retention mode: full session (default) or chunked (legacy)
     retain_mode = config.get("retainMode", "full-session")
     retain_every_n = max(1, config.get("retainEveryNTurns", 1))
-    retain_full_window = False
     messages_to_retain = all_messages
     document_id = session_id
     retention_progress = None
@@ -118,7 +121,6 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
         overlap_turns = config.get("retainOverlapTurns", 0)
         window_turns = retain_every_n + overlap_turns
         messages_to_retain = slice_last_turns_by_user_boundary(all_messages, window_turns)
-        retain_full_window = True
         document_id = f"{session_id}-{int(time.time() * 1000)}"
         debug_log(
             config,
@@ -130,7 +132,6 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
             debug_log(config, f"No new messages for session {session_id}, skipping retain")
             return
         messages_to_retain = all_messages[retention_progress.start_index :]
-        retain_full_window = retention_progress.start_index == 0
         if retention_progress.compacted:
             debug_log(
                 config,
@@ -147,8 +148,10 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
     # Format transcript
     retain_roles = config.get("retainRoles", ["user", "assistant"])
     include_tool_calls = config.get("retainToolCalls", True)
+    # Both modes already picked exactly the messages to send (full session: the
+    # not-yet-retained suffix; chunked: the sliding window), so keep all of them.
     transcript, message_count = prepare_retention_transcript(
-        messages_to_retain, retain_roles, retain_full_window, include_tool_calls=include_tool_calls
+        messages_to_retain, retain_roles, retain_full_window=True, include_tool_calls=include_tool_calls
     )
 
     if not transcript:
@@ -237,6 +240,8 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
             context=config.get("retainContext", "claude-code"),
             metadata=metadata,
             tags=tags,
+            # Date the content by its newest message, not by when it is sent.
+            timestamp=next((m["timestamp"] for m in reversed(messages_to_retain) if m.get("timestamp")), None),
             timeout=15,
         )
         if retention_progress is not None:
