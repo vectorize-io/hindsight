@@ -839,6 +839,19 @@ describe("runRetainHook honors retainSessions", () => {
     expect(makeClient).not.toHaveBeenCalled();
   });
 
+  it("retainSessions: false still records usage, which is local only (#5391)", async () => {
+    const usageFile = join(root, "usage.jsonl");
+    vi.stubEnv("HINDSIGHT_USAGE_FILE", usageFile);
+    rawConfig = { retainSessions: false };
+    const { retain, makeClient } = stubClient();
+    await runRetainHook(spec, makeClient);
+    expect(retain).not.toHaveBeenCalled();
+    expect(JSON.parse(readFileSync(usageFile, "utf8"))).toMatchObject({
+      harness: "claude-code",
+      session: event().session_id,
+    });
+  });
+
   it("a banks.<id> override opts one repo out while the global default still writes", async () => {
     const bankId = deriveBankId(resolveConfig(), root, spec.harness, root);
     rawConfig = { banks: { [bankId]: { retainSessions: false } } };

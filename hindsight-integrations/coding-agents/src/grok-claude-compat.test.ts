@@ -119,3 +119,66 @@ describe("Claude Code hooks run by Grok", () => {
     expect(makeClient).toHaveBeenCalled();
   });
 });
+
+/** Everything a hook wrote to stdout. */
+const captured = async (run: () => Promise<void>): Promise<string> => {
+  const write = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+  try {
+    await run();
+    return write.mock.calls.map((c) => String(c[0])).join("");
+  } finally {
+    write.mockRestore();
+  }
+};
+
+// Grok hands the model `additionalContext` from tool hooks only: SessionStart is observe-only and
+// UserPromptSubmit can only block, so context emitted there never reached the model (#5467).
+describe("Grok Build context delivery", () => {
+  const grok = HOOK_HARNESSES["grok-build"];
+  const toolUse = () => grokEvent("post_tool_use", "PostToolUse", { toolName: "read_file" });
+
+  it("delivers SessionStart and prompt context once, on the next PostToolUse", async () => {
+    vi.stubEnv("GROK_HOOK_EVENT", "session_start");
+    stdin = grokEvent("session_start", "SessionStart", { source: "new" });
+    const started = await captured(() =>
+      runSessionStartHook(grok.sessionStart, () => ({
+        listPages: async () => ({ items: [] }),
+        listDocumentIds: async () => new Set<string>(),
+      }))
+    );
+    expect(started).not.toContain("additionalContext");
+
+    vi.stubEnv("GROK_HOOK_EVENT", "user_prompt_submit");
+    stdin = grokEvent("user_prompt_submit", "UserPromptSubmit", { prompt: "which parser?" });
+    const prompted = await captured(() => runHook(grok.prompt, promptClient() as never));
+    expect(prompted).not.toContain("additionalContext");
+
+    vi.stubEnv("GROK_HOOK_EVENT", "post_tool_use");
+    stdin = toolUse();
+    const delivered = JSON.parse(
+      await captured(() => runHook(grok.prompt, promptClient() as never))
+    );
+    expect(delivered.hookSpecificOutput.hookEventName).toBe("PostToolUse");
+    const context: string = delivered.hookSpecificOutput.additionalContext;
+    // Both stashed blocks arrive: the session preamble and the prompt's roster refresh.
+    expect(context).toContain("<hindsight_knowledge>");
+    expect(context).toContain("<hindsight_knowledge_refresh>");
+
+    // Delivered once: the next tool call has nothing to hand over, and never builds a client.
+    stdin = toolUse();
+    const makeClient = promptClient();
+    expect(await captured(() => runHook(grok.prompt, makeClient as never))).toBe("");
+    expect(makeClient).not.toHaveBeenCalled();
+  });
+
+  it("installs the prompt entry on PostToolUse; other hosts still emit on the prompt", async () => {
+    expect(grok.additionalHooks).toEqual([
+      { event: "PostToolUse", entry: "grok-hook.js", timeout: 30 },
+    ]);
+    stdin = grokEvent("user_prompt_submit", "UserPromptSubmit", { prompt: "which parser?" });
+    const out = await captured(() =>
+      runHook(HOOK_HARNESSES["claude-code"].prompt, promptClient() as never)
+    );
+    expect(JSON.parse(out).hookSpecificOutput.additionalContext).toBeTruthy();
+  });
+});

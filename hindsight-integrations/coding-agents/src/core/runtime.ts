@@ -241,8 +241,10 @@ export class RuntimeCore {
     lastTurnComplete: boolean
   ): Promise<void> {
     if (process.env.HINDSIGHT_DISABLE_HOOKS) return; // anti-recursion (see seedIfCold)
-    if (!this.writeBackEnabled || !sessionId || !turns.length) return;
+    if (!sessionId || !turns.length) return;
+    // Usage is a local file, so it is recorded whether or not write-back is on (#5391).
     this.recordUsage(sessionId, turns, lastTurnComplete);
+    if (!this.writeBackEnabled) return;
     const st = this.stateFor(sessionId);
     this.retain(sessionId, turns, st.startTs);
   }
@@ -261,7 +263,7 @@ export class RuntimeCore {
    */
   async onSessionIdle(sessionId: string): Promise<void> {
     if (process.env.HINDSIGHT_DISABLE_HOOKS) return; // anti-recursion (see seedIfCold)
-    if (!this.writeBackEnabled || !sessionId || !this.fetchTranscript) return;
+    if (!sessionId || !this.fetchTranscript) return;
     let turns: TransportTurn[];
     try {
       turns = await this.fetchTranscript(sessionId);
@@ -274,6 +276,7 @@ export class RuntimeCore {
     }
     if (!turns.length) return;
     this.recordUsage(sessionId, turns, true); // idle: the reply is in
+    if (!this.writeBackEnabled) return; // usage above is local and recorded regardless (#5391)
     const st = this.stateFor(sessionId);
     // idle can fire more than once for one exchange (and again on a session with no new activity);
     // only retain when this transcript actually grew past what we last wrote.

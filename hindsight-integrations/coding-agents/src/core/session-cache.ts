@@ -66,6 +66,45 @@ export function writeSessionCache(cacheFile: string, cache: SessionCache): void 
   }
 }
 
+/** Context a prompt hook could not deliver itself, waiting for the session's next tool hook (see
+ *  HookSpec.toolHook). Its own file: `buildHookOutput` rewrites the session cache every turn. */
+function pendingContextFile(harness: string, sessionId: string): string {
+  return join(tmpdir(), `hindsight-${harness}`, `${sessionId}.pending`);
+}
+
+/** Add a block to the session's pending context. A block already waiting is not added again, so a
+ *  session that goes several turns without a tool call is not handed the same roster N times. */
+export function stashPendingContext(harness: string, sessionId: string, context: string): void {
+  const path = pendingContextFile(harness, sessionId);
+  let existing = "";
+  try {
+    existing = readFileSync(path, "utf8");
+  } catch {
+    /* nothing pending yet */
+  }
+  if (existing.includes(context)) return;
+  try {
+    writeFileAtomic(path, existing ? `${existing}\n\n${context}` : context);
+  } catch {
+    /* best-effort, like the session cache */
+  }
+}
+
+/** Claim and clear the session's pending context. The rename is the claim: tool hooks can run in
+ *  parallel, and only the one whose rename succeeds delivers the block. */
+export function takePendingContext(harness: string, sessionId: string): string | undefined {
+  const path = pendingContextFile(harness, sessionId);
+  const claimed = `${path}.${process.pid}.claim`;
+  try {
+    renameSync(path, claimed);
+    return readFileSync(claimed, "utf8") || undefined;
+  } catch {
+    return undefined;
+  } finally {
+    rmSync(claimed, { force: true });
+  }
+}
+
 /** The session root's own file, deliberately NOT the shared session cache — see sessionRootDir. */
 function sessionRootFile(harness: string, sessionId: string): string {
   return join(tmpdir(), `hindsight-${harness}`, `${sessionId}.root`);

@@ -482,6 +482,10 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
       prompt: { event: "UserPromptSubmit", entry: "grok-hook.js", timeout: 30 },
       stop: { event: "Stop", entry: "grok-stop-hook.js", timeout: 60 },
     },
+    // Grok hands the model `additionalContext` from TOOL hooks only: SessionStart is observe-only
+    // and UserPromptSubmit can only block (#5467). Both stash their context instead, and the
+    // prompt entry, also registered on PostToolUse, delivers it beside the next tool result.
+    additionalHooks: [{ event: "PostToolUse", entry: "grok-hook.js", timeout: 30 }],
     sessionStart: {
       ...standardSessionStart("grok-build"),
       // Grok's wire envelope is camelCase, unlike Claude's similarly named hook events.
@@ -489,10 +493,19 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
         cwd: ev.cwd as string | undefined,
         sessionId: ev.sessionId as string | undefined,
       }),
+      deferContextToToolHook: true,
     },
     prompt: {
       ...claudePrompt,
       harness: "grok-build",
+      toolHook: {
+        // Grok names the event twice: snake_case `hookEventName`, plus a Claude-named alias.
+        accept: (ev) =>
+          ev.hookEventName === "post_tool_use" || ev.hook_event_name === "PostToolUse",
+        emit: (context) => ({
+          hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: context },
+        }),
+      },
       parse: (ev) => ({
         prompt: ev.prompt as string | undefined,
         cwd: ev.cwd as string | undefined,

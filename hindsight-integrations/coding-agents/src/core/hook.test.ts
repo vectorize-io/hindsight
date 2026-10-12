@@ -512,7 +512,7 @@ describe("buildHookOutput", () => {
     expect(next.context ?? "").not.toContain("<hindsight_memory>");
   });
 
-  it("autoInject pages: a FAILED search is retried, an empty one is not", async () => {
+  it("autoInject pages: a FAILED search is retried within its budget", async () => {
     // The retryability fix is not reflect-only. A page search that threw used to cache "" just
     // like a search that matched nothing, so a transient blip cost the whole session (#4607).
     const cfg = resolveConfig({ autoInject: "pages" });
@@ -530,15 +530,51 @@ describe("buildHookOutput", () => {
     expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBe("");
     await buildHookOutput(args);
     expect(client.searchKnowledgePages).toHaveBeenCalledTimes(2);
+  });
 
-    // A search that RAN and matched nothing is an answer, not a failure: cached on the first turn.
+  it("autoInject recall: an EMPTY result retries on a later prompt, within a bounded budget", async () => {
+    // An empty first recall used to be cached as "" and stopped injection for the whole session,
+    // although each turn queries with its OWN prompt (#5082).
+    const cfg = resolveConfig({ autoInject: "recall" });
+    const recallObservations = vi
+      .fn<(q: string, o: { timeoutMs: number }) => Promise<string[]>>()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(["Uploads retry 3 times."]);
+    const client = makeClient({ recallObservations });
+    const args = { harness: "claude-code", prompt: MATCHING_PROMPT, cfg, client, cacheFile };
+    const first = await buildHookOutput(args);
+    expect(first.context ?? "").not.toContain("Uploads retry 3 times.");
+    expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBeUndefined();
+    const second = await buildHookOutput(args);
+    expect(second.context).toContain("Uploads retry 3 times.");
+    expect(recallObservations).toHaveBeenCalledTimes(2);
+
+    // Bounded: a bank that never matches stops being asked after five empty turns.
     rmSync(cacheFile, { force: true });
-    const empty = makeClient({ searchKnowledgePages: vi.fn(async () => []) });
-    const emptyArgs = { ...args, client: empty };
-    await buildHookOutput(emptyArgs);
+    const empty = makeClient({ recallObservations: vi.fn(async () => []) });
+    for (let i = 0; i < 7; i++) await buildHookOutput({ ...args, client: empty });
+    expect(empty.recallObservations).toHaveBeenCalledTimes(5);
     expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBe("");
-    await buildHookOutput(emptyArgs);
-    expect(empty.searchKnowledgePages).toHaveBeenCalledTimes(1);
+  });
+
+  it("autoInject recall: bounds the query under the server's 500-token cap", async () => {
+    // A 2000-character slice sent ~1000 tokens of CJK, which older servers reject with HTTP 400,
+    // so long or non-Latin prompts got no memory at all (#5476).
+    const recallObservations = vi.fn(async (_q: string, _o: { timeoutMs: number }) => [] as string[]);
+    const client = makeClient({ recallObservations });
+    const cfg = resolveConfig({ autoInject: "recall" });
+    const bytes = (s: string) => Buffer.byteLength(s, "utf8");
+    for (const prompt of ["记忆".repeat(1500), "🧠".repeat(1000), "word ".repeat(1000)]) {
+      rmSync(cacheFile, { force: true });
+      await buildHookOutput({ harness: "claude-code", prompt, cfg, client, cacheFile });
+      const query = recallObservations.mock.calls.at(-1)![0] as string;
+      expect(query.length).toBeGreaterThan(0);
+      expect(prompt.startsWith(query)).toBe(true);
+      // Non-ASCII: never more UTF-8 bytes than the cap (a BPE token spans at least one byte).
+      if (!/^[\x00-\x7f]*$/.test(prompt)) expect(bytes(query)).toBeLessThanOrEqual(500);
+    }
+    // ASCII keeps a useful query length rather than collapsing to the byte bound.
+    expect((recallObservations.mock.calls.at(-1)![0] as string).length).toBe(1000);
   });
 
   it("autoInject recall: injects recalled observations, never reflects or searches pages", async () => {

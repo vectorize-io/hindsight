@@ -166,6 +166,29 @@ describe("RuntimeCore session-idle write-back", () => {
     }
   });
 
+  it("records usage with retainSessions off, and still retains nothing (#5391)", async () => {
+    const usageFile = join(mkdtempSync(join(tmpdir(), "hs-rt-usage-")), "usage.jsonl");
+    vi.stubEnv("HINDSIGHT_USAGE_FILE", usageFile);
+    try {
+      const { client, retained } = makeClient();
+      const runtime = new RuntimeCore(client, "bank-1", resolveConfig({ retainSessions: false }));
+      const turns = [turn("user", "how do we round?"), turn("assistant", "half up")];
+      await runtime.onTranscript("s7", turns, true);
+      runtime.setTranscriptSource(async () => [
+        ...turns,
+        turn("user", "and ties?"),
+        turn("assistant", "even"),
+      ]);
+      await runtime.onSessionIdle("s7");
+      await new Promise((r) => setTimeout(r, 0));
+      expect(retained).toHaveLength(0);
+      const recorded = readFileSync(usageFile, "utf8").trim().split("\n");
+      expect(recorded.map((l) => JSON.parse(l).turn)).toEqual([1, 2]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("no-ops when the host cannot refetch, rather than retaining a stale transcript", async () => {
     const { client, retained } = makeClient();
     const runtime = new RuntimeCore(client, "bank-1", resolveConfig({}));

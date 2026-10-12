@@ -100,7 +100,8 @@ export async function buildRetain(args: {
   harness: string;
   sessionId: string;
   transcriptPath: string;
-  client: RetainClient;
+  /** Absent when write-back is off: usage is still recorded, nothing is retained (#5391). */
+  client?: RetainClient;
   readTranscript?: TranscriptReader;
   lastAssistantMessage?: string;
   readLastMessage?: LastMessageReader;
@@ -152,6 +153,7 @@ export async function buildRetain(args: {
     reviseLastTurn: true,
   });
 
+  if (!client) return;
   const startTs = turns[0]?.timestamp ?? new Date().toISOString();
   const t0 = Date.now();
   try {
@@ -226,24 +228,26 @@ export async function runRetainHook(
   if (cfg.disabled) return; // per-bank opt-out (banks.<id> override)
   // Checked only HERE, after the bank is resolved, so a `banks.<id>` section can turn write-back
   // back on for one repo under a global `retainSessions: false` (and vice versa). Before the
-  // daemon start below: a session that writes nothing has no reason to bring a server up.
+  // daemon start below: a session that writes nothing has no reason to bring a server up. It still
+  // reads the transcript, because usage is recorded either way — it is a local file (#5391).
+  let client: RetainClient | undefined;
   if (!cfg.retainSessions) {
     diag(spec.harness, "retain_disabled", { bank: bankId, session: sessionId });
-    return;
+  } else {
+    // Last chance to get the daemon up: this is the write path, and a session whose daemon never
+    // started would otherwise lose its whole conversation. The Stop hook has the longest budget of
+    // any hook and nothing is waiting on its result, so it can afford the longer wait.
+    // Deliberately NOT gated on the result — retain proceeds either way, so an unreachable daemon
+    // produces the same `retain_failed` diagnostic as an unreachable Cloud/self-hosted server.
+    await ensureDaemon(cfg, spec.harness, { waitMs: DAEMON_WAIT_RETAIN_MS });
+    client = makeClient({
+      apiUrl: cfg.apiUrl,
+      apiToken: cfg.apiToken,
+      bank: bankId,
+      maxParallelRetains: cfg.maxParallelRetains,
+      observationScopes: cfg.observationScopes,
+    });
   }
-  // Last chance to get the daemon up: this is the write path, and a session whose daemon never
-  // started would otherwise lose its whole conversation. The Stop hook has the longest budget of
-  // any hook and nothing is waiting on its result, so it can afford the longer wait.
-  // Deliberately NOT gated on the result — retain proceeds either way, so an unreachable daemon
-  // produces the same `retain_failed` diagnostic as an unreachable Cloud/self-hosted server.
-  await ensureDaemon(cfg, spec.harness, { waitMs: DAEMON_WAIT_RETAIN_MS });
-  const client = makeClient({
-    apiUrl: cfg.apiUrl,
-    apiToken: cfg.apiToken,
-    bank: bankId,
-    maxParallelRetains: cfg.maxParallelRetains,
-    observationScopes: cfg.observationScopes,
-  });
 
   await buildRetain({
     harness: spec.harness,

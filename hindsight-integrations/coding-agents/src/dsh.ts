@@ -244,6 +244,9 @@ function injectionMessage(text: string): DshUserMessage {
  * real Cordis events; the tests drive them with a stand-in agent and core.
  */
 export function createDshHooks(resolve: (agent: DshAgent) => Workspace | undefined) {
+  // sessionId -> the block last appended. dsh keeps every injected message in the history it sends,
+  // so re-appending an unchanged block (the per-turn roster) only stacks identical copies (#5026).
+  const lastInjected = new Map<string, string>();
   return {
     sessionStart({ agent }: { agent: DshAgent }): void {
       const workspace = resolve(agent);
@@ -275,6 +278,11 @@ export function createDshHooks(resolve: (agent: DshAgent) => Workspace | undefin
         diag(HARNESS, "inject_empty", { session: sessionId });
         return decision;
       }
+      if (injection === lastInjected.get(sessionId)) {
+        diag(HARNESS, "inject_unchanged", { session: sessionId });
+        return decision;
+      }
+      lastInjected.set(sessionId, injection);
       diag(HARNESS, "inject_ok", { session: sessionId, chars: injection.length });
       return { kind: "enter", messages: [...decision.messages, injectionMessage(injection)] };
     },
@@ -291,6 +299,7 @@ export function createDshHooks(resolve: (agent: DshAgent) => Workspace | undefin
 
     disposed({ agent }: { agent: DshAgent }): void {
       liveAgents.delete(agent.session.header.id);
+      lastInjected.delete(agent.session.header.id);
     },
   };
 }

@@ -36,7 +36,12 @@ import type { ClientOpts, RetainOpts } from "./hindsight";
 import { buildRetainStamp } from "./retain-stamp";
 import { detectLegacyClaudePlugin, legacyClaudePluginWarning } from "./legacy";
 import { HindsightClient } from "./hindsight";
-import { sessionCacheFile, sessionRootDir, writeSessionCache } from "./session-cache";
+import {
+  sessionCacheFile,
+  sessionRootDir,
+  stashPendingContext,
+  writeSessionCache,
+} from "./session-cache";
 
 /** Minimal client shape `buildSessionStartContext` needs. */
 interface SeedContextClient {
@@ -133,6 +138,9 @@ export interface SessionStartHookSpec {
   /** Optional event gate, evaluated before config loading: false makes the hook a silent no-op. */
   accept?(event: Record<string, unknown>): boolean;
   emit(output: SessionStartOutput): unknown;
+  /** The host drops SessionStart context (Grok Build, #5467): stash it for the session's first tool
+   *  hook instead — see HookSpec.toolHook. */
+  deferContextToToolHook?: boolean;
   /** Optional per-repo host registration, run once memory is confirmed LIVE for the repo (after
    *  bank derivation and the opt-in/`disabled` gates). Returns an optional user-facing banner
    *  hint (registration maintenance is host business, its absence a host problem) and must never
@@ -414,6 +422,10 @@ export async function runSessionStartHook(
       out.systemMessage = out.systemMessage ? `${out.systemMessage}\n${mcpHint}` : mcpHint;
     if (out.deferInitialReflect && sessionId) {
       writeSessionCache(sessionCacheFile(harness, sessionId), { deferInitialReflect: true });
+    }
+    if (spec.deferContextToToolHook && out.additionalContext && sessionId) {
+      stashPendingContext(harness, sessionId, out.additionalContext);
+      out.additionalContext = undefined;
     }
     // The lifecycle computes one host-neutral output; the registry owns each host's wire schema.
     const payload = spec.emit(out);

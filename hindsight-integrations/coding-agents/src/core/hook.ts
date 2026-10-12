@@ -44,6 +44,8 @@ import {
   readSessionCache,
   sessionCacheFile,
   sessionRootDir,
+  stashPendingContext,
+  takePendingContext,
   writeSessionCache,
   type SessionCache,
 } from "./session-cache";
@@ -73,6 +75,13 @@ export interface HookSpec {
   /** Wrap injected context (and an optional user-facing notice) in the harness's native
    *  hook-output schema. Harnesses whose schema has no user-visible channel ignore `notice`. */
   emit(context: string, notice?: string, event?: Record<string, unknown>): unknown;
+  /** For a host that only hands a TOOL hook's context to the model (Grok Build, #5467): the
+   *  turn's context is stashed for the session instead of emitted, and the next event this
+   *  accepts (a tool hook routed to the same entry) delivers it once through `emit`. */
+  toolHook?: {
+    accept(event: Record<string, unknown>): boolean;
+    emit(context: string): unknown;
+  };
 }
 
 /** Minimal client shape `buildHookOutput` needs — `HindsightClient` satisfies it structurally. */
@@ -94,17 +103,41 @@ interface HookClient {
  *  reflect path), so a dead server spends this many turns before every later turn is free. */
 const HOOK_INJECT_ATTEMPTS = 2;
 
+/** How many turns a pages/recall source may come back EMPTY on before the session stops asking.
+ *  Larger than the failure budget: an empty retrieval is cheap (no LLM), and its query is the
+ *  current prompt, so an opener like "hi" matching nothing says nothing about the real question. */
+const HOOK_INJECT_EMPTY_ATTEMPTS = 5;
+
 /**
  * What to cache for a once-per-session auto-injection, given what the source returned.
  *
- * `null` (ran, nothing to say) resolves the session — `""` is cached and no later turn retries.
- * `undefined` (failed) stays unresolved so a later turn can try again, until the attempt budget
- * is spent. Caching a failure as an answer is what made one first-prompt timeout cost a whole
- * session's memory (#4607); applied to all three sources, not just reflect.
+ * `null` (ran, nothing matched THIS prompt) and `undefined` (failed) both stay unresolved so a
+ * later turn can try again, each until its own attempt budget is spent. Caching either as an
+ * answer cost the whole session its memory: a first-prompt timeout (#4607), or a first prompt
+ * that simply matched nothing (#5082).
  */
 function resolveInjection(got: string | null | undefined, attempts: number): string | undefined {
   if (got != null) return got;
-  return got === null || attempts >= HOOK_INJECT_ATTEMPTS ? "" : undefined;
+  const budget = got === null ? HOOK_INJECT_EMPTY_ATTEMPTS : HOOK_INJECT_ATTEMPTS;
+  return attempts >= budget ? "" : undefined;
+}
+
+/** Servers older than the query truncation reject a recall query over 500 tokens with HTTP 400,
+ *  which cost the turn its memory on long or non-Latin prompts (#5476). A byte-level BPE token
+ *  never covers less than one UTF-8 byte, so non-ASCII is costed at its byte length (a true
+ *  ceiling) and ASCII at half a token, which still leaves English and code ~1000 characters. */
+const RECALL_QUERY_MAX_TOKENS = 500;
+
+function boundRecallQuery(prompt: string): string {
+  let cost = 0;
+  let end = 0;
+  for (const ch of prompt) {
+    const cp = ch.codePointAt(0)!;
+    cost += cp < 0x80 ? 0.5 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+    if (cost > RECALL_QUERY_MAX_TOKENS) break;
+    end += ch.length;
+  }
+  return prompt.slice(0, end);
 }
 
 /** Knowledge-page search for the prompt, formatted for injection. `null` = it ran and nothing
@@ -145,7 +178,7 @@ async function injectRecall(
   const t0 = Date.now();
   try {
     // What is asked for — types, token budget, everything — is the client's `recallOptions`.
-    const observations = await client.recallObservations(prompt.slice(0, 2000), { timeoutMs });
+    const observations = await client.recallObservations(boundRecallQuery(prompt), { timeoutMs });
     diag(harness, event, { ms: Date.now() - t0, count: observations.length });
     return observations.length ? formatRecallFallback(observations, lead) : null;
   } catch (e) {
@@ -397,6 +430,12 @@ export async function runHook(
   if (!ev) return;
   if (spec.accept && !spec.accept(ev)) return;
   const { prompt: rawPrompt, cwd: rawCwd, sessionId } = spec.parse(ev);
+  if (spec.toolHook?.accept(ev)) {
+    // Runs on every tool call, so it does nothing but hand over what a prompt hook stashed.
+    const pending = sessionId ? takePendingContext(spec.harness, sessionId) : undefined;
+    if (pending) process.stdout.write(JSON.stringify(spec.toolHook.emit(pending)));
+    return;
+  }
   if (spec.requireCwd && !rawCwd) return;
   const cwd = rawCwd || process.cwd();
   const prompt = (rawPrompt || "").trim();
@@ -460,5 +499,10 @@ export async function runHook(
   ) {
     startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
   }
-  if (output.context || output.notice) out(output.context, output.notice);
+  let context = output.context;
+  if (context && spec.toolHook && sessionId) {
+    stashPendingContext(spec.harness, sessionId, context);
+    context = undefined;
+  }
+  if (context || output.notice) out(context, output.notice);
 }
