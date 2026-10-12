@@ -297,6 +297,8 @@ class TestMentalModelsCRUD:
 
         monkeypatch.setattr(embedding_utils, "generate_embeddings_batch", pausing_generate)
 
+        # Raw read: the engine API never exposes a model's embedding, and a stale
+        # vector is exactly what this regression is about.
         async def stored_embedding() -> str:
             async with memory._pool.acquire() as conn:
                 return await conn.fetchval(

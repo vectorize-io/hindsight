@@ -8,6 +8,7 @@ import time
 from typing import Any
 
 import aiohttp
+from pydantic import BaseModel
 
 from ..aiohttp_session import per_phase_timeout, proxy_env_is_set
 from .base import FileParser, UnsupportedFileTypeError
@@ -24,6 +25,18 @@ _DEFAULT_TIMEOUT = 300.0  # seconds
 # HTTP status codes that indicate the file type is not supported.
 # Other 4xx codes (401, 403, 429, etc.) are operational errors, not file-type issues.
 _UNSUPPORTED_FILE_STATUS_CODES = {400, 415, 422}
+
+
+class _ParseJob(BaseModel):
+    status: str | None = None
+    error_message: str | None = None
+
+
+class _ParseResult(BaseModel):
+    """``GET /api/v2/parse/{id}``: ``job`` always, ``markdown_full`` when expanded."""
+
+    job: _ParseJob = _ParseJob()
+    markdown_full: str | None = None
 
 
 class LlamaParseParser(FileParser):
@@ -85,14 +98,13 @@ class LlamaParseParser(FileParser):
         deadline = time.monotonic() + self._timeout
         while True:
             async with session.get(f"{_LLAMA_PARSE_BASE_URL}/{job_id}", headers=self._auth_headers) as resp:
-                status_data = await _json_or_raise(resp, filename, "poll job status")
-            job = status_data.get("job") or {}
-            status = job.get("status")
+                job = _ParseResult.model_validate(await _json_or_raise(resp, filename, "poll job status")).job
+            status = job.status
 
             if status == "COMPLETED":
                 break
             if status in ("FAILED", "CANCELLED"):
-                error = job.get("error_message") or status.lower()
+                error = job.error_message or status.lower()
                 raise RuntimeError(f"LlamaParse job failed for '{filename}': {error}")
 
             if time.monotonic() >= deadline:
@@ -104,8 +116,8 @@ class LlamaParseParser(FileParser):
         async with session.get(
             f"{_LLAMA_PARSE_BASE_URL}/{job_id}", headers=self._auth_headers, params={"expand": "markdown_full"}
         ) as resp:
-            result_data = await _json_or_raise(resp, filename, "fetch markdown result")
-        markdown = result_data.get("markdown_full")
+            result = _ParseResult.model_validate(await _json_or_raise(resp, filename, "fetch markdown result"))
+        markdown = result.markdown_full
         if not markdown:
             raise RuntimeError(f"No content extracted from '{filename}'")
         return markdown
