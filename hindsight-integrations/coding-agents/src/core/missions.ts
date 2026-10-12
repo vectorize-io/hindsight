@@ -207,10 +207,13 @@ export interface KnowledgePage {
  * The subject-scoping clause every page this plugin creates carries, naming the subject it is
  * about — the seeded taxonomy (through `pagesFor`) and each captured initiative alike.
  *
- * `project` is the repository when the bank is one repository's, and the BANK otherwise — a bank
+ * `project` is the repository when the bank is one repository's, and undefined otherwise — a bank
  * several repos share has no repo to name, and naming whichever one seeded last made the sentence
- * flip on every session start (#4146). Either way it must be stable for the bank, because the
- * clause is PATCHed onto pages that outlive the session.
+ * flip on every session start (#4146). Naming the BANK instead, as this once did, scoped every page
+ * to a project no memory is about, so a shared bank's pages all came out empty (#4490): such a bank
+ * gets a clause that keeps the dependency exclusion and attributes each item to its own project.
+ * Either way it must be stable for the bank, because the clause is PATCHed onto pages that outlive
+ * the session.
  *
  * A bank collects everything said IN a repository, which is NOT the same as everything said ABOUT
  * it: a repo that reads its dependency's source, drafts its upstream issues, or documents how it
@@ -228,7 +231,15 @@ export interface KnowledgePage {
  * (`codingBankManifest`, #2492) — a mission-only fix would never reach an existing bank, while a
  * reworded query re-syncs through `seedPages()`'s drift PATCH on the next run.
  */
-export function pageScopeRule(project: string): string {
+export function pageScopeRule(project?: string): string {
+  if (project === undefined)
+    return (
+      ` This bank is shared by several projects: attribute each thing you include to the ` +
+      `repository or project its sources name, and group by project where that helps. Leave out ` +
+      `facts about external tools, libraries and services those projects merely use, configure, ` +
+      `deploy or discuss — they belong to somebody else's codebase — including any commit SHA or ` +
+      `identifier from such a dependency's repository.`
+    );
   return (
     ` Scope this page to ${project} ITSELF: the bank also holds facts about external tools, ` +
     `libraries and services that ${project} merely uses, configures, deploys or discusses, and ` +
@@ -324,7 +335,7 @@ export type CustomPagesConfig = Record<string, CustomPage>;
  * failure mode someone rewording or adding a question is not thereby choosing to take on.
  */
 export function pagesFor(
-  project: string,
+  project: string | undefined,
   pages: PagesConfig = {},
   customPages: CustomPagesConfig = {}
 ): KnowledgePage[] {

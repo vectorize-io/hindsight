@@ -36,7 +36,7 @@
  * Fire-and-forget and fail-safe throughout, mirroring core/seed.ts's `startBackgroundSeed`: a
  * missing binary or a spawn failure must silently no-op, never crash the caller.
  */
-import { spawn as realSpawn } from "node:child_process";
+import { execFileSync, spawn as realSpawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -124,6 +124,26 @@ function resolveAgentBin(harness: SurveyHarness, claudeBin?: string): string {
       return process.env.HINDSIGHT_ANTIGRAVITY_BIN || "agy";
     case "opencode":
       return process.env.HINDSIGHT_OPENCODE_BIN || "opencode";
+  }
+}
+
+/**
+ * Whether `bin` is opencode v1 — the only opencode our plugin can teach SURVEY_AGENT to. npm
+ * `@opencode/cli` (v2, versioned `0.0.0-beta-…`) publishes an `opencode` bin too, and a v2 plugin
+ * cannot define an agent (harness/opencode2.ts), so `run --agent hindsight-survey` under it dies
+ * with "agent hindsight-survey not found" (#5084). Any probe failure answers no.
+ */
+function opencodeCanDefineSurveyAgent(bin: string): boolean {
+  try {
+    const out = execFileSync(bin, ["--version"], {
+      encoding: "utf8",
+      timeout: 5_000,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return Number(/(\d+)\./.exec(out)?.[1] ?? 0) >= 1;
+  } catch {
+    return false;
   }
 }
 
@@ -306,6 +326,7 @@ export async function startCodebaseSurvey(
     claudeBin?: string;
     spawn?: typeof realSpawn;
     exists?: (bin: string) => boolean; // seam for tests
+    opencodeDefinesAgent?: (bin: string) => boolean; // seam for tests
     supervisorPath?: string;
     lease?: { dir?: string; staleMs?: number; heartbeatMs?: number }; // seam for tests
   } = {}
@@ -332,6 +353,12 @@ export async function startCodebaseSurvey(
       seen.add(harness);
       const bin = resolveAgentBin(harness, opts.claudeBin);
       if (!exists(bin)) continue;
+      // A runner that cannot have the survey agent would only fail after the lease is taken.
+      if (
+        harness === "opencode" &&
+        !(opts.opencodeDefinesAgent ?? opencodeCanDefineSurveyAgent)(bin)
+      )
+        continue;
 
       const plan = buildSurveyPlan(harness, bin, repoDir, {
         model: opts.model,

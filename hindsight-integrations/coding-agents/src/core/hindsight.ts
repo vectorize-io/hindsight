@@ -100,11 +100,11 @@ export interface ClientOpts {
   apiUrl: string;
   apiToken?: string;
   bank: string;
-  /** Repository this bank is about, named in every seeded page's query (`pageScopeRule`). Only
-   *  `seedPages()` reads it. Undefined when no single repository is (a shared static bank, a path
-   *  map, a bank several repos are renamed onto) — the query then names the BANK, which is the
-   *  only stable subject such a bank has. Must be a property of the bank and never of the calling
-   *  session's cwd: see `bankProjectName` (#4146). */
+  /** Repository this bank is about, named in every page query this client writes
+   *  (`pageScopeRule`). Undefined when no single repository is (a shared static bank, a path map, a
+   *  bank several repos are renamed onto) — the query then gets the shared-bank clause, which
+   *  names no project (#4490). Must be a property of the bank and never of the calling session's
+   *  cwd: see `bankProjectName` (#4146). */
   project?: string;
   log?: (msg: string) => void;
   /** Cap on concurrent retain-related requests (drain op polls, deepen pools). Default 10. */
@@ -570,6 +570,15 @@ export class HindsightClient {
     }
   }
 
+  /** Whether the bank holds any document at all — a one-row listing. A bank that does not exist
+   *  yet (404) holds none; any other failure throws, so a caller can tell "empty" from "unknown". */
+  async hasDocuments(): Promise<boolean> {
+    const r = await this.req("GET", this.bankUrl("/documents?limit=1"));
+    if (r.status === 404) return false;
+    const j = (await r.json()) as { items?: unknown[]; total?: number };
+    return (j.total ?? j.items?.length ?? 0) > 0;
+  }
+
   /** Configure the bank: POST the coding bank manifest to /import (missions, retain strategies,
    *  entity labels), then seed knowledge pages when the server supports them. Both halves are
    *  idempotent and ADDITIVE — nothing the bank already says is overwritten (#3927), bar the
@@ -909,10 +918,9 @@ export class HindsightClient {
     pagesConfig: PagesConfig = {},
     customPages: CustomPagesConfig = {}
   ): Promise<void> {
-    // The bank id is the fallback subject, not a degraded one: for a bank no single repository
-    // owns it is the only name that stays put across sessions, and under the default
-    // `coding-agent::{gitProject}` template `project` is always set, so it never applies there.
-    const pages = pagesFor(this.project ?? this.bank, pagesConfig, customPages);
+    // No project = a bank no single repository owns: the shared-bank clause. Pages seeded under the
+    // old bank-named clause drift from it and are PATCHed below, which rebuilds them (#4490).
+    const pages = pagesFor(this.project, pagesConfig, customPages);
     const existing = new Map<string, KnowledgeNode>();
     let roots: KnowledgeNode[];
     try {
@@ -1007,7 +1015,7 @@ export class HindsightClient {
     }
     const initiatives = await this.resyncInitiativeTriggers(roots, pageTrigger);
     this.log(
-      `[bank] knowledge pages seeded on ${this.bank} (scoped to ${this.project ?? this.bank}): ` +
+      `[bank] knowledge pages seeded on ${this.bank} (scoped to ${this.project ?? "the shared bank"}): ` +
         `${created} created, ${updated} re-synced, ` +
         `${pages.length - created - updated - vanished} unchanged` +
         (vanished ? `, ${vanished} deleted under us` : "") +
@@ -1023,9 +1031,12 @@ export class HindsightClient {
    * it: five taxonomy pages against one page per initiative, each an LLM synthesis per
    * consolidation under the auto-refresh that used to be the default (#3506).
    *
-   * Only the trigger is touched. Their `name` and `source_query` are written once, from the
-   * initiative's own title, and re-stating either would rebuild a page whose question never
-   * changed. The tree read above is reused rather than re-fetched.
+   * Their `name` and `source_query` are written once, from the initiative's own title, and
+   * re-stating either would rebuild a page whose question never changed. The one exception is
+   * the scope clause: a page captured while the clause named the BANK is scoped to a project no
+   * memory is about and comes out empty (#4490), so exactly that clause is swapped for the current
+   * one — the rest of the query, the user's wording included, is kept. The tree read above is
+   * reused rather than re-fetched.
    */
   private async resyncInitiativeTriggers(
     roots: KnowledgeNode[],
@@ -1034,16 +1045,23 @@ export class HindsightClient {
     const folder = roots.find(
       (n) => n.kind === "folder" && (n.name || "").toLowerCase() === "initiatives"
     );
+    const bankScope = pageScopeRule(this.bank);
     let updated = 0;
     for (const page of folder?.children ?? []) {
+      if (page.kind !== "page") continue;
+      const patch: { trigger?: PageTrigger; source_query?: string } = {};
+      const query = page.description?.replace(bankScope, pageScopeRule(this.project));
+      if (query !== page.description) patch.source_query = query;
       // No trigger reported = policy unknown, not divergent (a server older than #3572).
-      if (page.kind !== "page" || page.trigger == null) continue;
-      const desired = pageTriggerFor(pageTrigger, this.bank, page.name);
-      if (!pageTriggerDrifted(page.trigger, desired)) continue;
+      if (page.trigger != null) {
+        const desired = pageTriggerFor(pageTrigger, this.bank, page.name);
+        if (pageTriggerDrifted(page.trigger, desired)) patch.trigger = pageTriggerPatch(desired);
+      }
+      if (!patch.trigger && !patch.source_query) continue;
       const r = await this.req(
         "PATCH",
         this.bankUrl(`/knowledge-base/nodes/${encodeURIComponent(page.id)}`),
-        { trigger: pageTriggerPatch(desired) }
+        patch
       );
       // 404 only: `req` throws on every other non-ok status it was not told to tolerate, so the
       // 405/501 this used to test for never arrive (see `pagesUnsupported`). No latch here — a
@@ -1103,13 +1121,12 @@ export class HindsightClient {
       // "the project's memory" alone never said WHICH project (#3476). `max_tokens` is stated for
       // the same reason `seedPages` states it — leaving it implicit pins these pages to whatever
       // the server's page default happens to be, which is only coincidentally PAGE_MAX_TOKENS.
-      const subject = this.project ?? this.bank;
       const r = await this.req("POST", this.bankUrl("/knowledge-base/pages"), {
         name: args.title,
         source_query:
           `Summarize the "${args.title}" initiative: what is being built or changed and why, ` +
           `and its current state — drawn from the project's memory.` +
-          pageScopeRule(subject),
+          pageScopeRule(this.project),
         parent_id: folderId,
         tags: ["knowledge:feature-work"],
         max_tokens: PAGE_MAX_TOKENS,
@@ -1127,8 +1144,11 @@ export class HindsightClient {
     // rewritten) as an addition, and this string is what the page synthesis reads.
     const verb = args.relatesToPageId ? "Update to an existing initiative" : "New initiative";
     const content = `${verb}: ${args.title}. ${args.summary}`;
-    // Unique marker document id (NOT pageId) so repeated captures accrue instead of replacing.
-    const markerId = `initiative-marker-${this.slugify(args.title)}-${Date.now()}`;
+    // A STABLE id per initiative, so a recapture upserts instead of adding one more document every
+    // call (#5076). Keyed on the page, not the title — a recapture may reword it — and two slots:
+    // the creation marker keeps what the initiative set out to do, the update marker holds the
+    // latest plan change (a newer update supersedes the older one).
+    const markerId = `initiative-marker-${this.slugify(pageId)}${args.relatesToPageId ? "-update" : ""}`;
     const tags = [...new Set([...(args.stamp?.tags ?? []), "knowledge:feature-work"])];
     // The context rides on every fact extracted from this marker, verbatim (ExtractedFact.context),
     // so the Initiatives overview can link an initiative to its own page from what it retrieved.

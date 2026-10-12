@@ -64,7 +64,11 @@ describe("buildSessionStartContext", () => {
   });
 
   it("cold git repo + autoSeed on -> seeds + surveys, note in systemMessage (user-visible) + roster in additionalContext (model)", async () => {
-    const client = { listDocumentIds: async () => new Set<string>(), listPages: listPagesOk };
+    const client = {
+      listDocumentIds: async () => new Set<string>(),
+      listPages: listPagesOk,
+      hasDocuments: async () => false,
+    };
     const startSeed = vi.fn();
     const startSurvey = vi.fn().mockResolvedValue(true);
     const out = await buildSessionStartContext({
@@ -159,19 +163,69 @@ describe("buildSessionStartContext", () => {
     expect(out.deferInitialReflect).toBe(false);
   });
 
-  it("an empty but reachable page roster defers first reflect even when git documents already exist", async () => {
+  // #5209: an empty roster is not an empty bank — a bank with memories and no pages must still
+  // get its first-prompt reflect. Only a server-confirmed empty bank defers it.
+  it("an empty page roster does NOT defer first reflect when the bank already has documents", async () => {
     const out = await buildSessionStartContext({
       cwd: "/repo/dir",
       bankId: "bank-1",
-      cfg: resolveConfig(),
+      cfg: resolveConfig({ autoSeed: false }),
       client: {
-        listDocumentIds: async () => new Set(["git:abc"]),
+        listDocumentIds: async () => new Set<string>(),
         listPages: async () => ({ items: [] }),
+        hasDocuments: async () => true,
+      },
+    });
+    expect(out.deferInitialReflect).toBe(false);
+  });
+
+  it.each([
+    ["holds documents", async () => true],
+    ["cannot be probed", async () => Promise.reject(new Error("down"))],
+  ])("a cold repo does NOT defer first reflect when the bank %s", async (_, hasDocuments) => {
+    const out = await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig({ codebaseSurvey: false }),
+      client: {
+        listDocumentIds: async () => new Set<string>(),
+        listPages: async () => ({ items: [] }),
+        hasDocuments,
       },
       hasGit: () => true,
       startSeed: vi.fn(),
     });
-    expect(out.deferInitialReflect).toBe(true);
+    expect(out.systemMessage).toContain("is learning");
+    expect(out.deferInitialReflect).toBe(false);
+  });
+
+  // #5124: with gitIngest "none" no git document is ever written, so the git check alone called
+  // every session cold and launched a new survey each time. The baseline markers prove a survey ran.
+  it("no git docs but a survey baseline exists -> warm: no new survey, no learning banner", async () => {
+    const startSurvey = vi.fn().mockResolvedValue(true);
+    const out = await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig({ gitIngest: "none" }),
+      client: {
+        listDocumentIds: async (tag: string) =>
+          tag === "source:survey-baseline"
+            ? new Set(["survey-baseline:aaa"])
+            : tag === "source:upload"
+              ? new Set(["repository-component-map"])
+              : new Set<string>(),
+        listPages: listPagesOk,
+        hasDocuments: async () => true,
+      },
+      hasGit: () => true,
+      startSeed: vi.fn(),
+      startSurvey,
+      headSha: () => "bbb",
+      commitsSince: () => 1,
+    });
+    expect(startSurvey).not.toHaveBeenCalled();
+    expect(out.systemMessage).not.toContain("is learning");
+    expect(out.deferInitialReflect).toBe(false);
   });
 
   // The old "declined state -> no seed" test is gone with the seed-state file itself: the live

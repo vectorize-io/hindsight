@@ -197,6 +197,7 @@ describe("startCodebaseSurvey", () => {
       harness: "opencode",
       spawn,
       exists: (b) => b === "opencode",
+      opencodeDefinesAgent: () => true,
     });
     const [bin, argv, options] = launched(spawn);
     expect(bin).toBe("opencode");
@@ -205,6 +206,36 @@ describe("startCodebaseSurvey", () => {
     // survey exists to make (#3450) — the whole point is not to run under it.
     expect(argv).not.toContain("plan");
     expect(options.env.HINDSIGHT_DISABLE_HOOKS).toBe("1");
+  });
+
+  // #5084: npm @opencode/cli (v2) also installs an `opencode` bin, and v2 cannot define our agent —
+  // `opencode run --agent hindsight-survey` there fails with "agent not found". Skip that runner.
+  it("skips an `opencode` bin that cannot define the survey agent (opencode v2)", async () => {
+    const spawn = fakeSpawn();
+    const ok = await startCodebaseSurvey("/repo", {
+      harness: "opencode2" as never,
+      spawn,
+      exists: (b) => b === "opencode",
+      opencodeDefinesAgent: () => false,
+    });
+    expect(ok).toBe(false);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform === "win32").each([
+    ["0.0.0-beta-18743", false],
+    ["1.18.9", true],
+  ])("reads `opencode --version` %s as able to define the agent: %s", async (version, ok) => {
+    const bin = join(lockDir, "opencode");
+    writeFileSync(bin, `#!/bin/sh\necho ${version}\n`, { mode: 0o755 });
+    const spawn = fakeSpawn();
+    process.env.HINDSIGHT_OPENCODE_BIN = bin;
+    try {
+      await startCodebaseSurvey("/repo", { harness: "opencode", spawn, exists: (b) => b === bin });
+    } finally {
+      delete process.env.HINDSIGHT_OPENCODE_BIN;
+    }
+    expect(spawn).toHaveBeenCalledTimes(ok ? 1 : 0);
   });
 
   // The recipe above is only safe because the agent it names is read-only. opencode drops denied

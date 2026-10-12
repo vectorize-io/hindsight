@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -43,6 +44,23 @@ describe("resolveHostMemory", () => {
     expect(client.apiUrl).toBe("http://server");
     expect(client.apiToken).toBe("k");
     expect(client.maxParallelRetains).toBe(3);
+  });
+
+  // #4490: the host client named no project, so an initiative captured in a repo-owned bank was
+  // scoped to the bank id; a shared bank must still name none (it gets the shared-bank clause).
+  it("names the repo as the page subject only when the bank is that repo's", async () => {
+    const repo = join(root, "my-repo");
+    mkdirSync(repo);
+    execFileSync("git", ["init", "-q", repo]);
+    writeConfig({});
+    let { resolveHostMemory } = await loadFactory();
+    const own = resolveHostMemory("dsh", repo);
+    expect(own.client.project).toBe("my-repo");
+    expect(own.bankId).toContain("my-repo");
+
+    writeConfig({ bankId: "shared-memory" });
+    ({ resolveHostMemory } = await loadFactory());
+    expect(resolveHostMemory("dsh", repo).client.project).toBeUndefined();
   });
 
   it("enforces optInOnly for every host, not just the ones that remembered to pass a directory", async () => {

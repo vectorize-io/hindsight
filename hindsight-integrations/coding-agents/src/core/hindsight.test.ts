@@ -117,6 +117,31 @@ describe("HindsightClient.documentTags", () => {
   });
 });
 
+describe("HindsightClient.hasDocuments", () => {
+  it.each([
+    [200, { items: [{ id: "a" }], total: 7 }, true],
+    [200, { items: [], total: 0 }, false],
+    [404, { detail: "Bank not found" }, false],
+  ])("status %s %j -> %s", async (status, body, expected) => {
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b" });
+    const fetchMock = vi.fn(async () => jsonResponse(status, body));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await client.hasDocuments()).toBe(expected);
+    expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toBe(
+      "http://x/v1/default/banks/b/documents?limit=1"
+    );
+  });
+
+  it("throws on a server error, so a caller cannot read it as an empty bank", async () => {
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(500, { detail: "boom" }))
+    );
+    await expect(client.hasDocuments()).rejects.toThrow();
+  });
+});
+
 describe("HindsightClient.drain", () => {
   it("polls at most maxParallelRetains ops concurrently", async () => {
     const cap = 2;

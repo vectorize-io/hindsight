@@ -45,6 +45,9 @@ interface SeedContextClient {
   // (gitLogIsCurrent). The minimal test clients omit it and keep the exact-HEAD check.
   documentTags?(documentId: string): Promise<string[] | undefined>;
   listPages(): Promise<unknown>;
+  // Optional: whether the bank holds any document at all. Without it the first-prompt reflect is
+  // never deferred — only a confirmed-empty bank is.
+  hasDocuments?(): Promise<boolean>;
   knowledgePagesSupported?: boolean;
   // Optional: used to write the survey-baseline marker (Option A). HindsightClient has it; the
   // minimal test clients omit it, and the baseline write guards on its presence.
@@ -169,6 +172,7 @@ export async function buildSessionStartContext(args: {
   const t0 = Date.now();
   let cold: boolean | undefined; // undefined = not checked (autoSeed off / non-git / unreachable)
   let gitDocIds: Set<string> | undefined; // the cold-check's doc set, reused by the banner's git note
+  let bankEmpty = false; // true only when the server confirmed the bank holds no documents
   const harness = args.harness ?? "claude-code";
   const hasGit = args.hasGit ?? hasGitHistory;
   const startSeed = args.startSeed ?? startBackgroundSeed;
@@ -227,8 +231,29 @@ export async function buildSessionStartContext(args: {
           docIds = undefined; // server unreachable: transient — do nothing, try again next session
         }
 
-        cold = docIds !== undefined ? docIds.size === 0 : undefined;
+        // No git documents is not the whole story: under `gitIngest: "none"` none are ever
+        // written, so a bank an earlier session already surveyed still reads as cold and every
+        // session would launch another survey (#5124). Its survey-baseline markers say otherwise
+        // — the same evidence the warm branch below reads. An unreadable marker list keeps the
+        // git-only answer.
+        let baselines: Set<string> | undefined;
+        if (docIds?.size === 0) {
+          baselines = await client
+            .listDocumentIds(SURVEY_BASELINE_TAG, "all_strict")
+            .catch(() => undefined);
+        }
+        cold = docIds !== undefined ? docIds.size === 0 && !baselines?.size : undefined;
         gitDocIds = docIds;
+        // Only a CONFIRMED-empty bank defers the first-prompt reflect. A cold repo can sit in a
+        // bank that already holds memories (a shared bank, imported conversations), and a failed
+        // or missing probe proves nothing (#5209). Probed before the seed and the survey baseline
+        // below write their first documents.
+        if (cold === true && client.hasDocuments) {
+          bankEmpty = await client.hasDocuments().then(
+            (has) => !has,
+            () => false
+          );
+        }
         if (docIds !== undefined) {
           // ALWAYS fire the background deepen engine when the server is reachable — it is
           // idempotent (per-bank lock, dedup by document id) and each run does only the missing
@@ -240,7 +265,7 @@ export async function buildSessionStartContext(args: {
           startSeed(cwd, { limit: cfg.seedLimit, harness });
           // Cold iff the bank has zero source:git docs (an undefined result — server error — is
           // NOT treated as cold; we never surveyed/noted on an unconfirmed-empty bank).
-          if (docIds.size === 0) {
+          if (cold) {
             if (cfg.codebaseSurvey !== false) {
               // Run the survey under the current harness's own CLI (falls back to any available agent).
               const started = await startSurvey(cwd, {
@@ -261,9 +286,11 @@ export async function buildSessionStartContext(args: {
             // HEAD as the baseline WITHOUT surveying (no surprise spend).
             const sha = resolveHeadSha(cwd);
             if (sha) {
-              const markers = await client
-                .listDocumentIds(SURVEY_BASELINE_TAG, "all_strict")
-                .catch(() => new Set<string>());
+              const markers =
+                baselines ??
+                (await client
+                  .listDocumentIds(SURVEY_BASELINE_TAG, "all_strict")
+                  .catch(() => new Set<string>()));
               const counts: number[] = [];
               for (const id of markers) {
                 if (!id.startsWith(SURVEY_BASELINE_PREFIX)) continue;
@@ -302,24 +329,22 @@ export async function buildSessionStartContext(args: {
     }
   }
 
-  // An actual empty roster, like a cold git-doc result, means this bank has no useful material to
-  // synthesize yet. A failed roster request is NOT evidence of that, so keep the two cases apart.
   let pages: PageRef[] = [];
-  let pageListKnown = false;
   try {
     pages = parsePageList(await client.listPages());
-    pageListKnown = true;
   } catch {
     if (client.knowledgePagesSupported === false) {
       diag(harness, "knowledge_pages_unavailable", { bank: bankId });
     }
-    /* fail-open preamble; preserve first-prompt reflect eligibility on a transient outage */
+    /* fail-open preamble */
   }
   const additionalContext = buildKnowledgePreamble(pages, {
     reflectOnNewGoals: cfg.autoInject !== "reflect",
     extra: cfg.toolGuideExtra,
   });
-  const deferInitialReflect = cold === true || (pageListKnown && pages.length === 0);
+  // An empty page roster is NOT an empty bank: a bank with memories and no pages still answers a
+  // reflect (#5209), so only the confirmed-empty probe above defers it.
+  const deferInitialReflect = bankEmpty;
 
   // The banner shows on EVERY session — Hindsight's presence is part of the product, not a
   // one-time setup note. Wording tracks the bank state: cold = "learning", else "remembering";

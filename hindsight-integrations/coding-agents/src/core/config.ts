@@ -153,7 +153,7 @@ export interface RawConfig {
    *  `hindsight_search_knowledge_pages` results. It adds to the built-in text, never replaces it,
    *  so the plugin's call triggers and crediting rule keep up with releases (#4791). */
   toolGuideExtra?: string;
-  pageRefreshEveryTurns?: number; // knowledge-page refresh cadence in user turns (default 10)
+  pageRefreshEveryTurns?: number; // knowledge-page refresh cadence in user turns (default 1; 0 also means 1)
   /** What it COSTS to keep this project's knowledge pages current — the trigger stamped on every
    *  page this plugin creates (the seeded taxonomy and each captured initiative):
    *    "cron" (default)         — refresh on `pageTriggerCron` only, and only when actually stale

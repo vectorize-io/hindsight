@@ -14,6 +14,20 @@ vi.mock("./daemon", async (importOriginal) => ({
   ensureDaemon: daemonSpy,
 }));
 
+// Whether a bank is new enough to defer is session-start's call (session-start.test.ts); here only
+// the hand-off of that decision to the first session is under test, so it can be forced.
+const forceDefer = vi.hoisted(() => ({ on: false }));
+vi.mock("./session-start", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./session-start")>();
+  return {
+    ...actual,
+    buildSessionStartContext: async (...a: Parameters<typeof actual.buildSessionStartContext>) => {
+      const out = await actual.buildSessionStartContext(...a);
+      return forceDefer.on ? { ...out, deferInitialReflect: true } : out;
+    },
+  };
+});
+
 describe("RuntimeCore", () => {
   it("uses the shared prompt lifecycle and consumes the new-bank reflect deferral once", async () => {
     const client = {
@@ -23,7 +37,12 @@ describe("RuntimeCore", () => {
     } as unknown as HindsightClient;
     const runtime = new RuntimeCore(client, "bank-1", resolveConfig({}));
 
-    await runtime.seedIfCold("/definitely-not-a-git-repository");
+    forceDefer.on = true;
+    try {
+      await runtime.seedIfCold("/definitely-not-a-git-repository");
+    } finally {
+      forceDefer.on = false;
+    }
     await runtime.onPrompt("runtime-shared-lifecycle", "first prompt");
     expect(client.reflect).not.toHaveBeenCalled();
 
