@@ -143,7 +143,7 @@ Optional settings in `~/.openclaw/openclaw.json`:
 - `recallPromptPreamble` - Custom preamble text placed above recalled memories. Overrides the built-in guidance text.
 - `recallInjectionPosition` - Where to inject recalled memories: `"user"` (default), `"prepend"`, or `"append"`. The default injects before the user message and preserves the system prompt cache. Use `"prepend"` or `"append"` when memories need system-level context.
 - `recallRoles` - Which message roles to include when composing the contextual recall query (default: `["user", "assistant"]`).
-- `retainEveryNTurns` - Retain every Nth turn (default: `1` = every turn). Values > 1 enable chunked retention.
+- `retainEveryNTurns` - Retain every Nth turn (default: `1` = every turn). Values > 1 enable chunked retention. When a session ends (`/new`, `/reset`, gateway stop) the turns since the last retain are flushed; on SQLite-backed OpenClaw this needs 2026.10.1 or newer.
 - `senderPrefixPattern` - Regex matching a human display-name prefix that some channels prepend to the user's text (e.g. `Alice: today weather?`). Supply the name part only — `Alice|Bob` or `[A-Za-z ]{1,20}` — the `:` separator and anchoring are added by the plugin. When set, the prefix is stripped from both the recall query and the retained transcript, so the sender's name no longer pollutes vector search or get extracted as a fact. Unset (default) strips nothing; an invalid regex is ignored.
 - `retainOverlapTurns` - Extra prior turns included when chunked retention fires (default: `0`).
 - `debug` - Enable debug logging (default: `false`).
