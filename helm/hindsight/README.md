@@ -188,6 +188,71 @@ The worker monitor requires `worker.enabled: true`. Without the operator,
 scrape `svc/<release>-api:8888/metrics` and `svc/<release>-worker:8889/metrics`
 directly with annotation-based discovery or static targets.
 
+### Extra objects
+
+`extraObjects` deploys arbitrary manifests with the release, so they are
+installed, upgraded and uninstalled together with Hindsight. Each entry is a
+YAML map or a multi-line string and is rendered through `tpl`, so it can use
+Helm templating. Typical uses are routing through an Istio service mesh in
+place of the Ingress, and providing credentials as a SealedSecret consumed via
+`existingSecret`:
+
+```yaml
+existingSecret: hindsight-credentials
+
+extraObjects:
+  - apiVersion: bitnami.com/v1alpha1
+    kind: SealedSecret
+    metadata:
+      name: hindsight-credentials
+    spec:
+      encryptedData:
+        HINDSIGHT_API_LLM_API_KEY: AgB...
+  - apiVersion: networking.istio.io/v1
+    kind: VirtualService
+    metadata:
+      name: '{{ include "hindsight.fullname" . }}'
+    spec:
+      hosts:
+        - hindsight.example.com
+      gateways:
+        - istio-system/public-gateway
+      http:
+        - match:
+            - uri:
+                prefix: /v1
+          route:
+            - destination:
+                host: '{{ include "hindsight.fullname" . }}-api'
+        - route:
+            - destination:
+                host: '{{ include "hindsight.fullname" . }}-control-plane'
+```
+
+In the map form a template expression must sit inside a quoted string. Use
+the string form when a template must produce a non-string value or whole
+blocks:
+
+```yaml
+extraObjects:
+  - |
+    apiVersion: networking.istio.io/v1
+    kind: DestinationRule
+    metadata:
+      name: {{ include "hindsight.fullname" . }}-api
+      labels:
+        {{- include "hindsight.labels" . | nindent 4 }}
+    spec:
+      host: {{ include "hindsight.fullname" . }}-api
+      trafficPolicy:
+        portLevelSettings:
+          - port:
+              number: {{ .Values.api.service.port }}
+            connectionPool:
+              http:
+                idleTimeout: 300s
+```
+
 ## Upgrading
 
 ```bash

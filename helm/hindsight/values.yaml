@@ -521,3 +521,21 @@ metrics:
     path: /metrics
     interval: 30s
     scrapeTimeout: 10s
+
+# Extra Kubernetes manifests deployed with the release, e.g. an Istio
+# Gateway/VirtualService in place of the Ingress, or a SealedSecret consumed
+# via existingSecret. Each entry is a YAML map or a multi-line string, rendered
+# through tpl so it can use Helm templating such as
+# '{{ include "hindsight.fullname" . }}'.
+extraObjects: []
+#  - apiVersion: networking.istio.io/v1
+#    kind: VirtualService
+#    metadata:
+#      name: '{{ include "hindsight.fullname" . }}'
+#    spec:
+#      hosts: [hindsight.example.com]
+#      gateways: [istio-system/public-gateway]
+#      http:
+#        - match: [{ uri: { prefix: /v1 } }]
+#          route: [{ destination: { host: '{{ include "hindsight.fullname" . }}-api' } }]
+#        - route: [{ destination: { host: '{{ include "hindsight.fullname" . }}-control-plane' } }]
