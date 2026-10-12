@@ -595,6 +595,9 @@ async function lazyReinit(configOverride?: PluginConfig): Promise<void> {
     isInitialized = true;
     // A copy that was never started has no retain queue, so a failed retain
     // would be dropped instead of replayed. (#4537)
+    // ponytail: the started copy may hold the same file, so both can replay one
+    // item; the persisted operation id keeps that idempotent on API >= 0.8.6.
+    // Share one queue per process via globalThis if duplicates show up on older APIs.
     if (!retainQueue && serviceGeneration === 0 && !preServiceController.signal.aborted) {
       initRetainQueue(config, 0, preServiceController.signal);
     }
