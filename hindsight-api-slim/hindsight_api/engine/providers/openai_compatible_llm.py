@@ -1560,6 +1560,25 @@ class OpenAICompatibleLLM(LLMInterface):
                                         output_tokens=0,
                                         success=True,
                                     )
+                                    # A recovered call is a successful one: the wrapper
+                                    # will not trace it, so record the span here (#5381).
+                                    try:
+                                        from hindsight_api.tracing import _serialize_for_span, get_span_recorder
+
+                                        get_span_recorder().record_llm_call(
+                                            provider=self.provider,
+                                            model=self.model,
+                                            scope=scope,
+                                            messages=messages,
+                                            response_content=_serialize_for_span(result),
+                                            input_tokens=0,
+                                            output_tokens=0,
+                                            duration=duration,
+                                            finish_reason=None,
+                                            error=None,
+                                        )
+                                    except Exception:
+                                        logger.debug("Span recording failed", exc_info=True)
                                     return LLMCallResult(
                                         content=result,
                                         usage=TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0),
