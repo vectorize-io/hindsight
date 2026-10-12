@@ -20,7 +20,7 @@ export const GIT_MISSION =
 
 export const GITLOG_MISSION =
   "You are ingesting an aggregated block of git commit MESSAGES ONLY (no diffs) — the project's " +
-  "recent commit-message history, newest first. Extract the project's INITIATIVES, FEATURES, " +
+  "recent commit-message history, oldest first. Extract the project's INITIATIVES, FEATURES, " +
   "ENHANCEMENTS, and notable changes or THEMES over time — what the project has been working on and " +
   "how it has evolved. Do NOT extract per-line code detail (there is no diff to draw it from). Group " +
   "related commits into a coherent initiative/theme where the messages make that clear; preserve exact " +

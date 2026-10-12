@@ -18,7 +18,6 @@
  *   - non-empty set (warm/pre-seeded)  -> no seed, seededAt written  (remember, skip enumerating)
  *   - empty set (cold)                 -> start the background seed, seededAt written, note added
  */
-import { readFileSync } from "node:fs";
 import { gitHeadSha, gitLogIsCurrent, hasGitHistory, commitsSince } from "./git";
 import { DEEPEN_DIFF_TARGET } from "./status";
 import { startBackgroundSeed } from "./seed";
@@ -30,7 +29,7 @@ import { DAEMON_WAIT_SESSION_START_MS, ensureDaemon } from "./daemon";
 import type { Config } from "./config";
 import { deriveBankIdOrSkip } from "./bank";
 import { brandWord } from "./brand";
-import { diag } from "./diag";
+import { diag, readHookEvent } from "./diag";
 import { setLogLevel } from "./log";
 import { parsePageList, buildKnowledgePreamble, type PageRef } from "./knowledge-injection";
 import type { ClientOpts, RetainOpts } from "./hindsight";
@@ -366,12 +365,8 @@ export async function runSessionStartHook(
   // throw here happens during session bootstrap, before the agent has done anything — more
   // disruptive than a failure mid-prompt — so nothing in this function may ever escape it.
   try {
-    let ev: Record<string, unknown> = {};
-    try {
-      ev = JSON.parse(readFileSync(0, "utf8")) as Record<string, unknown>;
-    } catch {
-      return; // no/invalid event: stay silent
-    }
+    const ev = readHookEvent(spec.harness);
+    if (!ev) return;
     if (spec.accept && !spec.accept(ev)) return;
     const { harness } = spec;
     const { cwd: rawCwd, sessionId } = spec.parse(ev);

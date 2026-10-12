@@ -20,11 +20,11 @@
  * in `buildHookOutput` (client + cache file in, injection string out) so it's unit-testable
  * without stdin/stdout; `runHook` is thin plumbing around it, with a `makeClient` seam for tests.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { deriveBankIdOrSkip } from "./bank";
 import type { Config } from "./config";
 import { applyBankConfig, loadConfig } from "./config";
-import { diag, diagFilePath } from "./diag";
+import { diag, diagFilePath, readHookEvent } from "./diag";
 import { describeError, log, setLogLevel } from "./log";
 import { startBackgroundSeed } from "./seed";
 import type { ClientOpts } from "./hindsight";
@@ -393,12 +393,8 @@ export async function runHook(
   // Anti-recursion: the codebase survey's own headless session sets this so its hooks are a no-op.
   if (process.env.HINDSIGHT_DISABLE_HOOKS) return;
 
-  let ev: Record<string, unknown> = {};
-  try {
-    ev = JSON.parse(readFileSync(0, "utf8")) as Record<string, unknown>;
-  } catch {
-    return; // no/invalid event: stay silent
-  }
+  const ev = readHookEvent(spec.harness);
+  if (!ev) return;
   if (spec.accept && !spec.accept(ev)) return;
   const { prompt: rawPrompt, cwd: rawCwd, sessionId } = spec.parse(ev);
   if (spec.requireCwd && !rawCwd) return;

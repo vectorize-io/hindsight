@@ -272,4 +272,19 @@ describe("startDaemonDetached", () => {
     expect(child.on).toHaveBeenCalledWith("error", expect.any(Function));
     expect(child.unref).toHaveBeenCalled();
   });
+
+  // #4964: tsup inlines @vectorize-io/hindsight-all into dist/daemon-start.js, so its spawns ship
+  // as ours. Before 0.9.2 they lacked windowsHide, and each opened a console window on Windows
+  // that killed the daemon when closed.
+  it("bundles a hindsight-all whose spawns hide the console window", () => {
+    const bundled = readFileSync(
+      fileURLToPath(
+        new URL("../../node_modules/@vectorize-io/hindsight-all/dist/index.js", import.meta.url)
+      ),
+      "utf8"
+    );
+    const spawns = bundled.match(/\bspawn\([^)]*\)/g) ?? [];
+    expect(spawns.length).toBeGreaterThan(0);
+    for (const call of spawns) expect(call).toContain("windowsHide: true");
+  });
 });

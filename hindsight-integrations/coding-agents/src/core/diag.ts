@@ -7,6 +7,7 @@
  * hook (UserPromptSubmit, Stop, and future ones like SessionStart) can depend on it without
  * reaching into another hook's module.
  */
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { appendLogLine, log, logsDir } from "./log";
 
@@ -25,4 +26,37 @@ export function diag(harness: string, event: string, extra: Record<string, unkno
   } catch {
     /* diagnostics must not break the agent */
   }
+}
+
+/**
+ * Parse a hook's stdin event. Null for no input, and for input that is not a JSON object — the
+ * latter is recorded in the diag file, since the hook then exits 0 having done nothing.
+ *
+ * Leading byte-order marks are dropped first, including the form a UTF-8 BOM takes after a
+ * Windows-1252 round trip ("ï»¿"): Cursor on Windows pipes the event through PowerShell, which
+ * delivers it that way, and JSON.parse rejected it — so every Cursor hook silently did nothing
+ * (#5366).
+ */
+export function parseHookEvent(harness: string, raw: string): Record<string, unknown> | null {
+  const text = raw.replace(/^(?:﻿|ï»¿)+/, "");
+  if (!text.trim()) return null;
+  try {
+    const ev: unknown = JSON.parse(text);
+    if (ev && typeof ev === "object" && !Array.isArray(ev)) return ev as Record<string, unknown>;
+    diag(harness, "hook_input_invalid", { error: "not a JSON object" });
+  } catch (e) {
+    diag(harness, "hook_input_invalid", { error: (e as Error).message });
+  }
+  return null;
+}
+
+/** Read and parse this hook invocation's event from stdin (see parseHookEvent). */
+export function readHookEvent(harness: string): Record<string, unknown> | null {
+  let raw: string;
+  try {
+    raw = readFileSync(0, "utf8");
+  } catch {
+    return null; // no stdin at all
+  }
+  return parseHookEvent(harness, raw);
 }

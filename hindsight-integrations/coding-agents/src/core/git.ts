@@ -17,7 +17,9 @@ const RS = "\x1e"; // record separator between commits in gitLogText
 const GITLOG_HEAD = "gitlog-head:"; // tag naming the commit the git-log document was written at
 
 function git(repo: string, ...args: string[]): string {
-  return execFileSync("git", ["-C", repo, ...args], {
+  // `log.showSignature=true` in the user's config makes `git log`/`git show` print signature
+  // checks to stdout ahead of the formatted output, which we parse as data (#5269).
+  return execFileSync("git", ["-C", repo, "-c", "log.showSignature=false", ...args], {
     encoding: "utf8",
     maxBuffer: 1 << 28,
     windowsHide: true,
@@ -159,19 +161,34 @@ export async function ingestGit(
 }
 
 /**
- * The last `limit` commits as an aggregated MESSAGES-ONLY block (no diffs) — one record per commit:
- * "<shortsha> <date> <author>\n<subject>\n\n<body>", newest first, separated by a divider line.
- * Thin wrapper over `git log`; empty repo (no commits) -> "".
+ * Up to the last `limit` commits as an aggregated MESSAGES-ONLY block (no diffs) — one record per
+ * commit: "<shortsha> <date> <author>\n<subject>\n\n<body>", OLDEST first, separated by a divider
+ * line. Thin wrapper over `git log`; empty repo (no commits) -> "".
+ *
+ * Built so a new commit only APPENDS to the previous text (#5003). The server's delta retain keeps
+ * every chunk whose text is unchanged at the same index, so an append re-extracts only the tail.
+ * This used to be the newest `limit` commits, newest first: every commit shifted the whole text,
+ * no chunk survived, and the entire history was re-extracted and re-consolidated each time.
+ * Flipping the order alone is not enough once the window is full — dropping the oldest commit
+ * shifts the text again — so the window's START moves in fixed steps of half the limit (counted
+ * from the root commit), and the document holds between limit/2 and `limit` commits. The history
+ * is rewritten once per step instead of once per commit. Commits that land in the middle of the
+ * date order (a merged branch, a rebase) still shift the text, which costs the full re-extraction
+ * every commit used to.
  */
 export function gitLogText(repo: string, limit: number): string {
   let raw: string;
   try {
+    const total = Number(git(repo, "rev-list", "--count", "--no-merges", "HEAD").trim());
+    const step = Math.max(1, Math.ceil(limit / 2));
+    const start = total > limit ? Math.ceil((total - limit) / step) * step : 0;
     raw = git(
       repo,
       "log",
       `-n`,
-      String(limit),
+      String(total - start),
       "--no-merges",
+      "--reverse", // applied after -n: the newest N, printed oldest first
       "--date=short",
       `--format=%h${US}%ad${US}%an${US}%s${US}%b${RS}`
     );

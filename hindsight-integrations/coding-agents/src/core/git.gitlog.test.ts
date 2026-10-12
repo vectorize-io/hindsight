@@ -52,6 +52,40 @@ describe("gitLogText", () => {
     expect(gitLogText(dir, 10)).toBe("");
   });
 
+  // #5003: the server keeps unchanged chunks only when the text before them is unchanged, so a new
+  // commit must append to the document, not shift it — including once the window is full.
+  it("appends a new commit to the previous text, stepping the window by half the limit", () => {
+    const subjects = (text: string) => text.match(/feat: c\d+/g);
+    const texts = [""];
+    for (let i = 1; i <= 9; i++) {
+      commit(dir, `feat: c${i}`);
+      texts.push(gitLogText(dir, 4));
+    }
+    expect(subjects(texts[4])).toEqual(["feat: c1", "feat: c2", "feat: c3", "feat: c4"]);
+    expect(subjects(texts[5])).toEqual(["feat: c3", "feat: c4", "feat: c5"]);
+    expect(subjects(texts[9])).toEqual(["feat: c7", "feat: c8", "feat: c9"]);
+    for (const n of [1, 2, 3, 5, 7]) {
+      expect(texts[n + 1].startsWith(`${texts[n]}\n\n---\n\n`)).toBe(true);
+    }
+  }, 30_000); // 27 git processes: slow under the parallel suite
+
+  // #5269: `log.showSignature=true` printed signature checks into the parsed output.
+  it("ignores the user's log.showSignature setting", () => {
+    const key = join(dir, "key");
+    execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", key]);
+    for (const [k, v] of [
+      ["gpg.format", "ssh"],
+      ["user.signingkey", `${key}.pub`],
+      ["commit.gpgsign", "true"],
+      ["log.showSignature", "true"],
+    ])
+      execFileSync("git", ["-C", dir, "config", k, v]);
+    commit(dir, "feat: signed");
+
+    expect(gitLogNewestAuthorDate(dir)).toMatch(/^\d{4}-\d\d-\d\dT[\d:]+[+-Z][\d:]*$/);
+    expect(gitLogText(dir, 10)).toMatch(/^[0-9a-f]+ \d{4}-\d\d-\d\d Test User\nfeat: signed$/);
+  }, 30_000);
+
   it("gitLogNewestAuthorDate returns null for a repo with no commits", () => {
     expect(gitLogNewestAuthorDate(dir)).toBeNull();
   });

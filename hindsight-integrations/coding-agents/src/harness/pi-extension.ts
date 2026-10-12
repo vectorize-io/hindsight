@@ -52,6 +52,8 @@ interface SessionManagerLike {
  *  carry is raised inside seedIfCold at extension load, before any handler has a `ctx` to notify
  *  through — so it is logged rather than toasted here, and the field is not declared. */
 interface ExtensionContext {
+  /** The session's working directory. Optional so a host without it falls back to the process cwd. */
+  cwd?: string;
   sessionManager: SessionManagerLike;
 }
 
@@ -65,11 +67,15 @@ interface ToolDefinition {
   parameters: JsonSchema;
   execute(
     toolCallId: string,
-    params: Record<string, unknown>
+    params: Record<string, unknown>,
+    signal?: unknown,
+    onUpdate?: unknown,
+    ctx?: ExtensionContext
   ): Promise<{ content: { type: "text"; text: string }[]; details: unknown }>;
 }
 
 interface ExtensionAPI {
+  on(event: "session_start", handler: (event: unknown, ctx: ExtensionContext) => void): void;
   on(
     event: "before_agent_start",
     handler: (
@@ -94,16 +100,27 @@ export type ExtensionFactory = (pi: ExtensionAPI) => void;
  * straight to the model provider. A plain JSON Schema is therefore exactly what the tool needs. The
  * spec's handler returns an MCP `{content:[{text}]}` result and never throws, so we surface the
  * joined text back to the model.
+ *
+ * `bind` picks the spec to run for the calling session (its bank), since one process can serve
+ * sessions in several repositories; undefined means memory is off for that session's repository.
  */
-export function toPiTool(spec: ToolSpec): ToolDefinition {
+export function toPiTool(
+  spec: ToolSpec,
+  bind: (ctx: ExtensionContext | undefined) => ToolSpec | undefined = () => spec
+): ToolDefinition {
   const parameters = z.toJSONSchema(z.object(spec.inputSchema)) as JsonSchema;
   return {
     name: spec.name,
     label: spec.name,
     description: spec.description,
     parameters,
-    async execute(_toolCallId: string, params: Record<string, unknown>) {
-      const r = await spec.handler(params);
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const bound = bind(ctx);
+      if (!bound) {
+        const text = "Hindsight memory is disabled for this workspace.";
+        return { content: [{ type: "text", text }], details: null };
+      }
+      const r = await bound.handler(params);
       const text = r.content?.map((c) => c.text).join("\n") || "";
       return { content: [{ type: "text", text }], details: null };
     },
@@ -163,31 +180,70 @@ function createRuntime(harness: string, repoPath: string): RuntimeCore | undefin
   return new RuntimeCore(client, bankId, cfg, harness, repoPath);
 }
 
+interface PiWorkspace {
+  hooks: ReturnType<typeof createPiHooks>;
+  tools: ToolSpec[];
+}
+
 /**
  * Build the default export for a pi-family extension host. `harness` is the name the host is known
  * by ("pi", "prime-agent"), used for config lookup, bank derivation and diagnostics scoping — it is
  * NOT config-chosen; the entrypoint the host loaded determines it.
  *
- * The returned factory is called once per session in the project directory; it resolves config and
- * bank from `process.cwd()`, registers the knowledge tools, kicks off the shared cold-seed, and
- * wires the recall/retain hooks.
+ * Config and bank are resolved per SESSION, from `ctx.cwd`, and cached per directory. They used to
+ * be resolved once from `process.cwd()` at load, which is the session's repository only for the
+ * CLI: pi's web UI serves every session from one process started elsewhere, so the launch directory
+ * picked the bank — or, under `optInOnly`, disabled the extension for every session (#5039).
+ *
+ * The launch directory is still resolved at load, so the CLI registers its tools and starts its
+ * cold seed exactly as before. Tools cannot be unregistered, so they are registered once, from the
+ * first enabled workspace (at load for the CLI, at the first session in an enabled repository
+ * otherwise), and each call runs against the calling session's bank.
  */
-export function createPiExtension(harness: string): ExtensionFactory {
+export function createPiExtension(
+  harness: string,
+  makeRuntime: (harness: string, repoPath: string) => RuntimeCore | undefined = createRuntime
+): ExtensionFactory {
   return (pi) => {
-    const repoPath = process.cwd();
-    const core = createRuntime(harness, repoPath);
-    if (!core) return;
+    const launchDir = process.cwd();
+    const dirOf = (ctx: ExtensionContext | undefined) => ctx?.cwd || launchDir;
+    // `null` caches "memory is off here" so a disabled repository isn't re-resolved every turn.
+    const workspaces = new Map<string, PiWorkspace | null>();
+    const workspaceFor = (dir: string): PiWorkspace | undefined => {
+      const cached = workspaces.get(dir);
+      if (cached !== undefined) return cached ?? undefined;
+      const core = makeRuntime(harness, dir);
+      // Fire-and-forget cold seed (bank check + background git seed); the workspace's first
+      // before_agent_start awaits it via createPiHooks.
+      const ws = core
+        ? { hooks: createPiHooks(core, harness, core.seedIfCold(dir)), tools: core.toolSpecs() }
+        : null;
+      workspaces.set(dir, ws);
+      return ws ?? undefined;
+    };
 
-    for (const spec of core.toolSpecs()) pi.registerTool(toPiTool(spec));
+    let toolsRegistered = false;
+    const at = (ctx: ExtensionContext | undefined): PiWorkspace | undefined => {
+      const ws = workspaceFor(dirOf(ctx));
+      if (ws && !toolsRegistered) {
+        toolsRegistered = true;
+        for (const spec of ws.tools)
+          pi.registerTool(
+            toPiTool(spec, (c) => workspaceFor(dirOf(c))?.tools.find((t) => t.name === spec.name))
+          );
+      }
+      return ws;
+    };
 
-    // Fire-and-forget cold seed (bank check + background git seed); the first
-    // before_agent_start awaits it via createPiHooks.
-    const sessionStart = core.seedIfCold(repoPath);
-    const hooks = createPiHooks(core, harness, sessionStart);
-
-    pi.on("before_agent_start", (event, ctx) =>
-      hooks.beforeAgentStart(event, ctx.sessionManager.getSessionId())
+    at(undefined); // the launch directory: the CLI's session
+    pi.on("session_start", (_event, ctx) => {
+      at(ctx);
+    });
+    pi.on("before_agent_start", async (event, ctx) =>
+      at(ctx)?.hooks.beforeAgentStart(event, ctx.sessionManager.getSessionId())
     );
-    pi.on("agent_end", (event, ctx) => hooks.agentEnd(event, ctx.sessionManager.getSessionId()));
+    pi.on("agent_end", async (event, ctx) =>
+      at(ctx)?.hooks.agentEnd(event, ctx.sessionManager.getSessionId())
+    );
   };
 }

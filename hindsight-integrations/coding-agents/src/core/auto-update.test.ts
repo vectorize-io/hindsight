@@ -84,6 +84,21 @@ describe("npmViewVersion", () => {
     expect(opts.timeout).toBe(5000);
   });
 
+  // #5366: on Windows npm is npm.cmd, which spawn cannot run without a shell (`spawn npm ENOENT`).
+  it("runs npm through a shell on Windows", async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { value: "win32" });
+    try {
+      const spawn = npmSpawn(0, '"0.6.1"\n');
+      expect(await npmViewVersion("@x/y", asRealSpawn(spawn))).toBe("0.6.1");
+      const [command, opts] = spawn.mock.calls[0] as unknown as [string, Record<string, unknown>];
+      expect(command).toBe("npm view @x/y version --json");
+      expect(opts).toMatchObject({ shell: true, windowsHide: true, timeout: 5000 });
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+    }
+  });
+
   it("reads a failure as no-version, never as an exception", async () => {
     // non-zero exit (E404, offline, auth failure), with npm's stderr-style error event alongside…
     expect(await npmViewVersion("@x/y", asRealSpawn(npmSpawn(1, "", new Error("npm ERR!"))))).toBe(

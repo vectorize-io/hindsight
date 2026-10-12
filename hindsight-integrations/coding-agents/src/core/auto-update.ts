@@ -34,7 +34,7 @@
  * possible concurrent hook spawn would need a lock every hook takes on every turn, which is a
  * worse trade than the window it closes.
  */
-import { spawn as realSpawn } from "node:child_process";
+import { type ChildProcess, type SpawnOptions, spawn as realSpawn } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -262,6 +262,23 @@ function stampCheck(file: string, now: number, latest: string): void {
   }
 }
 
+/**
+ * Spawn npm or npx. On Windows both are `.cmd` shims, which spawn only runs through a shell — without
+ * one it fails `spawn npm ENOENT` and the update check never ran there (#5366). The command goes as
+ * one string because Node deprecates passing args together with `shell` (DEP0190); every word is a
+ * fixed literal, the package name or a RELEASE_RE-checked version, so none needs quoting.
+ */
+function spawnNpm(
+  spawnImpl: typeof realSpawn,
+  bin: "npm" | "npx",
+  args: string[],
+  opts: SpawnOptions
+): ChildProcess {
+  return process.platform === "win32"
+    ? spawnImpl([bin, ...args].join(" "), { ...opts, shell: true })
+    : spawnImpl(bin, args, opts);
+}
+
 /** Ask npm for the published version, or "" if it cannot be determined.
  *
  * `npm view`, not a fetch of registry.npmjs.org: the update this triggers is `npx <pkg>@<v>`,
@@ -290,7 +307,7 @@ export async function npmViewVersion(
       resolve(v);
     };
     try {
-      const child = spawnImpl("npm", ["view", pkg, "version", "--json"], {
+      const child = spawnNpm(spawnImpl, "npm", ["view", pkg, "version", "--json"], {
         timeout: NPM_VIEW_TIMEOUT_MS,
         stdio: ["ignore", "pipe", "ignore"],
         windowsHide: true,
@@ -301,7 +318,7 @@ export async function npmViewVersion(
       });
       // An unhandled pipe 'error' would crash the session-start hook.
       child.stdout?.on("error", (e) => done("", describeError(e)));
-      // ENOENT / EACCES (incl. Windows, where spawn without a shell can't see npm.cmd).
+      // ENOENT / EACCES: npm is not where PATH said it was.
       child.on("error", (e) => done("", describeError(e)));
       // close, not exit: stdout must have fully arrived before the parse.
       child.on("close", (code, signal) => {
@@ -407,7 +424,8 @@ export async function maybeAutoUpdate(
       }
 
       log.info("auto-update", `updating the Hindsight runtime ${current} -> ${latest}`);
-      const child = (opts.spawn ?? realSpawn)(
+      const child = spawnNpm(
+        opts.spawn ?? realSpawn,
         "npx",
         ["-y", `${PACKAGE_NAME}@${latest}`, "update"],
         {

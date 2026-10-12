@@ -13,12 +13,11 @@
  * without stdin; `runRetainHook` is thin plumbing around it, mirroring `runHook`/`buildHookOutput`
  * in core/hook.ts.
  */
-import { readFileSync } from "node:fs";
 import { deriveBankIdOrSkip } from "./bank";
 import { retainLiveSession } from "./chat";
 import { applyBankConfig, loadConfig } from "./config";
 import { DAEMON_WAIT_RETAIN_MS, ensureDaemon } from "./daemon";
-import { diag } from "./diag";
+import { diag, readHookEvent } from "./diag";
 import { describeError, log, setLogLevel } from "./log";
 import type { ClientOpts } from "./hindsight";
 import { HindsightClient } from "./hindsight";
@@ -187,12 +186,8 @@ export async function runRetainHook(
   // is synchronous. A margin keeps the kill from landing between our last wait and its response.
   const hostDeadline = Date.now() + spec.hostTimeoutSec * 1000 - HOST_DEADLINE_MARGIN_MS;
 
-  let ev: Record<string, unknown> = {};
-  try {
-    ev = JSON.parse(readFileSync(0, "utf8")) as Record<string, unknown>;
-  } catch {
-    return; // no/invalid event: stay silent
-  }
+  const ev = readHookEvent(spec.harness);
+  if (!ev) return;
   if (spec.accept && !spec.accept(ev)) return;
   const parsed = spec.parse(ev);
   const { sessionId, cwd: rawCwd, lastAssistantMessage } = parsed;
