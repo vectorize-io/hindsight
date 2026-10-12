@@ -2,6 +2,7 @@ import type {
   MoltbotPluginAPI,
   PluginConfig,
   PluginHookAgentContext,
+  PluginHookEndedTranscript,
   MemoryResult,
   RetainRequest,
 } from "./types.js";
@@ -507,6 +508,40 @@ export function sessionEndMessagesFromTranscript(
   } catch {
     // A missing, truncated or unreadable transcript is not an error worth failing the
     // session close over; the caller skips the flush exactly as it did before.
+    return undefined;
+  }
+}
+
+// Generous bounds for one session's tail; OpenClaw applies its own caps on top.
+const ENDED_TRANSCRIPT_MAX_MESSAGES = 10_000;
+const ENDED_TRANSCRIPT_MAX_BYTES = 8 * 1024 * 1024;
+
+/**
+ * The messages of a session that just ended, for the `session_end` flush.
+ *
+ * OpenClaw 2026.9.4 moved transcripts into SQLite, so the JSONL file the event
+ * points at no longer exists and the flush found nothing (#4594). 2026.10.1 added
+ * `ctx.endedTranscript`, a bounded reader over that store; use it when the host
+ * offers one and keep the file read for older hosts.
+ */
+export async function sessionEndMessages(
+  event: unknown,
+  endedTranscript: PluginHookEndedTranscript | undefined
+): Promise<unknown[] | undefined> {
+  if (endedTranscript === undefined) return sessionEndMessagesFromTranscript(event);
+  if (!endedTranscript.available) {
+    debug(`[Hindsight Hook] session_end: transcript unavailable (${endedTranscript.reason})`);
+    return undefined;
+  }
+  try {
+    const { messages, truncated } = await endedTranscript.readTail({
+      maxMessages: ENDED_TRANSCRIPT_MAX_MESSAGES,
+      maxBytes: ENDED_TRANSCRIPT_MAX_BYTES,
+    });
+    if (truncated) debug("[Hindsight Hook] session_end: transcript truncated to its tail");
+    return messages.length > 0 ? [...messages] : undefined;
+  } catch (error) {
+    log.warn(`session_end: could not read the ended transcript: ${error}`);
     return undefined;
   }
 }
@@ -2986,15 +3021,13 @@ ${memoriesFormatted}
         }
 
         // Resolved once: `session_end` carries no transcript, so the forced flush
-        // reads it from the file the event points at (#4341). Without this the guard
-        // below ended every session-close flush before it began.
+        // has to fetch it. Without this the guard below ended every session-close
+        // flush before it began. (#4341)
         let eventMessages = event.context?.sessionEntry?.messages ?? event.messages;
         if (force && (!Array.isArray(eventMessages) || eventMessages.length === 0)) {
-          eventMessages = sessionEndMessagesFromTranscript(event);
+          eventMessages = await sessionEndMessages(event, ctx?.endedTranscript);
           if (Array.isArray(eventMessages)) {
-            debug(
-              `[Hindsight Hook] session_end: read ${eventMessages.length} messages from ${event.sessionFile}`
-            );
+            debug(`[Hindsight Hook] session_end: read ${eventMessages.length} messages`);
           }
         }
 

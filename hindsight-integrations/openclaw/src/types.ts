@@ -51,7 +51,20 @@ export interface PluginHookAgentContext {
   messageProvider?: string;
   channelId?: string;
   senderId?: string;
+  /** session_end only, OpenClaw >= 2026.10.1. Absent on older hosts. */
+  endedTranscript?: PluginHookEndedTranscript;
 }
+
+/** OpenClaw's bounded reader for the transcript of a session that just ended. */
+export type PluginHookEndedTranscript =
+  | { available: false; reason: string }
+  | {
+      available: true;
+      readTail(options: {
+        maxMessages: number;
+        maxBytes: number;
+      }): Promise<{ messages: readonly unknown[]; totalMessages: number; truncated: boolean }>;
+    };
 
 export interface PluginConfig {
   /**

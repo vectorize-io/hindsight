@@ -16,6 +16,7 @@ import {
   buildRetainRequest,
   getDocumentIdBootToken,
   meetsMinimumVersion,
+  sessionEndMessages,
   sessionEndMessagesFromTranscript,
   parseHindsightApiCapabilities,
   supportsAppendFromCapabilities,
@@ -2379,6 +2380,58 @@ describe("inbound metadata blocks (marker and legacy forms)", () => {
 // sessionFile and nothing else, so the forced flush added for #1726 ended at its own
 // "no messages" guard on every session close and the turns after the last cadence
 // boundary were never retained.
+describe("sessionEndMessages — OpenClaw's ended-transcript reader (#4594)", () => {
+  // SQLite-backed hosts write no JSONL file, so the event's sessionFile is gone.
+  const event = {
+    sessionId: "s",
+    sessionFile: "/nonexistent/s.jsonl",
+    context: { agentId: "main" },
+  };
+  const messages = [
+    { role: "user", content: "two turns, below the cadence" },
+    { role: "assistant", content: "kept by the session_end flush" },
+  ];
+
+  it("reads the tail through the host reader, with bounds", async () => {
+    const readTail = vi.fn().mockResolvedValue({ messages, totalMessages: 2, truncated: false });
+    expect(await sessionEndMessages(event, { available: true, readTail })).toEqual(messages);
+    expect(readTail).toHaveBeenCalledWith({
+      maxMessages: expect.any(Number),
+      maxBytes: expect.any(Number),
+    });
+  });
+
+  it("returns nothing when the host says the transcript is unavailable", async () => {
+    expect(
+      await sessionEndMessages(event, { available: false, reason: "conversation-access-required" })
+    ).toBeUndefined();
+  });
+
+  it("returns nothing when the reader fails or is empty", async () => {
+    const failing = vi.fn().mockRejectedValue(new Error("handler settled"));
+    expect(await sessionEndMessages(event, { available: true, readTail: failing })).toBeUndefined();
+    const empty = vi.fn().mockResolvedValue({ messages: [], totalMessages: 0, truncated: false });
+    expect(await sessionEndMessages(event, { available: true, readTail: empty })).toBeUndefined();
+  });
+
+  it("falls back to the session file on hosts without the reader", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hs-session-end-"));
+    const sessionFile = join(dir, "s.jsonl");
+    writeFileSync(
+      sessionFile,
+      messages.map((message) => JSON.stringify({ type: "message", message })).join("\n") + "\n"
+    );
+    try {
+      const read = (await sessionEndMessages({ ...event, sessionFile }, undefined)) as Array<{
+        content: unknown;
+      }>;
+      expect(read.map((m) => m.content)).toEqual(messages.map((m) => m.content));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("sessionEndMessagesFromTranscript", () => {
   const madeDirs: string[] = [];
   const writeTranscript = (lines: unknown[]): string => {
