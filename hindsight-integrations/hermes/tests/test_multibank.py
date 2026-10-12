@@ -358,7 +358,7 @@ def test_retain_tool_reports_success_when_only_an_extra_bank_fails():
     result = provider.handle_tool_call("hindsight_retain", {"content": "a fact"})
 
     assert written == ["primary", "broken"]
-    assert "Memory stored successfully" in result
+    assert "Memory queued for storage" in result  # retain_async defaults on
 
 
 def test_retain_tool_reports_failure_when_the_primary_fails():

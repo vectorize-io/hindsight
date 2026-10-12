@@ -67,6 +67,7 @@ from .settings import (
     _normalize_min_scores,
     _normalize_observation_scopes,
     _normalize_string_list,
+    _parse_float_setting,
     _parse_int_setting,
     _project_name,
     _repository_root,
@@ -495,6 +496,10 @@ class HindsightMemoryProvider(MemoryProvider):
         self._prefetch_result, self._prefetch_count = "", 0
         self._prefetch_lock = threading.Lock()
         self._prefetch_thread = None
+        # Bumped by every new prefetch, session switch and shutdown: a worker writes its result
+        # only if no newer one started since, so a slow recall can't overwrite a fresher one or
+        # land in the next session.
+        self._prefetch_generation = 0
         self._last_recall_returned, self._last_recall_count = False, 0
         self._apply_recall_settings({})
 
@@ -515,6 +520,7 @@ class HindsightMemoryProvider(MemoryProvider):
                 _cloud_api_key(cfg) or cfg.get("api_url") or get_secret("HINDSIGHT_API_URL", "")
             )
         except Exception:
+            logger.debug("Hindsight availability check failed", exc_info=True)
             return False
 
     def unavailable_reason(self) -> str:
@@ -895,8 +901,13 @@ class HindsightMemoryProvider(MemoryProvider):
             if self._mode != "local_embedded" or not any(m in text for m in _RETRIABLE_CONNECTION_MARKERS):
                 raise
             logger.info("Hindsight embedded daemon appears unreachable; recreating client and retrying once: %s", exc)
-            self._client = None
-            self._client = client = self._get_client()
+            with self._client_lock:
+                stale, self._client = self._client, None
+            if stale is not None:
+                # Close it, or its aiohttp session leaks ("Unclosed client session").
+                with contextlib.suppress(Exception):
+                    self._run_sync(stale.aclose())
+            client = self._get_client()
             return self._run_sync(operation(client))
 
     # -- retain writer thread + server-side visibility -------------------------
@@ -1305,7 +1316,7 @@ class HindsightMemoryProvider(MemoryProvider):
     def _apply_retain_policy(self, cfg: dict) -> None:
         """Pure-config retain knobs (no env/secret reads; ``{}`` yields the defaults)."""
         self._auto_retain = cfg.get("auto_retain", True)
-        self._retain_every_n_turns = max(1, int(cfg.get("retain_every_n_turns", 1)))
+        self._retain_every_n_turns = max(1, _parse_int_setting(cfg.get("retain_every_n_turns"), 1))
         self._retain_context = cfg.get("retain_context", _RETAIN_CONTEXT_DEFAULT)
         self._retain_async = cfg.get("retain_async", True)
         # On by default so the user SEES memory working whether or not the model
@@ -1315,16 +1326,17 @@ class HindsightMemoryProvider(MemoryProvider):
         # recall-visible; when True it first waits (bounded, off the reply path)
         # for the queue to drain AND the server-side op(s) to complete.
         self._prefetch_waits_for_retain = cfg.get("prefetch_waits_for_retain", True)
-        self._prefetch_retain_drain_timeout = float(cfg.get("prefetch_retain_drain_timeout", 10.0))
+        self._prefetch_retain_drain_timeout = _parse_float_setting(cfg.get("prefetch_retain_drain_timeout"), 10.0)
 
     def _apply_recall_settings(self, cfg: dict) -> None:
         """Recall knobs are pure config too (``{}`` yields the defaults)."""
-        self._recall_tags = cfg.get("recall_tags") or None
+        # Documented as comma-separated; the client wants a list (a raw string is a 422).
+        self._recall_tags = _normalize_string_list(cfg.get("recall_tags")) or None
         self._recall_tags_match = cfg.get("recall_tags_match", "any")
         self._auto_recall = cfg.get("auto_recall", True)
         self._recall_sync = bool(cfg.get("recall_sync", False))
-        self._recall_max_tokens = int(cfg.get("recall_max_tokens", 4096))
-        self._recall_max_input_chars = int(cfg.get("recall_max_input_chars", 800))
+        self._recall_max_tokens = _parse_int_setting(cfg.get("recall_max_tokens"), 4096)
+        self._recall_max_input_chars = _parse_int_setting(cfg.get("recall_max_input_chars"), 800)
         # None -> observation-only (Hindsight's consolidated, deduplicated layer; raw
         # world/experience facts re-ship the evidence they summarize and burn the
         # recall_max_tokens budget); a comma-separated string is accepted for parity
@@ -1418,7 +1430,9 @@ class HindsightMemoryProvider(MemoryProvider):
     def system_prompt_block(self) -> str:
         mode = self._memory_mode if self._memory_mode in _SYSTEM_PROMPT_TAILS else "hybrid"
         label = "" if mode == "hybrid" else f" ({mode} mode)"
-        return f"# Hindsight Memory\nActive{label}. Bank: {self._bank_id}, budget: {self._budget}.\n{_SYSTEM_PROMPT_TAILS[mode]}"
+        # With auto_recall off nothing is injected, so hybrid must not promise injected context.
+        tail = _TOOL_GUIDANCE if mode == "hybrid" and not self._auto_recall else _SYSTEM_PROMPT_TAILS[mode]
+        return f"# Hindsight Memory\nActive{label}. Bank: {self._bank_id}, budget: {self._budget}.\n{tail}"
 
     # -- recall ------------------------------------------------------------------
 
@@ -1528,7 +1542,7 @@ class HindsightMemoryProvider(MemoryProvider):
             logger.debug("Recall: returned %d results", len(results))
             return "\n".join(f"- {r.text}" for r in results if r.text), len(results)
         except Exception as e:
-            logger.debug("Hindsight recall failed: %s", e, exc_info=True)
+            logger.warning("Hindsight recall failed: %s", e, exc_info=True)
             return "", 0
 
     def _finish_prefetch(self, result: str, count: int) -> str:
@@ -1576,6 +1590,10 @@ class HindsightMemoryProvider(MemoryProvider):
         if self._recall_sync or self._recall_disabled():
             return
 
+        with self._prefetch_lock:
+            self._prefetch_generation += 1
+            generation = self._prefetch_generation
+
         def _run():
             # Wait (bounded, off the reply path) for the just-completed turn's
             # retain to be recall-visible so the warmed context includes it.
@@ -1584,7 +1602,8 @@ class HindsightMemoryProvider(MemoryProvider):
             text, count = self._do_recall(query)
             if text:
                 with self._prefetch_lock:
-                    self._prefetch_result, self._prefetch_count = text, count
+                    if generation == self._prefetch_generation:
+                        self._prefetch_result, self._prefetch_count = text, count
 
         self._prefetch_thread = spawn_context_thread(_run, name="hindsight-prefetch")
         self._prefetch_thread.start()
@@ -1814,11 +1833,14 @@ class HindsightMemoryProvider(MemoryProvider):
                 len(content),
                 context,
             )
-            self._retain_batch(item, bank_id=bank_id)
+            resp = self._retain_batch(item, bank_id=bank_id, retain_async=self._retain_async)
+            if self._retain_async:
+                self._track_retain_ops(resp, bank_id)
 
         self._write_to_banks(list(self._write_bank_ids), _write)
         logger.debug("Tool hindsight_retain: success")
-        return "Memory stored successfully."
+        # An async retain is only accepted here; the memory is searchable once the server processes it.
+        return "Memory queued for storage." if self._retain_async else "Memory stored successfully."
 
     def _tool_recall(self, args: dict) -> str:
         query = args["query"]
@@ -1853,7 +1875,7 @@ class HindsightMemoryProvider(MemoryProvider):
             return json.dumps({"result": handler(self, args)})
         except Exception as e:
             logger.warning("%s failed: %s", tool_name, e, exc_info=True)
-            return tool_error(f"{failure}: {e}")
+            return tool_error(f"{failure}: {str(e) or type(e).__name__}")
 
     # -- session lifecycle -------------------------------------------------------
 
@@ -1906,6 +1928,7 @@ class HindsightMemoryProvider(MemoryProvider):
         # 2. Drain the old session's in-flight prefetch and drop its result.
         self._join_prefetch(3.0)
         with self._prefetch_lock:
+            self._prefetch_generation += 1  # a worker still running past the join must not land here
             self._prefetch_result = ""
 
         # 3. Rotate to the new session.
@@ -1955,6 +1978,12 @@ class HindsightMemoryProvider(MemoryProvider):
                     self._retain_queue.qsize(),
                 )
         self._join_prefetch(5.0)
+        with self._prefetch_lock:
+            self._prefetch_generation += 1
+        if self._atexit_registered:
+            # The hook holds this provider alive until exit; the gateway makes one per chat session.
+            atexit.unregister(self._atexit_shutdown)
+            self._atexit_registered = False
         if self._client is not None:
             with contextlib.suppress(Exception):
                 self._close_client()

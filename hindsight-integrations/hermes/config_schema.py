@@ -23,6 +23,8 @@ CONFIG_SCHEMA = ProviderConfigSchema(
             options=(
                 ProviderFieldOption("cloud", "Cloud", "Hindsight Cloud API (lightweight, just needs an API key)"),
                 ProviderFieldOption("local_external", "Local External", "Connect to an existing Hindsight instance"),
+                # Without it the panel can't show a local_embedded config, and saving it rewrote the mode.
+                ProviderFieldOption("local_embedded", "Local Embedded", "Run a local Hindsight daemon on this machine"),
             ),
             inline=True,
         ),

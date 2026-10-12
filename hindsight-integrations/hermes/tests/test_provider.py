@@ -1,13 +1,14 @@
 """The provider driven through the Hermes MemoryProvider interface, asserting what it
 sends to Hindsight (a recording fake client stands in for the real SDK)."""
 
+import asyncio
 import json
 import sys
 import threading
 from types import SimpleNamespace
 
 import hindsight_hermes as plugin
-from conftest import FakeClient
+from conftest import FakeClient, FakeRecallResponse
 from hindsight_client_api.exceptions import NotFoundException
 
 
@@ -514,3 +515,106 @@ def test_version_probe_sends_plugin_user_agent(monkeypatch):
     plugin._fetch_hindsight_api_version("http://hs.test")
     assert sent["User-agent"] == plugin._USER_AGENT
     assert plugin._USER_AGENT != "hindsight-hermes/0.0.0"
+
+
+def test_retain_tool_honours_retain_async(provider):
+    """#4662: the tool blocked on a sync retain whatever retain_async said."""
+    instance, fake = provider({})
+    result = json.loads(instance.handle_tool_call("hindsight_retain", {"content": "Ada likes tea"}))
+    assert fake.retains[0]["retain_async"] is True
+    assert result["result"] == "Memory queued for storage."
+
+    instance, fake = provider({"retain_async": False})
+    result = json.loads(instance.handle_tool_call("hindsight_retain", {"content": "Ada likes tea"}))
+    assert fake.retains[0]["retain_async"] is False
+    assert result["result"] == "Memory stored successfully."
+
+
+def test_a_tool_error_with_no_message_still_says_what_failed(provider):
+    """#4662: a timeout's str() is empty, which left the agent a bare 'Failed to search memory: '."""
+
+    class TimingOut(FakeClient):
+        async def arecall(self, **kwargs):
+            raise TimeoutError()
+
+    instance, _ = provider({}, client=TimingOut())
+    result = instance.handle_tool_call("hindsight_recall", {"query": "q"})
+    assert result.endswith("Failed to search memory: TimeoutError")
+
+
+def test_a_slow_prefetch_never_overwrites_a_newer_one(provider):
+    """#4662: an older background recall that finishes last must not replace the newer result."""
+    release_first = threading.Event()
+
+    class SlowFirst(FakeClient):
+        async def arecall(self, **kwargs):
+            if kwargs["query"] == "old":
+                while not release_first.is_set():
+                    await asyncio.sleep(0.01)
+                return FakeRecallResponse(["stale memory"])
+            return FakeRecallResponse(["fresh memory"])
+
+    instance, _ = provider({"prefetch_waits_for_retain": False}, client=SlowFirst())
+    instance.queue_prefetch("old")
+    old_worker = instance._prefetch_thread
+    instance.queue_prefetch("new")
+    instance._prefetch_thread.join(5)
+    release_first.set()
+    old_worker.join(5)
+
+    assert "fresh memory" in instance.prefetch("next")
+    instance.shutdown()
+
+
+def test_recall_tags_accept_the_documented_comma_separated_form(provider):
+    """#4662: the string went to the client as-is and the API rejected it (422)."""
+    instance, fake = provider({"recall_tags": "team, project-x"})
+    instance.handle_tool_call("hindsight_recall", {"query": "q"})
+    assert fake.recalls[0]["tags"] == ["team", "project-x"]
+
+
+def test_a_mistyped_number_in_config_falls_back_to_its_default(provider):
+    """#4662: a plain int()/float() on these crashed initialize, so memory was off entirely."""
+    instance, _ = provider(
+        {
+            "retain_every_n_turns": "two",
+            "recall_max_tokens": "lots",
+            "recall_max_input_chars": "",
+            "prefetch_retain_drain_timeout": "soon",
+        }
+    )
+    assert instance._retain_every_n_turns == 1
+    assert instance._recall_max_tokens == 4096
+    assert instance._recall_max_input_chars == 800
+    assert instance._prefetch_retain_drain_timeout == 10.0
+
+
+def test_prompt_does_not_promise_injected_memories_when_auto_recall_is_off(provider):
+    """#4662: hybrid mode told the model memories were injected even with auto_recall off."""
+    on, _ = provider({})
+    off, _ = provider({"auto_recall": False})
+    assert plugin._CONTEXT_NOTE in on.system_prompt_block()
+    assert plugin._CONTEXT_NOTE not in off.system_prompt_block()
+    assert plugin._TOOL_GUIDANCE in off.system_prompt_block()
+
+
+def test_reconnect_closes_the_client_it_replaces(provider, monkeypatch):
+    """#4662: the retry after a dead embedded daemon dropped the old client unclosed."""
+
+    class Dead(FakeClient):
+        closed = False
+
+        async def arecall(self, **kwargs):
+            raise RuntimeError("Cannot connect to host 127.0.0.1:8888")
+
+        async def aclose(self):
+            Dead.closed = True
+
+    dead, fresh = Dead(), FakeClient(recall_texts=["back"])
+    instance, _ = provider({}, client=dead)
+    instance._mode, instance._client = "local_embedded", dead
+    monkeypatch.setattr(instance, "_new_embedded_client", lambda: fresh)
+
+    result = json.loads(instance.handle_tool_call("hindsight_recall", {"query": "q"}))
+    assert result["result"] == "1. back"
+    assert Dead.closed

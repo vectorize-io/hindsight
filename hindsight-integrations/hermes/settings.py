@@ -66,6 +66,17 @@ def _parse_int_setting(value: Any, default: int) -> int:
         return default
 
 
+def _parse_float_setting(value: Any, default: float) -> float:
+    """Parse a float config/env value, falling back on invalid input."""
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        logger.warning("Invalid number for Hindsight setting %r; using default %s", value, default)
+        return default
+
+
 def _daemon_llm_provider(provider: str) -> str:
     return "openai" if provider in _OPENAI_WIRE_PROVIDERS else provider
 
