@@ -106,8 +106,33 @@ let currentPluginConfig: PluginConfig | null = null;
 let serviceGeneration = 0;
 let serviceAbortController: AbortController | null = null;
 // External-API hooks can lazy-initialize before the first service.start(). Keep
-// that recall-only lifetime cancellable without enabling pre-start retention.
-const preServiceRecallController = new AbortController();
+// that lifetime cancellable: the first start() or stop() aborts it.
+//
+// It covers retain as well as recall. It used to be recall-only, but OpenClaw
+// re-evaluates this module for each plugin registry it loads and only ever calls
+// service.start() on the first one, so the hooks that actually run often belong
+// to a copy that is never started. Recall worked there and retain returned at its
+// lifecycle guard without a log line, so memory silently stopped growing. (#4828)
+const preServiceController = new AbortController();
+
+/**
+ * Snapshot the lifecycle a hook runs under: the started service's, or the
+ * pre-start one when this module copy was never started. `isCurrent()` turns
+ * false once a later start() or stop() replaces it, so in-flight work can bail.
+ * After an explicit stop() there is no lifecycle and hooks do nothing.
+ */
+function captureHookLifecycle(): { signal: AbortSignal | undefined; isCurrent: () => boolean } {
+  const generation = serviceGeneration;
+  const controller = serviceAbortController ?? (generation === 0 ? preServiceController : null);
+  return {
+    signal: controller?.signal,
+    isCurrent: () =>
+      controller !== null &&
+      (serviceAbortController ?? preServiceController) === controller &&
+      generation === serviceGeneration &&
+      !controller.signal.aborted,
+  };
+}
 
 // Track which banks have had configured defaults applied (missions + bank config).
 const banksWithDefaultsApplied = new Set<string>();
@@ -568,6 +593,11 @@ async function lazyReinit(configOverride?: PluginConfig): Promise<void> {
 
     usingExternalApi = true;
     isInitialized = true;
+    // A copy that was never started has no retain queue, so a failed retain
+    // would be dropped instead of replayed. (#4537)
+    if (!retainQueue && serviceGeneration === 0 && !preServiceController.signal.aborted) {
+      initRetainQueue(config, 0, preServiceController.signal);
+    }
     // Replace the rejected initPromise with a resolved one
     initPromise = Promise.resolve();
     debug("[Hindsight] ✓ Lazy re-initialization succeeded");
@@ -2190,7 +2220,7 @@ export default function (api: MoltbotPluginAPI) {
     api.registerService({
       id: "hindsight-memory",
       async start() {
-        preServiceRecallController.abort();
+        preServiceController.abort();
         serviceAbortController?.abort();
         inflightRecalls.clear();
         const serviceController = new AbortController();
@@ -2472,7 +2502,7 @@ export default function (api: MoltbotPluginAPI) {
       async stop() {
         try {
           serviceGeneration++;
-          preServiceRecallController.abort();
+          preServiceController.abort();
           serviceAbortController?.abort();
           serviceAbortController = null;
           inflightRecalls.clear();
@@ -2584,14 +2614,8 @@ export default function (api: MoltbotPluginAPI) {
     // Auto-recall: Inject relevant memories before agent processes the message
     // Hook signature: (event, ctx) where event has {prompt, messages?} and ctx has agent context
     api.on("before_prompt_build", async (event: any, ctx?: PluginHookAgentContext) => {
-      const recallGeneration = serviceGeneration;
-      const recallController =
-        serviceAbortController ?? (recallGeneration === 0 ? preServiceRecallController : null);
-      const isCurrentRecall = () =>
-        recallController !== null &&
-        (serviceAbortController ?? preServiceRecallController) === recallController &&
-        recallGeneration === serviceGeneration &&
-        !recallController.signal.aborted;
+      const recallLifecycle = captureHookLifecycle();
+      const isCurrentRecall = recallLifecycle.isCurrent;
       if (!isCurrentRecall()) return;
       // Optional perf instrumentation (#1406). Captured here at hook entry so
       // the early-return paths below don't influence the measurement of slow
@@ -2757,7 +2781,7 @@ export default function (api: MoltbotPluginAPI) {
               minScores: pluginConfig.recallMinScores,
             },
             recallTimeoutMs,
-            recallController?.signal
+            recallLifecycle.signal
           );
           inflightRecalls.set(recallKey, recallPromise);
           void recallPromise
@@ -2849,7 +2873,7 @@ ${memoriesFormatted}
           // restarted mid-recall, which is not a timeout — quoting recallTimeoutMs
           // there reports a deadline that never elapsed, with a number unrelated
           // to the time actually spent. (#4450)
-          if (recallController?.signal.aborted) {
+          if (recallLifecycle.signal?.aborted) {
             debug("[Hindsight] Auto-recall cancelled: service stopped, skipping memory injection");
           } else {
             log.warn(
@@ -2876,13 +2900,7 @@ ${memoriesFormatted}
       const force = retainOptions.force === true;
       const hookName = retainOptions.hookName;
       const retainGeneration = serviceGeneration;
-      const retainController = serviceAbortController;
-      const retainSignal = retainController?.signal;
-      const retainLifecycleIsCurrent = () =>
-        retainController !== null &&
-        serviceAbortController === retainController &&
-        retainGeneration === serviceGeneration &&
-        !retainSignal?.aborted;
+      const { signal: retainSignal, isCurrent: retainLifecycleIsCurrent } = captureHookLifecycle();
       if (!retainLifecycleIsCurrent()) return;
       // Optional perf instrumentation (#1406). Only emitted when an actual
       // retain RPC fires; the many early-return skip paths are not measured.
