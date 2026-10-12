@@ -29,26 +29,30 @@ pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Default `User-Agent` header sent on every request unless overridden.
 pub const DEFAULT_USER_AGENT: &str = concat!("hindsight-client-rust/", env!("CARGO_PKG_VERSION"));
 
-/// Build a [`reqwest::Client`] with the given `User-Agent` header.
+/// Build a [`reqwest::Client`] whose `User-Agent` is `user_agent` followed by
+/// [`DEFAULT_USER_AGENT`] (e.g. `"hindsight-cli/0.6.2 hindsight-client-rust/0.6.2"`).
 ///
-/// Integrations should use this to identify themselves (e.g.
-/// `"hindsight-cli/0.6.2"`) so self-hosted deployments behind Cloudflare or
-/// other UA-based filters accept the traffic. Pass the resulting client to
-/// [`Client::new_with_client`].
+/// Integrations should use this to identify themselves, so self-hosted
+/// deployments behind Cloudflare or other UA-based filters accept the traffic
+/// and the server still learns the client version. Pass the resulting client
+/// to [`Client::new_with_client`].
 pub fn reqwest_client_with_user_agent(
     user_agent: impl Into<String>,
 ) -> Result<reqwest::Client, reqwest::Error> {
-    reqwest::Client::builder().user_agent(user_agent.into()).build()
+    build_reqwest_client(prefixed_user_agent(&user_agent.into()))
 }
 
-/// Construct a [`Client`] whose `User-Agent` is `user_agent` followed by
-/// [`DEFAULT_USER_AGENT`], so the server learns both the caller and the client
-/// version (e.g. `"hindsight-cli/0.6.2 hindsight-client-rust/0.6.2"`).
+fn build_reqwest_client(user_agent: String) -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder().user_agent(user_agent).build()
+}
+
+/// Construct a [`Client`] with a caller `User-Agent`, prefixed as in
+/// [`reqwest_client_with_user_agent`].
 pub fn client_with_user_agent(
     base_url: &str,
     user_agent: impl Into<String>,
 ) -> Result<Client, reqwest::Error> {
-    let http = reqwest_client_with_user_agent(prefixed_user_agent(&user_agent.into()))?;
+    let http = reqwest_client_with_user_agent(user_agent)?;
     Ok(Client::new_with_client(base_url, http))
 }
 
@@ -61,7 +65,7 @@ fn prefixed_user_agent(user_agent: &str) -> String {
 /// Prefer this over `Client::new` — the bare `Client::new` uses reqwest's
 /// default UA which is blocked by some reverse proxies (e.g. Cloudflare).
 pub fn default_client(base_url: &str) -> Result<Client, reqwest::Error> {
-    let http = reqwest_client_with_user_agent(DEFAULT_USER_AGENT)?;
+    let http = build_reqwest_client(DEFAULT_USER_AGENT.to_string())?;
     Ok(Client::new_with_client(base_url, http))
 }
 
