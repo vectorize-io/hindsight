@@ -618,3 +618,33 @@ def test_reconnect_closes_the_client_it_replaces(provider, monkeypatch):
     result = json.loads(instance.handle_tool_call("hindsight_recall", {"query": "q"}))
     assert result["result"] == "1. back"
     assert Dead.closed
+
+
+def test_shutdown_drops_its_atexit_hook(provider):
+    """#4662: the hook kept every provider alive until exit; the gateway makes one per chat session."""
+    import atexit
+
+    instance, _ = provider({})
+    instance.sync_turn("hi", "hello")
+    assert instance._atexit_registered
+    before = atexit._ncallbacks()
+    instance.shutdown()
+    assert not instance._atexit_registered
+    assert atexit._ncallbacks() == before - 1
+
+
+def test_availability_failure_is_logged(hermes_env, caplog):
+    """#4662: is_available swallowed the error, so a broken config showed no reason anywhere."""
+    (hermes_env / "hindsight").mkdir(parents=True, exist_ok=True)
+    (hermes_env / "hindsight" / "config.json").write_text(json.dumps({"mode": ["cloud"]}))
+    with caplog.at_level("DEBUG"):
+        assert plugin.HindsightMemoryProvider().is_available() is False
+    assert "availability check failed" in caplog.text
+
+
+def test_desktop_panel_offers_every_mode_the_plugin_runs():
+    """#4662: without local_embedded the panel could not hold that mode and saving rewrote it."""
+    from hindsight_hermes.config_schema import CONFIG_SCHEMA
+
+    mode = next(field for field in CONFIG_SCHEMA["fields"] if field["key"] == "mode")
+    assert {option[0] for option in mode["options"]} == {"cloud", "local_embedded", "local_external"}

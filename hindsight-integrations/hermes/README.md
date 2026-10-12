@@ -254,7 +254,7 @@ The lookup stops at the repository root. Only `bank_id` is read.
 | `recall_max_tokens` | `4096` | Maximum tokens for recall results |
 | `recall_max_input_chars` | `800` | Maximum input query length for auto-recall |
 | `recall_prompt_preamble` | — | Custom preamble for recalled memories in context |
-| `recall_tags` | — | Tags to filter when searching memories, as a JSON list (e.g. `["project-x", "team"]`). Comma-separated text is not supported here and makes recall fail. |
+| `recall_tags` | — | Tags to filter when searching memories: a JSON list (e.g. `["project-x", "team"]`) or comma-separated text (`"project-x, team"`) |
 | `recall_tags_match` | `any` | Tag matching mode: `any` / `all` / `any_strict` / `all_strict` |
 | `recall_types` | `observation` | Fact types surfaced by recall (both auto-recall and the `hindsight_recall` tool). Comma-separated string or JSON list. **Default narrowed to `observation` only** (see "Behavior change" below). Set to `observation,world,experience` to also include raw facts. |
 | `recall_min_scores` | — | Minimum relevance per score field, as a JSON object (e.g. `{"reranker": 0.25}` or `{"semantic": 0.5}`). Applies to both auto-recall and the `hindsight_recall` tool. See the tip below. |
