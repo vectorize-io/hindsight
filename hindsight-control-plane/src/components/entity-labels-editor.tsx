@@ -158,6 +158,7 @@ function MapFieldsEditor({
               <Select
                 value={field.type}
                 onValueChange={(value) => {
+                  // Select hands back a plain string; the items are FIELD_TYPE_LABELS keys, so the cast holds.
                   const v = value as MapField["type"];
                   updateField(fieldName, {
                     type: v,
