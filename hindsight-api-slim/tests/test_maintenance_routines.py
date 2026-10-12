@@ -318,6 +318,46 @@ def test_current_routine_bodies_keep_the_concurrent_ddl_guard():
     assert "deadlock_detected" in body
 
 
+def test_banks_needing_consolidation_probes_per_bank():
+    """Regression for #5425: the routine must probe each bank with ``EXISTS``.
+
+    The old ``JOIN memory_units ... GROUP BY m.bank_id`` body visits every
+    unconsolidated fact, so on a large backlog the planner seq-scans the whole
+    table on every reconcile pass. ``EXISTS`` stops at the first index hit.
+    """
+    body = _current_routines_migration_path().read_text()
+    assert "GROUP BY m.bank_id" not in body
+    assert "FROM %1$I.banks b" in body
+    assert "AND EXISTS (" in body
+
+
+@pytest.mark.asyncio
+async def test_banks_needing_consolidation_returns_each_bank_once(memory: MemoryEngine, request_context):
+    """The per-bank probe returns the same set the old aggregate did: one row per
+    bank with an eligible fact, whatever else the bank holds."""
+    many = await _make_bank(memory, request_context, "many")
+    mixed = await _make_bank(memory, request_context, "mixed")
+    empty = await _make_bank(memory, request_context, "empty")
+    observation_only = await _make_bank(memory, request_context, "obs")
+
+    async with memory._pool.acquire() as conn:
+        for _ in range(3):
+            await _insert_fact(conn, many)
+        # Failed and consolidated facts next to one eligible fact.
+        await _insert_fact(conn, mixed, failed=True)
+        await _insert_fact(conn, mixed, consolidated=True)
+        await _insert_fact(conn, mixed, fact_type="world")
+        await _insert_fact(conn, observation_only, fact_type="observation")
+
+        rows = await conn.fetch("SELECT schema_name, bank_id FROM public.banks_needing_consolidation()")
+
+    returned = [r["bank_id"] for r in rows]
+    assert returned.count(many) == 1
+    assert returned.count(mixed) == 1
+    assert empty not in returned
+    assert observation_only not in returned
+
+
 class _FakeAlembicContext:
     """Stands in for ``alembic.context``, whose ``config`` only exists inside a
     live migration run."""
