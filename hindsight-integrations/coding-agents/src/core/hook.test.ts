@@ -560,7 +560,9 @@ describe("buildHookOutput", () => {
   it("autoInject recall: bounds the query under the server's 500-token cap", async () => {
     // A 2000-character slice sent ~1000 tokens of CJK, which older servers reject with HTTP 400,
     // so long or non-Latin prompts got no memory at all (#5476).
-    const recallObservations = vi.fn(async (_q: string, _o: { timeoutMs: number }) => [] as string[]);
+    const recallObservations = vi.fn(
+      async (_q: string, _o: { timeoutMs: number }) => [] as string[]
+    );
     const client = makeClient({ recallObservations });
     const cfg = resolveConfig({ autoInject: "recall" });
     const bytes = (s: string) => Buffer.byteLength(s, "utf8");

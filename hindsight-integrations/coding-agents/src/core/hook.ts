@@ -6,7 +6,8 @@
  *     "reflect" (default) is an agentic synthesis over the bank returning the root-cause decision
  *     with exact values; "pages" is a knowledge-page search and "recall" a raw memory recall, both
  *     retrieval-only and far cheaper; "none" injects nothing and leaves it to the tools. Cached
- *     per session, injected on the turn it ran.
+ *     per session, injected on the turn it ran. A failed or empty attempt is retried on a later
+ *     prompt within a small budget (see `resolveInjection`).
  *   - KNOWLEDGE PAGES every turn: the page set is fetched on a cadence and matched LOCALLY against
  *     the prompt (section-level lexical scoring — no server/LLM call); the top sections are
  *     injected with provenance. Fast like recall, organized like reflect.
