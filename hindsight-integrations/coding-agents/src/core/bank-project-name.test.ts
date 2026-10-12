@@ -93,7 +93,7 @@ describe("bankProjectName", () => {
   it("returns undefined rather than throwing when the probe cannot name the repository", () => {
     mockProbe.mockReturnValue({ status: "failed", reason: "EAGAIN" });
     // deriveBankId refuses to guess here (#3950) because a wrong bank id is permanent; a page
-    // scope name is not identity, so the caller falls back to the bank id instead of crashing.
+    // scope name is not identity, so the caller gets the shared-bank scope instead of crashing.
     expect(bankProjectName({}, "/home/me/dev/myrepo-wt1")).toBeUndefined();
     expect(() => deriveBankId({}, "/home/me/dev/myrepo-wt1")).toThrow();
   });
@@ -103,13 +103,14 @@ describe("bankProjectName", () => {
     const BANK = "shared_bank_id";
 
     mockProbe.mockReturnValue(inRepo("/work/one-repo/.git"));
-    const fromRepoA = pagesFor(bankProjectName(cfg, "/work/.worktrees/one-repo-233") ?? BANK);
+    const fromRepoA = pagesFor(bankProjectName(cfg, "/work/.worktrees/one-repo-233"));
 
     mockProbe.mockReturnValue({ status: "absent" });
-    const fromWorkspaceRoot = pagesFor(bankProjectName(cfg, "/work") ?? BANK);
+    const fromWorkspaceRoot = pagesFor(bankProjectName(cfg, "/work"));
 
     // Same text => `seedPages()` sees no source drift => no PATCH, no page regeneration.
     expect(fromWorkspaceRoot).toEqual(fromRepoA);
-    for (const page of fromRepoA) expect(page.source_query).toContain("shared_bank_id");
+    // …and name no project at all: naming the bank scoped every page to nothing (#4490).
+    for (const page of fromRepoA) expect(page.source_query).not.toContain(BANK);
   });
 });

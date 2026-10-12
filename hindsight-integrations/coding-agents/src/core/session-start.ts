@@ -17,6 +17,8 @@
  *   - throws (server unreachable)      -> no seed, no state written  (try again next session)
  *   - non-empty set (warm/pre-seeded)  -> no seed, seededAt written  (remember, skip enumerating)
  *   - empty set (cold)                 -> start the background seed, seededAt written, note added
+ * "Empty" means no git documents AND no survey-baseline marker: under `gitIngest: "none"` no git
+ * document is ever written, and the markers are what show the repo was already surveyed (#5124).
  */
 import { gitHeadSha, gitLogIsCurrent, hasGitHistory, commitsSince } from "./git";
 import { DEEPEN_DIFF_TARGET } from "./status";
@@ -263,8 +265,9 @@ export async function buildSessionStartContext(args: {
           // loader's harness default and misfiles this session's survey + git history into the
           // wrong bank (e.g. `opencode::<project>` for a claude-code session). See #3247.
           startSeed(cwd, { limit: cfg.seedLimit, harness });
-          // Cold iff the bank has zero source:git docs (an undefined result — server error — is
-          // NOT treated as cold; we never surveyed/noted on an unconfirmed-empty bank).
+          // Cold iff the bank has zero source:git docs and no survey baseline (an undefined result
+          // — server error — is NOT treated as cold; we never surveyed/noted on an unconfirmed-empty
+          // bank).
           if (cold) {
             if (cfg.codebaseSurvey !== false) {
               // Run the survey under the current harness's own CLI (falls back to any available agent).
