@@ -547,6 +547,39 @@ describe("Codex provenance and assistant channels", () => {
     ]);
   });
 
+  it.each([
+    "# AGENTS.md instructions for /repo\n\n<INSTRUCTIONS>\nbe terse\n</INSTRUCTIONS>",
+    "# AGENTS.md instructions\n\n<INSTRUCTIONS>\nglobal rules\n</INSTRUCTIONS>",
+  ])("drops a plugins-first startup message split into items, no metadata (#5306)", (agents) => {
+    const items = [
+      "<recommended_plugins>\nUse tools.\n</recommended_plugins>",
+      agents,
+      "<environment_context>\n<cwd>/repo</cwd>\n</environment_context>",
+    ];
+    writeFileSync(
+      file,
+      [
+        item({
+          type: "message",
+          role: "user",
+          content: items.map((t) => ({ type: "input_text", text: t })),
+        }),
+        item({
+          type: "message",
+          role: "user",
+          content: [
+            { type: "input_text", text: "<environment_context>\n</environment_context>" },
+            { type: "input_text", text: "# AGENTS.md instructions\nliteral, no block" },
+            { type: "input_text", text: "real prompt" },
+          ],
+        }),
+      ].join("\n")
+    );
+    expect(readCodexTranscript(file)).toEqual([
+      { role: "user", content: "# AGENTS.md instructions\nliteral, no block\nreal prompt" },
+    ]);
+  });
+
   it("keeps UserMessage events authoritative even when response metadata says otherwise", () => {
     writeFileSync(
       file,

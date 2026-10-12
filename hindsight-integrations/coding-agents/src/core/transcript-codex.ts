@@ -86,6 +86,21 @@ function isSyntheticUserText(text: string): boolean {
   return s.startsWith("# AGENTS.md instructions for ") || s.startsWith("<environment_context>");
 }
 
+// The global `~/.codex/AGENTS.md` fallback is headed without ` for <dir>` (#5306).
+const AGENTS_BLOCK_HEADER = /^# AGENTS\.md instructions(?: for [^\n]*)?\n/;
+const STARTUP_TAG_BLOCK = /^<(recommended_plugins|environment_context)>(?:(?!<\1>)[\s\S])*<\/\1>$/;
+
+/** One content item that is WHOLLY Codex startup context. Codex 0.146–0.148 writes the startup
+ *  message as separate items with `<recommended_plugins>` first, so the joined-prefix check above
+ *  never matched it (#5306). Requiring the complete shape (the `<INSTRUCTIONS>` pair, or a single
+ *  closed tag block) keeps literal user text that merely starts like one. */
+function isStartupItem(text: string): boolean {
+  const s = text.trim();
+  if (AGENTS_BLOCK_HEADER.test(s))
+    return s.includes("<INSTRUCTIONS>") && s.includes("</INSTRUCTIONS>");
+  return STARTUP_TAG_BLOCK.test(s);
+}
+
 /** Join the text blocks of a content list (input_text/output_text/text; images have no text). */
 function contentText(content: ContentItem[] | undefined): string {
   return (Array.isArray(content) ? content : [])
@@ -115,7 +130,10 @@ function fallbackUserText(payload: Payload): string {
   ) {
     return contentText(content.filter((_, index) => !startupKinds.has(kinds[index])));
   }
-  const text = contentText(content);
+  const items = (Array.isArray(content) ? content : []).filter(
+    (c) => !(c && typeof c.text === "string" && isStartupItem(stripInjectedMemory(c.text)))
+  );
+  const text = contentText(items);
   return isSyntheticUserText(stripInjectedMemory(text)) ? "" : text;
 }
 

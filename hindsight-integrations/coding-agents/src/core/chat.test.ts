@@ -234,6 +234,40 @@ describe("retainLiveSession — incremental write-back", () => {
   const write = (client: HindsightClient, turnList: TransportTurn[], cursors: RetainCursorStore) =>
     retainLiveSession(client, "s1", turnList, "2026-01-01T00:00:00Z", "codex", { cursors });
 
+  it("replaces when an accepted write's operation later failed (#5251)", async () => {
+    const status = new Map<string, string>();
+    const { retain, client } = stubClient();
+    Object.assign(client, {
+      bankUrl: (s: string) => s,
+      req: vi.fn(async (_m: string, url: string) => {
+        const st = status.get(url.split("/").pop()!);
+        return new Response(JSON.stringify({ status: st }), { status: st ? 200 : 404 });
+      }),
+    });
+    const cursors = memoryCursorStore();
+    const opOf = (call: number) => retain.mock.calls[call][5].operationId as string;
+
+    await write(client, turns(2), cursors);
+    status.set(opOf(0), "completed");
+    await write(client, turns(3), cursors);
+    expect(retain.mock.calls[1][5].updateMode).toBe("append"); // completed: append is safe
+    expect(cursors.read("s1")?.ops).toEqual([opOf(1)]);
+
+    status.set(opOf(1), "failed"); // accepted, then extraction failed
+    await write(client, turns(4), cursors);
+    // The failed append's turn 2 is re-sent: the whole transcript, as a replace.
+    expect(retain.mock.calls[2][5].updateMode).toBeUndefined();
+    expect(retain.mock.calls[2][0]).toBe(
+      renderSessionJsonl("conversation:s1", turns(4), "2026-01-01T00:00:00Z")
+    );
+    expect(cursors.read("s1")?.ops).toEqual([opOf(2)]);
+
+    status.set(opOf(2), "pending"); // still running: tracked, append proceeds
+    await write(client, turns(5), cursors);
+    expect(retain.mock.calls[3][5].updateMode).toBe("append");
+    expect(cursors.read("s1")?.ops).toEqual([opOf(2), opOf(3)]);
+  });
+
   it("replaces on the first write, then appends only the new turns", async () => {
     const { retain, client } = stubClient();
     const cursors = memoryCursorStore();
@@ -330,6 +364,8 @@ describe("retainLiveSession — incremental write-back", () => {
       fingerprint: expect.any(String),
       bank: "coding-agent::repo",
       appendSupported: true,
+      // Accepted but never seen to complete (this stub cannot answer a status check): kept to check.
+      ops: expect.arrayContaining([replay[5].operationId, tail[5].operationId]),
     });
   });
 

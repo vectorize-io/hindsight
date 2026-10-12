@@ -18,7 +18,7 @@ import { resolveHostMemory } from "../core/host-client";
 import { diag } from "../core/diag";
 import type { ToolSpec } from "../core/knowledge-tools";
 import { RuntimeCore } from "../core/runtime";
-import { type PiMessage, readPiMessages } from "../core/transcript-pi";
+import { type PiEntry, type PiMessage, readPiEntries, readPiMessages } from "../core/transcript-pi";
 
 // ── Structural subset of the pi extension API ───────────────────────────────────────────────────
 // Declared locally so this package takes no dependency on the fast-moving pi / Prime Agent SDKs;
@@ -46,6 +46,9 @@ interface BeforeAgentStartResult {
 
 interface SessionManagerLike {
   getSessionId(): string;
+  /** Every entry from the session root to the current leaf, already holding this run's messages
+   *  when `agent_end` fires. Optional: a host without it falls back to the event's messages. */
+  getBranch?(): readonly PiEntry[];
 }
 
 /** Only what this adapter reads. Both hosts also expose a UI notifier, but the seed banner it would
@@ -88,6 +91,7 @@ interface ExtensionAPI {
     event: "agent_end",
     handler: (event: AgentEndEvent, ctx: ExtensionContext) => Promise<void> | void
   ): void;
+  on(event: "session_shutdown", handler: () => Promise<void> | void): void;
   registerTool(definition: ToolDefinition): void;
 }
 
@@ -134,7 +138,7 @@ export function toPiTool(
  * calls Hindsight directly.
  */
 export function createPiHooks(
-  core: Pick<RuntimeCore, "onPrompt" | "getInjection" | "onTranscript">,
+  core: Pick<RuntimeCore, "onPrompt" | "getInjection" | "onTranscript" | "flush">,
   harness: string,
   sessionStart?: Promise<void>
 ) {
@@ -168,10 +172,18 @@ export function createPiHooks(
       }
       return { systemPrompt: `${event.systemPrompt}\n\n${injection}` };
     },
-    async agentEnd(event: { messages: readonly PiMessage[] }, sessionId: string): Promise<void> {
-      const turns = readPiMessages(event.messages);
+    /** `branch` is the session's entries (`sessionManager.getBranch()`): the event alone holds only
+     *  the latest run, and writing that back replaced the session's earlier runs (#4963). */
+    async agentEnd(
+      event: { messages: readonly PiMessage[] },
+      sessionId: string,
+      branch?: readonly PiEntry[]
+    ): Promise<void> {
+      const turns = branch ? readPiEntries(branch) : readPiMessages(event.messages);
       if (turns.length) await core.onTranscript(sessionId, turns, true); // the run has ended
     },
+    /** The host is exiting: the last agent_end's write-back is still in flight (#5081). */
+    sessionShutdown: () => core.flush(),
   };
 }
 
@@ -244,7 +256,15 @@ export function createPiExtension(
       at(ctx)?.hooks.beforeAgentStart(event, ctx.sessionManager.getSessionId())
     );
     pi.on("agent_end", async (event, ctx) =>
-      at(ctx)?.hooks.agentEnd(event, ctx.sessionManager.getSessionId())
+      at(ctx)?.hooks.agentEnd(
+        event,
+        ctx.sessionManager.getSessionId(),
+        ctx.sessionManager.getBranch?.()
+      )
     );
+    // Every workspace this process served may still have a write-back in flight.
+    pi.on("session_shutdown", async () => {
+      await Promise.all([...workspaces.values()].map((ws) => ws?.hooks.sessionShutdown()));
+    });
   };
 }

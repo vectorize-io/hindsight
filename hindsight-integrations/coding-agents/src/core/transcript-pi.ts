@@ -29,7 +29,7 @@ export interface PiMessage {
 /** Structural subset of one line of a stored pi session (`~/.pi/agent/sessions/**\/*.jsonl`).
  *  Conversation lives in `type:"message"` entries; the file's first line is the `type:"session"`
  *  header (id + cwd) and the rest are settings changes, which carry no conversation. */
-interface PiEntry {
+export interface PiEntry {
   type?: string;
   timestamp?: string;
   message?: PiMessage;
@@ -94,7 +94,7 @@ export function readPiMessages(messages: readonly PiMessage[]): TransportTurn[] 
  * transcript past the size cap yields fewer turns, never a throw (see core/jsonl.ts).
  */
 export function readPiTranscript(path: string): TransportTurn[] {
-  const turns: TransportTurn[] = [];
+  const entries: PiEntry[] = [];
   for (const rawLine of readJsonl(path)) {
     const trimmed = rawLine.trim();
     if (!trimmed) continue;
@@ -104,9 +104,24 @@ export function readPiTranscript(path: string): TransportTurn[] {
     } catch {
       continue;
     }
-    if (typeof parsed !== "object" || parsed === null) continue;
-    const entry = parsed as PiEntry;
-    if (entry.type !== "message" || !entry.message) continue;
+    if (typeof parsed === "object" && parsed !== null) entries.push(parsed as PiEntry);
+  }
+  return readPiEntries(entries);
+}
+
+/**
+ * Normalize session entries — a stored session's lines, or the live session's
+ * `sessionManager.getBranch()` — into turns. The live path reads the session rather than the
+ * `agent_end` event because the event carries only the LATEST run's messages, and the write-back
+ * replaces the session's whole document with what it is given: a second prompt in one session
+ * dropped the first one's turns (#4963). `getBranch()` (root to current leaf) is used over the
+ * compaction-aware `buildSessionProjection()` so a compaction does not shrink the document to a
+ * summary.
+ */
+export function readPiEntries(entries: readonly PiEntry[]): TransportTurn[] {
+  const turns: TransportTurn[] = [];
+  for (const entry of entries) {
+    if (!entry || entry.type !== "message" || !entry.message) continue;
     // The entry's timestamp, not the inner message's: the outer one is the ISO string every other
     // reader's turns carry, while the inner is epoch milliseconds.
     for (const turn of renderMessage(entry.message)) {

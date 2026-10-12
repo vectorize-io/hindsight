@@ -73,7 +73,15 @@ export function readOpencodeMessages(messages: OcMessage[]): TransportTurn[] {
   return (messages || []).flatMap((m) => renderMessage(m));
 }
 
-/** The session id carried on the messages (first message that has one), or undefined. */
+/**
+ * The session the request is being built for: the id on the NEWEST message that carries one.
+ *
+ * `messages.transform` gets no session id in its input (`{}`), so it has to come from the list. It
+ * used to be the FIRST message's id, but a side session that starts from its parent's history (the
+ * oh-my-opencode "btw" question) carries the parent's messages first — so its transcript replaced
+ * the parent's `conversation:` document (#5052). The latest message is the one just sent in the
+ * session actually running.
+ */
 export function opencodeSessionId(messages: OcMessage[]): string | undefined {
-  return (messages || []).find((m) => m.info?.sessionID)?.info?.sessionID;
+  return [...(messages || [])].reverse().find((m) => m.info?.sessionID)?.info?.sessionID;
 }

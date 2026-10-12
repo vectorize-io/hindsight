@@ -327,3 +327,27 @@ describe("RuntimeCore tool workspace binding", () => {
     expect(await workspaceOf(core)).toBe(process.cwd());
   });
 });
+
+/** agent_end write-backs are fire-and-forget; a host that exits right after one dropped it (#5081). */
+describe("RuntimeCore.flush", () => {
+  it("waits for an in-flight write-back, and gives up after its bound", async () => {
+    let release: (() => void) | undefined;
+    const client = {
+      retain: vi.fn(() => new Promise<void>((r) => (release = r))),
+    } as unknown as HindsightClient;
+    const runtime = new RuntimeCore(client, "bank-1", resolveConfig({}));
+    await runtime.onTranscript("s-flush", [{ role: "user", content: "hi" }], true);
+
+    const t0 = Date.now();
+    await runtime.flush(50); // the server never answers: flush must still return
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(45);
+
+    let flushed = false;
+    const done = runtime.flush(5_000).then(() => (flushed = true));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(flushed).toBe(false);
+    release?.();
+    await done;
+    expect(client.retain).toHaveBeenCalledOnce();
+  });
+});

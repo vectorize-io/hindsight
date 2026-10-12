@@ -9,6 +9,7 @@ describe("pi extension adapter", () => {
       onPrompt: vi.fn(async () => {}),
       getInjection: vi.fn(() => "<hindsight_memories>remember this</hindsight_memories>"),
       onTranscript: vi.fn(async () => {}),
+      flush: vi.fn(async () => {}),
     };
     const hooks = createPiHooks(core, "pi");
     const sections: Record<string, string> = { base: "You are pi." };
@@ -121,6 +122,33 @@ describe("pi extension adapter", () => {
     );
   });
 
+  it("writes back the whole session branch, not just the latest run's messages (#4963)", async () => {
+    const onTranscript = vi.fn(async () => {});
+    const flush = vi.fn(async () => {});
+    const core = { onPrompt: vi.fn(), getInjection: vi.fn(), onTranscript, flush };
+    const hooks = createPiHooks(core as never, "pi");
+    const msg = (role: string, text: string) => ({
+      type: "message",
+      timestamp: "2026-10-01T00:00:00.000Z",
+      message: { role, content: [{ type: "text", text }] },
+    });
+
+    // The second run's event holds only its own exchange; the session holds both runs.
+    await hooks.agentEnd({ messages: [{ role: "user", content: "beta" }] }, "session-1", [
+      { type: "session" },
+      msg("user", "alpha"),
+      msg("assistant", "noted alpha"),
+      { type: "compaction" },
+      msg("user", "beta"),
+    ]);
+    const turns = (onTranscript.mock.calls[0] as unknown[])[1] as { content: string }[];
+    expect(turns.map((t) => t.content)).toEqual(["alpha", "noted alpha", "beta"]);
+
+    // Exit drains the write-back the last agent_end started (#5081).
+    await hooks.sessionShutdown();
+    expect(flush).toHaveBeenCalledOnce();
+  });
+
   it("does not write back an empty exchange", async () => {
     const onTranscript = vi.fn(async () => {});
     const core = {
@@ -166,6 +194,7 @@ describe("pi extension factory", () => {
       onPrompt: vi.fn(async () => {}),
       getInjection: vi.fn(() => undefined),
       onTranscript: vi.fn(async () => {}),
+      flush: vi.fn(async () => {}),
       toolSpecs: (): ToolSpec[] => [
         {
           name: "hindsight_reflect",
@@ -235,6 +264,11 @@ describe("pi extension factory", () => {
     expect(await run("/repo-b")).toBe("bank of /repo-b");
     expect(await run(process.cwd())).toBe("Hindsight memory is disabled for this workspace.");
     expect(pi.tools).toHaveLength(1);
+
+    // Exit drains every workspace's in-flight write-back, not just the launch one's (#5081).
+    await pi.handlers.session_shutdown({}, undefined);
+    expect(cores.get("/repo-a")?.flush).toHaveBeenCalledOnce();
+    expect(cores.get("/repo-b")?.flush).toHaveBeenCalledOnce();
   });
 
   it("registers the launch directory's tools at load, as the CLI always has", () => {
