@@ -1828,8 +1828,9 @@ async def retain_batch(
                 if merged_filenames:
                     merged_item["attachment_filenames"] = merged_filenames
                 contents_dicts = [merged_item]
-            # Rebuild contents list to match
-            contents = _build_contents(contents_dicts, document_tags)
+            if existing_text or _merged_text is not None:
+                # Rebuild contents list to match
+                contents = _build_contents(contents_dicts, document_tags)
         if existing_text:
             log_buffer.append(
                 f"[append] Prepended {len(existing_text):,} chars from existing document {effective_doc_id}"
