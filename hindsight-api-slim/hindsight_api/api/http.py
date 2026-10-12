@@ -212,6 +212,7 @@ def FieldWithDefault(default_factory: Callable, **kwargs) -> Any:
 
 from hindsight_api.config import ConfigLike, HindsightConfig, StaticConfigProxy, get_config
 from hindsight_api.engine.interface import BankTemplateImportWrite
+from hindsight_api.engine.memories.base import StoreWriteUnavailable
 from hindsight_api.engine.memory_engine import (
     KEEP_PARENT,
     Budget,
@@ -312,8 +313,38 @@ def _internal_error(exc: Exception, where: str) -> HTTPException:
     ``raise _internal_error(e, ...)`` and keep the ``raise`` visible at the
     handler instead of hidden behind a call.
     """
+    unavailable = _store_unavailable(exc)
+    if unavailable is not None:
+        logger.warning(f"Store unavailable in {where}, answering 503: {exc}")
+        return unavailable
     logger.error(f"Error in {where}: {exc}\n\nTraceback:\n{traceback.format_exc()}")
     return HTTPException(status_code=500, detail=str(exc))
+
+
+def _store_unavailable(exc: BaseException) -> HTTPException | None:
+    """The 503 for a store that shed this request, or None if it did not.
+
+    A store that cannot take a request *right now* — a bank briefly closed to writes, or indexing
+    that has fallen behind its writers — raises :class:`StoreWriteUnavailable`. The app-level
+    handler turns it into 503 + ``Retry-After``, but only when it escapes the route; every route's
+    catch-all caught it first and answered 500, which tells a client the request is broken. A bulk
+    ingest that stops on a 500 silently loses the rest of what it was writing.
+
+    Walks the cause/context chain because the engine usually wraps the store's error before a route
+    sees it.
+    """
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, StoreWriteUnavailable):
+            return HTTPException(
+                status_code=503,
+                detail=str(cur),
+                headers={"Retry-After": str(getattr(cur, "retry_after", 30))},
+            )
+        cur = cur.__cause__ or cur.__context__
+    return None
 
 
 def _parse_iso_datetime(value: str | None, param: str) -> datetime | None:
@@ -5602,8 +5633,6 @@ def _register_routes(app: FastAPI):
     # A bank briefly closed to writes — a store migrating it between backends holds it for a few
     # seconds. 503 + Retry-After rather than a 500: nothing is broken, and the difference decides
     # whether a client retries or reports a failure to the user.
-    from ..engine.memories.base import StoreWriteUnavailable
-
     @app.exception_handler(StoreWriteUnavailable)
     async def store_write_unavailable_handler(request, exc: StoreWriteUnavailable):
         return JSONResponse(
@@ -6367,6 +6396,8 @@ def _register_routes(app: FastAPI):
                 detail="Request timed out while searching memories. Try a shorter or more specific query.",
             )
         except Exception as e:
+            if (unavailable := _store_unavailable(e)) is not None:
+                raise unavailable
             import traceback
 
             handler_duration = time.time() - handler_start
@@ -10291,6 +10322,8 @@ def _register_routes(app: FastAPI):
                     status_code=422,
                     detail={"violations": [asdict(v) for v in e.violations]},
                 )
+            if (unavailable := _store_unavailable(e)) is not None:
+                raise unavailable
             import traceback
 
             # Create a summary of the input for debugging
