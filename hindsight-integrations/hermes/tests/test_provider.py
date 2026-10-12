@@ -3,6 +3,7 @@ sends to Hindsight (a recording fake client stands in for the real SDK)."""
 
 import json
 import sys
+import threading
 from types import SimpleNamespace
 
 import hindsight_hermes as plugin
@@ -55,6 +56,20 @@ def test_shutdown_flushes_turns_below_the_retain_cadence(provider):
 
     assert len(fake.retains) == 1
     assert _messages_of(fake) == ["User: one", "Assistant: 1", "User: two", "Assistant: 2"]
+
+
+def test_turn_timestamp_is_taken_when_queued_not_when_written(provider, monkeypatch):
+    """#5189: a busy writer must not move the turn's event time to when it finally ran."""
+    instance, fake = provider({})
+    release = threading.Event()
+    instance._enqueue_retain(release.wait)  # hold the writer until the clock has moved on
+    monkeypatch.setattr(plugin, "_event_timestamp", lambda: "2026-01-01T00:00:00Z")
+    instance.sync_turn("one", "1")
+    monkeypatch.setattr(plugin, "_event_timestamp", lambda: "2026-01-01T00:05:00Z")
+    release.set()
+    instance.shutdown()
+
+    assert _retain_item(fake)["timestamp"] == "2026-01-01T00:00:00Z"
 
 
 def test_auto_retain_off_stores_nothing(provider):
