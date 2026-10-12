@@ -31,8 +31,7 @@
       },
       "bankMission": {
         "type": "string",
-        "description": "Mission stamped onto the bank's reflect_mission column on first use. Only affects the /reflect operation — does not steer retain or recall. Leave unset (or empty) to manage missions out-of-band via PATCH /banks/{id}.",
-        "default": "You are an AI assistant helping users across multiple communication channels (Telegram, Slack, Discord, etc.). Remember user preferences, instructions, and important context from conversations to provide personalized assistance."
+        "description": "Mission stamped onto the bank's reflect_mission column on first use. Only affects the /reflect operation — does not steer retain or recall. Leave unset (or empty) to manage missions out-of-band via PATCH /banks/{id}."
       },
       "retainMission": {
         "type": "string",

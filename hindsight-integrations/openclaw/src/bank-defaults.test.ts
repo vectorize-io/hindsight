@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { HindsightClient } from "@vectorize-io/hindsight-client";
+import { readFileSync } from "fs";
 import type { PluginConfig } from "./types.js";
 import {
   applyConfiguredBankDefaults,
@@ -13,6 +14,25 @@ import {
 } from "./bank-defaults.js";
 
 const clientOpts = { baseUrl: "http://localhost:8888", apiKey: "test-token" };
+
+describe("manifest schema defaults", () => {
+  // OpenClaw validates plugin config with AJV applyDefaults, so every schema
+  // `default` reaches the plugin as if the user had set it. A default on a
+  // bank-stamped field would overwrite settings managed out-of-band on every
+  // reload — the bankMission default did exactly that to reflect_mission (#5477).
+  it("stamp nothing onto the bank when the user configured nothing", () => {
+    const manifest = JSON.parse(
+      readFileSync(new URL("../openclaw.plugin.json", import.meta.url), "utf-8")
+    );
+    const defaults = Object.fromEntries(
+      Object.entries(manifest.configSchema.properties as Record<string, { default?: unknown }>)
+        .filter(([, prop]) => "default" in prop)
+        .map(([key, prop]) => [key, prop.default])
+    );
+    expect(buildCreateBankDefaults(defaults as PluginConfig)).toEqual({});
+    expect(buildBankConfigApiUpdates(defaults as PluginConfig)).toEqual({});
+  });
+});
 
 describe("hasConfiguredBankDefaults", () => {
   it("returns false when no bank default options are set", () => {
