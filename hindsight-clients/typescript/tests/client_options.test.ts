@@ -19,4 +19,18 @@ describe("HindsightClient options", () => {
     expect(headers.get("Authorization")).toBe("Bearer test-api-key");
     expect(headers.get("User-Agent")).toBe(DEFAULT_USER_AGENT);
   });
+
+  test("puts a caller's user agent in front of the client's own", () => {
+    const client = new HindsightClient({
+      baseUrl: "http://localhost:8888",
+      userAgent: "hindsight-test/1.2.3",
+    });
+    const internalClient = client as unknown as {
+      client: { getConfig: () => { headers: Headers } };
+    };
+
+    expect(internalClient.client.getConfig().headers.get("User-Agent")).toBe(
+      `hindsight-test/1.2.3 ${DEFAULT_USER_AGENT}`
+    );
+  });
 });

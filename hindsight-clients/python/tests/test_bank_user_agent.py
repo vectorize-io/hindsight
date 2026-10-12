@@ -35,4 +35,4 @@ async def test_bank_helper_uses_configured_user_agent(method: str, user_agent: s
         finally:
             await client.aclose()
 
-    assert observed == [user_agent or DEFAULT_USER_AGENT]
+    assert observed == [f"{user_agent} {DEFAULT_USER_AGENT}" if user_agent else DEFAULT_USER_AGENT]

@@ -162,10 +162,12 @@ export interface HindsightClientOptions {
    */
   apiKey?: string;
   /**
-   * Override the default `User-Agent` header. Integrations should set this to
-   * identify themselves (e.g. `"hindsight-ai-sdk/1.2.0"`). Browsers ignore
-   * attempts to set `User-Agent`; this only takes effect in Node.js / Bun /
-   * Deno runtimes. Defaults to `hindsight-client-typescript/<version>`.
+   * Product token placed in front of the client's own in the `User-Agent`
+   * header. Integrations should set this to identify themselves (e.g.
+   * `"hindsight-ai-sdk/1.2.0"` is sent as
+   * `"hindsight-ai-sdk/1.2.0 hindsight-client-typescript/<version>"`). Browsers
+   * ignore attempts to set `User-Agent`; this only takes effect in Node.js /
+   * Bun / Deno runtimes. Defaults to `hindsight-client-typescript/<version>`.
    */
   userAgent?: string;
   /** Optional headers sent with every request. */
@@ -345,7 +347,11 @@ export class HindsightClient {
   constructor(options: HindsightClientOptions) {
     const headers: Record<string, string> = {
       ...options.headers,
-      "User-Agent": options.userAgent ?? DEFAULT_USER_AGENT,
+      // Prefix rather than replace, so the server still learns the client version behind an
+      // integration. Before, a caller's value replaced the default and the version was lost.
+      "User-Agent": options.userAgent
+        ? `${options.userAgent} ${DEFAULT_USER_AGENT}`
+        : DEFAULT_USER_AGENT,
     };
     if (options.apiKey) {
       headers.Authorization = `Bearer ${options.apiKey}`;

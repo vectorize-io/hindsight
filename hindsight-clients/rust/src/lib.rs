@@ -41,16 +41,19 @@ pub fn reqwest_client_with_user_agent(
     reqwest::Client::builder().user_agent(user_agent.into()).build()
 }
 
-/// Construct a [`Client`] with a custom `User-Agent` header.
-///
-/// Equivalent to [`Client::new`] but sets the UA string. Use this instead of
-/// the bare `Client::new` when pointing at a hosted Hindsight deployment.
+/// Construct a [`Client`] whose `User-Agent` is `user_agent` followed by
+/// [`DEFAULT_USER_AGENT`], so the server learns both the caller and the client
+/// version (e.g. `"hindsight-cli/0.6.2 hindsight-client-rust/0.6.2"`).
 pub fn client_with_user_agent(
     base_url: &str,
     user_agent: impl Into<String>,
 ) -> Result<Client, reqwest::Error> {
-    let http = reqwest_client_with_user_agent(user_agent)?;
+    let http = reqwest_client_with_user_agent(prefixed_user_agent(&user_agent.into()))?;
     Ok(Client::new_with_client(base_url, http))
+}
+
+fn prefixed_user_agent(user_agent: &str) -> String {
+    format!("{user_agent} {DEFAULT_USER_AGENT}")
 }
 
 /// Construct a [`Client`] with the default Hindsight `User-Agent`.
@@ -58,12 +61,21 @@ pub fn client_with_user_agent(
 /// Prefer this over `Client::new` — the bare `Client::new` uses reqwest's
 /// default UA which is blocked by some reverse proxies (e.g. Cloudflare).
 pub fn default_client(base_url: &str) -> Result<Client, reqwest::Error> {
-    client_with_user_agent(base_url, DEFAULT_USER_AGENT)
+    let http = reqwest_client_with_user_agent(DEFAULT_USER_AGENT)?;
+    Ok(Client::new_with_client(base_url, http))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_caller_user_agent_keeps_client_version() {
+        assert_eq!(
+            prefixed_user_agent("hindsight-test/1.2.3"),
+            format!("hindsight-test/1.2.3 {DEFAULT_USER_AGENT}")
+        );
+    }
 
     #[test]
     fn test_client_creation() {
