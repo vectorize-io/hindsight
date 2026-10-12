@@ -1,4 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -262,6 +264,34 @@ describe("HindsightClient.drain", () => {
     await c.drain(["1", "2"], "test", 10_000);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(log).toHaveBeenCalledWith("[wait] test drained — 2 done, 1 failed");
+  });
+
+  it("a 403/404 poll fails the op at once instead of polling it until the timeout (#5080)", async () => {
+    for (const status of [403, 404]) {
+      const fetchMock = vi.fn(async () => jsonResponse(status, { detail: "nope" }));
+      vi.stubGlobal("fetch", fetchMock);
+      const log = vi.fn();
+      const c = new HindsightClient({ apiUrl: "http://x", bank: "b", log });
+
+      await c.drain(["1"], "test", 60_000);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(log).toHaveBeenCalledWith(`  … test op 1 -> HTTP ${status}, counted as failed`);
+      expect(log).toHaveBeenCalledWith("[wait] test drained — 1 done, 1 failed");
+    }
+  });
+
+  it("a 5xx poll is retried a bounded number of times, then fails the op", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => jsonResponse(503, {}));
+    vi.stubGlobal("fetch", fetchMock);
+    const log = vi.fn();
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "b", log });
+
+    const p = c.drain(["1"], "test", 60 * 60 * 1000);
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    await p;
+    expect(fetchMock).toHaveBeenCalledTimes(12);
+    expect(log).toHaveBeenCalledWith("[wait] test drained — 1 done, 1 failed");
   });
 });
 
@@ -649,6 +679,30 @@ describe("HindsightClient.reflect failures", () => {
       .catch((e) => e)) as ReflectError;
     expect(timeout.timedOut).toBe(true);
     expect(timeout.fallbackEligible).toBe(true);
+  });
+
+  it("is bounded by its own deadline, not undici's headersTimeout (#5504)", async () => {
+    // Node's fetch cuts a request whose headers take longer than 300s, under any signal. Shrink
+    // that default to 100ms on a real server that answers after 2s (undici's timers tick at
+    // ~0.5-1s, so the gap must be wide): a deadline of 10s must win.
+    const server = createServer((_req, res) =>
+      setTimeout(() => res.end(JSON.stringify({ text: "late answer" })), 2_000)
+    );
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    void globalThis.Headers; // loads Node's undici, which installs the global dispatcher
+    const key = Symbol.for("undici.globalDispatcher.1");
+    const g = globalThis as Record<symbol, unknown>;
+    const original = g[key] as object;
+    const Agent = original.constructor as new (opts: object) => object;
+    g[key] = new Agent({ headersTimeout: 100 });
+    try {
+      const client = new HindsightClient({ apiUrl: `http://127.0.0.1:${port}`, bank: "b" });
+      expect(await client.reflect("why?", { timeoutMs: 10_000 })).toBe("late answer");
+    } finally {
+      g[key] = original;
+      server.close();
+    }
   });
 });
 

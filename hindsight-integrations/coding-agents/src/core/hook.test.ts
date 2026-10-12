@@ -168,6 +168,32 @@ describe("buildHookOutput", () => {
     expect(client.reflect).toHaveBeenCalledTimes(2);
   });
 
+  it("a permanent 4xx reflect is not retried on a later turn (#5207); 5xx/429 still are", async () => {
+    const cfg = resolveConfig({});
+    const args = { harness: "claude-code", prompt: UNRELATED_PROMPT, cfg, cacheFile };
+    const permanent = makeClient({
+      reflect: vi.fn(async () => {
+        throw new ReflectError("reflect 401", 401, false);
+      }),
+    });
+    const t1 = await buildHookOutput({ ...args, client: permanent });
+    expect(t1.notice).toContain("no memory this turn");
+    expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBe("");
+    await buildHookOutput({ ...args, client: permanent });
+    expect(permanent.reflect).toHaveBeenCalledTimes(1);
+
+    for (const status of [429, 503]) {
+      rmSync(cacheFile, { force: true });
+      const transient = makeClient({
+        reflect: vi.fn(async () => {
+          throw new ReflectError(`reflect ${status}`, status, false);
+        }),
+      });
+      await buildHookOutput({ ...args, client: transient });
+      expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBeUndefined();
+    }
+  });
+
   it("reflect_failed records the bank, the deadline, and the server's full error body", async () => {
     const diagFile = join(root, "diag.log");
     vi.stubEnv("HINDSIGHT_DIAG_FILE", diagFile);

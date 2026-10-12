@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { RateLimitedError, type HindsightClient } from "./hindsight";
 import {
@@ -269,6 +272,29 @@ describe("retainLiveSession — incremental write-back", () => {
     await write(next, turns(4), cursors);
     expect(probe).not.toHaveBeenCalled();
     expect(retain.mock.calls[0][5].updateMode).toBe("append");
+  });
+
+  it("records the probed write-back mode in the diag trail, so a dead append is visible (#5286)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hs-chat-diag-"));
+    vi.stubEnv("HINDSIGHT_DIAG_FILE", join(dir, "diag.jsonl"));
+    try {
+      await write(stubClient(false).client, turns(2), memoryCursorStore());
+      const events = readFileSync(join(dir, "diag.jsonl"), "utf8")
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l));
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          harness: "codex",
+          event: "retain_mode",
+          mode: "replace",
+          appendSupported: false,
+        })
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("sends a stable v5 operation_id so a resubmitted write is not applied twice", async () => {

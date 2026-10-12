@@ -5680,6 +5680,11 @@ def _register_routes(app: FastAPI):
         tags=["Monitoring"],
         operation_id="get_version",
     )
+    # Same handler under /v1, kept out of the OpenAPI spec (it is an alias, not a new operation).
+    # A reverse proxy that routes only /v1 to the API — the Helm chart's default ingress does —
+    # sends a bare /version to the control plane instead, so clients probing capabilities there
+    # silently saw "unsupported" (#5286). Clients try this path first.
+    @app.get("/v1/version", response_model=VersionResponse, include_in_schema=False)
     async def version_endpoint() -> VersionResponse:
         """
         Get API version and enabled features.

@@ -319,7 +319,12 @@ export async function buildHookOutput(args: {
       // budget is spent. Caching "" here meant one timeout on the session's first prompt disabled
       // synthesis for the ENTIRE session, and against a real server a reflect near the timeout is a
       // coin flip, not an edge case (#4607).
-      reflectAnswer = resolveInjection(undefined, reflectAttempts);
+      // ...except a permanent 4xx, which fails identically on every later turn: resolve it now
+      // rather than spend the session's second attempt on a call that cannot succeed (#5207).
+      reflectAnswer =
+        e instanceof ReflectError && e.permanent
+          ? ""
+          : resolveInjection(undefined, reflectAttempts);
       reflectFailed = true;
       log.warn(harness, "reflect failed — session runs without memory", {
         error: describeError(e),

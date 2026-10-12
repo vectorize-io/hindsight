@@ -3,6 +3,7 @@
  * backfill (ingest past sessions) and the live runtime write-back. A leading `system` turn carries
  * the REF-ID tracer; every turn gets an ABSOLUTE timestamp.
  */
+import { diag } from "./diag";
 import { RateLimitedError, type HindsightClient } from "./hindsight";
 import {
   advancePaths,
@@ -288,6 +289,7 @@ async function writeSession(
   // A "yes" is remembered on the cursor: hook harnesses run a fresh process per Stop, so without it
   // every turn re-asked, and one slow or failed probe turned that turn's append into a full replace
   // (#4560). A "no" is not remembered — the server can be upgraded mid-session.
+  const probed = Boolean(cursors) && cursor?.appendSupported !== true;
   const appendSupported =
     Boolean(cursors) && (cursor?.appendSupported === true || (await supportsAppend(client)));
   const plan = planRetain(turns, cursor, {
@@ -295,6 +297,9 @@ async function writeSession(
     bank: client.bank,
     path: transcriptPath,
   });
+  // Recorded whenever the probe ran, so a deployment where append never activates shows up in the
+  // diag trail instead of only as oversized retains (#5286). A cached "yes" is not re-logged.
+  if (probed) diag(harness ?? "", "retain_mode", { mode: plan.mode, appendSupported });
   // Which files the document holds after this write-back. A replace rebuilds it from THIS file
   // alone, so it forgets the others — which is what lets the file it dropped be appended back as a
   // segment on its next hook, rather than replacing again.

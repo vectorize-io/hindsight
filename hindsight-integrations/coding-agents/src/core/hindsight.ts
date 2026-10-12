@@ -204,9 +204,12 @@ async function isEndpointMissing(r: Response): Promise<boolean> {
         .toLowerCase() === "not found"
     );
   } catch {
-    // No JSON body at all (a proxy's HTML 404, a bare gateway response). Our API always answers
-    // bank-not-found in JSON, so this is not it — latch, as this code did before the fix.
-    return true;
+    // No JSON body at all (a proxy's HTML/plain-text 404, a bare gateway response). This used to
+    // latch, but a reverse proxy answers exactly this while the backend restarts, and the latch
+    // never expires — knowledge pages stayed off for the life of the process (#5071). Only our
+    // API's own JSON 404 is a verdict; anything else leaves the capability unknown, so the next
+    // call asks again.
+    return false;
   }
 }
 
@@ -235,6 +238,13 @@ export class ReflectError extends Error {
    *  every endpoint (auth, missing bank), so it is not. */
   get fallbackEligible(): boolean {
     return this.timedOut || (this.status !== undefined && this.status >= 500);
+  }
+
+  /** A 4xx the next attempt would get again (bad key, missing bank, rejected body) — retrying it
+   *  only spends another doomed call (#5207). 408/429 are "not now", so they stay retryable. */
+  get permanent(): boolean {
+    const s = this.status;
+    return s !== undefined && s >= 400 && s < 500 && s !== 408 && s !== 429;
   }
 }
 
@@ -266,6 +276,11 @@ export const DEFAULT_RECALL_OPTIONS: Record<string, unknown> = {
 
 /** How long drain() pauses between poll cycles when the API did not rate-limit (429). */
 const POLL_CYCLE_MS = 5000;
+
+/** Consecutive 5xx polls after which drain() gives an operation up as failed. A blip recovers in
+ *  one or two cycles; a server answering 5xx for this long (~1 min at the 5s cycle) is not going to
+ *  report that op's status, and polling it for the rest of the hour only hides it (#5080). */
+const POLL_MAX_SERVER_ERRORS = 12;
 
 /** Minimum backoff after a 429 that carried no (or a shorter) Retry-After. */
 const RETRY_AFTER_FLOOR_MS = 10 * 1000;
@@ -309,6 +324,35 @@ function shapePage(page: unknown): unknown {
     ...(p.timestamp ? { last_updated_at: p.timestamp } : {}),
     body,
   };
+}
+
+/** Undici's cross-version handle on the dispatcher Node's global `fetch` uses. */
+const GLOBAL_DISPATCHER = Symbol.for("undici.globalDispatcher.1");
+
+/**
+ * The global dispatcher with undici's own header/body timeouts switched off, for a request that
+ * already carries an AbortSignal deadline — or undefined where there is nothing to wrap.
+ *
+ * Node's fetch applies a 300s `headersTimeout` below our signal, so a reflect configured above
+ * 300s (`reflectToolTimeoutMs` defaults to 330s, past the server's own reflect wall) died with
+ * UND_ERR_HEADERS_TIMEOUT before the server could answer (#5504). Composing over the CURRENT
+ * global dispatcher, instead of building a new undici `Agent`, needs no `undici` dependency (the
+ * bundled one is not importable) and keeps any proxy dispatcher the host installed. Hosts whose
+ * fetch is not undici's (Bun, DSH's own) have no such dispatcher and ignore the option.
+ */
+function signalOnlyDispatcher(): unknown {
+  // Node loads undici — which installs the global dispatcher — lazily. Touching the `Headers`
+  // global loads it; touching `fetch` does not (it is a wrapper until first called).
+  void globalThis.Headers;
+  const d = (globalThis as Record<symbol, unknown>)[GLOBAL_DISPATCHER] as
+    | { compose?: (interceptor: unknown) => unknown }
+    | undefined;
+  if (typeof d?.compose !== "function") return undefined; // Node 18's undici predates compose()
+  type Dispatch = (opts: Record<string, unknown>, handler: unknown) => boolean;
+  return d.compose(
+    (dispatch: Dispatch) => (opts: Record<string, unknown>, handler: unknown) =>
+      dispatch({ ...opts, headersTimeout: 0, bodyTimeout: 0 }, handler)
+  );
 }
 
 export class HindsightClient {
@@ -392,7 +436,10 @@ export class HindsightClient {
    * bounds the whole call.
    */
   private async fetchWithAuth(url: string, init: RequestInit): Promise<Response> {
-    const send = () => fetch(url, { ...init, headers: this.headers() });
+    // Only a request with its own deadline drops undici's timeouts; the drain poll has none.
+    const dispatcher = init.signal ? signalOnlyDispatcher() : undefined;
+    const send = () =>
+      fetch(url, { ...init, headers: this.headers(), ...(dispatcher ? { dispatcher } : {}) });
     const r = await send();
     if (r.status !== 401 || !this.refreshToken()) return r;
     return send();
@@ -493,15 +540,22 @@ export class HindsightClient {
     return this.idempotentRetain;
   }
 
+  /** `/v1/version` first: an ingress that routes only `/v1` to the API (the Helm chart's default)
+   *  hands a bare `/version` to the control plane, whose HTML 404 or login redirect read as "no",
+   *  so append silently never turned on (#5286). Servers that predate the alias still answer
+   *  `/version`, so that stays as the fallback. */
   private async probeIdempotentRetain(): Promise<boolean> {
-    try {
-      const r = await this.req("GET", `${this.apiUrl}/version`);
-      if (!r.ok) return false;
-      const j = (await r.json()) as { api_version?: string };
-      return semverGte(j.api_version, MIN_IDEMPOTENT_RETAIN_VERSION);
-    } catch {
-      return false;
+    for (const path of ["/v1/version", "/version"]) {
+      try {
+        const r = await this.req("GET", `${this.apiUrl}${path}`);
+        if (!r.ok) continue;
+        const j = (await r.json()) as { api_version?: string };
+        return semverGte(j.api_version, MIN_IDEMPOTENT_RETAIN_VERSION);
+      } catch {
+        /* unreachable or not our API's JSON — try the next path */
+      }
     }
+    return false;
   }
 
   /**
@@ -685,7 +739,13 @@ export class HindsightClient {
     this.log(`[wait] draining ${ids.length} ${label} operations …`);
     const start = Date.now();
     const pending = new Set(ids);
+    const serverErrors = new Map<string, number>();
     let failed = 0;
+    const giveUp = (id: string, status: number): void => {
+      pending.delete(id);
+      failed++;
+      this.log(`  … ${label} op ${id} -> HTTP ${status}, counted as failed`);
+    };
     while (pending.size && Date.now() - start < maxMs) {
       // Cycle backoff: default 5s; any 429 in the cycle raises it to the longest Retry-After seen
       // (floor 10s) so a rate-limited API gets room to recover before the next poll round.
@@ -700,7 +760,17 @@ export class HindsightClient {
             );
             return; // op stays pending — retried after the backoff
           }
-          if (!r.ok) return;
+          // Any other non-OK used to just `return`, leaving the op pending for the whole maxMs:
+          // a 403/404 (auth drift, vanished op or bank) was polled for an hour (#5080). A 4xx
+          // will answer the same next cycle, so it is terminal now; a 5xx gets a bounded run.
+          if (r.status >= 500) {
+            const n = (serverErrors.get(id) ?? 0) + 1;
+            serverErrors.set(id, n);
+            if (n >= POLL_MAX_SERVER_ERRORS) giveUp(id, r.status);
+            return;
+          }
+          if (!r.ok) return giveUp(id, r.status);
+          serverErrors.delete(id);
           const st = (((await r.json()) as { status?: string }).status || "").toLowerCase();
           if (TERMINAL.has(st)) {
             pending.delete(id);

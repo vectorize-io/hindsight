@@ -37,7 +37,7 @@ describe("HindsightClient append capability", () => {
     const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
     await expect(c.supportsAppendRetain()).resolves.toBe(false);
     expect(calls.map((call) => call.url)).toEqual([
-      "http://x/version",
+      "http://x/v1/version",
       "http://x/v1/default/banks/repo-a/config",
     ]);
   });
@@ -78,7 +78,36 @@ describe("HindsightClient append capability", () => {
     ]);
     const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
     await expect(c.supportsAppendRetain()).resolves.toBe(false);
-    expect(calls.map((call) => call.url)).toEqual(["http://x/version"]);
+    expect(calls.map((call) => call.url)).toEqual(["http://x/v1/version"]);
+  });
+
+  it("probes /v1/version first, so a /v1-only ingress still enables append (#5286)", async () => {
+    // The bare /version lands on the control plane behind such an ingress: an HTML page.
+    const html = { ok: true, status: 200, json: async () => JSON.parse("<!doctype html>") };
+    const fetchMock = vi.fn(async (url: string) =>
+      url === "http://x/v1/version"
+        ? ({ ok: true, status: 200, json: async () => ({ api_version: "0.10.3" }) } as any)
+        : (html as any)
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await expect(c.supportsIdempotentRetain()).resolves.toBe(true);
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual(["http://x/v1/version"]);
+  });
+
+  it("falls back to /version on a server that predates the /v1 alias", async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      url === "http://x/v1/version"
+        ? ({ ok: false, status: 404, json: async () => ({ detail: "Not Found" }) } as any)
+        : ({ ok: true, status: 200, json: async () => ({ api_version: "0.9.0" }) } as any)
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await expect(c.supportsIdempotentRetain()).resolves.toBe(true);
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "http://x/v1/version",
+      "http://x/version",
+    ]);
   });
 });
 
@@ -174,7 +203,7 @@ describe("HindsightClient knowledge-page reads", () => {
     expect(c.knowledgePagesSupported).toBe(false);
   });
 
-  it("a 404 with no JSON body at all still latches (a proxy, not our API answering)", async () => {
+  it("a 404 with no JSON body does NOT latch: a proxy answers it during a backend restart (#5071)", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({
@@ -186,8 +215,10 @@ describe("HindsightClient knowledge-page reads", () => {
       })) as any
     );
     const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
-    await expect(c.listPages()).rejects.toMatchObject({ code: "knowledge_pages_unavailable" });
-    expect(c.knowledgePagesSupported).toBe(false);
+    expect(await c.listPages()).toEqual({ items: [] });
+    expect(c.knowledgePagesSupported).toBeUndefined();
+    expect(await c.searchKnowledgePages("architecture")).toEqual([]);
+    expect(c.knowledgePagesSupported).toBeUndefined();
   });
 
   it("seedPages: a bank that does not exist yet writes nothing and does not latch", async () => {
