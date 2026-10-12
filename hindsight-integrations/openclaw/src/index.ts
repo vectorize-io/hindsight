@@ -3378,8 +3378,11 @@ ${memoriesFormatted}
         healthy: async () => {
           const live = await readyClient().catch(() => null);
           if (!live) return false;
+          // Bounded: OpenClaw's status call waits on this, and a hung API must read
+          // as unavailable rather than hang the Memory page.
           const res = await fetch(`${live.options.baseUrl.replace(/\/$/, "")}/health`, {
             headers: authHeaders(live.options),
+            signal: AbortSignal.timeout(5000),
           }).catch(() => null);
           return res?.ok === true;
         },

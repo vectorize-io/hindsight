@@ -28,19 +28,19 @@ type MemoryCallerAuthority =
   | { kind: "session"; sessionKey: string; sandboxed: boolean; audience?: MemoryAudience }
   | { kind: "host"; operation: string };
 
-export interface MemoryReference {
+interface MemoryReference {
   providerId: string;
   id: string;
 }
 
-export interface MemorySearchHit {
+interface MemorySearchHit {
   reference: MemoryReference;
   excerpt: string;
   score?: number;
   source?: string;
 }
 
-export interface MemoryProviderHandle {
+interface MemoryProviderHandle {
   capabilities: {
     sources: readonly ("memory" | "sessions")[];
     pagination: boolean;
