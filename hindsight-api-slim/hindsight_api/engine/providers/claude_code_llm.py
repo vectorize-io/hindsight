@@ -29,6 +29,7 @@ from hindsight_api.engine.llm_interface import (
     ProviderRateLimitResetError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema
@@ -211,6 +212,14 @@ class ClaudeCodeLLM(LLMInterface):
                 "CLAUDE_CODE_OAUTH_TOKEN from config" if "CLAUDE_CODE_OAUTH_TOKEN" in self._env else "claude auth login"
             )
             logger.info(f"Claude Code: Using Claude Agent SDK (authentication via {auth})")
+            # Automated calls on a Claude subscription may conflict with Anthropic's
+            # terms; point operators at the docs notice rather than starting silently (#5444).
+            logger.warning(
+                "Claude Code provider runs automated model calls on your Claude subscription, which may "
+                "conflict with Anthropic's terms. Read the notice before using it beyond personal local "
+                "development, and prefer the 'anthropic' provider with an API key for servers: "
+                "https://hindsight.vectorize.io/developer/models#claude-code-setup-claude-promax"
+            )
         except Exception as e:
             raise RuntimeError(
                 f"Failed to initialize Claude Code provider: {e}\n\n"
@@ -414,7 +423,13 @@ class ClaudeCodeLLM(LLMInterface):
                             await asyncio.sleep(backoff)
                             last_exception = e
                             continue
-                        raise
+                        # Retry budget spent: structural repair as a last resort, as
+                        # openai_compatible_llm.py does since #3935. A quotation copied
+                        # verbatim leaves an unescaped inner '"' that every retry
+                        # reproduces (#5472). We only get here after the CLI's
+                        # ResultMessage arrived without an error, so the body is complete.
+                        # Raises JSONDecodeError again if unrecoverable.
+                        json_data = parse_llm_json(full_text)
 
                     if skip_validation:
                         result = json_data
@@ -761,6 +776,27 @@ class ClaudeCodeLLM(LLMInterface):
                     output_tokens=estimated_output,
                     success=True,
                 )
+
+                # Record trace span. The wrapper records only failed calls, so without
+                # this a successful tool round never reaches the traces (#5381).
+                try:
+                    from hindsight_api.tracing import get_span_recorder
+
+                    get_span_recorder().record_llm_call(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        messages=messages,
+                        response_content=full_text or None,
+                        input_tokens=estimated_input,
+                        output_tokens=estimated_output,
+                        duration=duration,
+                        finish_reason="tool_calls" if tool_calls else "stop",
+                        error=None,
+                        tool_calls=[{"id": c.id, "name": c.name, "arguments": c.arguments} for c in tool_calls] or None,
+                    )
+                except Exception as span_error:
+                    logger.debug("Claude Code span recording failed: %s", span_error, exc_info=True)
 
                 # Log slow calls
                 if duration > 10.0:

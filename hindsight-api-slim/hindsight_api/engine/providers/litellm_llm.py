@@ -334,6 +334,8 @@ class LiteLLMLLM(LLMInterface):
                 }
 
         last_exception = None
+        # Kept outside the try so the final invalid-JSON log can name it (#5443).
+        finish_reason = None
 
         for attempt in range(max_retries + 1):
             try:
@@ -456,7 +458,12 @@ class LiteLLMLLM(LLMInterface):
                     await asyncio.sleep(backoff)
                     continue
                 else:
-                    logger.error(f"LiteLLM returned invalid JSON after {max_retries + 1} attempts")
+                    # finish_reason and a content prefix tell a prose reply ("stop",
+                    # "No facts found...") apart from truncation or an empty body (#5443).
+                    logger.error(
+                        f"LiteLLM returned invalid JSON after {max_retries + 1} attempts "
+                        f"(finish_reason={finish_reason!r}, content={e.doc[:200]!r})"
+                    )
                     raise
 
             except (TimeoutError, asyncio.TimeoutError, _litellm_timeout_exc()) as e:

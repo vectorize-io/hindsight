@@ -189,6 +189,35 @@ class CodexRunawayStreamError(aiohttp.ClientPayloadError):
     """
 
 
+class CodexStreamError(aiohttp.ClientPayloadError):
+    """The backend failed the response mid-stream (an ``error`` / ``response.failed`` SSE event).
+
+    The ChatGPT backend reports overloads this way after a 200, so there is no HTTP
+    status to classify on. Before this, both SSE parsers skipped those events and
+    returned empty content, which surfaced as a ``JSONDecodeError`` or "no usable
+    tool call" (#5505). Like :class:`CodexRunawayStreamError`, it is a
+    ``ClientPayloadError`` so ``call()`` retries it with backoff and
+    ``remote_retry`` treats it as transient.
+    """
+
+
+_SSE_FAILURE_EVENTS = frozenset({"error", "response.failed"})
+
+
+def _raise_on_sse_failure(event_type: str | None, data: Any) -> None:
+    """Raise :class:`CodexStreamError` with the backend's code and message for a failure event."""
+    if event_type not in _SSE_FAILURE_EVENTS:
+        return
+    # ``error`` carries code/message at the top level; ``response.failed`` nests them
+    # under response.error.
+    error: Any = data
+    if isinstance(data, dict) and isinstance(data.get("response"), dict):
+        error = data["response"].get("error") or {}
+    code = error.get("code") if isinstance(error, dict) else None
+    message = error.get("message") if isinstance(error, dict) else None
+    raise CodexStreamError(f"Codex backend failed the response ({event_type}): {code}: {message or data}")
+
+
 class CodexLLM(LLMInterface):
     """
     LLM provider using OpenAI Codex OAuth authentication.
@@ -911,6 +940,7 @@ class CodexLLM(LLMInterface):
 
                 try:
                     data = json.loads(data_str)
+                    _raise_on_sse_failure(event_type, data)
 
                     # Extract content based on event type
                     if event_type == "response.text.delta" and "delta" in data:
@@ -1182,6 +1212,7 @@ class CodexLLM(LLMInterface):
 
                 try:
                     data = json.loads(data_str)
+                    _raise_on_sse_failure(event_type, data)
 
                     # Extract text content
                     if event_type == "response.text.delta" and "delta" in data:

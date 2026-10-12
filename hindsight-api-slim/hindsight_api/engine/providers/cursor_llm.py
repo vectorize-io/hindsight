@@ -334,7 +334,16 @@ class CursorLLM(LLMInterface):
             output_tokens=result.usage.output_tokens,
         )
 
-    def _record(self, scope: str, start: float, input_tokens: int, output_tokens: int) -> None:
+    def _record(
+        self,
+        scope: str,
+        start: float,
+        messages: list[dict[str, Any]],
+        result: Any,
+        input_tokens: int,
+        output_tokens: int,
+        tool_calls: list[LLMToolCall] | None = None,
+    ) -> None:
         duration = time.time() - start
         get_metrics_collector().record_llm_call(
             provider=self.provider,
@@ -345,6 +354,26 @@ class CursorLLM(LLMInterface):
             output_tokens=output_tokens,
             success=True,
         )
+        # The wrapper records spans only for failed calls; a successful one is the
+        # provider's to record, or it never reaches the traces (#5381).
+        try:
+            from hindsight_api.tracing import _serialize_for_span, get_span_recorder
+
+            get_span_recorder().record_llm_call(
+                provider=self.provider,
+                model=self.model,
+                scope=scope,
+                messages=messages,
+                response_content=_serialize_for_span(result),
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                duration=duration,
+                finish_reason="tool_calls" if tool_calls else "stop",
+                error=None,
+                tool_calls=[{"id": c.id, "name": c.name, "arguments": c.arguments} for c in tool_calls or []] or None,
+            )
+        except Exception:
+            logger.debug("Cursor span recording failed", exc_info=True)
         if duration > 10.0:
             logger.info(f"slow llm call: scope={scope}, model={self.provider}/{self.model}, time={duration:.3f}s")
 
@@ -403,7 +432,7 @@ class CursorLLM(LLMInterface):
                         raise
                     result = data if skip_validation else response_format.model_validate(data)
 
-                self._record(scope, start, in_tok, out_tok)
+                self._record(scope, start, messages, result, in_tok, out_tok)
                 return LLMCallResult(
                     content=result,
                     usage=TokenUsage(input_tokens=in_tok, output_tokens=out_tok, total_tokens=in_tok + out_tok),
@@ -525,7 +554,7 @@ class CursorLLM(LLMInterface):
                             )
                         )
 
-                self._record(scope, start, in_tok, out_tok)
+                self._record(scope, start, messages, content, in_tok, out_tok, tool_calls)
                 return LLMToolCallResult(
                     content=content,
                     tool_calls=tool_calls,

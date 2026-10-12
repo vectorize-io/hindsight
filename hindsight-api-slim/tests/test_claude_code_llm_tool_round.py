@@ -349,3 +349,48 @@ async def test_genuine_error_without_tool_calls_still_raises(monkeypatch):
             scope="reflect",
             tool_choice=LLM_TOOL_CHOICE_AUTO,
         )
+
+
+@pytest.mark.asyncio
+async def test_successful_tool_round_records_a_trace_span(monkeypatch):
+    """call_with_tools must record its own span; the wrapper traces only failures (#5381)."""
+    from unittest.mock import MagicMock
+
+    import hindsight_api.tracing as tracing
+
+    class _FakeClient:
+        def __init__(self, options: _FakeOptions) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def query(self, prompt: str) -> None:
+            return None
+
+        async def receive_response(self):
+            yield _FakeAssistantMessage(
+                content=[_FakeToolUseBlock(id="tu_1", name="mcp__hindsight_tools__recall", input={"query": "q"})]
+            )
+            yield _FakeResultMessage(subtype="error_max_turns", is_error=True, result=None)
+
+    _install_fake_sdk(monkeypatch, _FakeClient)
+    recorder = MagicMock()
+    monkeypatch.setattr(tracing, "get_span_recorder", lambda: recorder)
+
+    await _instantiate_provider().call_with_tools(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[_RECALL_TOOL],
+        max_retries=0,
+        scope="reflect",
+        tool_choice=LLM_TOOL_CHOICE_AUTO,
+    )
+
+    recorder.record_llm_call.assert_called_once()
+    kwargs = recorder.record_llm_call.call_args.kwargs
+    assert kwargs["scope"] == "reflect"
+    assert kwargs["finish_reason"] == "tool_calls"
+    assert kwargs["tool_calls"] == [{"id": "tu_1", "name": "recall", "arguments": {"query": "q"}}]

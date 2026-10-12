@@ -935,3 +935,63 @@ async def test_drifted_keys_are_named_back_to_the_model_on_retry():
     detail = str(excinfo.value)
     assert "subject, predicate, object, type" in detail or "object, predicate, subject, type" in detail
     assert "what" in detail
+
+
+def _json_error_for(text: str) -> json.JSONDecodeError:
+    """The exact error a provider raises after failing to parse ``text``."""
+    try:
+        json.loads(text)
+    except json.JSONDecodeError as e:
+        return e
+    raise AssertionError(f"{text!r} parsed")
+
+
+@pytest.mark.asyncio
+async def test_prose_no_facts_reply_counts_as_zero_facts(retain_config):
+    """Issue #5443: a model that answers "no facts" in prose, not JSON, has nothing to extract.
+
+    It used to raise JSONDecodeError, fail the chunk, and with it the whole retain.
+    """
+    from hindsight_api.engine.retain.fact_extraction import extract_facts_from_text
+
+    llm = _make_recording_llm({})
+    llm.call = AsyncMock(side_effect=_json_error_for("No extractable facts were found in the provided chunk."))
+
+    facts, chunks, _usage = await extract_facts_from_text(
+        text="ok, status update: done.",
+        event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+        llm_config=llm,
+        agent_name="test-agent",
+        config=retain_config("0"),
+        context="",
+    )
+
+    assert facts == []
+    assert [count for _text, count in chunks] == [0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "I cannot help with that.",
+        # Truncated JSON mentions no facts in prose; it is a real failure.
+        '{"facts": [{"what": "no facts',
+    ],
+)
+async def test_other_unparseable_replies_still_fail_the_retain(retain_config, reply):
+    """Only a plain "no facts" answer is forgiven; any other bad reply stays a hard failure."""
+    from hindsight_api.engine.retain.fact_extraction import extract_facts_from_text
+
+    llm = _make_recording_llm({})
+    llm.call = AsyncMock(side_effect=_json_error_for(reply))
+
+    with pytest.raises(RuntimeError, match="Fact extraction failed: 1/1 chunks failed"):
+        await extract_facts_from_text(
+            text="Alice visited Paris in 2023.",
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            llm_config=llm,
+            agent_name="test-agent",
+            config=retain_config("0"),
+            context="",
+        )

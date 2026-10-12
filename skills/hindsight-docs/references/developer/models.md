@@ -655,8 +655,11 @@ an API key from the [Anthropic Console](https://console.anthropic.com/).
    # No API key needed - uses claude auth login credentials
    ```
 
-   **Server-held token (recommended for headless/Docker/Linux hosts):** instead of relying on
-   the host's `claude auth login` session, generate a long-lived token once and give it to Hindsight:
+   **Server-held token (optional, for a personal machine without a browser login):** instead of
+   relying on the host's `claude auth login` session, you can generate a long-lived token once and
+   give it to Hindsight. This is still subscription access, so the Terms of Service notice above
+   applies in full: it does not make the provider suitable for servers, Docker deployments or shared
+   hosts. For those, use the `anthropic` provider with an API key.
    ```bash
    claude setup-token            # prints sk-ant-oat01-...
    export HINDSIGHT_API_LLM_API_KEY=sk-ant-oat01-...

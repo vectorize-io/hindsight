@@ -356,3 +356,39 @@ async def test_call_turns_a_subscription_limit_into_a_reset_time(monkeypatch):
 )
 def test_limit_reset_at(text, expected):
     assert _limit_reset_at(text, datetime(2026, 10, 3, 22, 10, tzinfo=UTC)) == expected
+
+
+@pytest.mark.asyncio
+async def test_call_repairs_an_unescaped_quote_once_retries_are_spent(monkeypatch):
+    """A quotation copied verbatim repeats on every retry; the last attempt repairs it (#5472)."""
+    import claude_agent_sdk
+
+    broken = '{"fact": "He said the intuition "one spec at a time" was right"}'
+
+    async def fake_query(prompt: str, options: _FakeOptions):
+        yield _FakeAssistantMessage(content=[_FakeTextBlock(text=broken)])
+        yield _FakeResultMessage(subtype="success", is_error=False, result=broken)
+
+    monkeypatch.setattr(claude_agent_sdk, "ClaudeAgentOptions", _FakeOptions)
+    monkeypatch.setattr(claude_agent_sdk, "AssistantMessage", _FakeAssistantMessage)
+    monkeypatch.setattr(claude_agent_sdk, "TextBlock", _FakeTextBlock)
+    monkeypatch.setattr(claude_agent_sdk, "ResultMessage", _FakeResultMessage)
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    result = (
+        await _instantiate_provider().call(
+            messages=[{"role": "user", "content": "extract facts"}],
+            response_format=_StructuredResponse,
+            max_retries=0,
+            scope="retain_extract_facts",
+        )
+    ).content
+
+    assert result.fact == 'He said the intuition "one spec at a time" was right'
+
+
+def test_startup_warns_about_subscription_terms(caplog):
+    """Starting the provider points operators at the Terms of Service notice (#5444)."""
+    with caplog.at_level("WARNING", logger="hindsight_api.engine.providers.claude_code_llm"):
+        _instantiate_provider()
+    assert any("Anthropic's terms" in r.getMessage() for r in caplog.records)
