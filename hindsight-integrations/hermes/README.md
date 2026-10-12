@@ -192,14 +192,29 @@ Points the plugin at an existing Hindsight instance you're already running (Dock
 
 ## Config
 
-Config file: `~/.hermes/hindsight/config.json`
+Each Hermes profile has its own config file: `$HERMES_HOME/hindsight/config.json` (`~/.hermes/hindsight/config.json`
+for the default profile). `hermes memory setup` writes it. The plugin reads the first of these that exists and is
+not empty:
+
+1. `$HERMES_HOME/hindsight/config.json` — this profile only
+2. `~/.hindsight/config.json` — shared by every profile
+3. Environment variables (see [Environment Variables](#environment-variables))
+
+A profile has exactly one config. To give one profile different banks per repository, workspace, platform or user,
+use `bank_id_template` or the [multiple banks](#multiple-banks) settings below; for fully separate setups, use
+separate Hermes profiles.
+
+Some keys also accept an older name: `apiKey` for `api_key`, `budget` for `recall_budget`, `prefetch_method` for
+`recall_prefetch_method`, `llmApiKey` for `llm_api_key`.
 
 ### Connection
 
 | Key | Default | Description |
 |-----|---------|-------------|
 | `mode` | `cloud` | `cloud`, `local_embedded`, or `local_external` |
-| `api_url` | `https://api.hindsight.vectorize.io` | API URL (cloud and local_external modes) |
+| `api_url` | `https://api.hindsight.vectorize.io` (cloud), `http://localhost:8888` (local_external) | API URL. Falls back to `HINDSIGHT_API_URL` when unset. |
+| `api_key` | — | Hindsight API key. Required for cloud, optional for local_external. Falls back to `HINDSIGHT_API_KEY` when unset; the setup wizard stores it there. |
+| `timeout` | `120` | Seconds to wait for each Hindsight API request. Falls back to `HINDSIGHT_TIMEOUT` when unset. |
 
 ### Memory Bank
 
@@ -211,8 +226,8 @@ Config file: `~/.hermes/hindsight/config.json`
 | `additional_banks` | — | Extra banks to write to and recall from, in priority order. |
 | `recall_additional_banks` | — | Extra banks to recall from but never write to, searched after the write banks. Alias `recallAdditionalBanks`, the name the Claude Code integration uses. A bank also listed in `additional_banks` stays writable. |
 | `trusted_project_dirs` | — | Absolute folders whose git repositories may choose their own bank with a `.hindsight/config.toml`. Empty by default, so a cloned repository cannot redirect your memory. |
-| `bank_mission` | — | Reflect mission (identity/framing for reflect reasoning). Applied via Banks API. |
-| `bank_retain_mission` | — | Retain mission (steers what gets extracted). Applied via Banks API. |
+| `bank_mission` | — | Read but not applied to the bank. To set a bank's reflect mission, use the bank's config (control plane or `PATCH /v1/default/banks/{bank_id}/config`). |
+| `bank_retain_mission` | — | Read but not applied to the bank. To set a bank's retain mission, use the bank's config, as above. |
 
 #### Multiple banks
 
@@ -239,7 +254,7 @@ The lookup stops at the repository root. Only `bank_id` is read.
 | `recall_max_tokens` | `4096` | Maximum tokens for recall results |
 | `recall_max_input_chars` | `800` | Maximum input query length for auto-recall |
 | `recall_prompt_preamble` | — | Custom preamble for recalled memories in context |
-| `recall_tags` | — | Tags to filter when searching memories |
+| `recall_tags` | — | Tags to filter when searching memories, as a JSON list (e.g. `["project-x", "team"]`). Comma-separated text is not supported here and makes recall fail. |
 | `recall_tags_match` | `any` | Tag matching mode: `any` / `all` / `any_strict` / `all_strict` |
 | `recall_types` | `observation` | Fact types surfaced by recall (both auto-recall and the `hindsight_recall` tool). Comma-separated string or JSON list. **Default narrowed to `observation` only** (see "Behavior change" below). Set to `observation,world,experience` to also include raw facts. |
 | `recall_min_scores` | — | Minimum relevance per score field, as a JSON object (e.g. `{"reranker": 0.25}` or `{"semantic": 0.5}`). Applies to both auto-recall and the `hindsight_recall` tool. See the tip below. |
@@ -274,12 +289,15 @@ The lookup stops at the repository root. Only `bank_id` is read.
 | `retain_async` | `true` | Process retain asynchronously on the Hindsight server |
 | `retain_every_n_turns` | `1` | Retain every N turns (1 = every turn) |
 | `retain_context` | `conversation between Hermes Agent and the User` | Context label for retained memories |
-| `retain_tags` | — | Default tags applied to retained memories; merged with per-call tool tags |
+| `retain_tags` | — | Default tags applied to retained memories; merged with per-call tool tags. JSON list or comma-separated text. |
+| `observation_scopes` | `combined` | How observations are grouped by tag during consolidation: `combined` (one pass over all tags), `per_tag` (one pass per tag), `all_combinations` (every tag subset, expensive), or a JSON list of tag lists for custom scopes (e.g. `[["user:alice"], ["project-x"]]`). |
 | `retain_source` | — | Opt-in `metadata.source` attached to retained memories (identifies the storing client, e.g. `hermes`). Empty by default — no attribution tag ships unless you set it. |
 | `retain_strategy` | — | Named retain strategy sent with every stored item (`HINDSIGHT_RETAIN_STRATEGY`). The bank must define it under `retain_strategies`; an unknown name is ignored by the server. Empty lets the bank decide. |
 | `retain_indicator` | `true` | Show a `👁️ Hindsight — saving to memory…` status line when a turn is saved. Turn off for customer-facing agents. |
 | `retain_user_prefix` | `User` | Label used before user turns in auto-retained transcripts |
 | `retain_assistant_prefix` | `Assistant` | Label used before assistant turns in auto-retained transcripts |
+| `prefetch_waits_for_retain` | `true` | Before the background recall for the next turn, wait until the turn just saved can be found, so recall includes it. Runs off the reply path and adds no response time. |
+| `prefetch_retain_drain_timeout` | `10` | Most seconds that background recall waits for the save above before recalling anyway |
 
 ### Integration
 
@@ -296,11 +314,13 @@ The lookup stops at the repository root. Only `bank_id` is read.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `llm_provider` | `openai` | `openai`, `anthropic`, `gemini`, `groq`, `openrouter`, `minimax`, `ollama`, `lmstudio`, `openai_compatible` |
-| `llm_model` | per-provider | Model name (e.g. `gpt-4o-mini`, `qwen/qwen3.5-9b`) |
-| `llm_base_url` | — | Endpoint URL for `openai_compatible` (e.g. `http://192.168.1.10:8080/v1`) |
-
-The LLM API key is stored in `~/.hermes/.env` as `HINDSIGHT_LLM_API_KEY`.
+| `llm_provider` | — | `openai`, `anthropic`, `gemini`, `groq`, `openrouter`, `minimax`, `ollama`, `lmstudio`, `openai_compatible`. The setup wizard suggests `openai`. |
+| `llm_model` | — | Model name (e.g. `gpt-4o-mini`, `qwen/qwen3.5-9b`). The setup wizard suggests one per provider. |
+| `llm_base_url` | — | Endpoint URL for `openai_compatible` (e.g. `http://192.168.1.10:8080/v1`). Falls back to `HINDSIGHT_API_LLM_BASE_URL`. |
+| `llm_api_key` | — | LLM API key. Usually left out of the file: the setup wizard stores it in `$HERMES_HOME/.env` as `HINDSIGHT_LLM_API_KEY`. |
+| `profile` | `hermes` | Name of the local daemon profile: its data, log and env file under `~/.hindsight/profiles/` are named after it. Give two Hermes profiles different values to keep their local memory apart. |
+| `idle_timeout` | `300` | Seconds of inactivity before the daemon stops; `0` keeps it running. Falls back to `HINDSIGHT_IDLE_TIMEOUT`. |
+| `port_health_grace_timeout` | `30` | Seconds to wait for a slow daemon health check before restarting it. Raise on busy or low-resource machines. `HINDSIGHT_EMBED_PORT_HEALTH_GRACE_TIMEOUT` wins when set. |
 
 The embedded daemon is a subprocess that cannot see the per-turn secret
 scope, so it reads the key from `~/.hindsight/profiles/<profile>.env`
@@ -326,15 +346,34 @@ Available in `hybrid` and `tools` memory modes:
 
 ## Environment Variables
 
+Set these in the profile's `$HERMES_HOME/.env`. A value in `config.json` always wins over its variable.
+
+These are used whenever the matching config key is not set:
+
 | Variable | Description |
 |----------|-------------|
-| `HINDSIGHT_API_KEY` | API key for Hindsight Cloud |
-| `HINDSIGHT_LLM_API_KEY` | LLM API key for local mode |
-| `HINDSIGHT_API_LLM_BASE_URL` | LLM Base URL for local mode (e.g. OpenRouter) |
-| `HINDSIGHT_API_URL` | Override API endpoint |
-| `HINDSIGHT_BANK_ID` | Override bank name |
-| `HINDSIGHT_BUDGET` | Override recall budget |
-| `HINDSIGHT_MODE` | Override mode (`cloud`, `local_embedded`, `local_external`) |
+| `HINDSIGHT_API_KEY` | Hindsight API key (`api_key`) |
+| `HINDSIGHT_API_URL` | API endpoint (`api_url`) |
+| `HINDSIGHT_TIMEOUT` | API request timeout in seconds (`timeout`) |
+| `HINDSIGHT_LLM_API_KEY` | LLM API key for local_embedded (`llm_api_key`); `HINDSIGHT_API_LLM_API_KEY` also works |
+| `HINDSIGHT_API_LLM_BASE_URL` | LLM endpoint for local_embedded (`llm_base_url`) |
+| `HINDSIGHT_IDLE_TIMEOUT` | Daemon idle timeout in seconds (`idle_timeout`) |
+| `HINDSIGHT_EMBED_PORT_HEALTH_GRACE_TIMEOUT` | Daemon health-check grace in seconds; wins over `port_health_grace_timeout` |
+| `HINDSIGHT_RETAIN_TAGS` | Default tags on retained memories (`retain_tags`) |
+| `HINDSIGHT_RETAIN_OBSERVATION_SCOPES` | Observation scopes (`observation_scopes`) |
+| `HINDSIGHT_RETAIN_SOURCE` | `metadata.source` on retained memories (`retain_source`) |
+| `HINDSIGHT_RETAIN_STRATEGY` | Named retain strategy (`retain_strategy`) |
+| `HINDSIGHT_RETAIN_USER_PREFIX` | Label before user turns (`retain_user_prefix`) |
+| `HINDSIGHT_RETAIN_ASSISTANT_PREFIX` | Label before assistant turns (`retain_assistant_prefix`) |
+
+These are used **only when there is no config file at all**. Once `hermes memory setup` has written
+`config.json`, they are ignored; set the config key instead:
+
+| Variable | Description |
+|----------|-------------|
+| `HINDSIGHT_MODE` | Mode: `cloud`, `local_embedded` or `local_external` (`mode`) |
+| `HINDSIGHT_BANK_ID` | Bank name (`bank_id`) |
+| `HINDSIGHT_BUDGET` | Recall budget (`recall_budget`) |
 | `HINDSIGHT_RETAIN_CONTEXT` | Label stored with each retained conversation (`retain_context`) |
 | `HINDSIGHT_RETAIN_INDICATOR` | `false` hides the "saving to memory" status line (`retain_indicator`) |
 | `HINDSIGHT_RECALL_INDICATOR` | `false` hides the "recalled N memories" status line (`recall_indicator`) |
