@@ -137,7 +137,6 @@ func (o *ExtractionChunk) UnmarshalJSON(data []byte) (err error) {
 	varExtractionChunk := _ExtractionChunk{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varExtractionChunk)
 
 	if err != nil {

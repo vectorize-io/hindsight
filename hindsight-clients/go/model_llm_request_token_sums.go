@@ -237,7 +237,6 @@ func (o *LLMRequestTokenSums) UnmarshalJSON(data []byte) (err error) {
 	varLLMRequestTokenSums := _LLMRequestTokenSums{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varLLMRequestTokenSums)
 
 	if err != nil {

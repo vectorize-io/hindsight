@@ -454,7 +454,6 @@ func (o *PromptBlockModel) UnmarshalJSON(data []byte) (err error) {
 	varPromptBlockModel := _PromptBlockModel{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varPromptBlockModel)
 
 	if err != nil {

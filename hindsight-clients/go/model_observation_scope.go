@@ -137,7 +137,6 @@ func (o *ObservationScope) UnmarshalJSON(data []byte) (err error) {
 	varObservationScope := _ObservationScope{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varObservationScope)
 
 	if err != nil {

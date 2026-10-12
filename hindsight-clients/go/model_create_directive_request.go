@@ -256,7 +256,6 @@ func (o *CreateDirectiveRequest) UnmarshalJSON(data []byte) (err error) {
 	varCreateDirectiveRequest := _CreateDirectiveRequest{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varCreateDirectiveRequest)
 
 	if err != nil {

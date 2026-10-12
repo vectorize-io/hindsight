@@ -107,7 +107,6 @@ func (o *MemoryGraphEdge) UnmarshalJSON(data []byte) (err error) {
 	varMemoryGraphEdge := _MemoryGraphEdge{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varMemoryGraphEdge)
 
 	if err != nil {

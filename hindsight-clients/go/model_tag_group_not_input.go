@@ -107,7 +107,6 @@ func (o *TagGroupNotInput) UnmarshalJSON(data []byte) (err error) {
 	varTagGroupNotInput := _TagGroupNotInput{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varTagGroupNotInput)
 
 	if err != nil {

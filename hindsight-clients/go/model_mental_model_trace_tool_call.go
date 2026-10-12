@@ -391,7 +391,6 @@ func (o *MentalModelTraceToolCall) UnmarshalJSON(data []byte) (err error) {
 	varMentalModelTraceToolCall := _MentalModelTraceToolCall{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varMentalModelTraceToolCall)
 
 	if err != nil {

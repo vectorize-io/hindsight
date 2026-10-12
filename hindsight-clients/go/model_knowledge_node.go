@@ -598,7 +598,6 @@ func (o *KnowledgeNode) UnmarshalJSON(data []byte) (err error) {
 	varKnowledgeNode := _KnowledgeNode{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varKnowledgeNode)
 
 	if err != nil {

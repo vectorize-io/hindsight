@@ -231,7 +231,6 @@ func (o *RetainRequest) UnmarshalJSON(data []byte) (err error) {
 	varRetainRequest := _RetainRequest{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varRetainRequest)
 
 	if err != nil {

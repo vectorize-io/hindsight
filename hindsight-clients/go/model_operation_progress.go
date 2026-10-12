@@ -266,7 +266,6 @@ func (o *OperationProgress) UnmarshalJSON(data []byte) (err error) {
 	varOperationProgress := _OperationProgress{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varOperationProgress)
 
 	if err != nil {

@@ -244,7 +244,6 @@ func (o *ReflectToolCall) UnmarshalJSON(data []byte) (err error) {
 	varReflectToolCall := _ReflectToolCall{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varReflectToolCall)
 
 	if err != nil {

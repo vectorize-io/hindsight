@@ -149,7 +149,6 @@ func (o *AddBackgroundRequest) UnmarshalJSON(data []byte) (err error) {
 	varAddBackgroundRequest := _AddBackgroundRequest{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varAddBackgroundRequest)
 
 	if err != nil {

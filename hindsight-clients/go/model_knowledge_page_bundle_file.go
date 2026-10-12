@@ -135,7 +135,6 @@ func (o *KnowledgePageBundleFile) UnmarshalJSON(data []byte) (err error) {
 	varKnowledgePageBundleFile := _KnowledgePageBundleFile{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varKnowledgePageBundleFile)
 
 	if err != nil {

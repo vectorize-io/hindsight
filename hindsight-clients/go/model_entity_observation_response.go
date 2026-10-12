@@ -153,7 +153,6 @@ func (o *EntityObservationResponse) UnmarshalJSON(data []byte) (err error) {
 	varEntityObservationResponse := _EntityObservationResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varEntityObservationResponse)
 
 	if err != nil {

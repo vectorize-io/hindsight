@@ -1,5 +1,11 @@
 use colored::*;
 
+/// Prefix of the error `api::humanize_client_error` builds when a response
+/// arrived but did not decode. Its text carries the response body, so it must
+/// never be classified by that text: a stored `error_message` mentioning "500"
+/// or "timeout" is not the current request's outcome.
+pub const INVALID_RESPONSE_PAYLOAD: &str = "Invalid response payload";
+
 pub fn handle_api_error(err: anyhow::Error, api_url: &str) -> ! {
     eprintln!("{}", format_error_message(&err, api_url));
     std::process::exit(1);
@@ -55,7 +61,11 @@ fn format_error_message(err: &anyhow::Error, api_url: &str) -> String {
     let err_str = err.to_string();
     // Classify the failure heading, not server-provided response text: a body
     // can mention timeout, DNS or resource numbers without changing the status.
-    let error_heading = split_http_error(&err_str).map_or(err_str.as_str(), |(head, _)| head);
+    let error_heading = if err_str.starts_with(INVALID_RESPONSE_PAYLOAD) {
+        INVALID_RESPONSE_PAYLOAD
+    } else {
+        split_http_error(&err_str).map_or(err_str.as_str(), |(head, _)| head)
+    };
 
     // Connection refused
     if error_heading.contains("Connection refused")
@@ -249,7 +259,23 @@ fn format_error_message(err: &anyhow::Error, api_url: &str) -> String {
     }
 
     // JSON parsing error - show actual response
-    if error_heading.contains("Failed to parse") || error_heading.contains("error decoding") {
+    if error_heading.contains("Failed to parse")
+        || error_heading.contains("error decoding")
+        || error_heading == INVALID_RESPONSE_PAYLOAD
+    {
+        // The decoder's own explanation, for a response that did not decode.
+        let decoder_hint = err_str
+            .strip_prefix(INVALID_RESPONSE_PAYLOAD)
+            .and_then(|rest| rest.strip_prefix(": "))
+            .and_then(|rest| rest.split("\nResponse was:").next())
+            .map(|reason| {
+                format!(
+                    "\n\n{}\n  {}",
+                    "Decoder error:".bright_yellow(),
+                    reason.bright_white()
+                )
+            })
+            .unwrap_or_default();
         // Extract the actual response if available
         let response_hint = if err_str.contains("Response was:") {
             let parts: Vec<&str> = err_str.split("Response was:").collect();
@@ -267,11 +293,12 @@ fn format_error_message(err: &anyhow::Error, api_url: &str) -> String {
         };
 
         return format!(
-            "{} {}\n\n{}\n  {}\n\n{}\n  • {}\n  • {}\n  • {}{}\n\n{}\n  • {}\n  • {}",
+            "{} {}\n\n{}\n  {}{}\n\n{}\n  • {}\n  • {}\n  • {}{}\n\n{}\n  • {}\n  • {}",
             "✗".bright_red().bold(),
             "Invalid API response format".bright_red().bold(),
             "API URL:".bright_yellow(),
             api_url.bright_white(),
+            decoder_hint,
             "Possible causes:".bright_yellow(),
             "The API returned an unexpected response format".bright_white(),
             "Version mismatch between CLI and API".bright_white(),
@@ -319,7 +346,7 @@ pub fn print_config_help() {
 
 #[cfg(test)]
 mod tests {
-    use super::format_error_message;
+    use super::{format_error_message, INVALID_RESPONSE_PAYLOAD};
 
     #[test]
     fn http_400_body_that_mentions_timeout_is_not_reported_as_a_timeout() {
@@ -445,6 +472,27 @@ mod tests {
         assert!(message.contains("API server error"), "{message}");
         assert!(message.contains("Could not process document 404"));
         assert!(!message.contains("Not found (404)"));
+    }
+
+    #[test]
+    fn an_undecodable_200_is_not_classified_by_its_body() {
+        // The request succeeded; only decoding failed. The body quotes a
+        // stored error mentioning 500 and a timeout, which must not become
+        // the reported category.
+        let error = anyhow::anyhow!(
+            "{INVALID_RESPONSE_PAYLOAD}: unknown variant `bogus_outcome`, expected `content_written`\n\
+             Response was: {{\"error_message\":\"upstream returned (500): request timeout\"}}"
+        );
+
+        let message = format_error_message(&error, "http://localhost:8888");
+
+        assert!(message.contains("Invalid API response format"), "{message}");
+        assert!(
+            message.contains("unknown variant `bogus_outcome`"),
+            "{message}"
+        );
+        assert!(!message.contains("API server error"), "{message}");
+        assert!(!message.contains("Request timed out"), "{message}");
     }
 
     #[test]

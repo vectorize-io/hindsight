@@ -2563,17 +2563,25 @@ class Hindsight:
         """
         loop = asyncio.get_event_loop()
         deadline = loop.time() + timeout
+        timeout_message = f"Export operation {operation_id} did not complete within {timeout}s"
         while True:
-            status = await self._operations_api.get_operation_status(
-                bank_id, operation_id, _request_timeout=self._timeout
-            )
+            # The deadline bounds the in-flight status request and the sleep
+            # too, so a slow poll or a long poll_interval can't overrun it.
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError(timeout_message)
+            try:
+                status = await asyncio.wait_for(
+                    self._operations_api.get_operation_status(bank_id, operation_id, _request_timeout=self._timeout),
+                    remaining,
+                )
+            except asyncio.TimeoutError:
+                raise TimeoutError(timeout_message) from None
             if status.status == "completed":
                 break
             if status.status in ("failed", "cancelled"):
                 raise RuntimeError(f"Export operation {operation_id} {status.status}: {status.error_message}")
-            if loop.time() >= deadline:
-                raise TimeoutError(f"Export operation {operation_id} did not complete within {timeout}s")
-            await asyncio.sleep(poll_interval)
+            await asyncio.sleep(min(poll_interval, max(deadline - loop.time(), 0)))
 
         meta = status.result_metadata or {}
         download_url = meta.get("download_url")

@@ -199,7 +199,6 @@ func (o *BackgroundResponse) UnmarshalJSON(data []byte) (err error) {
 	varBackgroundResponse := _BackgroundResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varBackgroundResponse)
 
 	if err != nil {

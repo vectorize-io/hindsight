@@ -166,7 +166,6 @@ func (o *LivenessResponse) UnmarshalJSON(data []byte) (err error) {
 	varLivenessResponse := _LivenessResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varLivenessResponse)
 
 	if err != nil {

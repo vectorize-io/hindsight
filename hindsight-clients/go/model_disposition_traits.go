@@ -166,7 +166,6 @@ func (o *DispositionTraits) UnmarshalJSON(data []byte) (err error) {
 	varDispositionTraits := _DispositionTraits{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varDispositionTraits)
 
 	if err != nil {

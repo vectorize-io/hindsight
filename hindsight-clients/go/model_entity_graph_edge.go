@@ -107,7 +107,6 @@ func (o *EntityGraphEdge) UnmarshalJSON(data []byte) (err error) {
 	varEntityGraphEdge := _EntityGraphEdge{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varEntityGraphEdge)
 
 	if err != nil {

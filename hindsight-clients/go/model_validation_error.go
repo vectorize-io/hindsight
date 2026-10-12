@@ -236,7 +236,6 @@ func (o *ValidationError) UnmarshalJSON(data []byte) (err error) {
 	varValidationError := _ValidationError{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varValidationError)
 
 	if err != nil {

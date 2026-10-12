@@ -135,7 +135,6 @@ func (o *AsyncOperationSubmitResponse) UnmarshalJSON(data []byte) (err error) {
 	varAsyncOperationSubmitResponse := _AsyncOperationSubmitResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varAsyncOperationSubmitResponse)
 
 	if err != nil {

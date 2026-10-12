@@ -132,6 +132,62 @@ test("exportDocuments keeps API-relative downloads on the authenticated client",
   expect(clientGet.mock.calls[0][0].url).toBe(DOWNLOAD_URL);
 });
 
+describe("export timeoutMs bounds the whole polling phase", () => {
+  let client: HindsightClient;
+  let clientGet: jest.Mock;
+  let lateReply: ReturnType<typeof setTimeout> | undefined;
+
+  afterEach(() => clearTimeout(lateReply));
+
+  beforeEach(() => {
+    client = new HindsightClient({ baseUrl: "http://localhost:8888" });
+    clientGet = jest.fn().mockResolvedValue({ data: ARCHIVE.buffer });
+    (client as any).client.get = clientGet;
+    mockedStatus.mockReset();
+    mockedExport.mockResolvedValue({ data: { operation_id: OPERATION_ID } } as any);
+    mockedExportDocuments.mockResolvedValue({ data: { operation_id: OPERATION_ID } } as any);
+  });
+
+  test.each(["exportBank", "exportDocuments"] as const)(
+    "%s does not wait for a status request that answers after the deadline",
+    async (method) => {
+      mockedStatus.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            lateReply = setTimeout(
+              () =>
+                resolve({
+                  data: { status: "completed", result_metadata: { download_url: DOWNLOAD_URL } },
+                } as any),
+              5000
+            );
+          }) as any
+      );
+
+      const start = Date.now();
+      await expect(client[method]("my-bank", { pollIntervalMs: 0, timeoutMs: 50 })).rejects.toThrow(
+        "did not complete within 50ms"
+      );
+      expect(Date.now() - start).toBeLessThan(1000);
+      expect(clientGet).not.toHaveBeenCalled();
+    }
+  );
+
+  test.each(["exportBank", "exportDocuments"] as const)(
+    "%s cuts a poll interval longer than the budget short, without another poll",
+    async (method) => {
+      mockedStatus.mockResolvedValue({ data: { status: "processing" } } as any);
+
+      const start = Date.now();
+      await expect(
+        client[method]("my-bank", { pollIntervalMs: 5000, timeoutMs: 50 })
+      ).rejects.toThrow("did not complete within 50ms");
+      expect(Date.now() - start).toBeLessThan(1000);
+      expect(mockedStatus).toHaveBeenCalledTimes(1);
+    }
+  );
+});
+
 describe("importBank mapping", () => {
   let client: HindsightClient;
 

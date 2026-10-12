@@ -590,6 +590,21 @@ else
         fi
     done
 
+    # Fix known generator issue: every model's UnmarshalJSON calls
+    # decoder.DisallowUnknownFields(), so a field the server adds to a
+    # response (a backward-compatible change) breaks every older client with
+    # `json: unknown field "..."`. Drop it to get plain encoding/json behaviour
+    # (unknown fields ignored); required-field checks stay. The generator's
+    # disallowAdditionalPropertiesIfNotPresent=false would instead add an
+    # AdditionalProperties map to every struct, changing the public API.
+    for f in model_*.go; do
+        [ -e "$f" ] || continue
+        if grep -q 'decoder.DisallowUnknownFields()' "$f"; then
+            sed -i.bak '/decoder\.DisallowUnknownFields()/d' "$f"
+            rm -f "$f.bak"
+        fi
+    done
+
     # Fix known generator issue: api_files.go uses os.File but generator omits "os" import
     if [ -f "api_files.go" ] && grep -q 'os\.File' api_files.go && ! grep -q '"os"' api_files.go; then
         echo "Patching api_files.go: adding missing 'os' import..."

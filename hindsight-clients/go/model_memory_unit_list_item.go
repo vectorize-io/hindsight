@@ -1017,7 +1017,6 @@ func (o *MemoryUnitListItem) UnmarshalJSON(data []byte) (err error) {
 	varMemoryUnitListItem := _MemoryUnitListItem{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varMemoryUnitListItem)
 
 	if err != nil {

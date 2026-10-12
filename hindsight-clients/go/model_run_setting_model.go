@@ -223,7 +223,6 @@ func (o *RunSettingModel) UnmarshalJSON(data []byte) (err error) {
 	varRunSettingModel := _RunSettingModel{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varRunSettingModel)
 
 	if err != nil {

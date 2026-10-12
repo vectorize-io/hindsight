@@ -299,7 +299,6 @@ func (o *ChunkAttachment) UnmarshalJSON(data []byte) (err error) {
 	varChunkAttachment := _ChunkAttachment{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varChunkAttachment)
 
 	if err != nil {

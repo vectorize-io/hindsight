@@ -520,7 +520,6 @@ func (o *MentalModelRefreshTrace) UnmarshalJSON(data []byte) (err error) {
 	varMentalModelRefreshTrace := _MentalModelRefreshTrace{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varMentalModelRefreshTrace)
 
 	if err != nil {

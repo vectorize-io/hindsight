@@ -147,7 +147,6 @@ func (o *DocumentExportSubmitResponse) UnmarshalJSON(data []byte) (err error) {
 	varDocumentExportSubmitResponse := _DocumentExportSubmitResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varDocumentExportSubmitResponse)
 
 	if err != nil {

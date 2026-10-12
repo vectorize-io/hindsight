@@ -284,7 +284,6 @@ func (o *ChunkResponse) UnmarshalJSON(data []byte) (err error) {
 	varChunkResponse := _ChunkResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varChunkResponse)
 
 	if err != nil {

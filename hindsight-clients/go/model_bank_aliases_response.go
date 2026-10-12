@@ -137,7 +137,6 @@ func (o *BankAliasesResponse) UnmarshalJSON(data []byte) (err error) {
 	varBankAliasesResponse := _BankAliasesResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varBankAliasesResponse)
 
 	if err != nil {

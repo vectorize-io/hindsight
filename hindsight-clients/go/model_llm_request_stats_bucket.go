@@ -191,7 +191,6 @@ func (o *LLMRequestStatsBucket) UnmarshalJSON(data []byte) (err error) {
 	varLLMRequestStatsBucket := _LLMRequestStatsBucket{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varLLMRequestStatsBucket)
 
 	if err != nil {

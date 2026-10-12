@@ -219,7 +219,6 @@ func (o *LLMRequestListResponse) UnmarshalJSON(data []byte) (err error) {
 	varLLMRequestListResponse := _LLMRequestListResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varLLMRequestListResponse)
 
 	if err != nil {

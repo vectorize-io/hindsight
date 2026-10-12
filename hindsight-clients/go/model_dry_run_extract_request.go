@@ -647,7 +647,6 @@ func (o *DryRunExtractRequest) UnmarshalJSON(data []byte) (err error) {
 	varDryRunExtractRequest := _DryRunExtractRequest{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varDryRunExtractRequest)
 
 	if err != nil {

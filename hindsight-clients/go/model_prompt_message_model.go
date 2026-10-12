@@ -143,7 +143,6 @@ func (o *PromptMessageModel) UnmarshalJSON(data []byte) (err error) {
 	varPromptMessageModel := _PromptMessageModel{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varPromptMessageModel)
 
 	if err != nil {

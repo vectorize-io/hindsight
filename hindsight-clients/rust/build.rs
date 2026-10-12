@@ -180,6 +180,52 @@ fn convert_anyof_to_nullable(value: &mut serde_json::Value) {
     }
 }
 
+/// Rename inline property enums whose `title` collides with a different enum.
+///
+/// typify names an inline enum after its `title`, and pydantic titles a field
+/// after its name. So two models whose `outcome` (or `kind`) fields allow
+/// different values collapse into ONE generated `Outcome` type -- whichever is
+/// generated first -- and the other model then rejects values its own schema
+/// allows (`RefreshMentalModelOperationDetails.outcome = "refresh_failed_error"`,
+/// `PromptBlockModel.kind = "text"`). The first enum with a title keeps it, so
+/// no existing type is renamed; later ones with a different value set become
+/// `{Schema}{Title}`.
+fn dedupe_inline_enum_titles(spec: &mut serde_json::Value) {
+    let Some(schemas) = spec
+        .pointer_mut("/components/schemas")
+        .and_then(|v| v.as_object_mut())
+    else {
+        return;
+    };
+    let mut first_values: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for (schema_name, schema) in schemas.iter_mut() {
+        let Some(props) = schema.get_mut("properties").and_then(|v| v.as_object_mut()) else {
+            continue;
+        };
+        for prop in props.values_mut() {
+            let (Some(title), Some(values)) = (
+                prop.get("title").and_then(|t| t.as_str()).map(str::to_owned),
+                prop.get("enum").and_then(|e| e.as_array()),
+            ) else {
+                continue;
+            };
+            let mut values: Vec<String> = values.iter().map(|v| v.to_string()).collect();
+            values.sort();
+            match first_values.get(&title) {
+                None => {
+                    first_values.insert(title, values);
+                }
+                Some(first) if *first == values => {}
+                Some(_) => {
+                    let prefix: String = schema_name.chars().filter(|c| c.is_alphanumeric()).collect();
+                    prop["title"] = serde_json::json!(format!("{prefix}{title}"));
+                }
+            }
+        }
+    }
+}
+
 fn main() {
     // Get the OpenAPI spec path from hindsight-docs/static (single source of truth)
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -216,6 +262,10 @@ fn main() {
     // null arm. Keeps progenitor from emitting unserializable flatten-of-
     // primitive structs (see collapse_string_anyof_unions docs).
     collapse_string_anyof_unions(&mut spec_json);
+
+    // Give same-titled inline enums with different values distinct names, so
+    // one model's enum doesn't silently replace another's.
+    dedupe_inline_enum_titles(&mut spec_json);
 
     // Filter out multipart/form-data endpoints (progenitor doesn't support them)
     filter_multipart_endpoints(&mut spec_json);

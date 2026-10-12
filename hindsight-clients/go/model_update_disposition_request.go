@@ -107,7 +107,6 @@ func (o *UpdateDispositionRequest) UnmarshalJSON(data []byte) (err error) {
 	varUpdateDispositionRequest := _UpdateDispositionRequest{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varUpdateDispositionRequest)
 
 	if err != nil {

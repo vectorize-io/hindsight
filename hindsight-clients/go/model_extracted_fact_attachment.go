@@ -166,7 +166,6 @@ func (o *ExtractedFactAttachment) UnmarshalJSON(data []byte) (err error) {
 	varExtractedFactAttachment := _ExtractedFactAttachment{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varExtractedFactAttachment)
 
 	if err != nil {

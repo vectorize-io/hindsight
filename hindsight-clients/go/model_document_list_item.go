@@ -470,7 +470,6 @@ func (o *DocumentListItem) UnmarshalJSON(data []byte) (err error) {
 	varDocumentListItem := _DocumentListItem{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varDocumentListItem)
 
 	if err != nil {

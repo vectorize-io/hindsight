@@ -534,7 +534,6 @@ func (o *BankListItem) UnmarshalJSON(data []byte) (err error) {
 	varBankListItem := _BankListItem{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varBankListItem)
 
 	if err != nil {

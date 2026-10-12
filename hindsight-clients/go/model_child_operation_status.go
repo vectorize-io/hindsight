@@ -273,7 +273,6 @@ func (o *ChildOperationStatus) UnmarshalJSON(data []byte) (err error) {
 	varChildOperationStatus := _ChildOperationStatus{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varChildOperationStatus)
 
 	if err != nil {

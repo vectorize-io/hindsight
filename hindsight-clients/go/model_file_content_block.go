@@ -181,7 +181,6 @@ func (o *FileContentBlock) UnmarshalJSON(data []byte) (err error) {
 	varFileContentBlock := _FileContentBlock{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varFileContentBlock)
 
 	if err != nil {

@@ -339,7 +339,6 @@ func (o *LabelGroupInput) UnmarshalJSON(data []byte) (err error) {
 	varLabelGroupInput := _LabelGroupInput{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varLabelGroupInput)
 
 	if err != nil {

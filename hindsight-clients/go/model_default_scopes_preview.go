@@ -163,7 +163,6 @@ func (o *DefaultScopesPreview) UnmarshalJSON(data []byte) (err error) {
 	varDefaultScopesPreview := _DefaultScopesPreview{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varDefaultScopesPreview)
 
 	if err != nil {

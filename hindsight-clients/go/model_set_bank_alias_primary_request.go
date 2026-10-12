@@ -108,7 +108,6 @@ func (o *SetBankAliasPrimaryRequest) UnmarshalJSON(data []byte) (err error) {
 	varSetBankAliasPrimaryRequest := _SetBankAliasPrimaryRequest{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varSetBankAliasPrimaryRequest)
 
 	if err != nil {

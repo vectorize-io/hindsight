@@ -163,7 +163,6 @@ func (o *RetryOperationResponse) UnmarshalJSON(data []byte) (err error) {
 	varRetryOperationResponse := _RetryOperationResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varRetryOperationResponse)
 
 	if err != nil {

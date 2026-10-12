@@ -301,7 +301,6 @@ func (o *RecallResponse) UnmarshalJSON(data []byte) (err error) {
 	varRecallResponse := _RecallResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varRecallResponse)
 
 	if err != nil {

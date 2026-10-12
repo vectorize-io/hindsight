@@ -228,7 +228,6 @@ func (o *MentalModelRetraction) UnmarshalJSON(data []byte) (err error) {
 	varMentalModelRetraction := _MentalModelRetraction{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varMentalModelRetraction)
 
 	if err != nil {

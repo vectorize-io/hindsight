@@ -138,7 +138,6 @@ func (o *TemporalWindow) UnmarshalJSON(data []byte) (err error) {
 	varTemporalWindow := _TemporalWindow{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varTemporalWindow)
 
 	if err != nil {

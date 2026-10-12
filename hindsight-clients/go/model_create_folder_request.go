@@ -153,7 +153,6 @@ func (o *CreateFolderRequest) UnmarshalJSON(data []byte) (err error) {
 	varCreateFolderRequest := _CreateFolderRequest{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varCreateFolderRequest)
 
 	if err != nil {

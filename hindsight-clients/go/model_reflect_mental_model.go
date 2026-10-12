@@ -183,7 +183,6 @@ func (o *ReflectMentalModel) UnmarshalJSON(data []byte) (err error) {
 	varReflectMentalModel := _ReflectMentalModel{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varReflectMentalModel)
 
 	if err != nil {

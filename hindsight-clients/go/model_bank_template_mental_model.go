@@ -281,7 +281,6 @@ func (o *BankTemplateMentalModel) UnmarshalJSON(data []byte) (err error) {
 	varBankTemplateMentalModel := _BankTemplateMentalModel{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varBankTemplateMentalModel)
 
 	if err != nil {

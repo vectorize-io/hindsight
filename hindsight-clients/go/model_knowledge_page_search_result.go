@@ -331,7 +331,6 @@ func (o *KnowledgePageSearchResult) UnmarshalJSON(data []byte) (err error) {
 	varKnowledgePageSearchResult := _KnowledgePageSearchResult{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varKnowledgePageSearchResult)
 
 	if err != nil {

@@ -292,7 +292,6 @@ func (o *EntityListItem) UnmarshalJSON(data []byte) (err error) {
 	varEntityListItem := _EntityListItem{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varEntityListItem)
 
 	if err != nil {

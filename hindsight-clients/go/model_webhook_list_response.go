@@ -194,7 +194,6 @@ func (o *WebhookListResponse) UnmarshalJSON(data []byte) (err error) {
 	varWebhookListResponse := _WebhookListResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varWebhookListResponse)
 
 	if err != nil {

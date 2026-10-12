@@ -682,7 +682,6 @@ func (o *MemoryGraphTableRow) UnmarshalJSON(data []byte) (err error) {
 	varMemoryGraphTableRow := _MemoryGraphTableRow{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varMemoryGraphTableRow)
 
 	if err != nil {

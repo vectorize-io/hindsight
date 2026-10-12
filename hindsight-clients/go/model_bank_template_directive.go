@@ -256,7 +256,6 @@ func (o *BankTemplateDirective) UnmarshalJSON(data []byte) (err error) {
 	varBankTemplateDirective := _BankTemplateDirective{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varBankTemplateDirective)
 
 	if err != nil {

@@ -363,7 +363,6 @@ func (o *BankTemplateImportResponse) UnmarshalJSON(data []byte) (err error) {
 	varBankTemplateImportResponse := _BankTemplateImportResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varBankTemplateImportResponse)
 
 	if err != nil {

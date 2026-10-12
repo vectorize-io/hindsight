@@ -166,7 +166,6 @@ func (o *ReflectDirective) UnmarshalJSON(data []byte) (err error) {
 	varReflectDirective := _ReflectDirective{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varReflectDirective)
 
 	if err != nil {

@@ -195,7 +195,6 @@ func (o *RefreshMentalModelOperationDetails) UnmarshalJSON(data []byte) (err err
 	varRefreshMentalModelOperationDetails := _RefreshMentalModelOperationDetails{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varRefreshMentalModelOperationDetails)
 
 	if err != nil {

@@ -298,7 +298,6 @@ func (o *CreateMentalModelRequest) UnmarshalJSON(data []byte) (err error) {
 	varCreateMentalModelRequest := _CreateMentalModelRequest{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varCreateMentalModelRequest)
 
 	if err != nil {

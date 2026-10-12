@@ -650,7 +650,6 @@ func (o *MentalModelResponse) UnmarshalJSON(data []byte) (err error) {
 	varMentalModelResponse := _MentalModelResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varMentalModelResponse)
 
 	if err != nil {

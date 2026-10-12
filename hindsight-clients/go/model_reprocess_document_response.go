@@ -163,7 +163,6 @@ func (o *ReprocessDocumentResponse) UnmarshalJSON(data []byte) (err error) {
 	varReprocessDocumentResponse := _ReprocessDocumentResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varReprocessDocumentResponse)
 
 	if err != nil {

@@ -191,7 +191,6 @@ func (o *ListMemoryUnitsResponse) UnmarshalJSON(data []byte) (err error) {
 	varListMemoryUnitsResponse := _ListMemoryUnitsResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varListMemoryUnitsResponse)
 
 	if err != nil {

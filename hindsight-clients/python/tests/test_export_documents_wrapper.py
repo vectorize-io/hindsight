@@ -5,6 +5,8 @@ orchestration. The signed-URL test uses a local HTTP server to check the actual
 download request and credential boundary.
 """
 
+import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -153,3 +155,46 @@ async def test_export_documents_raises_without_download_url():
 
     with pytest.raises(RuntimeError, match="download_url"):
         await client.aexport_documents("my-bank", poll_interval=0)
+
+
+def _client_for(export_method):
+    client = _make_client()
+    submitted = AsyncMock(return_value=MagicMock(operation_id=OPERATION_ID))
+    if export_method == "aexport_documents":
+        client._document_transfer_api.export_documents = submitted
+    else:
+        client._bank_transfer_api.export_bank_transfer = submitted
+    _mock_download(client)
+    return client
+
+
+@pytest.mark.parametrize("export_method", ["aexport_documents", "aexport_bank"])
+async def test_export_timeout_bounds_a_slow_status_request(export_method):
+    # A status request that answers "completed" after the deadline must not be
+    # waited for, and the archive must not be downloaded.
+    client = _client_for(export_method)
+
+    async def late_completed(*args, **kwargs):
+        await asyncio.sleep(5)
+        return _status("completed", result_metadata={"download_url": DOWNLOAD_URL})
+
+    client._operations_api.get_operation_status = late_completed
+
+    start = time.monotonic()
+    with pytest.raises(TimeoutError):
+        await getattr(client, export_method)("my-bank", poll_interval=0, timeout=0.05)
+    assert time.monotonic() - start < 1
+    client._api_client.call_api.assert_not_awaited()
+
+
+@pytest.mark.parametrize("export_method", ["aexport_documents", "aexport_bank"])
+async def test_export_timeout_bounds_the_poll_sleep(export_method):
+    # A poll interval longer than the budget must be cut short, with no extra poll.
+    client = _client_for(export_method)
+    client._operations_api.get_operation_status = AsyncMock(return_value=_status("processing"))
+
+    start = time.monotonic()
+    with pytest.raises(TimeoutError):
+        await getattr(client, export_method)("my-bank", poll_interval=5, timeout=0.05)
+    assert time.monotonic() - start < 1
+    assert client._operations_api.get_operation_status.await_count == 1

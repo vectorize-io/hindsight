@@ -191,7 +191,6 @@ func (o *EntityListResponse) UnmarshalJSON(data []byte) (err error) {
 	varEntityListResponse := _EntityListResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varEntityListResponse)
 
 	if err != nil {

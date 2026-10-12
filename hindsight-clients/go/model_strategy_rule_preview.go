@@ -195,7 +195,6 @@ func (o *StrategyRulePreview) UnmarshalJSON(data []byte) (err error) {
 	varStrategyRulePreview := _StrategyRulePreview{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varStrategyRulePreview)
 
 	if err != nil {

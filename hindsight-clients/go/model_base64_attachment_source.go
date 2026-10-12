@@ -177,7 +177,6 @@ func (o *Base64AttachmentSource) UnmarshalJSON(data []byte) (err error) {
 	varBase64AttachmentSource := _Base64AttachmentSource{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varBase64AttachmentSource)
 
 	if err != nil {

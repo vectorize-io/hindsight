@@ -194,7 +194,6 @@ func (o *DirectiveListResponse) UnmarshalJSON(data []byte) (err error) {
 	varDirectiveListResponse := _DirectiveListResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varDirectiveListResponse)
 
 	if err != nil {

@@ -135,7 +135,6 @@ func (o *TextContentBlock) UnmarshalJSON(data []byte) (err error) {
 	varTextContentBlock := _TextContentBlock{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varTextContentBlock)
 
 	if err != nil {

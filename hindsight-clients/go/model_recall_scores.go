@@ -246,7 +246,6 @@ func (o *RecallScores) UnmarshalJSON(data []byte) (err error) {
 	varRecallScores := _RecallScores{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varRecallScores)
 
 	if err != nil {

@@ -147,7 +147,6 @@ func (o *DocumentImportSubmitResponse) UnmarshalJSON(data []byte) (err error) {
 	varDocumentImportSubmitResponse := _DocumentImportSubmitResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varDocumentImportSubmitResponse)
 
 	if err != nil {

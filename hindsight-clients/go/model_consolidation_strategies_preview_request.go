@@ -149,7 +149,6 @@ func (o *ConsolidationStrategiesPreviewRequest) UnmarshalJSON(data []byte) (err 
 	varConsolidationStrategiesPreviewRequest := _ConsolidationStrategiesPreviewRequest{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varConsolidationStrategiesPreviewRequest)
 
 	if err != nil {

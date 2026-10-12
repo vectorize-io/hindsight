@@ -236,7 +236,6 @@ func (o *EntityGraphNodeData) UnmarshalJSON(data []byte) (err error) {
 	varEntityGraphNodeData := _EntityGraphNodeData{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varEntityGraphNodeData)
 
 	if err != nil {

@@ -56,7 +56,12 @@ where
         }
         ClientError::InvalidResponsePayload(bytes, src) => {
             let body = String::from_utf8_lossy(&bytes);
-            anyhow::anyhow!("Invalid response payload ({}): {}", src, body)
+            anyhow::anyhow!(
+                "{}: {}\nResponse was: {}",
+                crate::errors::INVALID_RESPONSE_PAYLOAD,
+                src,
+                body
+            )
         }
         other => anyhow::anyhow!("{}", other),
     }

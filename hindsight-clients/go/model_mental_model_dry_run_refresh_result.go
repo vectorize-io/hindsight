@@ -775,7 +775,6 @@ func (o *MentalModelDryRunRefreshResult) UnmarshalJSON(data []byte) (err error) 
 	varMentalModelDryRunRefreshResult := _MentalModelDryRunRefreshResult{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varMentalModelDryRunRefreshResult)
 
 	if err != nil {

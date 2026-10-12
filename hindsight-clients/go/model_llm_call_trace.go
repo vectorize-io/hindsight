@@ -137,7 +137,6 @@ func (o *LLMCallTrace) UnmarshalJSON(data []byte) (err error) {
 	varLLMCallTrace := _LLMCallTrace{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varLLMCallTrace)
 
 	if err != nil {

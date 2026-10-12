@@ -201,7 +201,6 @@ func (o *MentalModelRefreshWindow) UnmarshalJSON(data []byte) (err error) {
 	varMentalModelRefreshWindow := _MentalModelRefreshWindow{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varMentalModelRefreshWindow)
 
 	if err != nil {

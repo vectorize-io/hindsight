@@ -149,7 +149,6 @@ func (o *ConsolidationResponse) UnmarshalJSON(data []byte) (err error) {
 	varConsolidationResponse := _ConsolidationResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varConsolidationResponse)
 
 	if err != nil {

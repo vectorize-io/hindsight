@@ -147,7 +147,6 @@ func (o *LabelValue) UnmarshalJSON(data []byte) (err error) {
 	varLabelValue := _LabelValue{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varLabelValue)
 
 	if err != nil {

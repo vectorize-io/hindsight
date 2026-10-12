@@ -587,7 +587,6 @@ func (o *ReflectFact) UnmarshalJSON(data []byte) (err error) {
 	varReflectFact := _ReflectFact{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varReflectFact)
 
 	if err != nil {

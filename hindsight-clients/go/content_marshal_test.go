@@ -43,3 +43,20 @@ func TestContentBlocksMarshalAsAnArray(t *testing.T) {
 		t.Errorf("blocks did not serialise as an array\n got: %s\nwant: %s", body, want)
 	}
 }
+
+// A field the server adds to a response must not break an older client.
+//
+// The generator emits decoder.DisallowUnknownFields() in every model's
+// UnmarshalJSON, so a newly added response field failed decoding with
+// `json: unknown field "..."`. generate-clients.sh strips that call; this test
+// fails if that step is ever dropped.
+func TestResponseIgnoresUnknownFields(t *testing.T) {
+	var got DirectiveListResponse
+	data := []byte(`{"items":[],"total":0,"limit":20,"offset":0,"added_later":true}`)
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unknown response field rejected: %v", err)
+	}
+	if got.Limit != 20 {
+		t.Errorf("limit = %d, want 20", got.Limit)
+	}
+}

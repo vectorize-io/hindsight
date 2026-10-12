@@ -398,7 +398,6 @@ func (o *FeaturesInfo) UnmarshalJSON(data []byte) (err error) {
 	varFeaturesInfo := _FeaturesInfo{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varFeaturesInfo)
 
 	if err != nil {

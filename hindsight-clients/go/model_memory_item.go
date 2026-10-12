@@ -536,7 +536,6 @@ func (o *MemoryItem) UnmarshalJSON(data []byte) (err error) {
 	varMemoryItem := _MemoryItem{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varMemoryItem)
 
 	if err != nil {

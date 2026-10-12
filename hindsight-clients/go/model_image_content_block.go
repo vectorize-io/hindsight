@@ -135,7 +135,6 @@ func (o *ImageContentBlock) UnmarshalJSON(data []byte) (err error) {
 	varImageContentBlock := _ImageContentBlock{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varImageContentBlock)
 
 	if err != nil {

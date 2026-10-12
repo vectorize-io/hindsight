@@ -228,7 +228,6 @@ func (o *BankTemplateManifest) UnmarshalJSON(data []byte) (err error) {
 	varBankTemplateManifest := _BankTemplateManifest{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varBankTemplateManifest)
 
 	if err != nil {

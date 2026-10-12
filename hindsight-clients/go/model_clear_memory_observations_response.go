@@ -107,7 +107,6 @@ func (o *ClearMemoryObservationsResponse) UnmarshalJSON(data []byte) (err error)
 	varClearMemoryObservationsResponse := _ClearMemoryObservationsResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varClearMemoryObservationsResponse)
 
 	if err != nil {

@@ -107,7 +107,6 @@ func (o *KnowledgeTreeResponse) UnmarshalJSON(data []byte) (err error) {
 	varKnowledgeTreeResponse := _KnowledgeTreeResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varKnowledgeTreeResponse)
 
 	if err != nil {

@@ -231,7 +231,6 @@ func (o *MemoryTimeseriesBucket) UnmarshalJSON(data []byte) (err error) {
 	varMemoryTimeseriesBucket := _MemoryTimeseriesBucket{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varMemoryTimeseriesBucket)
 
 	if err != nil {

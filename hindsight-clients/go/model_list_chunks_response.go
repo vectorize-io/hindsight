@@ -191,7 +191,6 @@ func (o *ListChunksResponse) UnmarshalJSON(data []byte) (err error) {
 	varListChunksResponse := _ListChunksResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varListChunksResponse)
 
 	if err != nil {

@@ -154,7 +154,6 @@ func (o *EntityInput) UnmarshalJSON(data []byte) (err error) {
 	varEntityInput := _EntityInput{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varEntityInput)
 
 	if err != nil {

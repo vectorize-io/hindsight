@@ -310,7 +310,6 @@ func (o *CreatePageRequest) UnmarshalJSON(data []byte) (err error) {
 	varCreatePageRequest := _CreatePageRequest{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varCreatePageRequest)
 
 	if err != nil {

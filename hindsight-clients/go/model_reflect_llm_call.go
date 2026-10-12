@@ -137,7 +137,6 @@ func (o *ReflectLLMCall) UnmarshalJSON(data []byte) (err error) {
 	varReflectLLMCall := _ReflectLLMCall{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varReflectLLMCall)
 
 	if err != nil {

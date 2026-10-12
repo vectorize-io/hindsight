@@ -187,7 +187,6 @@ func (o *TagGroupLeaf) UnmarshalJSON(data []byte) (err error) {
 	varTagGroupLeaf := _TagGroupLeaf{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varTagGroupLeaf)
 
 	if err != nil {

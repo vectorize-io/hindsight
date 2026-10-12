@@ -107,7 +107,6 @@ func (o *KnowledgePageBundleResponse) UnmarshalJSON(data []byte) (err error) {
 	varKnowledgePageBundleResponse := _KnowledgePageBundleResponse{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varKnowledgePageBundleResponse)
 
 	if err != nil {
