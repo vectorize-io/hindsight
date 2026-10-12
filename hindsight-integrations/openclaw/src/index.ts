@@ -2200,6 +2200,16 @@ export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     skipStatelessSessions: config.skipStatelessSessions !== false,
     debug: config.debug ?? false,
     debugPerfTiming: config.debugPerfTiming === true,
+    // Both were missing from this whitelist, so the logger always ran at
+    // `info` with a 5-minute summary whatever the user configured.
+    logLevel:
+      config.logLevel && ["off", "error", "warning", "info", "debug"].includes(config.logLevel)
+        ? config.logLevel
+        : undefined,
+    logSummaryIntervalMs:
+      typeof config.logSummaryIntervalMs === "number" && config.logSummaryIntervalMs >= 0
+        ? config.logSummaryIntervalMs
+        : undefined,
     // Retain queue: kept off the strict whitelist before — user values were
     // silently dropped before queue init read them. (#1443)
     retainQueuePath:
@@ -2235,7 +2245,9 @@ export default function (api: MoltbotPluginAPI) {
     // Get plugin config first (needed for debug flag and service registration)
     const pluginConfig = getPluginConfig(api);
     // If logLevel is 'debug', also enable legacy debug flag
-    debugEnabled = pluginConfig.debug ?? pluginConfig.logLevel === "debug";
+    // `debug` is always a boolean here (getPluginConfig defaults it, and so does
+    // the schema), so `??` never reached logLevel and `logLevel: "debug"` was a no-op.
+    debugEnabled = pluginConfig.debug === true || pluginConfig.logLevel === "debug";
 
     // Configure structured logger — route through OpenClaw's api.logger for consistent formatting
     if (api.logger) setApiLogger(api.logger);
