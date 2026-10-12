@@ -620,17 +620,20 @@ def test_reconnect_closes_the_client_it_replaces(provider, monkeypatch):
     assert Dead.closed
 
 
-def test_shutdown_drops_its_atexit_hook(provider):
-    """#4662: the hook kept every provider alive until exit; the gateway makes one per chat session."""
-    import atexit
+def test_shutdown_drops_its_atexit_hook(provider, monkeypatch):
+    """#4662: the hook kept every provider alive until exit; the gateway makes one per chat session.
+    Hooks are recorded rather than counted: atexit._ncallbacks() does not drop on unregister on
+    every Python the plugin supports."""
+    hooks: list = []
+    monkeypatch.setattr(plugin.atexit, "register", hooks.append)
+    monkeypatch.setattr(plugin.atexit, "unregister", hooks.remove)
 
     instance, _ = provider({})
     instance.sync_turn("hi", "hello")
-    assert instance._atexit_registered
-    before = atexit._ncallbacks()
+    assert hooks == [instance._atexit_shutdown]
     instance.shutdown()
+    assert hooks == []
     assert not instance._atexit_registered
-    assert atexit._ncallbacks() == before - 1
 
 
 def test_availability_failure_is_logged(hermes_env, caplog):
