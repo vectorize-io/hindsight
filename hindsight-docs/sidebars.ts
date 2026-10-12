@@ -217,15 +217,34 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'Hosting',
+      label: 'Cloud & Enterprise',
       collapsible: false,
       items: [
         {
-          type: 'link',
-          href: 'https://ui.hindsight.vectorize.io',
-          label: 'Cloud',
-          customProps: { icon: 'lu-cloud', iconAfter: 'lu-arrow-up-right' },
+          type: 'doc',
+          id: 'cloud-enterprise/overview',
+          label: 'Overview',
+          customProps: { icon: 'lu-compare' },
         },
+        {
+          type: 'doc',
+          id: 'cloud-enterprise/hindsight-cloud',
+          label: 'Hindsight Cloud',
+          customProps: { icon: 'lu-cloud' },
+        },
+        {
+          type: 'doc',
+          id: 'cloud-enterprise/enterprise',
+          label: 'Enterprise',
+          customProps: { icon: 'lu-server' },
+        },
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Hosting',
+      collapsible: false,
+      items: [
         {
           type: 'doc',
           id: 'developer/installation',
