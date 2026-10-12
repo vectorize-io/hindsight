@@ -225,7 +225,7 @@ Retained documents use stable session-scoped IDs derived from the OpenClaw `sess
 
 ## OpenClaw compatibility
 
-Version 0.12.0 and later work with **OpenClaw 2026.7.x through 2026.9.x**. The plugin reads both the old and the new conversation-metadata labels, so plugin and OpenClaw versions do not need to match.
+Version 0.12.0 and later work with **OpenClaw 2026.7.x through 2026.10.x**. The plugin reads both the old and the new conversation-metadata labels, so plugin and OpenClaw versions do not need to match.
 
 **On OpenClaw 2026.8.1 or later, use 0.12.0 or later.** 2026.8.1 changed how OpenClaw labels the metadata it attaches to each message; earlier plugin versions no longer recognised it, so turns were skipped with `missing stable sender identity`, routing IDs were stored as conversation content, and automatic recall could search using that metadata instead of your message.
 
@@ -235,6 +235,15 @@ Two expected (non-error) messages on 2026.8.1+:
 - `openclaw plugins doctor` then reports `memory-core` is not selected for the memory slot — that is OpenClaw noting its built-in memory stepped aside.
 
 Upgrading from 0.11.1 or earlier: installs could fail with `npm error Cannot read properties of null (reading 'edgesOut')`. That was a packaging problem in the plugin, fixed in 0.12.0 — retry with the new version.
+
+## OpenClaw's memory page, status and search
+
+On OpenClaw 2026.10 or later, the plugin registers as OpenClaw's native memory provider. OpenClaw's own memory surfaces then read from Hindsight instead of reporting "memory plugin unavailable":
+
+- `memory.status` and the Memory page report Hindsight's health.
+- Gateway `memory.search` (with `version: 2`) and `memory.get` return Hindsight memories.
+
+Search is read-only and answers only callers allowed to see the whole bank: an operator, or the agent owner's private session. It works when an agent's bank depends on the agent alone: `dynamicBankGranularity: ["agent"]`, a static `bankId`, or an `agentBankMap` entry. When banks are keyed by user or channel (the default granularity), OpenClaw can't tell which user's bank to search, so search is refused and status still reports ready. Prompt-side recall stays with `autoRecall`, so turning this on never injects memories twice. Older OpenClaw versions ignore it.
 
 ## Documentation
 

@@ -13,6 +13,7 @@ import {
   type MinScores,
 } from "@vectorize-io/hindsight-client";
 import { RetainQueue } from "./retain-queue.js";
+import { createMemoryProviderRuntime } from "./memory-provider.js";
 import { compileSessionPatterns, matchesSessionPattern } from "./session-patterns.js";
 import { parseSessionFile } from "./session-file.js";
 import { createHash, randomUUID } from "crypto";
@@ -731,6 +732,36 @@ function getConfiguredBankId(pluginConfig: PluginConfig): string | undefined {
 
   const trimmed = pluginConfig.bankId.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * The bank an agent's memory lives in when it depends on the agent alone: an
+ * `agentBankMap` entry, a static bank, or agent-only dynamic banking. Undefined
+ * when the bank is keyed by user, channel or provider, which an agent id can't
+ * pick.
+ */
+export function agentOnlyBankId(agentId: string, pluginConfig: PluginConfig): string | undefined {
+  const ctx: PluginHookAgentContext = { agentId };
+  const mapped = mappedBankIdForAgent(ctx, pluginConfig);
+  if (mapped) return mapped;
+  if (usesStaticBank(pluginConfig)) return getStaticBankId(pluginConfig);
+  const fields = pluginConfig.dynamicBankGranularity?.length
+    ? pluginConfig.dynamicBankGranularity
+    : DEFAULT_DYNAMIC_BANK_GRANULARITY;
+  return fields.every((field) => field === "agent") ? deriveBankId(ctx, pluginConfig) : undefined;
+}
+
+/** The initialized client and its options, initializing lazily like the hooks do. */
+async function readyClient(): Promise<{
+  client: HindsightClient;
+  options: HindsightClientOptions;
+} | null> {
+  await (global as any).__hindsightClient?.waitForReady();
+  return client && clientOptions ? { client, options: clientOptions } : null;
+}
+
+function authHeaders(options: HindsightClientOptions): Record<string, string> {
+  return options.apiKey ? { Authorization: `Bearer ${options.apiKey}` } : {};
 }
 
 function usesStaticBank(pluginConfig: PluginConfig): boolean {
@@ -3305,6 +3336,55 @@ ${memoriesFormatted}
     });
     debug("[Hindsight] Hooks registered");
     log.info("agent hooks registered");
+
+    // OpenClaw's own memory surfaces read through this when Hindsight holds the
+    // memory slot; without it they all report "memory plugin unavailable". (#4916)
+    api.registerMemoryCapability?.({
+      providerRuntime: createMemoryProviderRuntime({
+        providerId: "hindsight-openclaw",
+        agentBank: (agentId) => agentOnlyBankId(agentId, currentPluginConfig || pluginConfig),
+        recall: async (bankId, query, signal) => {
+          const live = await readyClient();
+          if (!live) throw new Error("Hindsight client is not initialized");
+          const config = currentPluginConfig || pluginConfig;
+          const response = await scopeClient(live.client, bankId).recall(
+            {
+              query,
+              maxTokens: config.recallMaxTokens,
+              budget: config.recallBudget,
+              types: config.recallTypes,
+            },
+            config.recallTimeoutMs,
+            signal
+          );
+          return (response.results ?? []).map((r) => ({
+            id: r.id,
+            text: r.text,
+            score: r.scores?.final,
+          }));
+        },
+        getMemory: async (bankId, memoryId, signal) => {
+          const live = await readyClient();
+          if (!live) throw new Error("Hindsight client is not initialized");
+          const res = await fetch(
+            `${live.options.baseUrl.replace(/\/$/, "")}/v1/default/banks/${encodeURIComponent(bankId)}/memories/${encodeURIComponent(memoryId)}`,
+            { headers: authHeaders(live.options), signal }
+          );
+          if (res.status === 404) return null;
+          if (!res.ok) throw new Error(`Hindsight memory lookup failed: HTTP ${res.status}`);
+          const body = (await res.json()) as { text?: unknown };
+          return typeof body.text === "string" ? body.text : null;
+        },
+        healthy: async () => {
+          const live = await readyClient().catch(() => null);
+          if (!live) return false;
+          const res = await fetch(`${live.options.baseUrl.replace(/\/$/, "")}/health`, {
+            headers: authHeaders(live.options),
+          }).catch(() => null);
+          return res?.ok === true;
+        },
+      }),
+    });
   } catch (error) {
     log.error("plugin loading error", error);
     if (error instanceof Error) {

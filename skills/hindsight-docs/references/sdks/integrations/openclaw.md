@@ -430,7 +430,7 @@ uvx hindsight-embed@latest -p openclaw ui
 ## OpenClaw compatibility
 
 The plugin is tested against the current OpenClaw release and against older ones.
-Version 0.12.0 and later work with **OpenClaw 2026.7.x through 2026.9.x**.
+Version 0.12.0 and later work with **OpenClaw 2026.7.x through 2026.10.x**.
 
 **If you are on OpenClaw 2026.8.1 or later, upgrade to plugin 0.12.0.** OpenClaw
 2026.8.1 changed how it labels the conversation metadata it attaches to each
@@ -521,6 +521,15 @@ openclaw config get plugins.entries.hindsight-openclaw.config.llmProvider
 
 If you used `--ref-source env`, double-check that the referenced env var
 (e.g. `OPENAI_API_KEY`) is exported in the shell that runs `openclaw gateway`.
+
+## OpenClaw's memory page, status and search
+
+On OpenClaw 2026.10 or later, the plugin registers as OpenClaw's native memory provider. OpenClaw's own memory surfaces then read from Hindsight instead of reporting "memory plugin unavailable":
+
+- `memory.status` and the Memory page report Hindsight's health.
+- Gateway `memory.search` (with `version: 2`) and `memory.get` return Hindsight memories.
+
+Search is read-only and answers only callers allowed to see the whole bank: an operator, or the agent owner's private session. It works when an agent's bank depends on the agent alone: `dynamicBankGranularity: ["agent"]`, a static `bankId`, or an `agentBankMap` entry. When banks are keyed by user or channel (the default granularity), OpenClaw can't tell which user's bank to search, so search is refused and status still reports ready. Prompt-side recall stays with `autoRecall`, so turning this on never injects memories twice. Older OpenClaw versions ignore it.
 
 ## Limitations
 
