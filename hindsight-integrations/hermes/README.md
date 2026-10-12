@@ -346,7 +346,7 @@ Available in `hybrid` and `tools` memory modes:
 
 ## Environment Variables
 
-Set these in the profile's `$HERMES_HOME/.env`. A value in `config.json` always wins over its variable.
+Set these in the profile's `$HERMES_HOME/.env`. A value in `config.json` wins over its variable, except where noted.
 
 These are used whenever the matching config key is not set:
 
