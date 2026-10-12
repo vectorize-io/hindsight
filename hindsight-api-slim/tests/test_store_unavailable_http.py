@@ -11,6 +11,7 @@ import pytest
 
 from hindsight_api.api.http import _internal_error, _store_unavailable
 from hindsight_api.engine.memories.base import StoreWriteUnavailable
+from hindsight_api.engine.reflect.agent import ReflectToolExecutionError
 
 
 class _Shed(StoreWriteUnavailable):
@@ -52,15 +53,21 @@ def test_any_other_failure_is_still_a_500():
 
 
 @pytest.mark.asyncio
-async def test_retain_and_recall_answer_503_when_the_store_sheds(memory, monkeypatch):
-    """Through the real routes: both have their own catch-all rather than the shared one."""
+async def test_retain_recall_and_reflect_answer_503_when_the_store_sheds(memory, monkeypatch):
+    """Through the real routes: each has its own catch-all rather than the shared one."""
     from hindsight_api.api import create_app
 
     async def shed(*args, **kwargs):
         raise _wrapped()
 
     monkeypatch.setattr(memory, "retain_batch_async", shed)
+
+    async def reflect_tool_shed(*args, **kwargs):
+        # Reflect wraps a failed retrieval tool in its own error, chaining the store's refusal.
+        raise ReflectToolExecutionError("Reflect tool 'recall' failed on iteration 1") from _wrapped()
+
     monkeypatch.setattr(memory, "recall_async", shed)
+    monkeypatch.setattr(memory, "reflect_async", reflect_tool_shed)
     app = create_app(memory, initialize_memory=False)
 
     transport = httpx.ASGITransport(app=app)
@@ -73,7 +80,11 @@ async def test_retain_and_recall_answer_503_when_the_store_sheds(memory, monkeyp
             "/v1/default/banks/shed-test/memories/recall",
             json={"query": "anything"},
         )
+        reflect = await client.post(
+            "/v1/default/banks/shed-test/reflect",
+            json={"query": "anything"},
+        )
 
-    for response in (retain, recall):
+    for response in (retain, recall, reflect):
         assert response.status_code == 503, response.text
         assert response.headers["retry-after"] == "7"

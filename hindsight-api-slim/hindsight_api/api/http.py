@@ -341,7 +341,7 @@ def _store_unavailable(exc: BaseException) -> HTTPException | None:
             return HTTPException(
                 status_code=503,
                 detail=str(cur),
-                headers={"Retry-After": str(getattr(cur, "retry_after", 30))},
+                headers={"Retry-After": str(cur.retry_after)},
             )
         cur = cur.__cause__ or cur.__context__
     return None
@@ -6575,6 +6575,9 @@ def _register_routes(app: FastAPI):
             # evidence it was asked for. Answering anyway would return a confident
             # reply built on a partial (often empty) evidence set, which callers
             # store as a real answer (#2894). Returning the failure lets them retry.
+            # A tool whose recall the store shed is "not now", so it gets the same 503 as recall.
+            if (unavailable := _store_unavailable(e)) is not None:
+                raise unavailable
             logger.warning("Reflect retrieval failure in bank %s: %s", bank_id, e)
             raise HTTPException(status_code=500, detail=str(e))
         except TimeoutError as e:
