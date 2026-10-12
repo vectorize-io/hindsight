@@ -165,39 +165,65 @@ def _warn_if_client_outdated() -> None:
 
 
 # update_mode='append' capability (Hindsight >= 0.5.0), cached per (API URL, key fingerprint)
-# per process so every provider on the same API+key shares one /version round trip. A failed probe
-# caches False, so the key must include the credential or one profile's 401 would silently downgrade
-# a sibling profile that shares the URL with a valid key.
+# per process so every provider on the same API+key shares one /version round trip. Only an answer
+# the server actually gave is cached; an unreachable server is asked again (the coding-agents client
+# does the same by probing per write). Caching that failure too disabled append
+# for the whole process after one network blip at startup (#5221). The key includes the credential
+# so one profile's 401 cannot downgrade a sibling profile that shares the URL with a valid key.
 _append_capability_cache: Dict[tuple[str, str | None], bool] = {}
 _append_capability_lock = threading.Lock()
+# When the probe last found the server unreachable. The probe runs on the agent's turn, so a hung
+# server is asked again at most once per window rather than stalling every turn on its timeout.
+_append_probe_unreachable_at: Dict[tuple[str, str | None], float] = {}
+_APPEND_PROBE_RETRY_S = 60.0
+
+
+class _VersionProbeUnreachable(Exception):
+    """No version path answered: the server is down or slow, so its version is still unknown."""
 
 
 def _fetch_hindsight_api_version(api_url: str, api_key: str | None = None, timeout: float = 5.0) -> str | None:
-    """GET ``<api_url>/version`` -> version string, or None on any failure (= legacy API)."""
+    """The server's version, or None when it answered without one (an API older than /version).
+
+    ``/v1/version`` first: an ingress that routes only ``/v1`` to the API hands a bare ``/version``
+    to whatever else it fronts, whose 404 read as "no version" (same order as coding-agents, #5286).
+    Raises ``_VersionProbeUnreachable`` when neither path could be reached (connection error,
+    timeout, 5xx), so the caller can tell "unknown" from "old".
+    """
+    import urllib.error
     import urllib.request
 
     if not api_url:
         return None
-    url = api_url.rstrip("/") + "/version"
     headers = {"User-Agent": _USER_AGENT}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-    req = urllib.request.Request(url, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-            data = json.loads(resp.read().decode("utf-8", errors="replace"))
-    except Exception as exc:
-        logger.debug("Hindsight /version probe failed for %s: %s", url, exc)
-        return None
-    version = (data.get("version") or data.get("api_version")) if isinstance(data, dict) else None
-    return str(version) if version else None
+    reached = False
+    for path in ("/v1/version", "/version"):
+        url = api_url.rstrip("/") + path
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as resp:  # noqa: S310
+                reached = True
+                data = json.loads(resp.read().decode("utf-8", errors="replace"))
+        except urllib.error.HTTPError as exc:
+            reached = reached or exc.code < 500  # a 4xx is an answer: this path is not served
+            logger.debug("Hindsight version probe %s answered %s", url, exc.code)
+            continue
+        except Exception as exc:
+            logger.debug("Hindsight version probe failed for %s: %s", url, exc)
+            continue
+        version = (data.get("version") or data.get("api_version")) if isinstance(data, dict) else None
+        if version:
+            return str(version)
+    if not reached:
+        raise _VersionProbeUnreachable(api_url)
+    return None
 
 
 def _check_api_supports_update_mode_append(api_url: str, api_key: str | None = None) -> bool:
-    """Cached ``update_mode='append'`` check for *api_url*. False on any probe failure
-    (safe default: per-process document_id, no update_mode = resume-overwrite fix intact).
-
-    Probes once per URL per process. See #6654.
+    """Cached ``update_mode='append'`` check for *api_url*. False when the server is too old or
+    unreachable (safe default: per-process document_id, no update_mode = resume-overwrite fix
+    intact); only the server's own answer is cached. See #6654, #5221.
     """
     if not api_url:
         return False
@@ -207,7 +233,18 @@ def _check_api_supports_update_mode_append(api_url: str, api_key: str | None = N
     with _append_capability_lock:
         if cache_key in _append_capability_cache:
             return _append_capability_cache[cache_key]
-    version = _fetch_hindsight_api_version(api_url, api_key)
+        failed_at = _append_probe_unreachable_at.get(cache_key)
+        if failed_at is not None and time.monotonic() - failed_at < _APPEND_PROBE_RETRY_S:
+            return False
+    try:
+        version = _fetch_hindsight_api_version(api_url, api_key)
+    except _VersionProbeUnreachable:
+        with _append_capability_lock:
+            _append_probe_unreachable_at[cache_key] = time.monotonic()
+        logger.debug(
+            "Hindsight API %s unreachable for the version probe; retrying in %ss", api_url, _APPEND_PROBE_RETRY_S
+        )
+        return False
     try:  # missing/invalid version -> unsupported
         from packaging.version import Version
 
@@ -704,6 +741,17 @@ class HindsightMemoryProvider(MemoryProvider):
                 "choices": ["any", "all", "any_strict", "all_strict"],
             },
             {
+                "key": "reflect_tags",
+                "description": "Tags to filter what reflect reasons over (comma-separated or a list); unset searches the whole bank",
+                "default": "",
+            },
+            {
+                "key": "reflect_tags_match",
+                "description": "Tag matching mode for reflect",
+                "default": "any",
+                "choices": ["any", "all", "any_strict", "all_strict"],
+            },
+            {
                 "key": "recall_types",
                 "description": "Fact types to surface on recall — applies to both auto-recall and the hindsight_recall tool (comma-separated or list). Defaults to observation-only — observations are Hindsight's consolidated, deduplicated, evidence-grounded knowledge layer; raw world/experience facts are the supporting evidence observations already summarize. Set to e.g. 'observation,world,experience' to also include raw facts.",
                 "default": "observation",
@@ -730,6 +778,11 @@ class HindsightMemoryProvider(MemoryProvider):
                 "default": True,
             },
             {"key": "auto_retain", "description": "Automatically retain conversation turns", "default": True},
+            {
+                "key": "retain_cron",
+                "description": "Also auto-retain scheduled (cron) runs; off by default so job output stays out of the user's memory",
+                "default": False,
+            },
             {"key": "retain_every_n_turns", "description": "Retain every N turns (1 = every turn)", "default": 1},
             {
                 "key": "retain_async",
@@ -1071,6 +1124,8 @@ class HindsightMemoryProvider(MemoryProvider):
     def initialize(self, session_id: str, **kwargs) -> None:
         self._session_id = str(session_id or "").strip()
         self._parent_session_id = str(kwargs.get("parent_session_id", "") or "").strip()
+        # "primary" | "subagent" | "cron" | "flush"; read by _apply_retain_policy (#4945).
+        self._agent_context = str(kwargs.get("agent_context") or "primary")
         # Status channel for the retain indicator (recall reports via recall_status()).
         if callable(kwargs.get("status_callback")):
             self._status_callback = kwargs["status_callback"]
@@ -1244,7 +1299,11 @@ class HindsightMemoryProvider(MemoryProvider):
         banks = cfg_get(cfg, "banks", "hermes", default={})
         self._bank_id_template = cfg.get("bank_id_template", "") or ""
         # The static bank: the template's fallback and the mirror target, from one place.
-        self._static_bank_id = cfg.get("bank_id") or banks.get("bankId") or "hermes"
+        # A non-empty HINDSIGHT_BANK_ID wins over config.json's bank, as documented (#5171); without
+        # config.json, _load_config already builds the bank from it.
+        self._static_bank_id = (
+            get_secret("HINDSIGHT_BANK_ID", "") or cfg.get("bank_id") or banks.get("bankId") or "hermes"
+        )
         # Precedence: closest .hindsight/config.toml in a trusted repository → template → static bank_id.
         # The repository is only looked up when something needs it, and only once.
         trusted_dirs = _normalize_string_list(cfg.get("trusted_project_dirs"))
@@ -1315,7 +1374,9 @@ class HindsightMemoryProvider(MemoryProvider):
 
     def _apply_retain_policy(self, cfg: dict) -> None:
         """Pure-config retain knobs (no env/secret reads; ``{}`` yields the defaults)."""
-        self._auto_retain = cfg.get("auto_retain", True)
+        # Hermes' provider contract: skip automatic writes for scheduled runs. retain_cron opts back in.
+        is_cron = getattr(self, "_agent_context", "primary") == "cron"
+        self._auto_retain = cfg.get("auto_retain", True) and (not is_cron or bool(cfg.get("retain_cron", False)))
         self._retain_every_n_turns = max(1, _parse_int_setting(cfg.get("retain_every_n_turns"), 1))
         self._retain_context = cfg.get("retain_context", _RETAIN_CONTEXT_DEFAULT)
         self._retain_async = cfg.get("retain_async", True)
@@ -1333,6 +1394,10 @@ class HindsightMemoryProvider(MemoryProvider):
         # Documented as comma-separated; the client wants a list (a raw string is a 422).
         self._recall_tags = _normalize_string_list(cfg.get("recall_tags")) or None
         self._recall_tags_match = cfg.get("recall_tags_match", "any")
+        # Reflect's own scope, opt-in: reflect searched the whole bank before recall_tags existed,
+        # so inheriting them would quietly narrow it for every install that sets them (#5170).
+        self._reflect_tags = _normalize_string_list(cfg.get("reflect_tags")) or None
+        self._reflect_tags_match = cfg.get("reflect_tags_match", "any")
         self._auto_recall = cfg.get("auto_recall", True)
         self._recall_sync = bool(cfg.get("recall_sync", False))
         self._recall_max_tokens = _parse_int_setting(cfg.get("recall_max_tokens"), 4096)
@@ -1516,10 +1581,11 @@ class HindsightMemoryProvider(MemoryProvider):
         return results
 
     def _reflect(self, query: str) -> str | None:
+        kwargs: Dict[str, Any] = {"bank_id": self._bank_id, "query": query, "budget": self._budget}
+        if self._reflect_tags:
+            kwargs.update(tags=self._reflect_tags, tags_match=self._reflect_tags_match)
         try:
-            resp = self._run_hindsight_operation(
-                lambda client: client.areflect(bank_id=self._bank_id, query=query, budget=self._budget)
-            )
+            resp = self._run_hindsight_operation(lambda client: client.areflect(**kwargs))
         except Exception as exc:
             if _bank_not_written_yet(exc):
                 return None

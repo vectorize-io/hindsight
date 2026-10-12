@@ -7,6 +7,8 @@ import sys
 import threading
 from types import SimpleNamespace
 
+import pytest
+
 import hindsight_hermes as plugin
 from conftest import FakeClient, FakeRecallResponse
 from hindsight_client_api.exceptions import NotFoundException
@@ -512,9 +514,85 @@ def test_version_probe_sends_plugin_user_agent(monkeypatch):
         raise OSError("offline")
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
-    plugin._fetch_hindsight_api_version("http://hs.test")
+    with pytest.raises(plugin._VersionProbeUnreachable):
+        plugin._fetch_hindsight_api_version("http://hs.test")
     assert sent["User-agent"] == plugin._USER_AGENT
     assert plugin._USER_AGENT != "hindsight-hermes/0.0.0"
+
+
+class _VersionServer:
+    """urlopen stand-in: maps a path to a JSON body, an HTTP status, or an exception."""
+
+    def __init__(self, routes):
+        self.routes, self.calls = routes, []
+
+    def __call__(self, req, timeout):
+        import io
+        import urllib.error
+
+        path = req.full_url.split("hs.test", 1)[1]
+        self.calls.append(path)
+        answer = self.routes.get(path, 404)
+        if isinstance(answer, Exception):
+            raise answer
+        if isinstance(answer, int):
+            raise urllib.error.HTTPError(req.full_url, answer, "", {}, io.BytesIO(b""))
+        body = io.BytesIO(json.dumps(answer).encode())
+        body.__enter__ = lambda: body
+        return body
+
+
+@pytest.fixture
+def version_probe(monkeypatch):
+    import urllib.request
+
+    monkeypatch.setitem(sys.modules, "agent.credential_persistence", SimpleNamespace(fingerprint_secret_value=str))
+    monkeypatch.setattr(plugin, "_append_capability_cache", {})
+    monkeypatch.setattr(plugin, "_append_probe_unreachable_at", {})
+
+    def _serve(routes):
+        server = _VersionServer(routes)
+        monkeypatch.setattr(urllib.request, "urlopen", server)
+        return server
+
+    return _serve
+
+
+def test_an_unreachable_server_is_asked_again_not_cached(version_probe, monkeypatch):
+    """#5221: one failed probe at startup used to disable append for the whole process."""
+    down = version_probe({"/v1/version": OSError("refused"), "/version": OSError("refused")})
+    assert plugin._check_api_supports_update_mode_append("http://hs.test") is False
+    # Inside the retry window a hung server is not asked again on every turn.
+    assert plugin._check_api_supports_update_mode_append("http://hs.test") is False
+    assert down.calls == ["/v1/version", "/version"]
+
+    monkeypatch.setattr(plugin, "_APPEND_PROBE_RETRY_S", 0.0)
+    up = version_probe({"/v1/version": {"api_version": "0.10.3"}})
+    assert plugin._check_api_supports_update_mode_append("http://hs.test") is True
+    assert up.calls == ["/v1/version"]
+
+
+def test_a_server_error_counts_as_unreachable(version_probe, monkeypatch):
+    version_probe({"/v1/version": 503, "/version": 502})
+    assert plugin._check_api_supports_update_mode_append("http://hs.test") is False
+    monkeypatch.setattr(plugin, "_APPEND_PROBE_RETRY_S", 0.0)
+    version_probe({"/v1/version": {"api_version": "0.10.3"}})
+    assert plugin._check_api_supports_update_mode_append("http://hs.test") is True
+
+
+def test_an_old_server_answer_is_cached(version_probe):
+    """A server that answers without a version is old, not down: that answer is kept."""
+    old = version_probe({"/v1/version": 404, "/version": 404})
+    assert plugin._check_api_supports_update_mode_append("http://hs.test") is False
+    assert plugin._check_api_supports_update_mode_append("http://hs.test") is False
+    assert old.calls == ["/v1/version", "/version"]
+
+
+def test_version_falls_back_to_the_bare_path(version_probe):
+    """Servers that predate the /v1 alias still answer /version (coding-agents order, #5286)."""
+    server = version_probe({"/v1/version": 404, "/version": {"version": "0.5.0"}})
+    assert plugin._check_api_supports_update_mode_append("http://hs.test") is True
+    assert server.calls == ["/v1/version", "/version"]
 
 
 def test_retain_tool_honours_retain_async(provider):
@@ -651,3 +729,61 @@ def test_desktop_panel_offers_every_mode_the_plugin_runs():
 
     mode = next(field for field in CONFIG_SCHEMA["fields"] if field["key"] == "mode")
     assert {option[0] for option in mode["options"]} == {"cloud", "local_embedded", "local_external"}
+
+
+def test_cron_runs_are_not_auto_retained(provider):
+    """#4945: Hermes passes agent_context="cron" for scheduled jobs; the contract is to skip writes."""
+    cron, fake = provider({}, agent_context="cron")
+    cron.sync_turn("daily digest", "here is the news")
+    cron.handle_tool_call("hindsight_retain", {"content": "an explicit note"})  # the tool still works
+    cron.shutdown()
+    assert [call["items"][0]["content"] for call in fake.retains] == ["an explicit note"]
+
+
+def test_retain_cron_opts_cron_runs_back_in(provider):
+    cron, fake = provider({"retain_cron": True}, agent_context="cron")
+    cron.sync_turn("daily digest", "here is the news")
+    cron.shutdown()
+    assert len(fake.retains) == 1
+
+
+def test_primary_runs_are_auto_retained(provider):
+    primary, fake = provider({}, agent_context="primary")
+    primary.sync_turn("hello", "hi")
+    primary.shutdown()
+    assert len(fake.retains) == 1
+
+
+def test_bank_id_env_wins_over_config_json(provider):
+    """#5171: HINDSIGHT_BANK_ID is documented as an override; config.json used to shadow it."""
+    from conftest import SECRETS
+
+    SECRETS["HINDSIGHT_BANK_ID"] = "env-bank"
+    instance, fake = provider({"bank_id": "config-bank"})
+    instance.sync_turn("hello", "hi")
+    instance.shutdown()
+    assert fake.retains[0]["bank_id"] == "env-bank"
+
+
+def test_config_bank_is_kept_without_the_env_var(provider):
+    instance, fake = provider({"bank_id": "config-bank"})
+    instance.sync_turn("hello", "hi")
+    instance.shutdown()
+    assert fake.retains[0]["bank_id"] == "config-bank"
+
+
+def test_reflect_tags_scope_reflect(provider):
+    """#5170: reflect gets its own opt-in scope; recall_tags never leak into it."""
+    instance, fake = provider(
+        {"reflect_tags": "team, project-x", "reflect_tags_match": "all", "recall_tags": "other"},
+        client=FakeClient(reflect_text="synthesis"),
+    )
+    instance.handle_tool_call("hindsight_reflect", {"query": "q"})
+    assert fake.reflects[0]["tags"] == ["team", "project-x"]
+    assert fake.reflects[0]["tags_match"] == "all"
+
+
+def test_reflect_without_reflect_tags_uses_the_whole_bank(provider):
+    instance, fake = provider({"recall_tags": "team"}, client=FakeClient(reflect_text="synthesis"))
+    instance.handle_tool_call("hindsight_reflect", {"query": "q"})
+    assert "tags" not in fake.reflects[0]

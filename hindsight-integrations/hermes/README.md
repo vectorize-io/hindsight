@@ -231,7 +231,7 @@ Some keys also accept an older name: `apiKey` for `api_key`, `budget` for `recal
 
 #### Multiple banks
 
-The primary bank is chosen in this order: a `.hindsight/config.toml` in a trusted repository, then `bank_id_template`, then `bank_id`. Writes go to the primary, then `bank_id` when `mirror_to_own_bank` is on, then each `additional_banks` entry. Recall searches the same banks and then each `recall_additional_banks` entry, all at once, each with the configured budget and `recall_max_tokens`; results are merged in that order and deduplicated by text. Reflect uses the primary bank only.
+The primary bank is chosen in this order: a `.hindsight/config.toml` in a trusted repository, then `bank_id_template`, then `HINDSIGHT_BANK_ID` or `bank_id`. Writes go to the primary, then `bank_id` when `mirror_to_own_bank` is on, then each `additional_banks` entry. Recall searches the same banks and then each `recall_additional_banks` entry, all at once, each with the configured budget and `recall_max_tokens`; results are merged in that order and deduplicated by text. Reflect uses the primary bank only.
 
 The three list settings take a JSON list or comma-separated text; use the JSON form for a value that contains a comma.
 
@@ -256,6 +256,8 @@ The lookup stops at the repository root. Only `bank_id` is read.
 | `recall_prompt_preamble` | — | Custom preamble for recalled memories in context |
 | `recall_tags` | — | Tags to filter when searching memories: a JSON list (e.g. `["project-x", "team"]`) or comma-separated text (`"project-x, team"`) |
 | `recall_tags_match` | `any` | Tag matching mode: `any` / `all` / `any_strict` / `all_strict` |
+| `reflect_tags` | — | Tags that scope what reflect reasons over (the `hindsight_reflect` tool and `recall_prefetch_method: reflect`), as a JSON list or comma-separated text. Unset, reflect uses the whole bank; `recall_tags` does not apply to reflect. |
+| `reflect_tags_match` | `any` | Tag matching mode for `reflect_tags` |
 | `recall_types` | `observation` | Fact types surfaced by recall (both auto-recall and the `hindsight_recall` tool). Comma-separated string or JSON list. **Default narrowed to `observation` only** (see "Behavior change" below). Set to `observation,world,experience` to also include raw facts. |
 | `recall_min_scores` | — | Minimum relevance per score field, as a JSON object (e.g. `{"reranker": 0.25}` or `{"semantic": 0.5}`). Applies to both auto-recall and the `hindsight_recall` tool. See the tip below. |
 | `auto_recall` | `true` | Automatically recall memories before each turn |
@@ -286,6 +288,7 @@ The lookup stops at the repository root. Only `bank_id` is read.
 | Key | Default | Description |
 |-----|---------|-------------|
 | `auto_retain` | `true` | Automatically retain conversation turns |
+| `retain_cron` | `false` | Also auto-retain scheduled (cron) runs. Off by default, so job output stays out of the user's memory; the `hindsight_retain` tool still works in cron runs. |
 | `retain_async` | `true` | Process retain asynchronously on the Hindsight server |
 | `retain_every_n_turns` | `1` | Retain every N turns (1 = every turn) |
 | `retain_context` | `conversation between Hermes Agent and the User` | Context label for retained memories |
@@ -354,6 +357,7 @@ These are used whenever the matching config key is not set:
 |----------|-------------|
 | `HINDSIGHT_API_KEY` | Hindsight API key (`api_key`) |
 | `HINDSIGHT_API_URL` | API endpoint (`api_url`) |
+| `HINDSIGHT_BANK_ID` | Bank name; when set, wins over `bank_id` in `config.json` (a `bank_id_template` still takes precedence) |
 | `HINDSIGHT_TIMEOUT` | API request timeout in seconds (`timeout`) |
 | `HINDSIGHT_LLM_API_KEY` | LLM API key for local_embedded (`llm_api_key`); `HINDSIGHT_API_LLM_API_KEY` also works |
 | `HINDSIGHT_API_LLM_BASE_URL` | LLM endpoint for local_embedded (`llm_base_url`) |
@@ -372,7 +376,6 @@ These are used **only when there is no config file at all**. Once `hermes memory
 | Variable | Description |
 |----------|-------------|
 | `HINDSIGHT_MODE` | Mode: `cloud`, `local_embedded` or `local_external` (`mode`) |
-| `HINDSIGHT_BANK_ID` | Bank name (`bank_id`) |
 | `HINDSIGHT_BUDGET` | Recall budget (`recall_budget`) |
 | `HINDSIGHT_RETAIN_CONTEXT` | Label stored with each retained conversation (`retain_context`) |
 | `HINDSIGHT_RETAIN_INDICATOR` | `false` hides the "saving to memory" status line (`retain_indicator`) |
