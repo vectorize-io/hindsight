@@ -389,18 +389,14 @@ describe("before_prompt_build hook", () => {
     expect(result.prependContext).toContain("<hindsight_memories>");
   });
 
-  it("uses identity cached in before_dispatch when later hooks lack sender metadata", async () => {
+  it("uses identity cached in message_received when later hooks lack sender metadata", async () => {
     if (!apiReachable) return;
     recallSpy.mockResolvedValue(EMPTY_RECALL);
 
     await triggerHook(
-      "before_dispatch",
-      {
-        sessionKey: "agent:main:telegram:direct:U020",
-        channel: "telegram",
-        senderId: "U020",
-      },
-      { sessionKey: "agent:main:telegram:direct:U020" }
+      "message_received",
+      { sessionKey: "agent:main:telegram:direct:U020", senderId: "U020" },
+      { sessionKey: "agent:main:telegram:direct:U020", channelId: "telegram" }
     );
 
     await triggerHook(
@@ -412,18 +408,14 @@ describe("before_prompt_build hook", () => {
     expect(recallSpy).toHaveBeenCalledOnce();
   });
 
-  it("skips recall when before_dispatch detects a provider mismatch for the session", async () => {
+  it("skips recall when message_received detects a provider mismatch for the session", async () => {
     if (!apiReachable) return;
     recallSpy.mockResolvedValue(EMPTY_RECALL);
 
     await triggerHook(
-      "before_dispatch",
-      {
-        sessionKey: "agent:main:telegram:direct:U021",
-        channel: "discord",
-        senderId: "U021",
-      },
-      { sessionKey: "agent:main:telegram:direct:U021" }
+      "message_received",
+      { sessionKey: "agent:main:telegram:direct:U021", senderId: "U021" },
+      { sessionKey: "agent:main:telegram:direct:U021", channelId: "discord" }
     );
 
     const result = await triggerHook(
@@ -555,18 +547,14 @@ describe("agent_end hook", () => {
     expect(options?.metadata?.message_count).toBe("1");
   });
 
-  it("uses identity cached in before_dispatch for retain metadata when agent_end ctx is sparse", async () => {
+  it("uses identity cached in message_received for retain metadata when agent_end ctx is sparse", async () => {
     if (!apiReachable) return;
     retainSpy.mockResolvedValue(OK_RETAIN);
 
     await triggerHook(
-      "before_dispatch",
-      {
-        sessionKey: "agent:main:telegram:direct:U015B",
-        channel: "telegram",
-        senderId: "U015B",
-      },
-      { sessionKey: "agent:main:telegram:direct:U015B" }
+      "message_received",
+      { sessionKey: "agent:main:telegram:direct:U015B", senderId: "U015B" },
+      { sessionKey: "agent:main:telegram:direct:U015B", channelId: "telegram" }
     );
 
     await triggerHook(
