@@ -2598,7 +2598,14 @@ export default function (api: MoltbotPluginAPI) {
     debug("[Hindsight] Registering agent hooks...");
     log.info("registering agent hooks");
 
-    api.on("before_dispatch", async (event: any, ctx?: PluginHookAgentContext) => {
+    // Inbound identity capture: cache the sender and dispatch surface per session
+    // before the agent runs, for banks keyed by user or channel.
+    //
+    // This used `before_dispatch`, which carries the same fields. OpenClaw refuses
+    // to start or resume a Goal while any plugin holds `before_dispatch` (it can't
+    // replay it after a restart), so the plugin blocked Goals. `message_received`
+    // fires earlier on the same inbound path and is not on that list. (#5177)
+    api.on("message_received", async (event: any, ctx?: PluginHookAgentContext) => {
       try {
         const sessionKey =
           ctx?.sessionKey ?? (typeof event?.sessionKey === "string" ? event.sessionKey : undefined);
@@ -2606,8 +2613,9 @@ export default function (api: MoltbotPluginAPI) {
           return;
         }
 
+        // A message hook's channelId is the surface ("telegram", "webchat").
         const dispatchChannel =
-          (typeof event?.channel === "string" ? event.channel : undefined) ||
+          (typeof ctx?.channelId === "string" ? ctx.channelId : undefined) ||
           ctx?.messageProvider ||
           parseSessionKey(sessionKey).provider;
         const { resolvedCtx, skipReason } = resolveAndCacheIdentity({
@@ -2624,7 +2632,7 @@ export default function (api: MoltbotPluginAPI) {
 
         if (skipReason) {
           debug(
-            `[Hindsight] before_dispatch marked session ${sessionKey} to skip this turn: ${formatIdentitySkipReason(skipReason)}`
+            `[Hindsight] message_received marked session ${sessionKey} to skip this turn: ${formatIdentitySkipReason(skipReason)}`
           );
           logSkipOnce("dispatch", sessionKey, skipReason);
           return;
@@ -2634,15 +2642,15 @@ export default function (api: MoltbotPluginAPI) {
         }
 
         debug(
-          `[Hindsight] before_dispatch cached identity for ${sessionKey}: ${resolvedCtx.messageProvider}/${resolvedCtx.channelId} sender=${resolvedCtx.senderId}`
+          `[Hindsight] message_received cached identity for ${sessionKey}: ${resolvedCtx.messageProvider}/${resolvedCtx.channelId} sender=${resolvedCtx.senderId}`
         );
       } catch (error) {
-        log.warn(`before_dispatch identity cache error: ${error}`);
+        log.warn(`message_received identity cache error: ${error}`);
       }
     });
 
     // No `before_agent_start` registration: the callback used to call
-    // `resolveAndCacheIdentity()` and emit a debug log, but `before_dispatch`
+    // `resolveAndCacheIdentity()` and emit a debug log, but `message_received`
     // already populates the identity cache earlier in the inbound path,
     // `before_prompt_build` re-resolves before recall (and can infer
     // `senderId` from prompt content when ctx is missing it), and `agent_end`
