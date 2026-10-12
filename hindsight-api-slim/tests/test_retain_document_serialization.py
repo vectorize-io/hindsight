@@ -983,6 +983,41 @@ async def test_folded_execution_reports_one_hook_per_operation(memory_stub_emb, 
 
 
 @pytest.mark.asyncio
+async def test_folded_json_array_appends_to_a_new_document_merge(memory_stub_emb, request_context):
+    """Queued conversation appends to a document that does not exist yet are folded into one
+    execution. Their arrays must merge into ONE array, as they do onto a stored body — the
+    merge used to run only when a body was stored, so these were newline-joined into
+    ``[...]\n[...]``, which is not JSON and loses turn-aware chunking (#2409)."""
+    validator = _RecordingValidator()
+    memory_stub_emb._operation_validator = validator
+    turns = [
+        [{"role": "user", "content": "TURN_ONE Alice works at Google."}],
+        [{"role": "user", "content": "TURN_TWO Bob works at Microsoft."}],
+    ]
+    try:
+        bank_id = f"test_fold_json_new_doc_{_ts()}"
+        document_id = "conversation"
+        await memory_stub_emb.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {"content": json.dumps(turn), "document_id": document_id, "update_mode": "append"} for turn in turns
+            ],
+            request_context=request_context,
+            fold_members=[
+                FoldMemberRef(operation_id="op-1", items_count=1),
+                FoldMemberRef(operation_id="op-2", items_count=1),
+            ],
+        )
+    finally:
+        memory_stub_emb._operation_validator = None
+
+    doc = await memory_stub_emb.get_document(document_id, bank_id, request_context=request_context)
+    assert json.loads(doc["original_text"]) == turns[0] + turns[1]
+    # The merge must not blur which operation submitted what.
+    assert [json.loads(r.contents[0]["content"]) for r in validator.results] == turns
+
+
+@pytest.mark.asyncio
 async def test_unfolded_retain_reports_one_hook_with_full_usage(memory_stub_emb, request_context):
     """The ordinary path is untouched: one hook, all the usage, no folded_with."""
     validator = _RecordingValidator()

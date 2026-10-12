@@ -262,3 +262,23 @@ async def test_concurrent_synchronous_appends_keep_every_turn(client, bank_id, s
     assert not missing, f"turns lost: {missing}"
     remembered = await _fact_texts(client, bank_id, document_id=DOCUMENT_ID)
     assert remembered and set(remembered) == {MENTION}, remembered
+
+
+async def test_conversation_turns_appended_together_to_a_new_document_stay_one_array(
+    client, bank_id, settled, mentions
+):
+    """Several conversation turns that reach a document in one execution — one request
+    carrying them, or queued turns the worker folds together — before the document
+    exists. They must be stored as ONE JSON array, like turns appended onto a stored
+    conversation are. They used to be joined with a newline instead: not JSON,
+    so turn-aware chunking and speaker attribution were lost for the session's opening."""
+    turns = [[{"role": "user", "content": turn}] for turn in TURNS[:2]]
+    await client.aretain_batch(
+        bank_id=bank_id,
+        items=[{"content": json.dumps(turn), "update_mode": "append"} for turn in turns],
+        document_id=DOCUMENT_ID,
+    )
+    await settled(bank_id)
+
+    document = await client.documents.get_document(bank_id, DOCUMENT_ID)
+    assert json.loads(document.original_text) == turns[0] + turns[1]

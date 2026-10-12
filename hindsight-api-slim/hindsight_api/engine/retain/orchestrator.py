@@ -1795,6 +1795,7 @@ async def retain_batch(
         # restate them would erase every name the earlier turns gave. (A SQL bank merges them in
         # `sync_document_attachments` instead, so this stays empty there.)
         prior_filenames: dict[str, str] = base.attachment_filenames if base else {}
+        first = contents_dicts[0]
         if existing_text:
             # Prepend existing text as a new content item at the beginning.
             #
@@ -1805,16 +1806,19 @@ async def retain_batch(
             # `strategy` that way (#4590); the same list in `merged_item` below also dropped the
             # caller's `entities`, which that branch is the only carrier of. `{**item, "content":
             # ...}` is how the oversized-item splitter already re-slices an item, so the two agree.
-            first = contents_dicts[0]
             existing_content = cast(RetainContentDict, {**first, "content": existing_text})
             existing_content.pop("attachment_filenames", None)
             if prior_filenames:
                 # The stored document's names, not the new turn's: they describe the base text.
                 existing_content["attachment_filenames"] = prior_filenames
             contents_dicts = [existing_content, *contents_dicts]
+        if len(contents_dicts) > 1:
             # Collapse to the merged array when every part is one, so `original_text` stays valid
             # JSON (#2409). `merge_json_array_parts` is the same function the splitter predicts an
             # oversized append's body with, so the two cannot disagree about what this produces.
+            # Runs with no stored body too: queued appends to a document that does not exist yet
+            # are folded into this one call (`engine/retain/fold.py`); without merging here
+            # their parts were newline-joined into `[...]\n[...]`.
             _merged_text = merge_json_array_parts([_item.get("content", "") for _item in contents_dicts])
             if _merged_text is not None:
                 merged_item = cast(RetainContentDict, {**first, "content": _merged_text})
@@ -1826,6 +1830,7 @@ async def retain_batch(
                 contents_dicts = [merged_item]
             # Rebuild contents list to match
             contents = _build_contents(contents_dicts, document_tags)
+        if existing_text:
             log_buffer.append(
                 f"[append] Prepended {len(existing_text):,} chars from existing document {effective_doc_id}"
             )
