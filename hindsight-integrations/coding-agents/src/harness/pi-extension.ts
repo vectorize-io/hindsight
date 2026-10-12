@@ -49,8 +49,9 @@ interface SessionManagerLike {
 }
 
 /** Only what this adapter reads. Both hosts also expose a UI notifier, but the seed banner it would
- *  carry is raised inside seedIfCold at extension load, before any handler has a `ctx` to notify
- *  through — so it is logged rather than toasted here, and the field is not declared. */
+ *  carry is raised inside seedIfCold, which runs when a workspace is first resolved (at extension
+ *  load for the launch directory) rather than inside a handler holding a `ctx` to notify through —
+ *  so it is logged rather than toasted here, and the field is not declared. */
 interface ExtensionContext {
   /** The session's working directory. Optional so a host without it falls back to the process cwd. */
   cwd?: string;
