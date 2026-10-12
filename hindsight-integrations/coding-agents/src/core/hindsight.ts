@@ -529,7 +529,7 @@ export class HindsightClient {
 
   /**
    * Whether this server honours `operation_id` on an async retain, and can therefore be appended to
-   * safely (see MIN_IDEMPOTENT_RETAIN_VERSION). Probed once per client via GET /version; anything
+   * safely (see MIN_IDEMPOTENT_RETAIN_VERSION). Probed once per client via the version endpoint; anything
    * unreachable, unparseable or older answers "no", which costs efficiency, never correctness.
    */
   async supportsIdempotentRetain(): Promise<boolean> {
