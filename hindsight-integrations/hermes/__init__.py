@@ -187,8 +187,9 @@ def _fetch_hindsight_api_version(api_url: str, api_key: str | None = None, timeo
 
     ``/v1/version`` first: an ingress that routes only ``/v1`` to the API hands a bare ``/version``
     to whatever else it fronts, whose 404 read as "no version" (same order as coding-agents, #5286).
-    Raises ``_VersionProbeUnreachable`` when neither path could be reached (connection error,
-    timeout, 5xx), so the caller can tell "unknown" from "old".
+    Raises ``_VersionProbeUnreachable`` when no version came back and either path failed to answer
+    (connection error, timeout, 5xx), so the caller can tell "unknown" from "old": only a 4xx or a
+    versionless body from every path means the server is old.
     """
     import urllib.error
     import urllib.request
@@ -198,24 +199,27 @@ def _fetch_hindsight_api_version(api_url: str, api_key: str | None = None, timeo
     headers = {"User-Agent": _USER_AGENT}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-    reached = False
+    unanswered = False
     for path in ("/v1/version", "/version"):
         url = api_url.rstrip("/") + path
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as resp:  # noqa: S310
-                reached = True
                 data = json.loads(resp.read().decode("utf-8", errors="replace"))
         except urllib.error.HTTPError as exc:
-            reached = reached or exc.code < 500  # a 4xx is an answer: this path is not served
+            unanswered = unanswered or exc.code >= 500  # a 4xx is an answer: this path is not served
             logger.debug("Hindsight version probe %s answered %s", url, exc.code)
             continue
+        except ValueError as exc:  # not our JSON (an HTML page behind a proxy): an answer, not an outage
+            logger.debug("Hindsight version probe %s returned no JSON: %s", url, exc)
+            continue
         except Exception as exc:
+            unanswered = True
             logger.debug("Hindsight version probe failed for %s: %s", url, exc)
             continue
         version = (data.get("version") or data.get("api_version")) if isinstance(data, dict) else None
         if version:
             return str(version)
-    if not reached:
+    if unanswered:
         raise _VersionProbeUnreachable(api_url)
     return None
 

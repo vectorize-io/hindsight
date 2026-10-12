@@ -537,9 +537,7 @@ class _VersionServer:
             raise answer
         if isinstance(answer, int):
             raise urllib.error.HTTPError(req.full_url, answer, "", {}, io.BytesIO(b""))
-        body = io.BytesIO(json.dumps(answer).encode())
-        body.__enter__ = lambda: body
-        return body
+        return io.BytesIO(json.dumps(answer).encode())
 
 
 @pytest.fixture
@@ -577,6 +575,15 @@ def test_a_server_error_counts_as_unreachable(version_probe, monkeypatch):
     assert plugin._check_api_supports_update_mode_append("http://hs.test") is False
     monkeypatch.setattr(plugin, "_APPEND_PROBE_RETRY_S", 0.0)
     version_probe({"/v1/version": {"api_version": "0.10.3"}})
+    assert plugin._check_api_supports_update_mode_append("http://hs.test") is True
+
+
+def test_one_failed_path_keeps_the_answer_unknown(version_probe, monkeypatch):
+    """A 404 on /v1/version and a timeout on /version is not proof of an old server."""
+    version_probe({"/v1/version": 404, "/version": TimeoutError()})
+    assert plugin._check_api_supports_update_mode_append("http://hs.test") is False
+    monkeypatch.setattr(plugin, "_APPEND_PROBE_RETRY_S", 0.0)
+    version_probe({"/v1/version": 404, "/version": {"version": "0.10.3"}})
     assert plugin._check_api_supports_update_mode_append("http://hs.test") is True
 
 
