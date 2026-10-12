@@ -157,7 +157,8 @@ function MapFieldsEditor({
               />
               <Select
                 value={field.type}
-                onValueChange={(v: MapField["type"]) =>
+                onValueChange={(value) => {
+                  const v = value as MapField["type"];
                   updateField(fieldName, {
                     type: v,
                     ...(v === "map" ? { fields: field.fields ?? {}, values: undefined } : {}),
@@ -167,8 +168,8 @@ function MapFieldsEditor({
                     ...(v === "value" || v === "multi-values"
                       ? { fields: undefined, values: field.values ?? [] }
                       : {}),
-                  })
-                }
+                  });
+                }}
               >
                 <SelectTrigger className="h-7 text-xs w-[120px] shrink-0 px-2 py-0">
                   <SelectValue />
