@@ -1,0 +1,180 @@
+---
+sidebar_position: 1
+slug: /
+title: Overview
+hide_title: true
+description: State of the art long-term memory for your agents. Hindsight gives AI agents memory that learns across sessions.
+hide_table_of_contents: true
+---
+
+import HomeHero from '@site/src/components/HomeHero';
+import HomeFlow from '@site/src/components/HomeFlow';
+import HomeBenchmarks from '@site/src/components/HomeBenchmarks';
+import SkillBanner from '@site/src/components/SkillBanner';
+import Figure from '@site/src/components/Figure';
+import whatHindsightDoes from '@site/figures/what-hindsight-does.json';
+
+{/* The page's own `# Overview` H1 is suppressed via hide_title: this is the site
+    root, and the hero's headline is the H1 a visitor and a crawler should see.
+    The sidebar and page metadata still read "Overview" from the frontmatter. */}
+
+<HomeHero />
+
+## Benchmarks
+
+<HomeBenchmarks />
+
+{/* Retrieval accuracy only. The coding-agent chart opens inside the coding-agents
+    card above, where it is evidence for a path the reader has just been shown,
+    and is explained in full on /sdks/integrations/coding-agents. */}
+
+## Why Hindsight?
+
+AI agents forget everything between sessions. Every conversation starts from zero—no context about who you are, what you've discussed, or what the assistant has learned. This isn't just an implementation detail; it fundamentally limits what AI Agents can do.
+
+**The problem is harder than it looks:**
+
+- **Simple vector search isn't enough** — "What did Alice do last spring?" requires temporal reasoning, not just semantic similarity
+- **Facts get disconnected** — Knowing "Alice works at Google" and "Google is in Mountain View" should let you answer "Where does Alice work?" even if you never stored that directly
+- **AI Agents need to consolidate knowledge** — A coding assistant that remembers "the user prefers functional programming" should consolidate this into an observation and weigh it when making recommendations
+- **Context matters** — The same information means different things to different memory banks with different personalities
+
+Hindsight solves these problems with a memory system designed specifically for AI agents.
+
+{/* Rendered here rather than by the DocBreadcrumbs wrapper (which serves every
+    other page): at the top it sat between the navbar and the hero band as a
+    bordered strip and broke the full-bleed, and it lands better as the answer
+    to the problem the section above just described. */}
+<SkillBanner />
+
+## How It Works
+
+{/* The router: three kinds of visitor land on this page — one who has never
+    heard of agent memory, one looking for the coding-agent plugin, one looking
+    for the Hermes/OpenClaw plugin — and this is where each of them can see
+    their own path. It opens "How It Works" because the cards answer "what does
+    this look like for me" before the sections below answer "how". */}
+<HomeFlow />
+
+### Memory Types
+
+Hindsight does not store conversations. It extracts what was said into typed
+facts and then builds on them:
+
+- **World fact** — an objective claim it was told. *"Alice works at Google."*
+- **Experience fact** — something the bank itself did. *"I recommended Python to Bob."*
+- **Observation** — a belief consolidated from many facts, with its evidence and
+  its history. *"User was a React enthusiast, has now switched to Vue."*
+- **Mental model** — a curated summary you write for a question you ask often.
+- **Knowledge page** — a living document the bank writes about itself.
+
+Facts are not a list. Each is linked to the entities it mentions and to the other
+facts that share them, which is what makes "where does Alice work?" answerable
+from two facts that were never stored together — the graph at the top of this
+page is a sample bank's; hover a memory to see what it links to.
+
+### Multi-Strategy Retrieval
+
+`recall()` runs four searches **in parallel**, because no single one handles
+every question:
+
+- **Semantic** — meaning rather than wording, so "Alice's job" finds "Alice works as a software engineer"
+- **Keyword (BM25)** — the names and technical terms an embedding blurs together; five pluggable Postgres backends, including one that works on a Citus cluster
+- **Graph** — entity links, so a fact reachable in two hops comes back even when it shares no words with the query
+- **Temporal** — time expressions parsed into a window, then filled by relevance *and spread across the range*, so "what happened in 2023?" is not all from December
+
+Then the part that matters more than any single arm:
+
+- **Fused by rank, not score** — a memory several strategies agree on wins, and no arm's scoring scale can dominate the others
+- **Re-ranked by a cross-encoder** that reads the query and the memory together
+- **Cut to a token budget, not a top-k** — you say how much context you can afford and Hindsight fills it, because agents budget in tokens and not in result counts
+
+See [Recall](/developer/retrieval) for the strategies in full.
+
+### Observation Consolidation
+
+A background worker keeps turning raw facts into durable beliefs:
+
+- **Deduplicated** — overlapping facts merge into one observation instead of piling up as repeats
+- **Evidence-grounded** — each observation points at the memories that support it, with exact quotes and a proof count
+- **Refined, not overwritten** — new evidence updates an observation and its history is kept, so you can see a belief change
+- **Freshness-aware** — when memories have landed but not yet been consolidated, `reflect` treats the affected observations as stale and checks them against raw facts before trusting them
+
+### Knowledge Pages
+
+Observations answer one question at a time. A **knowledge page** is a living
+document the bank writes about itself — "What are the components here?", "What's
+our error-handling convention?" — rewritten incrementally as consolidation
+produces new knowledge in its scope:
+
+- **A wiki, not a blob** — pages live in a tree of folders, browsable and searchable, each answering one question
+- **Built from observations** — synthesized from consolidated beliefs rather than raw conversation, so a page is not a transcript summary
+- **Never self-citing** — a page never reads another page, so they cannot cite each other into a feedback loop
+- **Real files when you want them** — `hindsight fs mount` projects the tree onto disk as ordinary markdown, so `grep`, an editor or an agent's file tools all work with no SDK
+
+See [Knowledge Pages](/developer/knowledge-pages) for the full model.
+
+### Reflect
+
+`recall()` returns memories. `reflect()` returns an **answer**, by running an
+agentic loop over the bank rather than a single query:
+
+- **It gathers its own evidence** — the agent decides what it needs and calls its own tools, up to ten rounds, and cannot answer before it has retrieved something
+- **It checks sources in priority order** — mental models and knowledge pages first, then observations, and only then raw facts, so it reads the distilled answer before the transcript
+- **It cites what it used** — and only IDs it actually retrieved can be cited
+
+What makes two banks answer the same question differently is their configuration:
+
+- **Mission** — the bank's identity in plain language, which tells it what to prioritise. *"I am a research assistant specializing in ML. I prefer simplicity over cutting-edge."*
+- **Directives** — hard rules it must never break. *"Never recommend specific stocks."*
+- **Disposition** — skepticism, literalism and empathy on a 1–5 scale, shaping how it interprets what it finds
+
+These shape `reflect` only. `recall` returns the same memories whoever is asking.
+
+See [Reflect](/developer/reflect) for the loop in detail.
+
+## Architecture Deep Dive
+
+Everything above, end to end and in motion: what a document turns into on the
+way in, what each of the three operations touches, and what the worker changes
+behind them. Play it, or step through it at your own pace.
+
+<Figure doc={whatHindsightDoes} />
+
+## Integrations
+
+**Coding agents** — [one install](/sdks/integrations/coding-agents) wires 20+
+harnesses (Claude Code, Codex CLI, Cursor CLI, opencode, Copilot CLI and more) to
+a per-repo memory bank.
+
+**Personal agents** — [Hermes](/sdks/integrations/hermes) and
+[OpenClaw](/sdks/integrations/openclaw) install Hindsight as their memory
+provider: every turn recalls what matters before answering and retains what was
+said afterwards. The Hermes desktop app configures it
+[in Settings](/sdks/integrations/hermes-desktop), no terminal.
+
+Everything else — frameworks, MCP servers, tools — is in the
+[Integrations Hub](/integrations).
+
+## Next Steps
+
+### Getting Started
+- [**Quick Start**](/developer/api/quickstart) — Install and get up and running in 60 seconds
+- [**RAG vs Hindsight**](/developer/rag-vs-hindsight) — See how Hindsight differs from traditional RAG with real examples
+
+### Core Concepts
+- [**Retain**](/developer/retain) — How memories are stored with multi-dimensional facts
+- [**Recall**](/developer/retrieval) — How the 4-way parallel search retrieves memories
+- [**Reflect**](/developer/reflect) — How mission, directives, and disposition shape reasoning
+
+### API Methods
+- [**Retain**](/developer/api/retain) — Store information in memory banks
+- [**Recall**](/developer/api/recall) — Search and retrieve memories
+- [**Reflect**](/developer/api/reflect) — Agentic reasoning with memory
+- [**Mental Models**](/developer/api/mental-models) — User-curated summaries for common queries
+- [**Memory Banks**](/developer/api/memory-banks) — Configure mission, directives, and disposition
+- [**Documents**](/developer/api/documents) — Manage document sources
+- [**Operations**](/developer/api/operations) — Monitor async tasks
+
+### Deployment
+- [**Server Setup**](/developer/installation) — Deploy with Docker Compose, Helm, or pip

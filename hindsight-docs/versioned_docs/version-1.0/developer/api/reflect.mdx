@@ -1,0 +1,297 @@
+---
+sidebar_position: 3
+---
+
+# Reflect
+
+Generate a grounded, disposition-aware response using an agentic reasoning loop.
+
+When you call **reflect**, Hindsight runs an agentic loop that autonomously searches the memory bank using multiple retrieval tools, applies the bank's disposition traits to shape the reasoning style, and produces a final answer grounded in what it found. Unlike recall — which returns raw facts — reflect returns a synthesized response written by the LLM.
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import CodeSnippet from '@site/src/components/CodeSnippet';
+
+{/* Import raw source files */}
+import reflectPy from '!!raw-loader!@site/examples/api/reflect.py';
+import reflectMjs from '!!raw-loader!@site/examples/api/reflect.mjs';
+import reflectSh from '!!raw-loader!@site/examples/api/reflect.sh';
+import reflectGo from '!!raw-loader!@site/examples/api/reflect.go';
+
+:::info How Reflect Works
+Learn about disposition-driven reasoning in the [Reflect Architecture](/developer/reflect) guide.
+:::
+
+:::tip Prerequisites
+Make sure you've completed the [Quick Start](./quickstart) to install the client and start the server.
+:::
+
+## Basic Usage
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={reflectPy} section="reflect-basic" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={reflectMjs} section="reflect-basic" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={reflectSh} section="reflect-basic" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={reflectGo} section="reflect-basic" language="go" />
+</TabItem>
+</Tabs>
+
+---
+
+## Parameters
+
+### query
+
+The question or prompt to reflect on. This is the only required field. If you have situational context that should influence the answer, include it directly in the query rather than as a separate field.
+
+### budget
+
+Controls how thoroughly the agent explores the memory bank before answering. Accepted values are `low` (default), `mid`, and `high`. At `low`, the agent does a shallow search optimized for speed. At `mid`, it checks multiple sources when the question warrants it. At `high`, it performs deep exploration across all knowledge levels and may use multiple query variations to find indirect connections. Use `high` for complex questions that require synthesizing information from many sources.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={reflectPy} section="reflect-with-params" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={reflectMjs} section="reflect-with-params" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={reflectSh} section="reflect-with-params" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={reflectGo} section="reflect-with-params" language="go" />
+</TabItem>
+</Tabs>
+
+### max_tokens
+
+Limits the length of the final generated response. Defaults to `4096`. This does not affect how much the agent can retrieve during the agentic loop — only the final answer length.
+
+### response_schema
+
+An optional JSON Schema **object** with a non-empty `properties` map (nested objects and arrays are supported). When provided, the response includes a `structured_output` field **in addition to** the markdown `text`: the agent reasons to its answer, then a second pass extracts that answer into JSON matching your schema. `structured_output` is therefore a faithful projection of `text` — you get the readable answer *and* a typed object to program against, never one instead of the other. Invalid schemas (not an object, or no properties) are rejected before the call runs.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={reflectPy} section="reflect-structured-output" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={reflectMjs} section="reflect-structured-output" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={reflectSh} section="reflect-structured-output" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={reflectGo} section="reflect-structured-output" language="go" />
+</TabItem>
+</Tabs>
+
+### tags
+
+Defines the visibility scope used throughout the reflect agent. It filters raw
+facts, observations, and mental models that the agent can retrieve. The same
+`tags` and `tags_match` values also select which tagged directives are injected
+into the reflect prompt.
+
+`tags` defaults to `null`, `tags_match` defaults to `any`, and `tag_groups`
+defaults to `null`. For non-empty tags, raw facts, observations, and mental
+models use the same matching modes as [recall tags](./recall#tags). Directives
+have one additional rule: untagged directives are global and remain eligible
+whenever a tag scope is supplied, including with a strict or exact match.
+
+| Reflect configuration | Raw facts and observations | Mental models | Active directives |
+|-----------------------|----------------------------|---------------|-------------------|
+| Omit `tags`, `tags_match`, and `tag_groups` | All tagged and untagged data | All tagged and untagged models | Untagged/global directives only |
+| `tags: []`, default `tags_match: "any"` | All tagged and untagged data | All tagged and untagged models | Untagged/global directives only |
+| No tags, `tags_match: "exact"` | Untagged/global data only | Untagged/global models only | Untagged/global directives only |
+| Non-empty `tags`, `any` or `all` | Matching tagged data plus untagged/global data | Matching models plus untagged/global models | Matching tagged directives plus untagged/global directives |
+| Non-empty `tags`, `any_strict` or `all_strict` | Matching tagged data only | Matching tagged models only | Matching tagged directives plus untagged/global directives |
+| Non-empty `tags`, `exact` | Data with exactly the requested tag set | Models with exactly the requested tag set | Exactly matching tagged directives plus untagged/global directives |
+| Non-empty `tag_groups`, default top-level `tags_match` | Data matching the compound expression | Models matching the compound expression | Matching tagged directives plus untagged/global directives |
+
+A `tag_groups` leaf may set `resolve: "fuzzy"`, as in
+[recall](./recall#fuzzy-leaves); reflect resolves it once, before the agentic
+loop starts, so every tool it runs filters on the same tags.
+
+The first row is intentionally asymmetric: an unscoped reflect can search all
+memories, but it does not load tagged directives. To create a directive that
+applies to every reflect call, leave its `tags` empty. To create a scoped
+directive, assign tags and pass a matching scope to `reflect`.
+
+:::note `isolation_mode`
+`isolation_mode` is an internal `list_directives` option, not a public reflect
+request parameter. Reflect always enables it. When neither `tags` nor
+`tag_groups` is supplied, it limits directive loading to untagged directives.
+There is currently no per-request switch to disable it.
+:::
+
+:::note MCP omitted tags
+The MCP `reflect` tool forwards `tags_match` only when `tags` is present. To
+request the empty exact scope through MCP, pass `tags: []` together with
+`tags_match: "exact"`.
+:::
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={reflectPy} section="reflect-with-tags" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={reflectMjs} section="reflect-with-tags" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={reflectSh} section="reflect-with-tags" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={reflectGo} section="reflect-with-tags" language="go" />
+</TabItem>
+</Tabs>
+
+#### Common scope examples
+
+Unscoped reflect searches all memories but applies only global directives:
+
+```json
+{
+  "query": "Summarize the current project status"
+}
+```
+
+A project scope includes global data and directives alongside matching
+`project:a` data and directives:
+
+```json
+{
+  "query": "Summarize the current project status",
+  "tags": ["project:a"]
+}
+```
+
+A strict project scope excludes untagged memories, observations, and mental
+models. Global directives still apply:
+
+```json
+{
+  "query": "Summarize the current project status",
+  "tags": ["project:a"],
+  "tags_match": "all_strict"
+}
+```
+
+### tag_groups
+
+Provides compound tag filtering with recursive `and`, `or`, and `not`
+expressions. It affects the same reflect data sources and directive selection as
+flat `tags`. `tag_groups` and `tags` are mutually exclusive in the public REST
+request. Each leaf supplies its own matching mode and defaults to
+`any_strict`; the top-level groups are AND-ed. Normally leave the top-level
+`tags_match` at its default, `any`. Setting it to `exact` while using
+`tag_groups` additionally constrains facts, observations, and mental models to
+the global flat scope before applying the compound expression.
+
+The MCP `reflect` tool currently exposes flat `tags` and `tags_match`, but not
+`tag_groups`.
+
+### include
+
+Controls optional supplementary data returned alongside the main response.
+
+#### include.facts
+
+When enabled, the response includes a `based_on` object listing the memories, mental models, and directives the agent actually used to construct the answer. Only sources retrieved during the agent loop can appear here — citations are validated to prevent hallucinated references. Useful for transparency and verification.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={reflectPy} section="reflect-sources" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={reflectMjs} section="reflect-sources" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={reflectSh} section="reflect-sources" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={reflectGo} section="reflect-sources" language="go" />
+</TabItem>
+</Tabs>
+
+#### include.tool_calls
+
+When enabled, the response includes a `trace` object with the full execution log of every tool call and LLM call made during the agentic loop, including inputs, outputs, and durations. Set `output: false` to include only tool inputs for a smaller payload. Useful for debugging why the agent reached a particular conclusion.
+
+### reflect_search_observations_max_tokens
+
+Token budget for the agent's `search_observations` tool when the model names no
+budget of its own. Observation evidence is often the largest single contributor
+to the reflect context on a big bank, so lowering this trades the lowest-ranked
+observations for a smaller (cheaper, faster) LLM context. Defaults to `5000`.
+
+### reflect_search_observations_include_entities
+
+Whether `search_observations` attaches resolved entity names to each
+observation. They are useful when the surface text uses an alias ("Bob" for
+canonical "Robert Smith"), but they can be more than half the serialized tool
+payload; setting `false` keeps the same observations and ranking with a much
+smaller context. Defaults to `true`.
+
+Both options can be defaulted for a whole bank with the
+`reflect_default_options` config key (see
+[Configuration](../configuration.mdx)); an explicit value on the request always
+wins. A mental-model refresh is configured separately and does **not** read
+`reflect_default_options` — set the trigger's fields of the same name, or the
+bank's `knowledge_page_default_trigger`, instead (see
+[Mental Models](./mental-models.mdx)).
+
+---
+
+## Response
+
+### text
+
+The synthesized answer as a well-formatted markdown string. This is the primary output of reflect. Still returned when `response_schema` is provided — `structured_output` is derived from it, not a replacement for it.
+
+### structured_output
+
+The LLM's response parsed according to the `response_schema` provided in the request. Only present when `response_schema` was set. `null` otherwise.
+
+### structured_output_error
+
+Why the structured view could not be produced. Present only when a `response_schema` was given and the extraction pass failed — a provider error, a timeout, or output that would not parse. The reflect itself still succeeds: you get `200` and the markdown `text`, and this field tells you the machine-readable half is missing because something broke, not because the answer held nothing matching your schema. A missing `structured_output` **without** this field is the latter, ordinary case (the endpoint omits null fields). Treat its presence as retryable, and as the signal to alert on if structured output stops working.
+
+### based_on
+
+The sources the agent used to construct the answer. Only present when `include.facts` was enabled. Contains three fields:
+
+- `memories` — a list of memory facts (world, experience, observation) that were retrieved and cited. Each item has `id`, `text`, `type`, `context`, `occurred_start`, and `occurred_end`.
+- `mental_models` — a list of mental models that were used. Each item has `id`, `text`, and `context`.
+- `directives` — a list of directives that were enforced during reasoning. Each item has `id`, `name`, and `content`.
+
+### usage
+
+Token usage for all LLM calls made during the agentic loop: `input_tokens`, `output_tokens`, and `total_tokens`. Useful for cost tracking.
+
+### trace
+
+The full execution log of the agentic loop. Only present when `include.tool_calls` was enabled. Contains:
+
+- `tool_calls` — each tool invocation with `tool` name (`lookup`, `recall`, `learn`, `expand`), `input`, `output` (if `output: true`), `duration_ms`, and `iteration` number.
+- `llm_calls` — each LLM call with `scope` (e.g., `"agent_1"`, `"final"`) and `duration_ms`.
+
+## When Reflect Fails
+
+Reflect answers from evidence it gathered, so a run that could not gather it does not answer at all — it fails with a **500**, rather than returning a confident reply built on nothing:
+
+- **A retrieval tool raised.** The database, the embedder or the reranker was unavailable. One failure in a batch fails the run: an answer written around a tool that never returned is indistinguishable from one over a bank that genuinely holds nothing on the topic, and callers store it as a real answer.
+- **The model produced no answer.** The `done` call arrived empty, or the final synthesis returned nothing.
+- **The model or transport cannot drive tool calls.** Reflect is driven entirely by structured tool calls; a transport that silently drops the tool definitions fails loudly so you can switch to a tool-calling-capable model.
+- **The provider kept failing.** A non-context-overflow LLM error is retried once inside the loop and then given up on.
+
+A **successful retrieval that returns nothing is not a failure**: the bank genuinely has nothing on the topic, and reflect says so in its answer.
+
+Two cases are deliberately not failures. A run whose *context window* overflows synthesizes from the evidence it has — the prompt was too big for the model, which is a budgeting problem, not a broken dependency. And a tool call the model got *wrong* — a missing argument, a tool that does not exist — is returned to it as an error to fix, not raised.
