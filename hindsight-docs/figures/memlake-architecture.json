@@ -1,373 +1,408 @@
 {
- "title": "Memlake architecture",
- "speed": 2600,
- "elements": [
-  {
-   "id": "root",
-   "type": "group",
-   "x": 0,
-   "y": 0,
-   "children": [
-    "col-left",
-    "col-bucket",
-    "col-bg"
-   ],
-   "layout": {
-    "direction": "row",
-    "gap": 56,
-    "align": "start"
-   }
+  "title": "Memlake architecture",
+  "view": {
+    "width": 1280,
+    "height": 760
   },
-  {
-   "id": "hs",
-   "type": "rectangle",
-   "tone": "blue",
-   "content": [
+  "speed": 2600,
+  "elements": [
     {
-     "type": "title",
-     "text": "Hindsight API"
+      "id": "root",
+      "type": "group",
+      "x": 0,
+      "y": 0,
+      "children": [
+        "col-left",
+        "col-bucket",
+        "col-bg"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 56,
+        "align": "start"
+      }
     },
     {
-     "type": "chips",
-     "items": [
-      "retain",
-      "recall",
-      "reflect"
-     ]
-    }
-   ]
-  },
-  {
-   "id": "col-servers",
-   "type": "group",
-   "label": {
-    "title": "Memlake servers"
-   },
-   "children": [
-    "sA",
-    "sB"
-   ],
-   "layout": {
-    "direction": "column",
-    "gap": 24,
-    "align": "stretch"
-   }
-  },
-  {
-   "id": "sA",
-   "type": "rectangle",
-   "tone": "gray",
-   "content": [
-    {
-     "type": "title",
-     "text": "Server A"
+      "id": "hs",
+      "type": "rectangle",
+      "tone": "blue",
+      "content": [
+        {
+          "type": "title",
+          "text": "Hindsight API"
+        },
+        {
+          "type": "chips",
+          "items": [
+            "retain",
+            "recall",
+            "reflect"
+          ]
+        }
+      ]
     },
     {
-     "type": "chips",
-     "items": [
-      "RAM cache",
-      "NVMe cache"
-     ]
-    }
-   ]
-  },
-  {
-   "id": "sB",
-   "type": "rectangle",
-   "tone": "gray",
-   "content": [
-    {
-     "type": "title",
-     "text": "Server B"
+      "id": "col-servers",
+      "type": "group",
+      "label": {
+        "title": "Memlake servers"
+      },
+      "children": [
+        "sA",
+        "sB"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 24,
+        "align": "stretch"
+      }
     },
     {
-     "type": "chips",
-     "items": [
-      "RAM cache",
-      "NVMe cache"
-     ]
-    }
-   ]
-  },
-  {
-   "id": "col-bucket",
-   "type": "group",
-   "label": {
-    "title": "Your bucket \u00b7 tenant / bank"
-   },
-   "children": [
-    "log",
-    "segs",
-    "manifest"
-   ],
-   "layout": {
-    "direction": "column",
-    "gap": 28,
-    "align": "stretch"
-   }
-  },
-  {
-   "id": "log",
-   "type": "rectangle",
-   "tone": "orange",
-   "content": [
-    {
-     "type": "title",
-     "text": "Log"
+      "id": "sA",
+      "type": "rectangle",
+      "tone": "gray",
+      "content": [
+        {
+          "type": "title",
+          "text": "Server A"
+        },
+        {
+          "type": "chips",
+          "items": [
+            "RAM cache",
+            "NVMe cache"
+          ]
+        }
+      ]
     },
     {
-     "type": "text",
-     "text": "one object per write"
-    }
-   ]
-  },
-  {
-   "id": "segs",
-   "type": "rectangle",
-   "tone": "green",
-   "content": [
-    {
-     "type": "title",
-     "text": "Segments"
+      "id": "sB",
+      "type": "rectangle",
+      "tone": "gray",
+      "content": [
+        {
+          "type": "title",
+          "text": "Server B"
+        },
+        {
+          "type": "chips",
+          "items": [
+            "RAM cache",
+            "NVMe cache"
+          ]
+        }
+      ]
     },
     {
-     "type": "text",
-     "text": "immutable indexes"
-    }
-   ]
-  },
-  {
-   "id": "manifest",
-   "type": "rectangle",
-   "tone": "purple",
-   "content": [
-    {
-     "type": "title",
-     "text": "Manifest + head"
+      "id": "col-bucket",
+      "type": "group",
+      "label": {
+        "title": "Your bucket · tenant / bank"
+      },
+      "children": [
+        "log",
+        "segs",
+        "manifest"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 28,
+        "align": "stretch"
+      }
     },
     {
-     "type": "text",
-     "text": "the only objects that change"
-    }
-   ]
-  },
-  {
-   "id": "col-bg",
-   "type": "group",
-   "label": {
-    "title": "Background"
-   },
-   "children": [
-    "arch",
-    "backup",
-    "idx"
-   ],
-   "layout": {
-    "direction": "column",
-    "gap": 36,
-    "align": "stretch"
-   }
-  },
-  {
-   "id": "idx",
-   "type": "rectangle",
-   "tone": "gray",
-   "content": [
-    {
-     "type": "title",
-     "text": "Indexer"
+      "id": "log",
+      "type": "rectangle",
+      "tone": "orange",
+      "content": [
+        {
+          "type": "title",
+          "text": "Log"
+        },
+        {
+          "type": "text",
+          "text": "one object per write"
+        }
+      ]
     },
     {
-     "type": "text",
-     "text": "log \u2192 segments"
-    }
-   ]
-  },
-  {
-   "id": "arch",
-   "type": "rectangle",
-   "tone": "gray",
-   "content": [
-    {
-     "type": "title",
-     "text": "Archiver"
+      "id": "segs",
+      "type": "rectangle",
+      "tone": "green",
+      "content": [
+        {
+          "type": "title",
+          "text": "Segments"
+        },
+        {
+          "type": "text",
+          "text": "immutable indexes"
+        }
+      ]
     },
     {
-     "type": "text",
-     "text": "continuous backups"
+      "id": "manifest",
+      "type": "rectangle",
+      "tone": "purple",
+      "content": [
+        {
+          "type": "title",
+          "text": "Manifest + head"
+        },
+        {
+          "type": "text",
+          "text": "the only objects that change"
+        }
+      ]
+    },
+    {
+      "id": "col-bg",
+      "type": "group",
+      "label": {
+        "title": "Background"
+      },
+      "children": [
+        "arch",
+        "backup",
+        "idx"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 36,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "idx",
+      "type": "rectangle",
+      "tone": "gray",
+      "content": [
+        {
+          "type": "title",
+          "text": "Indexer"
+        },
+        {
+          "type": "text",
+          "text": "log → segments"
+        }
+      ]
+    },
+    {
+      "id": "arch",
+      "type": "rectangle",
+      "tone": "gray",
+      "content": [
+        {
+          "type": "title",
+          "text": "Archiver"
+        },
+        {
+          "type": "text",
+          "text": "continuous backups"
+        }
+      ]
+    },
+    {
+      "id": "backup",
+      "type": "cylinder",
+      "tone": "gray",
+      "label": {
+        "title": "Backup bucket",
+        "lines": [
+          "another account"
+        ]
+      }
+    },
+    {
+      "id": "hs-sA",
+      "type": "arrow",
+      "start": {
+        "id": "hs"
+      },
+      "end": {
+        "id": "sA"
+      },
+      "route": "curved",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "hs-sB",
+      "type": "arrow",
+      "start": {
+        "id": "hs"
+      },
+      "end": {
+        "id": "sB"
+      },
+      "route": "curved",
+      "quiet": true
+    },
+    {
+      "id": "sA-log",
+      "type": "arrow",
+      "start": {
+        "id": "sA"
+      },
+      "end": {
+        "id": "log"
+      },
+      "route": "curved",
+      "quiet": true
+    },
+    {
+      "id": "sA-segs",
+      "type": "arrow",
+      "start": {
+        "id": "sA"
+      },
+      "end": {
+        "id": "segs"
+      },
+      "route": "curved"
+    },
+    {
+      "id": "sA-manifest",
+      "type": "arrow",
+      "start": {
+        "id": "sA"
+      },
+      "end": {
+        "id": "manifest"
+      },
+      "route": "curved",
+      "quiet": true
+    },
+    {
+      "id": "sB-segs",
+      "type": "arrow",
+      "start": {
+        "id": "sB"
+      },
+      "end": {
+        "id": "segs"
+      },
+      "route": "curved"
+    },
+    {
+      "id": "sB-manifest",
+      "type": "arrow",
+      "start": {
+        "id": "sB"
+      },
+      "end": {
+        "id": "manifest"
+      },
+      "route": "curved",
+      "quiet": true
+    },
+    {
+      "id": "idx-log",
+      "type": "arrow",
+      "start": {
+        "id": "log"
+      },
+      "end": {
+        "id": "idx"
+      },
+      "route": "curved",
+      "quiet": true
+    },
+    {
+      "id": "idx-segs",
+      "type": "arrow",
+      "start": {
+        "id": "idx"
+      },
+      "end": {
+        "id": "segs"
+      },
+      "route": "curved",
+      "quiet": true
+    },
+    {
+      "id": "idx-manifest",
+      "type": "arrow",
+      "start": {
+        "id": "idx"
+      },
+      "end": {
+        "id": "manifest"
+      },
+      "route": "curved",
+      "quiet": true
+    },
+    {
+      "id": "arch-log",
+      "type": "arrow",
+      "start": {
+        "id": "log"
+      },
+      "end": {
+        "id": "arch"
+      },
+      "route": "curved",
+      "quiet": true
+    },
+    {
+      "id": "arch-backup",
+      "type": "arrow",
+      "start": {
+        "id": "arch"
+      },
+      "end": {
+        "id": "backup"
+      },
+      "route": "curved",
+      "quiet": true
+    },
+    {
+      "id": "col-left",
+      "type": "group",
+      "children": [
+        "hs",
+        "col-servers"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 44,
+        "align": "stretch"
+      }
     }
-   ]
-  },
-  {
-   "id": "backup",
-   "type": "cylinder",
-   "tone": "gray",
-   "label": {
-    "title": "Backup bucket",
-    "lines": [
-     "another account"
-    ]
-   }
-  },
-  {
-   "id": "hs-sA",
-   "type": "arrow",
-   "start": {
-    "id": "hs"
-   },
-   "end": {
-    "id": "sA"
-   },
-   "route": "curved",
-   "fromSide": "bottom",
-   "toSide": "top"
-  },
-  {
-   "id": "hs-sB",
-   "type": "arrow",
-   "start": {
-    "id": "hs"
-   },
-   "end": {
-    "id": "sB"
-   },
-   "route": "curved",
-   "quiet": true
-  },
-  {
-   "id": "sA-log",
-   "type": "arrow",
-   "start": {
-    "id": "sA"
-   },
-   "end": {
-    "id": "log"
-   },
-   "route": "curved",
-   "quiet": true
-  },
-  {
-   "id": "sA-segs",
-   "type": "arrow",
-   "start": {
-    "id": "sA"
-   },
-   "end": {
-    "id": "segs"
-   },
-   "route": "curved"
-  },
-  {
-   "id": "sA-manifest",
-   "type": "arrow",
-   "start": {
-    "id": "sA"
-   },
-   "end": {
-    "id": "manifest"
-   },
-   "route": "curved",
-   "quiet": true
-  },
-  {
-   "id": "sB-segs",
-   "type": "arrow",
-   "start": {
-    "id": "sB"
-   },
-   "end": {
-    "id": "segs"
-   },
-   "route": "curved"
-  },
-  {
-   "id": "sB-manifest",
-   "type": "arrow",
-   "start": {
-    "id": "sB"
-   },
-   "end": {
-    "id": "manifest"
-   },
-   "route": "curved",
-   "quiet": true
-  },
-  {
-   "id": "idx-log",
-   "type": "arrow",
-   "start": {
-    "id": "log"
-   },
-   "end": {
-    "id": "idx"
-   },
-   "route": "curved",
-   "quiet": true
-  },
-  {
-   "id": "idx-segs",
-   "type": "arrow",
-   "start": {
-    "id": "idx"
-   },
-   "end": {
-    "id": "segs"
-   },
-   "route": "curved",
-   "quiet": true
-  },
-  {
-   "id": "idx-manifest",
-   "type": "arrow",
-   "start": {
-    "id": "idx"
-   },
-   "end": {
-    "id": "manifest"
-   },
-   "route": "curved",
-   "quiet": true
-  },
-  {
-   "id": "arch-log",
-   "type": "arrow",
-   "start": {
-    "id": "log"
-   },
-   "end": {
-    "id": "arch"
-   },
-   "route": "curved",
-   "quiet": true
-  },
-  {
-   "id": "arch-backup",
-   "type": "arrow",
-   "start": {
-    "id": "arch"
-   },
-   "end": {
-    "id": "backup"
-   },
-   "route": "curved",
-   "quiet": true
-  },
-  {
-   "id": "col-left",
-   "type": "group",
-   "children": [
-    "hs",
-    "col-servers"
-   ],
-   "layout": {
-    "direction": "column",
-    "gap": 44,
-    "align": "stretch"
-   }
-  }
- ],
- "view": {
-  "width": 1280,
-  "height": 760
- }
+  ],
+  "scenes": [
+    {
+      "label": "Architecture",
+      "beats": [
+        {
+          "edges": {
+            "edge": "hs-sA",
+            "data": "retain · recall · reflect"
+          },
+          "say": "The Hindsight API talks to a Memlake server. Any server can answer any request, so there is no primary."
+        },
+        {
+          "edges": {
+            "edge": "sA-log",
+            "data": "PUT · if-none-match"
+          },
+          "say": "Servers A and B each keep a RAM and an NVMe cache, and hold no durable state of their own."
+        },
+        {
+          "edges": {
+            "edge": "sA-manifest",
+            "data": "head · if-match"
+          },
+          "say": "Everything durable lives in your bucket, per tenant and bank: a log with one object per write, immutable segment indexes, and a manifest whose head is the only object that changes."
+        },
+        {
+          "edges": {
+            "edge": "idx-segs",
+            "data": "log → segments"
+          },
+          "say": "In the background an indexer folds the log into segments, and an archiver copies the log to a backup bucket in another account."
+        }
+      ]
+    }
+  ]
 }
