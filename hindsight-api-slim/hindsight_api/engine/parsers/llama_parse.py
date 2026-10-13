@@ -8,35 +8,19 @@ import time
 from typing import Any
 
 import aiohttp
-from pydantic import BaseModel
 
 from ..aiohttp_session import per_phase_timeout, proxy_env_is_set
 from .base import FileParser, UnsupportedFileTypeError
 
 logger = logging.getLogger(__name__)
 
-_LLAMA_PARSE_BASE_URL = "https://api.cloud.llamaindex.ai/api/v2/parse"
-# v2 requires an explicit tier and version (v1 had a default mode). cost_effective
-# is the closest to v1's default parse at a comparable per-page cost.
-_PARSE_CONFIGURATION = json.dumps({"tier": "cost_effective", "version": "latest"})
+_LLAMA_PARSE_BASE_URL = "https://api.cloud.llamaindex.ai/api/parsing"
 _DEFAULT_POLL_INTERVAL = 2.0  # seconds
 _DEFAULT_TIMEOUT = 300.0  # seconds
 
 # HTTP status codes that indicate the file type is not supported.
 # Other 4xx codes (401, 403, 429, etc.) are operational errors, not file-type issues.
 _UNSUPPORTED_FILE_STATUS_CODES = {400, 415, 422}
-
-
-class _ParseJob(BaseModel):
-    status: str | None = None
-    error_message: str | None = None
-
-
-class _ParseResult(BaseModel):
-    """``GET /api/v2/parse/{id}``: ``job`` always, ``markdown_full`` when expanded."""
-
-    job: _ParseJob = _ParseJob()
-    markdown_full: str | None = None
 
 
 class LlamaParseParser(FileParser):
@@ -89,22 +73,21 @@ class LlamaParseParser(FileParser):
         form = aiohttp.FormData()
         # Ensure file_data is plain bytes (storage backends may return obstore.Bytes)
         form.add_field("file", bytes(file_data), filename=filename, content_type=content_type)
-        form.add_field("configuration", _PARSE_CONFIGURATION)
         async with session.post(f"{_LLAMA_PARSE_BASE_URL}/upload", headers=self._auth_headers, data=form) as resp:
             upload_data = await _json_or_raise(resp, filename, "upload")
         job_id: str = upload_data["id"]
 
-        # Step 2: Poll job status until COMPLETED, FAILED or CANCELLED
+        # Step 2: Poll job status until SUCCESS or ERROR
         deadline = time.monotonic() + self._timeout
         while True:
-            async with session.get(f"{_LLAMA_PARSE_BASE_URL}/{job_id}", headers=self._auth_headers) as resp:
-                job = _ParseResult.model_validate(await _json_or_raise(resp, filename, "poll job status")).job
-            status = job.status
+            async with session.get(f"{_LLAMA_PARSE_BASE_URL}/job/{job_id}", headers=self._auth_headers) as resp:
+                status_data = await _json_or_raise(resp, filename, "poll job status")
+            status = status_data.get("status")
 
-            if status == "COMPLETED":
+            if status == "SUCCESS":
                 break
-            if status in ("FAILED", "CANCELLED"):
-                error = job.error_message or status.lower()
+            if status in ("ERROR", "CANCELLED"):
+                error = status_data.get("error_code") or status_data.get("error") or "unknown error"
                 raise RuntimeError(f"LlamaParse job failed for '{filename}': {error}")
 
             if time.monotonic() >= deadline:
@@ -114,10 +97,10 @@ class LlamaParseParser(FileParser):
 
         # Step 3: Fetch the markdown result
         async with session.get(
-            f"{_LLAMA_PARSE_BASE_URL}/{job_id}", headers=self._auth_headers, params={"expand": "markdown_full"}
+            f"{_LLAMA_PARSE_BASE_URL}/job/{job_id}/result/markdown", headers=self._auth_headers
         ) as resp:
-            result = _ParseResult.model_validate(await _json_or_raise(resp, filename, "fetch markdown result"))
-        markdown = result.markdown_full
+            result_data = await _json_or_raise(resp, filename, "fetch markdown result")
+        markdown = result_data.get("markdown")
         if not markdown:
             raise RuntimeError(f"No content extracted from '{filename}'")
         return markdown
