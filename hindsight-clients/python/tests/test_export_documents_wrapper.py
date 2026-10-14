@@ -189,7 +189,7 @@ async def test_export_timeout_bounds_a_slow_status_request(export_method):
 
 @pytest.mark.parametrize("export_method", ["aexport_documents", "aexport_bank"])
 async def test_export_timeout_bounds_the_poll_sleep(export_method):
-    # A poll interval longer than the budget must be cut short, with no extra poll.
+    # A poll interval the remaining budget can't fit must end the wait, with no extra poll.
     client = _client_for(export_method)
     client._operations_api.get_operation_status = AsyncMock(return_value=_status("processing"))
 

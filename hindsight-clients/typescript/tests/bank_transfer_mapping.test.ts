@@ -174,7 +174,7 @@ describe("export timeoutMs bounds the whole polling phase", () => {
   );
 
   test.each(["exportBank", "exportDocuments"] as const)(
-    "%s cuts a poll interval longer than the budget short, without another poll",
+    "%s ends the wait when the budget can't fit another poll interval, without another poll",
     async (method) => {
       mockedStatus.mockResolvedValue({ data: { status: "processing" } } as any);
 
