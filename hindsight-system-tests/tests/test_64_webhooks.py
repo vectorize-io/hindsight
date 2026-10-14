@@ -116,6 +116,26 @@ async def test_the_server_records_the_delivery_as_completed(client, stubs, bank_
     assert delivery.last_error is None
 
 
+async def test_the_receiver_can_dedupe_and_match_the_delivery_log(client, stubs, bank_id, stub_server, settled):
+    """Retries make at-least-once delivery, so a receiver needs a key for the event
+    that a retry keeps, and a way to find what it received in the server's log.
+
+    The event id travels in the signed body and in a header; the delivery id in a
+    header is the same id the deliveries API lists, carrying the same event id.
+    """
+    await _deliver(client, stubs, bank_id, stub_server.url, settled)
+    received = stubs.webhooks[0]
+
+    webhooks = await client.webhooks.list_webhooks(bank_id)
+    deliveries = await client.webhooks.list_webhook_deliveries(bank_id, webhooks.items[0].id)
+    delivery = deliveries.items[0]
+
+    assert received.body["event_id"]
+    assert received.headers["x-hindsight-event-id"] == received.body["event_id"]
+    assert received.headers["x-hindsight-delivery-id"] == delivery.id
+    assert delivery.event_id == received.body["event_id"]
+
+
 async def test_a_loopback_destination_is_refused(client, bank_id):
     """The SSRF guard (GHSA-ggrr-69wp-fj54).
 

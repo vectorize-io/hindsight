@@ -90,6 +90,7 @@ export interface Webhook {
 
 export interface WebhookDelivery {
   id: string;
+  event_id: string | null;
   webhook_id: string | null;
   url: string;
   event_type: string;
