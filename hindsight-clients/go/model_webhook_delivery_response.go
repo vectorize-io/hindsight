@@ -22,6 +22,7 @@ var _ MappedNullable = &WebhookDeliveryResponse{}
 // WebhookDeliveryResponse Response model for a webhook delivery record.
 type WebhookDeliveryResponse struct {
 	Id string `json:"id"`
+	EventId NullableString `json:"event_id,omitempty"`
 	WebhookId NullableString `json:"webhook_id"`
 	Url string `json:"url"`
 	EventType string `json:"event_type"`
@@ -83,6 +84,48 @@ func (o *WebhookDeliveryResponse) GetIdOk() (*string, bool) {
 // SetId sets field value
 func (o *WebhookDeliveryResponse) SetId(v string) {
 	o.Id = v
+}
+
+// GetEventId returns the EventId field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *WebhookDeliveryResponse) GetEventId() string {
+	if o == nil || IsNil(o.EventId.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.EventId.Get()
+}
+
+// GetEventIdOk returns a tuple with the EventId field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *WebhookDeliveryResponse) GetEventIdOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.EventId.Get(), o.EventId.IsSet()
+}
+
+// HasEventId returns a boolean if a field has been set.
+func (o *WebhookDeliveryResponse) HasEventId() bool {
+	if o != nil && o.EventId.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetEventId gets a reference to the given NullableString and assigns it to the EventId field.
+func (o *WebhookDeliveryResponse) SetEventId(v string) {
+	o.EventId.Set(&v)
+}
+// SetEventIdNil sets the value for EventId to be an explicit nil
+func (o *WebhookDeliveryResponse) SetEventIdNil() {
+	o.EventId.Set(nil)
+}
+
+// UnsetEventId ensures that no value is present for EventId, not even an explicit nil
+func (o *WebhookDeliveryResponse) UnsetEventId() {
+	o.EventId.Unset()
 }
 
 // GetWebhookId returns the WebhookId field value
@@ -512,6 +555,9 @@ func (o WebhookDeliveryResponse) MarshalJSON() ([]byte, error) {
 func (o WebhookDeliveryResponse) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	toSerialize["id"] = o.Id
+	if o.EventId.IsSet() {
+		toSerialize["event_id"] = o.EventId.Get()
+	}
 	toSerialize["webhook_id"] = o.WebhookId.Get()
 	toSerialize["url"] = o.Url
 	toSerialize["event_type"] = o.EventType

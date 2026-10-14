@@ -13180,6 +13180,7 @@ components:
           created_at: created_at
           last_response_status: 6
           url: url
+          event_id: event_id
           event_type: event_type
           updated_at: updated_at
           webhook_id: webhook_id
@@ -13193,6 +13194,7 @@ components:
           created_at: created_at
           last_response_status: 6
           url: url
+          event_id: event_id
           event_type: event_type
           updated_at: updated_at
           webhook_id: webhook_id
@@ -13220,6 +13222,7 @@ components:
         created_at: created_at
         last_response_status: 6
         url: url
+        event_id: event_id
         event_type: event_type
         updated_at: updated_at
         webhook_id: webhook_id
@@ -13231,6 +13234,9 @@ components:
       properties:
         id:
           title: Id
+          type: string
+        event_id:
+          nullable: true
           type: string
         webhook_id:
           nullable: true

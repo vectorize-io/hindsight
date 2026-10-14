@@ -130,6 +130,7 @@ class WebhookManager:
                         {
                             "type": "webhook_delivery",
                             "operation_id": str(operation_id),
+                            "event_id": event.event_id,
                             "bank_id": event.bank_id,
                             "url": webhook.url,
                             "secret": webhook.secret,
@@ -212,6 +213,7 @@ class WebhookManager:
                     {
                         "type": "webhook_delivery",
                         "operation_id": str(operation_id),
+                        "event_id": event.event_id,
                         "bank_id": event.bank_id,
                         "url": webhook.url,
                         "secret": webhook.secret,

@@ -351,6 +351,49 @@ class TestFireEvent:
             )
 
     @pytest.mark.asyncio
+    async def test_fire_event_shares_one_event_id_across_webhooks(self, memory: MemoryEngine):
+        """Every delivery of one event carries the same event_id; each delivery has its own id.
+
+        The event_id is also in the signed body, so receivers can dedupe on it.
+        """
+        bank_id = f"wh-evid-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory._pool, bank_id)
+        webhooks = [
+            WebhookConfig(
+                id="",
+                bank_id=None,
+                url=f"https://global.example.com/hook-{i}",
+                secret=None,
+                event_types=["consolidation.completed"],
+                enabled=True,
+            )
+            for i in range(2)
+        ]
+        manager = WebhookManager(backend=memory._backend, global_webhooks=webhooks)
+
+        event = _make_event(bank_id)
+        await manager.fire_event(event)
+
+        async with memory._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT operation_id, task_payload FROM async_operations "
+                "WHERE operation_type = 'webhook_delivery' AND bank_id = $1",
+                bank_id,
+            )
+            await conn.execute(
+                "DELETE FROM async_operations WHERE operation_type = 'webhook_delivery' AND bank_id = $1",
+                bank_id,
+            )
+
+        payloads = [
+            json.loads(r["task_payload"]) if isinstance(r["task_payload"], str) else r["task_payload"] for r in rows
+        ]
+        assert len(payloads) == 2
+        assert {p["event_id"] for p in payloads} == {event.event_id}
+        assert all(json.loads(p["payload"])["event_id"] == event.event_id for p in payloads)
+        assert len({r["operation_id"] for r in rows}) == 2
+
+    @pytest.mark.asyncio
     async def test_fire_event_no_match_if_event_type_mismatch(
         self, memory: MemoryEngine, webhook_manager: WebhookManager
     ):
@@ -599,6 +642,23 @@ class TestHandleWebhookDelivery:
         assert v1_part == f"v1={expected}"
 
     @pytest.mark.asyncio
+    async def test_delivery_sends_event_and_delivery_ids(self, memory: MemoryEngine):
+        """X-Hindsight-Event-Id is the event's id; X-Hindsight-Delivery-Id is the delivery row id."""
+        delivery_id = str(uuid.uuid4())
+        task_dict = {**_make_delivery_task(), "event_id": "evt-1", "_operation_id": delivery_id}
+        headers = await self._capture_headers(memory, task_dict)
+
+        assert headers["X-Hindsight-Event-Id"] == "evt-1"
+        assert headers["X-Hindsight-Delivery-Id"] == delivery_id
+
+    @pytest.mark.asyncio
+    async def test_delivery_queued_before_event_ids_omits_the_header(self, memory: MemoryEngine):
+        """A task queued by an older server has no event_id, so no empty header is sent."""
+        headers = await self._capture_headers(memory, _make_delivery_task())
+
+        assert "X-Hindsight-Event-Id" not in headers
+
+    @pytest.mark.asyncio
     async def test_custom_headers_cannot_override_signature_or_event(self, memory: MemoryEngine):
         """http_config.headers must not be able to forge the event type or a signature.
 
@@ -613,16 +673,18 @@ class TestHandleWebhookDelivery:
                     "X-Hindsight-Signature": "sha256=forged",
                     "X-Hub-Signature-256": "sha256=forged",
                     "X-Hindsight-Signature-V2": "t=0,v1=forged",
+                    "X-Hindsight-Event-Id": "forged",
                     "X-Custom": "kept",
                 }
             },
         )
-        headers = await self._capture_headers(memory, task_dict)
+        headers = await self._capture_headers(memory, {**task_dict, "event_id": "evt-real"})
 
         assert headers["X-Hindsight-Event"] == "consolidation.completed"
         assert headers["X-Hindsight-Signature"] != "sha256=forged"
         assert headers["X-Hub-Signature-256"] != "sha256=forged"
         assert headers["X-Hindsight-Signature-V2"] != "t=0,v1=forged"
+        assert headers["X-Hindsight-Event-Id"] == "evt-real"
         assert headers["X-Custom"] == "kept", "unrelated custom headers still pass through"
 
     @pytest.mark.asyncio
@@ -1019,6 +1081,7 @@ class TestWebhookHttpApi:
                 "event_type": "consolidation.completed",
                 "payload": '{"event":"consolidation.completed"}',
                 "webhook_id": webhook_id,
+                "event_id": "evt-listed",
             }
         )
         async with memory._pool.acquire() as conn:
@@ -1046,6 +1109,7 @@ class TestWebhookHttpApi:
             assert delivery["status"] == "completed"
             assert delivery["event_type"] == "consolidation.completed"
             assert delivery["attempts"] == 1
+            assert delivery["event_id"] == "evt-listed"
         finally:
             async with memory._pool.acquire() as conn:
                 await conn.execute("DELETE FROM async_operations WHERE operation_id = $1", delivery_id)

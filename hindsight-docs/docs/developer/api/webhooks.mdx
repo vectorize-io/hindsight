@@ -22,7 +22,7 @@ Webhooks are registered per memory bank and fire automatically when matching eve
 A delivery is considered failed if your endpoint returns a non-2xx status code or does not respond within the configured timeout (default 30 seconds). After 6 failed attempts, the delivery is marked as permanently failed and no further retries are made.
 
 :::info At-least-once delivery
-Webhook delivery tasks are queued in the same database transaction as the primary operation (e.g. the retain or consolidation write). This means if the server crashes after committing but before sending, the delivery task survives and will be retried. As a result, **your endpoint may receive the same event more than once** — use the `operation_id` field to deduplicate if needed.
+Webhook delivery tasks are queued in the same database transaction as the primary operation (e.g. the retain or consolidation write). This means if the server crashes after committing but before sending, the delivery task survives and will be retried. As a result, **your endpoint may receive the same event more than once** — deduplicate on `event_id` (also sent as the `X-Hindsight-Event-Id` header). Don't use `operation_id` for this: a batch retain fires one event per document under the same operation.
 :::
 
 ## Verifying Deliveries
@@ -32,6 +32,8 @@ When a webhook is registered with a secret, every delivery carries an HMAC-SHA25
 | Header | Value | Notes |
 |--------|-------|-------|
 | `X-Hindsight-Event` | The event type, e.g. `retain.completed` | Always sent |
+| `X-Hindsight-Event-Id` | The event's `event_id` | Always sent. Same value on every retry and on every webhook the event goes to — use it to deduplicate |
+| `X-Hindsight-Delivery-Id` | This event's delivery to this webhook | Always sent. Same value on every retry; matches the `id` listed by `GET /webhooks/{id}/deliveries` |
 | `X-Hindsight-Signature` | `sha256=<hex>` over the raw body | Sent when a secret is configured |
 | `X-Hub-Signature-256` | Identical to `X-Hindsight-Signature` | The conventional name for this construction, so GitHub-style receivers verify out of the box |
 | `X-Hindsight-Signature-V2` | `t=<unix_seconds>,v1=<hex>` over `<t>.<raw body>` | Timestamped variant — use this if you want replay protection |
@@ -69,7 +71,7 @@ Two things to get right in any language:
 - **Sign the raw bytes.** Re-serializing the parsed JSON changes whitespace and key order, and the signature will not match. Read the body before your framework decodes it.
 - **Compare in constant time** (`hmac.compare_digest`, `crypto.timingSafeEqual`, …), never with `==`.
 
-Custom headers set on a webhook's `http_config` cannot override `X-Hindsight-Event` or any signature header, so a receiver can trust those values whatever else is configured.
+Custom headers set on a webhook's `http_config` cannot override `X-Hindsight-Event`, the id headers, or any signature header, so a receiver can trust those values whatever else is configured.
 
 ## Event Types
 
@@ -81,6 +83,7 @@ Fired after Hindsight finishes consolidating new memories into observations for 
 
 ```json
 {
+  "event_id": "3f6c2a9e-8d41-4b7a-9c0e-5e2f1d7a6b48",
   "event": "consolidation.completed",
   "bank_id": "my-bank",
   "operation_id": "a1b2c3d4e5f6",
@@ -116,6 +119,7 @@ Fired once per document after a retain operation completes (both synchronous and
 
 ```json
 {
+  "event_id": "3f6c2a9e-8d41-4b7a-9c0e-5e2f1d7a6b48",
   "event": "retain.completed",
   "bank_id": "my-bank",
   "operation_id": "a1b2c3d4e5f6",
@@ -153,6 +157,7 @@ Fired when a bank's [Memory Defense](../memory-defense/index.md) policy acts on 
 
 ```json
 {
+  "event_id": "3f6c2a9e-8d41-4b7a-9c0e-5e2f1d7a6b48",
   "event": "memory_defense.triggered",
   "bank_id": "my-bank",
   "operation_id": "a1b2c3d4e5f6",

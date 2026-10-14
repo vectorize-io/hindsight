@@ -27,6 +27,7 @@ class WebhookDeliveryResponse(BaseModel):
     Response model for a webhook delivery record.
     """ # noqa: E501
     id: StrictStr
+    event_id: Optional[StrictStr] = None
     webhook_id: Optional[StrictStr]
     url: StrictStr
     event_type: StrictStr
@@ -39,7 +40,7 @@ class WebhookDeliveryResponse(BaseModel):
     last_attempt_at: Optional[StrictStr] = None
     created_at: Optional[StrictStr] = None
     updated_at: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["id", "webhook_id", "url", "event_type", "status", "attempts", "next_retry_at", "last_error", "last_response_status", "last_response_body", "last_attempt_at", "created_at", "updated_at"]
+    __properties: ClassVar[List[str]] = ["id", "event_id", "webhook_id", "url", "event_type", "status", "attempts", "next_retry_at", "last_error", "last_response_status", "last_response_body", "last_attempt_at", "created_at", "updated_at"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -80,6 +81,11 @@ class WebhookDeliveryResponse(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # set to None if event_id (nullable) is None
+        # and model_fields_set contains the field
+        if self.event_id is None and "event_id" in self.model_fields_set:
+            _dict['event_id'] = None
+
         # set to None if webhook_id (nullable) is None
         # and model_fields_set contains the field
         if self.webhook_id is None and "webhook_id" in self.model_fields_set:
@@ -133,6 +139,7 @@ class WebhookDeliveryResponse(BaseModel):
 
         _obj = cls.model_validate({
             "id": obj.get("id"),
+            "event_id": obj.get("event_id"),
             "webhook_id": obj.get("webhook_id"),
             "url": obj.get("url"),
             "event_type": obj.get("event_type"),

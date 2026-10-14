@@ -5043,6 +5043,13 @@ class MemoryEngine(MemoryEngineInterface):
             **http_config.headers,
             "X-Hindsight-Event": event_type,
         }
+        # Event id: stable across retries and across webhooks (dedupe key). Delivery
+        # id: this event to this webhook, the id the deliveries API lists. Tasks
+        # queued before event ids existed carry none, so the header is skipped.
+        if event_id := task_dict.get("event_id"):
+            headers["X-Hindsight-Event-Id"] = event_id
+        if operation_id:
+            headers["X-Hindsight-Delivery-Id"] = operation_id
         if secret and self._webhook_manager:
             signature = self._webhook_manager._sign_payload(secret, payload_bytes)
             headers["X-Hindsight-Signature"] = signature

@@ -1,5 +1,6 @@
 """Pydantic models for the webhook system."""
 
+import uuid
 from datetime import datetime
 from enum import StrEnum
 
@@ -74,6 +75,10 @@ class MemoryDefenseEventData(BaseModel):
 
 
 class WebhookEvent(BaseModel):
+    # One logical event: shared by every webhook it fans out to and stable across
+    # retries, so receivers dedupe on it. ``operation_id`` can't serve: a batch
+    # retain fires one event per document under the same operation.
+    event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     event: WebhookEventType
     bank_id: str
     operation_id: str

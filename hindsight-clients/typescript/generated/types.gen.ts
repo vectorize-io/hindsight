@@ -6948,6 +6948,10 @@ export type WebhookDeliveryResponse = {
    */
   id: string;
   /**
+   * Event Id
+   */
+  event_id?: string | null;
+  /**
    * Webhook Id
    */
   webhook_id: string | null;

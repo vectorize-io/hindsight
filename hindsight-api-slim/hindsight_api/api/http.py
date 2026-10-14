@@ -4934,6 +4934,7 @@ class WebhookDeliveryResponse(BaseModel):
     """Response model for a webhook delivery record."""
 
     id: str
+    event_id: str | None = None
     webhook_id: str | None
     url: str
     event_type: str
@@ -4969,6 +4970,7 @@ class WebhookDeliveryResponse(BaseModel):
 
         return cls(
             id=str(row["operation_id"]),
+            event_id=task_payload.get("event_id"),
             webhook_id=task_payload.get("webhook_id"),
             url=task_payload.get("url", ""),
             event_type=task_payload.get("event_type", ""),

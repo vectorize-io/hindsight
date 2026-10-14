@@ -19548,6 +19548,17 @@
             "type": "string",
             "title": "Id"
           },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
           "webhook_id": {
             "anyOf": [
               {
