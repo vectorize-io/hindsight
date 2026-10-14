@@ -52,6 +52,8 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
             model=body["model"],
             messages=body["messages"],
             tools=tuple(tool["function"]["name"] for tool in body.get("tools") or []),
+            api_key=request.headers.get("authorization", "").removeprefix("Bearer ") or None,
+            headers={k.lower(): v for k, v in request.headers.items()},
         )
 
         reply = stubs.llm.resolve(chat_request)

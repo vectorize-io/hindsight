@@ -165,6 +165,11 @@ class LiteLLMRouterLLM(LiteLLMLLM):
             kwargs.setdefault("extra_headers", dict(self._default_headers))
         return kwargs
 
+    def supports_request_overrides(self) -> bool:
+        # Keys live per deployment in the Router config; one override cannot say
+        # which deployment it is for.
+        return False
+
     async def verify_connection(self) -> None:
         from hindsight_api.engine.llm_interface import OutputTooLongError
 

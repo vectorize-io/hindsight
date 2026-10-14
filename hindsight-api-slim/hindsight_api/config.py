@@ -2488,12 +2488,14 @@ class LLMMemberConfig:
     provider: str
     api_key: str | None
     model: str
-    base_url: str | None
-    reasoning_effort: str | None
-    extra_body: dict | None
-    default_headers: dict | None
-    bedrock_service_tier: str | None
-    gemini_service_tier: str | None
+    # Defaulted so an LLM request extension can build one from just the fields it sets;
+    # the env parser always passes every field.
+    base_url: str | None = None
+    reasoning_effort: str | None = None
+    extra_body: dict | None = None
+    default_headers: dict | None = None
+    bedrock_service_tier: str | None = None
+    gemini_service_tier: str | None = None
     cache_affinity: str | None = None
     codex_home: str | None = None
     vertexai_project_id: str | None = None

@@ -18,6 +18,7 @@ Hindsight that copies the extension in — see [Packaging](#packaging-an-extensi
 | --- | --- | --- |
 | [`supabase-tenant`](./supabase-tenant) | `TENANT` | Validates [Supabase](https://supabase.com) Auth JWTs and gives each user their own Postgres schema |
 | [`static-keys-tenant`](./static-keys-tenant) | `TENANT` | Authenticates static API keys from env vars and gives each user their own Postgres schema |
+| [`bank-llm-routing`](./bank-llm-routing) | `LLM_REQUEST` | Picks the LLM and key of each call by bank-id and operation pattern — per-customer gateway keys, or a model per bank or operation |
 
 Extensions maintained outside this repository can be listed here too —
 [open a feature request](https://github.com/vectorize-io/hindsight/issues/new?template=feature_request.yml)
@@ -50,6 +51,7 @@ variable in `module.path:ClassName` form:
 | MCP tools | `HINDSIGHT_API_MCP_EXTENSION` | `MCPExtension` |
 | Operation hooks | `HINDSIGHT_API_OPERATION_VALIDATOR_EXTENSION` | `OperationValidatorExtension` |
 | Memory defense | `HINDSIGHT_API_MEMORY_DEFENSE_EXTENSION` | `MemoryDefenseExtension` |
+| LLM per call | `HINDSIGHT_API_LLM_REQUEST_EXTENSION` | `LLMRequestExtension` |
 
 Every other environment variable sharing the slot's prefix becomes the extension's
 config, lowercased and with the prefix stripped. For the `TENANT` slot:

@@ -19,6 +19,7 @@ Safety / scope:
 - The serialized config omits message bodies (the ``messages``/``contents``/``input``
   keys are stripped); message previews are length-capped, so an enabled dump can't
   flood logs or spill large bodies.
+- Credential-bearing keys (``api_key``, ``extra_headers``, ``headers``) are redacted.
 - Never raises — diagnostics must not break the request path (falls back to ``repr``).
 """
 
@@ -34,6 +35,12 @@ logger = logging.getLogger(__name__)
 # Top-level request keys whose values are message bodies. Stripped from the config
 # view so the dump never spills large user content — previews are logged separately.
 _CONTENT_KEYS = ("messages", "contents", "input")
+
+# Request keys that carry credentials — the provider key (LiteLLM takes it per call)
+# or headers that may hold one (a gateway virtual key, a per-request Authorization).
+# Their values are replaced, never logged.
+_SECRET_KEYS = ("api_key", "extra_headers", "headers")
+_REDACTED = "[redacted]"
 
 _PREVIEW_CHARS = 1500
 _CONFIG_REPR_CAP = 8000
@@ -74,7 +81,7 @@ def _serialize_config(request: Any) -> str:
         if callable(dump):
             return dump(exclude_none=True)
         if isinstance(request, dict):
-            view = {k: v for k, v in request.items() if k not in _CONTENT_KEYS}
+            view = {k: (_REDACTED if k in _SECRET_KEYS else v) for k, v in request.items() if k not in _CONTENT_KEYS}
             return json.dumps(view, ensure_ascii=False, default=str)
         return repr(request)[:_CONFIG_REPR_CAP]
     except Exception:

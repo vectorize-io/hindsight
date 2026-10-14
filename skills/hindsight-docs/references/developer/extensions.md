@@ -85,6 +85,42 @@ HINDSIGHT_API_MCP_EXTENSION=mypackage.mcp:MyMCPExtension
 
 ---
 
+### LLMRequestExtension
+
+Decides, per LLM call, which LLM the call goes to and with which credentials. Use it to:
+
+- **Bill each customer on their own key.** Front your LLM spend with a gateway (LiteLLM proxy, Bifrost, OpenRouter, Portkey, ...) that gives each customer a virtual key, and send each bank's calls with its customer's key.
+- **Pick the model per bank or per operation.** A cheap model for one bank's retain and a strong one for its reflect, a different provider or cloud account per customer.
+
+It is asked once per LLM call with the tenant schema, the bank and the operation the call runs for — retain, reflect, consolidation, mental-model refresh — in the API process and in the worker alike. It answers with an `LLMRequestOverrides`, or `None` to use the server's own LLM. Raising refuses the call.
+
+```bash
+HINDSIGHT_API_LLM_REQUEST_EXTENSION=mypackage.llms:MyLLMs
+```
+
+An answer can carry:
+
+| Field | Effect |
+| --- | --- |
+| `llm` | Send the call to this LLM instead of the server's: provider, model, base URL, key and the other per-LLM settings (`LLMMemberConfig`, the shape of a multi-LLM chain member). Fields left unset inherit the server's global LLM defaults; timeouts and retries inherit the operation's. |
+| `api_key` | The key for the LLM the call goes to (the server's, or `llm`'s). |
+| `headers` | Extra request headers, e.g. a gateway's customer id. |
+
+Things to know:
+
+- **The choice is server-side.** Nothing comes from the API caller. If your extension builds an answer from something a caller can write (bank config, metadata), validate it — otherwise that is where an endpoint or a key would come from user input.
+- **Credentials without `llm` cost no new client.** The key and headers go on a per-call copy of the existing SDK client that shares its connection pool. Supported on OpenAI-compatible endpoints (`openai`, `groq`, `deepseek`, `openrouter`, `fireworks`, `lmstudio`, any gateway set as `base_url`, ...), `anthropic` and `litellm`. A call to any other provider (`gemini`, `vertexai`, `ollama`, `bedrock`, `litellmrouter`, the OAuth/CLI providers) that the answer gives a key or headers to is **refused**, never sent on the configured credentials. To change the key of one of those, answer with a whole `llm` instead.
+- **An `llm` answer is built once and reused**, up to 64 distinct LLMs per process (least recently used are dropped). An extension that answers with one LLM per user on a large user base should use a gateway and `api_key` instead.
+- **No batch retain.** `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` with this extension fails at startup: batch jobs are submitted on the server's LLM.
+- **LLM calls only.** Embeddings and reranking keep their own configuration.
+- **Startup check:** the connection check at boot uses the server's own LLM. If it has no usable key (for example, the gateway has none for the server), set `HINDSIGHT_API_SKIP_LLM_VERIFICATION=true`.
+
+Load the same extension in the API and in every worker: a worker without it runs consolidation and refreshes on the server's LLM.
+
+The [`bank-llm-routing`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-extensions/bank-llm-routing) community extension routes on bank-id and operation patterns from configuration, and is a working example of the interface.
+
+---
+
 ## Writing Custom Extensions
 
 ### Extension Basics
@@ -449,6 +485,36 @@ class MyMCPExtension(MCPExtension):
             # ... custom logic
             return f"Results for: {query}"
 ```
+
+### Example: Custom LLMRequestExtension
+
+```python
+from hindsight_api.config import LLMMemberConfig
+from hindsight_api.extensions import (
+    LLMRequestExtension,
+    LLMRequestOverrides,
+    LLMRequestRefused,
+    LLMRequestTarget,
+)
+
+
+class PerCustomerLLMs(LLMRequestExtension):
+    def __init__(self, config: dict[str, str]) -> None:
+        super().__init__(config)
+        self.keys = load_keys(config["keys_file"])  # your own store: {(schema, bank_id): key}
+
+    async def resolve(self, target: LLMRequestTarget) -> LLMRequestOverrides | None:
+        key = self.keys.get((target.schema, target.bank_id))
+        if key is None:
+            # Refuse rather than return None: None sends the call on the server's own LLM.
+            raise LLMRequestRefused(f"no LLM key for bank {target.bank_id!r}")
+        if target.operation == "reflect":
+            # A stronger model for reflect, on the customer's own account.
+            return LLMRequestOverrides(llm=LLMMemberConfig(provider="anthropic", model="claude-sonnet-5-5", api_key=key))
+        return LLMRequestOverrides(api_key=key, headers={"x-customer": target.bank_id})
+```
+
+`resolve` runs on every LLM call, so cache anything slow. Bank ids are unique per tenant schema only — a multi-tenant deployment must key on `target.schema` too, or one tenant can name a bank after another tenant's and be billed to its key. `LLMRequestOverrides` keeps the LLM and key out of its `repr`; keep them out of your own logs as well.
 
 ---
 

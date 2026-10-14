@@ -279,6 +279,18 @@ class LLMInterface(ABC):
         """Whether retries can acquire concurrency permits per upstream attempt."""
         return False
 
+    def supports_request_overrides(self) -> bool:
+        """Whether a call can be sent with the credentials an LLM request extension chose.
+
+        A provider that returns True must apply ``current_llm_request_overrides()``
+        (from ``hindsight_api.extensions.llm_request``) to every request it sends: the
+        ``api_key`` in place of its own, and the ``headers`` added. One that cannot —
+        OAuth/CLI-session providers, a router whose keys live per deployment — keeps
+        False, and an overridden call to it is refused instead of going out on the
+        server's credentials.
+        """
+        return False
+
     def supports_vision(self) -> bool | None:
         """Whether this provider can accept image parts in a user message.
 

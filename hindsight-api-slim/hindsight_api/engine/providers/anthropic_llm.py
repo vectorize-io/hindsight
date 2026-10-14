@@ -363,7 +363,8 @@ class AnthropicLLM(LLMInterface):
                     # on every byte, so an upstream trickling keep-alive whitespace never trips it
                     # and the call pins its worker slot forever (#4763).
                     response = await asyncio.wait_for(
-                        self._client.messages.create(**call_params), timeout=self.timeout or _DEFAULT_ANTHROPIC_TIMEOUT
+                        self._request_client().messages.create(**call_params),
+                        timeout=self.timeout or _DEFAULT_ANTHROPIC_TIMEOUT,
                     )
                 # Stash usage before parse/validate, which may raise locally
                 # even though the provider charged for these tokens (#2387).
@@ -650,7 +651,8 @@ class AnthropicLLM(LLMInterface):
                     # on every byte, so an upstream trickling keep-alive whitespace never trips it
                     # and the call pins its worker slot forever (#4763).
                     response = await asyncio.wait_for(
-                        self._client.messages.create(**call_params), timeout=self.timeout or _DEFAULT_ANTHROPIC_TIMEOUT
+                        self._request_client().messages.create(**call_params),
+                        timeout=self.timeout or _DEFAULT_ANTHROPIC_TIMEOUT,
                     )
                 stash_response_usage(_usage_from_anthropic_response(response))
 
@@ -957,6 +959,30 @@ class AnthropicLLM(LLMInterface):
         """Clean up resources (close Anthropic client connections)."""
         if hasattr(self, "_client") and self._client:
             await self._client.close()
+
+    def supports_request_overrides(self) -> bool:
+        return True
+
+    def _request_client(self) -> Any:
+        """The SDK client for one call, carrying the credentials an LLM request extension chose.
+
+        ``with_options`` returns a copy that shares this client's connection pool, so a
+        per-request key costs an object, not a connection. Applying the key here — not
+        as ``extra_headers`` in the call params — keeps it out of everything that logs
+        or dumps those params.
+        """
+        # Lazy: importing the extensions package here would be circular.
+        from hindsight_api.extensions.llm_request import current_llm_request_overrides
+
+        overrides = current_llm_request_overrides()
+        if overrides is None:
+            return self._client
+        options: dict[str, Any] = {}
+        if overrides.api_key is not None:
+            options["api_key"] = overrides.api_key
+        if overrides.headers:
+            options["default_headers"] = dict(overrides.headers)
+        return self._client.with_options(**options) if options else self._client
 
     def supports_attempt_scoped_concurrency(self) -> bool:
         return True

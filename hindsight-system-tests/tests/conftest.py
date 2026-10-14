@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from pathlib import Path
@@ -22,6 +23,7 @@ from hindsight_system_tests import (
     LLMStub,
     Stubs,
     start_hindsight_server,
+    start_hindsight_worker,
     start_stub_server,
     wait_until_settled,
 )
@@ -128,6 +130,81 @@ def retrying_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> It
     )
     yield server
     server.stop()
+
+
+#: The tenant schema of the LLM-keys deployment. Its own, so its worker claims only its
+#: own banks' work and the default server's worker never claims theirs.
+KEYED_SCHEMA = "systest_llmkeys"
+
+#: Bank-id prefix → the key the bank-llm-routing extension bills that bank's calls to.
+KEYED_BANKS = {f"{BANK_PREFIX}alice-": "alice-key", f"{BANK_PREFIX}bob-": "bob-key"}
+
+#: A bank prefix routed to a whole different LLM rather than a different key.
+CARL_PREFIX = f"{BANK_PREFIX}carl-"
+CARL_MODEL = "carl-model"
+CARL_RETAIN_MODEL = "carl-retain-model"
+
+BANK_LLM_ROUTING_EXTENSION_DIR = Path(__file__).resolve().parents[2] / "hindsight-extensions" / "bank-llm-routing"
+
+
+@pytest.fixture(scope="session")
+def keyed_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
+    """A split deployment — HTTP server plus a standalone worker — that sends each bank's
+    LLM calls with its own key, or to its own LLM, through the ``bank-llm-routing``
+    community extension.
+
+    Split on purpose: the extension must hold in the API process (sync retain, reflect)
+    and in the worker process (async retain, consolidation, mental-model refresh), and
+    with the in-process worker on, a story could not tell which one ran a step.
+    """
+    routes = [
+        {
+            "bank": f"{prefix}*",
+            "schema": KEYED_SCHEMA,
+            "api_key": key,
+            "headers": {"x-gateway-customer": key.removesuffix("-key")},
+        }
+        for prefix, key in KEYED_BANKS.items()
+    ]
+    # Carl's banks run on an LLM of their own — model, endpoint and key — and retain on a
+    # different one again, so a story can tell the operations apart by the model they reached.
+    carl_llm = {"provider": "openai", "base_url": f"{stub_server.url}/v1", "api_key": "carl-key"}
+    routes += [
+        {
+            "bank": f"{CARL_PREFIX}*",
+            "schema": KEYED_SCHEMA,
+            "operation": "retain",
+            "llm": {**carl_llm, "model": CARL_RETAIN_MODEL},
+        },
+        {"bank": f"{CARL_PREFIX}*", "schema": KEYED_SCHEMA, "llm": {**carl_llm, "model": CARL_MODEL}},
+    ]
+    env = {
+        "HINDSIGHT_API_DATABASE_SCHEMA": KEYED_SCHEMA,
+        "HINDSIGHT_API_LLM_REQUEST_EXTENSION": "hindsight_ext_bank_llm_routing:BankLLMRoutingExtension",
+        "HINDSIGHT_API_LLM_REQUEST_ROUTES": json.dumps(routes),
+        "HINDSIGHT_API_LLM_REQUEST_UNMATCHED": "deny",
+        "PYTHONPATH": str(BANK_LLM_ROUTING_EXTENSION_DIR),
+    }
+    server = start_hindsight_server(
+        stub_url=stub_server.url,
+        log_path=tmp_path_factory.mktemp("keyed-server") / "server.log",
+        extra_env={**env, "HINDSIGHT_API_WORKER_ENABLED": "false"},
+    )
+    worker = start_hindsight_worker(
+        stub_url=stub_server.url,
+        log_path=tmp_path_factory.mktemp("keyed-worker") / "worker.log",
+        extra_env=env,
+    )
+    yield server
+    worker.stop()
+    server.stop()
+
+
+@pytest.fixture
+async def keyed_client(keyed_server) -> AsyncIterator[Hindsight]:
+    client = Hindsight(base_url=keyed_server.url)
+    yield client
+    await client.aclose()
 
 
 @pytest.fixture

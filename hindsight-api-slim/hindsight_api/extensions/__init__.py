@@ -25,6 +25,12 @@ from hindsight_api.extensions.bank_tables import BankScopedTable
 from hindsight_api.extensions.base import Extension
 from hindsight_api.extensions.context import DefaultExtensionContext, ExtensionContext
 from hindsight_api.extensions.http import HttpExtension
+from hindsight_api.extensions.llm_request import (
+    LLMRequestExtension,
+    LLMRequestOverrides,
+    LLMRequestRefused,
+    LLMRequestTarget,
+)
 from hindsight_api.extensions.loader import load_extension
 from hindsight_api.extensions.mcp import MCPExtension
 from hindsight_api.extensions.memory_defense import (
@@ -96,6 +102,11 @@ __all__ = [
     "HttpExtension",
     # MCP Extension
     "MCPExtension",
+    # LLM Request Extension
+    "LLMRequestExtension",
+    "LLMRequestOverrides",
+    "LLMRequestRefused",
+    "LLMRequestTarget",
     # Operation Validator - Core
     "DeferOperation",
     "OperationValidationError",

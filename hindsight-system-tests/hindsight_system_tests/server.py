@@ -176,7 +176,28 @@ def start_hindsight_server(
     *, stub_url: str, log_path: Path, extra_env: dict[str, str] | None = None
 ) -> HindsightServer:
     port = free_port()
+    env = _server_env(stub_url, extra_env)
+    env.update({"HINDSIGHT_API_HOST": "127.0.0.1", "HINDSIGHT_API_PORT": str(port)})
+    return _start(["hindsight-api"], env=env, url=f"http://127.0.0.1:{port}", log_path=log_path)
 
+
+def start_hindsight_worker(
+    *, stub_url: str, log_path: Path, extra_env: dict[str, str] | None = None
+) -> HindsightServer:
+    """A standalone ``hindsight-worker`` process, as a split deployment runs one.
+
+    It claims queued work from every schema its tenant extension lists — with the
+    default extension, ``HINDSIGHT_API_DATABASE_SCHEMA`` — so a story pairing it
+    with an HTTP-only server gives both its own schema, or this worker would claim
+    every other server's work too.
+    """
+    port = free_port()
+    env = _server_env(stub_url, extra_env)
+    command = ["hindsight-worker", "--http-host", "127.0.0.1", "--http-port", str(port)]
+    return _start(command, env=env, url=f"http://127.0.0.1:{port}", log_path=log_path)
+
+
+def _server_env(stub_url: str, extra_env: dict[str, str] | None) -> dict[str, str]:
     env = os.environ.copy()
     # The repo .env is for the developer's own server; a system test must depend
     # only on what it sets here, or it passes on one machine and fails on another.
@@ -195,8 +216,6 @@ def start_hindsight_server(
     env.update(
         {
             "HINDSIGHT_API_DATABASE_URL": f"pg0://{PG0_INSTANCE}:{PG0_PORT}",
-            "HINDSIGHT_API_HOST": "127.0.0.1",
-            "HINDSIGHT_API_PORT": str(port),
             "HINDSIGHT_API_LOG_LEVEL": "info",
             # Everything the server does by default stays on, background work
             # included. A retain enqueues observation extraction and can trigger
@@ -208,7 +227,10 @@ def start_hindsight_server(
             # catch are mostly in that half.
         }
     )
+    return env
 
+
+def _start(command: list[str], *, env: dict[str, str], url: str, log_path: Path) -> HindsightServer:
     # `hindsight-api` calls load_dotenv(find_dotenv(usecwd=True), override=True) at
     # startup, and a discovered .env deliberately wins over the ambient environment
     # (see issue #2961). Started from anywhere inside the repo it would therefore
@@ -221,14 +243,13 @@ def start_hindsight_server(
 
     log_file = log_path.open("w")
     process = subprocess.Popen(
-        ["uv", "run", "--project", str(API_DIR), "hindsight-api"],
+        ["uv", "run", "--project", str(API_DIR), *command],
         cwd=run_dir,
         env=env,
         stdout=log_file,
         stderr=subprocess.STDOUT,
     )
 
-    url = f"http://127.0.0.1:{port}"
     server = HindsightServer(url=url, log_path=log_path, _process=process)
     _wait_until_healthy(server)
     return server
@@ -238,7 +259,7 @@ def _wait_until_healthy(server: HindsightServer) -> None:
     deadline = time.monotonic() + SERVER_STARTUP_TIMEOUT
     while time.monotonic() < deadline:
         if server._process.poll() is not None:
-            raise RuntimeError(f"hindsight-api exited during startup:\n{server.logs()}")
+            raise RuntimeError(f"{server._process.args} exited during startup:\n{server.logs()}")
         with contextlib.suppress(httpx.HTTPError):
             response = httpx.get(f"{server.url}/health", timeout=5)
             if response.status_code == 200:
@@ -246,4 +267,4 @@ def _wait_until_healthy(server: HindsightServer) -> None:
         time.sleep(0.5)
 
     server.stop()
-    raise RuntimeError(f"hindsight-api was not healthy within {SERVER_STARTUP_TIMEOUT}s:\n{server.logs()}")
+    raise RuntimeError(f"{server._process.args} was not healthy within {SERVER_STARTUP_TIMEOUT}s:\n{server.logs()}")

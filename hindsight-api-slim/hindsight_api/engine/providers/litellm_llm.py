@@ -229,6 +229,18 @@ class LiteLLMLLM(LLMInterface):
         if self._default_headers:
             kwargs.setdefault("extra_headers", dict(self._default_headers))
 
+        # Credentials an LLM request extension chose for this call (see
+        # supports_request_overrides). Lazy: importing the extensions package here
+        # would be circular.
+        from hindsight_api.extensions.llm_request import current_llm_request_overrides
+
+        overrides = current_llm_request_overrides()
+        if overrides is not None:
+            if overrides.api_key is not None:
+                kwargs["api_key"] = overrides.api_key
+            if overrides.headers:
+                kwargs["extra_headers"] = {**kwargs.get("extra_headers", {}), **overrides.headers}
+
         # Bedrock service tier: flex (50% cheaper), priority, or reserved
         if self.model.startswith("bedrock/") and self.bedrock_service_tier is not None:
             kwargs["service_tier"] = self.bedrock_service_tier
@@ -680,6 +692,10 @@ class LiteLLMLLM(LLMInterface):
     async def cleanup(self) -> None:
         """Clean up resources."""
         pass
+
+    def supports_request_overrides(self) -> bool:
+        # Bedrock authenticates with AWS credentials, not a key a gateway hands out.
+        return self.provider != "bedrock"
 
     def supports_attempt_scoped_concurrency(self) -> bool:
         return True

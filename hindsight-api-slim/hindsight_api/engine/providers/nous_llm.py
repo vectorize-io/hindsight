@@ -83,6 +83,10 @@ class NousLLM(OpenAICompatibleLLM):
             self.base_url,
         )
 
+    def supports_request_overrides(self) -> bool:
+        # The key is a Nous OAuth token this provider refreshes itself.
+        return False
+
     # ------------------------------------------------------------------
     # Token lifecycle
     # ------------------------------------------------------------------

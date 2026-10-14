@@ -39,6 +39,11 @@ class ChatRequest:
     messages: list[dict[str, Any]]
     tools: tuple[str, ...] = ()
     """Names of the tools offered on this call, when it is a tool-using turn."""
+    api_key: str | None = None
+    """The bearer key the call was sent with — for the stories about whose account a
+    call is billed to."""
+    headers: dict[str, str] = field(default_factory=dict, compare=False)
+    """The request headers, lowercased."""
 
     @property
     def user_text(self) -> str:
