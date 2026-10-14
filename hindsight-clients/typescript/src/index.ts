@@ -1987,9 +1987,14 @@ export class HindsightClient {
           `Export operation ${operationId} ${status.status}: ${status.error_message ?? ""}`
         );
       }
-      await new Promise((resolve) =>
-        setTimeout(resolve, Math.min(pollInterval, Math.max(deadline - Date.now(), 0)))
-      );
+      // Sleeping out a budget that can't fit another poll just burns the
+      // remainder, and on a coarse clock it can leave enough slack for a second
+      // poll the caller didn't ask for (the Python wrapper hit exactly that on
+      // Windows, whose timers wake up to ~16ms early).
+      if (deadline - Date.now() <= pollInterval) {
+        throw timedOut();
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
     }
 
     const downloadUrl = (resultMetadata as { download_url?: string } | null | undefined)
