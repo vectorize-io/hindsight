@@ -2584,7 +2584,12 @@ class Hindsight:
                 break
             if status.status in ("failed", "cancelled"):
                 raise RuntimeError(f"Export operation {operation_id} {status.status}: {status.error_message}")
-            await asyncio.sleep(min(poll_interval, max(deadline - loop.time(), 0)))
+            # Sleeping out a budget that can't fit another poll just burns the
+            # remainder, and on a coarse clock (Windows wakes up to ~16ms early)
+            # it can leave enough slack for a second poll the caller didn't ask for.
+            if deadline - loop.time() <= poll_interval:
+                raise TimeoutError(timeout_message)
+            await asyncio.sleep(poll_interval)
 
         meta = status.result_metadata or {}
         download_url = meta.get("download_url")
