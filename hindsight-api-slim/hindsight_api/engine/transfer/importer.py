@@ -394,6 +394,8 @@ class BankImportResult:
     #: not reproduce are dropped rather than restored against a stale id.
     maintenance_queue_rows_imported: int = 0
     invalidated_memories_imported: int = 0
+    #: Per-document outcomes, for the engine's post-retain hook (as on ImportResult).
+    imported_documents: list[ImportedDocument] = field(default_factory=list)
 
 
 @dataclass
@@ -1132,6 +1134,7 @@ async def import_bank(
         result.documents_imported = doc_result.documents_imported
         result.facts_imported = doc_result.facts_imported
         result.observations_imported = doc_result.observations_imported
+        result.imported_documents = doc_result.imported_documents
         unit_id_map = doc_result.remapped_unit_ids
         document_id_map = doc_result.remapped_document_ids
 

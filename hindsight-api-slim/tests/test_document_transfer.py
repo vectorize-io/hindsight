@@ -43,7 +43,9 @@ from hindsight_api.engine.transfer.schema import (
 from hindsight_api.extensions import (
     BankWriteContext,
     BankWriteOperation,
+    ImportContext,
     OperationValidationError,
+    RetainSource,
     ValidationResult,
 )
 from hindsight_api.webhooks.manager import WebhookManager
@@ -1561,12 +1563,169 @@ async def test_import_fires_retain_complete_hook(memory, request_context):
             assert res.llm_output_tokens == 0
             assert res.llm_total_tokens == 0
             assert res.processed_content_tokens == 0
+            # ...which a re-retain the chunk dedup skipped also reports, so the
+            # result says it is an import, and carries the document's text.
+            assert res.source == RetainSource.IMPORT
+            assert res.contents[0]["content"] in ("Alice works at Google.", "Bob works at Microsoft.")
             # unit_ids are reported per content item, with the created facts.
             assert res.unit_ids and res.unit_ids[0]
     finally:
         memory._operation_validator = original_validator
         await memory.delete_bank(src, request_context=request_context)
         await memory.delete_bank(dst, request_context=request_context)
+
+
+class _ImportGateValidator(RetainResultCapture):
+    """Records every import gate call and refuses imports when told to."""
+
+    def __init__(self, *, refuse: bool = False) -> None:
+        super().__init__()
+        self.refuse = refuse
+        self.imports: list[ImportContext] = []
+
+    async def validate_import(self, ctx: ImportContext) -> ValidationResult:
+        self.imports.append(ctx)
+        if self.refuse:
+            return ValidationResult.reject("import not permitted", status_code=402)
+        return ValidationResult.accept()
+
+
+async def _export_bank_archive(memory, bank_id) -> bytes:
+    from hindsight_api.engine.transfer import export_bank
+
+    backend = await memory._get_backend()
+    async with acquire_with_retry(backend) as conn:
+        return await export_bank(conn, bank_id)
+
+
+@pytest.mark.asyncio
+async def test_retain_reports_retain_source(memory, request_context):
+    """An ordinary retain is reported as RETAIN, so only imports are marked IMPORT."""
+    bank = _unique_bank("transfer_source_retain")
+    capture = RetainResultCapture()
+    original_validator = memory._operation_validator
+    memory._operation_validator = capture
+    try:
+        await _retain(memory, bank, "Alice works at Google.", request_context, "doc-1")
+        assert [r.source for r in capture.results] == [RetainSource.RETAIN]
+    finally:
+        memory._operation_validator = original_validator
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_bank_restore_reports_each_document_as_imported(memory, request_context):
+    """A whole-bank restore brings documents in just as a document import does, so it
+    reports them the same way: once each, as IMPORT, with zero tokens."""
+    source = _unique_bank("restore_hook_src")
+    target = _unique_bank("restore_hook_dst")
+    await _retain(memory, source, "Alice works at Google.", request_context, "doc-1")
+    await _retain(memory, source, "Bob works at Microsoft.", request_context, "doc-2")
+    archive = await _export_bank_archive(memory, source)
+
+    gate = _ImportGateValidator()
+    original_validator = memory._operation_validator
+    memory._operation_validator = gate
+    try:
+        submission = await memory.submit_bank_import_async(source, archive, request_context, target_bank_id=target)
+        status = await memory.get_operation_status(source, submission["operation_id"], request_context=request_context)
+        assert status["status"] == "completed", status
+
+        assert [(c.bank_id, sorted(d["document_id"] for d in c.contents)) for c in gate.imports] == [
+            (target, ["doc-1", "doc-2"])
+        ]
+        assert sorted(r.document_id for r in gate.results) == ["doc-1", "doc-2"]
+        for res in gate.results:
+            assert res.bank_id == target
+            assert res.source == RetainSource.IMPORT
+            assert res.llm_total_tokens == 0
+            assert res.processed_content_tokens == 0
+            assert res.unit_ids and res.unit_ids[0]
+    finally:
+        memory._operation_validator = original_validator
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_clone_reports_nothing_as_imported(memory, request_context):
+    """A clone copies documents the tenant already has: it is neither gated nor reported
+    as an import, though it runs the same restore underneath."""
+    source = _unique_bank("clone_hook_src")
+    target = _unique_bank("clone_hook_dst")
+    await _retain(memory, source, "Alice works at Google.", request_context, "doc-1")
+
+    gate = _ImportGateValidator()
+    original_validator = memory._operation_validator
+    memory._operation_validator = gate
+    try:
+        submission = await memory.submit_bank_clone_async(source, target, request_context)
+        status = await memory.get_operation_status(source, submission["operation_id"], request_context=request_context)
+        assert status["status"] == "completed", status
+        clone_facts = await memory.list_memory_units(target, limit=100, request_context=request_context)
+        assert clone_facts["total"] > 0
+
+        assert gate.imports == []
+        assert gate.results == []
+    finally:
+        memory._operation_validator = original_validator
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_import_gate_sees_the_archive_and_can_refuse_a_document_import(memory, request_context):
+    """The gate runs at submission with the archive's documents; a refusal reaches the
+    caller and nothing is queued or written."""
+    src = _unique_bank("import_gate_src")
+    dst = _unique_bank("import_gate_dst")
+    await _retain(memory, src, "Alice works at Google.", request_context, "doc-1")
+    archive = await memory.export_documents_async(src, request_context)
+
+    gate = _ImportGateValidator(refuse=True)
+    original_validator = memory._operation_validator
+    memory._operation_validator = gate
+    try:
+        with pytest.raises(OperationValidationError) as exc:
+            await memory.import_documents_async(dst, archive, request_context)
+        assert exc.value.status_code == 402
+        assert [(c.bank_id, c.contents) for c in gate.imports] == [
+            (dst, [{"document_id": "doc-1", "content": "Alice works at Google."}])
+        ]
+        assert gate.results == []
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            exists = await conn.fetchval(f"SELECT 1 FROM {fq_store_table('banks')} WHERE bank_id = $1", dst)
+        assert exists is None, "a refused import must not create the bank"
+    finally:
+        memory._operation_validator = original_validator
+        await memory.delete_bank(src, request_context=request_context)
+        await memory.delete_bank(dst, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_import_gate_can_refuse_a_bank_restore(memory, request_context):
+    """A refused restore never creates the target bank."""
+    source = _unique_bank("restore_gate_src")
+    target = _unique_bank("restore_gate_dst")
+    await _retain(memory, source, "Alice works at Google.", request_context, "doc-1")
+    archive = await _export_bank_archive(memory, source)
+
+    gate = _ImportGateValidator(refuse=True)
+    original_validator = memory._operation_validator
+    memory._operation_validator = gate
+    try:
+        with pytest.raises(OperationValidationError):
+            await memory.submit_bank_import_async(source, archive, request_context, target_bank_id=target)
+        assert [c.bank_id for c in gate.imports] == [target]
+        assert gate.results == []
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            exists = await conn.fetchval(f"SELECT 1 FROM {fq_store_table('banks')} WHERE bank_id = $1", target)
+        assert exists is None
+    finally:
+        memory._operation_validator = original_validator
+        await memory.delete_bank(source, request_context=request_context)
 
 
 class _ImportRejectingValidator(RetainResultCapture):

@@ -621,7 +621,8 @@ if TYPE_CHECKING:
     from .retain.attachment_content import AttachmentOccurrence, LoadedAttachment, RetainAttachment
     from .retain.attachment_store import StoredAttachment
     from .transfer import BankImportResult, ImportResult, TransferScope
-    from .transfer.importer import OnConflict
+    from .transfer.importer import ImportedDocument, OnConflict
+    from .transfer.schema import TransferDocument
     from .vector_index_health import CoverageTrigger
 
 
@@ -3820,6 +3821,10 @@ class MemoryEngine(MemoryEngineInterface):
             ),
             operation_id=operation_id,
         )
+        # Restored documents are reported like imported ones. Only here, not in
+        # import_bank_async: a clone reuses that restore, but copies documents the
+        # tenant already has rather than bringing in new ones.
+        await self._report_imported_documents(result.bank_id, result.imported_documents, context)
 
         if operation_id:
             counts = {
@@ -7844,6 +7849,10 @@ class MemoryEngine(MemoryEngineInterface):
                     CreateBankContext(bank_id=target, request_context=request_context)
                 )
             )
+        if scope.data:
+            from .transfer.importer import parse_archive
+
+            await self._validate_import(target, parse_archive(archive_bytes).documents, request_context)
 
         storage_key = f"banks/{bank_id}/imports/{uuid.uuid4()}/transfer.zip"
         await self._file_storage.store(
@@ -8654,7 +8663,7 @@ class MemoryEngine(MemoryEngineInterface):
             raise ValueError(f"Invalid on_conflict '{on_conflict}'; expected skip|replace|new-id")
         # Validate synchronously so a malformed/unsupported archive surfaces as an
         # immediate error to the caller rather than a background task failure.
-        parse_archive(archive_bytes)
+        parsed = parse_archive(archive_bytes)
 
         await self._authenticate_tenant(request_context)
         # Gate every import, not just one that creates the bank: _ensure_bank_exists only
@@ -8667,6 +8676,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.IMPORT_DOCUMENTS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        await self._validate_import(bank_id, parsed.documents, request_context)
         await self._refuse_bank_wide_if_scoped(bank_id, request_context, "import documents")
         await self._get_backend()
         # Ensure the bank (and its per-bank vector indexes) exist before inserts.
@@ -8694,6 +8704,59 @@ class MemoryEngine(MemoryEngineInterface):
             operation_type="import_documents",
             task_type="import_documents",
             task_payload=task_payload,
+        )
+
+    async def _report_imported_documents(
+        self,
+        bank_id: str,
+        documents: "Sequence[ImportedDocument]",
+        request_context: "RequestContext",
+    ) -> None:
+        """Fire the post-retain hook once per imported document, as retain does.
+
+        Import runs no LLM extraction, so the token counts are zero; ``source=IMPORT``
+        tells an extension these are new documents rather than a re-retain the chunk
+        dedup made free (which also reports ``processed_content_tokens=0``).
+        """
+        if not self._operation_validator:
+            return
+        from hindsight_api.extensions import RetainResult, RetainSource
+
+        for doc in documents:
+            try:
+                await self._operation_validator.on_retain_complete(
+                    RetainResult(
+                        bank_id=bank_id,
+                        contents=[{"content": doc.content}],
+                        request_context=request_context,
+                        document_id=doc.document_id,
+                        fact_type_override=None,
+                        unit_ids=[doc.unit_ids],
+                        success=True,
+                        error=None,
+                        llm_input_tokens=0,
+                        llm_output_tokens=0,
+                        llm_total_tokens=0,
+                        processed_content_tokens=0,
+                        source=RetainSource.IMPORT,
+                    )
+                )
+            except Exception as e:
+                logger.warning(f"Post-import hook error (non-fatal): {e}")
+
+    async def _validate_import(
+        self, bank_id: str, documents: "Sequence[TransferDocument]", request_context: "RequestContext"
+    ) -> None:
+        """Run the validator's import gate over the archive's documents."""
+        if not self._operation_validator:
+            return
+        from hindsight_api.extensions import ImportContext
+
+        contents = [{"document_id": document.id, "content": document.original_text or ""} for document in documents]
+        await self._validate_operation(
+            self._operation_validator.validate_import(
+                ImportContext(bank_id=bank_id, request_context=request_context, contents=contents)
+            )
         )
 
     async def _run_import_documents(
@@ -8739,34 +8802,7 @@ class MemoryEngine(MemoryEngineInterface):
             outbox_callback_factory=outbox_factory,
         )
 
-        # Fire the post-retain extension hook (usage tracking / metrics /
-        # notifications) once per imported document, mirroring retain. Import runs
-        # no LLM extraction, so token counts are zero and processed_content_tokens
-        # is 0 ("nothing went through the extraction pipeline") — extensions that
-        # meter LLM/extraction cost therefore correctly bill an import as free.
-        if self._operation_validator:
-            from hindsight_api.extensions import RetainResult
-
-            for doc in result.imported_documents:
-                try:
-                    await self._operation_validator.on_retain_complete(
-                        RetainResult(
-                            bank_id=bank_id,
-                            contents=[{"content": doc.content}],
-                            request_context=request_context,
-                            document_id=doc.document_id,
-                            fact_type_override=None,
-                            unit_ids=[doc.unit_ids],
-                            success=True,
-                            error=None,
-                            llm_input_tokens=0,
-                            llm_output_tokens=0,
-                            llm_total_tokens=0,
-                            processed_content_tokens=0,
-                        )
-                    )
-                except Exception as e:
-                    logger.warning(f"Post-import hook error (non-fatal): {e}")
+        await self._report_imported_documents(bank_id, result.imported_documents, request_context)
 
         # Same async side effects every fact insert triggers (retain or import).
         await self._submit_post_insert_maintenance(bank_id, request_context, config=resolved_config)
