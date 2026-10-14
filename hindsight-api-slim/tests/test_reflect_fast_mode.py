@@ -14,6 +14,7 @@ import pytest
 
 from hindsight_api.engine.reflect.agent import run_reflect_agent
 from hindsight_api.engine.response_models import LLMCallResult, LLMToolCall, LLMToolCallResult, TokenUsage
+from tests.reflect_script import closing_echo
 
 
 class _ScriptedProvider:
@@ -25,13 +26,14 @@ class _ScriptedProvider:
 
     def __init__(self, scripted: list[LLMToolCallResult], search_query: str | None = None):
         self._scripted = scripted
+        self._reply = closing_echo(scripted)
         self.tool_choices: list[str] = []
         self.search_query = search_query
         self.distill_prompts: list[str] = []
 
     async def call_with_tools(self, *, tool_choice, **_):
         self.tool_choices.append(tool_choice.function_name or tool_choice.mode.value)
-        return self._scripted.pop(0)
+        return self._reply(tool_choice=tool_choice)
 
     async def call(self, *, messages, **_):
         self.distill_prompts.append(messages[-1]["content"])
@@ -133,7 +135,7 @@ async def test_without_a_decision_model_the_agent_decides_after_the_parallel_ret
     result = await _reflect(provider, functions, None)
 
     assert result.text == "A"
-    assert provider.tool_choices == ["auto"], "no forced turns: the retrieval already ran"
+    assert provider.tool_choices == ["auto", "done"], "no forced turns, then the closing step writes the answer"
     assert functions["recall_fn"].await_count == 1
 
 
@@ -144,7 +146,7 @@ async def test_a_failing_decision_model_falls_back_to_the_agent():
     result = await _reflect(provider, _functions(), AsyncMock(side_effect=RuntimeError("HTTP 403")))
 
     assert result.text == "A"
-    assert provider.tool_choices == ["auto"]
+    assert provider.tool_choices == ["auto", "done"]
 
 
 @pytest.mark.asyncio
@@ -280,7 +282,7 @@ async def test_without_a_decision_model_fresh_pages_hide_nothing():
 
     await _reflect(provider, _fresh_page_functions(), None)
 
-    assert provider.tool_choices == ["auto"]
+    assert provider.tool_choices == ["auto", "done"]
 
 
 @pytest.mark.asyncio

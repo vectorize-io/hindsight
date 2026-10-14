@@ -1292,11 +1292,6 @@ async def _run_reflect_agent_inner(
     # tool_use blocks with one id back into the request. ``_unique_tool_call_ids``
     # reads and extends this set.
     emitted_wire_ids: set[str] = set()
-    # How many times the model has handed back a ``document`` whose shape the
-    # schema refuses. Bounded: the rejection is fed back so the model can fix the
-    # shape, but a model that cannot will otherwise re-spend the whole iteration
-    # budget on the same malformed payload.
-    document_rejections = 0
     # Set once earlier tool results were blanked in ``messages`` to fit a forced
     # step. The model then saw a shortened conversation, so the answer must come
     # from the full ``context_history`` via the standalone synthesis prompt.
@@ -1595,52 +1590,12 @@ async def _run_reflect_agent_inner(
                 )
                 continue
 
-            # Process done tool - wrap with tool call span
-            from hindsight_api.tracing import get_tracer
-
-            tracer = get_tracer()
-            span_name = "hindsight.reflect_tool_call"
-            with tracer.start_as_current_span(span_name) as span:
-                span.set_attribute("hindsight.scope", "reflect_tool_call")
-                span.set_attribute("hindsight.operation", "reflect_tool_call")
-                try:
-                    return await _process_done_tool(
-                        done_call.model_copy(
-                            update={"arguments": presenter.resolve(_done_arguments(done_call, result.finish_reason))}
-                        ),
-                        available_memory_ids,
-                        available_mental_model_ids,
-                        available_observation_ids,
-                        iteration + 1,
-                        total_tools_called,
-                        tool_trace,
-                        _get_llm_trace(),
-                        _get_usage(),
-                        _log_completion,
-                        reflect_id,
-                        directives_applied=directives_applied,
-                        llm_config=llm_config,
-                        response_schema=response_schema,
-                        max_tokens=max_tokens,
-                        presenter=presenter,
-                        finish_reason=result.finish_reason,
-                    )
-                except DocumentSectionsInvalidError as exc:
-                    # The document did not match the declared shape. Hand the
-                    # per-field errors back and let the model re-emit ``done``,
-                    # the same way the evidence guardrail above re-asks: the one
-                    # thing we must not do is invent a reading of it, which is
-                    # how a repr of a block object reached stored content
-                    # (#4910). Out of retries, the run fails loudly rather than
-                    # storing a document nobody can trust.
-                    document_rejections += 1
-                    logger.warning(
-                        f"[REFLECT {reflect_id}] done document rejected (attempt {document_rejections}): {exc}"
-                    )
-                    if document_rejections > _MAX_DOCUMENT_REJECTIONS or iteration >= max_iterations - 1:
-                        raise
-                    messages.extend(_document_rejection_messages(done_call, exc))
-                    continue
+            # The model is ready to answer. The answer itself is always written by the closing
+            # step, never taken from this turn's ``done``: the closing request restates the question
+            # and asks for every fact and exact value, and the done a free turn emits sees neither.
+            # Taking it as-is lost a rule's return value on sde-bench seqledger-history ("returns
+            # False" was in the evidence three times), and the agent needed a correction for it.
+            return await (_forced_final_synthesis if compacted else _finish)(iteration + 1)
 
         # Fast mode after a "not enough" verdict: the LLM wrote its next search, and that query
         # runs as another fast round (every layer at once, pruned, judged again) rather than as
