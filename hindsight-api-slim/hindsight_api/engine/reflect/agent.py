@@ -2061,10 +2061,13 @@ async def _process_done_tool(
     # #899's MCP coercion).
     document: StructuredDocument | None = None
     raw_document = args.get("document")
-    # Twice: a double-encoded document is still a string after one decode (#5202).
-    for _ in range(2):
-        if isinstance(raw_document, str):
-            raw_document = _decode_json_argument(raw_document, finish_reason, "document")
+    if isinstance(raw_document, str):
+        raw_document = _decode_json_argument(raw_document, finish_reason, "document")
+    # A double-encoded document is still JSON text after one decode (#5202). Only
+    # text that opens like JSON is decoded again: plain prose would otherwise fail
+    # as "not valid JSON, check the closing brackets", which is not what is wrong.
+    if isinstance(raw_document, str) and raw_document.lstrip()[:1] in ("{", "["):
+        raw_document = _decode_json_argument(raw_document, finish_reason, "document")
     if isinstance(raw_document, list):
         # A bare section array is the document with its wrapper dropped -- the
         # same flattening document_from_sections forgives one level down.

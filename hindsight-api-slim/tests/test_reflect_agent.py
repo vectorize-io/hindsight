@@ -2479,7 +2479,7 @@ class TestDoneToolStringDocument:
 
         assert "Quarterly planning is owned by the platform team." in result.text
         rejection = mock_llm.call_with_tools.await_args_list[2].kwargs["messages"][-1]
-        assert "document: " in rejection["content"]
+        assert "expected an object with a sections array, got" in rejection["content"]
 
     @pytest.mark.asyncio
     async def test_unparseable_string_document_that_is_never_fixed_raises(self, mock_llm, mock_functions):
