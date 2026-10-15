@@ -823,7 +823,7 @@
   "documentsView": {
     "loadingDocuments": "문서 불러오는 중...",
     "totalDocuments": "전체 {total}개 문서",
-    "searchPlaceholder": "문서 ID로 필터링…",
+    "searchPlaceholder": "문서 ID 또는 내용으로 검색…",
     "clearSearch": "검색 지우기",
     "refreshDocuments": "문서 새로고침",
     "noDocumentsMatchSearch": "검색과 일치하는 문서 없음",
@@ -839,6 +839,7 @@
     "colUpdated": "수정일",
     "seeAllInDocument": "문서를 열면 모든 태그와 메타데이터를 볼 수 있습니다",
     "colSize": "크기",
+    "matchedInText": "본문에서 일치",
     "colMemoryUnits": "메모리 유닛",
     "showingRange": "{total}개 중 {from}-{to} 표시",
     "previousPage": "이전",

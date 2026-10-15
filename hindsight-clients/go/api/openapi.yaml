@@ -2527,8 +2527,10 @@ paths:
           title: Bank Id
           type: string
         style: simple
-      - description: Case-insensitive substring filter on document ID (e.g. 'report'
-          matches 'report-2024')
+      - description: "Case-insensitive substring filter on document ID or document\
+          \ text (e.g. 'report' matches 'report-2024' or any document containing 'report').\
+          \ Unindexed scan of the bank's documents: meant for browsing and inspection,\
+          \ not for high-volume or latency-sensitive workloads — use recall for that."
         explode: true
         in: query
         name: q
@@ -7858,6 +7860,16 @@ components:
           default: []
           description: Tags associated with this document
           items:
+            type: string
+          type: array
+        matched_fields:
+          default: []
+          description: "Which fields matched the `q` search: 'id', 'original_text',\
+            \ or both. Empty when no `q` is given."
+          items:
+            enum:
+            - id
+            - original_text
             type: string
           type: array
       required:

@@ -200,3 +200,62 @@ async def test_list_documents_orders_by_last_write(memory, request_context):
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_list_documents_search_query_matches_text(memory, request_context):
+    """q matches document text, not only the document ID (#5214)."""
+    bank_id = f"test_list_docs_q_text_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        await _retain_doc(memory, bank_id, "doc-a", None, request_context)
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "xyzabc123 !@# Onboarding-Zebra-Token $$$"}],
+            document_id="doc-b",
+            request_context=request_context,
+        )
+
+        result = await memory.list_documents(
+            bank_id=bank_id, search_query="onboarding-zebra", request_context=request_context
+        )
+        assert {d["id"] for d in result["items"]} == {"doc-b"}
+        assert result["total"] == 1
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_list_documents_reports_matched_fields(memory, request_context):
+    """Each row says which fields matched q: id, original_text, or both."""
+    bank_id = f"test_list_docs_matched_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+
+        async def retain(document_id: str, content: str) -> None:
+            await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=[{"content": f"xyzabc123 !@# {content} $$$"}],
+                document_id=document_id,
+                request_context=request_context,
+            )
+
+        await retain("kiwi-both", "kiwi-in-text")
+        await retain("kiwi-id-only", "nothing-here")
+        await retain("plain", "kiwi-in-text")
+        await retain("unrelated", "nothing-here")
+
+        result = await memory.list_documents(bank_id=bank_id, search_query="KIWI", request_context=request_context)
+        matched = {d["id"]: d["matched_fields"] for d in result["items"]}
+        assert matched == {
+            "kiwi-both": ["id", "original_text"],
+            "kiwi-id-only": ["id"],
+            "plain": ["original_text"],
+        }
+
+        no_q = await memory.list_documents(bank_id=bank_id, request_context=request_context)
+        assert all(d["matched_fields"] == [] for d in no_q["items"])
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)

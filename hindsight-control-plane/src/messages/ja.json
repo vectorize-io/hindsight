@@ -823,7 +823,7 @@
   "documentsView": {
     "loadingDocuments": "ドキュメントを読み込み中...",
     "totalDocuments": "合計{total}件のドキュメント",
-    "searchPlaceholder": "ドキュメントIDで絞り込み…",
+    "searchPlaceholder": "ドキュメントIDまたは本文で検索…",
     "clearSearch": "検索をクリア",
     "refreshDocuments": "ドキュメントを更新",
     "noDocumentsMatchSearch": "検索に一致するドキュメントがありません",
@@ -839,6 +839,7 @@
     "colUpdated": "更新日",
     "seeAllInDocument": "すべてのタグとメタデータはドキュメントを開くと確認できます",
     "colSize": "サイズ",
+    "matchedInText": "本文に一致",
     "colMemoryUnits": "メモリユニット",
     "showingRange": "{total}件中{from}〜{to}件を表示",
     "previousPage": "前へ",

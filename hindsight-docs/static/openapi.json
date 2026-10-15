@@ -3658,10 +3658,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')",
+              "description": "Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads \u2014 use recall for that.",
               "title": "Q"
             },
-            "description": "Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')"
+            "description": "Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads \u2014 use recall for that."
           },
           {
             "name": "tags",
@@ -11525,6 +11525,19 @@
             "type": "array",
             "title": "Tags",
             "description": "Tags associated with this document",
+            "default": []
+          },
+          "matched_fields": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "id",
+                "original_text"
+              ]
+            },
+            "type": "array",
+            "title": "Matched Fields",
+            "description": "Which fields matched the `q` search: 'id', 'original_text', or both. Empty when no `q` is given.",
             "default": []
           }
         },

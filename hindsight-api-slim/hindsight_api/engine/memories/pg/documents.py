@@ -588,11 +588,18 @@ async def list_documents(
         query_conditions.append(f"bank_id = ${param_count}")
         query_params.append(bank_id)
 
+        # Which fields the search matched, per row (0/1 so the Oracle translation needs no booleans).
+        match_columns = "0 AS id_matched, 0 AS text_matched"
         if search_query:
-            # Search in document ID
+            # Search in document ID and content. No index on original_text: this is a
+            # sequential scan per bank, meant for browsing, not hot-path workloads.
             param_count += 1
-            query_conditions.append(f"id ILIKE ${param_count}")
+            query_conditions.append(f"(id ILIKE ${param_count} OR original_text ILIKE ${param_count})")
             query_params.append(f"%{search_query}%")
+            match_columns = (
+                f"CASE WHEN id ILIKE ${param_count} THEN 1 ELSE 0 END AS id_matched, "
+                f"CASE WHEN original_text ILIKE ${param_count} THEN 1 ELSE 0 END AS text_matched"
+            )
 
         built = build_tags_where_clause(tags, param_offset=param_count + 1, match=tags_match)
         tags_clause = built.sql
@@ -651,7 +658,8 @@ async def list_documents(
                 updated_at,
                 LENGTH(original_text) as text_length,
                 retain_params,
-                tags
+                tags,
+                {match_columns}
             FROM {fq_table("documents")}
             {where_clause}
             ORDER BY {window.order_by or "updated_at DESC, created_at DESC, id"}
@@ -693,6 +701,11 @@ async def list_documents(
                     "retain_params": retain_params_val or None,
                     "document_metadata": document_metadata or None,
                     "tags": row["tags"] if row["tags"] else [],
+                    "matched_fields": [
+                        field
+                        for field, matched in (("id", row["id_matched"]), ("original_text", row["text_matched"]))
+                        if matched
+                    ],
                 }
             )
 

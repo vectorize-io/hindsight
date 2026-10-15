@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
@@ -36,7 +36,19 @@ class DocumentListItem(BaseModel):
     retain_params: Optional[Dict[str, Any]] = None
     document_metadata: Optional[Dict[str, Any]] = None
     tags: Optional[List[StrictStr]] = Field(default=None, description="Tags associated with this document")
-    __properties: ClassVar[List[str]] = ["id", "bank_id", "content_hash", "created_at", "updated_at", "text_length", "memory_unit_count", "retain_params", "document_metadata", "tags"]
+    matched_fields: Optional[List[StrictStr]] = Field(default=None, description="Which fields matched the `q` search: 'id', 'original_text', or both. Empty when no `q` is given.")
+    __properties: ClassVar[List[str]] = ["id", "bank_id", "content_hash", "created_at", "updated_at", "text_length", "memory_unit_count", "retain_params", "document_metadata", "tags", "matched_fields"]
+
+    @field_validator('matched_fields')
+    def matched_fields_validate_enum(cls, value):
+        """Validates the enum"""
+        if value is None:
+            return value
+
+        for i in value:
+            if i not in set(['id', 'original_text']):
+                raise ValueError("each list item must be one of ('id', 'original_text')")
+        return value
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -113,7 +125,8 @@ class DocumentListItem(BaseModel):
             "memory_unit_count": obj.get("memory_unit_count") if obj.get("memory_unit_count") is not None else 0,
             "retain_params": obj.get("retain_params"),
             "document_metadata": obj.get("document_metadata"),
-            "tags": obj.get("tags")
+            "tags": obj.get("tags"),
+            "matched_fields": obj.get("matched_fields")
         })
         return _obj
 

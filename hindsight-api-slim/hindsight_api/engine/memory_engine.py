@@ -13361,7 +13361,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         Args:
             bank_id: bank ID (required)
-            search_query: Search in document ID
+            search_query: Case-insensitive substring filter on document ID or text (unindexed, for browsing)
             tags: Filter by tags
             tags_match: How to match tags (any, all, any_strict, all_strict)
             time_field: Time axis to filter and order by — ``created_at`` (when the

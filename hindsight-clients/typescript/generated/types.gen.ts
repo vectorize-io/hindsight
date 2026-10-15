@@ -2105,6 +2105,12 @@ export type DocumentListItem = {
    * Tags associated with this document
    */
   tags?: Array<string>;
+  /**
+   * Matched Fields
+   *
+   * Which fields matched the `q` search: 'id', 'original_text', or both. Empty when no `q` is given.
+   */
+  matched_fields?: Array<"id" | "original_text">;
 };
 
 /**
@@ -9047,7 +9053,7 @@ export type ListDocumentsData = {
     /**
      * Q
      *
-     * Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')
+     * Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
      */
     q?: string | null;
     /**

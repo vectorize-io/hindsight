@@ -572,7 +572,7 @@ type ApiListDocumentsRequest struct {
 	authorization *string
 }
 
-// Case-insensitive substring filter on document ID (e.g. &#39;report&#39; matches &#39;report-2024&#39;)
+// Case-insensitive substring filter on document ID or document text (e.g. &#39;report&#39; matches &#39;report-2024&#39; or any document containing &#39;report&#39;). Unindexed scan of the bank&#39;s documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
 func (r ApiListDocumentsRequest) Q(q string) ApiListDocumentsRequest {
 	r.q = &q
 	return r

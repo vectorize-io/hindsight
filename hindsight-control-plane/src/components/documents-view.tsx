@@ -1764,6 +1764,10 @@ export function DocumentsView() {
                     documents.map((doc) => {
                       const harness = documentHarness(doc.document_metadata, doc.tags);
                       const harnessLogo = resolveHarnessLogo(harness);
+                      // Which fields the search matched; highlights the matching cells.
+                      const matchedFields: string[] = doc.matched_fields ?? [];
+                      const idMatched = matchedFields.includes("id");
+                      const textMatched = matchedFields.includes("original_text");
                       return (
                         <TableRow
                           key={doc.id}
@@ -1773,10 +1777,18 @@ export function DocumentsView() {
                           {/* Identity block: the ID reads first, with when it was
                               last touched underneath. Created-at was dropped —
                               for almost every document it repeated updated-at. */}
-                          <TableCell className="text-card-foreground">
+                          <TableCell
+                            className={`text-card-foreground ${idMatched ? "bg-amber-500/10" : ""}`}
+                          >
                             <div className="min-w-0">
                               <div className="font-mono text-sm truncate" title={doc.id}>
-                                {doc.id}
+                                {idMatched ? (
+                                  <mark className="rounded-sm bg-amber-300/60 px-0.5 text-inherit dark:bg-amber-400/30">
+                                    {doc.id}
+                                  </mark>
+                                ) : (
+                                  doc.id
+                                )}
                               </div>
                               {/* The harness logo trails the timestamp rather
                                   than leading the ID: as a leading mark it only
@@ -1797,6 +1809,11 @@ export function DocumentsView() {
                                   size={14}
                                   titlePrefix={tCommon("harness")}
                                 />
+                                {textMatched && (
+                                  <span className="rounded-full bg-amber-300/60 px-2 py-0.5 text-[11px] font-medium text-foreground dark:bg-amber-400/30">
+                                    {t("matchedInText")}
+                                  </span>
+                                )}
                                 {updatingDocIds.has(doc.id) && (
                                   <span
                                     className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
@@ -1818,7 +1835,10 @@ export function DocumentsView() {
                               harnessShownAsLogo={!!harnessLogo}
                             />
                           </TableCell>
-                          <TableCell className="text-card-foreground text-right tabular-nums whitespace-nowrap font-medium">
+                          <TableCell
+                            className={`text-card-foreground text-right tabular-nums whitespace-nowrap font-medium ${textMatched ? "bg-amber-500/10" : ""}`}
+                            title={textMatched ? t("matchedInText") : undefined}
+                          >
                             {formatBytes(doc.text_length || 0)}
                           </TableCell>
                           <TableCell className="text-right tabular-nums font-semibold text-foreground">

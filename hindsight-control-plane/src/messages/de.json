@@ -823,7 +823,7 @@
   "documentsView": {
     "loadingDocuments": "Dokumente werden geladen...",
     "totalDocuments": "{total} Dokumente gesamt",
-    "searchPlaceholder": "Nach Dokument-ID filtern…",
+    "searchPlaceholder": "Nach Dokument-ID oder Text suchen…",
     "clearSearch": "Suche löschen",
     "refreshDocuments": "Dokumente aktualisieren",
     "noDocumentsMatchSearch": "Keine Dokumente entsprechen Ihrer Suche",
@@ -839,6 +839,7 @@
     "colUpdated": "Aktualisiert",
     "seeAllInDocument": "Dokument öffnen, um alle Tags und Metadaten zu sehen",
     "colSize": "Größe",
+    "matchedInText": "Treffer im Text",
     "colMemoryUnits": "Speichereinheiten",
     "showingRange": "{from}-{to} von {total} angezeigt",
     "previousPage": "Vorherige",

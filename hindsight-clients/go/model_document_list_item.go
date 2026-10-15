@@ -38,6 +38,8 @@ type DocumentListItem struct {
 	DocumentMetadata map[string]interface{} `json:"document_metadata,omitempty"`
 	// Tags associated with this document
 	Tags []string `json:"tags,omitempty"`
+	// Which fields matched the `q` search: 'id', 'original_text', or both. Empty when no `q` is given.
+	MatchedFields []string `json:"matched_fields,omitempty"`
 }
 
 type _DocumentListItem DocumentListItem
@@ -404,6 +406,38 @@ func (o *DocumentListItem) SetTags(v []string) {
 	o.Tags = v
 }
 
+// GetMatchedFields returns the MatchedFields field value if set, zero value otherwise.
+func (o *DocumentListItem) GetMatchedFields() []string {
+	if o == nil || IsNil(o.MatchedFields) {
+		var ret []string
+		return ret
+	}
+	return o.MatchedFields
+}
+
+// GetMatchedFieldsOk returns a tuple with the MatchedFields field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *DocumentListItem) GetMatchedFieldsOk() ([]string, bool) {
+	if o == nil || IsNil(o.MatchedFields) {
+		return nil, false
+	}
+	return o.MatchedFields, true
+}
+
+// HasMatchedFields returns a boolean if a field has been set.
+func (o *DocumentListItem) HasMatchedFields() bool {
+	if o != nil && !IsNil(o.MatchedFields) {
+		return true
+	}
+
+	return false
+}
+
+// SetMatchedFields gets a reference to the given []string and assigns it to the MatchedFields field.
+func (o *DocumentListItem) SetMatchedFields(v []string) {
+	o.MatchedFields = v
+}
+
 func (o DocumentListItem) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -441,6 +475,9 @@ func (o DocumentListItem) ToMap() (map[string]interface{}, error) {
 	}
 	if !IsNil(o.Tags) {
 		toSerialize["tags"] = o.Tags
+	}
+	if !IsNil(o.MatchedFields) {
+		toSerialize["matched_fields"] = o.MatchedFields
 	}
 	return toSerialize, nil
 }

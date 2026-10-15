@@ -2644,6 +2644,10 @@ class DocumentListItem(OpenRowModel):
     retain_params: dict[str, Any] | None = Field(default=None, description="Parameters used during retain")
     document_metadata: dict[str, Any] | None = Field(default=None, description="Document metadata")
     tags: list[str] = FieldWithDefault(list, description="Tags associated with this document")
+    matched_fields: list[Literal["id", "original_text"]] = FieldWithDefault(
+        list,
+        description="Which fields matched the `q` search: 'id', 'original_text', or both. Empty when no `q` is given.",
+    )
 
 
 class ListDocumentsResponse(BaseModel):
@@ -7824,7 +7828,13 @@ def _register_routes(app: FastAPI):
     async def api_list_documents(
         bank_id: str,
         q: str | None = Query(
-            None, description="Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')"
+            None,
+            description=(
+                "Case-insensitive substring filter on document ID or document text (e.g. 'report' matches "
+                "'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: "
+                "meant for browsing and inspection, not for high-volume or latency-sensitive workloads — "
+                "use recall for that."
+            ),
         ),
         tags: list[str] | None = Query(None, description="Filter documents by tags"),
         tags_match: str = Query(
@@ -7848,7 +7858,7 @@ def _register_routes(app: FastAPI):
 
         Args:
             bank_id: Memory Bank ID (from path)
-            q: Case-insensitive substring filter on document ID
+            q: Case-insensitive substring filter on document ID or text (unindexed, for browsing)
             tags: Filter documents by tags
             tags_match: How to match tags (any, all, any_strict, all_strict)
             time_field: Time axis to filter and order by (created_at, updated_at)
