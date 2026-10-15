@@ -170,8 +170,10 @@ class TestSharedState:
     async def test_without_a_question_date_it_is_today(self):
         client = _Client()
         reranker = CrossEncoderReranker(cross_encoder=_reranker(client))
+        before = datetime.now(UTC).date()
         await reranker.rerank("q", [_candidate("a"), _candidate("b")])
-        assert client.asked[0][0] == f"Current date: {datetime.now(UTC).date().isoformat()}\n\nQuestion: q"
+        after = datetime.now(UTC).date()
+        assert client.asked[0][0] in {f"Current date: {day.isoformat()}\n\nQuestion: q" for day in (before, after)}
 
 
 @pytest.fixture(autouse=True)

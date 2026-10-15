@@ -1513,9 +1513,9 @@ export HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_API_KEY=your-openai-key
 **Recall.** With a decision model, recall uses it in place of the [reranker](#reranker).
 It asks of each candidate whether showing it would help answer the question, telling it
 the date the question is asked (the recall's question date, else today), and orders the
-pool by that. That order is final: recall skips the
-recency, temporal and proof-count boosts it applies to a cross-encoder, and publishes no
-reranker score, so `min_scores.reranker` is rejected. To keep the cross-encoder for recall
+pool by that. That order is final: recall skips the recency, temporal and proof-count
+boosts it applies to a cross-encoder, and publishes no reranker score, so
+`min_scores.reranker` is rejected. To keep the cross-encoder for recall
 while other operations use the decision model, set
 `HINDSIGHT_API_RECALL_DECISION_MODEL_PROVIDER=none`.
 

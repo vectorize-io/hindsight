@@ -77,7 +77,7 @@ async def test_the_model_is_told_the_question_date(decision_model_client, bank, 
     )
 
     assert stubs.rerank.states
-    assert all(state.startswith("Current date: 2024-05-01") for state in stubs.rerank.states)
+    assert set(stubs.rerank.states) == {"Current date: 2024-05-01\n\nQuestion: When is the launch deadline?"}
 
 
 async def test_a_rank_position_is_not_published_or_floored(decision_model_client, bank):

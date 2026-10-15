@@ -144,9 +144,10 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
 
         A ``choice`` whose options are the candidates is the ranking: every option
         gets a probability, and they sum to 1, so the stub scores each option's text
-        lexically and normalises. A ``noul`` asks about one memory, and is answered with the rulebook's verdict
-        for it, else its lexical relevance to the state. A ``score`` is the cut: its
-        answer is a level, and the rulebook decides which one.
+        lexically and normalises. A ``noul`` asks about one memory, and is answered
+        with the rulebook's verdict for it, else its lexical relevance to the state. A
+        ``score`` is the cut: its answer is a level, and the rulebook decides which
+        one.
         """
         body = await request.json()
         validate_systemone(body)
