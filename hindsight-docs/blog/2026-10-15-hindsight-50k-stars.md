@@ -35,8 +35,12 @@ Where things stand today:
 
 That is a release every 4.8 days, sustained for eleven and a half months.
 
-None of this would exist without other people's work. [Postgres](https://www.postgresql.org/) holds every memory and every link between them. [pgvector](https://github.com/pgvector/pgvector) does the similarity search recall is built on. The [Model Context Protocol](https://modelcontextprotocol.io/) is why one bank serves Claude Code, Cursor and a Grok Bot without a connector for each. Open-weight models are why you can run all of it on your own hardware.
+None of this would exist without other people's work. [pgvector](https://github.com/pgvector/pgvector) does the similarity search recall is built on. Open-weight models are why you can run all of it on your own hardware.
 
 Thank you to everyone who filed an issue with a reproduction instead of a screenshot, sent a pull request to an integration we had never heard of, or argued with a design decision and turned out to be right. Several of the sharper things in 1.0 exist because someone outside the team said *this is wrong*.
 
-Thanks for all the stars. The [repository](https://github.com/vectorize-io/hindsight) is where the next stretch happens, and the good first issues are labelled.
+Thanks for all the stars. If you have not tried it yet, one command wires every coding agent on your machine into one shared memory bank:
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install all
+```
