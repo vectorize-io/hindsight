@@ -529,8 +529,12 @@ class LiteLLMLLM(LLMInterface):
                 dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_kwargs)
 
                 last_exception = e
-                # LiteLLM maps every provider error to an exception carrying the HTTP
-                # status on ``status_code``; the message often doesn't repeat it (#5009).
+                # Retry on the HTTP status LiteLLM maps onto every provider error
+                # (``status_code``): 408/409/425/429 and 5xx retry, other 4xx fail fast.
+                # This used to search the message for rate/limit/timeout/500/503/...,
+                # but the message often omits the status -- Bedrock's transient 503
+                # failed on its first attempt -- and a 400 mentioning a "limit" was
+                # retried (#5009).
                 if attempt < max_retries and is_transient_remote_error(e):
                     backoff = min(initial_backoff * (2**attempt), max_backoff)
                     jitter = backoff * 0.2 * (2 * (time.time() % 1) - 1)
@@ -686,6 +690,7 @@ class LiteLLMLLM(LLMInterface):
                 dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_kwargs)
 
                 last_exception = e
+                # Status-based, same as call() (#5009).
                 if attempt < max_retries and is_transient_remote_error(e):
                     await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
                     continue
