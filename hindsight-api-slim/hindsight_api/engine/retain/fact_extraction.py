@@ -2010,23 +2010,6 @@ def _coerce_fact_response(response: Any) -> dict[str, Any] | None:
     return None
 
 
-# A reply that says, in words, there is nothing to extract ("No extractable facts
-# were found in the provided chunk."). Deliberately narrow: it must name facts or
-# extraction, so an unrelated prose reply still fails loudly (#5443).
-_NO_FACTS_PROSE_RE = re.compile(
-    r"\b(no|zero|not any|none of the)\b[^.]{0,60}\bfacts?\b|\bnothing\b[^.]{0,40}\bextract",
-    re.IGNORECASE,
-)
-
-
-def _is_no_facts_prose(text: str) -> bool:
-    """True when ``text`` holds no JSON at all and clearly says there are no facts."""
-    stripped = text.strip()
-    if not stripped or len(stripped) > 500 or "{" in stripped or "[" in stripped:
-        return False
-    return _NO_FACTS_PROSE_RE.search(stripped) is not None
-
-
 async def _extract_facts_from_chunk(
     chunk: str,
     chunk_index: int,
@@ -2476,20 +2459,6 @@ async def _extract_facts_from_chunk(
                 )
 
             return chunk_facts, usage
-
-        except json.JSONDecodeError as e:
-            # The provider already spent its own retry budget on this reply. A reply
-            # with no JSON at all that plainly says there is nothing to extract is the
-            # model answering "no facts" in prose (providers that don't enforce the
-            # schema, #5443) — count it as zero facts instead of failing the retain.
-            # Anything else is still a real failure and propagates as before.
-            if _is_no_facts_prose(e.doc):
-                logger.warning(
-                    f"LLM answered in prose instead of JSON for chunk {chunk_index + 1}/{total_chunks}; "
-                    f"treating as no facts: {e.doc[:200]!r}"
-                )
-                return [], usage
-            raise
 
         except BadRequestError as e:
             last_error = e
