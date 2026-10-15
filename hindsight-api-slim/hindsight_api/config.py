@@ -204,9 +204,9 @@ ENV_LLM_STRUCTURED_OUTPUT_FORCED_TOOL = "HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_FOR
 # model name.
 ENV_LLM_VISION = "HINDSIGHT_API_LLM_VISION"
 # Whether the backend honours OpenAI's ``response_format={"type": "json_object"}``.
-# Tri-state like ENV_LLM_VISION: unset lets the provider decide (LM Studio, Ollama
-# and Volcano say no; llama.cpp follows HINDSIGHT_API_LLAMACPP_NO_GRAMMAR; the rest
-# say yes). When false, the soft path sends the schema in the prompt only. Needed
+# Tri-state like ENV_LLM_VISION: unset lets the provider decide (LM Studio, Ollama,
+# Volcano and z.ai say no; llama.cpp follows HINDSIGHT_API_LLAMACPP_NO_GRAMMAR; the
+# rest say yes). When false, the soft path sends the schema in the prompt only. Needed
 # for ``provider=openai`` pointed at a local server that can't constrain output and
 # instead rewrites the prompt in ways a thinking model can loop on (issue #4935).
 ENV_LLM_OPENAI_COMPATIBLE_JSON_MODE = "HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE"
