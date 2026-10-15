@@ -1467,6 +1467,37 @@ The `jina-mlx` provider uses [`jinaai/jina-reranker-v3-mlx`](https://huggingface
 > **📝 License**
 >
 `jina-reranker-v3-mlx` is licensed under CC BY-NC 4.0. Contact Jina AI for commercial usage.
+### Decision model
+
+A decision model answers typed questions (pick one of these, how likely is this) in well
+under a second. Operations that support one hand it the in-between judgments an LLM call
+would otherwise make, and keep the LLM for writing. Set it up once here. Each operation
+uses it unless that operation overrides or turns it off.
+
+This is separate from the `typesafe` [reranker](#reranker), which keeps its own
+`HINDSIGHT_API_RERANKER_TYPESAFE_*` settings.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_DECISION_MODEL_PROVIDER` | `none` or `typesafe` ([TypeSafe](https://typesafe.ai) System One). | `none` |
+| `HINDSIGHT_API_DECISION_MODEL_API_KEY` | API key. Required when the provider is not `none`. | - |
+| `HINDSIGHT_API_DECISION_MODEL_MODEL` | Model name. | `jev-latest` |
+| `HINDSIGHT_API_DECISION_MODEL_BASE_URL` | API base URL. | `https://api.typesafe.ai` |
+| `HINDSIGHT_API_DECISION_MODEL_TIMEOUT` | Request timeout in seconds. | `60` |
+| `HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT` | Most requests in flight at once, per operation. | `24` |
+
+**Per-operation overrides.** `HINDSIGHT_API_{RECALL,REFLECT,CONSOLIDATION}_DECISION_MODEL_{PROVIDER,API_KEY,MODEL,BASE_URL}`
+replace the global value for that operation only; anything not set falls back to the
+global value. Set an operation's provider to `none` to turn the decision model off for it,
+or set it to `typesafe` to give one operation a decision model without a global one.
+
+```bash
+export HINDSIGHT_API_DECISION_MODEL_PROVIDER=typesafe
+export HINDSIGHT_API_DECISION_MODEL_API_KEY=your-typesafe-key
+export HINDSIGHT_API_REFLECT_DECISION_MODEL_MODEL=jev-preview        # reflect only
+export HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_PROVIDER=none      # consolidation opts out
+```
+
 ### Authentication
 
 By default, Hindsight runs without authentication. For production deployments, enable API key authentication using the built-in tenant extension:

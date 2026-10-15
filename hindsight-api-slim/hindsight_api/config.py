@@ -654,6 +654,16 @@ ENV_RERANKER_TYPESAFE_TIMEOUT = "HINDSIGHT_API_RERANKER_TYPESAFE_TIMEOUT"
 ENV_RERANKER_TYPESAFE_MAX_CONCURRENT = "HINDSIGHT_API_RERANKER_TYPESAFE_MAX_CONCURRENT"
 ENV_RERANKER_TYPESAFE_PRUNE_CANDIDATES = "HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES"
 
+# Decision model (TypeSafe System One): set up once, used by every operation that hands it
+# judgments. Each operation may override provider/key/model/URL with
+# HINDSIGHT_API_{RECALL,REFLECT,CONSOLIDATION}_DECISION_MODEL_* (see _decision_model_env).
+ENV_DECISION_MODEL_PROVIDER = "HINDSIGHT_API_DECISION_MODEL_PROVIDER"
+ENV_DECISION_MODEL_API_KEY = "HINDSIGHT_API_DECISION_MODEL_API_KEY"
+ENV_DECISION_MODEL_MODEL = "HINDSIGHT_API_DECISION_MODEL_MODEL"
+ENV_DECISION_MODEL_BASE_URL = "HINDSIGHT_API_DECISION_MODEL_BASE_URL"
+ENV_DECISION_MODEL_TIMEOUT = "HINDSIGHT_API_DECISION_MODEL_TIMEOUT"
+ENV_DECISION_MODEL_MAX_CONCURRENT = "HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT"
+
 # Alibaba Cloud DashScope configuration (reranker only)
 ENV_RERANKER_ALIBABA_API_KEY = "HINDSIGHT_API_RERANKER_ALIBABA_API_KEY"
 ENV_RERANKER_ALIBABA_MODEL = "HINDSIGHT_API_RERANKER_ALIBABA_MODEL"
@@ -1440,6 +1450,22 @@ DEFAULT_RERANKER_TYPESAFE_BASE_URL = "https://api.typesafe.ai"
 DEFAULT_RERANKER_TYPESAFE_MAX_CONCURRENT = 24
 # Off by default: dropping changes what recall returns, so it is opt-in.
 DEFAULT_RERANKER_TYPESAFE_PRUNE_CANDIDATES = False
+
+# "none": no decision model; operations that could use one keep their LLM-only path.
+DECISION_MODEL_PROVIDERS = ("none", "typesafe")
+DecisionModelOperation = Literal["recall", "reflect", "consolidation"]
+DECISION_MODEL_OPERATIONS: tuple[DecisionModelOperation, ...] = ("recall", "reflect", "consolidation")
+DEFAULT_DECISION_MODEL_PROVIDER = "none"
+DEFAULT_DECISION_MODEL_MODEL = "jev-latest"
+DEFAULT_DECISION_MODEL_BASE_URL = "https://api.typesafe.ai"
+DEFAULT_DECISION_MODEL_TIMEOUT = 60.0
+DEFAULT_DECISION_MODEL_MAX_CONCURRENT = 24
+
+
+def _decision_model_env(operation: str, setting: str) -> str:
+    """Env var for one operation's decision-model override, e.g. HINDSIGHT_API_REFLECT_DECISION_MODEL_API_KEY."""
+    return f"HINDSIGHT_API_{operation.upper()}_DECISION_MODEL_{setting}"
+
 
 DEFAULT_RERANKER_ALIBABA_MODEL = "qwen3-rerank"
 
@@ -2982,6 +3008,18 @@ def admission_in_flight_for(explicit: int, per_core: int, workers: int) -> int:
     return max(per_core, round(per_core * cores_per_worker))
 
 
+@dataclass(frozen=True)
+class DecisionModelConfig:
+    """One operation's decision model, with its overrides already applied over the global setup."""
+
+    provider: str
+    api_key: str
+    model: str
+    base_url: str
+    timeout: float
+    max_concurrent: int
+
+
 @dataclass
 class HindsightConfig:
     """Configuration container for Hindsight API."""
@@ -3710,6 +3748,27 @@ class HindsightConfig:
     reranker_max_backoff: float = DEFAULT_RERANKER_MAX_BACKOFF
     reranker_retry_budget: float = DEFAULT_RERANKER_RETRY_BUDGET
 
+    # Decision model: the global setup, then per-operation overrides (None = use the global
+    # value). Read through decision_model_config(), never field by field.
+    decision_model_provider: str = DEFAULT_DECISION_MODEL_PROVIDER
+    decision_model_api_key: str | None = None
+    decision_model_model: str = DEFAULT_DECISION_MODEL_MODEL
+    decision_model_base_url: str = DEFAULT_DECISION_MODEL_BASE_URL
+    decision_model_timeout: float = DEFAULT_DECISION_MODEL_TIMEOUT
+    decision_model_max_concurrent: int = DEFAULT_DECISION_MODEL_MAX_CONCURRENT
+    recall_decision_model_provider: str | None = None
+    recall_decision_model_api_key: str | None = None
+    recall_decision_model_model: str | None = None
+    recall_decision_model_base_url: str | None = None
+    reflect_decision_model_provider: str | None = None
+    reflect_decision_model_api_key: str | None = None
+    reflect_decision_model_model: str | None = None
+    reflect_decision_model_base_url: str | None = None
+    consolidation_decision_model_provider: str | None = None
+    consolidation_decision_model_api_key: str | None = None
+    consolidation_decision_model_model: str | None = None
+    consolidation_decision_model_base_url: str | None = None
+
     # Class-level sets for configuration categorization
 
     # CREDENTIAL_FIELDS: Never exposed via API, never configurable per-tenant/bank
@@ -3775,6 +3834,15 @@ class HindsightConfig:
         "xai_oauth_client_id",
         "xai_oauth_token_path",
         "xai_oauth_base_url",
+        # Decision model keys and endpoints, global and per operation
+        "decision_model_api_key",
+        "decision_model_base_url",
+        "recall_decision_model_api_key",
+        "recall_decision_model_base_url",
+        "reflect_decision_model_api_key",
+        "reflect_decision_model_base_url",
+        "consolidation_decision_model_api_key",
+        "consolidation_decision_model_base_url",
     }
 
     # CONFIGURABLE_FIELDS: Safe behavioral settings that can be customized per-tenant/bank
@@ -4002,6 +4070,8 @@ class HindsightConfig:
 
     def validate(self) -> None:
         """Validate configuration values and raise errors for invalid combinations."""
+        for operation in DECISION_MODEL_OPERATIONS:
+            self.decision_model_config(operation)  # raises on an unknown provider or a missing key
         # Validate vector_extension
         validate_extension(self.vector_extension)
 
@@ -4792,6 +4862,21 @@ class HindsightConfig:
             or os.getenv(ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY),
             reranker_google_timeout=float(os.getenv(ENV_RERANKER_GOOGLE_TIMEOUT, str(DEFAULT_RERANKER_GOOGLE_TIMEOUT))),
             reranker_members=_parse_reranker_members(),
+            # Decision model
+            decision_model_provider=os.getenv(ENV_DECISION_MODEL_PROVIDER) or DEFAULT_DECISION_MODEL_PROVIDER,
+            decision_model_api_key=os.getenv(ENV_DECISION_MODEL_API_KEY) or None,
+            decision_model_model=os.getenv(ENV_DECISION_MODEL_MODEL) or DEFAULT_DECISION_MODEL_MODEL,
+            decision_model_base_url=os.getenv(ENV_DECISION_MODEL_BASE_URL) or DEFAULT_DECISION_MODEL_BASE_URL,
+            decision_model_timeout=float(os.getenv(ENV_DECISION_MODEL_TIMEOUT) or DEFAULT_DECISION_MODEL_TIMEOUT),
+            decision_model_max_concurrent=int(
+                os.getenv(ENV_DECISION_MODEL_MAX_CONCURRENT) or DEFAULT_DECISION_MODEL_MAX_CONCURRENT
+            ),
+            **{
+                f"{operation}_decision_model_{setting.lower()}": os.getenv(_decision_model_env(operation, setting))
+                or None
+                for operation in DECISION_MODEL_OPERATIONS
+                for setting in ("PROVIDER", "API_KEY", "MODEL", "BASE_URL")
+            },
             # Server
             host=os.getenv(ENV_HOST) or None,
             port=int(os.getenv(ENV_PORT, DEFAULT_PORT)),
@@ -5414,6 +5499,41 @@ class HindsightConfig:
             if f.name.startswith("mental_model_refresh_llm_")
         )
 
+    def decision_model_config(self, operation: DecisionModelOperation) -> DecisionModelConfig | None:
+        """The decision model ``operation`` uses, or None when it has none.
+
+        Each setting is the operation's override when set, else the global one, the same
+        fallback as the per-operation LLM settings. An operation can set its provider to
+        "none" to opt out, or name one when no global decision model is set up.
+        """
+
+        def setting(name: str) -> Any:
+            override = getattr(self, f"{operation}_decision_model_{name}")
+            return override if override is not None else getattr(self, f"decision_model_{name}")
+
+        provider = setting("provider").lower()
+        if provider not in DECISION_MODEL_PROVIDERS:
+            raise ValueError(
+                f"Unknown decision model provider for {operation}: {provider!r}. "
+                f"Supported: {', '.join(DECISION_MODEL_PROVIDERS)}"
+            )
+        if provider == "none":
+            return None
+        api_key = setting("api_key")
+        if not api_key:
+            raise ValueError(
+                f"{ENV_DECISION_MODEL_API_KEY} (or {_decision_model_env(operation, 'API_KEY')}) is required "
+                f"when the {operation} decision model provider is {provider!r}"
+            )
+        return DecisionModelConfig(
+            provider=provider,
+            api_key=api_key,
+            model=setting("model"),
+            base_url=setting("base_url"),
+            timeout=self.decision_model_timeout,
+            max_concurrent=self.decision_model_max_concurrent,
+        )
+
     def log_config(self) -> None:
         """Log the current configuration (without sensitive values)."""
         logger.info(f"Database: {mask_network_location(self.database_url)} (schema: {self.database_schema})")
@@ -5440,6 +5560,11 @@ class HindsightConfig:
             logger.info(f"LLM (mental model refresh): provider={refresh_provider}, model={refresh_model}")
         logger.info(f"Embeddings: provider={self.embeddings_provider}")
         logger.info(f"Reranker: provider={self.reranker_provider}")
+        for operation in DECISION_MODEL_OPERATIONS:
+            if decision_model := self.decision_model_config(operation):
+                logger.info(
+                    f"Decision model ({operation}): provider={decision_model.provider}, model={decision_model.model}"
+                )
         logger.info(f"Graph retriever: {self.graph_retriever}")
 
 
