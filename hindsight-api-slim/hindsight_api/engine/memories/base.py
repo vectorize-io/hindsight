@@ -2970,8 +2970,10 @@ class MemoriesExtension(Extension, ABC):
         retagged: Callable[[list[str] | None], list[str]],
         rescoped: Callable[[Any], str | None],
     ) -> int:
-        """Retag a document's memories to ``tags``, then invalidate the observations built on them
-        and requeue their sources, so the next consolidation rebuilds them under the new tags.
+        """Retag a document's memories to ``tags``, then invalidate the observations built on the
+        memories whose observation scopes that moves, and requeue their sources, so the next
+        consolidation rebuilds them under the new scopes. A memory whose scopes stay put (``shared``,
+        or an explicit scope list the retag does not touch) keeps its observations (#5593).
         Returns how many observations were deleted.
 
         ``retagged(existing_tags)`` is a memory's final tag list (the document's tags plus the
@@ -2984,6 +2986,22 @@ class MemoriesExtension(Extension, ABC):
             conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, limit=1_000_000
         )
         _doc_units = _doc_page.memories
+        from ..consolidation.consolidator import write_scopes_changed
+
+        # Only the memories whose observation scopes actually move (#5593). Decided BEFORE the
+        # patch below: a store may hand back live records that the patch then rewrites.
+        _src_ids: list[str] = []
+        for m in _doc_units:
+            if m.fact_type not in ("experience", "world"):
+                continue
+            _new_scopes = rescoped(m.observation_scopes)
+            if write_scopes_changed(
+                m.tags,
+                m.observation_scopes,
+                retagged(m.tags),
+                m.observation_scopes if _new_scopes is None else _new_scopes,
+            ):
+                _src_ids.append(m.unit_id)
         if _doc_units:
             _patches = []
             for m in _doc_units:
@@ -2993,7 +3011,6 @@ class MemoriesExtension(Extension, ABC):
                     _patch.metadata = {META_OBSERVATION_SCOPES: _scopes_json}
                 _patches.append(_patch)
             await self.update_memories(bank_id, _patches)
-        _src_ids = [m.unit_id for m in _doc_units if m.fact_type in ("experience", "world")]
         if _src_ids:
             invalidated_obs = await self.delete_stale_observations(
                 conn=conn, ops=ops, fq_table=fq_table, bank_id=bank_id, fact_ids=_src_ids
@@ -3477,8 +3494,8 @@ class MemoriesExtension(Extension, ABC):
         """Give every memory of the document the document's current tags, metadata and
         observation scoping. ``final_tags`` maps a memory's current tags to the ones it ends with
         (the document tags, plus the label projection it already carries)."""
+        from ..consolidation.consolidator import write_scopes_changed
         from ..metadata_utils import drop_null_values
-        from ..retain.fact_storage import _normalize_scopes
 
         page = await self.scan_memories(
             conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, limit=1_000_000
@@ -3508,21 +3525,19 @@ class MemoriesExtension(Extension, ABC):
             )
             for m in page.memories
         ]
-        if patches:
-            await self.update_memories(bank_id, patches)
         # Against the tags the unit will actually END with, not the document's: a survivor
         # keeping its label projection has not been rescoped, and comparing it to the bare
         # document tags reported every such unit as moved on every retain — an observation
-        # sweep and a full re-consolidation of the document for no change at all.
+        # sweep and a full re-consolidation of the document for no change at all. Decided
+        # BEFORE the patch: a store may hand back live records that the patch then rewrites.
         rescoped = [
             m.unit_id
             for m in page.memories
             if m.fact_type in ("experience", "world")
-            and (
-                set(m.tags or []) != set(new_tags_by_unit[m.unit_id])
-                or _normalize_scopes(m.observation_scopes) != _normalize_scopes(observation_scopes)
-            )
+            and write_scopes_changed(m.tags, m.observation_scopes, new_tags_by_unit[m.unit_id], observation_scopes)
         ]
+        if patches:
+            await self.update_memories(bank_id, patches)
         return RelabelResult(updated=len(patches), rescoped_unit_ids=rescoped)
 
     async def memory_ids_for_chunks(self, *, conn, fq_table, bank_id: str, chunk_ids: list[str]) -> list[str]:

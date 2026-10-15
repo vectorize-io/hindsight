@@ -292,8 +292,8 @@ async def relabel_document_memories(
     final_tags: Callable[[list[str] | None], list[str]],
 ) -> RelabelResult:
     """Set the document's tags, metadata and observation scoping on every memory it owns."""
+    from ...consolidation.consolidator import write_scopes_changed
     from ...metadata_utils import drop_null_values
-    from ...retain.fact_storage import _normalize_scopes
 
     # Read the scoping the survivors carry BEFORE overwriting it — the cascade below has to
     # know which units actually moved, and after the UPDATE that is no longer answerable.
@@ -312,10 +312,7 @@ async def relabel_document_memories(
         row["id"]
         for row in prior
         if row["fact_type"] in ("experience", "world")
-        and (
-            set(row["tags"] or []) != set(new_tags_by_id[row["id"]])
-            or _normalize_scopes(row["observation_scopes"]) != _normalize_scopes(observation_scopes)
-        )
+        and write_scopes_changed(row["tags"], row["observation_scopes"], new_tags_by_id[row["id"]], observation_scopes)
     ]
 
     result = await conn.execute(

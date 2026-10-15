@@ -407,8 +407,9 @@ async def retag_document_memories(
     retagged: Callable[[list[str] | None], list[str]],
     rescoped: Callable[[Any], str | None],
 ) -> int:
-    """Retag the document's units, then delete the observations built on them and requeue
-    their sources (the document's and every co-source) for re-consolidation.
+    """Retag the document's units, then delete the observations built on the units whose
+    observation scopes that moves and requeue their sources (the document's and every co-source)
+    for re-consolidation. Units whose scopes stay put keep their observations (#5593).
 
     Returns how many observations were deleted.
     """
@@ -434,7 +435,22 @@ async def retag_document_memories(
             bank_id,
             _ids,
         )
-    unit_ids = [str(row["id"]) for row in unit_rows if row["fact_type"] in ("experience", "world")]
+    from ...consolidation.consolidator import write_scopes_changed
+
+    # Only the units whose observation scopes actually move: under `shared` or an explicit
+    # scope list a tag change leaves every observation where it was (#5593).
+    unit_ids: list[str] = []
+    for row in unit_rows:
+        if row["fact_type"] not in ("experience", "world"):
+            continue
+        new_scopes = rescoped(row["observation_scopes"])
+        if write_scopes_changed(
+            row["tags"],
+            row["observation_scopes"],
+            retagged(row["tags"]),
+            row["observation_scopes"] if new_scopes is None else new_scopes,
+        ):
+            unit_ids.append(str(row["id"]))
 
     await conn.execute(
         f"UPDATE {fq_table('memory_units')} SET tags = $1, updated_at = now() WHERE document_id = $2 AND bank_id = $3",

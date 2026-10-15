@@ -2570,6 +2570,54 @@ async def test_a_retag_that_deletes_an_observation_requeues_its_sources():
     assert store.rows["fact-1"].consolidated_at is None
 
 
+# Scope-aware invalidation (#5593): under `shared` the tags are not the scope, so a retag or a
+# re-retain relabel moves no observation and must requeue nothing.
+
+
+async def test_a_retag_under_shared_scopes_keeps_its_observations():
+    when = datetime.now(timezone.utc)
+    store = InMemoryMemories({})
+    store.rows["fact-1"] = _consolidated_fact(when)
+    store.rows["fact-1"].observation_scopes = "shared"
+    store.rows["obs-1"] = StoredMemory(
+        unit_id="obs-1", text="an observation", fact_type="observation", source_memory_ids=["fact-1"]
+    )
+
+    assert await _retag(store) == 0
+    assert "obs-1" in store.rows
+    assert store.rows["fact-1"].tags == ["new"]
+    assert store.rows["fact-1"].consolidated_at == when
+
+
+@pytest.mark.parametrize(
+    ("scopes", "moved"),
+    [("shared", False), ([["team"]], False), ("combined", True), (None, True), ("per_tag", True)],
+)
+async def test_relabel_reports_only_memories_whose_scopes_move(scopes, moved):
+    store = InMemoryMemories({})
+    store.rows["fact-1"] = StoredMemory(
+        unit_id="fact-1",
+        text="a fact",
+        fact_type="world",
+        document_id="doc-1",
+        tags=["team", "session:1"],
+        observation_scopes=scopes,
+    )
+
+    result = await store.relabel_document_memories(
+        conn=None,
+        fq_table=None,
+        bank_id="bank-x",
+        document_id="doc-1",
+        tags=["team", "session:2"],
+        metadata={},
+        observation_scopes=scopes,
+        final_tags=lambda _old: ["team", "session:2"],
+    )
+
+    assert result.rescoped_unit_ids == (["fact-1"] if moved else [])
+
+
 async def test_the_engine_resolves_entities_in_sql_whatever_store_is_configured(
     pg0_db_url, embeddings, cross_encoder, query_analyzer
 ):

@@ -564,6 +564,22 @@ def _resolve_write_scopes(memory: dict[str, Any]) -> list[frozenset[str]]:
     return [frozenset(s) for s in parsed] or [frozenset(tags)]
 
 
+def write_scopes_changed(
+    old_tags: list[str] | None, old_scopes: Any, new_tags: list[str] | None, new_scopes: Any
+) -> bool:
+    """Whether relabelling a memory moves it to a different set of observation scopes.
+
+    Its observations need rebuilding only then: under ``shared`` or an explicit scope list
+    the tags take no part in where observations go, so a tag change alone moves nothing
+    (#5593). Compares the exact scopes :func:`_resolve_write_scopes` resolves before and
+    after, so this and the consolidator can never disagree — a mode change that resolves to
+    the same scopes (``combined`` over ``[a]`` -> ``[["a"]]``) rebuilds nothing either.
+    """
+    return set(_resolve_write_scopes({"tags": old_tags, "observation_scopes": old_scopes})) != set(
+        _resolve_write_scopes({"tags": new_tags, "observation_scopes": new_scopes})
+    )
+
+
 def _batch_scope_signature(memory: dict[str, Any]) -> tuple[tuple[str, ...], ...]:
     """The exact set of observation scopes consolidating this memory will write.
 

@@ -10908,17 +10908,21 @@ class MemoryEngine(MemoryEngineInterface):
         """
         Update mutable fields on a document without re-processing its content.
 
-        Tag changes propagate to all associated memory units and trigger observation
-        invalidation + re-consolidation (same semantics as delete_document):
-        - Observations referencing the document's memory units are deleted.
-        - The document's own units and any co-source memories from other documents
-          have consolidated_at reset so they are re-consolidated under the new tags.
+        Tag changes propagate to all associated memory units. For each unit whose
+        observation scopes the change moves, observations are invalidated and
+        re-consolidated (same semantics as delete_document):
+        - Observations referencing those memory units are deleted.
+        - Those units and any co-source memories from other documents have
+          consolidated_at reset so they are re-consolidated under the new scopes.
 
-        That cascade is required: consolidation scopes a memory by its tags, so an
-        observation built under the old tag set is no longer valid, and deleting it
-        strands every OTHER source that observation carried unless they are requeued
-        too. It only runs when the tag set actually changes — a PATCH re-sending the
-        tags the document already has (an idempotent normalisation sweep) is a no-op.
+        That cascade is required where the tags ARE the scope (``combined``,
+        ``per_tag``, ``all_combinations``): an observation built under the old tag
+        set is no longer valid, and deleting it strands every OTHER source that
+        observation carried unless they are requeued too. Under ``shared`` or an
+        explicit scope list the tags take no part in where observations go, so a tag
+        change invalidates nothing (#5593). It only runs when the tag set actually
+        changes — a PATCH re-sending the tags the document already has (an
+        idempotent normalisation sweep) is a no-op.
 
         Args:
             document_id: Document ID to update
