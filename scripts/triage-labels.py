@@ -44,7 +44,7 @@ ISSUE_OPTIONS = {
     INTEGRATION: "Another framework integration (CrewAI, LangGraph, LiteLLM, Pydantic AI, n8n, Obsidian, "
     "MCP clients, ...)",
 }
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-3.1-flash-lite"
 
 
 def gh(*args: str) -> str:
