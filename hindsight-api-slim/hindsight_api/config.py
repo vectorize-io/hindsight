@@ -654,16 +654,6 @@ ENV_RERANKER_TYPESAFE_TIMEOUT = "HINDSIGHT_API_RERANKER_TYPESAFE_TIMEOUT"
 ENV_RERANKER_TYPESAFE_MAX_CONCURRENT = "HINDSIGHT_API_RERANKER_TYPESAFE_MAX_CONCURRENT"
 ENV_RERANKER_TYPESAFE_PRUNE_CANDIDATES = "HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES"
 
-# Decision model (TypeSafe System One): set up once, used by every operation that hands it
-# judgments. Each operation may override provider/key/model/URL with
-# HINDSIGHT_API_{RECALL,REFLECT,CONSOLIDATION}_DECISION_MODEL_* (see _decision_model_env).
-ENV_DECISION_MODEL_PROVIDER = "HINDSIGHT_API_DECISION_MODEL_PROVIDER"
-ENV_DECISION_MODEL_API_KEY = "HINDSIGHT_API_DECISION_MODEL_API_KEY"
-ENV_DECISION_MODEL_MODEL = "HINDSIGHT_API_DECISION_MODEL_MODEL"
-ENV_DECISION_MODEL_BASE_URL = "HINDSIGHT_API_DECISION_MODEL_BASE_URL"
-ENV_DECISION_MODEL_TIMEOUT = "HINDSIGHT_API_DECISION_MODEL_TIMEOUT"
-ENV_DECISION_MODEL_MAX_CONCURRENT = "HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT"
-
 # Alibaba Cloud DashScope configuration (reranker only)
 ENV_RERANKER_ALIBABA_API_KEY = "HINDSIGHT_API_RERANKER_ALIBABA_API_KEY"
 ENV_RERANKER_ALIBABA_MODEL = "HINDSIGHT_API_RERANKER_ALIBABA_MODEL"
@@ -672,6 +662,16 @@ ENV_RERANKER_ALIBABA_MODEL = "HINDSIGHT_API_RERANKER_ALIBABA_MODEL"
 ENV_RERANKER_GOOGLE_MODEL = "HINDSIGHT_API_RERANKER_GOOGLE_MODEL"
 ENV_RERANKER_GOOGLE_PROJECT_ID = "HINDSIGHT_API_RERANKER_GOOGLE_PROJECT_ID"
 ENV_RERANKER_GOOGLE_SERVICE_ACCOUNT_KEY = "HINDSIGHT_API_RERANKER_GOOGLE_SERVICE_ACCOUNT_KEY"
+
+# Decision model (TypeSafe System One): set up once, shared by every operation that supports
+# one. Separate from the typesafe reranker above, which keeps its own settings. Each operation may override provider/key/model/URL with
+# HINDSIGHT_API_{RECALL,REFLECT,CONSOLIDATION}_DECISION_MODEL_* (see _decision_model_env).
+ENV_DECISION_MODEL_PROVIDER = "HINDSIGHT_API_DECISION_MODEL_PROVIDER"
+ENV_DECISION_MODEL_API_KEY = "HINDSIGHT_API_DECISION_MODEL_API_KEY"
+ENV_DECISION_MODEL_MODEL = "HINDSIGHT_API_DECISION_MODEL_MODEL"
+ENV_DECISION_MODEL_BASE_URL = "HINDSIGHT_API_DECISION_MODEL_BASE_URL"
+ENV_DECISION_MODEL_TIMEOUT = "HINDSIGHT_API_DECISION_MODEL_TIMEOUT"
+ENV_DECISION_MODEL_MAX_CONCURRENT = "HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT"
 
 ENV_VECTOR_EXTENSION = "HINDSIGHT_API_VECTOR_EXTENSION"
 ENV_ANN_ITERATIVE_SCAN = "HINDSIGHT_API_ANN_ITERATIVE_SCAN"
@@ -1451,6 +1451,10 @@ DEFAULT_RERANKER_TYPESAFE_MAX_CONCURRENT = 24
 # Off by default: dropping changes what recall returns, so it is opt-in.
 DEFAULT_RERANKER_TYPESAFE_PRUNE_CANDIDATES = False
 
+DEFAULT_RERANKER_ALIBABA_MODEL = "qwen3-rerank"
+
+DEFAULT_RERANKER_GOOGLE_MODEL = "semantic-ranker-default-004"
+
 # "none": no decision model; operations that could use one keep their LLM-only path.
 DECISION_MODEL_PROVIDERS = ("none", "typesafe")
 DecisionModelOperation = Literal["recall", "reflect", "consolidation"]
@@ -1466,10 +1470,6 @@ def _decision_model_env(operation: str, setting: str) -> str:
     """Env var for one operation's decision-model override, e.g. HINDSIGHT_API_REFLECT_DECISION_MODEL_API_KEY."""
     return f"HINDSIGHT_API_{operation.upper()}_DECISION_MODEL_{setting}"
 
-
-DEFAULT_RERANKER_ALIBABA_MODEL = "qwen3-rerank"
-
-DEFAULT_RERANKER_GOOGLE_MODEL = "semantic-ranker-default-004"
 
 # Vector extension (pgvector, vchord, pgvectorscale, or AlloyDB ScaNN)
 DEFAULT_VECTOR_EXTENSION = "pgvector"  # Options: "pgvector", "vchord", "pgvectorscale", "scann"
@@ -5507,11 +5507,11 @@ class HindsightConfig:
         "none" to opt out, or name one when no global decision model is set up.
         """
 
-        def setting(name: str) -> Any:
+        def setting(name: str) -> str | None:
             override = getattr(self, f"{operation}_decision_model_{name}")
             return override if override is not None else getattr(self, f"decision_model_{name}")
 
-        provider = setting("provider").lower()
+        provider = (setting("provider") or DEFAULT_DECISION_MODEL_PROVIDER).lower()
         if provider not in DECISION_MODEL_PROVIDERS:
             raise ValueError(
                 f"Unknown decision model provider for {operation}: {provider!r}. "
@@ -5528,8 +5528,8 @@ class HindsightConfig:
         return DecisionModelConfig(
             provider=provider,
             api_key=api_key,
-            model=setting("model"),
-            base_url=setting("base_url"),
+            model=setting("model") or DEFAULT_DECISION_MODEL_MODEL,
+            base_url=setting("base_url") or DEFAULT_DECISION_MODEL_BASE_URL,
             timeout=self.decision_model_timeout,
             max_concurrent=self.decision_model_max_concurrent,
         )
