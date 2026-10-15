@@ -9,6 +9,7 @@ Configuration via environment variables - see hindsight_api.config for all env v
 import asyncio
 import contextvars
 import logging
+import os
 import time
 import warnings
 from abc import ABC, abstractmethod
@@ -312,7 +313,8 @@ class LocalSTCrossEncoder(CrossEncoderModel):
 
         # Download outside the lock; build and smoke-test under it, because a
         # transformers build flips process-global state (see LOCAL_MODEL_BUILD_LOCK).
-        prefetch_local_model(self.model_name)
+        # sentence-transformers caches under SENTENCE_TRANSFORMERS_HOME when it is set.
+        prefetch_local_model(self.model_name, cache_dir=os.getenv("SENTENCE_TRANSFORMERS_HOME"))
         with LOCAL_MODEL_BUILD_LOCK:
             # Suppress verbose transformers warnings during model loading
             # This suppresses the "UNEXPECTED" warnings from CrossEncoder which are harmless

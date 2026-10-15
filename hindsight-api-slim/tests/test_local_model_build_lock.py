@@ -69,8 +69,13 @@ async def test_startup_loads_download_together_and_build_one_at_a_time():
         asyncio.run(model.initialize())
 
     with (
-        patch("hindsight_api.engine.embeddings.prefetch_local_model", lambda name: both_downloading.wait()),
-        patch("hindsight_api.engine.cross_encoder.prefetch_local_model", lambda name: both_downloading.wait()),
+        patch(
+            "hindsight_api.engine.embeddings.prefetch_local_model", lambda name, cache_dir=None: both_downloading.wait()
+        ),
+        patch(
+            "hindsight_api.engine.cross_encoder.prefetch_local_model",
+            lambda name, cache_dir=None: both_downloading.wait(),
+        ),
         patch("sentence_transformers.SentenceTransformer", side_effect=probe.build(_fake_embedder())),
         patch("sentence_transformers.CrossEncoder", side_effect=probe.build(_fake_reranker())),
     ):
@@ -96,3 +101,20 @@ def test_prefetch_failure_is_left_to_the_loader():
 
     with patch("huggingface_hub.snapshot_download", side_effect=OSError("offline")):
         prefetch_local_model("org/model")  # must not raise
+
+
+async def test_prefetch_downloads_where_sentence_transformers_reads(monkeypatch, tmp_path):
+    """Prefetching into the HF cache while sentence-transformers reads from its own
+    home would download every model twice."""
+    from hindsight_api.engine.embeddings import LocalSTEmbeddings
+
+    monkeypatch.setenv("SENTENCE_TRANSFORMERS_HOME", str(tmp_path))
+    embeddings = LocalSTEmbeddings(model_name="org/model", force_cpu=True)
+
+    with (
+        patch("huggingface_hub.snapshot_download") as download,
+        patch("sentence_transformers.SentenceTransformer", return_value=_fake_embedder()),
+    ):
+        await embeddings.initialize()
+
+    assert download.call_args.kwargs["cache_dir"] == str(tmp_path)

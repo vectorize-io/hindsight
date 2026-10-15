@@ -99,9 +99,13 @@ LOCAL_MODEL_BUILD_LOCK = threading.Lock()
 _PREFETCH_IGNORE = ["onnx/*", "openvino/*", "*.onnx", "*.bin", "*.h5", "*.msgpack", "*.ot", "*.gguf", "*.tflite"]
 
 
-def prefetch_local_model(model_name: str) -> None:
+def prefetch_local_model(model_name: str, cache_dir: str | None = None) -> None:
     """Download a HuggingFace model into the cache so that only the build, not the
-    download, runs under ``LOCAL_MODEL_BUILD_LOCK``."""
+    download, runs under ``LOCAL_MODEL_BUILD_LOCK``.
+
+    ``cache_dir`` must be the folder the loader reads from (``None`` is the HF hub
+    cache), or the loader downloads the model a second time.
+    """
     if os.path.isdir(model_name):
         return
     # Sync on purpose: huggingface_hub has no async download, and this runs where the
@@ -109,7 +113,7 @@ def prefetch_local_model(model_name: str) -> None:
     try:
         from huggingface_hub import snapshot_download
 
-        snapshot_download(model_name, ignore_patterns=_PREFETCH_IGNORE)
+        snapshot_download(model_name, cache_dir=cache_dir, ignore_patterns=_PREFETCH_IGNORE)
     except Exception as e:
         # Offline, gated, unknown id, …: the loader raises the real error itself.
         logger.debug("Prefetch of %s skipped: %s", model_name, e)
