@@ -2442,6 +2442,46 @@ class TestDoneToolStringDocument:
         assert "arguments: not valid JSON" in rejection["content"]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "document",
+        [json.dumps(json.dumps(_DOCUMENT)), _DOCUMENT["sections"], json.dumps(_DOCUMENT["sections"])],
+        ids=["double-encoded", "bare-section-list", "string-encoded-section-list"],
+    )
+    async def test_recoverable_document_shapes_render(self, mock_llm, mock_functions, document):
+        """#5202: shapes with one clear reading render like the object form, no re-ask."""
+        mock_llm.call_with_tools.side_effect = self._recall_then({"document": document, "memory_ids": ["mem-1"]})
+
+        result = await self._run(mock_llm, mock_functions)
+
+        assert "Quarterly planning is owned by the platform team." in result.text
+        assert mock_llm.call_with_tools.await_count == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "document",
+        [json.dumps("just prose"), 42, {"title": "Ops", "content": "Quarterly planning."}],
+        ids=["string", "number", "object-without-sections"],
+    )
+    async def test_non_document_is_re_asked_with_its_shape(self, mock_llm, mock_functions, document):
+        """#5202: a document that is not one is re-asked, naming what arrived -- not a bare no-answer failure."""
+        mock_llm.call_with_tools.side_effect = [
+            self._recall_then({})[0],
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="2", name="done", arguments={"document": document, "memory_ids": ["mem-1"]})
+                ],
+                finish_reason="tool_calls",
+            ),
+            self._done("3", json.dumps(_DOCUMENT), "tool_calls"),
+        ]
+
+        result = await self._run(mock_llm, mock_functions)
+
+        assert "Quarterly planning is owned by the platform team." in result.text
+        rejection = mock_llm.call_with_tools.await_args_list[2].kwargs["messages"][-1]
+        assert "document: " in rejection["content"]
+
+    @pytest.mark.asyncio
     async def test_unparseable_string_document_that_is_never_fixed_raises(self, mock_llm, mock_functions):
         """A model that keeps sending garbage still fails the run loudly."""
         mock_llm.call_with_tools.side_effect = [

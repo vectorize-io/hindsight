@@ -2061,8 +2061,26 @@ async def _process_done_tool(
     # #899's MCP coercion).
     document: StructuredDocument | None = None
     raw_document = args.get("document")
-    if isinstance(raw_document, str):
-        raw_document = _decode_json_argument(raw_document, finish_reason, "document")
+    # Twice: a double-encoded document is still a string after one decode (#5202).
+    for _ in range(2):
+        if isinstance(raw_document, str):
+            raw_document = _decode_json_argument(raw_document, finish_reason, "document")
+    if isinstance(raw_document, list):
+        # A bare section array is the document with its wrapper dropped -- the
+        # same flattening document_from_sections forgives one level down.
+        raw_document = {"sections": raw_document}
+    if raw_document is not None and (
+        not isinstance(raw_document, dict) or not ({"sections", "blocks"} & raw_document.keys())
+    ):
+        # A document was sent but is not one. Falling through to ``answer`` would
+        # raise ReflectNoAnswerError with nothing saying what arrived, and fail a
+        # whole refresh over a shape the model fixes when told (#5202). Re-ask.
+        raise DocumentSectionsInvalidError(
+            [
+                f"document: expected an object with a sections array, got {type(raw_document).__name__} "
+                f"({json.dumps(raw_document, default=str)[:120]})"
+            ]
+        )
     if isinstance(raw_document, dict):
         document = document_from_sections(raw_document)
         answer = render_document(document).strip()
@@ -2072,18 +2090,16 @@ async def _process_done_tool(
         # The model called ``done`` with nothing usable in it -- no ``answer``
         # field and no decodable ``document`` object. Typically its output was
         # cut off mid-tool-call by the completion cap (finish_reason "length"),
-        # but the same signature also comes from a well-formed completion whose
-        # ``document`` argument decoded to something other than an object (an
-        # undecodable string is re-asked before reaching here), so truncation is one
-        # possible cause, not the only one. Fail instead of standing in
+        # or a document with an empty sections array (a document of the wrong
+        # shape is re-asked before reaching here). Fail instead of standing in
         # a placeholder: it is non-empty, so every downstream emptiness guard reads
         # it as a real answer and stores it over working content (#2959).
         raise ReflectNoAnswerError(
             f"Reflect's done tool returned no answer (iteration {iterations}, "
             f"{total_tools_called} tool call(s) made): the done call carried no usable "
-            "answer and no decodable document object. If the model's output was cut off "
-            "mid-tool-call, the answer field may have arrived empty; a document argument "
-            "that is not a JSON object produces the same signature."
+            f"answer and no document content (finish_reason={finish_reason}, argument keys: "
+            f"{sorted(args)}). If the model's output was cut off mid-tool-call, the answer "
+            "field may have arrived empty; a document with no sections produces the same signature."
         )
 
     final_usage = usage
