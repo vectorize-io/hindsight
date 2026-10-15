@@ -105,8 +105,8 @@ def _build_per_op_semaphores() -> dict[str, CrossLoopSemaphore]:
 
 _per_op_llm_semaphores: dict[str, CrossLoopSemaphore] = _build_per_op_semaphores()
 
-# Call scopes the automatic mental-model refresh makes: the reflect pass itself, its
-# dry run, and the structured delta/retraction ops that follow it.
+# Operation labels (and call scopes) of the automatic mental-model refresh: the reflect
+# pass itself, its dry run, and the structured delta/retraction ops that follow it.
 _MENTAL_MODEL_REFRESH_SCOPES = (
     "refresh_mental_model",
     "dry_run_refresh_mental_model",
@@ -141,7 +141,15 @@ def _semaphores_for_scope(scope: str) -> list[CrossLoopSemaphore]:
     Always includes the global semaphore; includes the per-op semaphore when
     one is configured for the scope's operation bucket.
     """
+    from .llm_trace import current_trace_context
+
+    # The refresh runs the reflect agent, whose calls are scoped reflect/
+    # reflect_tool_call/final_rewrite/...: classify by the operation the call runs
+    # under first, or those calls would land in the interactive reflect bucket (#5027).
+    trace_ctx = current_trace_context()
     op = _scope_to_operation(scope)
+    if trace_ctx is not None and trace_ctx.operation and trace_ctx.operation.startswith(_MENTAL_MODEL_REFRESH_SCOPES):
+        op = "mental_model_refresh"
     per_op = _per_op_llm_semaphores.get(op) if op is not None else None
     if per_op is None:
         return [_global_llm_semaphore]
