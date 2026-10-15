@@ -34,8 +34,10 @@ rerank_shared_context: contextvars.ContextVar[str | None] = contextvars.ContextV
     "hindsight_rerank_shared_context", default=None
 )
 
-_MAX_QUERY_TOKENS = 2_000  # Defensive ceiling on the query, which every request carries
-# The same for the shared context: past the request ceiling, every request would fail.
+# Defensive ceilings on the query and the shared context, which every request carries:
+# past the request ceiling, every request would fail. Each also stays within a quarter of
+# that ceiling, so a low one still leaves half of each request for the questions.
+_MAX_QUERY_TOKENS = 2_000
 _MAX_SHARED_CONTEXT_TOKENS = 4_000
 _CONFLICT_OPTION_TOKENS = 300  # Per-candidate ceiling in a conflict question
 # Recall prepends this per candidate, so it is held aside while the pool's shared
@@ -227,11 +229,14 @@ class DecisionModelReranker(CrossEncoderModel):
     async def initialize(self) -> None:
         pass
 
+    def _capped(self, text: str, ceiling: int) -> str:
+        ceiling = min(ceiling, self._client.max_request_tokens // 4)
+        return truncate_to_tokens(text, ceiling).text if count_tokens(text) > ceiling else text
+
     def _state(self, query: str) -> str:
         """The question's state: what is being asked, plus the framing every candidate shares."""
-        shared = rerank_shared_context.get()
-        if shared and count_tokens(shared) > _MAX_SHARED_CONTEXT_TOKENS:
-            shared = truncate_to_tokens(shared, _MAX_SHARED_CONTEXT_TOKENS).text
+        query = self._capped(query, _MAX_QUERY_TOKENS)
+        shared = self._capped(rerank_shared_context.get() or "", _MAX_SHARED_CONTEXT_TOKENS)
         return f"{shared}\n\nQuestion: {query}" if shared else f"Question: {query}"
 
     async def _rank(self, query: str, docs: list[str], indices: list[int]) -> list[int]:
@@ -352,8 +357,6 @@ class DecisionModelReranker(CrossEncoderModel):
         return superseded
 
     async def _rerank(self, query: str, docs: list[str], indices: list[int], scores: list[float]) -> None:
-        if count_tokens(query) > _MAX_QUERY_TOKENS:
-            query = truncate_to_tokens(query, _MAX_QUERY_TOKENS).text
         # Judge each candidate on what is its own, not on the preamble they all carry.
         own = _strip_shared_prefix(docs, indices)
         docs = [own.get(index, doc) for index, doc in enumerate(docs)]

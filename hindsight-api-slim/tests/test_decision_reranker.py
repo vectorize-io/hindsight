@@ -8,6 +8,7 @@ from hindsight_api.engine.search.decision_reranker import (
     _CONFLICT_INSTRUCTIONS,
     DecisionModelReranker,
     _strip_shared_prefix,
+    _MAX_SHARED_CONTEXT_TOKENS,
     _ValuePayload,
     _value_payload,
     rerank_shared_context,
@@ -27,6 +28,7 @@ class _Client:
         self.confidence = confidence
         self.conflicts_fail = conflicts_fail
         self.asked: list[tuple[str, dict]] = []
+        self.max_request_tokens = 26_000
 
     async def ask_all(self, state, questions):
         self.asked.append((state, questions))
@@ -159,7 +161,19 @@ class TestSharedPreamble:
             await reranker.predict([("q", "a"), ("q", "b")])
         finally:
             rerank_shared_context.reset(token)
-        assert count_tokens(client.asked[0][0]) <= 4_100
+        assert count_tokens(client.asked[0][0]) <= _MAX_SHARED_CONTEXT_TOKENS + count_tokens("\n\nQuestion: q")
+
+    async def test_a_low_request_ceiling_shrinks_the_caps(self):
+        """A ceiling below the caps would otherwise fail every request."""
+        client = _Client()
+        client.max_request_tokens = 1_000
+        reranker = _reranker(client)
+        token = rerank_shared_context.set("profile line\n" * 5_000)
+        try:
+            await reranker.predict([("long question " * 2_000, "a"), ("long question " * 2_000, "b")])
+        finally:
+            rerank_shared_context.reset(token)
+        assert count_tokens(client.asked[0][0]) <= 520
 
     async def test_the_preamble_does_not_reach_the_rank_question(self):
         client = _Client()
