@@ -3511,8 +3511,8 @@ class MemoriesExtension(Extension, ABC):
         # chunk_id, consolidation_failed_at, …) and a patch that carried user keys loose among them
         # could not be told apart from one setting an internal field.
         #
-        # Set unconditionally, mirroring Postgres's `SET metadata = $4`: a document whose metadata
-        # was cleared must clear on its survivors too, which an absent key would not do.
+        # Set in full on every patched memory, mirroring Postgres's `SET metadata = $4`: a document
+        # whose metadata was cleared must clear on its survivors too, which an absent key would not do.
         new_tags_by_unit = {m.unit_id: final_tags(m.tags) for m in page.memories}
         new_metadata = drop_null_values(metadata or {})
         # Only memories whose labels actually differ: a patch moves `updated_at`, the "this

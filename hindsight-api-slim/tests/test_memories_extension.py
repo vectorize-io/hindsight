@@ -2618,6 +2618,37 @@ async def test_relabel_reports_only_memories_whose_scopes_move(scopes, moved):
     assert result.rescoped_unit_ids == (["fact-1"] if moved else [])
 
 
+async def test_relabel_with_unchanged_labels_patches_nothing():
+    """#5614: a patch moves `updated_at`, which consolidation reads as "this fact was edited" — so
+    re-sending a document with the same tags, metadata and scopes must patch no memory, and a real
+    change must still patch it."""
+    store = InMemoryMemories({})
+    store.rows["fact-1"] = StoredMemory(
+        unit_id="fact-1",
+        text="a fact",
+        fact_type="world",
+        document_id="doc-1",
+        tags=["team"],
+        metadata={"src": "v1"},
+        observation_scopes="shared",
+    )
+
+    async def _relabel(metadata):
+        return await store.relabel_document_memories(
+            conn=None,
+            fq_table=None,
+            bank_id="bank-x",
+            document_id="doc-1",
+            tags=["team"],
+            metadata=metadata,
+            observation_scopes="shared",
+            final_tags=lambda _old: ["team"],
+        )
+
+    assert (await _relabel({"src": "v1"})).updated == 0
+    assert (await _relabel({"src": "v2"})).updated == 1
+
+
 async def test_the_engine_resolves_entities_in_sql_whatever_store_is_configured(
     pg0_db_url, embeddings, cross_encoder, query_analyzer
 ):

@@ -141,3 +141,24 @@ async def test_replacing_leaves_alone_an_item_retained_beside_it_without_an_id(c
     await settled(bank_id)
 
     assert await _fact_texts(client, bank_id) == sorted([LISBON, PYTHON])
+
+
+async def test_re_sending_the_same_document_edits_no_fact(client, bank_id, retained):
+    """An unchanged re-send — same text, same tags — is a no-op on every fact (#5614).
+
+    A fact's `updated_at` is the "this fact was edited" signal: consolidation throws
+    away an in-flight batch whose source facts moved after it read them. Sync jobs
+    re-push whole documents unchanged, so a re-send that touched every fact kept
+    discarding consolidation work on that document, while the facts looked the same.
+    """
+
+    async def _written_at() -> dict[str, str | None]:
+        memories = await client.memory.list_memories(bank_id, limit=100)
+        return {item.id: item.updated_at for item in memories.items if item.fact_type != "observation"}
+
+    before = await _written_at()
+    assert len(before) == 2
+
+    await retained(ORIGINAL)
+
+    assert await _written_at() == before

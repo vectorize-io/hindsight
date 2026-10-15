@@ -206,11 +206,8 @@ async def test_identical_re_retain_does_not_touch_any_unit(memory, request_conte
     doc = "doc-same"
 
     async def _written_at():
-        async with memory._pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT id, updated_at FROM memory_units WHERE bank_id = $1 AND document_id = $2", bank_id, doc
-            )
-        return {row["id"]: row["updated_at"] for row in rows}
+        res = await memory.list_memory_units(bank_id, document_id=doc, limit=200, request_context=request_context)
+        return {u["id"]: u["updated_at"] for u in res["items"]}
 
     try:
         await memory._ensure_bank_exists(bank_id, request_context)
