@@ -101,16 +101,35 @@ class _OpenAIResponse(BaseModel):
     usage: DecisionUsage = Field(default_factory=DecisionUsage)
 
 
-def _openai_question(name: str, question: DecisionQuestion) -> dict[str, Any]:
-    body: dict[str, Any] = {"name": name, "instructions": question.instructions}
+class _OpenAIOption(BaseModel):
+    value: str
+    description: str
+
+
+class _OpenAILevel(BaseModel):
+    label: str
+    description: str
+
+
+class _OpenAIQuestion(BaseModel):
+    type: Literal["predicate", "choice", "score"]
+    name: str
+    instructions: str
+    choices: list[_OpenAIOption] | None = None
+    levels: list[_OpenAILevel] | None = None
+
+
+def _openai_question(name: str, question: DecisionQuestion) -> _OpenAIQuestion:
     if question.type == "noul":
-        return {**body, "type": "predicate"}
+        return _OpenAIQuestion(type="predicate", name=name, instructions=question.instructions)
     criteria = question.criteria or []
     # The Decisions API wants a description for every option and level; a bare label doubles as one.
-    labels = criteria.items() if isinstance(criteria, dict) else ((label, None) for label in criteria)
+    labels = list(criteria.items()) if isinstance(criteria, dict) else [(label, None) for label in criteria]
     if question.type == "choice":
-        return {**body, "type": "choice", "choices": [{"value": k, "description": d or k} for k, d in labels]}
-    return {**body, "type": "score", "levels": [{"label": k, "description": d or k} for k, d in labels]}
+        choices = [_OpenAIOption(value=k, description=d or k) for k, d in labels]
+        return _OpenAIQuestion(type="choice", name=name, instructions=question.instructions, choices=choices)
+    levels = [_OpenAILevel(label=k, description=d or k) for k, d in labels]
+    return _OpenAIQuestion(type="score", name=name, instructions=question.instructions, levels=levels)
 
 
 def _from_openai(response: _OpenAIResponse) -> DecisionResponse:
@@ -172,7 +191,7 @@ class DecisionModel:
             body = {
                 "model": self.model,
                 "input": text,
-                "questions": [_openai_question(name, q) for name, q in questions.items()],
+                "questions": [_openai_question(name, q).model_dump(exclude_none=True) for name, q in questions.items()],
             }
             return _from_openai(_OpenAIResponse.model_validate(await self._post("/v1/decisions", body)))
 
