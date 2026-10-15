@@ -247,7 +247,7 @@ async def test_bank_override_disables_the_cross_encoder(memory, request_context,
     rerank_calls: list[str] = []
     real_rerank = memory._cross_encoder_reranker.rerank
 
-    async def spy(query, candidates):
+    async def spy(query, candidates, now=None):
         rerank_calls.append(query)
         return await real_rerank(query, candidates)
 
