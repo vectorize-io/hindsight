@@ -672,6 +672,7 @@ ENV_DECISION_MODEL_MODEL = "HINDSIGHT_API_DECISION_MODEL_MODEL"
 ENV_DECISION_MODEL_BASE_URL = "HINDSIGHT_API_DECISION_MODEL_BASE_URL"
 ENV_DECISION_MODEL_TIMEOUT = "HINDSIGHT_API_DECISION_MODEL_TIMEOUT"
 ENV_DECISION_MODEL_MAX_CONCURRENT = "HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT"
+ENV_DECISION_MODEL_MAX_REQUEST_TOKENS = "HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS"
 
 ENV_VECTOR_EXTENSION = "HINDSIGHT_API_VECTOR_EXTENSION"
 ENV_ANN_ITERATIVE_SCAN = "HINDSIGHT_API_ANN_ITERATIVE_SCAN"
@@ -1478,6 +1479,13 @@ DECISION_MODEL_PROVIDERS = ("none", *DECISION_MODEL_PROVIDER_DEFAULTS)
 DEFAULT_DECISION_MODEL_PROVIDER = "none"
 DEFAULT_DECISION_MODEL_TIMEOUT = 60.0
 DEFAULT_DECISION_MODEL_MAX_CONCURRENT = 24
+# Most tokens one request may carry, counted on the whole JSON body. It follows the context
+# window of the model the endpoint serves (32k for jev-latest), less a margin: the endpoint
+# counted 14% more than we do on the same body (42.3k vs 37.3k, 95.2k vs 83.5k), so 26k
+# here is about 29.6k there. A request has to hold the state and at least one question,
+# hence the floor.
+DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS = 26_000
+MIN_DECISION_MODEL_MAX_REQUEST_TOKENS = 1_000
 
 
 def _decision_model_env(operation: str, setting: str) -> str:
@@ -3033,6 +3041,7 @@ class DecisionModelConfig:
     base_url: str
     timeout: float
     max_concurrent: int
+    max_request_tokens: int
 
 
 @dataclass
@@ -3774,6 +3783,7 @@ class HindsightConfig:
     decision_model_base_url: str | None = None
     decision_model_timeout: float = DEFAULT_DECISION_MODEL_TIMEOUT
     decision_model_max_concurrent: int = DEFAULT_DECISION_MODEL_MAX_CONCURRENT
+    decision_model_max_request_tokens: int = DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS
     recall_decision_model_provider: str | None = None
     recall_decision_model_api_key: str | None = None
     recall_decision_model_model: str | None = None
@@ -4890,6 +4900,9 @@ class HindsightConfig:
             decision_model_max_concurrent=int(
                 os.getenv(ENV_DECISION_MODEL_MAX_CONCURRENT) or DEFAULT_DECISION_MODEL_MAX_CONCURRENT
             ),
+            decision_model_max_request_tokens=int(
+                os.getenv(ENV_DECISION_MODEL_MAX_REQUEST_TOKENS) or DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS
+            ),
             **{
                 f"{operation}_decision_model_{setting.lower()}": os.getenv(_decision_model_env(operation, setting))
                 or None
@@ -5541,6 +5554,19 @@ class HindsightConfig:
             )
         if provider == "none":
             return None
+        # Checked here, not on the first request: a ceiling no request fits, or a cap no
+        # request gets through, would otherwise surface as every decision failing.
+        if self.decision_model_timeout <= 0:
+            raise ValueError(f"{ENV_DECISION_MODEL_TIMEOUT} must be positive, not {self.decision_model_timeout}")
+        if self.decision_model_max_concurrent < 1:
+            raise ValueError(
+                f"{ENV_DECISION_MODEL_MAX_CONCURRENT} must be at least 1, not {self.decision_model_max_concurrent}"
+            )
+        if self.decision_model_max_request_tokens < MIN_DECISION_MODEL_MAX_REQUEST_TOKENS:
+            raise ValueError(
+                f"{ENV_DECISION_MODEL_MAX_REQUEST_TOKENS} must be at least {MIN_DECISION_MODEL_MAX_REQUEST_TOKENS}, "
+                f"not {self.decision_model_max_request_tokens}"
+            )
         inherits_global = provider == (self.decision_model_provider or "").lower()
 
         def setting(name: str) -> str | None:
@@ -5565,6 +5591,7 @@ class HindsightConfig:
             base_url=required(setting("base_url") or defaults.base_url, "BASE_URL"),
             timeout=self.decision_model_timeout,
             max_concurrent=self.decision_model_max_concurrent,
+            max_request_tokens=self.decision_model_max_request_tokens,
         )
 
     def log_config(self) -> None:
@@ -5592,7 +5619,10 @@ class HindsightConfig:
             refresh_model = self.mental_model_refresh_llm_model or self.reflect_llm_model or self.llm_model
             logger.info(f"LLM (mental model refresh): provider={refresh_provider}, model={refresh_model}")
         logger.info(f"Embeddings: provider={self.embeddings_provider}")
-        logger.info(f"Reranker: provider={self.reranker_provider}")
+        if self.decision_model_config("recall") is not None:
+            logger.info("Reranker: replaced by the decision model in recall")
+        else:
+            logger.info(f"Reranker: provider={self.reranker_provider}")
         for operation in DECISION_MODEL_OPERATIONS:
             if decision_model := self.decision_model_config(operation):
                 logger.info(

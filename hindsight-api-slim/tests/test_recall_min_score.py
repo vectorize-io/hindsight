@@ -211,6 +211,27 @@ class TestRankScoreReranker:
         assert all(r.scores.reranker is None for r in floored.results)
 
 
+class TestDecisionReranker:
+    """A decision model's order is final: recall skips the boosts it applies to a cross-encoder."""
+
+    async def test_boosts_apply_to_a_cross_encoder_but_not_a_decision_model(self, seeded_memory, monkeypatch):
+        engine, bank_id = seeded_memory
+        # A fresh date makes the recency boost non-neutral, so skipping it is observable.
+        pool = await engine._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("UPDATE memory_units SET occurred_start = now() WHERE id = ANY($1::uuid[])", ALL_IDS)
+
+        monkeypatch.setattr(engine._cross_encoder_reranker, "cross_encoder", _StubReranker("cohere"))
+        boosted = await _recall(engine, bank_id)
+        monkeypatch.setattr(engine._cross_encoder_reranker, "cross_encoder", _StubReranker("decision_model"))
+        decided = await _recall(engine, bank_id)
+
+        n = len(decided.results)
+        assert n >= 2
+        assert [r.scores.final for r in decided.results] == pytest.approx([(n - i) / n for i in range(n)])
+        assert boosted.results[0].scores.final > 1.0, "the recency boost lifts a fresh fact above its rerank score"
+
+
 class TestRetrievalLevelFilters:
     @pytest.mark.memory_backend_incompatible
     async def test_semantic_floor_prunes_in_retrieval(self, seeded_memory):

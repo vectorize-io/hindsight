@@ -21,7 +21,9 @@ provider's wire format:
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -29,6 +31,10 @@ from pydantic import BaseModel, Field
 from .._cross_loop import CrossLoopSemaphore
 from ..config import DecisionModelConfig
 from .aiohttp_session import LoopLocalSession, per_phase_timeout, raise_for_status
+from .remote_retry import RetryPolicy, acall_with_retry
+from .token_encoding import count_tokens
+
+logger = logging.getLogger(__name__)
 
 
 class DecisionQuestion(BaseModel):
@@ -36,10 +42,13 @@ class DecisionQuestion(BaseModel):
 
     ``criteria``: for a choice, option id -> description (None when the id says enough);
     for a score, the levels from lowest to highest.
+
+    ``instructions`` may be named parts instead of one string — a task and the item it is
+    about, say — which System One reads as such; providers that take a string get it as JSON.
     """
 
     type: Literal["noul", "choice", "score"]
-    instructions: str
+    instructions: str | dict[str, str]
     criteria: dict[str, str | None] | list[str] | None = None
 
     def system_one(self) -> dict[str, Any]:
@@ -120,16 +129,19 @@ class _OpenAIQuestion(BaseModel):
 
 
 def _openai_question(name: str, question: DecisionQuestion) -> _OpenAIQuestion:
+    instructions = question.instructions
+    if not isinstance(instructions, str):
+        instructions = json.dumps(instructions, ensure_ascii=False)
     if question.type == "noul":
-        return _OpenAIQuestion(type="predicate", name=name, instructions=question.instructions)
+        return _OpenAIQuestion(type="predicate", name=name, instructions=instructions)
     criteria = question.criteria or []
     # The Decisions API wants a description for every option and level; a bare label doubles as one.
     labels = list(criteria.items()) if isinstance(criteria, dict) else [(label, None) for label in criteria]
     if question.type == "choice":
         choices = [_OpenAIOption(value=k, description=d or k) for k, d in labels]
-        return _OpenAIQuestion(type="choice", name=name, instructions=question.instructions, choices=choices)
+        return _OpenAIQuestion(type="choice", name=name, instructions=instructions, choices=choices)
     levels = [_OpenAILevel(label=k, description=d or k) for k, d in labels]
-    return _OpenAIQuestion(type="score", name=name, instructions=question.instructions, levels=levels)
+    return _OpenAIQuestion(type="score", name=name, instructions=instructions, levels=levels)
 
 
 def _from_openai(response: _OpenAIResponse) -> DecisionResponse:
@@ -151,6 +163,12 @@ def _from_openai(response: _OpenAIResponse) -> DecisionResponse:
 
 
 class DecisionModel:
+    # Most questions in one request. Measured on System One: roughly 750 single-candidate
+    # questions go through and 775 come back max_tokens_exceeded, so this is kept clear of
+    # the edge. The token ceiling is ``max_request_tokens``: it belongs to the model the
+    # endpoint serves, not to this client, so it is a setting.
+    MAX_QUESTIONS = 700
+
     def __init__(
         self,
         provider: str,
@@ -159,8 +177,12 @@ class DecisionModel:
         base_url: str,
         timeout: float,
         max_concurrent: int,
+        max_request_tokens: int,
+        retry_policy: RetryPolicy | None = None,
     ):
         self.provider = provider
+        self.max_request_tokens = max_request_tokens
+        self.retry_policy = retry_policy or RetryPolicy()
         self.model = model
         self.base_url = base_url.rstrip("/")
         # CrossLoopSemaphore, not asyncio.Semaphore: one client is built at startup and
@@ -181,10 +203,70 @@ class DecisionModel:
             base_url=config.base_url,
             timeout=config.timeout,
             max_concurrent=config.max_concurrent,
+            max_request_tokens=config.max_request_tokens,
         )
 
     async def ask(self, state: str | dict[str, Any], questions: dict[str, DecisionQuestion]) -> DecisionResponse:
-        """Ask ``questions`` (keyed by caller-chosen ids) about ``state`` in one request."""
+        """Ask ``questions`` (keyed by caller-chosen ids) about ``state`` in one request.
+
+        Retried on its own when it fails transiently — a 429 above all, which a single
+        endpoint replica returns as soon as a few recalls overlap.
+        """
+        return await acall_with_retry(
+            lambda: self._ask_once(state, questions),
+            policy=self.retry_policy,
+            budget=self.retry_policy.new_budget(),
+            provider=f"decision_model:{self.provider}",
+        )
+
+    async def ask_all(
+        self, state: str | dict[str, Any], questions: dict[str, DecisionQuestion]
+    ) -> dict[str, DecisionAnswer]:
+        """Ask ``questions`` in as many requests as it takes for each to fit the window.
+
+        A request that still fails after its retries is logged and its answers are left
+        out, so the caller decides what an unanswered question means rather than losing
+        every answer to one failed request.
+        """
+
+        async def ask(part: dict[str, DecisionQuestion]) -> dict[str, DecisionAnswer]:
+            try:
+                return (await self.ask(state, part)).answers
+            except Exception as e:
+                logger.warning(f"Decision model: a request of {len(part)} questions failed: {e}")
+                return {}
+
+        answers: dict[str, DecisionAnswer] = {}
+        for part in await asyncio.gather(*(ask(part) for part in self._split(state, questions))):
+            answers.update(part)
+        return answers
+
+    def _split(
+        self, state: str | dict[str, Any], questions: dict[str, DecisionQuestion]
+    ) -> list[dict[str, DecisionQuestion]]:
+        """``questions`` in groups whose request bodies each fit ``max_request_tokens``.
+
+        Counted on the System One body — state, model and every question with its framing —
+        since that is what the endpoint counts against its window. The OpenAI shape carries
+        the same text under other keys. A single question over the ceiling still goes out
+        alone, and fails there.
+        """
+        envelope = count_tokens(json.dumps({"model": self.model, "state": state, "questions": {}}))
+        parts: list[dict[str, DecisionQuestion]] = []
+        current: dict[str, DecisionQuestion] = {}
+        used = envelope
+        for key, question in questions.items():
+            tokens = count_tokens(json.dumps({key: question.system_one()}))
+            if current and (len(current) >= self.MAX_QUESTIONS or used + tokens > self.max_request_tokens):
+                parts.append(current)
+                current, used = {}, envelope
+            current[key] = question
+            used += tokens
+        if current:
+            parts.append(current)
+        return parts
+
+    async def _ask_once(self, state: str | dict[str, Any], questions: dict[str, DecisionQuestion]) -> DecisionResponse:
         if self.provider == "openai":
             # The Decisions API takes text, not a structured state.
             text = state if isinstance(state, str) else json.dumps(state, ensure_ascii=False)
@@ -206,6 +288,7 @@ class DecisionModel:
         return DecisionResponse.model_validate(await self._post("/v1/systemone", body))
 
     async def _post(self, path: str, body: dict[str, Any]) -> Any:
+        # The slot is held per attempt, so a request waiting out its backoff frees it.
         async with self._semaphore:
             async with self._session.get().post(f"{self.base_url}{path}", json=body) as response:
                 await raise_for_status(response)

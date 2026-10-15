@@ -87,6 +87,29 @@ def typesafe_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> It
 
 
 @pytest.fixture(scope="session")
+def decision_model_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
+    """A server with a decision model set up, pointed at the stub: recall ranks with it.
+
+    The decision model is server-level, so it costs a process. HTTP only, for the same
+    reason as ``typesafe_server``: both share one database, and a worker here would run
+    the other server's queued work with this server's ranking.
+    """
+    log_path: Path = tmp_path_factory.mktemp("decision-model-server") / "server.log"
+    server = start_hindsight_server(
+        stub_url=stub_server.url,
+        log_path=log_path,
+        extra_env={
+            "HINDSIGHT_API_DECISION_MODEL_PROVIDER": "typesafe",
+            "HINDSIGHT_API_DECISION_MODEL_API_KEY": "stub-key",
+            "HINDSIGHT_API_DECISION_MODEL_BASE_URL": stub_server.url,
+            "HINDSIGHT_API_WORKER_ENABLED": "false",
+        },
+    )
+    yield server
+    server.stop()
+
+
+@pytest.fixture(scope="session")
 def scoped_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
     """A server whose operation validator confines each API key to ``user:<key>`` + ``kind:rule``.
 
@@ -217,6 +240,13 @@ async def retrying_client(retrying_server) -> AsyncIterator[Hindsight]:
 @pytest.fixture
 async def typesafe_client(typesafe_server) -> AsyncIterator[Hindsight]:
     client = Hindsight(base_url=typesafe_server.url)
+    yield client
+    await client.aclose()
+
+
+@pytest.fixture
+async def decision_model_client(decision_model_server) -> AsyncIterator[Hindsight]:
+    client = Hindsight(base_url=decision_model_server.url)
     yield client
     await client.aclose()
 

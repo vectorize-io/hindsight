@@ -463,6 +463,11 @@ class RerankStub:
     #: keep more. Ignored by the Cohere-shaped /rerank endpoint, which has no cut.
     cut_level: int = 0
 
+    #: The value a decision model's conflict question says is current: the option that
+    #: mentions it wins, confidently. None answers it like any other Choice — lexically,
+    #: which on two options that differ by one value is a hedge nothing acts on.
+    current_value: str | None = None
+
     def score(self, query: str, document: str) -> float:
         from .lexical import lexical_relevance
 
@@ -502,6 +507,7 @@ class Stubs:
         default or it leaks into whatever runs next."""
         self.llm.reset()
         self.rerank.cut_level = RerankStub.cut_level
+        self.rerank.current_value = RerankStub.current_value
         self.rejected_requests.clear()
         self.webhooks.clear()
 

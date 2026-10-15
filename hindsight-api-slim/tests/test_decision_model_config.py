@@ -1,5 +1,6 @@
 """The decision model is set up once and each operation may override it."""
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -15,6 +16,8 @@ from hindsight_api.engine.decision_model import (
     DecisionResponse,
     DecisionUsage,
 )
+from hindsight_api.engine.remote_retry import RetryPolicy
+from hindsight_api.engine.token_encoding import count_tokens
 from tests.aiohttp_stub import stub_server
 
 _GLOBAL = {
@@ -47,6 +50,7 @@ def test_global_setup_reaches_every_operation(monkeypatch):
             base_url="https://api.typesafe.ai",
             timeout=60.0,
             max_concurrent=24,
+            max_request_tokens=26_000,
         )
 
 
@@ -202,7 +206,13 @@ class _Upstream:
 def _client(provider: str, base_url: str, model: str) -> DecisionModel:
     return DecisionModel.from_config(
         DecisionModelConfig(
-            provider=provider, api_key="k", model=model, base_url=base_url, timeout=5.0, max_concurrent=2
+            provider=provider,
+            api_key="k",
+            model=model,
+            base_url=base_url,
+            timeout=5.0,
+            max_concurrent=2,
+            max_request_tokens=26_000,
         )
     )
 
@@ -299,3 +309,101 @@ async def test_openai_refusal_raises():
     async with stub_server(upstream.handle) as base_url:
         with pytest.raises(DecisionRefusedError, match="urgent"):
             await _client("openai", base_url, "gpt-6-luna").ask("x", {"urgent": _QUESTIONS["urgent"]})
+
+
+def test_the_default_request_ceiling_fits_a_32k_window(monkeypatch):
+    """The endpoint counted 14% more than we do on the same body."""
+    assert _config(monkeypatch, {}).decision_model_max_request_tokens * 1.14 < 32_768
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [
+        "HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS=500",
+        "HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT=-1",
+        "HINDSIGHT_API_DECISION_MODEL_TIMEOUT=-5",
+    ],
+)
+def test_a_setting_no_request_can_work_with_fails_at_startup(monkeypatch, setting):
+    """Not on the first request, as a 422 or a hang."""
+    name, value = setting.split("=")
+    with pytest.raises(ValueError, match=name):
+        _config(monkeypatch, {**_GLOBAL, name: value}).validate()
+
+
+@dataclass
+class _Answering:
+    """A System One upstream answering every question it is sent. A request whose
+    questions include ``down`` fails with 503; the first ``limited`` requests get 429."""
+
+    down: str | None = None
+    limited: int = 0
+    bodies: list[Any] = field(default_factory=list)
+
+    async def handle(self, request: web.Request) -> web.StreamResponse:
+        body = await request.json()
+        self.bodies.append(body)
+        if self.limited:
+            self.limited -= 1
+            return web.json_response({"detail": "slow down"}, status=429)
+        if self.down in body["questions"]:
+            return web.json_response({"detail": "down"}, status=503)
+        return web.json_response({"answers": {key: {"noul": 0.5} for key in body["questions"]}})
+
+
+def _splitting_client(base_url: str, max_request_tokens: int = 26_000) -> DecisionModel:
+    return DecisionModel(
+        provider="typesafe",
+        api_key="k",
+        model="jev-latest",
+        base_url=base_url,
+        timeout=5.0,
+        max_concurrent=2,
+        max_request_tokens=max_request_tokens,
+        retry_policy=RetryPolicy(max_retries=2, initial_backoff=0.0, max_backoff=0.0, budget_seconds=5.0),
+    )
+
+
+def _nouls(count: int, text: str) -> dict[str, DecisionQuestion]:
+    return {f"m{i}": DecisionQuestion(type="noul", instructions=f"{text} {i}") for i in range(count)}
+
+
+async def test_every_request_fits_the_ceiling_counting_the_whole_body():
+    """The endpoint counts every token of the body against its model's window. A ceiling
+    that counted only the candidates was overrun by the state, which goes out with every
+    request: 63k-token requests sent to a 32k window came back 422."""
+    upstream = _Answering()
+    questions = _nouls(60, "memory about the storage layer")
+    async with stub_server(upstream.handle) as base_url:
+        answers = await _splitting_client(base_url, max_request_tokens=1_500).ask_all(
+            "what did we decide about the storage layer " * 40, questions
+        )
+    assert len(upstream.bodies) > 1
+    assert all(count_tokens(json.dumps(body)) <= 1_500 for body in upstream.bodies)
+    assert list(answers) == list(questions), "every question asked once, answers keyed as sent"
+
+
+async def test_a_pool_over_the_question_cap_is_split():
+    upstream = _Answering()
+    async with stub_server(upstream.handle) as base_url:
+        await _splitting_client(base_url).ask_all("q", _nouls(DecisionModel.MAX_QUESTIONS + 5, "x"))
+    assert sorted(len(body["questions"]) for body in upstream.bodies) == [5, DecisionModel.MAX_QUESTIONS]
+
+
+async def test_a_rate_limited_request_is_retried():
+    """One replica returns 429 as soon as a few recalls overlap; the request must not be lost."""
+    upstream = _Answering(limited=1)
+    async with stub_server(upstream.handle) as base_url:
+        answers = await _splitting_client(base_url).ask_all("q", _nouls(1, "x"))
+    assert len(upstream.bodies) == 2
+    assert answers["m0"].noul == 0.5
+
+
+async def test_a_request_that_keeps_failing_loses_only_its_own_answers():
+    upstream = _Answering(down="m0")
+    questions = _nouls(4, "word " * 400)
+    async with stub_server(upstream.handle) as base_url:
+        answers = await _splitting_client(base_url, max_request_tokens=1_000).ask_all("q", questions)
+    failed = next(body["questions"] for body in upstream.bodies if "m0" in body["questions"])
+    assert len(failed) < len(questions), "the pool must have been split for this to mean anything"
+    assert set(answers) == set(questions) - set(failed)

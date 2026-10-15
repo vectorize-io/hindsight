@@ -598,6 +598,7 @@ def validate_sql_schema(sql: str) -> None:
 from .cross_encoder import RANK_SCORE_PROVIDERS, CrossEncoderModel
 from .embeddings import Embeddings, create_embeddings_from_env
 from .interface import BankConfigState, BankTemplateImportWrite, MemoryEngineInterface
+from .search.decision_reranker import PROVIDER_NAME as DECISION_MODEL_RERANKER
 
 if TYPE_CHECKING:
     from hindsight_api.config_resolver import ValidatedBankConfigUpdate
@@ -10016,7 +10017,11 @@ class MemoryEngine(MemoryEngineInterface):
             # math, additive boosts and final sort would otherwise be invisible in
             # the phase metrics (issue #2361).
             scoring_start = time.time()
-            if scored_results and reranking == "interleave":
+            if scored_results and reranking == "cross_encoder" and served_provider == DECISION_MODEL_RERANKER:
+                # A decision model ranked the whole pool and resolved its conflicts; its order
+                # is final. The recency / temporal / proof-count boosts would only second-guess it.
+                log_buffer.append("  [4.6] Decision model order kept (combined scoring skipped)")
+            elif scored_results and reranking == "interleave":
                 # Interleave order is authoritative for dedup recall: do NOT re-sort by the
                 # recency/temporal boosts — that re-sort is precisely what buried the twin
                 # under RRF. Seed weight from the interleave-position rrf_score so the order

@@ -1502,6 +1502,9 @@ This is separate from the `typesafe` [reranker](#reranker), which keeps its own
 | `HINDSIGHT_API_DECISION_MODEL_BASE_URL` | API base URL. Required for `cloudflare`. | provider default |
 | `HINDSIGHT_API_DECISION_MODEL_TIMEOUT` | Request timeout in seconds. | `60` |
 | `HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT` | Most requests in flight at once, for each operation using the decision model. | `24` |
+| `HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS` | Most tokens one request may carry, counted on the whole request body. Larger asks are split across requests. Set it to the served model's context window less a margin. | `26000` |
+
+Every request is retried on its own when it is rate-limited (429) or fails transiently.
 
 | Provider | API | Default model | Default base URL |
 |----------|-----|---------------|------------------|
@@ -1523,6 +1526,14 @@ export HINDSIGHT_API_REFLECT_DECISION_MODEL_MODEL=jev-preview        # reflect o
 export HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_PROVIDER=openai    # consolidation on OpenAI
 export HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_API_KEY=your-openai-key
 ```
+
+**Recall.** With a decision model, recall uses it in place of the [reranker](#reranker).
+It asks of each candidate whether showing it would help answer the question, and orders
+the pool by that. Then, on questions that ask for a value (a date, a count, a version), it
+asks which of the candidates that disagree states the current answer, and drops the
+out-of-date ones when the verdict is confident. That order is final: recall skips the
+recency, temporal and proof-count boosts it applies to a cross-encoder, and publishes no
+reranker score, so `min_scores.reranker` is rejected.
 
 ### Authentication
 

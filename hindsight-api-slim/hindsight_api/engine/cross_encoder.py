@@ -73,7 +73,8 @@ _served_provider: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 # weak it is, so a fixed floor just keeps a fixed share of the pool and the value
 # is not comparable between recalls (#4901). Recall rejects min_scores.reranker
 # for these and publishes no reranker score.
-RANK_SCORE_PROVIDERS = frozenset({"typesafe"})
+# "decision_model" is recall's decision-model reranker (engine/search/decision_reranker.py).
+RANK_SCORE_PROVIDERS = frozenset({"typesafe", "decision_model"})
 
 
 class RerankTimeoutError(Exception):
