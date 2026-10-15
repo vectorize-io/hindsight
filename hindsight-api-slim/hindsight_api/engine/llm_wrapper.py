@@ -138,8 +138,9 @@ def _scope_to_operation(scope: str) -> str | None:
 def _semaphores_for_scope(scope: str) -> list[CrossLoopSemaphore]:
     """Return the semaphores a call with the given scope must acquire.
 
-    Always includes the global semaphore; includes the per-op semaphore when
-    one is configured for the scope's operation bucket.
+    Always includes the global semaphore; includes the per-op semaphore when one
+    is configured for the call's bucket — the refresh bucket when the call runs
+    under a refresh operation, otherwise the bucket of its scope.
     """
     from .llm_trace import current_trace_context
 
