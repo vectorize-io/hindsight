@@ -36,23 +36,31 @@ When an existing observation is written in a different language from the new fac
 
 _PROCESSING_RULES = """## PROCESSING RULES
 
-1. PREFER UPDATE OVER CREATE (when there is something to merge with): if new facts describe the same canonical event, statement, decision, claim, or recurring pattern already covered by an existing observation, UPDATE that observation and attach the new facts as evidence. Do NOT create a near-duplicate sibling. One canonical observation with many source facts is always better than many siblings with one source fact each. Merge aggressively on: same named event, same diagnostic finding, same architectural decision, same recurring claim. **When the EXISTING OBSERVATIONS list is empty, or no existing observation covers the same facet as a new fact, CREATE a new observation** — this rule is about preventing duplicates, not about refusing to record durable knowledge. CREATE is the correct default for any structurally distinct event, claim, or pattern that has no existing match.
+1. PREFER UPDATE OVER CREATE (when there is something to merge with): if new facts describe the same canonical event, statement, decision, claim, or recurring pattern already covered by an existing observation, UPDATE that observation and attach the new facts as evidence. Do NOT create a near-duplicate sibling. One canonical observation with many source facts is always better than many siblings with one source fact each. Merge aggressively on: same named event, same diagnostic finding, same architectural decision, same recurring claim. **When the EXISTING OBSERVATIONS list is empty, or no existing observation covers the same facet as a new fact, CREATE a new observation** — this rule is about preventing duplicates, not about refusing to record durable knowledge. CREATE is the correct default for any structurally distinct event, claim, or pattern that has no existing match. Different wording is not a different fact: "Maria leads the design team" restates "the design team is led by Maria", and "backups are taken every night at 02:00" restates "the backup job runs nightly at 2am". A CREATE must say something no existing observation already says — if every part of it is already stated, UPDATE those observations instead.
 
 2. ONE OBSERVATION PER DISTINCT FACET: each observation tracks exactly one specific facet — a count ("has 3 items"), a named entity ("has a dog named Rex"), a relationship ("works at Google"), a decision, an event. Never merge different facets into one observation.
 
 3. MATCH BY ENTITY/FACET, NOT TOPIC: when deciding whether to UPDATE vs CREATE, match on the specific entity or facet. "Sold item X" updates only the X observation. "Now has 5 items" updates only the count observation. Do not update observations about different entities just because they share a general topic.
 
-4. STATE CHANGES — UPDATE CONCISELY: when a fact changes the state of something ("sold X", "X died", "moved to Y"), UPDATE the matching observation to reflect the current state. Include dates when available. Keep it concise — only information about THAT specific facet. Example: "User owned a dog named Rex who died on March 15, 2025". Do NOT pull in information from other observations — each observation stays focused on its own facet.
+4. STATE CHANGES ARE UPDATES, NEVER DELETES: when a fact changes the state of something ("sold X", "X died", "moved to Y", "switched from A to B", "A was removed", "the setting was reverted"), UPDATE the matching observation to the current state and keep what it replaced in a short clause. Include dates when available. Keep it concise — only information about THAT specific facet. Examples: "User owned a dog named Rex who died on March 15, 2025"; "The project manages Node.js versions with nub (switched from fnm)". Do NOT pull in information from other observations — each observation stays focused on its own facet. Never DELETE an observation because its subject changed: a delete records nothing, so the new fact's content would be lost.
 
-5. CASCADE TO ALL AFFECTED OBSERVATIONS: a state change may affect multiple observations. For example, if entity C is removed from a group, update BOTH the individual observation for C AND any list/group observation that includes C (remove C from the list while keeping all other members intact).
+5. CASCADE TO ALL AFFECTED OBSERVATIONS: a state change may affect multiple observations. For example, if entity C is removed from a group, update BOTH the individual observation for C AND any list/group observation that includes C (remove C from the list while keeping all other members intact). The same holds when two existing observations state the changed value (say, one about a service's port and one summarising the whole service): update EVERY one of them — and every observation that only holds because of the old state (once a person leaves a company, "commutes to that company's office" is history, not a current habit). No observation may be left presenting the old value as current. Cascading never recomputes a number (rule 8): when one of the user's 5 horses dies, the count observation keeps the last count the user stated, and the death is recorded on that horse's own observation.
 
 6. RESOLVE REFERENCES: when a new fact provides a concrete value for a vague placeholder in an existing observation (e.g., "home country" → "Sweden"), UPDATE to embed the resolved value.
 
 7. PRESERVE HISTORY: observations that record significant events (sold, died, moved, changed) are important history — never DELETE them. Only delete an observation when it is restated identically or truly meaningless. Be very conservative with deletes.
 
-8. NO COMPUTATION: you do not have the full picture — never calculate, derive, or adjust numeric values. If the user says "I have 2 dogs" and then "I have a dog named Rex", do NOT update the count to 3 — you don't know if Rex is one of the 2 or a new one. If the user says "I sold X", do NOT decrement a count. Only update a count when the user explicitly states a new count. Synthesize and consolidate what was stated, but never do arithmetic or logical deductions.
+8. NO COMPUTATION: you do not have the full picture — never calculate, derive, or adjust numeric values. If the user says "I have 2 dogs" and then "I have a dog named Rex", do NOT update the count to 3 — you don't know if Rex is one of the 2 or a new one. If the user says "I sold X", do NOT decrement a count. Only update a count when the user explicitly states a new count. Synthesize and consolidate what was stated, but never do arithmetic or logical deductions. A count is its own facet: never write it into the observation about one named member ("has 1 horse, which is named Daisy" deduces which horse is left) — update the count observation, or create one.
 
-9. KEEP DISTINCT TOPICS DISTINCT: do not merge observations about different people, entities, or unrelated topics. Merging is for the same canonical fact recurring — not for related-but-distinct claims."""
+9. KEEP DISTINCT TOPICS DISTINCT: do not merge observations about different people, entities, or unrelated topics. Merging is for the same canonical fact recurring — not for related-but-distinct claims. Names that differ by a single word or letter ("ledger-sync" vs "ledger-sink", "Marco" vs "Marta") are DIFFERENT entities: never update one's observation with the other's fact.
+
+10. RECENCY IS `mentioned_at`, NOT ARRIVAL ORDER: facts can arrive out of order — an old conversation may be processed after a newer one. Before letting a new fact change an observation's current state, compare `mentioned_at`. If the new fact was stated EARLIER than the observation's `mentioned_at`, it is older news: it must not overwrite the current state — but it is still history and must not be ignored. UPDATE the observation to attach it as evidence and, if it differs, record it as the earlier state ("prefers Svelte; earlier preferred React"). Nor may an older fact CREATE an observation that newer knowledge has overtaken: if an existing observation records that the situation has since changed (he moved away, the setting was removed), write the older fact in the past tense ("took the night train to Vienna while he lived there") or attach it to that observation.
+
+11. SKIP EPHEMERAL CHATTER: a momentary activity ("grabbing a coffee", "back in five minutes"), what is on someone's screen right now, greetings and thanks are not knowledge — record none of them, even under a mission that says to track anything notable. Only a MISSION that explicitly asks for that kind of data (timestamped actions, session state, screen content) overrides this.
+
+12. AN UPDATE REWRITES THE WHOLE TEXT: the `text` of an UPDATE replaces the observation's text entirely. It must still say everything the old text said, except what the new fact changes, AND it must state what the new fact adds. A detail dropped from the text is deleted from memory, and a fact cited as evidence but not stated in the text is lost. This never licenses absorbing other facets (rule 2): attach a fact only to the observation of its own facet, and if none exists, CREATE one.
+
+13. EVERY DURABLE FACT LANDS SOMEWHERE: each new fact that is not ephemeral chatter must appear in the `source_fact_ids` of at least one create or update — a restatement as new evidence on the observation it restates, anything else as an update or a create. A fact you leave out is lost: it is never shown to you again."""
 
 # Field-by-field definitions of the input shape used by the cached system
 # prefix. The call site runs .format(), so these strings must contain no braces.
@@ -101,8 +109,11 @@ _SPLIT_INPUT_SECTION = """## INPUT
 _DECISION_GUIDE = """## DECISION GUIDE
 
 - **Same canonical event, decision, claim, or facet as an existing observation → UPDATE** (use `observation_id` + new `source_fact_ids`).
+- **Before any CREATE, look for the same entity with the same value** (number, name, date, place) in the existing observations — including inside a longer observation that covers several things about that entity. If one already states it, the new fact is a restatement → UPDATE that observation.
+- **A fact that changes a value an existing observation states → UPDATE that observation**, even when the value sits inside a longer observation about several things. A separate CREATE would leave that observation stating the old value as current.
 - **New durable knowledge with no existing match → CREATE** (use `source_fact_ids`).
 - **Cross-reference facts within the batch** — a later fact may resolve a vague reference in an earlier one.
+- **State change, replacement or reversal → UPDATE every observation that states the old value**, never DELETE.
 - **Purely ephemeral facts** → omit them unless the MISSION explicitly targets such data (timestamped events, session state, screen content)."""
 
 # Output format — JSON braces escaped as {{ }} so .format() leaves them literal
@@ -122,7 +133,7 @@ Existing observation:
 Expected output (one UPDATE, no creates — both new facts are additional evidence for the same canonical decision):
 
 {{"creates": [],
-  "updates": [{{"text": "Donald named Athena's sovereignty as a foundational principle of the Janus architecture.", "observation_id": "11111111-1111-1111-1111-111111111111", "source_fact_ids": ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"], "reason": "Both new facts restate the same sovereignty decision already captured by obs 1111 — merged as evidence rather than creating siblings."}}],
+  "updates": [{{"observation_id": "11111111-1111-1111-1111-111111111111", "current_text": "Donald named Athena's sovereignty as a foundational principle of the Janus architecture.", "text": "Donald named Athena's sovereignty as a foundational principle of the Janus architecture.", "source_fact_ids": ["a1b2c3d4-e5f6-7890-abcd-ef1234567890", "b2c3d4e5-f6a7-8901-bcde-f12345678901"], "reason": "Both new facts restate the same sovereignty decision already captured by obs 1111 — merged as evidence rather than creating siblings."}}],
   "deletes": []}}
 
 ### Example 2 — State change updates one observation; unrelated fact creates a new one
@@ -137,22 +148,37 @@ Existing observation:
 Expected output (UPDATE for the state change; CREATE for the unrelated work-hours facet):
 
 {{"creates": [{{"text": "Alice works long hours, often past midnight.", "source_fact_ids": ["d4e5f6a7-b8c9-0123-defa-234567890123"], "reason": "Work-hours is a distinct facet; no existing observation covers it, so CREATE."}}],
-  "updates": [{{"text": "Alice owned a 2019 Honda Civic; sold it on March 15, 2025.", "observation_id": "22222222-2222-2222-2222-222222222222", "source_fact_ids": ["c3d4e5f6-a7b8-9012-cdef-123456789012"], "reason": "State change to the existing Honda Civic observation 2222 — UPDATE, not a new sibling."}}],
+  "updates": [{{"observation_id": "22222222-2222-2222-2222-222222222222", "current_text": "Alice owns a 2019 Honda Civic.", "text": "Alice owned a 2019 Honda Civic; sold it on March 15, 2025.", "source_fact_ids": ["c3d4e5f6-a7b8-9012-cdef-123456789012"], "reason": "State change to the existing Honda Civic observation 2222 — UPDATE, not a new sibling."}}],
   "deletes": []}}
 
-### Example 3 — A superseded observation is deleted (note the `observation_id`)
+### Example 3 — A change reaches two observations that state the same value; the redundant one is deleted (note the `observation_id`)
 
 Input facts:
   [e5f6a7b8-c9d0-1234-efab-345678901234] Bob confirmed the beta waitlist was shut down and replaced by open signup. (occurred_start=2025-06-02, mentioned_at=2025-06-02)
 
-Existing observation:
+Existing observations:
   {{"id": "33333333-3333-3333-3333-333333333333", "text": "Bob is on the beta waitlist.", "proof_count": 1}}
+  {{"id": "44444444-4444-4444-4444-444444444444", "text": "Bob is waiting on the beta waitlist for an invite.", "proof_count": 1}}
 
-Expected output (the waitlist observation is no longer true of anyone and records no significant event, so DELETE it and CREATE the replacement):
+Expected output (the change is an UPDATE that keeps what was replaced; the second observation restates the first, so it is DELETED rather than left saying the waitlist still exists):
 
-{{"creates": [{{"text": "Bob uses the product through open signup; the beta waitlist was shut down.", "source_fact_ids": ["e5f6a7b8-c9d0-1234-efab-345678901234"], "reason": "The waitlist observation is superseded outright rather than amended, so CREATE the replacement and DELETE the old one."}}],
+{{"creates": [],
+  "updates": [{{"observation_id": "33333333-3333-3333-3333-333333333333", "current_text": "Bob is on the beta waitlist.", "text": "Bob uses the product through open signup; the beta waitlist he was on was shut down in June 2025.", "source_fact_ids": ["e5f6a7b8-c9d0-1234-efab-345678901234"], "reason": "State change to the waitlist observation 3333 — UPDATE to the current state, not a delete."}}],
+  "deletes": [{{"observation_id": "44444444-4444-4444-4444-444444444444", "merged_into": "33333333-3333-3333-3333-333333333333", "reason": "Restates observation 3333, which now carries the current state; left alone it would still present the waitlist as current."}}]}}
+
+### Example 4 — A new facet of a known entity is its own observation
+
+Input facts:
+  [f6a7b8c9-d0e1-2345-fabc-456789012345] The Lisbon office is managed by Rui Costa. (mentioned_at=2025-07-01)
+
+Existing observation:
+  {{"id": "55555555-5555-5555-5555-555555555555", "text": "The Lisbon office opens at 8:00 and closes at 18:00.", "proof_count": 2}}
+
+Expected output (who manages the office is a different facet from its opening hours: CREATE it, and leave the hours observation exactly as it is — rewriting it to the new fact would erase the hours):
+
+{{"creates": [{{"text": "The Lisbon office is managed by Rui Costa.", "source_fact_ids": ["f6a7b8c9-d0e1-2345-fabc-456789012345"], "reason": "Management is a distinct facet; observation 5555 covers only opening hours."}}],
   "updates": [],
-  "deletes": [{{"observation_id": "33333333-3333-3333-3333-333333333333", "reason": "The waitlist no longer exists — this observation is superseded, not merely out of date."}}]}}
+  "deletes": []}}
 
 ### Observation text rules
 
@@ -163,10 +189,11 @@ Expected output (the waitlist observation is no longer true of anyone and record
 ### Field rules
 
 - `source_fact_ids`: copy the EXACT UUID strings shown in brackets `[uuid]` from new facts — never use integers or positions.
-- `observation_id`: copy the EXACT `id` UUID string from existing observations.
+- `observation_id`: copy the EXACT `id` UUID string from existing observations — never a new fact's id. A fact with no matching observation is a CREATE.
+- `current_text` (updates): copy the observation's existing `text` verbatim, THEN write `text` as that text edited — so nothing it already said is lost by accident.
 - One create or update may reference multiple facts when they jointly support the observation.
 - **AT MOST ONE UPDATE PER `observation_id`**: if several new facts all update the same existing observation, emit a single `updates` entry that lists all contributing `source_fact_ids` and a single consolidated `text`. Never emit two `updates` entries with the same `observation_id` in one response — they would silently overwrite each other.
-- `deletes`: only when an observation is directly superseded or contradicted by new facts. Every entry MUST carry `observation_id` — the EXACT `id` UUID string of the observation to remove, copied from existing observations, exactly as an UPDATE does. A delete entry without it names no target and is rejected, and rejecting it discards the whole response — the creates and updates alongside it included. Naming the observation in `reason` prose is NOT enough. If you cannot supply the id, emit no delete.
+- `deletes`: only for an observation that restates another one (fold it into the survivor with an UPDATE in the same response) or is truly meaningless. A changed state is an UPDATE, never a delete. When the deleted observation's content now lives in another observation, set `merged_into` to that observation's `id` — its evidence moves there; otherwise omit `merged_into`. Every entry MUST carry `observation_id` — the EXACT `id` UUID string of the observation to remove, copied from existing observations, exactly as an UPDATE does. A delete entry without it names no target and is rejected, and rejecting it discards the whole response — the creates and updates alongside it included. Naming the observation in `reason` prose is NOT enough. If you cannot supply the id, emit no delete.
 - `reason`: REQUIRED on every create/update/delete — one sentence explaining the choice. For a CREATE, state which existing observation(s) you considered and why none matched (a near-identical existing observation means you should UPDATE, not CREATE). This is audited to catch duplicate creates.
 - Do NOT include `tags` — handled automatically.
 - Return `{{"creates": [], "updates": [], "deletes": []}}` if nothing durable is found."""
@@ -223,8 +250,13 @@ def build_consolidation_input(
     observations_text: str,
     observations_mission: str | None = None,
     observation_capacity_note: str | None = None,
+    related_note: str | None = None,
 ) -> str:
     """Per-batch user message: MISSION + INPUT data + any capacity constraint.
+
+    ``related_note`` names,
+    per new fact, the existing observations that mention the same entity by name: the ones a
+    change must be checked against.
 
     The MISSION lives here (not in the cached system prefix) so the prefix stays
     bank-agnostic and one CachedContent serves every bank. The capacity note also
@@ -236,5 +268,13 @@ def build_consolidation_input(
         capacity_section = f"## CAPACITY CONSTRAINT\n\n{escape_for_prompt(observation_capacity_note)}\n\n"
     # _SPLIT_INPUT_SECTION omits the stable observation-format explanation (now in
     # the cached system prefix) — only the variable facts/observations remain.
-    template = mission_section + capacity_section + _SPLIT_INPUT_SECTION
+    related_section = ""
+    if related_note:
+        related_section = (
+            "## OBSERVATIONS ABOUT THE SAME ENTITIES\n\n"
+            "For each new fact, the existing observations that name the same entity. Check every one: if "
+            "the fact changes something it states, UPDATE it too (rule 5); leave the others as they are:\n"
+            f"{escape_for_prompt(related_note)}\n\n"
+        )
+    template = mission_section + capacity_section + related_section + _SPLIT_INPUT_SECTION
     return template.format(facts_text=facts_text, observations_text=observations_text)

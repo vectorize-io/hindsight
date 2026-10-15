@@ -114,7 +114,9 @@ def test_json_schema_still_advertises_only_the_canonical_name():
     emit — it only widens what a free-form one gets away with."""
     schema = _ConsolidationBatchResponse.model_json_schema()["$defs"]["_DeleteAction"]
     assert schema["required"] == ["observation_id"]
-    assert set(schema["properties"]) == {"observation_id", "reason"}
+    # `merged_into` is optional: a delete that folds its content into another observation
+    # names it, so the evidence moves there instead of being re-queued.
+    assert set(schema["properties"]) == {"observation_id", "merged_into", "reason"}
 
 
 # ---------------------------------------------------------------------------

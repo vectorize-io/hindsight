@@ -326,10 +326,10 @@ issue/PR history — and what grades it. "eval" = a `test_09` scenario (real mod
 - Significant events are history, never deleted (rule 7; #814) — eval `horse-farm`
 - No arithmetic or deduction on counts (rule 8) — eval `no-arithmetic`, `horse-farm`
 - Different people, entities and numbers stay apart, lookalike names included (rule 9; #5497, #1725) — eval `distinct-entities-stay-apart`, `noisy-service-catalogue`
-- Recency is `mentioned_at`, not arrival order; older news never overwrites (#2550) — eval `recency-is-when-stated`
-- Chatter is skipped under the default mission — eval `default-drops-chatter`
-- An update keeps everything the observation said — eval `noisy-service-catalogue` (neighbours, coverage)
-- Every durable fact lands in an observation (#5054) — eval coverage check on every wave
+- Recency is `mentioned_at`, not arrival order; older news never overwrites (rule 10; #2550) — eval `recency-is-when-stated`
+- Chatter is skipped under the default mission (rule 11 / decision guide) — eval `default-drops-chatter`
+- An update keeps everything the observation said (rule 12) — eval `noisy-service-catalogue` (neighbours, coverage)
+- Every durable fact lands in an observation (rule 13; #5054) — eval coverage check on every wave
 - A correction retires a false belief (#3509) — eval `correction-retires-false-belief`
 - Retired settings and tools stop reading as current (#3248, #3475) — eval `retired-conventions`
 - The mission wins over the rules: it can keep ephemera (#525) or forbid names (#4619) — eval `mission-keeps-ephemeral`, `mission-forbids-names`
@@ -340,13 +340,18 @@ issue/PR history — and what grades it. "eval" = a `test_09` scenario (real mod
 
 **What the server guarantees — deterministic**
 - Source facts survive; observations cite evidence that resolves — system `test_20`; eval evidence check
-- `proof_count` equals the evidence count, including multi-fact creates (#4955) — eval evidence check
+- `proof_count` equals the evidence count, including multi-fact creates (#4955) — eval evidence check; system `test_22`
 - Dates come from the evidence: earliest start, latest mention, none invented (#501, #3477) — eval date check; unit `test_consolidation_temporal_merge.py`
 - One response is applied atomically with its `consolidated_at` stamps (#3876) — unit `test_consolidation_batch_atomicity.py`
 - Failed calls bisect, then mark failed; recovery is explicit (#601) — system `test_21`
 - Semantic near-twin merge on create and update, number- and negation-aware (#1977, #2000) — unit `test_consolidation_dedup.py`
 - Exact-text duplicate creates are dropped (#1907) — unit `test_consolidation_dedup.py`
 - Deletes must name an `observation_id`; a malformed one no longer voids the response (#4152, #4183) — unit `test_consolidation_delete_schema.py`, `test_consolidation_delete_prompt_llm.py`
+- A deleted observation's evidence moves to the survivor (`merged_into`) or is re-queued — system `test_22_consolidation_safety_nets`
+- Facts a response ignores are re-asked (together, then alone) — system `test_22_consolidation_safety_nets`
+- Miscopied observation ids and malformed fact ids are repaired or ignored, never fatal (#5273) — system `test_22_consolidation_safety_nets`
+- Updates aimed at a lookalike entity are refused — unit `test_consolidation_lookalike.py`; system `test_22_consolidation_safety_nets`
+- A change's untouched same-entity observations get a second look; counts are found by their noun — unit `test_consolidation_lookalike.py`; eval `horse-farm`, `noisy-service-catalogue`
 - Observation scopes (`combined`, `per_tag`, `all_combinations`, `shared`, explicit) and strategies (#2202, #4619) — system `test_24`, `test_29`
 - Per-scope observation caps (#729, #2163) — system `test_29`; unit `test_observation_scope_limit_resolution.py`
 - Observation history snapshots — unit `test_observation_history.py`

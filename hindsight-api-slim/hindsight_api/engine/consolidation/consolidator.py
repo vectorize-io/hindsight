@@ -20,6 +20,7 @@ import copy
 import json
 import logging
 import math
+import re
 import time
 import uuid
 from collections import defaultdict
@@ -741,8 +742,13 @@ class _CreateAction(BaseModel):
 
 
 class _UpdateAction(BaseModel):
-    text: str
     observation_id: str  # UUID of the existing observation to update
+    # The observation's text as it stands, copied before ``text`` is written. Not used by the
+    # code: field order is generation order, and a small model that copies the old text first
+    # edits it, where one writing ``text`` cold tends to emit just the new fact and erase the
+    # rest of the observation. Optional, so a response without it still validates.
+    current_text: str = ""
+    text: str
     source_fact_ids: list[str]  # memory UUIDs from the NEW FACTS list
     reason: str = ""  # LLM's one-sentence justification (diagnostic only)
 
@@ -776,7 +782,31 @@ class _DeleteAction(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     observation_id: str = Field(validation_alias=AliasChoices("observation_id", "id"))
+    # The observation that now carries this one's content, when the delete folds a restating
+    # observation into another. Its evidence moves there; a delete without it retires a belief.
+    merged_into: str | None = None
     reason: str = ""  # LLM's one-sentence justification (diagnostic only)
+
+
+@dataclass
+class _PreparedDelete:
+    observation_id: str
+    #: Fold target, already checked against the recall pool. None when the response named none
+    #: (or one it was never shown): the evidence is then re-queued rather than dropped.
+    merged_into: str | None
+
+
+@dataclass
+class _PendingFold:
+    """A deleted observation's evidence, still to be placed once the response's writes are in.
+
+    With a target it moves onto the observation that absorbed the content. Without one it is
+    re-queued: small models delete a "redundant" observation without naming where its content
+    went — sometimes it went nowhere — and the next pass re-attaches what is still uncovered.
+    """
+
+    target_id: str | None
+    gone: StoredMemory
 
 
 class _ConsolidationBatchResponse(BaseModel):
@@ -1741,6 +1771,8 @@ async def _run_consolidation_job(
             failed_ids: list[Any] = []
 
             pending: list[list[dict[str, Any]]] = [llm_batch_local]
+            # How many extra looks each fact has had (see below): at most two.
+            reasked: dict[str, int] = {}
             while pending:
                 sub_batch = pending.pop(0)
 
@@ -1858,8 +1890,37 @@ async def _run_consolidation_job(
                         f" {sub_batch[0]['id']}, marking consolidation_failed_at"
                     )
                 else:
-                    succeeded_ids.extend(m["id"] for m in sub_batch)
-                    all_results.extend(sub_results)
+                    # A fact the response never acted on is stamped consolidated all the same, and
+                    # would never be shown to the model again. In a batch that is as likely an
+                    # oversight as a judgement — a small model handles seven of eight facts and
+                    # forgets the eighth — so the facts it left are asked again together, in a
+                    # smaller batch; one that batch forgets too gets a last call of its own (it
+                    # happened: handled the two others of three, dropped the third). Skipped while
+                    # alone is the model's answer — chatter, ephemera — and is never re-asked.
+                    ignored = (
+                        [
+                            m
+                            for m, r in zip(sub_batch, sub_results)
+                            if r.get("reason") == "no_durable_knowledge" and reasked.get(str(m["id"]), 0) < 2
+                        ]
+                        if len(sub_batch) > 1
+                        else []
+                    )
+                    ignored_ids = {str(m["id"]) for m in ignored}
+                    for m, r in zip(sub_batch, sub_results):
+                        if str(m["id"]) not in ignored_ids:
+                            succeeded_ids.append(m["id"])
+                            all_results.append(r)
+                    if ignored:
+                        logger.info(
+                            f"[CONSOLIDATION] bank={bank_id} response left {len(ignored)}/{len(sub_batch)}"
+                            " facts unaddressed; re-asking them"
+                        )
+                        first = [m for m in ignored if str(m["id"]) not in reasked]
+                        again = [m for m in ignored if str(m["id"]) in reasked]
+                        for fid in ignored_ids:
+                            reasked[fid] = reasked.get(fid, 0) + 1
+                        pending[0:0] = ([first] if first else []) + [[m] for m in again]
 
             # The successful sub-batches stamped their own ``consolidated_at`` inside the
             # transaction that wrote their observations (#3876) — a stamp and the writes it
@@ -2405,11 +2466,6 @@ async def _process_memory_batch(
     if perf:
         perf.record_timing("recall", time.time() - t0)
 
-    # 2. Build per-fact observation sets (keyed by memory ID string) for secure action validation
-    per_fact_obs_ids: dict[str, set[str]] = {
-        str(memories[i]["id"]): {str(obs.id) for obs in r.results} for i, r in enumerate(per_fact_recalls)
-    }
-
     # Union all observations (deduped by id)
     seen_ids: set[str] = set()
     union_observations: list["MemoryFact"] = []
@@ -2442,6 +2498,8 @@ async def _process_memory_batch(
                 f"({current_count}/{max_obs}), only updates/deletes allowed"
             )
 
+    related = await _same_entity_observations(pool, bank_id, memories, union_observations)
+
     # 3. Single LLM call
     t0 = time.time()
     llm_result = await _consolidate_batch_with_llm(
@@ -2452,11 +2510,14 @@ async def _process_memory_batch(
         config=config,
         remaining_observation_slots=remaining_observation_slots,
         max_observations_per_scope=max_obs,
+        related=related,
     )
     if perf:
         perf.record_timing("llm", time.time() - t0)
         perf.record_llm_call(llm_result.obs_count, llm_result.prompt_chars)
         perf.record_llm_batch_failures(llm_result.failed_attempts)
+    if not llm_result.failed:
+        await _cascade_to_untouched(llm_config, config, memories, union_observations, llm_result, related)
 
     # 4. Prepare every action connection-free, then apply them all in ONE transaction.
     #
@@ -2492,19 +2553,27 @@ async def _process_memory_batch(
         else None
     )
 
+    # Repair ids a small model miscopied, then drop updates aimed at a different entity.
+    _resolve_miscopied_ids(llm_result, {str(obs.id) for obs in union_observations})
+    if llm_result.updates:
+        _drop_cross_entity_updates(llm_result, union_observations, memories, bank_id)
+
     # --- Prepare: deletes -----------------------------------------------------
     # Deletes carry no slow work; validating them here keeps the whole decision set in
     # one place. They are still applied first inside the transaction, so an observation
     # slot freed by a delete is available to a create in the same response.
-    prepared_deletes: list[str] = []
+    prepared_deletes: list[_PreparedDelete] = []
+    pool_ids = {str(obs.id) for obs in union_observations}
     for delete in llm_result.deletes:
         # Security: the observation must be present in the unioned recall
-        if not any(str(obs.id) == delete.observation_id for obs in union_observations):
+        if delete.observation_id not in pool_ids:
             logger.debug(
                 f"Batch consolidation: rejected delete — observation {delete.observation_id} not in unioned recall"
             )
             continue
-        prepared_deletes.append(delete.observation_id)
+        # A fold target must be one the model was shown, like any other target it names.
+        target = delete.merged_into if delete.merged_into in pool_ids - {delete.observation_id} else None
+        prepared_deletes.append(_PreparedDelete(observation_id=delete.observation_id, merged_into=target))
 
     # --- Prepare: updates -----------------------------------------------------
     # Each action is prepared on its own: a liveness preflight, an embedding and, with semantic
@@ -2529,16 +2598,16 @@ async def _process_memory_batch(
         if not source_mems:
             _log_unresolved_action("update", update.source_fact_ids, update.text, perf)
             return None
-        # Security: the observation must have been recalled for at least one of the source facts
-        if not any(update.observation_id in per_fact_obs_ids.get(str(m["id"]), set()) for m in source_mems):
-            logger.debug(
-                f"Batch consolidation: rejected update — observation {update.observation_id} "
-                f"not in any source fact's recall"
-            )
-            return None
+        # Security: the observation must be one the model was shown — the pooled recall, already
+        # confined to this bank and scope, exactly as for a delete. Not "recalled for one of the
+        # cited facts": the model reads the whole pool, so attaching a fact to an observation that
+        # a sibling fact surfaced is a legitimate choice, and rejecting it dropped the fact's
+        # evidence silently (it is stamped consolidated all the same).
         model = next((m for m in union_observations if str(m.id) == update.observation_id), None)
         if model is None:
-            logger.debug(f"Update skipped: observation {update.observation_id} not found in recall results")
+            logger.warning(
+                f"Batch consolidation: rejected update — observation {update.observation_id} not in the recall pool"
+            )
             return None
         agg = _aggregate_source_fields(source_mems, tags=fact_tags)
         source_memory_ids = [m["id"] for m in source_mems]
@@ -2691,9 +2760,14 @@ async def _process_memory_batch(
                         )
                     )
 
-                    for observation_id in prepared_deletes:
-                        await _execute_delete_action(conn=conn, bank_id=bank_id, observation_id=observation_id)
+                    pending_folds: list[_PendingFold] = []
+                    for prepared_delete in prepared_deletes:
+                        gone = await _execute_delete_action(
+                            conn=conn, bank_id=bank_id, observation_id=prepared_delete.observation_id, read_back=True
+                        )
                         deleted_count += 1
+                        if gone is not None:
+                            pending_folds.append(_PendingFold(target_id=prepared_delete.merged_into, gone=gone))
 
                     for prepared in prepared_updates:
                         updated_emb_str = await _apply_update_action(
@@ -2751,6 +2825,9 @@ async def _process_memory_batch(
                         if action == "created":
                             for m in prepared_create.source_mems:
                                 per_memory_created.add(str(m["id"]))
+
+                    for fold in pending_folds:
+                        await _fold_deleted_evidence(conn, memory_engine, bank_id, fold)
 
                     # The facts this response consumed are marked consolidated in the SAME transaction
                     # as the observations that now carry them. Stamping them separately is what let a
@@ -3035,15 +3112,305 @@ async def _apply_create_action(
     return created["action"]
 
 
+_CHANGE_WORDS = re.compile(
+    r"\b(moved|switched|changed|left|removed|replaced|reverted|retired|no longer|instead|sold|died|"
+    r"raised|lowered|renamed|migrated|dropped|stopped|ended|quit)\b",
+    re.IGNORECASE,
+)
+
+
+def _signals_change(fact_text: str, old_text: str, new_text: str) -> bool:
+    """Whether a fact changed a state rather than adding to it: it says so ("moved from…",
+    "no longer…"), or the rewrite dropped a name or number the observation stated."""
+    if _CHANGE_WORDS.search(fact_text):
+        return True
+    # A newly stated count: the fact gives a number for something the observation counted
+    # differently ("has 5 horses" against "has 1 horse").
+    if _counted_nouns(fact_text) & _counted_nouns(old_text) and set(re.findall(r"\d+", fact_text)) - set(
+        re.findall(r"\d+", old_text)
+    ):
+        return True
+    old_values = _names(old_text) | set(re.findall(r"\d+", old_text))
+    new_lower = new_text.lower()
+    return any(v not in new_lower for v in old_values)
+
+
+async def _cascade_to_untouched(
+    llm_config: Any,
+    config: Any,
+    memories: list[dict[str, Any]],
+    union_observations: list["MemoryFact"],
+    llm_result: _BatchLLMResult,
+    candidates: dict[str, list[str]],
+) -> None:
+    """Give a change a second look at the observations it left untouched.
+
+    A change must reach every observation stating the old value (rule 5). Listing them in
+    the prompt is not enough for a small model: shown four billing-gateway observations for
+    an ownership change, it rewrote three and left "the settle-api, refund-worker and
+    billing-gateway services are owned by team Atlas" asserting the old team. So when a
+    response rewrites an observation because of a fact, the same-entity observations that
+    fact left untouched go back to the model in one focused call — that fact, only those
+    observations — and only its updates are kept: the fact itself is already recorded.
+    """
+    pool_ids = {str(o.id) for o in union_observations}
+    text_by_id = {str(o.id): o.text for o in union_observations}
+    fact_text = {str(m["id"]): str(m.get("text") or "").split(" | ")[0] for m in memories}
+    touched = {_resolve_pool_id(u.observation_id, pool_ids) for u in llm_result.updates}
+    touched |= {_resolve_pool_id(d.observation_id, pool_ids) for d in llm_result.deletes}
+    # Only state changes need the second look. Adding a facet ("also written in Kotlin")
+    # leaves the other observations true, and asking anyway costs a call per fact.
+    changing = {
+        fid
+        for u in llm_result.updates
+        for fid in u.source_fact_ids
+        if _signals_change(
+            fact_text.get(fid, ""), text_by_id.get(_resolve_pool_id(u.observation_id, pool_ids) or "", ""), u.text
+        )
+    } | {
+        fid for c in llm_result.creates for fid in c.source_fact_ids if _signals_change(fact_text.get(fid, ""), "", "")
+    }
+    pending = {
+        fid: [oid for oid in ids if oid not in touched and oid in pool_ids]
+        for fid, ids in candidates.items()
+        if fid in changing
+    }
+    pending = {fid: ids for fid, ids in pending.items() if ids}
+    if not pending:
+        return
+    wanted = {oid for ids in pending.values() for oid in ids}
+    second = await _consolidate_batch_with_llm(
+        llm_config=llm_config,
+        memories=[m for m in memories if str(m["id"]) in pending],
+        union_observations=[o for o in union_observations if str(o.id) in wanted],
+        union_source_facts={},
+        config=config,
+        # "Check each one", not "each must be updated": these were matched by name, and an
+        # instruction to rewrite them pushed "now has 1 horse" into every horse's observation.
+        related=pending,
+    )
+    if second.failed:
+        return
+    logger.info(
+        f"[CONSOLIDATION] cascade pass over {len(wanted)} untouched observation(s): {len(second.updates)} updated"
+    )
+    for update in second.updates:
+        target = _resolve_pool_id(update.observation_id, pool_ids)
+        if target not in wanted or target in touched:
+            continue
+        # A second look may correct what an observation states, never give it a new facet: a
+        # count written into a named member's observation ("has 1 horse, which is named
+        # Daisy") is the facet mixing rule 2 forbids, and it outlives the next count.
+        if _counted_nouns(update.text) - _counted_nouns(text_by_id.get(target or "", "")):
+            continue
+        llm_result.updates.append(update)
+
+
+#: An entity named by more shown observations than this is an attribute ("team Atlas"),
+#: not the subject; listing every observation that mentions it is noise, not a checklist.
+_RELATED_MAX_PER_ENTITY = 5
+
+
+def stated_after(observation_at: Any, fact_at: Any) -> bool:
+    """Whether the observation was last stated after the fact: then the fact is not news to it."""
+
+    def parse(value: Any) -> datetime | None:
+        if value is None:
+            return None
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+    obs, fact = parse(observation_at), parse(fact_at)
+    return obs is not None and fact is not None and obs > fact
+
+
+async def _same_entity_observations(
+    pool: DatabaseBackend,
+    bank_id: str,
+    memories: list[dict[str, Any]],
+    union_observations: list["MemoryFact"],
+) -> dict[str, list[str]]:
+    """Per fact, the shown observations that name one of its entities — when there are several.
+
+    A change has to reach every observation that states the old value (rule 5), and a small
+    model updates the obvious one and stops: with "billing-gateway is owned by team Atlas" and
+    a longer billing-gateway profile repeating the owner both in view, an ownership change
+    rewrote the first and left the profile asserting the old team. Matching by name is
+    deterministic and catches exactly that — evidence links do not, since the profile carried
+    the owner without citing the fact that said it. A single match is listed too: a longer
+    observation that mentions the owner in passing was left stale when the model CREATEd a
+    separate ownership observation instead of updating it.
+    """
+    if not union_observations:
+        return {}
+    async with acquire_with_retry(pool) as conn:
+        names = await get_memories().entity_map_for_units(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(m["id"]) for m in memories]
+        )
+    related: dict[str, list[str]] = {}
+    for memory in memories:
+        fact_id = str(memory["id"])
+        # Never an observation stated after the fact: listing it as one to check invited
+        # the model to overwrite "favorite is Svelte" with an older "favorite is React".
+        shown = [o for o in union_observations if not stated_after(o.mentioned_at, memory.get("mentioned_at"))]
+        ids: list[str] = []
+        for entity in names.get(fact_id, []):
+            name = entity["canonical_name"].lower()
+            matches = [str(o.id) for o in shown if len(name) >= 3 and name in o.text.lower()]
+            if len(matches) <= _RELATED_MAX_PER_ENTITY:
+                ids.extend(m for m in matches if m not in ids)
+        # A count is stated about a kind of thing, not a named one ("the user has 5 horses"
+        # names only the user), so its stale copies are found by the noun: a run had written
+        # "has 1 horse, which is named Daisy" into Daisy's observation, and it outlived the 5.
+        for noun in _counted_nouns(str(memory.get("text") or "")):
+            ids.extend(str(o.id) for o in shown if noun in _counted_nouns(o.text) and str(o.id) not in ids)
+        if ids:
+            related[fact_id] = ids
+    return related
+
+
+_COUNT = re.compile(r"\b(\d+)\s+([a-z]{3,})", re.IGNORECASE)
+
+
+def _counted_nouns(text: str) -> set[str]:
+    """The things a text gives a count of, singularised: "has 5 horses" -> {"horse"}."""
+    return {m.group(2).lower().removesuffix("s") for m in _COUNT.finditer(text)}
+
+
+def _resolve_pool_id(raw: str | None, pool_ids: set[str]) -> str | None:
+    """``raw`` as a pool id, tolerating a miscopied tail.
+
+    Small models copy the head of a UUID and invent the rest (``d0a3effa-1795-4c48-…`` came
+    back as ``d0a3effa-1795-4ef0-…``). An exact match wins; otherwise the one pool id sharing
+    the first two groups is meant — 48 bits, so two candidates never collide by chance in a
+    pool of tens. Anything else is returned unchanged and rejected downstream.
+    """
+    if raw is None or raw in pool_ids:
+        return raw
+    head = raw[:13]
+    matches = [pid for pid in pool_ids if len(head) == 13 and pid.startswith(head)]
+    return matches[0] if len(matches) == 1 else raw
+
+
+def _resolve_miscopied_ids(llm_result: _BatchLLMResult, pool_ids: set[str]) -> None:
+    for update in llm_result.updates:
+        update.observation_id = _resolve_pool_id(update.observation_id, pool_ids) or update.observation_id
+    for delete in llm_result.deletes:
+        delete.observation_id = _resolve_pool_id(delete.observation_id, pool_ids) or delete.observation_id
+        delete.merged_into = _resolve_pool_id(delete.merged_into, pool_ids)
+
+
+_NAME_TOKEN = re.compile(r"[\w][\w.-]*[\w]")
+
+
+#: Capitalised only because they open a sentence: never a name.
+_SENTENCE_OPENERS = frozenset(
+    "the a an this that these those it its he she they we our their his her my after before when "
+    "while since during from with ownership".split()
+)
+
+
+def _names(text: str) -> set[str]:
+    """Words that can name a thing: identifiers (``ledger-sync``, ``v2_api``) and capitalised
+    words ("Marta"), not counting a capitalised sentence opener. Lower-cased for comparison."""
+    return {
+        w.lower()
+        for w in _NAME_TOKEN.findall(text)
+        if len(w) >= 4 and ("-" in w or "_" in w or (w[0].isupper() and w.lower() not in _SENTENCE_OPENERS))
+    }
+
+
+def _lookalike(a: str, b: str) -> bool:
+    """Two different names a small model confuses: the same identifier stem with another
+    suffix (``invoice-api`` / ``invoice-sync``), or one or two letters apart (``Marco`` /
+    ``Marta``, ``ledger-sync`` / ``ledger-sink``)."""
+    if a == b:
+        return False
+    stem_a, stem_b = re.split(r"[-_]", a)[0], re.split(r"[-_]", b)[0]
+    if ("-" in a or "_" in a) and ("-" in b or "_" in b) and stem_a == stem_b:
+        return True
+    if a[0] != b[0] or abs(len(a) - len(b)) > 2:
+        return False
+    previous = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        current = [i]
+        for j, cb in enumerate(b, 1):
+            current.append(min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (ca != cb)))
+        previous = current
+    return previous[-1] <= 2
+
+
+def _aimed_at_a_lookalike(fact_text: str, observation_text: str) -> bool:
+    """The fact names something the observation does not, and the observation names a
+    lookalike of it the fact does not — the signature of updating the wrong twin."""
+    fact_names, obs_names = _names(fact_text), _names(observation_text)
+    missing = fact_names - obs_names
+    foreign = obs_names - fact_names
+    return any(_lookalike(x, y) for x in missing for y in foreign)
+
+
+def _drop_cross_entity_updates(
+    llm_result: _BatchLLMResult,
+    union_observations: list["MemoryFact"],
+    memories: list[dict[str, Any]],
+    bank_id: str,
+) -> None:
+    """Drop an UPDATE that rewrites one entity's observation with a lookalike's fact.
+
+    Near-identical names ("ledger-sync" vs "ledger-sink") embed almost the same, so a small
+    model rewrites one's observation with the other's fact: the observation then describes
+    the wrong entity and the right one's evidence is gone. Dropped, not turned into a create —
+    the update's text is the rewritten observation, so a create would only duplicate it. The
+    facts it cited become unaddressed, and the caller re-asks them. A fact that is already
+    on its own and still aimed at the wrong entity is recorded as written: a fact is one
+    claim about one entity, which is what an observation of it says.
+
+    Judged on the texts. Two earlier versions compared resolved entities — first by id, then
+    by canonical name — and both failed the same way: entity resolution itself merges
+    lookalike names (a run "corrected the service name from invoice-sync to invoice-gateway"
+    with both resolved to one entity), so the check inherited the very confusion it guards.
+    """
+    text_by_fact = {str(m["id"]): str(m.get("text") or "").split(" | ")[0] for m in memories}
+    text_by_obs = {str(o.id): o.text for o in union_observations}
+    kept: list[_UpdateAction] = []
+    for update in llm_result.updates:
+        current = text_by_obs.get(update.observation_id, "")
+        strays = [
+            fid
+            for fid in update.source_fact_ids
+            if fid in text_by_fact and _aimed_at_a_lookalike(text_by_fact[fid], current)
+        ]
+        if strays:
+            logger.info(
+                f"[CONSOLIDATION] bank={bank_id} dropped update of {update.observation_id[:8]}: it cites a fact"
+                " about a lookalike of what the observation is about"
+            )
+            if len(memories) == 1 and text_by_fact[strays[0]].strip():
+                llm_result.creates.append(
+                    _CreateAction(
+                        text=text_by_fact[strays[0]].strip(), source_fact_ids=[strays[0]], reason=update.reason
+                    )
+                )
+        else:
+            kept.append(update)
+    llm_result.updates = kept
+
+
 async def _execute_delete_action(
     conn: "DatabaseConnection",
     bank_id: str,
     observation_id: str,
-) -> None:
-    """Delete a superseded or contradicted observation."""
-    await get_memories().delete_observation(
-        conn=conn, fq_table=fq_table, bank_id=bank_id, observation_id=observation_id
+    *,
+    read_back: bool = False,
+) -> StoredMemory | None:
+    """Delete an observation. With ``read_back``, return the row as it was (None if already gone)."""
+    store = get_memories()
+    gone = (
+        await store.get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[observation_id])
+        if read_back
+        else []
     )
+    await store.delete_observation(conn=conn, fq_table=fq_table, bank_id=bank_id, observation_id=observation_id)
     # History lives in Postgres regardless of where the observation itself does, and no
     # longer cascades from memory_units (that FK was dropped so it could be recorded for
     # observations kept outside SQL). Drop it explicitly so a deleted observation's
@@ -3054,6 +3421,48 @@ async def _execute_delete_action(
         uuid.UUID(observation_id),
     )
     logger.debug(f"Deleted observation {observation_id}")
+    return gone[0] if gone else None
+
+
+async def _fold_deleted_evidence(
+    conn: "DatabaseConnection",
+    memory_engine: "MemoryEngine",
+    bank_id: str,
+    fold: _PendingFold,
+) -> None:
+    """Move a folded-away observation's evidence onto the observation that absorbed it.
+
+    An UPDATE can only cite this batch's facts, so without this the survivor carries the
+    deleted observation's content with none of its evidence, and those facts — stamped
+    consolidated long ago — back nothing and are never looked at again. Runs after the
+    response's updates, so it extends the survivor as rewritten. If the survivor is gone, the
+    evidence is re-queued instead: the next pass attaches it to whatever covers it now.
+    """
+    live = await _filter_live_source_memories(
+        conn, bank_id, [uuid.UUID(str(sid)) for sid in fold.gone.source_memory_ids]
+    )
+    if not live:
+        return
+    store = get_memories()
+    if fold.target_id is not None:
+        target = await store.get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[fold.target_id])
+        if target and target[0].fact_type == "observation":
+            folded = await store.fold_sources_into_observation(
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                observation_id=fold.target_id,
+                expected_text=target[0].text,
+                merged_text=target[0].text,
+                source_memory_ids=live,
+                bounds=_TemporalBounds.of(fold.gone),
+                embeddings=memory_engine.embeddings,
+            )
+            if folded:
+                return
+    await store.mark_consolidated(
+        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(sid) for sid in live], when=None
+    )
 
 
 async def _embed_observation_text(
@@ -3303,13 +3712,16 @@ async def _consolidate_batch_with_llm(
     config: Any,
     remaining_observation_slots: int | None = None,
     max_observations_per_scope: int = -1,
+    related: dict[str, list[str]] | None = None,
 ) -> _BatchLLMResult:
     """Single LLM call for a batch of facts against a pooled set of observations."""
     if config is None:
         raise ValueError("config is required for _consolidate_batch_with_llm")
     if union_observations:
         obs_list = _build_observations_for_llm(union_observations, union_source_facts)
-        observations_text = json.dumps(obs_list, indent=2, ensure_ascii=False)
+        # One observation per line, no indentation: the pool is nearly all of a batch's
+        # uncached input, and `indent=2` spent a fifth of it on whitespace.
+        observations_text = "[\n" + ",\n".join(json.dumps(o, ensure_ascii=False) for o in obs_list) + "\n]"
     else:
         observations_text = "[]"
 
@@ -3358,6 +3770,8 @@ async def _consolidate_batch_with_llm(
         observations_text=observations_text,
         observations_mission=config.observations_mission,
         observation_capacity_note=observation_capacity_note,
+        related_note="\n".join(f"- fact {fid} → observations {', '.join(ids)}" for fid, ids in (related or {}).items())
+        or None,
     )
 
     # Opt into context caching of the stable system prefix. response_schema is
@@ -3415,8 +3829,14 @@ async def _consolidate_batch_with_llm(
                 call_kwargs["max_retries"] = inner_max_retries
             batch_call = await llm_config.call(**call_kwargs)
             response: _ConsolidationBatchResponse = batch_call.content
+            # A model recording a new fact sometimes names that fact as the UPDATE target. There is
+            # no observation to update, and dropping it loses the fact — it is a create.
+            fact_ids = {str(m["id"]) for m in memories}
+            misaimed = [u for u in response.updates if u.observation_id in fact_ids]
+            creates = response.creates + [
+                _CreateAction(text=u.text, source_fact_ids=u.source_fact_ids, reason=u.reason) for u in misaimed
+            ]
             # Defensive truncation: some LLM providers may not enforce JSON schema max_length
-            creates = response.creates
             if remaining_observation_slots is not None and remaining_observation_slots >= 0:
                 if len(creates) > remaining_observation_slots:
                     logger.info(
@@ -3424,7 +3844,9 @@ async def _consolidate_batch_with_llm(
                         f"(max_observations_per_scope={max_observations_per_scope})"
                     )
                     creates = creates[:remaining_observation_slots]
-            updates = _dedupe_updates(response.updates, batch_label=batch_label)
+            updates = _dedupe_updates(
+                [u for u in response.updates if u.observation_id not in fact_ids], batch_label=batch_label
+            )
             return _BatchLLMResult(
                 creates=creates,
                 updates=updates,
