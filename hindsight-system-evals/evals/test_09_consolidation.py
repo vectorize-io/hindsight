@@ -524,13 +524,13 @@ async def _run(client: Hindsight, bank_id: str, settled: SettleFn, scenario: Sce
                 json.dumps(
                     {
                         "scenario": scenario.id,
-                        "passed": not (outcome.traps_hit or outcome.missed or outcome.problems),
+                        "passed": outcome.passed,
                         **dataclasses.asdict(outcome.cost),
                     }
                 )
                 + "\n"
             )
-    assert not (outcome.traps_hit or outcome.missed or outcome.problems), outcome.report()
+    assert outcome.passed, outcome.report()
 
 
 @pytest.mark.parametrize("scenario_id", MINIMUM_ACCEPTANCE)

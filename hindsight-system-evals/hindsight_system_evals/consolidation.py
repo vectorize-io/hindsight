@@ -34,11 +34,13 @@ import os
 import random
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from typing import Any
 
 from hindsight_client import Hindsight
 from hindsight_client_api.api.llm_traces_api import LLMTracesApi
+from hindsight_client_api.models.memory_unit_list_item import MemoryUnitListItem
 
 from hindsight_system_evals.judge import evaluate
 from hindsight_system_evals.pages import SettleFn
@@ -96,6 +98,20 @@ class Observation:
 
 
 @dataclass
+class ConsolidationCall:
+    """One consolidation LLM call from the server's trace: what the model was shown and answered."""
+
+    scope: str
+    started_at: str | None
+    input_tokens: int
+    cached_tokens: int
+    output_tokens: int
+    duration_ms: int
+    input: Any
+    output: Any
+
+
+@dataclass
 class ConsolidationCost:
     """What consolidating the scenario cost, from the server's own LLM trace."""
 
@@ -118,6 +134,10 @@ class ConsolidationOutcome:
     traps_hit: list[str] = field(default_factory=list)
     missed: list[str] = field(default_factory=list)
     cost: ConsolidationCost = field(default_factory=ConsolidationCost)
+
+    @property
+    def passed(self) -> bool:
+        return not (self.traps_hit or self.missed or self.problems)
 
     @property
     def final(self) -> list[Observation]:
@@ -159,8 +179,9 @@ def _parse(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
 
 
-async def _list(client: Hindsight, bank_id: str, kind: str) -> list:
-    items, offset = [], 0
+async def _list(client: Hindsight, bank_id: str, kind: str) -> list[MemoryUnitListItem]:
+    items: list[MemoryUnitListItem] = []
+    offset = 0
     while True:
         page = await client.alist_memories(bank_id, type=kind, limit=500, offset=offset)
         items += page.items
@@ -185,7 +206,10 @@ async def _observations(client: Hindsight, bank_id: str) -> list[Observation]:
 
 
 def _check_snapshot(
-    wave_no: int, observations: list[Observation], facts_by_id: dict, outcome: ConsolidationOutcome
+    wave_no: int,
+    observations: list[Observation],
+    facts_by_id: dict[str, MemoryUnitListItem],
+    outcome: ConsolidationOutcome,
 ) -> None:
     for o in observations:
         where = f"wave {wave_no}, {o.text[:80]!r}"
@@ -230,44 +254,51 @@ def _timeline(scenario: Scenario) -> str:
     return "\n".join(lines)
 
 
-async def _consolidation_calls(client: Hindsight, bank_id: str) -> list[dict]:
+async def _consolidation_calls(client: Hindsight, bank_id: str) -> list[ConsolidationCall]:
     """Every consolidation call the server traced for the bank, oldest first: what the
     model was shown and what it answered."""
     api = LLMTracesApi(client._api_client)
-    calls, offset = [], 0
+    calls: list[ConsolidationCall] = []
+    offset = 0
     while True:
         page = await api.list_llm_requests(bank_id, limit=500, offset=offset)
         calls += [
-            {
-                "scope": c.scope,
-                "started_at": c.started_at,
-                "input_tokens": c.input_tokens or 0,
-                "cached_tokens": c.cached_tokens or 0,
-                "output_tokens": c.output_tokens or 0,
-                "duration_ms": c.duration_ms or 0,
-                "input": c.input,
-                "output": c.output,
-            }
+            ConsolidationCall(
+                scope=c.scope or "",
+                started_at=c.started_at,
+                input_tokens=c.input_tokens or 0,
+                cached_tokens=c.cached_tokens or 0,
+                output_tokens=c.output_tokens or 0,
+                duration_ms=c.duration_ms or 0,
+                input=c.input,
+                output=c.output,
+            )
             for c in page.items
             if (c.scope or "").startswith("consolidation")
         ]
         offset += len(page.items)
         if not page.items or offset >= page.total:
-            return sorted(calls, key=lambda c: c["started_at"] or "")
+            return sorted(calls, key=lambda c: c.started_at or "")
 
 
-def _check_twins(scenario: Scenario, calls: list[dict], outcome: ConsolidationOutcome, facts: list) -> None:
+def _check_twins(
+    scenario: Scenario,
+    calls: list[ConsolidationCall],
+    outcome: ConsolidationOutcome,
+    facts: list[MemoryUnitListItem],
+) -> None:
     """Every fact with a ``twin`` must have been shown an observation containing it.
 
     A fact the LLM never saw passes only if it was settled without it — attached as
     evidence to an observation that contains the twin (a server may decide plain
     restatements before the LLM call).
     """
-    shown: list[tuple[str, str]] = []
+    #: Per traced call: the batch's new-facts section, and one chunk per observation shown.
+    shown: list[tuple[str, list[str]]] = []
     for call in calls:
-        if call["scope"] != "consolidation":
+        if call.scope != "consolidation":
             continue
-        text = json.dumps(call["input"], ensure_ascii=False)
+        text = json.dumps(call.input, ensure_ascii=False)
         # The system prompt carries both headings too, as format notes; the last pair is the batch.
         split = text.rfind("### Existing observations")
         # One chunk per observation entry (its text and its evidence).
@@ -303,7 +334,7 @@ async def run_scenario(client: Hindsight, bank_id: str, settled: SettleFn, scena
     for wave_no, wave in enumerate(scenario.waves, 1):
         items = []
         for j, fact in enumerate(wave.facts):
-            item: dict = {
+            item: dict[str, Any] = {
                 "content": fact.text,
                 "timestamp": f"{fact.on}T12:00:00Z",
                 "document_id": f"{scenario.id}-w{wave_no}-{j}",
@@ -347,15 +378,15 @@ async def run_scenario(client: Hindsight, bank_id: str, settled: SettleFn, scena
 
     calls = await _consolidation_calls(client, bank_id)
     outcome.cost.calls = len(calls)
-    outcome.cost.input_tokens = sum(c["input_tokens"] for c in calls)
-    outcome.cost.cached_tokens = sum(c["cached_tokens"] for c in calls)
-    outcome.cost.output_tokens = sum(c["output_tokens"] for c in calls)
-    outcome.cost.llm_seconds = sum(c["duration_ms"] for c in calls) / 1000
+    outcome.cost.input_tokens = sum(c.input_tokens for c in calls)
+    outcome.cost.cached_tokens = sum(c.cached_tokens for c in calls)
+    outcome.cost.output_tokens = sum(c.output_tokens for c in calls)
+    outcome.cost.llm_seconds = sum(c.duration_ms for c in calls) / 1000
     _check_twins(scenario, calls, outcome, facts)
     if dump_dir := os.getenv("HINDSIGHT_EVAL_CONSOLIDATION_DUMP"):
         os.makedirs(dump_dir, exist_ok=True)
         with open(os.path.join(dump_dir, f"{scenario.id}.json"), "w", encoding="utf-8") as f:
-            json.dump(calls, f, indent=1, ensure_ascii=False, default=str)
+            json.dump([asdict(c) for c in calls], f, indent=1, ensure_ascii=False, default=str)
 
     rendered = _render(outcome.final, scenario.focus)
     context = (
@@ -391,6 +422,21 @@ _CHATTER = (
 )
 
 
+@dataclass(frozen=True)
+class _Service:
+    team: str
+    language: str
+    port: int
+
+
+@dataclass(frozen=True)
+class _Person:
+    relation: str
+    city: str
+    job: str
+    birthday: str
+
+
 def noisy_service_bank() -> Scenario:
     """A platform team's service catalogue: 30 services, 120 facts, plus chatter.
 
@@ -412,16 +458,18 @@ def noisy_service_bank() -> Scenario:
     fixed_ports = {8210, 8211, 8443, 8444}
     ports = rng.sample([p for p in range(8100, 8999) if p not in fixed_ports], len(services))
     spec = {
-        name: (rng.choice(_TEAMS), rng.choice(_LANGUAGES), port) for name, port in zip(services, ports, strict=True)
+        name: _Service(rng.choice(_TEAMS), rng.choice(_LANGUAGES), port)
+        for name, port in zip(services, ports, strict=True)
     }
     # Fixed so the wave-2 sentences below can name the before and after values.
-    spec["ledger-sync"] = ("Orion", "Go", 8443)
-    spec["ledger-sink"] = ("Orion", "Go", 8444)
-    spec["billing-gateway"] = ("Atlas", "Kotlin", 8210)
-    spec["billing-api"] = ("Atlas", "Kotlin", 8211)
+    spec["ledger-sync"] = _Service("Orion", "Go", 8443)
+    spec["ledger-sink"] = _Service("Orion", "Go", 8444)
+    spec["billing-gateway"] = _Service("Atlas", "Kotlin", 8210)
+    spec["billing-api"] = _Service("Atlas", "Kotlin", 8211)
 
     seed: list[Fact] = []
-    for i, (name, (team, language, port)) in enumerate(spec.items()):
+    for i, (name, service) in enumerate(spec.items()):
+        team, language, port = service.team, service.language, service.port
         day = f"2026-08-{1 + i % 28:02d}"
         seed += [
             Fact(f"The {name} service is owned by team {team}.", day, (name, f"team {team}")),
@@ -447,22 +495,22 @@ def noisy_service_bank() -> Scenario:
             twin=("billing-gateway", "atlas"),
         ),
         Fact(
-            f"Team {spec['payout-worker'][0]} owns the payout-worker service.",
+            f"Team {spec['payout-worker'].team} owns the payout-worker service.",
             later,
-            ("payout-worker", f"team {spec['payout-worker'][0]}"),
-            twin=("payout-worker", spec["payout-worker"][0]),
+            ("payout-worker", f"team {spec['payout-worker'].team}"),
+            twin=("payout-worker", spec["payout-worker"].team),
         ),
         Fact(
-            f"payout-worker is a {spec['payout-worker'][1]} service.",
+            f"payout-worker is a {spec['payout-worker'].language} service.",
             later,
             ("payout-worker",),
-            twin=("payout-worker", spec["payout-worker"][1]),
+            twin=("payout-worker", spec["payout-worker"].language),
         ),
         Fact(
-            f"The invoice-api service accepts traffic on port {spec['invoice-api'][2]}.",
+            f"The invoice-api service accepts traffic on port {spec['invoice-api'].port}.",
             later,
             ("invoice-api",),
-            twin=("invoice-api", str(spec["invoice-api"][2])),
+            twin=("invoice-api", str(spec["invoice-api"].port)),
         ),
     )
     return Scenario(
@@ -535,17 +583,18 @@ def noisy_personal_bank() -> Scenario:
     """
     rng = random.Random(5497)
     spec = {
-        name: (relation, rng.choice(_CITIES), rng.choice(_JOBS), f"{rng.choice(_MONTHS)} {rng.randint(1, 28)}")
+        name: _Person(relation, rng.choice(_CITIES), rng.choice(_JOBS), f"{rng.choice(_MONTHS)} {rng.randint(1, 28)}")
         for name, relation in _PEOPLE
     }
     # Fixed so wave 2 can name the before and after values, and the lookalikes differ.
-    spec["Maria"] = ("sister", "Turin", "nurse", "March 3")
-    spec["Mario"] = ("neighbour", "Milan", "baker", "June 12")
-    spec["Paolo"] = ("cousin", "Genoa", "teacher", "May 9")
-    spec["Paola"] = ("colleague", "Verona", "architect", "July 21")
+    spec["Maria"] = _Person("sister", "Turin", "nurse", "March 3")
+    spec["Mario"] = _Person("neighbour", "Milan", "baker", "June 12")
+    spec["Paolo"] = _Person("cousin", "Genoa", "teacher", "May 9")
+    spec["Paola"] = _Person("colleague", "Verona", "architect", "July 21")
 
     seed: list[Fact] = []
-    for i, (name, (relation, city, job, birthday)) in enumerate(spec.items()):
+    for i, (name, person) in enumerate(spec.items()):
+        relation, city, job, birthday = person.relation, person.city, person.job, person.birthday
         day = f"2026-07-{1 + i % 28:02d}"
         seed += [
             Fact(f"{name} is the user's {relation}.", day, (name, "user")),
@@ -566,13 +615,13 @@ def noisy_personal_bank() -> Scenario:
             twin=("paolo", "teacher"),
         ),
         Fact(
-            f"Lucia celebrates her birthday on {spec['Lucia'][3]}.",
+            f"Lucia celebrates her birthday on {spec['Lucia'].birthday}.",
             later,
             ("Lucia",),
-            twin=("lucia", spec["Lucia"][3].split()[0].lower()),
+            twin=("lucia", spec["Lucia"].birthday.split()[0].lower()),
         ),
         Fact(
-            f"Franco is based in {spec['Franco'][1]}.", later, ("Franco",), twin=("franco", spec["Franco"][1].lower())
+            f"Franco is based in {spec['Franco'].city}.", later, ("Franco",), twin=("franco", spec["Franco"].city.lower())
         ),
     )
     return Scenario(
