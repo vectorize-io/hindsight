@@ -58,7 +58,7 @@ def hindsight_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> I
 
 @pytest.fixture(scope="session")
 def typesafe_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
-    """A second server whose reranker is TypeSafe, pointed at the stub.
+    """A second server whose reranker and decision model are TypeSafe, pointed at the stub.
 
     The reranker provider is server-level — it is not in `_CONFIGURABLE_FIELDS`, so
     no bank can switch to it — which is why this costs a whole process rather than a
@@ -74,6 +74,10 @@ def typesafe_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> It
             "HINDSIGHT_API_RERANKER_TYPESAFE_API_KEY": "stub-key",
             "HINDSIGHT_API_RERANKER_TYPESAFE_BASE_URL": stub_server.url,
             "HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES": "true",
+            # The decision model reflect uses: the same stub endpoint, set up on its own.
+            "HINDSIGHT_API_DECISION_MODEL_PROVIDER": "typesafe",
+            "HINDSIGHT_API_DECISION_MODEL_API_KEY": "stub-key",
+            "HINDSIGHT_API_DECISION_MODEL_BASE_URL": stub_server.url,
             # HTTP only. Both servers share one database, so a worker here claims the OTHER
             # server's queued work — every story's consolidation and refreshes — and runs it with
             # this server's reranker, pruning by whatever cut level a TypeSafe story last set. The

@@ -1,4 +1,4 @@
-"""A coding agent's first-prompt reflect, on a real sde-bench bank, in both reflect modes.
+"""A coding agent's first-prompt reflect, on a real sde-bench bank, with and without the decision model.
 
 The coding-agents plugin reflects once on a session's first prompt and injects the answer.
 It does not send the developer's prompt as written: it wraps it in ~2k characters of
@@ -6,8 +6,8 @@ rendering rules (``buildReflectQuery``, copied below). And the bank it reads is 
 this package's corpus: the task's repo history, the one chat where the decision was made,
 and 140 decoy developer conversations, plus pages the plugin wrote about the code.
 
-Fast reflect passed every other suite here and still failed this, measured on sde-bench
-``boltons-budget-001`` (2026-10-06): it injected "The bank holds no decision on the
+Reflect with the decision model passed every other suite here and still failed this, measured on
+sde-bench ``boltons-budget-001`` (2026-10-06): it injected "The bank holds no decision on the
 Retrier" in both tasks while agent mode injected the decision, and it took 14s against 7-10s.
 Three causes, none visible on short questions over an on-topic corpus:
 
@@ -17,10 +17,11 @@ Three causes, none visible on short questions over an on-topic corpus:
   "fully" was its likeliest answer, buying two more LLM turns.
 
 So this suite runs both modes over several frozen banks of that shape, interleaved, and
-grades them as rates: one bank and three repeats measured a single task's luck (fast mode
+grades them as rates: one bank and three repeats measured a single task's luck (the decision model
 lost one task twice to a consolidated observation the agent happened to search around, and
-agent mode lost different ones). Fast mode must get as many decisions right as agent mode,
-less one, answer "no decision" no more often than agent mode, and be faster with fewer LLM calls. The banks and each
+agent mode lost different ones). With the decision model, reflect must get as many decisions right
+as agent mode, less one, answer "no decision" no more often, and make fewer LLM calls (the cost) in
+less time. The banks and each
 task's bug report and recorded policy are in ``fixtures/coding-agent-banks/``.
 """
 
@@ -51,8 +52,8 @@ MANIFEST = json.loads((BANKS / "manifest.json").read_text())
 #: bank, so one slow provider call or one lucky search does not decide either.
 REPEATS = int(os.getenv("HINDSIGHT_EVAL_CODING_REFLECT_REPEATS", "2"))
 
-# The decision-model steps fast reflect records in its trace; none of them is an LLM call.
-_DECISION_SCOPES = ("fast_prune", "fast_sufficiency", "fast_pages_sufficiency")
+# The decision-model steps reflect records in its trace; none of them is an LLM call.
+_DECISION_SCOPES = ("decision_prune", "decision_sufficiency", "decision_pages_sufficiency")
 
 #: sde-bench's own first-prompt template (sdebench/harness/run.py, the "base" variant).
 GOAL_TEMPLATE = (
@@ -117,7 +118,7 @@ async def _import_bank(client: Hindsight, host_bank: str, task_id: str, settled:
     # calls to whichever mode happened to be measured at the time.
     await client.aupdate_bank_config(target, enable_auto_consolidation=False, enable_observations=False)
     # An import rewrites every memory after the pages last read them, so the pages arrive
-    # stale. A plugin keeps its pages fresh, and fresh pages are the case that failed: fast mode
+    # stale. A plugin keeps its pages fresh, and fresh pages are the case that failed: the decision model
     # hid the facts behind them. Refreshed once here, so the bank is the one the agent meets.
     pages = await client.alist_mental_models(bank_id=target, detail="metadata")
     for page in pages.items:
@@ -134,7 +135,7 @@ async def _import_bank(client: Hindsight, host_bank: str, task_id: str, settled:
 async def _reflect(client: Hindsight, bank: str, task_id: str, mode: str) -> ReflectRun:
     task = MANIFEST["tasks"][task_id]
     # The generated API takes any config field; the wrapper names only the common ones.
-    await client.banks.update_bank_config(bank, BankConfigUpdate(updates={"reflect_mode": mode}))
+    await client.banks.update_bank_config(bank, BankConfigUpdate(updates={"reflect_use_decision_model": mode == "decision"}))
     goal = GOAL_TEMPLATE.format(repo=task["repo"], bug_report=task["bug_report"])
     start = time.monotonic()
     response = await client.areflect(
@@ -167,7 +168,7 @@ async def _reflect(client: Hindsight, bank: str, task_id: str, mode: str) -> Ref
     )
 
 
-async def test_coding_agent_reflect_fast_matches_agent_and_is_faster(
+async def test_coding_agent_reflect_with_decision_model_matches_agent_and_costs_less(
     client: Hindsight, bank_id: str, settled: SettleFn
 ) -> None:
     await client.aupdate_bank_config(bank_id, enable_auto_consolidation=False)
@@ -176,33 +177,34 @@ async def test_coding_agent_reflect_fast_matches_agent_and_is_faster(
         bank = await _import_bank(client, bank_id, task_id, settled)
         # Interleaved, so a provider that slows down part-way through hits both modes alike.
         for _ in range(REPEATS):
-            for mode in ("agent", "fast"):
+            for mode in ("agent", "decision"):
                 runs.append(await _reflect(client, bank, task_id, mode))
 
     agent = [r for r in runs if r.mode == "agent"]
-    fast = [r for r in runs if r.mode == "fast"]
+    decision = [r for r in runs if r.mode == "decision"]
     log.info(
-        "correct: agent %d/%d, fast %d/%d",
+        "correct: agent %d/%d, decision model %d/%d",
         sum(r.correct for r in agent),
         len(agent),
-        sum(r.correct for r in fast),
-        len(fast),
+        sum(r.correct for r in decision),
+        len(decision),
     )
-    # The bug this suite exists for: fast mode answering "no decision" where agent mode found one.
+    # The bug this suite exists for: the decision model answering "no decision" where agent mode found one.
     # Agent mode can say it too on the hardest bank (dedupe-history, where a later commit undid
-    # the decision), so fast is held to agent's count, not to zero.
-    no_decision = {mode: [r.task for r in runs if r.mode == mode and r.said_no_decision] for mode in ("agent", "fast")}
-    assert len(no_decision["fast"]) <= len(no_decision["agent"]), f"answered 'no decision': {no_decision}"
-    assert sum(r.correct for r in fast) >= sum(r.correct for r in agent) - 1, (
-        f"fast reported the decision in {sum(r.correct for r in fast)}/{len(fast)} runs, agent in "
-        f"{sum(r.correct for r in agent)}/{len(agent)}; missed: {[r.task for r in fast if not r.correct]}"
+    # the decision), so it is held to agent's count, not to zero.
+    no_decision = {mode: [r.task for r in runs if r.mode == mode and r.said_no_decision] for mode in ("agent", "decision")}
+    assert len(no_decision["decision"]) <= len(no_decision["agent"]), f"answered 'no decision': {no_decision}"
+    assert sum(r.correct for r in decision) >= sum(r.correct for r in agent) - 1, (
+        f"with the decision model, reflect reported the decision in {sum(r.correct for r in decision)}/{len(decision)} runs, agent in "
+        f"{sum(r.correct for r in agent)}/{len(agent)}; missed: {[r.task for r in decision if not r.correct]}"
     )
 
-    if not any(r.decision_calls for r in fast):
+    if not any(r.decision_calls for r in decision):
         pytest.skip(
-            "fast mode ran without a decision model, so only its answers were graded; set "
-            "HINDSIGHT_EVAL_SET_RERANKER_TYPESAFE_API_KEY to compare its speed"
+            "no decision model is set up, so both arms ran agent turns and only the answers were graded; set "
+            "HINDSIGHT_EVAL_SET_DECISION_MODEL_PROVIDER=typesafe and HINDSIGHT_EVAL_SET_DECISION_MODEL_API_KEY "
+            "to compare cost and time"
         )
-    fast_s, agent_s = statistics.median(r.seconds for r in fast), statistics.median(r.seconds for r in agent)
-    assert fast_s < agent_s, f"fast reflect took {fast_s:.1f}s (median), agent {agent_s:.1f}s"
-    assert statistics.median(r.llm_calls for r in fast) < statistics.median(r.llm_calls for r in agent)
+    assert statistics.median(r.llm_calls for r in decision) < statistics.median(r.llm_calls for r in agent)
+    decision_s, agent_s = statistics.median(r.seconds for r in decision), statistics.median(r.seconds for r in agent)
+    assert decision_s < agent_s, f"with the decision model reflect took {decision_s:.1f}s (median), agent {agent_s:.1f}s"

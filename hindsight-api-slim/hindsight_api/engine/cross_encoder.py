@@ -1030,7 +1030,7 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
     SHORTLIST = 12
 
     # The fewest candidates a cut may keep, by rank. 0 for recall, where the cut is
-    # the whole point; fast reflect raises it, because the cut's levels jump from five
+    # the whole point; reflect's decision model raises it, because the cut's levels jump from five
     # to ten and it picked five for a question whose answer was a count over seven.
     MIN_KEEP = 0
 
@@ -1064,7 +1064,13 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         timeout: float = DEFAULT_RERANKER_TYPESAFE_TIMEOUT,
         max_concurrent: int = DEFAULT_RERANKER_TYPESAFE_MAX_CONCURRENT,
         prune_candidates: bool = DEFAULT_RERANKER_TYPESAFE_PRUNE_CANDIDATES,
+        shortlist: int | None = None,
+        min_keep: int | None = None,
     ):
+        if shortlist is not None:
+            self.SHORTLIST = shortlist
+        if min_keep is not None:
+            self.MIN_KEEP = min_keep
         # Tolerate an unset-but-present value ("VAR=" in a compose file, or a config
         # built with every field zeroed) by falling back to the default.
         self.model = model or DEFAULT_RERANKER_TYPESAFE_MODEL
@@ -1220,7 +1226,7 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
     async def evidence_is_sufficient(self, query: str, evidence: str) -> bool:
         """Whether ``evidence`` already answers ``query``: one Score question.
 
-        Used by fast reflect to skip the LLM turns that would otherwise decide to keep
+        Used by a decision-orchestrated reflect to skip the LLM turns that would otherwise decide to keep
         searching. A Score, not a yes/no Choice, for the reason the cut uses one: the
         levels are ordered, and "partly" must not be rounded up to "yes".
         """

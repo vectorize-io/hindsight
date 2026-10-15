@@ -3001,7 +3001,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Initialize cross-encoder reranker (cached for performance)
         self._cross_encoder_reranker = CrossEncoderReranker(cross_encoder=cross_encoder)
-        self._fast_reflect_decision_model: TypeSafeCrossEncoder | None = None
+        self._reflect_decision_model_client: TypeSafeCrossEncoder | None = None
 
         # Initialize task backend.
         # All backends use BrokerTaskBackend + WorkerPoller for async background execution.
@@ -15229,33 +15229,34 @@ class MemoryEngine(MemoryEngineInterface):
         return override
 
     def _reflect_decision_model(self) -> TypeSafeCrossEncoder | None:
-        """The decision model fast reflect asks "is this enough?", or None without a key.
+        """The decision model reflect asks "is this enough?", or None when none is set up.
 
-        Built from the TypeSafe reranker settings, whichever reranker recall uses, and
-        once per engine so its connection pool is shared across reflects.
+        Built from the reflect decision-model setup (HINDSIGHT_API_DECISION_MODEL_*, with
+        HINDSIGHT_API_REFLECT_DECISION_MODEL_* overrides), once per engine so its connection
+        pool is shared across reflects. It is a TypeSafeCrossEncoder because pruning needs
+        that class's rank-and-cut; the sufficiency question is one more call on it.
         """
-        if self._fast_reflect_decision_model is None:
-            config = get_config()
-            if not config.reranker_typesafe_api_key:
+        if self._reflect_decision_model_client is None:
+            setup = get_config().decision_model_config("reflect")
+            if setup is None:
                 return None
-            model = TypeSafeCrossEncoder(
-                api_key=config.reranker_typesafe_api_key,
-                model=config.reranker_typesafe_model,
-                base_url=config.reranker_typesafe_base_url,
-                timeout=config.reranker_typesafe_timeout,
-                max_concurrent=config.reranker_typesafe_max_concurrent,
+            self._reflect_decision_model_client = TypeSafeCrossEncoder(
+                api_key=setup.api_key,
+                model=setup.model,
+                base_url=setup.base_url,
+                timeout=setup.timeout,
+                max_concurrent=setup.max_concurrent,
                 prune_candidates=True,
+                # The recall cut keeps at most 12; a reflect answer can need more (a count
+                # over seven customers is seven facts plus the observations about them).
+                # The floor guards the cut's coarse levels: on that count it kept five.
+                shortlist=25,
+                min_keep=15,
             )
-            # The recall cut keeps at most 12; a reflect answer can need more (a count
-            # over seven customers is seven facts plus the observations about them).
-            # The floor guards the cut's coarse levels: on that count it kept five.
-            model.SHORTLIST = 25
-            model.MIN_KEEP = 15
-            self._fast_reflect_decision_model = model
-        return self._fast_reflect_decision_model
+        return self._reflect_decision_model_client
 
     async def _prune_reflect_evidence(self, query: str, texts: list[str]) -> list[bool]:
-        """Keep flags for fast reflect's first retrieval: ranked and cut by the decision model."""
+        """Keep flags for the first retrieval of a decision-orchestrated reflect."""
         model = self._reflect_decision_model()
         assert model is not None  # only wired when a decision model is configured
         scores = await model.predict([(query, text) for text in texts])
@@ -15432,7 +15433,15 @@ class MemoryEngine(MemoryEngineInterface):
         max_iterations = max(1, int(base_max_iterations * budget_multipliers.get(effective_budget, 1.0)))
         max_context_tokens = config.reflect_max_context_tokens
         wall_timeout = config.reflect_wall_timeout
-        fast_reflect = getattr(resolved_reflect_config, "reflect_mode", None) == "fast"
+        # Decision-orchestrated when a decision model is set up for reflect and the bank keeps
+        # it on: for an interactive reflect and a knowledge-page refresh, each its own switch.
+        is_refresh = _operation_label.endswith("refresh_mental_model")
+        use_decision_model = getattr(
+            resolved_reflect_config,
+            "mental_model_refresh_use_decision_model" if is_refresh else "reflect_use_decision_model",
+            True,
+        )
+        decision_model = self._reflect_decision_model() if use_decision_model else None
 
         # Run agentic loop - acquire connections only when needed for DB operations
         # (not held during LLM calls which can be slow)
@@ -15688,15 +15697,8 @@ class MemoryEngine(MemoryEngineInterface):
                         store_document_text=config_dict.get("store_document_text", DEFAULT_STORE_DOCUMENT_TEXT),
                         answer_as_document=answer_as_document,
                         tool_token_limits=tool_token_limits,
-                        fast=fast_reflect,
-                        evidence_is_sufficient_fn=(
-                            decision_model.evidence_is_sufficient
-                            if fast_reflect and (decision_model := self._reflect_decision_model())
-                            else None
-                        ),
-                        prune_evidence_fn=(
-                            self._prune_reflect_evidence if fast_reflect and self._reflect_decision_model() else None
-                        ),
+                        evidence_is_sufficient_fn=decision_model.evidence_is_sufficient if decision_model else None,
+                        prune_evidence_fn=self._prune_reflect_evidence if decision_model else None,
                     ),
                     timeout=wall_timeout,
                 )
@@ -15715,15 +15717,6 @@ class MemoryEngine(MemoryEngineInterface):
                 )
 
             _mark("agent")
-            total_time = time.time() - reflect_start
-            logger.info(
-                "[REFLECT %s] Complete: %d chars, %d iterations, %d tool calls | %.3fs",
-                reflect_id,
-                len(agent_result.text),
-                agent_result.iterations,
-                agent_result.tools_called,
-                total_time,
-            )
 
             # Convert agent tool trace to ToolCallTrace objects
             tool_trace_result = [
@@ -15929,9 +15922,15 @@ class MemoryEngine(MemoryEngineInterface):
                     logger.warning(f"Post-reflect hook error (non-fatal): {e}")
 
             _mark("post")
+            # The one closing line per reflect: the agent's outcome plus where the wall clock
+            # went, setup to post-processing, so a slow reflect points at its step.
             logger.info(
-                "[REFLECT %s] timeline | %s | total=%dms",
+                "[REFLECT %s] Complete: %d chars, %d iterations, %d tool calls%s | %s | total=%dms",
                 reflect_id,
+                len(agent_result.text),
+                agent_result.iterations,
+                agent_result.tools_called,
+                f", decision model {decision_model.model}" if decision_model else "",
                 " ".join(
                     f"{step}={int((at - before) * 1000)}ms" for (_, before), (step, at) in zip(_timeline, _timeline[1:])
                 ),

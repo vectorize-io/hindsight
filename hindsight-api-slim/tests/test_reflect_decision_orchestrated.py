@@ -1,7 +1,7 @@
-"""Fast reflect: retrieval runs in parallel rounds, and a decision model decides when to stop.
+"""Decision-orchestrated reflect: retrieval runs in parallel rounds, and a decision model decides when to stop.
 
 Agent mode spends one LLM turn per retrieval layer only to write a search string.
-Fast mode rewrites the request into one query, runs those layers in parallel with it,
+With a decision model, reflect rewrites the request into one query, runs those layers in parallel with it,
 then asks a decision model whether the evidence already answers it; if not, the LLM's
 next query runs as another such round. These tests pin the
 mechanics with a scripted provider; whether the answers hold up is the system
@@ -58,7 +58,7 @@ def _functions() -> dict[str, AsyncMock]:
     }
 
 
-async def _reflect(provider: _ScriptedProvider, functions: dict[str, AsyncMock], sufficient: AsyncMock | None):
+async def _reflect(provider: _ScriptedProvider, functions: dict[str, AsyncMock], sufficient: AsyncMock):
     return await run_reflect_agent(
         llm_config=provider,
         bank_id="b",
@@ -67,7 +67,6 @@ async def _reflect(provider: _ScriptedProvider, functions: dict[str, AsyncMock],
         has_mental_models=True,
         budget="mid",
         max_iterations=6,
-        fast=True,
         evidence_is_sufficient_fn=sufficient,
         **functions,
     )
@@ -91,11 +90,11 @@ async def test_sufficient_evidence_costs_one_llm_call():
     question, evidence = sufficient.await_args.args
     assert question == "where does Alice live?"
     assert all(marker in evidence for marker in ("page", '"o"', '"m"'))
-    assert [c.scope for c in result.llm_trace] == ["fast_query", "fast_sufficiency", "closing_done"]
+    assert [c.scope for c in result.llm_trace] == ["round_query", "decision_sufficiency", "closing_done"]
 
 
 @pytest.mark.asyncio
-async def test_insufficient_evidence_runs_another_fast_round_with_the_llms_query():
+async def test_insufficient_evidence_runs_another_parallel_round_with_the_llms_query():
     """The LLM writes the next search; it runs on every layer, pruned, and is judged again."""
     follow_up = LLMToolCallResult(
         tool_calls=[LLMToolCall(id="r", name="recall", arguments={"query": "Alice's new address"})],
@@ -114,7 +113,6 @@ async def test_insufficient_evidence_runs_another_fast_round_with_the_llms_query
         has_mental_models=True,
         budget="mid",
         max_iterations=6,
-        fast=True,
         evidence_is_sufficient_fn=sufficient,
         prune_evidence_fn=prune,
         **functions,
@@ -125,18 +123,6 @@ async def test_insufficient_evidence_runs_another_fast_round_with_the_llms_query
         assert [c.args[0] for c in functions[name].await_args_list] == ["where does Alice live?", "Alice's new address"]
     assert prune.await_count == 2, "both rounds are pruned"
     assert sufficient.await_count == 2, "the decision model, not the LLM, ends the second round"
-
-
-@pytest.mark.asyncio
-async def test_without_a_decision_model_the_agent_decides_after_the_parallel_retrieval():
-    provider = _ScriptedProvider([_done()])
-    functions = _functions()
-
-    result = await _reflect(provider, functions, None)
-
-    assert result.text == "A"
-    assert provider.tool_choices == ["auto", "done"], "no forced turns, then the closing step writes the answer"
-    assert functions["recall_fn"].await_count == 1
 
 
 @pytest.mark.asyncio
@@ -151,7 +137,7 @@ async def test_a_failing_decision_model_falls_back_to_the_agent():
 
 @pytest.mark.asyncio
 async def test_a_refusing_decision_model_hands_the_rounds_back_to_the_llm():
-    """A refused check reads as "not enough"; repeating fast rounds on it would run to the limit."""
+    """A refused check reads as "not enough"; repeating parallel rounds on it would run to the limit."""
     follow_up = LLMToolCallResult(
         tool_calls=[LLMToolCall(id="r", name="recall", arguments={"query": "Alice's new address"})],
         finish_reason="tool_calls",
@@ -164,7 +150,7 @@ async def test_a_refusing_decision_model_hands_the_rounds_back_to_the_llm():
 
     assert result.text == "A"
     assert refusing.await_count == 1, "asked once, then the LLM decides"
-    # The follow-up ran as the one search the LLM asked for, not as another fast round.
+    # The follow-up ran as the one search the LLM asked for, not as another parallel round.
     assert functions["search_observations_fn"].await_count == 1
     assert functions["recall_fn"].await_args_list[-1].args[0] == "Alice's new address"
 
@@ -205,7 +191,6 @@ async def test_pruned_evidence_never_reaches_the_answer():
         has_mental_models=True,
         budget="mid",
         max_iterations=6,
-        fast=True,
         evidence_is_sufficient_fn=sufficient,
         prune_evidence_fn=prune,
         **{k: v for k, v in functions.items()},
@@ -216,7 +201,12 @@ async def test_pruned_evidence_never_reaches_the_answer():
     assert not any(gone in evidence for gone in ("Bob likes tea", "Bob's tea", "tea notes", '"tea"'))
     assert '"moved"' in evidence, "a kept observation keeps its source facts"
     assert result.text == "A"
-    assert [c.scope for c in result.llm_trace] == ["fast_query", "fast_prune", "fast_sufficiency", "closing_done"]
+    assert [c.scope for c in result.llm_trace] == [
+        "round_query",
+        "decision_prune",
+        "decision_sufficiency",
+        "closing_done",
+    ]
 
 
 @pytest.mark.asyncio
@@ -231,7 +221,6 @@ async def test_a_failing_pruner_keeps_all_evidence():
         bank_profile={"name": "T", "mission": "M"},
         has_mental_models=True,
         max_iterations=6,
-        fast=True,
         evidence_is_sufficient_fn=sufficient,
         prune_evidence_fn=AsyncMock(side_effect=RuntimeError("HTTP 500")),
         **_functions(),
@@ -260,7 +249,7 @@ async def test_fresh_pages_that_answer_hide_the_lower_layers():
     pages_only = sufficient.await_args_list[0].args[1]
     assert "the page" in pages_only and '"o"' not in pages_only and '"m"' not in pages_only
     assert sufficient.await_count == 1, "the pages' verdict is the only check needed"
-    assert [c.scope for c in result.llm_trace] == ["fast_query", "fast_pages_sufficiency", "closing_done"]
+    assert [c.scope for c in result.llm_trace] == ["round_query", "decision_pages_sufficiency", "closing_done"]
 
 
 @pytest.mark.asyncio
@@ -277,15 +266,6 @@ async def test_fresh_pages_that_do_not_answer_keep_the_facts():
 
 
 @pytest.mark.asyncio
-async def test_without_a_decision_model_fresh_pages_hide_nothing():
-    provider = _ScriptedProvider([_done()])
-
-    await _reflect(provider, _fresh_page_functions(), None)
-
-    assert provider.tool_choices == ["auto", "done"]
-
-
-@pytest.mark.asyncio
 async def test_every_request_is_searched_with_a_rewritten_query():
     """A plugin's 2k-character prompt found nothing and took seconds per search when searched as is."""
     provider = _ScriptedProvider([_done()], search_query="Alice home city")
@@ -296,7 +276,7 @@ async def test_every_request_is_searched_with_a_rewritten_query():
     assert provider.distill_prompts == ["where does Alice live?"]
     for name in ("search_mental_models_fn", "search_observations_fn", "recall_fn"):
         assert functions[name].await_args.args[0] == "Alice home city"
-    assert [c.scope for c in result.llm_trace][0] == "fast_query"
+    assert [c.scope for c in result.llm_trace][0] == "round_query"
 
 
 @pytest.mark.asyncio
@@ -312,7 +292,7 @@ async def test_a_request_with_nothing_to_search_returns_empty_at_once():
     for fn in functions.values():
         assert fn.await_count == 0
     assert sufficient.await_count == 0
-    assert [c.scope for c in result.llm_trace] == ["fast_query"]
+    assert [c.scope for c in result.llm_trace] == ["round_query"]
 
 
 @pytest.mark.asyncio
@@ -329,7 +309,6 @@ async def test_a_document_is_never_answered_empty():
         has_mental_models=True,
         budget="mid",
         max_iterations=6,
-        fast=True,
         evidence_is_sufficient_fn=AsyncMock(return_value=True),
         answer_as_document=True,
         **functions,

@@ -1021,7 +1021,8 @@ ENV_CONSOLIDATION_WALL_TIMEOUT = "HINDSIGHT_API_CONSOLIDATION_WALL_TIMEOUT"
 
 # Reflect agent settings
 ENV_REFLECT_MAX_ITERATIONS = "HINDSIGHT_API_REFLECT_MAX_ITERATIONS"
-ENV_REFLECT_MODE = "HINDSIGHT_API_REFLECT_MODE"
+ENV_REFLECT_USE_DECISION_MODEL = "HINDSIGHT_API_REFLECT_USE_DECISION_MODEL"
+ENV_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL"
 ENV_REFLECT_PROMPT_CACHE_ENABLED = "HINDSIGHT_API_REFLECT_PROMPT_CACHE_ENABLED"
 ENV_REFLECT_MAX_CONTEXT_TOKENS = "HINDSIGHT_API_REFLECT_MAX_CONTEXT_TOKENS"
 ENV_REFLECT_WALL_TIMEOUT = "HINDSIGHT_API_REFLECT_WALL_TIMEOUT"
@@ -1938,10 +1939,12 @@ DEFAULT_CONSOLIDATION_WALL_TIMEOUT = 7200  # seconds (2 hours)
 
 # Reflect agent settings
 DEFAULT_REFLECT_MAX_ITERATIONS = 10  # Max tool call iterations before forcing response
-# "agent": one LLM turn per retrieval layer, then the LLM decides when to stop.
-# "fast": the first layers run in parallel with the question as the query, and a
-# decision model (the TypeSafe reranker settings) judges whether that is enough.
-DEFAULT_REFLECT_MODE = "agent"
+# Whether reflect (and, separately, a knowledge-page refresh) is decision-orchestrated when a
+# reflect decision model is set up: the retrieval layers run in parallel rounds and the decision
+# model prunes the evidence and judges when it is enough, in place of the LLM's per-layer turns.
+# On by default, so setting up a decision model is what turns it on; a bank can opt out.
+DEFAULT_REFLECT_USE_DECISION_MODEL = True
+DEFAULT_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL = True
 # Step-by-step context caching for the reflect tool loop (Gemini). On by default;
 # requires the global prompt cache (HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED) to also
 # be on. Set false to force reflect to run uncached even when prompt caching is on.
@@ -3611,7 +3614,8 @@ class HindsightConfig:
 
     # Reflect agent settings
     reflect_max_iterations: int
-    reflect_mode: str
+    reflect_use_decision_model: bool
+    mental_model_refresh_use_decision_model: bool
     reflect_max_context_tokens: int
     reflect_wall_timeout: int
     reflect_prompt_cache_enabled: bool
@@ -3902,7 +3906,8 @@ class HindsightConfig:
         "knowledge_page_default_trigger",
         # Reflect settings
         "reflect_mission",
-        "reflect_mode",
+        "reflect_use_decision_model",
+        "mental_model_refresh_use_decision_model",
         "reflect_source_facts_max_tokens",
         "reflect_default_options",
         # Recall settings (used by internal recall, e.g. mental model refresh)
@@ -5273,7 +5278,14 @@ class HindsightConfig:
             ),
             # Reflect agent settings
             reflect_max_iterations=int(os.getenv(ENV_REFLECT_MAX_ITERATIONS, str(DEFAULT_REFLECT_MAX_ITERATIONS))),
-            reflect_mode=os.getenv(ENV_REFLECT_MODE, DEFAULT_REFLECT_MODE),
+            reflect_use_decision_model=os.getenv(
+                ENV_REFLECT_USE_DECISION_MODEL, str(DEFAULT_REFLECT_USE_DECISION_MODEL)
+            ).lower()
+            == "true",
+            mental_model_refresh_use_decision_model=os.getenv(
+                ENV_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL, str(DEFAULT_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL)
+            ).lower()
+            == "true",
             reflect_prompt_cache_enabled=os.getenv(
                 ENV_REFLECT_PROMPT_CACHE_ENABLED, str(DEFAULT_REFLECT_PROMPT_CACHE_ENABLED)
             ).lower()

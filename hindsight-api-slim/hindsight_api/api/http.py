@@ -3866,6 +3866,13 @@ class BankTemplateConfig(BaseModel):
         default=None, description="Toggle the entity/link graph arm during recall"
     )
     enable_reranking: bool | None = Field(default=None, description="Toggle cross-encoder reranking during recall")
+    reflect_use_decision_model: bool | None = Field(
+        default=None,
+        description="When the server has a decision model, reflect lets it prune evidence and decide when to stop",
+    )
+    mental_model_refresh_use_decision_model: bool | None = Field(
+        default=None, description="The same, for knowledge-page refreshes"
+    )
     disposition_skepticism: int | None = Field(default=None, ge=1, le=5, description="Skepticism trait (1-5)")
     disposition_literalism: int | None = Field(default=None, ge=1, le=5, description="Literalism trait (1-5)")
     disposition_empathy: int | None = Field(default=None, ge=1, le=5, description="Empathy trait (1-5)")

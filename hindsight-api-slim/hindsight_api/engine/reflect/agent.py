@@ -34,7 +34,7 @@ from .presentation import ToolResultPresenter
 from .prompts import (
     _SPLIT_SYNTHESIS_WARN_CHUNKS,
     CLAIMS_SYSTEM_PROMPT,
-    FAST_SEARCH_QUERY_SYSTEM_PROMPT,
+    ROUND_SEARCH_QUERY_SYSTEM_PROMPT,
     _extract_directive_rules,
     build_agent_user_prompt,
     build_chunk_claims_prompt,
@@ -149,13 +149,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# What the fast query rewrite replies when the request asks for nothing a memory bank could
+# What the round's query rewrite replies when the request asks for nothing a memory bank could
 # answer ("yes", "thanks", "go ahead"): reflect then returns an empty answer without searching.
-_FAST_NOTHING_TO_SEARCH = "NONE"
+_NOTHING_TO_SEARCH = "NONE"
 
-# Fast reflect's first recall, when the decision model will prune it: wide enough that a decision
+# A parallel round's recall, when the decision model will prune it: wide enough that a decision
 # the fused order ranks low still reaches the decision model, which re-ranks and cuts it.
-_FAST_RECALL_MAX_TOKENS = 8192
+_ROUND_RECALL_MAX_TOKENS = 8192
 
 DEFAULT_MAX_ITERATIONS = 10
 _COMPACTED_TOOL_RESULT = "[Earlier tool result omitted to fit the context budget; it is kept for the final answer.]"
@@ -630,7 +630,6 @@ async def _run_reflect_agent_inner(
     store_document_text: bool = True,
     answer_as_document: bool = False,
     tool_token_limits: ReflectToolTokenLimits | None = None,
-    fast: bool = False,
     evidence_is_sufficient_fn: Callable[[str, str], Awaitable[bool]] | None = None,
     prune_evidence_fn: Callable[[str, list[str]], Awaitable[list[bool]]] | None = None,
     *,
@@ -668,20 +667,20 @@ async def _run_reflect_agent_inner(
             uncapped-by-default config (``reflect_max_completion_tokens``).
         response_schema: Optional JSON Schema for structured output in final response
         directives: Optional list of directive mental models to inject as hard rules
-        fast: Fast mode. The first retrieval layers run in parallel with the question
-            as their query, instead of one LLM turn each writing a query, and
-            ``evidence_is_sufficient_fn`` (a decision model) may end retrieval there.
         evidence_is_sufficient_fn: (question, evidence) -> whether the evidence already
-            answers the question. Only consulted in fast mode, once, after the first
-            retrieval; without it fast mode hands over to ordinary ``auto`` turns.
-        prune_evidence_fn: (question, candidate texts) -> keep flag per candidate. In
-            fast mode the first retrieval's observations, facts and chunks are pruned
-            with it before the model (or the sufficiency check) reads them.
+            answers the question, asked of a decision model. Given, reflect is
+            decision-orchestrated: the retrieval layers run in parallel rounds with one
+            query each, instead of one LLM turn per layer writing its own, and this check
+            ends retrieval after a round. Without it, reflect runs agent turns.
+        prune_evidence_fn: (question, candidate texts) -> keep flag per candidate. In a
+            decision-orchestrated reflect each round's observations, facts and chunks are
+            pruned with it before the model (or the sufficiency check) reads them.
 
     Returns:
         ReflectAgentResult with final answer and metadata
     """
     start_time = time.time()
+    decision_orchestrated = evidence_is_sufficient_fn is not None
 
     # Transport-level output cap for the synthesis calls. Decoupled from
     # ``max_tokens`` (a page-length target enforced via prompt + rewrite): None by
@@ -1228,13 +1227,15 @@ async def _run_reflect_agent_inner(
             # otherwise read as "not enough" every round, and the loop would run to its limit.
             nonlocal decision_model_failed
             decision_model_failed = True
-            logger.warning(f"[REFLECT {reflect_id}] Fast mode: decision model failed, using agent turns: {e}")
+            logger.warning(
+                f"[REFLECT {reflect_id}] Decision-orchestrated: decision model failed, using agent turns: {e}"
+            )
             return False
         finally:
             llm_trace.append({"scope": trace_scope, "duration_ms": int((time.time() - decision_start) * 1000)})
 
     async def _timed_prune(tool_results: list[Any]) -> list[Any]:
-        """Fast mode's first retrieval, pruned by the decision model when there is one."""
+        """A parallel round's retrieval, pruned by the decision model when there is one."""
         if prune_evidence_fn is None:
             return tool_results
         prune_start = time.time()
@@ -1242,18 +1243,18 @@ async def _run_reflect_agent_inner(
         # prefer ("decisions, never the current implementation"), and pruning on the short query
         # kept the later commit that undid a decision as readily as the decision (sde-bench
         # dedupe-history), so the answer reported the decision as superseded.
-        pruned = await _prune_fast_batch(query, tool_results, prune_evidence_fn, reflect_id)
-        llm_trace.append({"scope": "fast_prune", "duration_ms": int((time.time() - prune_start) * 1000)})
+        pruned = await _prune_round(query, tool_results, prune_evidence_fn, reflect_id)
+        llm_trace.append({"scope": "decision_prune", "duration_ms": int((time.time() - prune_start) * 1000)})
         return pruned
 
-    # Whether the pages alone answered fast mode's first retrieval, and whether the batch that
-    # just landed was a fast round (all layers at once, pruned) that the decision model judges.
-    fast_pages_answered = False
-    fast_round_landed = False
+    # Whether the pages alone answered the first parallel round, and whether the batch that
+    # just landed was a parallel round (all layers at once, pruned) that the decision model judges.
+    pages_answered = False
+    round_landed = False
     decision_model_failed = False
 
-    def _fast_batch(search_query: str, id_prefix: str) -> LLMToolCallResult:
-        """Fast mode's retrieval round: every forced layer at once, with one query.
+    def _parallel_round(search_query: str, id_prefix: str) -> LLMToolCallResult:
+        """A decision-orchestrated retrieval round: every forced layer at once, with one query.
 
         Recall hands the decision model a wider slice than the default to cut down from: the
         fact that states a decision can rank low (63 of 95 for sde-bench csvquote-history's in
@@ -1261,9 +1262,9 @@ async def _run_reflect_agent_inner(
         """
 
         def _arguments(tool: str) -> dict[str, Any]:
-            arguments: dict[str, Any] = {"query": search_query, "reason": "fast mode"}
+            arguments: dict[str, Any] = {"query": search_query, "reason": "parallel round"}
             if tool == "recall" and prune_evidence_fn is not None:
-                arguments["max_tokens"] = _FAST_RECALL_MAX_TOKENS
+                arguments["max_tokens"] = _ROUND_RECALL_MAX_TOKENS
             return arguments
 
         return LLMToolCallResult(
@@ -1304,17 +1305,17 @@ async def _run_reflect_agent_inner(
         if cancel_check is not None:
             cancel_check()
 
-        # Fast mode, after the parallel first retrieval: a decision model judges whether
+        # After a parallel round: a decision model judges whether
         # that evidence already answers the question. Yes ends retrieval here, so the
         # only LLM call left is the answer itself; no hands over to ordinary ``auto``
         # turns, where the LLM writes follow-up queries from what it has read.
-        if fast and iteration == 1 and fast_pages_answered:
+        if decision_orchestrated and iteration == 1 and pages_answered:
             return await _finish(iteration)
-        if fast_round_landed and evidence_is_sufficient_fn is not None and not decision_model_failed:
-            fast_round_landed = False
+        if round_landed and evidence_is_sufficient_fn is not None and not decision_model_failed:
+            round_landed = False
             evidence = "\n\n".join(m["content"] for m in messages if m.get("role") == "tool")
-            if await _decision_says_sufficient(evidence, "fast_sufficiency"):
-                logger.info(f"[REFLECT {reflect_id}] Fast mode: the first retrieval answers the question.")
+            if await _decision_says_sufficient(evidence, "decision_sufficiency"):
+                logger.info(f"[REFLECT {reflect_id}] Decision-orchestrated: the first retrieval answers the question.")
                 return await _finish(iteration)
 
         # Determine tool_choice for this iteration.
@@ -1393,9 +1394,9 @@ async def _run_reflect_agent_inner(
             await _resolve_pending_cache()
 
         call_msg_count = len(messages)
-        fast_round = False
-        if fast and iteration == 0 and forced_sequence:
-            # Fast mode: every forced layer at once, with one query. In agent mode each of
+        parallel_round = False
+        if decision_orchestrated and iteration == 0 and forced_sequence:
+            # Decision-orchestrated: every forced layer at once, with one query. In agent mode each of
             # these is a full LLM round trip whose only output is a search string.
             #
             # Every request is rewritten into one search query first. It used to be only the
@@ -1404,13 +1405,13 @@ async def _run_reflect_agent_inner(
             # boltons-budget). The same call now also spots a request with nothing to look up
             # ("yes", "thanks"), which then returns at once instead of paying for a retrieval.
             distilled = (
-                (await _tracked_llm_call(query, "fast_query", FAST_SEARCH_QUERY_SYSTEM_PROMPT, None, temperature=0.0))
+                (await _tracked_llm_call(query, "round_query", ROUND_SEARCH_QUERY_SYSTEM_PROMPT, None, temperature=0.0))
                 .strip()
                 .strip('"')
             )
             # A document is never "nothing": a refresh must not store an empty page.
-            if distilled == _FAST_NOTHING_TO_SEARCH and not answer_as_document:
-                logger.info(f"[REFLECT {reflect_id}] Fast mode: nothing to search for; empty answer.")
+            if distilled == _NOTHING_TO_SEARCH and not answer_as_document:
+                logger.info(f"[REFLECT {reflect_id}] Decision-orchestrated: nothing to search for; empty answer.")
                 return ReflectAgentResult(
                     text="",
                     iterations=0,
@@ -1420,8 +1421,8 @@ async def _run_reflect_agent_inner(
                     usage=_get_usage(),
                     directives_applied=directives_applied,
                 )
-            result = _fast_batch(distilled or query, "fast_")
-            fast_round = True
+            result = _parallel_round(distilled or query, "round_")
+            parallel_round = True
             forced_steps_done = len(forced_sequence) - 1  # the increment below completes the sequence
         else:
             # Time spent waiting on LLM concurrency permits is collected separately so a
@@ -1597,12 +1598,12 @@ async def _run_reflect_agent_inner(
             # False" was in the evidence three times), and the agent needed a correction for it.
             return await (_forced_final_synthesis if compacted else _finish)(iteration + 1)
 
-        # Fast mode after a "not enough" verdict: the LLM wrote its next search, and that query
-        # runs as another fast round (every layer at once, pruned, judged again) rather than as
+        # After a "not enough" verdict: the LLM wrote its next search, and that query
+        # runs as another parallel round (every layer at once, pruned, judged again) rather than as
         # the one search it asked for. The LLM picks what to look for; the decision model, not
         # the LLM, decides when the evidence is enough.
         if (
-            fast
+            decision_orchestrated
             and iteration > 0
             and evidence_is_sufficient_fn is not None
             and not decision_model_failed
@@ -1617,8 +1618,8 @@ async def _run_reflect_agent_inner(
                 None,
             )
             if follow_up is not None:
-                result = _fast_batch(str(follow_up.arguments["query"]), f"fast{iteration + 1}_")
-                fast_round = True
+                result = _parallel_round(str(follow_up.arguments["query"]), f"round{iteration + 1}_")
+                parallel_round = True
 
         # Execute other tools in parallel (exclude done tool in all its format variants)
         other_tools = [tc for tc in result.tool_calls if not _is_done_tool(tc.name)]
@@ -1711,7 +1712,7 @@ async def _run_reflect_agent_inner(
                 )
                 for tc in other_tools
             ]
-            # Fast mode's first batch keeps the searches' own cross-encoder order. It once ran
+            # The first parallel round keeps the searches' own cross-encoder order. It once ran
             # them on fused (RRF) order instead, since the decision model cuts the list straight
             # after: ~2s faster, but the decision model then only cut, it never re-ordered, and
             # the answer read the evidence in fused order. On the sde-bench commit-history tasks
@@ -1721,7 +1722,7 @@ async def _run_reflect_agent_inner(
             total_tools_called += len(other_tools)
 
             if (
-                fast
+                decision_orchestrated
                 and iteration == 0
                 and (budget or "low").lower() != "high"
                 and evidence_is_sufficient_fn is not None
@@ -1736,18 +1737,20 @@ async def _run_reflect_agent_inner(
                 # decision-model calls, and pruning work thrown away when the pages answer costs
                 # less than waiting for one before starting the other.
                 pages_answer, pruned = await asyncio.gather(
-                    _decision_says_sufficient(json.dumps(pages, default=str), "fast_pages_sufficiency"),
+                    _decision_says_sufficient(json.dumps(pages, default=str), "decision_pages_sufficiency"),
                     _timed_prune(tool_results),
                 )
                 if pages_answer:
-                    logger.info(f"[REFLECT {reflect_id}] Fast mode: the pages answer; lower layers not shown.")
+                    logger.info(
+                        f"[REFLECT {reflect_id}] Decision-orchestrated: the pages answer; lower layers not shown."
+                    )
                     tool_results = _hide_lower_layers(other_tools, tool_results)
-                    fast_pages_answered = True
+                    pages_answered = True
                 else:
                     tool_results = pruned
-            elif fast_round:
+            elif parallel_round:
                 tool_results = await _timed_prune(tool_results)
-            fast_round_landed = fast_round
+            round_landed = parallel_round
 
             # Process results and add to messages
             for position, tc, result_data in zip(allowed_positions, other_tools, tool_results):
@@ -1929,7 +1932,7 @@ def _evidence_line(item: dict[str, Any]) -> str:
     return f"[{when}] {item.get('text', '')}" if when else str(item.get("text", ""))
 
 
-async def _prune_fast_batch(
+async def _prune_round(
     query: str,
     tool_results: list[Any],
     prune_evidence_fn: Callable[[str, list[str]], Awaitable[list[bool]]],
@@ -1966,11 +1969,11 @@ async def _prune_fast_batch(
     except OperationCancelledError:
         raise
     except Exception as e:
-        logger.warning(f"[REFLECT {reflect_id}] Fast mode: pruning failed, keeping all evidence: {e}")
+        logger.warning(f"[REFLECT {reflect_id}] Decision-orchestrated: pruning failed, keeping all evidence: {e}")
         return tool_results
 
     kept = {slot for slot, keep in zip(slots, keep_flags) if keep}
-    logger.info(f"[REFLECT {reflect_id}] Fast mode: kept {len(kept)}/{len(slots)} evidence items.")
+    logger.info(f"[REFLECT {reflect_id}] Decision-orchestrated: kept {len(kept)}/{len(slots)} evidence items.")
     pruned: list[Any] = []
     for i, output in enumerate(tool_results):
         if not isinstance(output, tuple) or not isinstance(output[0], dict) or "error" in output[0]:
