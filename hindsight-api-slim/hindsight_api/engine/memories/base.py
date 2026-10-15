@@ -3514,16 +3514,23 @@ class MemoriesExtension(Extension, ABC):
         # Set unconditionally, mirroring Postgres's `SET metadata = $4`: a document whose metadata
         # was cleared must clear on its survivors too, which an absent key would not do.
         new_tags_by_unit = {m.unit_id: final_tags(m.tags) for m in page.memories}
+        new_metadata = drop_null_values(metadata or {})
+        # Only memories whose labels actually differ: a patch moves `updated_at`, the "this
+        # fact was edited" signal consolidation discards an in-flight batch on (#5614), so a
+        # re-send of an unchanged document must patch nothing.
         patches = [
             MemoryPatch(
                 unit_id=m.unit_id,
                 tags=new_tags_by_unit[m.unit_id],
                 metadata={
-                    META_METADATA_JSON: json.dumps(drop_null_values(metadata or {})),
+                    META_METADATA_JSON: json.dumps(new_metadata),
                     META_OBSERVATION_SCOPES: json.dumps(observation_scopes),
                 },
             )
             for m in page.memories
+            if m.tags != new_tags_by_unit[m.unit_id]
+            or (m.metadata or {}) != new_metadata
+            or m.observation_scopes != observation_scopes
         ]
         # Against the tags the unit will actually END with, not the document's: a survivor
         # keeping its label projection has not been rescoped, and comparing it to the bare
