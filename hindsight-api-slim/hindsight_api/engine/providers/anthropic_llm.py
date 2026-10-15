@@ -521,6 +521,10 @@ class AnthropicLLM(LLMInterface):
                 logger.error(f"Anthropic API error after {max_retries + 1} attempts: {describe_llm_error(e)}")
                 raise
 
+            except ProviderContentPolicyError:
+                # An expected, permanent outcome — not an "unexpected error" worth an error log.
+                raise
+
             except Exception as e:
                 logger.error(f"Unexpected error during Anthropic call: {type(e).__name__}: {str(e)}")
                 raise
