@@ -413,10 +413,19 @@ async def run_cancellable_on_disconnect(
     lives in ``ClientDisconnectCancellationMiddleware`` (a pure-ASGI middleware
     installed outside the ``BaseHTTPMiddleware`` layer), which attaches a
     :class:`CancellationToken` to the ASGI scope and trips it on
-    ``http.disconnect``. Here we simply hand that token to the engine via
-    ``RequestContext`` — the engine checks it at stage/iteration boundaries — and
-    translate the resulting ``OperationCancelledError`` into 499 so abandoned
-    work stops instead of running to completion (issue #2122).
+    ``http.disconnect`` (issue #2122).
+
+    The token stops the work two ways, because each covers what the other cannot:
+
+    - It is handed to the engine via ``RequestContext``, which checks it at
+      stage/iteration boundaries. That stops work running in worker threads
+      (recall's graph expansion and reranking), which task cancellation cannot
+      interrupt.
+    - The coroutine runs as a task that is cancelled outright when the token
+      fires. That stops work parked on a single await, which never reaches a
+      checkpoint: an abandoned reflect sat in its closing ``done`` call and the
+      provider's retries, then the standalone fallback and its retries, for ~270s
+      until the wall timeout (issue #5128).
 
     Note: ``Request.is_disconnected()`` is deliberately NOT used — it silently
     never fires behind ``BaseHTTPMiddleware``, which is why the original #2127
@@ -426,7 +435,7 @@ async def run_cancellable_on_disconnect(
     if token is not None:
         request_context.cancellation = token
     try:
-        return await coro
+        return await run_task_cancellable_on_disconnect(http_request, coro, operation=operation, bank_id=bank_id)
     except OperationCancelledError as e:
         logger.info(f"[{operation.upper()} CANCELLED] bank={bank_id} reason={e.reason}")
         raise HTTPException(status_code=_CLIENT_CLOSED_REQUEST_STATUS_CODE, detail=e.reason) from e
@@ -441,9 +450,8 @@ async def run_task_cancellable_on_disconnect(
 ) -> _T:
     """Run a coroutine as a task and cancel it outright if the client disconnects.
 
-    The cooperative variant above is the right shape for recall and reflect, whose
-    expensive stages run in worker threads that task cancellation cannot interrupt.
-    A synchronous retain is the opposite shape: almost all of its wall time is spent
+    Used directly by sync retain, and under the cooperative variant above by recall
+    and reflect. A synchronous retain is the clearest case: almost all of its wall time is spent
     *awaiting* — queued on the LLM concurrency semaphore, then on the provider's
     response — so a checkpoint between stages never gets a turn, and only real task
     cancellation unblocks it. An abandoned sync retain measured 1880s, holding an LLM
@@ -6442,10 +6450,10 @@ def _register_routes(app: FastAPI):
 
             # Use the memory system's reflect_async method (record metrics)
             with metrics.record_operation("reflect", bank_id=bank_id, source="api", budget=request.budget.value):
-                # Cancel the reflect if the client disconnects: the agent loop
-                # checks request_context between iterations and the nested recall
-                # checks at its stage boundaries, so abandoned work stops instead
-                # of running to completion (issue #2122).
+                # Cancel the reflect if the client disconnects: the task is
+                # cancelled outright, so a closing call stuck in provider retries
+                # stops too (#5128), and the nested recall still checks at its
+                # stage boundaries for work in threads (#2122).
                 core_result = await run_cancellable_on_disconnect(
                     http_request,
                     request_context,

@@ -161,6 +161,40 @@ async def test_run_cancellable_wires_scope_token_and_maps_to_499():
     assert ctx.cancellation is token
 
 
+async def test_run_cancellable_stops_work_that_reaches_no_checkpoint():
+    """A reflect parked in one long provider call must stop when the client leaves.
+
+    The closing ``done`` call and the provider's retries are awaits with no
+    checkpoint between them; an abandoned reflect sat there ~270s until the wall
+    timeout (#5128). The task must be cancelled outright and its ``finally`` run.
+    """
+    token = CancellationToken()
+    ctx = RequestContext()
+    req = _ScopeRequest({SCOPE_CANCELLATION_TOKEN: token})
+    unwound = asyncio.Event()
+
+    async def work() -> str:
+        try:
+            await asyncio.sleep(3600)  # one long await, no checkpoints
+            return "answer"
+        finally:
+            unwound.set()
+
+    async def fire_soon():
+        await asyncio.sleep(0.02)
+        token.cancel("client disconnected")
+
+    asyncio.create_task(fire_soon())
+    with pytest.raises(HTTPException) as exc:
+        await asyncio.wait_for(
+            run_cancellable_on_disconnect(req, ctx, work(), operation="reflect", bank_id="b1"),
+            timeout=_TEST_TIMEOUT_SECONDS,
+        )
+    assert exc.value.status_code == _CLIENT_CLOSED_REQUEST_STATUS_CODE
+    assert exc.value.detail == "client disconnected"
+    assert unwound.is_set(), "the cancelled task was abandoned instead of awaited"
+
+
 # --- Middleware ASGI integration (the regression that matters) ------------------
 
 
@@ -183,7 +217,9 @@ def _build_app(*, with_base_http_middleware: bool) -> tuple[FastAPI, asyncio.Eve
                 while True:
                     ctx.raise_if_cancelled()
                     await asyncio.sleep(0.005)
-            except OperationCancelledError:
+            except (OperationCancelledError, asyncio.CancelledError):
+                # Either stop counts: the checkpoint, or the task being cancelled
+                # outright, whichever sees the tripped token first.
                 cancelled.set()
                 raise
 
@@ -387,13 +423,9 @@ async def test_run_task_cancellable_propagates_work_errors():
 # --- The whole route, end to end (#4526) ----------------------------------------
 
 
-async def test_sync_retain_route_answers_499_and_stops_the_work(memory, monkeypatch):
-    """A sync retain whose client hangs up must stop, not run to completion.
-
-    Drives the real app at the ASGI layer (the only level where a disconnect can be
-    delivered) with the extraction stubbed out as one long await — the shape of a
-    retain parked on the LLM semaphore, which is where the 1880s run in #4526 sat.
-    """
+async def _assert_route_answers_499_and_stops(memory, monkeypatch, *, engine_method: str, path: str, body: bytes):
+    """Drive the real app at the ASGI layer (the only level where a disconnect can be
+    delivered), with the engine call stubbed out as one long await, and hang up."""
     from hindsight_api.api import create_app
 
     app = create_app(memory, initialize_memory=False)
@@ -407,9 +439,8 @@ async def test_sync_retain_route_answers_499_and_stops_the_work(memory, monkeypa
         finally:
             unwound.set()
 
-    monkeypatch.setattr(memory, "retain_batch_async", never_finishes)
+    monkeypatch.setattr(memory, engine_method, never_finishes)
 
-    body = b'{"items": [{"content": "Alice works at Google"}], "async": false}'
     body_sent = False
 
     async def receive():
@@ -425,7 +456,6 @@ async def test_sync_retain_route_answers_499_and_stops_the_work(memory, monkeypa
     async def send(message):
         messages.append(message)
 
-    path = "/v1/default/banks/disconnect-probe/memories"
     scope = {
         "type": "http",
         "http_version": "1.1",
@@ -442,4 +472,34 @@ async def test_sync_retain_route_answers_499_and_stops_the_work(memory, monkeypa
 
     start = next(m for m in messages if m["type"] == "http.response.start")
     assert start["status"] == _CLIENT_CLOSED_REQUEST_STATUS_CODE
-    assert unwound.is_set(), "the abandoned retain kept running after the client left"
+    assert unwound.is_set(), "the abandoned operation kept running after the client left"
+
+
+async def test_sync_retain_route_answers_499_and_stops_the_work(memory, monkeypatch):
+    """A sync retain whose client hangs up must stop, not run to completion.
+
+    The stub is the shape of a retain parked on the LLM semaphore, which is where
+    the 1880s run in #4526 sat.
+    """
+    await _assert_route_answers_499_and_stops(
+        memory,
+        monkeypatch,
+        engine_method="retain_batch_async",
+        path="/v1/default/banks/disconnect-probe/memories",
+        body=b'{"items": [{"content": "Alice works at Google"}], "async": false}',
+    )
+
+
+async def test_reflect_route_answers_499_and_stops_the_work(memory, monkeypatch):
+    """A reflect whose client hangs up must stop, even inside one long await.
+
+    The stub is the shape of a reflect stuck in its closing call and the
+    provider's retries, which ran ~270s past the disconnect in #5128.
+    """
+    await _assert_route_answers_499_and_stops(
+        memory,
+        monkeypatch,
+        engine_method="reflect_async",
+        path="/v1/default/banks/disconnect-probe/reflect",
+        body=b'{"query": "Where does Alice work?"}',
+    )
