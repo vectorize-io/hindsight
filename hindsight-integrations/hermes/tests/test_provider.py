@@ -794,3 +794,17 @@ def test_reflect_without_reflect_tags_uses_the_whole_bank(provider):
     instance, fake = provider({"recall_tags": "team"}, client=FakeClient(reflect_text="synthesis"))
     instance.handle_tool_call("hindsight_reflect", {"query": "q"})
     assert "tags" not in fake.reflects[0]
+
+
+def test_observations_default_to_shared_scope(provider):
+    instance, fake = provider({})
+    instance.sync_turn("hi", "hello")
+    instance.shutdown()
+    assert _retain_item(fake)["observation_scopes"] == "shared"
+
+
+def test_explicit_observation_scopes_win_over_the_default(provider):
+    instance, fake = provider({"observation_scopes": "combined"})
+    instance.sync_turn("hi", "hello")
+    instance.shutdown()
+    assert _retain_item(fake)["observation_scopes"] == "combined"

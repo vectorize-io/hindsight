@@ -31,6 +31,10 @@ _DEFAULT_RETAIN_SOURCE = ""
 # decides (its ``retain_default_strategy``, else unmissioned ``concise`` extraction).
 # The bank must already define the name under ``retain_strategies``.
 _DEFAULT_RETAIN_STRATEGY = ""
+# Hermes tags every retain with volatile ``session:``/``parent:`` lineage, so the engine's
+# ``combined`` default (one scope per exact tag set) would keep observations per session.
+# ``shared`` merges them across sessions; the lineage tags stay on the facts.
+_DEFAULT_OBSERVATION_SCOPES = "shared"
 # Hindsight brand mark (eye ringed by graph nodes) for the recall/retain indicators.
 _HINDSIGHT_GLYPH = "👁️"
 # Hindsight 0.5.0 added ``update_mode='append'``; older APIs would silently
