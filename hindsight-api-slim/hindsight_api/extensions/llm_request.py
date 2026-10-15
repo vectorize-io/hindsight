@@ -39,7 +39,7 @@ from collections.abc import Mapping
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from hindsight_api.config import LLMMemberConfig
 from hindsight_api.extensions.base import Extension
@@ -156,6 +156,35 @@ def current_llm_request_overrides() -> LLMRequestOverrides | None:
     return _overrides_ctx.get()
 
 
+def request_client(client: Any) -> Any:
+    """``client`` (an OpenAI or Anthropic SDK client) carrying the credentials bound for this call.
+
+    ``with_options`` returns a copy that shares the client's connection pool, so a
+    per-request key costs an object, not a connection. Applying the key here — not
+    as ``extra_headers`` in the call params — keeps it out of everything that logs
+    or dumps those params.
+    """
+    overrides = _overrides_ctx.get()
+    if overrides is None:
+        return client
+    options: dict[str, Any] = {}
+    if overrides.api_key is not None:
+        options["api_key"] = overrides.api_key
+    if overrides.headers:
+        options["default_headers"] = dict(overrides.headers)
+    return client.with_options(**options) if options else client
+
+
+# Header names that carry a credential. The SDKs apply custom headers after their own
+# auth header, so one of these among a provider's default headers would override a
+# per-call key and send the call on the server's credentials.
+_CREDENTIAL_HEADER_HINTS = ("auth", "key", "token", "secret", "cookie")
+
+
+def _credential_headers(headers: Mapping[str, str] | None) -> list[str]:
+    return [name for name in (headers or {}) if any(hint in name.lower() for hint in _CREDENTIAL_HEADER_HINTS)]
+
+
 @dataclass
 class BoundLLMRequest:
     """What :func:`bind_llm_request` decided for one call. Pass to :meth:`reset` when done."""
@@ -206,18 +235,27 @@ async def bind_llm_request(provider: LLMProvider) -> BoundLLMRequest:
             f"{type(extension).__name__}.resolve() returned {type(overrides).__name__}, expected LLMRequestOverrides or None"
         )
 
-    delegate = _llm_for(overrides.llm, provider) if overrides is not None and overrides.llm is not None else None
+    delegate = _llm_for(overrides, provider) if overrides is not None and overrides.llm is not None else None
+    if overrides is not None and overrides.llm is not None and overrides.llm.api_key is None:
+        # _llm_for built the chosen LLM with the answer's key, so it is no longer a
+        # per-call override: providers that cannot take one need not refuse it.
+        overrides = dataclasses.replace(overrides, api_key=None)
     receiver = delegate or provider
-    if (
-        overrides is not None
-        and (overrides.api_key is not None or overrides.headers)
-        and not receiver._provider_impl.supports_request_overrides()
-    ):
-        raise LLMRequestRefused(
-            f"The LLM request extension chose credentials for bank {target.bank_id!r}, but provider "
-            f"'{receiver.provider}' cannot send a call with per-request credentials. Refusing rather than "
-            f"sending it on its configured credentials."
-        )
+    if overrides is not None and (overrides.api_key is not None or overrides.headers):
+        if not receiver._provider_impl.supports_request_overrides():
+            raise LLMRequestRefused(
+                f"The LLM request extension chose credentials for bank {target.bank_id!r}, but provider "
+                f"'{receiver.provider}' cannot send a call with per-request credentials. Refusing rather than "
+                f"sending it on its configured credentials."
+            )
+        # Names only in the message: the values are the credentials.
+        clashing = [h for h in _credential_headers(receiver.default_headers) if h not in overrides.headers]
+        if overrides.api_key is not None and clashing:
+            raise LLMRequestRefused(
+                f"The LLM request extension chose a key for bank {target.bank_id!r}, but the LLM's default "
+                f"headers {clashing} carry a credential that would override it. Refusing rather than sending "
+                f"the call on those; override the header in the answer's headers, or drop it from the defaults."
+            )
     return BoundLLMRequest(
         llm=delegate,
         _overrides_token=_overrides_ctx.set(overrides),
@@ -236,11 +274,21 @@ _chosen_llms: OrderedDict[str, LLMProvider] = OrderedDict()
 _chosen_llms_lock = threading.Lock()
 
 
-def _llm_for(member: LLMMemberConfig, caller: LLMProvider) -> LLMProvider:
-    """The LLM for ``member``, built like a multi-LLM chain member of ``caller``'s operation."""
-    from hindsight_api.config import get_config
+def _llm_for(overrides: LLMRequestOverrides, caller: LLMProvider) -> LLMProvider:
+    """The LLM for ``overrides.llm``, built like a multi-LLM chain member of ``caller``'s operation.
+
+    Unlike a chain member, it inherits none of the server's credentials: the server's
+    default headers, Vertex service account, Codex home and LiteLLM router config would
+    otherwise bill the server's account, or send its gateway key to the chosen endpoint.
+    A member without a key takes the answer's ``api_key``.
+    """
+    from hindsight_api.config import StaticConfigProxy, _get_raw_config
     from hindsight_api.engine.memory_engine import _LLMCallDefaults, _member_to_llm
 
+    assert overrides.llm is not None
+    member = overrides.llm
+    if member.api_key is None and overrides.api_key is not None:
+        member = dataclasses.replace(member, api_key=overrides.api_key)
     defaults = _LLMCallDefaults(
         timeout=caller.timeout,
         max_retries=caller.max_retries,
@@ -262,7 +310,14 @@ def _llm_for(member: LLMMemberConfig, caller: LLMProvider) -> LLMProvider:
     # Built outside the lock: constructing a provider can be slow (SDK import, service
     # account parsing). Two calls racing on a new config may both build; the first
     # one stored wins and the other is dropped unused.
-    built = _member_to_llm(member, get_config(), defaults)
+    no_server_credentials = dataclasses.replace(
+        _get_raw_config(),
+        llm_default_headers=None,
+        llm_vertexai_service_account_key=None,
+        llm_codex_home=None,
+        llm_litellmrouter_config=None,
+    )
+    built = _member_to_llm(member, StaticConfigProxy(no_server_credentials), defaults)
     with _chosen_llms_lock:
         llm = _chosen_llms.setdefault(key, built)
         _chosen_llms.move_to_end(key)

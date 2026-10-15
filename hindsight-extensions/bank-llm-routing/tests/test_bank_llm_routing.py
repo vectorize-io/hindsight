@@ -173,3 +173,26 @@ def test_startup_log_names_patterns_not_keys(caplog):
         _ext([{"bank": "acme-*", "api_key": "sk-secret"}])
     assert "acme-*" in caplog.text
     assert "sk-secret" not in caplog.text
+
+
+async def test_a_route_can_be_pinned_to_the_servers_provider_and_model():
+    # A multi-LLM chain asks once per member: a gateway key must not reach the fallback provider.
+    extension = _ext(
+        [{"bank": "acme-*", "provider": "openai", "model": "gpt-*", "api_key": "sk-gateway"}],
+        unmatched="server",
+    )
+
+    def target(provider: str, model: str) -> LLMRequestTarget:
+        return LLMRequestTarget(schema="public", bank_id="acme-1", operation="retain", provider=provider, model=model)
+
+    assert (await extension.resolve(target("openai", "gpt-4o"))).api_key == "sk-gateway"
+    assert await extension.resolve(target("anthropic", "gpt-4o")) is None
+    assert await extension.resolve(target("openai", "o3")) is None
+
+
+def test_routes_do_not_print_their_keys():
+    extension = _ext(
+        [{"bank": "a-*", "api_key": "sk-top", "headers": {"x-key": "sk-head"}, "llm": {"provider": "openai", "model": "m", "api_key": "sk-llm"}}]
+    )
+    printed = repr(extension.routes) + str(extension.routes)
+    assert "sk-top" not in printed and "sk-head" not in printed and "sk-llm" not in printed

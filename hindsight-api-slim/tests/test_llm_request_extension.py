@@ -19,10 +19,12 @@ from aiohttp import web
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 
-from hindsight_api.config import LLMMemberConfig
+from hindsight_api.config import LLM_STRATEGY_FAILOVER, LLMMemberConfig, LLMStrategyConfig
 
+from hindsight_api.engine.llm_interface import PromptCachePrefix
 from hindsight_api.engine.llm_wrapper import LLMProvider
 from hindsight_api.engine.memory_engine import _current_schema
+from hindsight_api.engine.multi_llm import MultiLLMProvider
 from hindsight_api.engine.providers.litellm_llm import LiteLLMLLM
 from hindsight_api.engine.providers.llm_debug import _serialize_config
 from hindsight_api.extensions.llm_request import (
@@ -304,7 +306,7 @@ async def test_the_chosen_llm_cache_is_bounded(install, monkeypatch):
 
 
 async def test_credentials_for_a_chosen_llm_that_cannot_take_them_are_refused(install):
-    install(LLMRequestOverrides(llm=LLMMemberConfig(provider="mock", api_key=None, model="x"), api_key="k"))
+    install(LLMRequestOverrides(llm=LLMMemberConfig(provider="mock", api_key="own", model="x"), api_key="k"))
     with pytest.raises(LLMRequestRefused, match="provider 'mock'"):
         await _call_for_bank(_openai_provider([]), "alice")
 
@@ -317,6 +319,125 @@ def test_answer_rejects_an_llm_that_is_not_a_member_config():
 def test_overrides_repr_hides_the_chosen_llm():
     member = LLMMemberConfig(provider="openai", api_key="sk-secret", model="m")
     assert "sk-secret" not in repr(LLMRequestOverrides(llm=member))
+
+
+async def test_a_chosen_llm_without_a_key_takes_the_answers_key(install):
+    received: list[str] = []
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        received.append(request.headers["Authorization"])
+        return web.json_response(_chat_completion("bank-model"))
+
+    async with stub_server(handler) as base_url:
+        member = LLMMemberConfig(provider="openai", api_key=None, model="bank-model", base_url=f"{base_url}/v1")
+        install(LLMRequestOverrides(llm=member, api_key="bank-key"))
+        await _call_for_bank(_openai_provider([]), "alice")
+
+    assert received == ["Bearer bank-key"]
+
+
+async def test_the_answers_key_fills_a_chosen_llm_that_cannot_take_per_call_keys(install):
+    # The key is built into the chosen LLM, not sent per call, so nothing is refused.
+    install(LLMRequestOverrides(llm=LLMMemberConfig(provider="mock", api_key=None, model="keyed"), api_key="k"))
+    bound = await bind_llm_request(LLMProvider(provider="mock", api_key="", base_url="", model="m"))
+    bound.reset()
+    assert bound.llm is not None and bound.llm.api_key == "k"
+
+
+async def test_a_chosen_llm_inherits_none_of_the_servers_credentials(install, monkeypatch):
+    import dataclasses
+
+    from hindsight_api import config as config_module
+
+    server_config = dataclasses.replace(
+        config_module._get_raw_config(),
+        llm_default_headers={"x-portkey-api-key": "server-gateway-key"},
+        llm_vertexai_service_account_key="/server/sa.json",
+        llm_codex_home="/server/codex",
+    )
+    monkeypatch.setattr(config_module, "_get_raw_config", lambda: server_config)
+    from hindsight_api.engine import memory_engine
+
+    built_from = []
+    build = memory_engine._member_to_llm
+    monkeypatch.setattr(memory_engine, "_member_to_llm", lambda m, c, d: built_from.append(c) or build(m, c, d))
+    install(LLMRequestOverrides(llm=LLMMemberConfig(provider="mock", api_key=None, model="inherits-nothing")))
+
+    bound = await bind_llm_request(LLMProvider(provider="mock", api_key="", base_url="", model="m"))
+    bound.reset()
+
+    assert bound.llm is not None and not bound.llm.default_headers and not bound.llm.codex_home
+    (config,) = built_from
+    assert config.llm_vertexai_service_account_key is None
+    assert config.llm_litellmrouter_config is None
+
+
+async def test_prompt_cache_goes_to_the_chosen_llm(install):
+    """The prefix says what is cacheable; the chosen LLM builds its own cache from it."""
+    received: list[str] = []
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        received.append((await request.json())["model"])
+        return web.json_response(_chat_completion("bank-model"))
+
+    server_seen: list[httpx.Request] = []
+    async with stub_server(handler) as base_url:
+        member = LLMMemberConfig(provider="openai", api_key="bank-key", model="bank-model", base_url=f"{base_url}/v1")
+        install(LLMRequestOverrides(llm=member))
+        configured = _openai_provider(server_seen).with_config(_bank_config(), bank_id="alice", operation="retain")
+        result = await configured.call(
+            messages=[{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}],
+            prompt_cache=PromptCachePrefix(system_instruction="sys"),
+            max_retries=0,
+        )
+
+    assert result.content == "ok"
+    assert received == ["bank-model"]
+    assert server_seen == []
+
+
+@pytest.mark.parametrize("make_provider", [_openai_provider, _anthropic_provider], ids=["openai", "anthropic"])
+async def test_tool_calls_send_the_bank_key(install, make_provider):
+    install(LLMRequestOverrides(api_key="alice-key"))
+    seen: list[httpx.Request] = []
+    configured = make_provider(seen).with_config(_bank_config(), bank_id="alice", operation="reflect")
+    await configured.call_with_tools(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "done", "parameters": {"type": "object"}}}],
+        max_retries=0,
+    )
+    auth = seen[0].headers.get("x-api-key") or seen[0].headers["authorization"].removeprefix("Bearer ")
+    assert auth == "alice-key"
+
+
+async def test_each_member_of_a_chain_is_asked_separately(install):
+    """A failover chain asks once per member, naming that member's provider and model,
+    so an extension can keep a key meant for one of them away from the others."""
+    failing: list[httpx.Request] = []
+    primary = _openai_provider(failing)
+
+    def fail(request: httpx.Request) -> httpx.Response:
+        failing.append(request)
+        return httpx.Response(500, json={"error": {"message": "down"}})
+
+    primary._provider_impl._client = AsyncOpenAI(
+        api_key="server-key",
+        base_url="http://gateway.test/v1",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(fail)),
+    )
+    fallback_seen: list[httpx.Request] = []
+    fallback = _anthropic_provider(fallback_seen)
+    fallback.model = "fallback-model"
+    ext = install(None)
+
+    chain = MultiLLMProvider([primary, fallback], LLMStrategyConfig(mode=LLM_STRATEGY_FAILOVER))
+    await chain.with_config(_bank_config(), bank_id="alice", operation="retain").call(
+        messages=[{"role": "user", "content": "hi"}], max_retries=0
+    )
+
+    assert [(t.provider, t.model) for t in ext.targets] == [("openai", "m"), ("anthropic", "fallback-model")]
+    assert len(fallback_seen) == 1
 
 
 # ── fail closed ───────────────────────────────────────────────────────────────
@@ -345,6 +466,107 @@ async def test_extension_error_fails_the_call(install):
     with pytest.raises(LLMRequestRefused, match="no key for mallory"):
         await _call_for_bank(_openai_provider(seen), "mallory")
     assert seen == []
+
+
+async def test_a_server_credential_header_cannot_override_the_bank_key(install):
+    """The SDKs apply default headers after their own auth header: a gateway key among
+    them would win over the bank's key, so the call is refused instead."""
+    install(LLMRequestOverrides(api_key="alice-key"))
+    llm = _openai_provider([])
+    llm.default_headers = {"x-portkey-api-key": "server-gateway-key", "x-trace": "t"}
+    with pytest.raises(LLMRequestRefused, match="x-portkey-api-key") as refused:
+        await _call_for_bank(llm, "alice")
+    assert "server-gateway-key" not in str(refused.value)
+
+
+async def test_a_credential_header_the_answer_overrides_is_fine(install):
+    install(LLMRequestOverrides(api_key="alice-key", headers={"x-portkey-api-key": "alice-gateway-key"}))
+    seen: list[httpx.Request] = []
+    llm = _openai_provider(seen)
+    llm.default_headers = {"x-portkey-api-key": "server-gateway-key"}
+    await _call_for_bank(llm, "alice")
+    assert seen[0].headers["x-portkey-api-key"] == "alice-gateway-key"
+
+
+@pytest.mark.parametrize(
+    ("model", "supported"),
+    [
+        ("openai/m", True),
+        ("anthropic/claude-x", True),
+        ("vertex_ai/gemini-x", False),
+        ("bedrock/anthropic.claude-x", False),
+        ("sagemaker/endpoint", False),
+    ],
+)
+def test_litellm_takes_a_key_only_for_keyed_backends(model, supported):
+    """Vertex, Bedrock, SageMaker ... ignore ``api_key`` and use the server's cloud credentials."""
+    llm = LLMProvider(provider="litellm", api_key="server-key", base_url="", model=model)
+    assert llm._provider_impl.supports_request_overrides() is supported
+
+
+# Which class answers supports_request_overrides for each provider class. A new
+# provider must be added here — and if it inherits True, its calls must go through
+# the client the override is applied to.
+_OVERRIDE_ANSWERED_BY = {
+    "AnthropicLLM": "AnthropicLLM",
+    "ClaudeCodeLLM": "LLMInterface",
+    "CodexLLM": "LLMInterface",
+    "CursorLLM": "LLMInterface",
+    "FireworksLLM": "OpenAICompatibleLLM",
+    "GeminiLLM": "LLMInterface",
+    "GitHubCopilotLLM": "LLMInterface",
+    "LiteLLMLLM": "LiteLLMLLM",
+    "LiteLLMRouterLLM": "LiteLLMRouterLLM",
+    "LlamaCppLLM": "LLMInterface",
+    "MockLLM": "LLMInterface",
+    "NoneLLM": "LLMInterface",
+    "NousLLM": "NousLLM",
+    "OpenAICompatibleLLM": "OpenAICompatibleLLM",
+    "OpenAIResponsesLLM": "LLMInterface",
+    "XaiOAuthLLM": "LLMInterface",
+}
+
+
+def test_every_provider_declares_whether_it_takes_per_call_credentials():
+    import importlib
+    import pkgutil
+
+    import hindsight_api.engine.providers as providers
+    from hindsight_api.engine.llm_interface import LLMInterface
+
+    for module in pkgutil.iter_modules(providers.__path__):
+        importlib.import_module(f"{providers.__name__}.{module.name}")
+
+    def subclasses(cls: type) -> list[type]:
+        return [sub for child in cls.__subclasses__() for sub in (child, *subclasses(child))]
+
+    found = {
+        cls.__name__: next(c.__name__ for c in cls.__mro__ if "supports_request_overrides" in vars(c))
+        for cls in subclasses(LLMInterface)
+        if cls.__module__.startswith(providers.__name__)
+    }
+    assert found == _OVERRIDE_ANSWERED_BY
+
+
+def test_providers_that_take_credentials_send_through_the_overridden_client():
+    """Every SDK request in those providers goes through ``_request_client()``; the
+    only direct uses of ``self._client`` are the batch APIs, which the extension
+    disables at startup, and ``close``."""
+    import re
+    from pathlib import Path
+
+    import hindsight_api.engine.providers as providers
+
+    direct = {
+        name: re.findall(r"self\._client\.([\w.]+)\(", (Path(providers.__path__[0]) / f"{name}.py").read_text())
+        for name in ("openai_compatible_llm", "anthropic_llm", "fireworks_llm", "nous_llm")
+    }
+    assert {name: sorted(set(calls)) for name, calls in direct.items()} == {
+        "openai_compatible_llm": ["batches.create", "batches.retrieve", "close", "files.content", "files.create"],
+        "anthropic_llm": ["close", "messages.batches.create", "messages.batches.results", "messages.batches.retrieve"],
+        "fireworks_llm": [],
+        "nous_llm": [],
+    }
 
 
 async def test_wrong_return_type_is_refused(install):

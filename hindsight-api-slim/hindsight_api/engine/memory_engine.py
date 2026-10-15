@@ -5717,6 +5717,10 @@ class MemoryEngine(MemoryEngineInterface):
         if self._initialized:
             return
 
+        # Before anything can make an LLM call through it.
+        if self._llm_request_extension is not None:
+            await self._llm_request_extension.on_startup()
+
         # Run model loading in thread pool (CPU-bound) in parallel with pg0 startup
         loop = asyncio.get_event_loop()
 
@@ -6277,6 +6281,7 @@ class MemoryEngine(MemoryEngineInterface):
             # Only our own: another engine in this process may have installed its own since.
             if installed_llm_request_extension() is self._llm_request_extension:
                 install_llm_request_extension(None)
+            await self._llm_request_extension.on_shutdown()
 
         # Stop the background maintenance loop (retention sweeps + reconcile)
         if self._maintenance_loop is not None:

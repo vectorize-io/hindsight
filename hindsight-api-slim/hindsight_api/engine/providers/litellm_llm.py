@@ -100,6 +100,32 @@ def _forced_tool_arguments(message: Any) -> str | None:
     return None
 
 
+# LiteLLM backends that authenticate with the ``api_key`` of the call (see
+# LiteLLMLLM.supports_request_overrides).
+_KEYED_LITELLM_BACKENDS = frozenset(
+    {
+        "openai",
+        "text-completion-openai",
+        "azure",
+        "anthropic",
+        "gemini",
+        "openrouter",
+        "litellm_proxy",
+        "groq",
+        "mistral",
+        "deepseek",
+        "together_ai",
+        "fireworks_ai",
+        "xai",
+        "cohere",
+        "cohere_chat",
+        "perplexity",
+        "deepinfra",
+        "hosted_vllm",
+    }
+)
+
+
 class LiteLLMLLM(LLMInterface):
     """
     LLM provider using the LiteLLM SDK for universal model support.
@@ -694,8 +720,17 @@ class LiteLLMLLM(LLMInterface):
         pass
 
     def supports_request_overrides(self) -> bool:
-        # Bedrock authenticates with AWS credentials, not a key a gateway hands out.
-        return self.provider != "bedrock"
+        # Decided by the backend LiteLLM routes the model to, not by our provider name:
+        # Bedrock, Vertex AI, SageMaker, ... authenticate with cloud credentials and
+        # ignore ``api_key``, which would send the call on the server's account. So an
+        # allowlist of backends known to read it; an unknown backend refuses.
+        if self.provider == "bedrock":
+            return False
+        try:
+            backend = self._litellm.get_llm_provider(self.model, api_base=self.base_url or None)[1]
+        except Exception:
+            return False
+        return backend in _KEYED_LITELLM_BACKENDS
 
     def supports_attempt_scoped_concurrency(self) -> bool:
         return True

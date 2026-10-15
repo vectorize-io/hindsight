@@ -3586,6 +3586,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       needs.detect-changes.outputs.core == 'true' ||
       needs.detect-changes.outputs.system-tests == 'true' ||
+      needs.detect-changes.outputs.extensions-bank-llm-routing == 'true' ||
       needs.detect-changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20

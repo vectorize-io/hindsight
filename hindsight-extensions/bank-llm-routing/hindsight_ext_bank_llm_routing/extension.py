@@ -41,7 +41,7 @@ class RouteLLM(BaseModel):
     provider: str = Field(min_length=1)
     model: str = Field(min_length=1)
     base_url: str | None = Field(default=None, min_length=1)
-    api_key: str | None = Field(default=None, min_length=1)
+    api_key: str | None = Field(default=None, min_length=1, repr=False)
 
     def member(self) -> LLMMemberConfig:
         return LLMMemberConfig(provider=self.provider, api_key=self.api_key, model=self.model, base_url=self.base_url)
@@ -64,10 +64,15 @@ class Route(BaseModel):
     operation: str | None = Field(default=None, min_length=1)
     """Only match calls of operations matching this glob: ``retain``, ``reflect``,
     ``consolidation*``, ``mental_model_*``. Unset matches every operation."""
+    provider: str | None = Field(default=None, min_length=1)
+    """Only match calls the server would send to this provider. With a multi-LLM chain,
+    or a provider per operation, a key-only route otherwise hands its key to every one."""
+    model: str | None = Field(default=None, min_length=1)
+    """Only match calls the server would send to models matching this glob."""
     llm: RouteLLM | None = None
-    api_key: str | None = Field(default=None, min_length=1)
+    api_key: str | None = Field(default=None, min_length=1, repr=False)
     """The key for the LLM the call goes to — the server's, or ``llm``'s."""
-    headers: dict[str, str] = Field(default_factory=dict)
+    headers: dict[str, str] = Field(default_factory=dict, repr=False)
 
     def overrides(self) -> LLMRequestOverrides:
         return LLMRequestOverrides(
@@ -79,6 +84,8 @@ class Route(BaseModel):
         where = self.bank if self.schema_ is None else f"{self.schema_}/{self.bank}"
         if self.operation is not None:
             where += f"[{self.operation}]"
+        if self.provider is not None or self.model is not None:
+            where += f"@{self.provider or '*'}/{self.model or '*'}"
         return where if self.llm is None else f"{where} -> {self.llm.provider}/{self.llm.model}"
 
     def matches(self, target: LLMRequestTarget) -> bool:
@@ -87,6 +94,10 @@ class Route(BaseModel):
         if self.schema_ is not None and self.schema_ != target.schema:
             return False
         if self.operation is not None and not fnmatchcase(target.operation or "", self.operation):
+            return False
+        if self.provider is not None and self.provider != target.provider:
+            return False
+        if self.model is not None and not fnmatchcase(target.model, self.model):
             return False
         return fnmatchcase(target.bank_id, self.bank)
 

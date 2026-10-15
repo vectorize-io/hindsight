@@ -102,17 +102,20 @@ An answer can carry:
 
 | Field | Effect |
 | --- | --- |
-| `llm` | Send the call to this LLM instead of the server's: provider, model, base URL, key and the other per-LLM settings (`LLMMemberConfig`, the shape of a multi-LLM chain member). Fields left unset inherit the server's global LLM defaults; timeouts and retries inherit the operation's. |
-| `api_key` | The key for the LLM the call goes to (the server's, or `llm`'s). |
+| `llm` | Send the call to this LLM instead of the server's: provider, model, base URL, key and the other per-LLM settings (`LLMMemberConfig`, the shape of a multi-LLM chain member). Fields left unset inherit the server's global LLM defaults, except its credentials (default headers, Vertex service account, Codex home, LiteLLM router config); timeouts and retries inherit the operation's. |
+| `api_key` | The key for the LLM the call goes to (the server's, or `llm`'s — it fills an `llm` that has no key of its own). |
 | `headers` | Extra request headers, e.g. a gateway's customer id. |
 
 Things to know:
 
 - **The choice is server-side.** Nothing comes from the API caller. If your extension builds an answer from something a caller can write (bank config, metadata), validate it — otherwise that is where an endpoint or a key would come from user input.
-- **Credentials without `llm` cost no new client.** The key and headers go on a per-call copy of the existing SDK client that shares its connection pool. Supported on OpenAI-compatible endpoints (`openai`, `groq`, `deepseek`, `openrouter`, `fireworks`, `lmstudio`, any gateway set as `base_url`, ...), `anthropic` and `litellm`. A call to any other provider (`gemini`, `vertexai`, `ollama`, `bedrock`, `litellmrouter`, the OAuth/CLI providers) that the answer gives a key or headers to is **refused**, never sent on the configured credentials. To change the key of one of those, answer with a whole `llm` instead.
+- **Credentials without `llm` cost no new client.** The key and headers go on a per-call copy of the existing SDK client that shares its connection pool. Supported on OpenAI-compatible endpoints (`openai`, `groq`, `deepseek`, `openrouter`, `fireworks`, `lmstudio`, any gateway set as `base_url`, ...), `anthropic` and `litellm` routed to a keyed backend (OpenAI, Anthropic, Azure, Gemini AI Studio, OpenRouter, a LiteLLM proxy, ...). A call to any other provider (`gemini`, `vertexai`, `ollama`, `bedrock`, `litellmrouter`, the OAuth/CLI providers) that the answer gives a key or headers to is **refused**, never sent on the configured credentials. To change the key of one of those, answer with a whole `llm` instead. A key is also refused when the server's default headers carry a credential (`Authorization`, `x-api-key`, `x-portkey-api-key`, ...) the answer does not override, since the SDK would send that one instead.
+- **Asked once per LLM in a chain.** With a multi-LLM chain or a provider per operation, each LLM is asked separately; check `target.provider` before handing out a key meant for one of them.
+- **Reflect prompt caching is off** while the extension is installed: Gemini's step-by-step reflect cache is created on the server's LLM, outside the calls the extension decides.
 - **An `llm` answer is built once and reused**, up to 64 distinct LLMs per process (least recently used are dropped). An extension that answers with one LLM per user on a large user base should use a gateway and `api_key` instead.
 - **No batch retain.** `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` with this extension fails at startup: batch jobs are submitted on the server's LLM.
 - **LLM calls only.** Embeddings and reranking keep their own configuration.
+- **Lifecycle:** `on_startup()` runs when the memory engine initializes, before any LLM call, and `on_shutdown()` when it closes.
 - **Startup check:** the connection check at boot uses the server's own LLM. If it has no usable key (for example, the gateway has none for the server), set `HINDSIGHT_API_SKIP_LLM_VERIFICATION=true`.
 
 Load the same extension in the API and in every worker: a worker without it runs consolidation and refreshes on the server's LLM.

@@ -556,10 +556,17 @@ async def run_reflect_agent(
     # Reflect step-by-step caching needs the provider to support it AND the
     # dedicated reflect flag (on by default; distinct from the global prompt-cache
     # switch so it can be turned off for reflect alone).
+    # Lazy: importing the extensions package here would be circular.
+    from ...extensions.llm_request import installed_llm_request_extension
+
+    # Off under an LLM request extension: the cache is created on the server's own LLM
+    # outside any call the extension decides, so it would upload a reflect the extension
+    # sends elsewhere (or refuses) to the server's account.
     incremental_caching = (
         provider_impl is not None
         and provider_impl.supports_incremental_prompt_cache()
         and get_config().reflect_prompt_cache_enabled
+        and installed_llm_request_extension() is None
     )
     cache_session_id = f"reflect:{reflect_id}"
     # In-flight cache-create tasks (scheduled to overlap tool execution). Awaited

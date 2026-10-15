@@ -71,12 +71,24 @@ Route fields — a route needs at least one of `llm`, `api_key`, `headers`:
 | `bank` | Glob over the bank id (`fnmatch`, case-sensitive). Required |
 | `schema` | Only match banks in this tenant schema |
 | `operation` | Glob over the operation: `retain`, `reflect`, `consolidation*`, `mental_model_*`, ... Unset matches all |
-| `llm` | Send the call to this LLM instead of the server's: `provider` and `model` (required), `base_url`, `api_key`. Unset settings inherit the server's LLM defaults |
+| `provider` | Only match calls the server would send to this provider |
+| `model` | Only match calls the server would send to models matching this glob |
+| `llm` | Send the call to this LLM instead of the server's: `provider` and `model` (required), `base_url`, `api_key`. Unset settings inherit the server's LLM defaults, except its credentials |
 | `api_key` | The key for the LLM the call goes to — the server's, or `llm`'s |
 | `headers` | Extra request headers |
 
 Give the **API and every worker** the same variables. A worker without the extension
 runs consolidation and mental-model refreshes on the server's LLM.
+
+### Multi-LLM chains
+
+With a multi-LLM chain, or a different provider per operation, every LLM in the chain
+is asked separately. A key-only route matches them all, so a gateway key would also go
+to the fallback provider. Pin such routes with `provider` (and `model`):
+
+```json
+[{"bank": "acme-*", "provider": "openai", "api_key": "sk-acme-gateway"}]
+```
 
 ### Multi-tenant deployments
 
