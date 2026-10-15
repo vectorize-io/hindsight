@@ -15366,7 +15366,9 @@ class MemoryEngine(MemoryEngineInterface):
         tag_groups = await self._resolve_fuzzy_tag_groups(bank_id, tag_groups)
 
         reflect_start = time.time()
-        reflect_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"
+        # The random suffix, as recall's id has: the clock alone gave two reflects on
+        # one bank started in the same millisecond the same id.
+        reflect_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}-{uuid.uuid4().hex[:6]}"
         tags_info = f", tags={tags} ({tags_match})" if tags else ""
         logger.info(f"[REFLECT {reflect_id}] Starting agentic reflect for query: {query[:50]}...{tags_info}")
 
@@ -15641,9 +15643,18 @@ class MemoryEngine(MemoryEngineInterface):
                         store_document_text=config_dict.get("store_document_text", DEFAULT_STORE_DOCUMENT_TEXT),
                         answer_as_document=answer_as_document,
                         tool_token_limits=tool_token_limits,
+                        reflect_id=reflect_id,
                     ),
                     timeout=wall_timeout,
                 )
+            except (asyncio.CancelledError, OperationCancelledError):
+                # Logged here, under this reflect's id, because the HTTP layer's
+                # "[REFLECT CANCELLED] bank=..." line has no way to say which of a
+                # bank's concurrent reflects it was (#5128).
+                token = request_context.cancellation
+                reason = token.reason if token is not None and token.cancelled else "task cancelled"
+                logger.info("[REFLECT %s] Cancelled after %.1fs: %s", reflect_id, time.time() - reflect_start, reason)
+                raise
             except asyncio.TimeoutError:
                 total_time = time.time() - reflect_start
                 logger.error(
