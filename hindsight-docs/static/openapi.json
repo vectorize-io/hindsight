@@ -9650,6 +9650,18 @@
             "title": "Recall Include Chunks",
             "description": "Include raw chunks in recall results"
           },
+          "recall_prefer_observations": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Prefer Observations",
+            "description": "Default for recall prefer_observations when the request omits it"
+          },
           "recall_max_tokens": {
             "anyOf": [
               {
@@ -16957,10 +16969,16 @@
             "description": "List of fact types to recall: 'world', 'experience', 'observation'. Defaults to all fact types if not specified."
           },
           "prefer_observations": {
-            "type": "boolean",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Prefer Observations",
-            "description": "When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact that an observation in the results was consolidated from, so the observation supersedes it and you don't get duplicate content. The freed slots are backfilled with the next results, keeping the result count at the requested budget. Disabled by default; set to true to enable. No effect unless 'observation' and at least one raw type are both requested.",
-            "default": false
+            "description": "When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact that an observation in the results was consolidated from, so the observation supersedes it and you don't get duplicate content. The freed slots are backfilled with the next results, keeping the result count at the requested budget. When omitted, uses the bank/global recall_prefer_observations config (false unless configured). No effect unless 'observation' and at least one raw type are both requested."
           },
           "budget": {
             "$ref": "#/components/schemas/Budget",

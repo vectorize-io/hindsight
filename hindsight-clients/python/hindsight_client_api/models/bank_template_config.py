@@ -77,10 +77,11 @@ class BankTemplateConfig(BaseModel):
     consolidation_max_memories_per_round: Optional[StrictInt] = None
     consolidation_llm_parallelism: Optional[StrictInt] = None
     recall_include_chunks: Optional[StrictBool] = None
+    recall_prefer_observations: Optional[StrictBool] = None
     recall_max_tokens: Optional[StrictInt] = None
     recall_chunks_max_tokens: Optional[StrictInt] = None
     memory_defense: Optional[Dict[str, Any]] = None
-    __properties: ClassVar[List[str]] = ["reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission", "enable_text_search", "enable_temporal_retrieval", "enable_graph_retrieval", "enable_reranking", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "entity_labels", "entities_allow_free_form", "retain_default_strategy", "retain_strategies", "retain_chunk_batch_size", "retain_max_attachments_per_chunk", "mcp_enabled_tools", "consolidation_llm_batch_size", "consolidation_source_facts_max_tokens", "consolidation_source_facts_max_tokens_per_observation", "max_observations_per_scope", "observation_scope_limits", "consolidation_strategies", "reflect_source_facts_max_tokens", "knowledge_page_default_trigger", "reflect_default_options", "mental_model_min_refresh_interval_seconds", "llm_gemini_safety_settings", "recall_budget_function", "recall_budget_fixed_low", "recall_budget_fixed_mid", "recall_budget_fixed_high", "recall_budget_adaptive_low", "recall_budget_adaptive_mid", "recall_budget_adaptive_high", "recall_budget_min", "recall_budget_max", "audit_log_enabled", "store_document_text", "enable_auto_consolidation", "consolidation_max_memories_per_round", "consolidation_llm_parallelism", "recall_include_chunks", "recall_max_tokens", "recall_chunks_max_tokens", "memory_defense"]
+    __properties: ClassVar[List[str]] = ["reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission", "enable_text_search", "enable_temporal_retrieval", "enable_graph_retrieval", "enable_reranking", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "entity_labels", "entities_allow_free_form", "retain_default_strategy", "retain_strategies", "retain_chunk_batch_size", "retain_max_attachments_per_chunk", "mcp_enabled_tools", "consolidation_llm_batch_size", "consolidation_source_facts_max_tokens", "consolidation_source_facts_max_tokens_per_observation", "max_observations_per_scope", "observation_scope_limits", "consolidation_strategies", "reflect_source_facts_max_tokens", "knowledge_page_default_trigger", "reflect_default_options", "mental_model_min_refresh_interval_seconds", "llm_gemini_safety_settings", "recall_budget_function", "recall_budget_fixed_low", "recall_budget_fixed_mid", "recall_budget_fixed_high", "recall_budget_adaptive_low", "recall_budget_adaptive_mid", "recall_budget_adaptive_high", "recall_budget_min", "recall_budget_max", "audit_log_enabled", "store_document_text", "enable_auto_consolidation", "consolidation_max_memories_per_round", "consolidation_llm_parallelism", "recall_include_chunks", "recall_prefer_observations", "recall_max_tokens", "recall_chunks_max_tokens", "memory_defense"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -375,6 +376,11 @@ class BankTemplateConfig(BaseModel):
         if self.recall_include_chunks is None and "recall_include_chunks" in self.model_fields_set:
             _dict['recall_include_chunks'] = None
 
+        # set to None if recall_prefer_observations (nullable) is None
+        # and model_fields_set contains the field
+        if self.recall_prefer_observations is None and "recall_prefer_observations" in self.model_fields_set:
+            _dict['recall_prefer_observations'] = None
+
         # set to None if recall_max_tokens (nullable) is None
         # and model_fields_set contains the field
         if self.recall_max_tokens is None and "recall_max_tokens" in self.model_fields_set:
@@ -450,6 +456,7 @@ class BankTemplateConfig(BaseModel):
             "consolidation_max_memories_per_round": obj.get("consolidation_max_memories_per_round"),
             "consolidation_llm_parallelism": obj.get("consolidation_llm_parallelism"),
             "recall_include_chunks": obj.get("recall_include_chunks"),
+            "recall_prefer_observations": obj.get("recall_prefer_observations"),
             "recall_max_tokens": obj.get("recall_max_tokens"),
             "recall_chunks_max_tokens": obj.get("recall_chunks_max_tokens"),
             "memory_defense": obj.get("memory_defense")

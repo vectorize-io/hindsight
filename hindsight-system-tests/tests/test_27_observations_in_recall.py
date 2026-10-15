@@ -61,6 +61,19 @@ async def test_preferring_observations_drops_the_facts_they_superseded(client, o
     assert [r.text for r in response.results] == [OBSERVATION]
 
 
+async def test_a_bank_can_prefer_observations_for_callers_that_never_ask(client, observed_bank):
+    """MCP clients and generic agents never pass the flag, so they would always
+    get the duplicates. The bank sets the default once; a caller that does say
+    what it wants still gets it."""
+    await client.banks.update_bank_config(observed_bank, {"updates": {"recall_prefer_observations": True}})
+
+    response = await client.arecall(bank_id=observed_bank, query=QUERY)
+    assert [r.text for r in response.results] == [OBSERVATION]
+
+    response = await client.arecall(bank_id=observed_bank, query=QUERY, prefer_observations=False)
+    assert sorted(r.text for r in response.results) == sorted([OBSERVATION, BERLIN, LEASE])
+
+
 async def test_the_evidence_is_still_reachable_as_provenance(client, observed_bank):
     """Superseded is not hidden. The observation names its sources, and
     `include_source_facts` hydrates them into their own section — so an agent can

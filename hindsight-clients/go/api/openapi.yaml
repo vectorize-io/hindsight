@@ -6468,6 +6468,9 @@ components:
         recall_include_chunks:
           nullable: true
           type: boolean
+        recall_prefer_observations:
+          nullable: true
+          type: boolean
         recall_max_tokens:
           nullable: true
           type: integer
@@ -11723,15 +11726,7 @@ components:
           nullable: true
           type: array
         prefer_observations:
-          default: false
-          description: "When recalling raw facts ('world'/'experience') together with\
-            \ 'observation', drop any raw fact that an observation in the results\
-            \ was consolidated from, so the observation supersedes it and you don't\
-            \ get duplicate content. The freed slots are backfilled with the next\
-            \ results, keeping the result count at the requested budget. Disabled\
-            \ by default; set to true to enable. No effect unless 'observation' and\
-            \ at least one raw type are both requested."
-          title: Prefer Observations
+          nullable: true
           type: boolean
         budget:
           $ref: '#/components/schemas/Budget'

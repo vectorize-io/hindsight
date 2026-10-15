@@ -33,7 +33,7 @@ class RecallRequest(BaseModel):
     """ # noqa: E501
     query: StrictStr
     types: Optional[List[StrictStr]] = None
-    prefer_observations: Optional[StrictBool] = Field(default=False, description="When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact that an observation in the results was consolidated from, so the observation supersedes it and you don't get duplicate content. The freed slots are backfilled with the next results, keeping the result count at the requested budget. Disabled by default; set to true to enable. No effect unless 'observation' and at least one raw type are both requested.")
+    prefer_observations: Optional[StrictBool] = None
     budget: Optional[Budget] = None
     max_tokens: Optional[StrictInt] = 4096
     trace: Optional[StrictBool] = False
@@ -116,6 +116,11 @@ class RecallRequest(BaseModel):
         if self.types is None and "types" in self.model_fields_set:
             _dict['types'] = None
 
+        # set to None if prefer_observations (nullable) is None
+        # and model_fields_set contains the field
+        if self.prefer_observations is None and "prefer_observations" in self.model_fields_set:
+            _dict['prefer_observations'] = None
+
         # set to None if query_timestamp (nullable) is None
         # and model_fields_set contains the field
         if self.query_timestamp is None and "query_timestamp" in self.model_fields_set:
@@ -155,7 +160,7 @@ class RecallRequest(BaseModel):
         _obj = cls.model_validate({
             "query": obj.get("query"),
             "types": obj.get("types"),
-            "prefer_observations": obj.get("prefer_observations") if obj.get("prefer_observations") is not None else False,
+            "prefer_observations": obj.get("prefer_observations"),
             "budget": obj.get("budget"),
             "max_tokens": obj.get("max_tokens") if obj.get("max_tokens") is not None else 4096,
             "trace": obj.get("trace") if obj.get("trace") is not None else False,

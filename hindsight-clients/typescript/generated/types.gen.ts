@@ -813,6 +813,12 @@ export type BankTemplateConfig = {
    */
   recall_include_chunks?: boolean | null;
   /**
+   * Recall Prefer Observations
+   *
+   * Default for recall prefer_observations when the request omits it
+   */
+  recall_prefer_observations?: boolean | null;
+  /**
    * Recall Max Tokens
    *
    * Max tokens of results returned by recall
@@ -5505,9 +5511,9 @@ export type RecallRequest = {
   /**
    * Prefer Observations
    *
-   * When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact that an observation in the results was consolidated from, so the observation supersedes it and you don't get duplicate content. The freed slots are backfilled with the next results, keeping the result count at the requested budget. Disabled by default; set to true to enable. No effect unless 'observation' and at least one raw type are both requested.
+   * When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact that an observation in the results was consolidated from, so the observation supersedes it and you don't get duplicate content. The freed slots are backfilled with the next results, keeping the result count at the requested budget. When omitted, uses the bank/global recall_prefer_observations config (false unless configured). No effect unless 'observation' and at least one raw type are both requested.
    */
-  prefer_observations?: boolean;
+  prefer_observations?: boolean | null;
   budget?: Budget;
   /**
    * Max Tokens

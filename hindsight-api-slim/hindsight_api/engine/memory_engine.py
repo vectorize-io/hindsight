@@ -8821,10 +8821,11 @@ class MemoryEngine(MemoryEngineInterface):
         max_tokens: int = 4096,
         enable_trace: bool = False,
         fact_type: list[str] | None = None,
-        # Opt-in (default False). Internal callers that recall raw facts on purpose —
-        # notably consolidation, which needs the raw facts it folds into observations —
-        # must leave this off so they aren't silently deduped away.
-        prefer_observations: bool = False,
+        # Default False for internal callers that recall raw facts on purpose — notably
+        # consolidation, which needs the raw facts it folds into observations, so they
+        # aren't silently deduped away. None means "use the bank-resolved
+        # recall_prefer_observations default" (public REST/MCP recall).
+        prefer_observations: bool | None = False,
         question_date: datetime | None = None,
         include_entities: bool = False,
         max_entity_tokens: int = 500,
@@ -8863,6 +8864,7 @@ class MemoryEngine(MemoryEngineInterface):
                        are requested, drop raw facts that a returned observation was consolidated from
                        (deduplication by provenance). Freed slots backfill, keeping the result count at
                        the budget. No-op unless both observation and raw types are requested.
+                       None resolves to the bank's recall_prefer_observations config.
             budget: Budget level for graph traversal (low=100, mid=300, high=600 units)
             max_tokens: Maximum tokens to return (counts only 'text' field, default 4096)
                        Results are returned until token budget is reached, stopping before
@@ -9052,6 +9054,8 @@ class MemoryEngine(MemoryEngineInterface):
         enable_temporal_retrieval = bool(budget_config_dict.get("enable_temporal_retrieval", True))
         enable_graph_retrieval = bool(budget_config_dict.get("enable_graph_retrieval", True))
         reranking = _resolve_reranking(budget_config_dict, reranking)
+        if prefer_observations is None:
+            prefer_observations = bool(budget_config_dict.get("recall_prefer_observations", False))
 
         # Log recall start with tags if present (skip if quiet mode for internal operations)
         if not _quiet:

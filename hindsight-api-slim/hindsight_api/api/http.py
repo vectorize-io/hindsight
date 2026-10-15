@@ -553,14 +553,14 @@ class RecallRequest(BaseModel):
         default=None,
         description="List of fact types to recall: 'world', 'experience', 'observation'. Defaults to all fact types if not specified.",
     )
-    prefer_observations: bool = Field(
-        default=False,
+    prefer_observations: bool | None = Field(
+        default=None,
         description=(
             "When recalling raw facts ('world'/'experience') together with 'observation', drop any raw "
             "fact that an observation in the results was consolidated from, so the observation supersedes "
             "it and you don't get duplicate content. The freed slots are backfilled with the next results, "
-            "keeping the result count at the requested budget. Disabled by default; set to true to enable. "
-            "No effect unless 'observation' and at least one raw type are both requested."
+            "keeping the result count at the requested budget. When omitted, uses the bank/global "
+            "recall_prefer_observations config (false unless configured). No effect unless 'observation' and at least one raw type are both requested."
         ),
     )
     budget: Budget = Budget.MID
@@ -4014,6 +4014,9 @@ class BankTemplateConfig(BaseModel):
         default=None, description="Number of consolidation LLM batches processed concurrently"
     )
     recall_include_chunks: bool | None = Field(default=None, description="Include raw chunks in recall results")
+    recall_prefer_observations: bool | None = Field(
+        default=None, description="Default for recall prefer_observations when the request omits it"
+    )
     recall_max_tokens: int | None = Field(default=None, description="Max tokens of results returned by recall")
     recall_chunks_max_tokens: int | None = Field(
         default=None, description="Max tokens of raw chunks returned by recall (when recall_include_chunks is set)"

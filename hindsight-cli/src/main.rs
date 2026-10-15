@@ -576,7 +576,7 @@ enum MemoryCommands {
         #[arg(long)]
         query_timestamp: Option<String>,
 
-        /// Prefer observations: drop raw facts a returned observation was consolidated from (no effect unless observation + a raw type are both recalled)
+        /// Prefer observations: drop raw facts a returned observation was consolidated from (no effect unless observation + a raw type are both recalled). Omitted: bank default
         #[arg(long)]
         prefer_observations: bool,
 

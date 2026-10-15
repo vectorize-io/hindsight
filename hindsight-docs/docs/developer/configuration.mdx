@@ -1718,6 +1718,12 @@ Disabling text search leaves the write path alone: `search_vector` and its index
 still maintained, so a bank can be switched back without a reindex. The
 [text-search backend](#text-search-extension) it would have used is simply unread.
 
+##### Default `prefer_observations`
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_RECALL_PREFER_OBSERVATIONS` | Value of recall's [`prefer_observations`](./api/recall#prefer_observations) when a REST or MCP request leaves it out: drop raw facts that a returned observation was consolidated from, so results carry no duplicates. A value in the request still wins. Hierarchical — overridable per bank. Useful when callers you don't control (MCP connectors, generic agents) never pass the flag. | `false` |
+
 ##### Pairing with the retain side: plain-retrieval ("RAG") banks
 
 These recall toggles only remove work from the *read* path. If a bank is being used as

@@ -356,7 +356,8 @@ pub fn recall(
         max_tokens,
         trace,
         query_timestamp,
-        prefer_observations,
+        // Flag absent: let the bank's recall_prefer_observations default decide.
+        prefer_observations: prefer_observations.then_some(true),
         include,
         tags: if tags.is_empty() { None } else { Some(tags) },
         tags_match: parse_tags_match(&tags_match),

@@ -646,6 +646,7 @@ The `config_updates` object accepts any bank-configurable field by its Python fi
 - `entity_labels` — controlled vocabulary for entity classification
 - `entities_allow_free_form` — allow labels outside `entity_labels`
 - `recall_include_chunks` — include raw chunks in recall results
+- `recall_prefer_observations` — default `prefer_observations` for recall calls that omit it
 - `recall_max_tokens` — max tokens for recall results
 - `mcp_enabled_tools` — tool allowlist for this bank
 
