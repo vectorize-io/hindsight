@@ -2497,7 +2497,19 @@ async def _process_memory_batch(
     # one place. They are still applied first inside the transaction, so an observation
     # slot freed by a delete is available to a create in the same response.
     prepared_deletes: list[str] = []
+    # A response can both UPDATE and DELETE one observation (seen when a fact supersedes it:
+    # the model rewrites it to the new state and also deletes "the old one"). Deletes apply
+    # first, so the update then found no row and was skipped while its source facts were
+    # still stamped consolidated — the new state was lost for good. The update carries the
+    # newer knowledge, so it wins.
+    updated_ids = {u.observation_id for u in llm_result.updates}
     for delete in llm_result.deletes:
+        if delete.observation_id in updated_ids:
+            logger.warning(
+                f"Batch consolidation: dropped delete of observation {delete.observation_id} — "
+                "the same response updates it"
+            )
+            continue
         # Security: the observation must be present in the unioned recall
         if not any(str(obs.id) == delete.observation_id for obs in union_observations):
             logger.debug(

@@ -75,15 +75,10 @@ async def test_later_message_wins_across_overlapping_sessions(
     await retain(SESSION_2, datetime(2026, 7, 5, 14, 0, tzinfo=timezone.utc), "session-2")  # 07-05
     await retain(SESSION_1_FULL, update_event_date, "session-1")  # 07-10: same doc, updated
 
-    async with memory._pool.acquire() as conn:
-        facts = await conn.fetch(
-            "SELECT fact_type, text, mentioned_at FROM memory_units WHERE bank_id = $1 ORDER BY fact_type, mentioned_at",
-            bank_id,
-        )
-    summary = "\n".join(f"- [{f['fact_type']}] (mentioned_at={f['mentioned_at']}) {f['text']}" for f in facts)
-    print(f"\n{summary}")
+    units = (await memory.list_memory_units(bank_id, limit=1000, request_context=request_context))["items"]
+    print("\n" + "\n".join(f"- [{u['fact_type']}] (mentioned_at={u['mentioned_at']}) {u['text']}" for u in units))
 
-    observations = "\n".join(f"- {f['text']}" for f in facts if f["fact_type"] == "observation")
+    observations = "\n".join(f"- {u['text']}" for u in units if u["fact_type"] == "observation")
     await assert_meets_criteria(
         response=observations,
         criteria=(
