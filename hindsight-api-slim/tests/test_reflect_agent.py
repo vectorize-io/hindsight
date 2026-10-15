@@ -10,6 +10,7 @@ These tests verify:
 
 import asyncio
 import json
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -408,6 +409,40 @@ class TestReflectAgentMocked:
         # And the model is told why (#5272): releasing tool_choice alone left a
         # model that kept descending and padded the answer with raw facts.
         assert "call done now" in json.loads(tool_result["content"])["guidance"]
+
+    @pytest.mark.asyncio
+    async def test_logs_under_the_reflect_id_it_is_given(self, mock_llm, mock_functions, caplog):
+        """One request, one id: the agent used to mint its own a few ms after the
+        engine logged ``Starting``, so a reflect's lines carried two ids."""
+        mock_functions["search_mental_models_fn"].return_value = {
+            "mental_models": [{"id": "mm-1", "name": "P", "content": "Fresh.", "is_stale": False}]
+        }
+        mock_llm.call_with_tools.side_effect = [
+            self._mm_call(),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="2", name="done", arguments={"answer": "Fresh.", "mental_model_ids": ["mm-1"]})
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        with caplog.at_level(logging.INFO, logger="hindsight_api.engine.reflect.agent"):
+            await run_reflect_agent(
+                llm_config=mock_llm,
+                bank_id="test-bank",
+                query="test query",
+                bank_profile={"name": "Test", "mission": "Testing"},
+                has_mental_models=True,
+                budget="low",
+                max_iterations=5,
+                reflect_id="engine-id",
+                **mock_functions,
+            )
+
+        tagged = [r.getMessage() for r in caplog.records if "[REFLECT " in r.getMessage()]
+        assert tagged, "the agent logged nothing under a reflect id"
+        assert all("[REFLECT engine-id]" in m for m in tagged), tagged
 
     @pytest.mark.asyncio
     async def test_stale_mental_model_gets_no_answer_now_guidance(self, mock_llm, mock_functions):
