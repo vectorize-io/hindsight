@@ -257,6 +257,45 @@ class TestSemaphoreEnforcement:
         assert peak == 2, f"retain cap should hold even for end-to-end calls, peak={peak}"
 
     @pytest.mark.asyncio
+    async def test_refresh_reflect_scoped_calls_respect_refresh_cap(self):
+        """End-to-end: a provider configured for the refresh operation binds its trace
+        before permits are taken, so reflect-agent scopes count against the refresh
+        cap and leave the interactive reflect cap free (#5027)."""
+        provider = LLMProvider(provider="mock", api_key="", base_url="", model="test-model")
+
+        in_flight = 0
+        peak = 0
+
+        async def slow_mock_call(**kwargs):
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.01)
+            in_flight -= 1
+            return "ok"
+
+        provider._provider_impl.call = slow_mock_call  # type: ignore[assignment]
+        refresh_llm = provider.with_config(
+            SimpleNamespace(llm_gemini_safety_settings=None), bank_id="b", operation="refresh_mental_model"
+        )
+
+        refresh_sem = llm_wrapper.CrossLoopSemaphore(1)
+        reflect_sem = llm_wrapper.CrossLoopSemaphore(1)
+        with patch.object(
+            llm_wrapper,
+            "_per_op_llm_semaphores",
+            {"mental_model_refresh": refresh_sem, "reflect": reflect_sem},
+        ):
+            await asyncio.gather(
+                *[
+                    refresh_llm.call(messages=[{"role": "user", "content": "x"}], scope=scope)
+                    for scope in ("reflect", "reflect_tool_call", "final_rewrite", "final_map_0")
+                ]
+            )
+
+        assert peak == 1, f"refresh cap should serialize the refresh's reflect calls, peak={peak}"
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("with_tools", [False, True])
     async def test_unrelated_call_can_run_while_retrying_call_backs_off(self, with_tools):
         """A logical call's retry sleep must not occupy the global permit."""
