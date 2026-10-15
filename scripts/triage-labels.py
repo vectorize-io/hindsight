@@ -28,6 +28,10 @@ ALL_LABELS = [CORE, INTEGRATION, *OWN_LABEL.values()]
 
 # Label -> what it means to the model. The labels are the enum values, so its
 # answer is already the label to apply.
+# Claude Code and Codex are both coding-agent harnesses AND server LLM providers. The
+# first descriptions only named them under coding-agents, so gemini-2.5-flash-lite filed
+# 13 of 28 open coding-agents issues there by mistake (e.g. #5542, a claude-code provider
+# bug). Core now names those providers and coding-agents says they are not its own.
 ISSUE_OPTIONS = {
     CORE: "The core Hindsight service: API server, memory engine (retain, recall, reflect, "
     "consolidation, mental models, knowledge pages, import/export), database, tenant/auth extensions, "
