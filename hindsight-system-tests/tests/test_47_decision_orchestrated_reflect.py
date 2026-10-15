@@ -107,5 +107,36 @@ async def test_a_bank_that_opts_out_runs_agent_turns(typesafe_client, llm, stubs
     response = await typesafe_client.areflect(bank_id=decision_bank, query=QUERY, include_tool_calls=True)
 
     assert response.text == ANSWER
-    assert not any(anchor_for("reflect_round_query") in call.all_text for call in llm.calls), "no query rewrite"
+    assert not _rewrote_the_query(llm), "no query rewrite"
     assert _reflect_turns(llm) > 1, "the agent wrote its own searches"
+
+
+def _rewrote_the_query(llm) -> bool:
+    return any(anchor_for("reflect_round_query") in call.all_text for call in llm.calls)
+
+
+async def test_a_knowledge_page_refresh_follows_its_own_switch(typesafe_client, llm, stubs, decision_bank):
+    """``mental_model_refresh_use_decision_model``, not reflect's switch, decides a refresh's path.
+
+    Run as dry runs: they execute in the API process, the one with the decision model (this
+    server has no worker), and leave the page as it is between the two.
+    """
+    stubs.rerank.cut_level = ENOUGH
+    llm.on_step("reflect_round_query").returns_text(SEARCH)
+    reflect_loop(llm, answer=ANSWER, query=SEARCH)
+    created = await typesafe_client.mental_models.create_mental_model(
+        decision_bank, {"name": "Home", "source_query": QUERY}
+    )
+    await wait_until_settled(typesafe_client, decision_bank)
+
+    await typesafe_client.banks.update_bank_config(decision_bank, {"updates": {"reflect_use_decision_model": False}})
+    llm.calls.clear()
+    await typesafe_client.mental_models.dry_run_refresh_mental_model(decision_bank, created.mental_model_id)
+    assert _rewrote_the_query(llm), "reflect's switch turned the refresh's decision model off"
+
+    await typesafe_client.banks.update_bank_config(
+        decision_bank, {"updates": {"mental_model_refresh_use_decision_model": False}}
+    )
+    llm.calls.clear()
+    await typesafe_client.mental_models.dry_run_refresh_mental_model(decision_bank, created.mental_model_id)
+    assert not _rewrote_the_query(llm), "the refresh kept the decision model after the bank turned it off"
