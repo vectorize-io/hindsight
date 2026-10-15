@@ -212,9 +212,8 @@ def test_flag_is_opt_in_by_default():
     import inspect
 
     from hindsight_api.api.http import RecallRequest
-    from hindsight_api.engine.memory_engine import MemoryEngine
-
     from hindsight_api.config import DEFAULT_RECALL_PREFER_OBSERVATIONS
+    from hindsight_api.engine.memory_engine import MemoryEngine
 
     assert RecallRequest(query="anything").prefer_observations is None
     assert DEFAULT_RECALL_PREFER_OBSERVATIONS is False

@@ -124,8 +124,11 @@ export function SearchDebugView() {
   const [includeEntities, setIncludeEntities] = useState(true);
   // null = not touched: the request omits it and the bank's resolved
   // recall_prefer_observations decides, which is also what the switch shows.
+  // bankPreferObservations is null until (or if never) the bank config loads;
+  // then the switch's shown value is sent explicitly so it can't mislead.
   const [preferObservations, setPreferObservations] = useState<boolean | null>(null);
-  const [bankPreferObservations, setBankPreferObservations] = useState(false);
+  const [bankPreferObservations, setBankPreferObservations] = useState<boolean | null>(null);
+  const shownPreferObservations = preferObservations ?? bankPreferObservations ?? false;
   const [windowStart, setWindowStart] = useState("");
   const [windowEnd, setWindowEnd] = useState("");
   const [tags, setTags] = useState("");
@@ -182,7 +185,7 @@ export function SearchDebugView() {
 
   useEffect(() => {
     setPreferObservations(null);
-    setBankPreferObservations(false);
+    setBankPreferObservations(null);
     if (!currentBank) return;
     let cancelled = false;
     client
@@ -204,7 +207,7 @@ export function SearchDebugView() {
     Boolean(queryDate),
     includeChunks,
     !includeEntities,
-    preferObservations !== null && preferObservations !== bankPreferObservations,
+    shownPreferObservations !== (bankPreferObservations ?? false),
     Boolean(tags.trim()),
     Boolean(windowStart || windowEnd),
   ].filter(Boolean).length;
@@ -260,7 +263,9 @@ export function SearchDebugView() {
           entities: includeEntities ? { max_tokens: 500 } : null,
           chunks: includeChunks ? { max_tokens: 8192 } : null,
         },
-        ...(preferObservations !== null && { prefer_observations: preferObservations }),
+        ...((preferObservations !== null || bankPreferObservations === null) && {
+          prefer_observations: shownPreferObservations,
+        }),
         ...(queryDate && { query_timestamp: queryDate }),
         ...(temporalWindow.value && { temporal_window: temporalWindow.value }),
         ...(parsedTags.length > 0 && { tags: parsedTags, tags_match: tagsMatch }),
@@ -408,7 +413,7 @@ export function SearchDebugView() {
                   <div className="flex sm:justify-end">
                     <Switch
                       id="recall-prefer-observations"
-                      checked={preferObservations ?? bankPreferObservations}
+                      checked={shownPreferObservations}
                       onCheckedChange={setPreferObservations}
                     />
                   </div>

@@ -576,9 +576,9 @@ enum MemoryCommands {
         #[arg(long)]
         query_timestamp: Option<String>,
 
-        /// Prefer observations: drop raw facts a returned observation was consolidated from (no effect unless observation + a raw type are both recalled). Omitted: bank default
-        #[arg(long)]
-        prefer_observations: bool,
+        /// Prefer observations: drop raw facts a returned observation was consolidated from (no effect unless observation + a raw type are both recalled). Bare flag = true; omitted = bank default
+        #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+        prefer_observations: Option<bool>,
 
         /// Start of the time window to search over (ISO 8601; no offset means UTC). Requires --window-end
         #[arg(long)]

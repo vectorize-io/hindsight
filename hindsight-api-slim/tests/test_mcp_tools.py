@@ -1274,6 +1274,14 @@ class TestRecallNewParams:
         call_kwargs = mock_memory.recall_async.call_args.kwargs
         assert call_kwargs["budget"] == Budget.LOW
 
+    async def test_recall_prefer_observations_defers_to_bank(self, mock_memory):
+        """Omitted → None, so the engine applies the bank's recall_prefer_observations."""
+        mcp = _make_mcp_server(mock_memory, {"recall"})
+        await _tools(mcp)["recall"].fn(query="test")
+        assert mock_memory.recall_async.call_args.kwargs["prefer_observations"] is None
+        await _tools(mcp)["recall"].fn(query="test", prefer_observations=False)
+        assert mock_memory.recall_async.call_args.kwargs["prefer_observations"] is False
+
     async def test_recall_with_types(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"recall"})
         await _tools(mcp)["recall"].fn(query="test", types=["world"])

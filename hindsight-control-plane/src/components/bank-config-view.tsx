@@ -1390,7 +1390,7 @@ export function BankConfigView() {
                         default; with one, the server value is not exposed. */}
                     {field in baseOverrides
                       ? t("recallServerDefault")
-                      : t("docStorageServerDefault", {
+                      : t("recallServerDefaultState", {
                           state: baseConfig[field] ? t("enabled") : t("disabled"),
                         })}
                   </SelectItem>
