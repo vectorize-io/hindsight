@@ -32,6 +32,7 @@ from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usag
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences, visible_token_usage
+from hindsight_api.engine.remote_retry import is_transient_remote_error
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
@@ -524,27 +525,17 @@ class LiteLLMLLM(LLMInterface):
                 raise
 
             except Exception as e:
-                error_str = str(e).lower()
-                # Fast fail on auth errors
-                if "401" in error_str or "403" in error_str or "unauthorized" in error_str:
-                    logger.error(f"LiteLLM auth error, not retrying: {e}")
-                    raise
-
                 # Diagnostic dump (opt-in) of the exact request behind any 4xx.
                 dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_kwargs)
 
                 last_exception = e
-                if attempt < max_retries:
-                    # Retry on rate limits, connection errors, server errors
-                    is_retryable = any(
-                        keyword in error_str
-                        for keyword in ("rate", "limit", "timeout", "connection", "500", "502", "503", "529")
-                    )
-                    if is_retryable:
-                        backoff = min(initial_backoff * (2**attempt), max_backoff)
-                        jitter = backoff * 0.2 * (2 * (time.time() % 1) - 1)
-                        await asyncio.sleep(backoff + jitter)
-                        continue
+                # LiteLLM maps every provider error to an exception carrying the HTTP
+                # status on ``status_code``; the message often doesn't repeat it (#5009).
+                if attempt < max_retries and is_transient_remote_error(e):
+                    backoff = min(initial_backoff * (2**attempt), max_backoff)
+                    jitter = backoff * 0.2 * (2 * (time.time() % 1) - 1)
+                    await asyncio.sleep(backoff + jitter)
+                    continue
 
                 logger.error(f"LiteLLM API error after {attempt + 1} attempts: {e}")
                 raise
@@ -691,22 +682,13 @@ class LiteLLMLLM(LLMInterface):
                 raise
 
             except Exception as e:
-                error_str = str(e).lower()
-                if "401" in error_str or "403" in error_str or "unauthorized" in error_str:
-                    raise
-
                 # Diagnostic dump (opt-in) of the exact request behind any 4xx.
                 dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_kwargs)
 
                 last_exception = e
-                if attempt < max_retries:
-                    is_retryable = any(
-                        keyword in error_str
-                        for keyword in ("rate", "limit", "timeout", "connection", "500", "502", "503", "529")
-                    )
-                    if is_retryable:
-                        await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
-                        continue
+                if attempt < max_retries and is_transient_remote_error(e):
+                    await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
+                    continue
 
                 logger.error(f"LiteLLM tool call error after {attempt + 1} attempts: {e}")
                 raise
