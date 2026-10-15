@@ -5872,9 +5872,11 @@ class MemoryEngine(MemoryEngineInterface):
         # pgvector rejects ("NaN not allowed in vector") on MPS, or raises
         # "c10::Half != float" on CPU — non-deterministically across restarts. By the
         # time gather() returns, all load threads have joined, so resetting the
-        # default here is race-free, keeps the loads fully parallel, and converges on
-        # the float32 inference state a healthy boot already reaches. torch is only
-        # imported (in sys.modules) if a local provider actually loaded a model.
+        # default here is race-free and converges on the float32 inference state a
+        # healthy boot already reaches. Model builds now also hold
+        # LOCAL_MODEL_BUILD_LOCK (issue #4420), so this is the backstop for a loader
+        # added without it. torch is only imported (in sys.modules) if a local
+        # provider actually loaded a model.
         # See https://github.com/vectorize-io/hindsight/issues/2162.
         torch_mod = sys.modules.get("torch")
         if torch_mod is not None and torch_mod.get_default_dtype() != torch_mod.float32:
