@@ -22,7 +22,6 @@ from hindsight_api.engine.retain.memory_budget import (
     PRODUCER_WAITING,
     RetainMemoryBudget,
     estimate_chunk_bytes,
-    next_item_or_producer_waiting,
 )
 from hindsight_api.engine.retain.types import ChunkMetadata, ExtractedFact, ProcessedFact
 
@@ -255,7 +254,7 @@ async def _pipeline(budget: RetainMemoryBudget, costs: list[int], batch_size: in
     async def consume() -> None:
         batch: list[int] = []
         while True:
-            item = await next_item_or_producer_waiting(queue, budget) if batch else await queue.get()
+            item = await budget.next_item_or_producer_waiting(queue) if batch else await queue.get()
             if item is None:
                 if batch:
                     written.append(batch)
@@ -300,8 +299,8 @@ async def test_queued_items_are_taken_before_the_waiting_signal():
     queue: asyncio.Queue = asyncio.Queue()
     queue.put_nowait("queued")
 
-    assert await next_item_or_producer_waiting(queue, budget) == "queued"
-    assert await next_item_or_producer_waiting(queue, budget) is PRODUCER_WAITING
+    assert await budget.next_item_or_producer_waiting(queue) == "queued"
+    assert await budget.next_item_or_producer_waiting(queue) is PRODUCER_WAITING
 
     budget.release(90)
     await asyncio.wait_for(blocked, timeout=1)
@@ -315,7 +314,7 @@ async def test_the_waiting_signal_does_not_swallow_a_queue_item():
     await asyncio.sleep(0)
     queue: asyncio.Queue = asyncio.Queue()
 
-    assert await next_item_or_producer_waiting(queue, budget) is PRODUCER_WAITING
+    assert await budget.next_item_or_producer_waiting(queue) is PRODUCER_WAITING
     queue.put_nowait("next")
     assert queue.get_nowait() == "next"
 
@@ -337,7 +336,7 @@ async def test_the_waiting_signal_clears_once_no_reservation_waits():
     await asyncio.wait_for(admitted, timeout=1)
 
     queue: asyncio.Queue = asyncio.Queue()
-    get = asyncio.create_task(next_item_or_producer_waiting(queue, budget))
+    get = asyncio.create_task(budget.next_item_or_producer_waiting(queue))
     await asyncio.sleep(0.05)
     assert not get.done(), "no reservation is waiting, so only a queue item should wake the consumer"
     queue.put_nowait("item")

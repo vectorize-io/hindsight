@@ -489,7 +489,7 @@ from . import (
 from . import timing as _timing
 from .embedding_coalescer import CoalescingEmbedder
 from .entity_labels import label_tag_keys
-from .memory_budget import PRODUCER_WAITING, RetainMemoryBudget, estimate_chunk_bytes, next_item_or_producer_waiting
+from .memory_budget import PRODUCER_WAITING, RetainMemoryBudget, estimate_chunk_bytes
 from .types import (
     CausalRelation,
     ChunkMetadata,
@@ -2883,7 +2883,7 @@ async def _streaming_retain_batch(
             # With an open batch, also wake when the producer blocks on the budget: that batch
             # may be what it is waiting on, and it can't send the next item until it is
             # written (#5296).
-            item = await next_item_or_producer_waiting(chunk_queue, memory_budget) if batch else await chunk_queue.get()
+            item = await memory_budget.next_item_or_producer_waiting(chunk_queue) if batch else await chunk_queue.get()
             if item is None:
                 # Process any remaining items
                 if batch and not pipeline_aborted[0]:
@@ -2900,7 +2900,7 @@ async def _streaming_retain_batch(
                 break
 
             producer_waiting = item is PRODUCER_WAITING
-            if item is not PRODUCER_WAITING:
+            if not producer_waiting:
                 batch.append(item)
                 batch_bytes += reserved_by_chunk.get(item[0], 0)
 

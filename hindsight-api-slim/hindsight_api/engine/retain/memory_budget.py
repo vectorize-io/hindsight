@@ -18,7 +18,7 @@ is the pipeline throttling itself rather than the worker being OOM-killed.
 Two rules keep it from deadlocking. A reservation larger than the whole budget is admitted
 anyway when nothing else is held, or a single unusually rich chunk would wait forever for
 room that only it could free. And a consumer that has drained the queue writes its open
-batch as soon as a producer is waiting for room (``next_item_or_producer_waiting``), or a
+batch as soon as a producer is waiting for room (``RetainMemoryBudget.next_item_or_producer_waiting``), or a
 small open batch plus a large next chunk would leave each side waiting on the other (#5296).
 """
 
@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
 
 
+# A one-member enum rather than a bare `object()` so `item is PRODUCER_WAITING` narrows the
+# type for the checker, and the consumer can index the real queue items without a cast.
 class _ProducerWaiting(enum.Enum):
     TOKEN = "producer_waiting"
 
@@ -174,31 +176,28 @@ class RetainMemoryBudget:
             return False
         return batch_bytes * 2 >= self.limit_bytes
 
+    async def next_item_or_producer_waiting(self, queue: "asyncio.Queue[_T]") -> "_T | _ProducerWaiting":
+        """The next queue item, or ``PRODUCER_WAITING`` if a producer blocks on the budget first.
 
-async def next_item_or_producer_waiting(
-    queue: "asyncio.Queue[_T]", budget: RetainMemoryBudget
-) -> "_T | _ProducerWaiting":
-    """The next queue item, or ``PRODUCER_WAITING`` if a producer blocks on the budget first.
+        For a consumer holding an open batch. Its reservation counts against the budget, so a
+        producer waiting for room can be waiting on that very batch — and the consumer waiting
+        for the producer's next item would then wait forever (#5296). Only an empty queue races
+        the signal: with items queued the consumer keeps its normal batching, so this changes
+        nothing until the alternative is a hang.
 
-    For a consumer holding an open batch. Its reservation counts against the budget, so a
-    producer waiting for room can be waiting on that very batch — and the consumer waiting
-    for the producer's next item would then wait forever (#5296). Only an empty queue races
-    the signal: with items queued the consumer keeps its normal batching, so this changes
-    nothing until the alternative is a hang.
-
-    ``Queue.get`` is cancellation-safe — an item only leaves the queue once the getter
-    resumes — so abandoning the pending get when the signal wins loses nothing.
-    """
-    if not queue.empty() or not budget.enabled:
-        return await queue.get()
-    get = asyncio.ensure_future(queue.get())
-    waiting = asyncio.ensure_future(budget._producer_waiting.wait())
-    try:
-        await asyncio.wait({get, waiting}, return_when=asyncio.FIRST_COMPLETED)
-    finally:
-        waiting.cancel()
-        if not get.done():
-            get.cancel()
-    if get.done() and not get.cancelled():
-        return get.result()
-    return PRODUCER_WAITING
+        ``Queue.get`` is cancellation-safe — an item only leaves the queue once the getter
+        resumes — so abandoning the pending get when the signal wins loses nothing.
+        """
+        if not queue.empty() or not self.enabled:
+            return await queue.get()
+        get = asyncio.ensure_future(queue.get())
+        waiting = asyncio.ensure_future(self._producer_waiting.wait())
+        try:
+            await asyncio.wait({get, waiting}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            waiting.cancel()
+            if not get.done():
+                get.cancel()
+        if get.done() and not get.cancelled():
+            return get.result()
+        return PRODUCER_WAITING
