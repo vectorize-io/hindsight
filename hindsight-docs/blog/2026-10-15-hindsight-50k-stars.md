@@ -1,10 +1,10 @@
 ---
-title: "50,000 Stars, and What We Stand On"
+title: "50,000 GitHub Stars"
 authors: [benfrank241]
 slug: "2026/10/15/hindsight-50k-stars"
 date: 2026-10-15T12:00
 tags: [hindsight, agent-memory, open-source, milestone, community]
-description: "Hindsight crossed 50,000 GitHub stars in under a year, and shipped 1.0 and Hindsight Memlake in the same week. The numbers, the projects we are built on, and the people who sent the pull requests."
+description: "Hindsight crossed 50,000 GitHub stars in 350 days, and shipped 1.0 and Hindsight Memlake in the same week."
 image: /img/blog/hindsight-50k-stars.png
 hide_table_of_contents: true
 ---
