@@ -489,7 +489,7 @@ from . import (
 from . import timing as _timing
 from .embedding_coalescer import CoalescingEmbedder
 from .entity_labels import label_tag_keys
-from .memory_budget import RetainMemoryBudget, estimate_chunk_bytes
+from .memory_budget import PRODUCER_WAITING, RetainMemoryBudget, estimate_chunk_bytes, next_item_or_producer_waiting
 from .types import (
     CausalRelation,
     ChunkMetadata,
@@ -2880,7 +2880,10 @@ async def _streaming_retain_batch(
                 logger.debug("retain chunk-progress write failed", exc_info=True)
 
         while True:
-            item = await chunk_queue.get()
+            # With an open batch, also wake when the producer blocks on the budget: that batch
+            # may be what it is waiting on, and it can't send the next item until it is
+            # written (#5296).
+            item = await next_item_or_producer_waiting(chunk_queue, memory_budget) if batch else await chunk_queue.get()
             if item is None:
                 # Process any remaining items
                 if batch and not pipeline_aborted[0]:
@@ -2896,14 +2899,17 @@ async def _streaming_retain_batch(
                 batch_bytes = 0
                 break
 
-            batch.append(item)
-            batch_bytes += reserved_by_chunk.get(item[0], 0)
+            producer_waiting = item is PRODUCER_WAITING
+            if item is not PRODUCER_WAITING:
+                batch.append(item)
+                batch_bytes += reserved_by_chunk.get(item[0], 0)
 
-            # Write on whichever comes first: the configured chunk count, or an open batch
-            # heavy enough that holding more would crowd out the producer (#3756). The
+            # Write on whichever comes first: the configured chunk count, an open batch
+            # heavy enough that holding more would crowd out the producer (#3756), or a
+            # producer already blocked on the budget with nothing left queued (#5296). The
             # count alone let a batch of fact-dense chunks grow far past any memory a
             # worker was sized for.
-            if len(batch) >= chunk_batch_size or memory_budget.should_flush(batch_bytes):
+            if producer_waiting or len(batch) >= chunk_batch_size or memory_budget.should_flush(batch_bytes):
                 if pipeline_aborted[0]:
                     # Another request took over the document — discard this batch
                     log_buffer.append(
