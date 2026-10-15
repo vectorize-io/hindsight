@@ -1479,23 +1479,32 @@ This is separate from the `typesafe` [reranker](#reranker), which keeps its own
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_DECISION_MODEL_PROVIDER` | `none` or `typesafe` ([TypeSafe](https://typesafe.ai) System One). | `none` |
-| `HINDSIGHT_API_DECISION_MODEL_API_KEY` | API key. Required when the provider is not `none`. | - |
-| `HINDSIGHT_API_DECISION_MODEL_MODEL` | Model name. | `jev-latest` |
-| `HINDSIGHT_API_DECISION_MODEL_BASE_URL` | API base URL. | `https://api.typesafe.ai` |
+| `HINDSIGHT_API_DECISION_MODEL_PROVIDER` | `none`, `typesafe`, `cloudflare` or `openai` (see below). | `none` |
+| `HINDSIGHT_API_DECISION_MODEL_API_KEY` | API key (Cloudflare: an API token with Workers AI access). Required when the provider is not `none`. | - |
+| `HINDSIGHT_API_DECISION_MODEL_MODEL` | Model name. | provider default |
+| `HINDSIGHT_API_DECISION_MODEL_BASE_URL` | API base URL. Required for `cloudflare`. | provider default |
 | `HINDSIGHT_API_DECISION_MODEL_TIMEOUT` | Request timeout in seconds. | `60` |
 | `HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT` | Most requests in flight at once, for each operation using the decision model. | `24` |
 
+| Provider | API | Default model | Default base URL |
+|----------|-----|---------------|------------------|
+| `typesafe` | [TypeSafe](https://typesafe.ai) System One (`/v1/systemone`) | `jev-latest` | `https://api.typesafe.ai` |
+| `cloudflare` | [Clef](https://blog.cloudflare.com/clef-decision-models) on Workers AI (System One body, `/@cf/cloudflare/<model>`) | `clef` (or `clef-flash`) | none: set `https://api.cloudflare.com/client/v4/accounts/<account_id>/ai/run`, or an AI Gateway `https://gateway.ai.cloudflare.com/v1/<account_id>/<gateway>/workers-ai` |
+| `openai` | [OpenAI Decisions API](https://developers.openai.com/api/docs/guides/decisions) (`/v1/decisions`, public beta) | `gpt-6-luna` | `https://api.openai.com` |
+
 **Per-operation overrides.** `HINDSIGHT_API_{RECALL,REFLECT,CONSOLIDATION}_DECISION_MODEL_{PROVIDER,API_KEY,MODEL,BASE_URL}`
-replace the global value for that operation only; anything not set falls back to the
-global value. Set an operation's provider to `none` to turn the decision model off for it,
-or set it to `typesafe` to give one operation a decision model without a global one.
+replace the global value for that operation only. Key, model and URL fall back to the global
+value only while the operation uses the global provider; an operation that switches to another
+provider takes that provider's defaults and needs its own key. Set an operation's provider to
+`none` to turn the decision model off for it, or give one operation a decision model without a
+global one.
 
 ```bash
 export HINDSIGHT_API_DECISION_MODEL_PROVIDER=typesafe
 export HINDSIGHT_API_DECISION_MODEL_API_KEY=your-typesafe-key
 export HINDSIGHT_API_REFLECT_DECISION_MODEL_MODEL=jev-preview        # reflect only
-export HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_PROVIDER=none      # consolidation opts out
+export HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_PROVIDER=openai    # consolidation on OpenAI
+export HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_API_KEY=your-openai-key
 ```
 
 ### Authentication

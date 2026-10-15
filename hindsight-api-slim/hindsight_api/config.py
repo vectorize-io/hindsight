@@ -1455,13 +1455,26 @@ DEFAULT_RERANKER_ALIBABA_MODEL = "qwen3-rerank"
 
 DEFAULT_RERANKER_GOOGLE_MODEL = "semantic-ranker-default-004"
 
-# "none": no decision model; operations that could use one keep their LLM-only path.
-DECISION_MODEL_PROVIDERS = ("none", "typesafe")
 DecisionModelOperation = Literal["recall", "reflect", "consolidation"]
 DECISION_MODEL_OPERATIONS: tuple[DecisionModelOperation, ...] = ("recall", "reflect", "consolidation")
+
+
+@dataclass(frozen=True)
+class _DecisionProviderDefaults:
+    model: str
+    #: None when the URL is per account and must be configured (Cloudflare).
+    base_url: str | None
+
+
+# "none": no decision model; operations that could use one keep their LLM-only path.
+# typesafe and cloudflare speak the System One API; openai has its own Decisions API.
+DECISION_MODEL_PROVIDER_DEFAULTS = {
+    "typesafe": _DecisionProviderDefaults(model="jev-latest", base_url="https://api.typesafe.ai"),
+    "cloudflare": _DecisionProviderDefaults(model="clef", base_url=None),
+    "openai": _DecisionProviderDefaults(model="gpt-6-luna", base_url="https://api.openai.com"),
+}
+DECISION_MODEL_PROVIDERS = ("none", *DECISION_MODEL_PROVIDER_DEFAULTS)
 DEFAULT_DECISION_MODEL_PROVIDER = "none"
-DEFAULT_DECISION_MODEL_MODEL = "jev-latest"
-DEFAULT_DECISION_MODEL_BASE_URL = "https://api.typesafe.ai"
 DEFAULT_DECISION_MODEL_TIMEOUT = 60.0
 DEFAULT_DECISION_MODEL_MAX_CONCURRENT = 24
 
@@ -3752,8 +3765,8 @@ class HindsightConfig:
     # value). Read through decision_model_config(), never field by field.
     decision_model_provider: str = DEFAULT_DECISION_MODEL_PROVIDER
     decision_model_api_key: str | None = None
-    decision_model_model: str = DEFAULT_DECISION_MODEL_MODEL
-    decision_model_base_url: str = DEFAULT_DECISION_MODEL_BASE_URL
+    decision_model_model: str | None = None
+    decision_model_base_url: str | None = None
     decision_model_timeout: float = DEFAULT_DECISION_MODEL_TIMEOUT
     decision_model_max_concurrent: int = DEFAULT_DECISION_MODEL_MAX_CONCURRENT
     recall_decision_model_provider: str | None = None
@@ -4865,8 +4878,8 @@ class HindsightConfig:
             # Decision model
             decision_model_provider=os.getenv(ENV_DECISION_MODEL_PROVIDER) or DEFAULT_DECISION_MODEL_PROVIDER,
             decision_model_api_key=os.getenv(ENV_DECISION_MODEL_API_KEY) or None,
-            decision_model_model=os.getenv(ENV_DECISION_MODEL_MODEL) or DEFAULT_DECISION_MODEL_MODEL,
-            decision_model_base_url=os.getenv(ENV_DECISION_MODEL_BASE_URL) or DEFAULT_DECISION_MODEL_BASE_URL,
+            decision_model_model=os.getenv(ENV_DECISION_MODEL_MODEL) or None,
+            decision_model_base_url=os.getenv(ENV_DECISION_MODEL_BASE_URL) or None,
             decision_model_timeout=float(os.getenv(ENV_DECISION_MODEL_TIMEOUT) or DEFAULT_DECISION_MODEL_TIMEOUT),
             decision_model_max_concurrent=int(
                 os.getenv(ENV_DECISION_MODEL_MAX_CONCURRENT) or DEFAULT_DECISION_MODEL_MAX_CONCURRENT
@@ -5502,16 +5515,15 @@ class HindsightConfig:
     def decision_model_config(self, operation: DecisionModelOperation) -> DecisionModelConfig | None:
         """The decision model ``operation`` uses, or None when it has none.
 
-        Each setting is the operation's override when set, else the global one, the same
-        fallback as the per-operation LLM settings. An operation can set its provider to
-        "none" to opt out, or name one when no global decision model is set up.
+        The operation's provider is its override when set, else the global one. Key, model
+        and URL then come from the operation's override, else from the global setting, but
+        only when the operation uses the global provider: a key or model meant for another
+        provider is never borrowed. Anything still unset takes the provider's default. An
+        operation can set its provider to "none" to opt out, or name one when no global
+        decision model is set up.
         """
-
-        def setting(name: str) -> str | None:
-            override = getattr(self, f"{operation}_decision_model_{name}")
-            return override if override is not None else getattr(self, f"decision_model_{name}")
-
-        provider = (setting("provider") or DEFAULT_DECISION_MODEL_PROVIDER).lower()
+        own_provider = getattr(self, f"{operation}_decision_model_provider")
+        provider = (own_provider or self.decision_model_provider or DEFAULT_DECISION_MODEL_PROVIDER).lower()
         if provider not in DECISION_MODEL_PROVIDERS:
             raise ValueError(
                 f"Unknown decision model provider for {operation}: {provider!r}. "
@@ -5519,17 +5531,28 @@ class HindsightConfig:
             )
         if provider == "none":
             return None
-        api_key = setting("api_key")
-        if not api_key:
-            raise ValueError(
-                f"{ENV_DECISION_MODEL_API_KEY} (or {_decision_model_env(operation, 'API_KEY')}) is required "
-                f"when the {operation} decision model provider is {provider!r}"
-            )
+        inherits_global = provider == (self.decision_model_provider or "").lower()
+
+        def setting(name: str) -> str | None:
+            own = getattr(self, f"{operation}_decision_model_{name}")
+            if own is not None or not inherits_global:
+                return own
+            return getattr(self, f"decision_model_{name}")
+
+        def required(value: str | None, env_setting: str) -> str:
+            if not value:
+                raise ValueError(
+                    f"HINDSIGHT_API_DECISION_MODEL_{env_setting} (or {_decision_model_env(operation, env_setting)}) "
+                    f"is required when the {operation} decision model provider is {provider!r}"
+                )
+            return value
+
+        defaults = DECISION_MODEL_PROVIDER_DEFAULTS[provider]
         return DecisionModelConfig(
             provider=provider,
-            api_key=api_key,
-            model=setting("model") or DEFAULT_DECISION_MODEL_MODEL,
-            base_url=setting("base_url") or DEFAULT_DECISION_MODEL_BASE_URL,
+            api_key=required(setting("api_key"), "API_KEY"),
+            model=setting("model") or defaults.model,
+            base_url=required(setting("base_url") or defaults.base_url, "BASE_URL"),
             timeout=self.decision_model_timeout,
             max_concurrent=self.decision_model_max_concurrent,
         )

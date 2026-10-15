@@ -1,9 +1,21 @@
 """The decision model is set up once and each operation may override it."""
 
+from dataclasses import dataclass, field
+from typing import Any
+
 import pytest
+from aiohttp import web
 
 from hindsight_api.config import DecisionModelConfig, HindsightConfig
-from hindsight_api.engine.decision_model import DecisionModel
+from hindsight_api.engine.decision_model import (
+    DecisionAnswer,
+    DecisionModel,
+    DecisionQuestion,
+    DecisionRefusedError,
+    DecisionResponse,
+    DecisionUsage,
+)
+from tests.aiohttp_stub import stub_server
 
 _GLOBAL = {
     "HINDSIGHT_API_DECISION_MODEL_PROVIDER": "typesafe",
@@ -78,6 +90,50 @@ def test_operation_can_have_one_without_a_global_setup(monkeypatch):
     assert config.decision_model_config("recall") is None
 
 
+def test_each_provider_has_its_own_defaults(monkeypatch):
+    config = _config(
+        monkeypatch,
+        {
+            "HINDSIGHT_API_DECISION_MODEL_PROVIDER": "openai",
+            "HINDSIGHT_API_DECISION_MODEL_API_KEY": "openai-key",
+        },
+    )
+    recall = config.decision_model_config("recall")
+    assert recall is not None
+    assert (recall.provider, recall.model, recall.base_url) == ("openai", "gpt-6-luna", "https://api.openai.com")
+
+
+def test_an_operation_on_another_provider_borrows_nothing_from_the_global_one(monkeypatch):
+    config = _config(
+        monkeypatch,
+        {
+            **_GLOBAL,
+            "HINDSIGHT_API_DECISION_MODEL_MODEL": "jev-preview",
+            "HINDSIGHT_API_REFLECT_DECISION_MODEL_PROVIDER": "openai",
+            "HINDSIGHT_API_REFLECT_DECISION_MODEL_API_KEY": "openai-key",
+        },
+    )
+    reflect = config.decision_model_config("reflect")
+    assert reflect is not None
+    assert (reflect.api_key, reflect.model, reflect.base_url) == ("openai-key", "gpt-6-luna", "https://api.openai.com")
+
+
+def test_another_provider_without_its_own_key_fails_at_startup(monkeypatch):
+    with pytest.raises(ValueError, match="HINDSIGHT_API_REFLECT_DECISION_MODEL_API_KEY"):
+        _config(monkeypatch, {**_GLOBAL, "HINDSIGHT_API_REFLECT_DECISION_MODEL_PROVIDER": "openai"}).validate()
+
+
+def test_cloudflare_needs_its_account_url(monkeypatch):
+    env = {"HINDSIGHT_API_DECISION_MODEL_PROVIDER": "cloudflare", "HINDSIGHT_API_DECISION_MODEL_API_KEY": "cf"}
+    with pytest.raises(ValueError, match="HINDSIGHT_API_DECISION_MODEL_BASE_URL"):
+        _config(monkeypatch, env).validate()
+    account_url = "https://api.cloudflare.com/client/v4/accounts/acct/ai/run"
+    config = _config(monkeypatch, {**env, "HINDSIGHT_API_DECISION_MODEL_BASE_URL": account_url})
+    recall = config.decision_model_config("recall")
+    assert recall is not None
+    assert (recall.model, recall.base_url) == ("clef", account_url)
+
+
 def test_missing_key_fails_at_startup(monkeypatch):
     with pytest.raises(ValueError, match="HINDSIGHT_API_DECISION_MODEL_API_KEY"):
         _config(monkeypatch, {"HINDSIGHT_API_DECISION_MODEL_PROVIDER": "typesafe"}).validate()
@@ -95,55 +151,151 @@ def test_keys_and_endpoints_are_credentials():
         assert f"{prefix}decision_model_base_url" in credentials
 
 
-class _Response:
-    def __init__(self, body: dict):
-        self._body = body
-        self.status = 200
+_QUESTIONS = {
+    "urgent": DecisionQuestion(type="noul", instructions="Is it urgent?"),
+    "team": DecisionQuestion(type="choice", instructions="Which team?", criteria={"billing": "Payments", "ops": None}),
+    "severity": DecisionQuestion(type="score", instructions="How severe?", criteria=["None", "Minor", "Critical"]),
+}
 
-    async def __aenter__(self):
-        return self
+#: The System One request body every typesafe/cloudflare call sends for _QUESTIONS.
+_SYSTEM_ONE_QUESTIONS = {
+    "urgent": {"type": "noul", "instructions": "Is it urgent?"},
+    "team": {"type": "choice", "instructions": "Which team?", "criteria": {"billing": "Payments", "ops": None}},
+    "severity": {"type": "score", "instructions": "How severe?", "criteria": ["None", "Minor", "Critical"]},
+}
 
-    async def __aexit__(self, *exc):
-        return False
+_SYSTEM_ONE_ANSWERS = {
+    "answers": {
+        "urgent": {"type": "noul", "noul": 0.9},
+        "team": {"type": "choice", "choice": "ops", "probabilities": {"billing": 0.2, "ops": 0.8}, "confidence": 0.7},
+        "severity": {"type": "score", "score": 1.6, "confidence": 0.8},
+    },
+    "usage": {"input_tokens": 12, "output_tokens": 1},
+}
 
-    async def json(self, content_type=None):
-        return self._body
+_EXPECTED = DecisionResponse(
+    answers={
+        "urgent": DecisionAnswer(noul=0.9),
+        "team": DecisionAnswer(choice="ops", probabilities={"billing": 0.2, "ops": 0.8}, confidence=0.7),
+        "severity": DecisionAnswer(score=1.6, confidence=0.8),
+    },
+    usage=DecisionUsage(input_tokens=12, output_tokens=1),
+)
 
 
-class _Session:
-    def __init__(self):
-        self.posted: list[tuple[str, dict]] = []
+@dataclass
+class _Upstream:
+    """What the stub server saw, and what it answers."""
 
-    def get(self):
-        return self
+    reply: Any
+    paths: list[str] = field(default_factory=list)
+    bodies: list[Any] = field(default_factory=list)
+    auth: list[str] = field(default_factory=list)
 
-    def post(self, url, headers=None, json=None):
-        self.posted.append((url, json))
-        return _Response({"answers": {"q": {"noul": 0.9}}, "usage": {"input_tokens": 12, "output_tokens": 1}})
+    async def handle(self, request: web.Request) -> web.StreamResponse:
+        self.paths.append(request.path)
+        self.bodies.append(await request.json())
+        self.auth.append(request.headers["Authorization"])
+        return web.json_response(self.reply)
 
 
-async def test_client_asks_with_the_configured_model():
-    client = DecisionModel.from_config(
+def _client(provider: str, base_url: str, model: str) -> DecisionModel:
+    return DecisionModel.from_config(
         DecisionModelConfig(
-            provider="typesafe",
-            api_key="k",
-            model="jev-preview",
-            base_url="https://example.test/",
-            timeout=5.0,
-            max_concurrent=2,
+            provider=provider, api_key="k", model=model, base_url=base_url, timeout=5.0, max_concurrent=2
         )
     )
-    session = _Session()
-    client._session = session  # type: ignore[assignment]
-    questions = {"q": {"type": "noul", "instructions": "Is it?"}}
 
-    answer = await client.ask({"fact": "x"}, questions)
 
-    assert answer.answers["q"].noul == 0.9
-    assert answer.usage.input_tokens == 12
-    assert session.posted == [
-        (
-            "https://example.test/v1/systemone",
-            {"model": "jev-preview", "state": {"fact": "x"}, "questions": questions},
-        )
+async def test_typesafe_speaks_system_one():
+    upstream = _Upstream(reply=_SYSTEM_ONE_ANSWERS)
+    async with stub_server(upstream.handle) as base_url:
+        answer = await _client("typesafe", base_url + "/", "jev-preview").ask({"fact": "x"}, _QUESTIONS)
+
+    assert answer == _EXPECTED
+    assert upstream.paths == ["/v1/systemone"]
+    assert upstream.auth == ["Bearer k"]
+    assert upstream.bodies == [{"model": "jev-preview", "state": {"fact": "x"}, "questions": _SYSTEM_ONE_QUESTIONS}]
+
+
+async def test_cloudflare_posts_system_one_to_the_workers_ai_model_and_unwraps_the_envelope():
+    # Workers AI's REST API wraps every answer in Cloudflare's v4 envelope.
+    upstream = _Upstream(reply={"result": _SYSTEM_ONE_ANSWERS, "success": True, "errors": [], "messages": []})
+    async with stub_server(upstream.handle) as base_url:
+        account_url = f"{base_url}/client/v4/accounts/acct/ai/run"
+        answer = await _client("cloudflare", account_url, "clef").ask("Checkout is down.", _QUESTIONS)
+
+    assert answer == _EXPECTED
+    assert upstream.paths == ["/client/v4/accounts/acct/ai/run/@cf/cloudflare/clef"]
+    assert upstream.bodies == [{"model": "clef", "state": "Checkout is down.", "questions": _SYSTEM_ONE_QUESTIONS}]
+
+
+async def test_openai_translates_to_the_decisions_api_and_back():
+    # Recorded from a live gpt-6-luna call, reshaped to these questions.
+    upstream = _Upstream(
+        reply={
+            "model": "gpt-6-luna",
+            "answers": [
+                {"type": "predicate", "name": "urgent", "probability": 0.9},
+                {
+                    "type": "choice",
+                    "name": "team",
+                    "choice": "ops",
+                    "probabilities": [{"value": "billing", "probability": 0.2}, {"value": "ops", "probability": 0.8}],
+                    "confidence": 0.7,
+                },
+                {
+                    "type": "score",
+                    "name": "severity",
+                    "score": 1.6,
+                    "probabilities": [
+                        {"value": 0, "label": "None", "probability": 0.0},
+                        {"value": 1, "label": "Minor", "probability": 0.4},
+                        {"value": 2, "label": "Critical", "probability": 0.6},
+                    ],
+                    "confidence": 0.8,
+                },
+            ],
+            "usage": {"input_tokens": 12, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 1},
+        }
+    )
+    async with stub_server(upstream.handle) as base_url:
+        answer = await _client("openai", base_url, "gpt-6-luna").ask({"fact": "x"}, _QUESTIONS)
+
+    assert answer == _EXPECTED
+    assert upstream.paths == ["/v1/decisions"]
+    assert upstream.bodies == [
+        {
+            "model": "gpt-6-luna",
+            "input": '{"fact": "x"}',
+            "questions": [
+                {"name": "urgent", "instructions": "Is it urgent?", "type": "predicate"},
+                {
+                    "name": "team",
+                    "instructions": "Which team?",
+                    "type": "choice",
+                    "choices": [
+                        {"value": "billing", "description": "Payments"},
+                        {"value": "ops", "description": "ops"},
+                    ],
+                },
+                {
+                    "name": "severity",
+                    "instructions": "How severe?",
+                    "type": "score",
+                    "levels": [
+                        {"label": "None", "description": "None"},
+                        {"label": "Minor", "description": "Minor"},
+                        {"label": "Critical", "description": "Critical"},
+                    ],
+                },
+            ],
+        }
     ]
+
+
+async def test_openai_refusal_raises():
+    upstream = _Upstream(reply={"answers": [{"type": "refusal", "name": "urgent"}]})
+    async with stub_server(upstream.handle) as base_url:
+        with pytest.raises(DecisionRefusedError, match="urgent"):
+            await _client("openai", base_url, "gpt-6-luna").ask("x", {"urgent": _QUESTIONS["urgent"]})
