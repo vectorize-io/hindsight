@@ -463,18 +463,18 @@ class RerankStub:
     #: keep more. Ignored by the Cohere-shaped /rerank endpoint, which has no cut.
     cut_level: int = 0
 
-    #: The value a decision model's conflict question says is current: the option that
-    #: mentions it wins, confidently. None answers it like any other Choice — lexically,
-    #: which on two options that differ by one value is a hedge nothing acts on.
-    current_value: str | None = None
-
     #: What a decision model's per-memory question answers, keyed by text the memory
     #: contains. Memories matching none are scored lexically, where ties fall back to
     #: retrieval order, which is not stable enough to pin.
     verdicts: dict[str, float]
 
+    #: The state each of those questions arrived with, so a story can see what the
+    #: model was told besides the memory.
+    states: list[str]
+
     def __init__(self) -> None:
         self.verdicts = {}
+        self.states = []
 
     def verdict(self, state: str, memory: str) -> float:
         scripted = next((score for text, score in self.verdicts.items() if text in memory), None)
@@ -515,12 +515,12 @@ class Stubs:
 
     def reset(self) -> None:
         """Between tests. The embedding stub is pure; the rerank stub is pure apart
-        from what a story set on it (cut level, current value, verdicts), which has to
+        from what a story set on it (cut level, verdicts) or it recorded, which has to
         go back to its default or it leaks into whatever runs next."""
         self.llm.reset()
         self.rerank.cut_level = RerankStub.cut_level
-        self.rerank.current_value = RerankStub.current_value
         self.rerank.verdicts = {}
+        self.rerank.states = []
         self.rejected_requests.clear()
         self.webhooks.clear()
 

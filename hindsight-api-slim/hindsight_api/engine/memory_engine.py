@@ -9971,7 +9971,9 @@ class MemoryEngine(MemoryEngineInterface):
 
                     # Ensure reranker is initialized (for lazy initialization mode)
                     await reranker_instance.ensure_initialized()
-                    reranked = await reranker_instance.rerank(query, merged_candidates)
+                    reranked = await reranker_instance.rerank(
+                        query, merged_candidates, now=_recall_scoring_now(question_date)
+                    )
                     scored_results = reranked.results
                     # Copied off the call that produced these scores. Do not read
                     # cross_encoder.provider_name here: on a failover chain that
@@ -10018,7 +10020,7 @@ class MemoryEngine(MemoryEngineInterface):
             # the phase metrics (issue #2361).
             scoring_start = time.time()
             if scored_results and reranking == "cross_encoder" and served_provider == DECISION_MODEL_RERANKER:
-                # A decision model ranked the whole pool and resolved its conflicts; its order
+                # A decision model judged every candidate in the pool; its order
                 # is final. The recency / temporal / proof-count boosts would only second-guess it.
                 log_buffer.append("  [4.6] Decision model order kept (combined scoring skipped)")
             elif scored_results and reranking == "interleave":
