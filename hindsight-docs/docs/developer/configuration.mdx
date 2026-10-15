@@ -1533,7 +1533,9 @@ the pool by that. Then, on questions that ask for a value (a date, a count, a ve
 asks which of the candidates that disagree states the current answer, and drops the
 out-of-date ones when the verdict is confident. That order is final: recall skips the
 recency, temporal and proof-count boosts it applies to a cross-encoder, and publishes no
-reranker score, so `min_scores.reranker` is rejected.
+reranker score, so `min_scores.reranker` is rejected. To keep the cross-encoder for recall
+while other operations use the decision model, set
+`HINDSIGHT_API_RECALL_DECISION_MODEL_PROVIDER=none`.
 
 ### Authentication
 
