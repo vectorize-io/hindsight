@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import litellm
 import pytest
 from pydantic import BaseModel
 
@@ -270,8 +271,10 @@ class TestRouterCall:
     @pytest.mark.asyncio
     async def test_retry_on_transient_then_success(self, two_step_config, mock_router_response):
         mock_router = MagicMock()
-        # First call raises a 503-style error, second call returns ok.
-        mock_router.acompletion = AsyncMock(side_effect=[Exception("503 Service Unavailable"), mock_router_response])
+        # First call raises a 503, second call returns ok. Retry follows the status
+        # LiteLLM maps onto the exception, not its message (#5009).
+        unavailable = litellm.ServiceUnavailableError(message="Service Unavailable", llm_provider="openai", model="m")
+        mock_router.acompletion = AsyncMock(side_effect=[unavailable, mock_router_response])
         provider = _make_router_provider(two_step_config, mock_router)
 
         result = (
@@ -288,7 +291,11 @@ class TestRouterCall:
     @pytest.mark.asyncio
     async def test_auth_error_does_not_retry(self, two_step_config):
         mock_router = MagicMock()
-        mock_router.acompletion = AsyncMock(side_effect=Exception("401 Unauthorized: bad key"))
+        mock_router.acompletion = AsyncMock(
+            side_effect=litellm.AuthenticationError(
+                message="401 Unauthorized: bad key", llm_provider="openai", model="m"
+            )
+        )
         provider = _make_router_provider(two_step_config, mock_router)
 
         with pytest.raises(Exception, match="401"):
