@@ -18656,26 +18656,17 @@ class MemoryEngine(MemoryEngineInterface):
         # The vector as well as its literal: a store-owned index takes the floats, and asking for
         # the string alone would mean embedding the same document twice on every page write.
         new_embedding_vec: list[float] | None = None
+        current_row: Any = None
         document_changed = name is not None or content is not None
         if document_changed:
             async with use_or_acquire(backend, conn) as read_conn:
                 current_row = await read_conn.fetchrow(
-                    f"SELECT name, content, reflect_response FROM {fq_table('mental_models')} "
-                    "WHERE bank_id = $1 AND id = $2",
+                    f"SELECT name, content FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
                     bank_id,
                     mental_model_id,
                 )
             if current_row is None:
                 return None
-
-            if content is not None:
-                # Snapshot for history, taken from the same read.
-                previous_content = current_row["content"]
-                raw_rr = current_row["reflect_response"]
-                if isinstance(raw_rr, str):
-                    previous_reflect_response = json.loads(raw_rr) if raw_rr else None
-                else:
-                    previous_reflect_response = raw_rr
 
             new_embedding_vec = await self._mental_model_embedding_vector(
                 name if name is not None else (current_row["name"] or ""),
@@ -18683,8 +18674,8 @@ class MemoryEngine(MemoryEngineInterface):
             )
             new_embedding_str = str(new_embedding_vec) if new_embedding_vec else None
 
-        # The exit stack carries the row lock a trigger patch takes below; it stays
-        # empty (and free) on every other update.
+        # The exit stack carries the row lock a trigger patch or document edit takes
+        # below; it stays empty (and free) on every other update.
         async with use_or_acquire(backend, conn) as conn, AsyncExitStack() as stack:
             # A supplied trigger PATCHES the stored one (see _merge_trigger): callers
             # send only the fields they set, so the rest have to be read back rather
@@ -18693,19 +18684,43 @@ class MemoryEngine(MemoryEngineInterface):
             # Read-modify-write, so the row is locked for the rest of the statement:
             # two concurrent patches (an agent setting a cron while another flips
             # fact_types) would otherwise both merge onto the same pre-image and the
-            # later write would drop the earlier one. Only this path takes the lock —
-            # a refresh passes no trigger and stays lock-free.
-            if trigger is not None:
+            # later write would drop the earlier one.
+            #
+            # A document edit takes the same lock for the same reason: the embedding above was
+            # computed from a pre-image read off the lock, and a concurrent edit may have moved
+            # the other half since (#5297). Re-checked under the lock, and re-embedded only in
+            # that rare race, so a slow embedder still never pins a connection in the common case.
+            if trigger is not None or document_changed:
                 await stack.enter_async_context(conn.transaction())
-                trigger_row = await conn.fetchrow(
-                    f"SELECT trigger, tags FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2 FOR UPDATE",
+                locked_row = await conn.fetchrow(
+                    f"SELECT trigger, tags, name, content, reflect_response FROM {fq_table('mental_models')} "
+                    "WHERE bank_id = $1 AND id = $2 FOR UPDATE",
                     bank_id,
                     mental_model_id,
                 )
-                if trigger_row is None:
+                if locked_row is None:
                     return None
-                trigger = self._merge_trigger(trigger, base=self._stored_trigger(trigger_row["trigger"]))
-                trigger = _scope_mental_model_trigger(trigger, tag_scope)
+                if trigger is not None:
+                    trigger = self._merge_trigger(trigger, base=self._stored_trigger(locked_row["trigger"]))
+                    trigger = _scope_mental_model_trigger(trigger, tag_scope)
+                if content is not None:
+                    # Snapshot for history from the locked row, so it is the content this write replaces.
+                    previous_content = locked_row["content"]
+                    raw_rr = locked_row["reflect_response"]
+                    if isinstance(raw_rr, str):
+                        previous_reflect_response = json.loads(raw_rr) if raw_rr else None
+                    else:
+                        previous_reflect_response = raw_rr
+                # Only the half the caller did not send came from the pre-image; re-embed if it moved.
+                if document_changed and (
+                    (name is None and locked_row["name"] != current_row["name"])
+                    or (content is None and locked_row["content"] != current_row["content"])
+                ):
+                    new_embedding_vec = await self._mental_model_embedding_vector(
+                        name if name is not None else (locked_row["name"] or ""),
+                        content if content is not None else (locked_row["content"] or ""),
+                    )
+                    new_embedding_str = str(new_embedding_vec) if new_embedding_vec else None
 
             # Build dynamic update
             updates = []

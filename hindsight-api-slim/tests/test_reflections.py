@@ -1,5 +1,6 @@
 """Tests for mental models (formerly reflections), observations, and learnings functionality."""
 
+import asyncio
 import uuid
 
 import httpx
@@ -261,6 +262,80 @@ class TestMentalModelsCRUD:
         assert renamed["name"] == "Renamed Model"
         assert embedded == [f"Renamed Model {updated['content']}"]
         assert await stored_embedding() != after_content_edit
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_edit_does_not_persist_a_stale_embedding(
+        self, memory: MemoryEngine, request_context, monkeypatch
+    ):
+        """Regression for #5297.
+
+        A rename embeds ``new name + stored content`` before taking the row lock. If a
+        content edit commits while the rename's embedding is in flight, the rename must
+        re-embed against the new content instead of writing a vector for the old one.
+        """
+        bank_id = f"test-mm-race-embed-{uuid.uuid4().hex[:8]}"
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+        mental_model = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Original Name",
+            source_query="Original Query",
+            content="Original Content",
+            request_context=request_context,
+        )
+
+        rename_embedding_started = asyncio.Event()
+        release_rename = asyncio.Event()
+        original_generate = embedding_utils.generate_embeddings_batch
+
+        async def pausing_generate(backend, texts, *args, **kwargs):
+            if texts[0].startswith("Renamed Model Original Content") and not rename_embedding_started.is_set():
+                rename_embedding_started.set()
+                await release_rename.wait()
+            return await original_generate(backend, texts, *args, **kwargs)
+
+        monkeypatch.setattr(embedding_utils, "generate_embeddings_batch", pausing_generate)
+
+        # Raw read: the engine API never exposes a model's embedding, and a stale
+        # vector is exactly what this regression is about.
+        async def stored_embedding() -> str:
+            async with memory._pool.acquire() as conn:
+                return await conn.fetchval(
+                    f"SELECT embedding::text FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                    bank_id,
+                    mental_model["id"],
+                )
+
+        rename = asyncio.create_task(
+            memory.update_mental_model(
+                bank_id=bank_id,
+                mental_model_id=mental_model["id"],
+                name="Renamed Model",
+                request_context=request_context,
+            )
+        )
+        await asyncio.wait_for(rename_embedding_started.wait(), timeout=30)
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mental_model["id"],
+            content="Rewritten Content",
+            request_context=request_context,
+        )
+        release_rename.set()
+        renamed = await rename
+        assert renamed["name"] == "Renamed Model"
+        assert renamed["content"] == "Rewritten Content\n"
+        raced = await stored_embedding()
+
+        # A sequential rename of the final document is the vector the race must match.
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mental_model["id"],
+            name="Renamed Model",
+            request_context=request_context,
+        )
+        assert raced == await stored_embedding()
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
