@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import re
+from dataclasses import dataclass
 
 from ...config import DecisionModelConfig
 from ..cross_encoder import CrossEncoderModel
@@ -34,6 +35,8 @@ rerank_shared_context: contextvars.ContextVar[str | None] = contextvars.ContextV
 )
 
 _MAX_QUERY_TOKENS = 2_000  # Defensive ceiling on the query, which every request carries
+# The same for the shared context: past the request ceiling, every request would fail.
+_MAX_SHARED_CONTEXT_TOKENS = 4_000
 _CONFLICT_OPTION_TOKENS = 300  # Per-candidate ceiling in a conflict question
 # Recall prepends this per candidate, so it is held aside while the pool's shared
 # preamble is found and put back afterwards.
@@ -68,7 +71,7 @@ _VALUE_QUESTION = re.compile(
     r"what time|how often|total|count|number of)\b",
     re.I,
 )
-_MONTH_NAMES = ("january february march april may june july august september october november december").split()
+_MONTH = re.compile(r"\b(january|february|march|april|may|june|july|august|september|october|november|december)\b")
 # Pronouns and framing words carry no subject, so they must not count as a shared term.
 _QUESTION_STOPWORDS = frozenset(
     "what when which who how many much long does did your their that this with from have "
@@ -96,16 +99,24 @@ def _token_overlap(a: set[str], b: set[str]) -> float:
     return len(a & b) / max(1, min(len(a), len(b))) if a and b else 0.0
 
 
-def _value_payload(text: str) -> tuple[frozenset[int], frozenset[str]]:
-    """The numbers and months a value question turns on.
+@dataclass(frozen=True)
+class _ValuePayload:
+    """The numbers and months a value question turns on."""
 
-    Years are dropped, so "April 1, 2024" and "2024-04-01" compare on day and month
-    rather than agreeing because they share 2024.
-    """
+    numbers: frozenset[int]
+    months: frozenset[str]
+
+    def states(self, value: _ValuePayload) -> bool:
+        """Whether this candidate states ``value``, possibly alongside more detail."""
+        return value.numbers <= self.numbers and value.months <= self.months
+
+
+def _value_payload(text: str) -> _ValuePayload:
+    """Years are dropped, so "April 1, 2024" and "2024-04-01" compare on day and month
+    rather than agreeing because they share 2024."""
     low = _comparable(text).lower()
     numbers = {int(n) for n in re.findall(r"\b(\d{1,4})\b", low) if int(n) < 1900}
-    months = {m for m in _MONTH_NAMES if m in low}
-    return frozenset(numbers), frozenset(months)
+    return _ValuePayload(frozenset(numbers), frozenset(_MONTH.findall(low)))
 
 
 def _strip_shared_prefix(docs: list[str], indices: list[int]) -> dict[int, str]:
@@ -219,6 +230,8 @@ class DecisionModelReranker(CrossEncoderModel):
     def _state(self, query: str) -> str:
         """The question's state: what is being asked, plus the framing every candidate shares."""
         shared = rerank_shared_context.get()
+        if shared and count_tokens(shared) > _MAX_SHARED_CONTEXT_TOKENS:
+            shared = truncate_to_tokens(shared, _MAX_SHARED_CONTEXT_TOKENS).text
         return f"{shared}\n\nQuestion: {query}" if shared else f"Question: {query}"
 
     async def _rank(self, query: str, docs: list[str], indices: list[int]) -> list[int]:
@@ -326,12 +339,13 @@ class DecisionModelReranker(CrossEncoderModel):
             # with the winner on it is stale — not only the candidates in this question. The
             # same value is often restated many times and only some land in one cluster;
             # leaving the rest behind leaves the majority stale. The test is the one that
-            # built the cluster, around the winner.
+            # built the cluster, around the winner, except that a candidate restating the
+            # winner's value with more detail around it agrees with it and is kept.
             superseded.update(
                 index
                 for index in conflicting
                 if index != winner
-                and payloads[index] != payloads[winner]
+                and not payloads[index].states(payloads[winner])
                 and _token_overlap(tokens[winner], tokens[index]) >= self.CONFLICT_OVERLAP
                 and (not subject or len(tokens[index] & subject) >= self.CONFLICT_MIN_SUBJECT_TERMS)
             )

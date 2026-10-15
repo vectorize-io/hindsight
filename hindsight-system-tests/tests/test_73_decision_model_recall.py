@@ -29,6 +29,8 @@ BERLIN = "Alice moved to Berlin in 2021"
 CELLO = "Alice plays the cello professionally"
 STALE = "The launch deadline for the mobile app is April 1"
 CURRENT = "The launch deadline for the mobile app is April 5"
+# What the model says of each memory on the deadline question.
+DEADLINE_VERDICTS = {CURRENT: 0.9, STALE: 0.8, CELLO: 0.5, BERLIN: 0.3}
 
 
 @pytest.fixture
@@ -56,43 +58,42 @@ async def bank(decision_model_client, hindsight_server, llm) -> AsyncIterator[st
 
 
 def _texts(response) -> list[str]:
-    return [result.text for result in response.results]
+    """Each result's fact, without the " | Involving: ..." suffix recall adds."""
+    return [result.text.split(" | ")[0] for result in response.results]
 
 
-async def test_the_models_order_reaches_the_client(decision_model_client, bank):
-    """The stub judges each memory by its overlap with the question, so the Berlin
-    memory leads, and nothing is dropped on a question that asks for no value."""
+async def test_the_models_order_reaches_the_client(decision_model_client, bank, stubs):
+    """The model's order is what comes back even where it goes against relevance, and
+    nothing is dropped on a question that asks for no value."""
+    stubs.rerank.verdicts = {CELLO: 0.9, STALE: 0.7, CURRENT: 0.5, BERLIN: 0.3}
+
     response = await decision_model_client.arecall(bank_id=bank, query="Where did Alice move to?")
 
-    texts = _texts(response)
-    assert texts[0].startswith(BERLIN)
-    assert len(texts) == 4
+    assert _texts(response) == [CELLO, STALE, CURRENT, BERLIN]
 
 
 async def test_a_superseded_value_is_dropped(decision_model_client, bank, stubs):
     """The model says April 5 is the current deadline, so April 1 is gone — not ranked
     last, where a caller reading everything would still see it."""
+    stubs.rerank.verdicts = DEADLINE_VERDICTS
     stubs.rerank.current_value = "April 5"
 
     response = await decision_model_client.arecall(
         bank_id=bank, query="When is the launch deadline for the mobile app?"
     )
 
-    texts = _texts(response)
-    assert any(text.startswith(CURRENT) for text in texts)
-    assert not any(text.startswith(STALE) for text in texts)
+    assert _texts(response) == [CURRENT, CELLO, BERLIN]
 
 
-async def test_a_hedged_verdict_keeps_both_values(decision_model_client, bank):
+async def test_a_hedged_verdict_keeps_both_values(decision_model_client, bank, stubs):
     """Without a confident verdict nothing is dropped: returning both is where recall
     was before, and dropping the wrong one would delete the answer."""
+    stubs.rerank.verdicts = DEADLINE_VERDICTS
     response = await decision_model_client.arecall(
         bank_id=bank, query="When is the launch deadline for the mobile app?"
     )
 
-    texts = _texts(response)
-    assert any(text.startswith(CURRENT) for text in texts)
-    assert any(text.startswith(STALE) for text in texts)
+    assert _texts(response) == [CURRENT, STALE, CELLO, BERLIN]
 
 
 async def test_a_rank_position_is_not_published_or_floored(decision_model_client, bank):

@@ -8,10 +8,12 @@ from hindsight_api.engine.search.decision_reranker import (
     _CONFLICT_INSTRUCTIONS,
     DecisionModelReranker,
     _strip_shared_prefix,
+    _ValuePayload,
     _value_payload,
     rerank_shared_context,
 )
 from hindsight_api.engine.search.reranking import CrossEncoderReranker
+from hindsight_api.engine.token_encoding import count_tokens
 
 
 class _Client:
@@ -41,19 +43,19 @@ class _Client:
         return [qs for _, qs in self.asked if next(iter(qs.values())).instructions == _CONFLICT_INSTRUCTIONS]
 
 
-def _reranker(**client) -> tuple[DecisionModelReranker, _Client]:
-    fake = _Client(**client)
-    return DecisionModelReranker(fake), fake  # type: ignore[arg-type]
+def _reranker(client: _Client) -> DecisionModelReranker:
+    return DecisionModelReranker(client)  # type: ignore[arg-type]
 
 
 class TestRanking:
     async def test_the_scores_order_the_candidates(self):
-        reranker, _ = _reranker(keep={"a": 0.1, "b": 0.9, "c": 0.5})
+        reranker = _reranker(_Client(keep={"a": 0.1, "b": 0.9, "c": 0.5}))
         scores = await reranker.predict([("q", "a"), ("q", "b"), ("q", "c")])
         assert scores[1] > scores[2] > scores[0]
 
     async def test_every_candidate_is_asked_about_and_the_query_is_the_state(self):
-        reranker, client = _reranker()
+        client = _Client()
+        reranker = _reranker(client)
         await reranker.predict([("what changed?", "a"), ("what changed?", "b"), ("what changed?", "c")])
         state, questions = client.asked[0]
         assert state == "Question: what changed?"
@@ -62,14 +64,15 @@ class TestRanking:
 
     async def test_candidates_scored_the_same_keep_their_input_order(self):
         """Equal scores must not reshuffle the pool: input order is the RRF order."""
-        reranker, _ = _reranker()
+        reranker = _reranker(_Client())
         scores = await reranker.predict([("q", f"candidate_{i}") for i in range(4)])
         assert scores[0] > scores[1] > scores[2] > scores[3]
 
     async def test_an_unanswered_candidate_is_kept_behind_the_answered(self):
         """A failed request leaves its candidates unanswered. An unranked candidate is
         recoverable; a deleted one is not."""
-        reranker, client = _reranker(keep={"b": 0.9})
+        client = _Client(keep={"b": 0.9})
+        reranker = _reranker(client)
 
         async def partial(state, questions):
             return {"m1": DecisionAnswer(noul=0.9)}
@@ -133,7 +136,8 @@ class TestSharedPreamble:
     async def test_the_shared_context_goes_in_the_state_once(self):
         """Not onto each candidate: identical text cannot rank them, and it costs the
         window once per candidate."""
-        reranker, client = _reranker()
+        client = _Client()
+        reranker = _reranker(client)
         token = rerank_shared_context.set(self.PROFILE)
         try:
             await reranker.predict([("q", "The deadline is April 5"), ("q", "The team chose Postgres")])
@@ -146,8 +150,20 @@ class TestSharedPreamble:
             "The team chose Postgres",
         ]
 
+    async def test_a_huge_shared_context_is_capped(self):
+        """It rides on every request, so uncapped it could push each one past the ceiling."""
+        client = _Client()
+        reranker = _reranker(client)
+        token = rerank_shared_context.set("profile line\n" * 5_000)
+        try:
+            await reranker.predict([("q", "a"), ("q", "b")])
+        finally:
+            rerank_shared_context.reset(token)
+        assert count_tokens(client.asked[0][0]) <= 4_100
+
     async def test_the_preamble_does_not_reach_the_rank_question(self):
-        reranker, client = _reranker()
+        client = _Client()
+        reranker = _reranker(client)
         await reranker.predict(
             [("q", f"{self.PROFILE}\nThe deadline is April 5"), ("q", f"{self.PROFILE}\nThe team chose Postgres")]
         )
@@ -157,7 +173,7 @@ class TestSharedPreamble:
     def test_the_preamble_does_not_make_unrelated_candidates_conflict(self):
         """Left in, 60 tokens of shared boilerplate put any two candidates over the overlap
         threshold, and two unrelated facts read as a disagreement."""
-        reranker, _ = _reranker()
+        reranker = _reranker(_Client())
         own = _strip_shared_prefix(
             [f"{self.PROFILE}\nThe deadline is April 5, 2024", f"{self.PROFILE}\nThe team chose Postgres"], [0, 1]
         )
@@ -184,7 +200,7 @@ class TestConflictResolution:
     async def test_the_superseded_candidate_is_dropped_not_demoted(self):
         """Reordering is not enough: a generator reading several stale restatements and one
         correction follows the majority, so the stale ones have to leave."""
-        reranker, _ = _reranker(choice="c1")
+        reranker = _reranker(_Client(choice="c1"))
         scores = await reranker.predict(self._pairs)
         assert scores[0] == 0.0, "the superseded candidate must be pruned, not ranked lower"
         assert scores[1] > 0.0
@@ -193,25 +209,39 @@ class TestConflictResolution:
     async def test_a_restatement_is_not_deleted(self):
         """Overlap is a guess about what a candidate says, not a judgement that it is untrue.
         Only a verdict removes anything."""
-        reranker, _ = _reranker(choice=None, confidence=0.0)
+        reranker = _reranker(_Client(choice=None, confidence=0.0))
         scores = await reranker.predict([(self.QUERY, self.STALE), (self.QUERY, f"{self.STALE}, as agreed")])
         assert all(score > 0.0 for score in scores)
+
+    async def test_a_restatement_of_the_winner_with_more_detail_is_kept(self):
+        """Adding a number to the current value still states it: only a candidate missing
+        the winner's value is out of date."""
+        reranker = _reranker(_Client(choice="c1"))
+        detailed = f"{self.CURRENT}, though it may slip, on all 3 platforms"
+        scores = await reranker.predict([*self._pairs, (self.QUERY, detailed)])
+        assert scores[0] == 0.0
+        assert scores[3] > 0.0
+
+    def test_a_month_inside_another_word_is_not_a_month(self):
+        assert _value_payload("The team marched on").months == frozenset()
 
     async def test_a_hedged_verdict_drops_nothing(self):
         """Below the floor the model is not resolving a conflict, and a wrong drop deletes
         the answer."""
-        reranker, _ = _reranker(choice="c1", confidence=0.5)
+        reranker = _reranker(_Client(choice="c1", confidence=0.5))
         assert all(score > 0.0 for score in await reranker.predict(self._pairs))
 
     async def test_a_question_that_does_not_ask_for_a_value_is_left_alone(self):
-        reranker, client = _reranker(choice="c1")
+        client = _Client(choice="c1")
+        reranker = _reranker(client)
         query = "Who owns the first sprint?"
         await reranker.predict([(query, self.STALE), (query, self.CURRENT)])
         assert client.conflicts == []
 
     async def test_candidates_that_are_not_about_the_question_are_left_alone(self):
         """Most candidates carry some incidental number; sharing one is not a conflict."""
-        reranker, client = _reranker(choice="c0")
+        client = _Client(choice="c0")
+        reranker = _reranker(client)
         await reranker.predict(
             [
                 (self.QUERY, "Version 1 of the logo was approved by the design team"),
@@ -223,11 +253,11 @@ class TestConflictResolution:
     async def test_an_unanswered_conflict_keeps_every_candidate(self):
         """Recall returning a stale candidate beside the current one is where it was
         before; failing the whole rerank over it would be worse."""
-        reranker, _ = _reranker(choice="c1", conflicts_fail=True)
+        reranker = _reranker(_Client(choice="c1", conflicts_fail=True))
         assert all(score > 0.0 for score in await reranker.predict(self._pairs))
 
     def test_a_terse_correction_conflicts_with_what_it_corrects(self):
-        reranker, _ = _reranker()
+        reranker = _reranker(_Client())
         assert reranker._conflict_clusters(self.QUERY, [self.STALE, self.CURRENT], [0, 1]) == [[0, 1]]
 
     async def test_a_confident_verdict_reaches_every_stale_restatement(self):
@@ -235,13 +265,13 @@ class TestConflictResolution:
         Dropping only the question's own members leaves the majority stale."""
         stale = [f"{self.STALE} (restated {n})" for n in range(5)]
         docs = [self.CURRENT, *stale]
-        reranker, _ = _reranker(choice="c0", confidence=0.95)
+        reranker = _reranker(_Client(choice="c0", confidence=0.95))
         superseded = await reranker._superseded(self.QUERY, docs, list(range(len(docs))))
         assert 0 not in superseded, "the winner must survive"
         assert len(superseded) == len(stale)
 
     def test_a_crowded_conflict_is_narrowed_not_skipped(self):
-        reranker, _ = _reranker()
+        reranker = _reranker(_Client())
         stale = [f"{self.STALE} in phase {n}" for n in range(reranker.CONFLICT_MAX_CLUSTER + 5)]
         docs = [self.CURRENT, *stale]
         clusters = reranker._conflict_clusters(self.QUERY, docs, list(range(len(docs))))
@@ -251,7 +281,7 @@ class TestConflictResolution:
 
     def test_a_cluster_is_the_anchor_and_its_direct_peers_only(self):
         """Grouping transitively collapsed a whole pool into one component."""
-        reranker, _ = _reranker()
+        reranker = _reranker(_Client())
         docs = [self.STALE, self.CURRENT, self.OTHER]
         assert reranker._conflict_clusters(self.QUERY, docs, [0, 1, 2]) == [[0, 1]]
 
@@ -263,12 +293,14 @@ class TestDateIsMetadataNotContent:
     DATE = "[Date: June 05, 2024 (2024-06-05)] "
 
     def test_two_candidates_sharing_a_date_do_not_conflict_because_of_it(self):
-        reranker, _ = _reranker()
+        reranker = _reranker(_Client())
         docs = [f"{self.DATE}The team chose Postgres for storage", f"{self.DATE}The deadline moved to April 5"]
         assert reranker._conflict_clusters("What is the deadline?", docs, [0, 1]) == []
 
     def test_the_dates_digits_stay_out_of_the_value_payload(self):
-        assert _value_payload(f"{self.DATE}the deadline is April 5") == (frozenset({5}), frozenset({"april"}))
+        assert _value_payload(f"{self.DATE}the deadline is April 5") == _ValuePayload(
+            frozenset({5}), frozenset({"april"})
+        )
 
     def test_the_date_still_reaches_the_judged_text(self):
         own = _strip_shared_prefix([f"{self.DATE}alpha", f"{self.DATE}beta"], [0, 1])
