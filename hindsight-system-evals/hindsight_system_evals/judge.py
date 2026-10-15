@@ -113,10 +113,17 @@ async def _judge_once(response: str, criteria: str, context: str | None, tempera
     return Verdict(bool(parsed.get("meets_criteria")), str(parsed.get("reasoning", "")))
 
 
-async def evaluate(response: str, criteria: str, context: str | None = None) -> Verdict:
-    """Grade ``response`` against ``criteria``, smoothing single-call judge noise."""
+async def evaluate(response: str, criteria: str, context: str | None = None, *, confirm_met: bool = False) -> Verdict:
+    """Grade ``response`` against ``criteria``, smoothing single-call judge noise.
+
+    By default a "not met" is the verdict that gets re-asked, because a failed
+    requirement is what fails a run. A *trap* criterion inverts that: there "met"
+    is the failure, so ``confirm_met=True`` re-asks a "met" instead. Smoothing the
+    wrong side turns noise into a hit — a correct "not met" overruled by two
+    lenient re-asks at higher temperature.
+    """
     primary = await _judge_once(response, criteria, context, temperature=0.0)
-    if primary.meets_criteria or _CONFIRMATIONS <= 0:
+    if primary.meets_criteria != confirm_met or _CONFIRMATIONS <= 0:
         return primary
 
     confirmations = await asyncio.gather(
@@ -126,5 +133,5 @@ async def evaluate(response: str, criteria: str, context: str | None = None) -> 
     verdicts = [primary] + [v for v in confirmations if isinstance(v, Verdict)]
     met = sum(1 for v in verdicts if v.meets_criteria)
     if met > len(verdicts) - met:
-        return Verdict(True, f"majority of {len(verdicts)} judges met the criteria (primary overruled as noise)")
-    return Verdict(False, f"{len(verdicts) - met}/{len(verdicts)} judges agree: {primary.reasoning}")
+        return Verdict(True, f"{met}/{len(verdicts)} judges met the criteria: {primary.reasoning}")
+    return Verdict(False, f"{len(verdicts) - met}/{len(verdicts)} judges did not: {primary.reasoning}")

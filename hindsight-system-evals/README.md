@@ -263,6 +263,102 @@ touching the corpus, so the smoke run faces the same distractors.
 `queries.jsonl`, `qrels/test.tsv`); the graded nDCG already handles NFCorpus's and
 TREC-COVID's 0/1/2 qrels.
 
+**`test_09` — consolidation.** Facts are retained in waves (as written, so only
+consolidation is graded) and the real consolidation runs after each one; the
+observations left behind are graded. Every scenario reproduces a failure that
+shipped or a rule the consolidation prompt promises:
+
+- restatements update one observation, never grow siblings (#1566, #3249);
+- a newer fact supersedes the old belief everywhere it appears (#1151, #3248, #3475);
+- recency is when a fact was *stated*, not when it was retained (#2550);
+- a correction retires the false belief (#3509);
+- one facet per observation, matched by entity, no arithmetic (#814, the horse farm);
+- a member leaving a list updates the list too; a vague reference gets resolved;
+- different people and different numbers stay apart (#5497);
+- observations keep their facts' language, and a mixed update is rewritten, not patched (#3166/#3181);
+- the mission wins: it can keep chatter (#525) or forbid names (#4619); without one, chatter is dropped;
+- the same facts under different tags in a `shared` scope merge (#2202, #3564);
+- in a bank of 30 near-identical services, every later fact is shown the
+  observation it belongs to (read from the LLM trace, so a recall miss and a
+  model miss are told apart), changes land as current, and the confusable
+  neighbours survive (#1907, #2000) — `--full` only, as it seeds ~130 facts; a second
+  bank of 20 people whose names come in lookalike pairs (Maria / Mario) checks the same on
+  personal memory.
+
+Each wave also runs deterministic checks: evidence exists and matches
+`proof_count` (#4955), dates come from the evidence (#501, #3477), no prompt
+metadata leaks into the text (#2544), every durable fact is cited (#5054), and a
+wave of pure restatements adds no observation. `HINDSIGHT_EVAL_CONSOLIDATION_DUMP=DIR`
+writes every consolidation call of each scenario (what the model was shown, what
+it answered) to `DIR/<scenario>.json` — the first thing to read on a failure.
+
+Each scenario also reports what consolidating it cost, read back from the server's
+LLM trace: calls, input / cached / output tokens, LLM seconds, and wall time from
+retain to settled. `HINDSIGHT_EVAL_CONSOLIDATION_COST=FILE` appends one JSON line per
+scenario with that and whether it passed, so two configurations can be compared on
+cost *and* outcome — a cheaper setting only counts at the same quality:
+
+```bash
+HINDSIGHT_EVAL_CONSOLIDATION_COST=/tmp/base.jsonl uv run pytest evals/test_09_consolidation.py --full
+# any server setting, for every bank of the run: HINDSIGHT_EVAL_SET_<NAME> -> HINDSIGHT_API_<NAME>
+HINDSIGHT_EVAL_SET_CONSOLIDATION_MAX_TOKENS=256 \
+  HINDSIGHT_EVAL_CONSOLIDATION_COST=/tmp/try.jsonl uv run pytest evals/test_09_consolidation.py --full
+```
+
+Speaker attribution is decided at
+retain and is out of scope; failure handling and scope mechanics are
+deterministic and live in `hindsight-system-tests`.
+
+### Consolidation capability inventory
+
+Everything consolidation promises, from the docs (`docs/developer/observations`), the
+prompt (`engine/consolidation/prompts.py`), the code (`engine/consolidation/`) and the
+issue/PR history — and what grades it. "eval" = a `test_09` scenario (real model);
+"system" = `hindsight-system-tests` (stub model); "unit" = `hindsight-api-slim/tests`.
+
+**What the model decides — graded by `test_09` on gemini-3.1-flash-lite**
+- Restatements update one observation; no near-duplicate siblings (rule 1; #1566, #3249, #1759) — eval `restatements-merge`, `shared-scope-merges-across-tags`
+- One facet per observation; a count is its own facet (rule 2; #814) — eval `horse-farm`
+- Match by entity, not topic: "sold Buttercup" never touches Daisy (rule 3; #814) — eval `horse-farm`
+- State changes are UPDATEs to the current state, keeping what was replaced (rule 4; #3248) — eval `retired-conventions`, `employer-supersedes`
+- A change cascades to every observation stating the old value, list members included (rule 5; #1151) — eval `employer-supersedes`, `cascade-to-group`, `noisy-service-catalogue`
+- Vague references are resolved by later facts (rule 6) — eval `resolve-reference`
+- Significant events are history, never deleted (rule 7; #814) — eval `horse-farm`
+- No arithmetic or deduction on counts (rule 8) — eval `no-arithmetic`, `horse-farm`
+- Different people, entities and numbers stay apart, lookalike names included (rule 9; #5497, #1725) — eval `distinct-entities-stay-apart`, `noisy-service-catalogue`
+- Recency is `mentioned_at`, not arrival order; older news never overwrites (#2550) — eval `recency-is-when-stated`
+- Chatter is skipped under the default mission — eval `default-drops-chatter`
+- An update keeps everything the observation said — eval `noisy-service-catalogue` (neighbours, coverage)
+- Every durable fact lands in an observation (#5054) — eval coverage check on every wave
+- A correction retires a false belief (#3509) — eval `correction-retires-false-belief`
+- Retired settings and tools stop reading as current (#3248, #3475) — eval `retired-conventions`
+- The mission wins over the rules: it can keep ephemera (#525) or forbid names (#4619) — eval `mission-keeps-ephemeral`, `mission-forbids-names`
+- Observations keep their facts' language; a mixed update is rewritten (#3166, #3181, #4016) — eval `language-chinese`, `language-mixed-update`; unit `test_consolidation_output_language.py`
+- A configured output language overrides (#3776) — unit `test_consolidation_output_language.py`
+- Observation text carries no prompt metadata, JSON or asides (#2544) — eval leak check on every wave
+- In a large bank of near-identical entities the recall still surfaces the right observation (#1907) — eval `noisy-service-catalogue` (30 services) and `noisy-personal-contacts` (20 people in lookalike name pairs), `twin` check from the LLM trace
+
+**What the server guarantees — deterministic**
+- Source facts survive; observations cite evidence that resolves — system `test_20`; eval evidence check
+- `proof_count` equals the evidence count, including multi-fact creates (#4955) — eval evidence check
+- Dates come from the evidence: earliest start, latest mention, none invented (#501, #3477) — eval date check; unit `test_consolidation_temporal_merge.py`
+- One response is applied atomically with its `consolidated_at` stamps (#3876) — unit `test_consolidation_batch_atomicity.py`
+- Failed calls bisect, then mark failed; recovery is explicit (#601) — system `test_21`
+- Semantic near-twin merge on create and update, number- and negation-aware (#1977, #2000) — unit `test_consolidation_dedup.py`
+- Exact-text duplicate creates are dropped (#1907) — unit `test_consolidation_dedup.py`
+- Deletes must name an `observation_id`; a malformed one no longer voids the response (#4152, #4183) — unit `test_consolidation_delete_schema.py`, `test_consolidation_delete_prompt_llm.py`
+- Observation scopes (`combined`, `per_tag`, `all_combinations`, `shared`, explicit) and strategies (#2202, #4619) — system `test_24`, `test_29`
+- Per-scope observation caps (#729, #2163) — system `test_29`; unit `test_observation_scope_limit_resolution.py`
+- Observation history snapshots — unit `test_observation_history.py`
+- Deleting or replacing a document removes and rebuilds its observations (#429, #3294) — system `test_25`; unit `test_delta_retain_orphan_observations.py`
+- Trigger, dedup and serialisation of consolidation jobs (#4368) — system `test_26`, `test_28`
+- Observations in recall, `prefer_observations`, source facts (#2311) — system `test_27`
+- A bank's own observations mission on a noisy bank: keeps what the mission asks, drops the small talk it leaves out — eval `noisy-service-catalogue-mission`
+
+**Out of scope here, deliberately** — speaker attribution is decided at retain (#4572, #1680)
+and belongs with the retain suites; operational behaviour (timeouts #3301/#4715, quota
+handling #4160, wall-clock ceilings) is not a quality property.
+
 ## The corpus
 
 `hindsight_system_evals/corpus.py` generates facts and their gold labels
