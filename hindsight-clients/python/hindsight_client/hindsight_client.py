@@ -2910,6 +2910,7 @@ class Hindsight:
         # Recall settings
         recall_max_tokens: int | None = None,
         recall_include_chunks: bool | None = None,
+        recall_prefer_observations: bool | None = None,
         recall_chunks_max_tokens: int | None = None,
         recall_budget_function: str | None = None,
         recall_budget_fixed_low: int | None = None,
@@ -2974,6 +2975,7 @@ class Hindsight:
                 consolidation_source_facts_max_tokens_per_observation=consolidation_source_facts_max_tokens_per_observation,
                 recall_max_tokens=recall_max_tokens,
                 recall_include_chunks=recall_include_chunks,
+                recall_prefer_observations=recall_prefer_observations,
                 recall_chunks_max_tokens=recall_chunks_max_tokens,
                 recall_budget_function=recall_budget_function,
                 recall_budget_fixed_low=recall_budget_fixed_low,
@@ -3037,6 +3039,7 @@ class Hindsight:
         # Recall settings
         recall_max_tokens: int | None = None,
         recall_include_chunks: bool | None = None,
+        recall_prefer_observations: bool | None = None,
         recall_chunks_max_tokens: int | None = None,
         recall_budget_function: str | None = None,
         recall_budget_fixed_low: int | None = None,
@@ -3117,6 +3120,7 @@ class Hindsight:
                 individual observation in the consolidation prompt.
             recall_max_tokens: Token budget for facts returned by recall.
             recall_include_chunks: Include source chunks in recall results.
+            recall_prefer_observations: Default ``prefer_observations`` for recall requests that omit it.
             recall_chunks_max_tokens: Token budget for those chunks.
             recall_budget_function: How the per-query result budget is derived: 'fixed' or 'adaptive'.
             recall_budget_fixed_low: Fixed budget for low-breadth queries.
@@ -3176,6 +3180,7 @@ class Hindsight:
                 "consolidation_source_facts_max_tokens_per_observation": consolidation_source_facts_max_tokens_per_observation,
                 "recall_max_tokens": recall_max_tokens,
                 "recall_include_chunks": recall_include_chunks,
+                "recall_prefer_observations": recall_prefer_observations,
                 "recall_chunks_max_tokens": recall_chunks_max_tokens,
                 "recall_budget_function": recall_budget_function,
                 "recall_budget_fixed_low": recall_budget_fixed_low,

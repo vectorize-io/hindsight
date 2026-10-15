@@ -983,6 +983,8 @@ export class HindsightClient {
       recallMaxTokens?: number;
       /** Include source chunks in recall results. */
       recallIncludeChunks?: boolean;
+      /** Default prefer_observations for recall requests that omit it. */
+      recallPreferObservations?: boolean;
       /** Token budget for those chunks. */
       recallChunksMaxTokens?: number;
       /** How the per-query result budget is derived: 'fixed' or 'adaptive'. */
@@ -1085,6 +1087,8 @@ export class HindsightClient {
     if (options.recallMaxTokens !== undefined) updates.recall_max_tokens = options.recallMaxTokens;
     if (options.recallIncludeChunks !== undefined)
       updates.recall_include_chunks = options.recallIncludeChunks;
+    if (options.recallPreferObservations !== undefined)
+      updates.recall_prefer_observations = options.recallPreferObservations;
     if (options.recallChunksMaxTokens !== undefined)
       updates.recall_chunks_max_tokens = options.recallChunksMaxTokens;
     if (options.recallBudgetFunction !== undefined)
