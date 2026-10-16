@@ -7,9 +7,12 @@ user-installed plugins (e.g. hindsight-memory). Their Stop hooks then retain
 the subprocess's own transcript back into the same bank, causing a recursive
 feedback loop documented in issue #1751.
 
-The fix redirects the subprocess to an isolated config dir via env. This test
-mocks the SDK to capture the ClaudeAgentOptions passed at call time and asserts
-the isolation env is present on both code paths (`call` and `call_with_tools`).
+The fix redirects the subprocess to an isolated config dir via env. That alone
+still let the CLI load ./.claude/settings.json from an inherited $HOME cwd as
+project settings (issue #5542), so the subprocess also runs in the isolated dir
+with no setting sources. This test mocks the SDK to capture the
+ClaudeAgentOptions passed at call time and asserts all of it on both code paths
+(`call` and `call_with_tools`).
 """
 
 from __future__ import annotations
