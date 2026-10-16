@@ -27,6 +27,8 @@ class _RefuseEverything(OperationValidatorExtension):
     def __init__(self) -> None:
         super().__init__({})
 
+    # The three abstract hooks must be defined for the class to instantiate; the
+    # __getattribute__ below answers every other validate_* the same way.
     async def validate_retain(self, ctx: Any) -> ValidationResult:
         return ValidationResult.reject("refused", 403)
 

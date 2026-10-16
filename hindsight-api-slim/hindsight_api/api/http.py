@@ -299,6 +299,10 @@ logger = logging.getLogger(__name__)
 def _internal_error(exc: Exception, where: str) -> HTTPException:
     """Log an unhandled handler exception with its traceback, and map it to a 500.
 
+    Two exceptions keep their own status instead: a validator rejection (the
+    validator's code — routes that forgot to catch it used to answer 500, #5448)
+    and a store that shed the request (503).
+
     Every route's catch-all used to do this inline — 72 byte-identical copies of
     the same four lines, plus seven near-copies that logged the traceback without
     the message. The duplication is why the policy had already drifted: what gets
@@ -313,8 +317,6 @@ def _internal_error(exc: Exception, where: str) -> HTTPException:
     ``raise _internal_error(e, ...)`` and keep the ``raise`` visible at the
     handler instead of hidden behind a call.
     """
-    # A validator rejection raised past a route's own catch must keep the
-    # validator's status, not turn into a 500 (issue #5448).
     if isinstance(exc, OperationValidationError):
         return HTTPException(status_code=exc.status_code, detail=exc.reason)
     unavailable = _store_unavailable(exc)
