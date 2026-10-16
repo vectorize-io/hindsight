@@ -1822,7 +1822,8 @@ export function DocumentsView() {
             {totalPages > 1 && (
               <div className="flex items-center justify-between mt-3 pt-3 border-t">
                 <div className="text-xs text-muted-foreground">
-                  {offset + 1}-{Math.min(offset + ITEMS_PER_PAGE, total)} of {total}
+                  {offset + 1}-{Math.min(offset + ITEMS_PER_PAGE, total)} of{" "}
+                  {total.toLocaleString()}
                   {totalIsEstimate ? "+" : ""}
                 </div>
                 <div className="flex items-center gap-1">

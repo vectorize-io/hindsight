@@ -94,6 +94,8 @@ async def test_the_listing_search_matches_the_text_and_says_where(client, bank_w
     fields that matched — the control plane highlights those cells (#5214)."""
     by_text = await client.documents.list_documents(bank_with_document, q="CELLO")
     assert by_text.total == 1
+    # Under the match cap the count is exact, and the client says so.
+    assert by_text.total_is_estimate is False
     assert [(d.id, d.matched_fields) for d in by_text.items] == [(DOCUMENT_ID, ["original_text"])]
 
     by_id = await client.documents.list_documents(bank_with_document, q="profile-")
@@ -108,3 +110,4 @@ async def test_the_listing_search_matches_the_text_and_says_where(client, bank_w
 
     unsearched = await client.documents.list_documents(bank_with_document)
     assert unsearched.items[0].matched_fields == []
+    assert unsearched.total_is_estimate is False

@@ -3910,6 +3910,8 @@ def _register_list_documents(mcp: FastMCP, memory: MemoryEngine, config: MCPTool
                 q: Optional search query to filter documents
                 limit: Maximum number of results (default: 100)
                 offset: Pagination offset (default: 0). Page until the returned items add up to 'total'.
+                    A 'q' search is capped: when 'total_is_estimate' is true there are more
+                    matches than 'total' — narrow 'q' to reach them.
                 bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
             """
             return await _run_tool(
@@ -3938,6 +3940,8 @@ def _register_list_documents(mcp: FastMCP, memory: MemoryEngine, config: MCPTool
                 q: Optional search query to filter documents
                 limit: Maximum number of results (default: 100)
                 offset: Pagination offset (default: 0). Page until the returned items add up to 'total'.
+                    A 'q' search is capped: when 'total_is_estimate' is true there are more
+                    matches than 'total' — narrow 'q' to reach them.
             """
             return await _run_tool(
                 config,

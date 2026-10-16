@@ -13467,7 +13467,8 @@ class MemoryEngine(MemoryEngineInterface):
 
         Args:
             bank_id: bank ID (required)
-            search_query: Case-insensitive substring filter on document ID or text (unindexed, for browsing)
+            search_query: Case-insensitive substring filter on document ID or text (for browsing). Capped:
+                past the cap ``total`` is a lower bound and ``total_is_estimate`` is true.
             tags: Filter by tags
             tags_match: How to match tags (any, all, any_strict, all_strict)
             time_field: Time axis to filter and order by — ``created_at`` (when the
@@ -13480,7 +13481,7 @@ class MemoryEngine(MemoryEngineInterface):
             request_context: Request context for authentication.
 
         Returns:
-            Dict with items (list of documents without original_text) and total count
+            Dict with items (list of documents without original_text), total count and ``total_is_estimate``
         """
         await self._authenticate_tenant(request_context)
         from hindsight_api.extensions import BankReadOperation
