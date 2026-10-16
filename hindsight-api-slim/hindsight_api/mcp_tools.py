@@ -1268,6 +1268,12 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             query_timestamp: str | None = None,
             min_scores: dict | None = None,
             temporal_window: dict | None = None,
+            include_chunks: bool = False,
+            max_chunk_tokens: int = 8192,
+            include_entities: bool = False,
+            max_entity_tokens: int = 500,
+            include_source_facts: bool = False,
+            max_source_facts_tokens: int = 4096,
             bank_id: str | None = None,
         ) -> str | dict:
             """
@@ -1306,6 +1312,17 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     extracting dates from the query text — pass it when you already know the range you mean.
                     It ranks memories dated inside the window higher; it does NOT drop memories dated outside
                     it, so do not use it to restrict results to a period.
+                include_chunks: Also return the source text chunks the matched facts were extracted from.
+                    Use it when you need exact strings (paths, IDs, commands) that extraction may have
+                    paraphrased. Default: False.
+                max_chunk_tokens: Max tokens of source chunks returned when include_chunks is set (default: 8192).
+                include_entities: Also return observations about the entities mentioned in the results.
+                    Default: False.
+                max_entity_tokens: Max tokens of entity observations when include_entities is set (default: 500).
+                include_source_facts: For observation results, also return the facts they were built from.
+                    Default: False.
+                max_source_facts_tokens: Max tokens of source facts when include_source_facts is set
+                    (default: 4096).
                 bank_id: Optional bank to search in (defaults to session bank). Use for cross-bank operations.
             """
             try:
@@ -1329,6 +1346,12 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     "prefer_observations": prefer_observations,
                     "budget": budget_enum,
                     "max_tokens": max_tokens,
+                    "include_chunks": include_chunks,
+                    "max_chunk_tokens": max_chunk_tokens,
+                    "include_entities": include_entities,
+                    "max_entity_tokens": max_entity_tokens,
+                    "include_source_facts": include_source_facts,
+                    "max_source_facts_tokens": max_source_facts_tokens,
                     "request_context": _get_request_context(config),
                 }
                 if tags is not None:
@@ -1373,6 +1396,12 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             query_timestamp: str | None = None,
             min_scores: dict | None = None,
             temporal_window: dict | None = None,
+            include_chunks: bool = False,
+            max_chunk_tokens: int = 8192,
+            include_entities: bool = False,
+            max_entity_tokens: int = 500,
+            include_source_facts: bool = False,
+            max_source_facts_tokens: int = 4096,
         ) -> dict:
             """
             Args:
@@ -1410,6 +1439,17 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     extracting dates from the query text — pass it when you already know the range you mean.
                     It ranks memories dated inside the window higher; it does NOT drop memories dated outside
                     it, so do not use it to restrict results to a period.
+                include_chunks: Also return the source text chunks the matched facts were extracted from.
+                    Use it when you need exact strings (paths, IDs, commands) that extraction may have
+                    paraphrased. Default: False.
+                max_chunk_tokens: Max tokens of source chunks returned when include_chunks is set (default: 8192).
+                include_entities: Also return observations about the entities mentioned in the results.
+                    Default: False.
+                max_entity_tokens: Max tokens of entity observations when include_entities is set (default: 500).
+                include_source_facts: For observation results, also return the facts they were built from.
+                    Default: False.
+                max_source_facts_tokens: Max tokens of source facts when include_source_facts is set
+                    (default: 4096).
             """
             try:
                 target_bank = await _resolve_bank(config, None)
@@ -1432,6 +1472,12 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     "prefer_observations": prefer_observations,
                     "budget": budget_enum,
                     "max_tokens": max_tokens,
+                    "include_chunks": include_chunks,
+                    "max_chunk_tokens": max_chunk_tokens,
+                    "include_entities": include_entities,
+                    "max_entity_tokens": max_entity_tokens,
+                    "include_source_facts": include_source_facts,
+                    "max_source_facts_tokens": max_source_facts_tokens,
                     "request_context": _get_request_context(config),
                 }
                 if tags is not None:
