@@ -21,6 +21,7 @@ storage instead of the seam.
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from datetime import datetime, timezone
@@ -32,10 +33,12 @@ from hindsight_api.engine.chunk_ids import build_chunk_id
 from hindsight_api.engine.memories import create_memories, get_memories, set_memories
 from hindsight_api.engine.memories.base import (
     DOC_META_FILE_STORAGE_KEY,
+    DOC_META_RETAIN_PARAMS,
     EntityPrunePassResult,
     MemoriesExtension,
     RecallArms,
     RelinkPassResult,
+    RetagResult,
     RetainResult,
     RetainSession,
     ScanPage,
@@ -123,6 +126,13 @@ class InMemoryMemories(MemoriesExtension):
         doc = self.documents.get(str(document_id))
         if doc is not None:
             doc["tags"] = list(tags)
+
+    async def set_document_observation_scopes(self, *, bank_id, document_id, observation_scopes):
+        doc = self.documents.get(str(document_id))
+        if doc is not None:
+            params = json.loads(doc["metadata"].get(DOC_META_RETAIN_PARAMS) or "{}")
+            params["observation_scopes"] = observation_scopes
+            doc["metadata"][DOC_META_RETAIN_PARAMS] = json.dumps(params)
 
     async def set_document_file(self, *, bank_id, document_id, storage_key, original_name, content_type):
         self.calls.append("set_document_file")
@@ -2523,13 +2533,13 @@ async def test_a_resumed_streaming_retain_reports_a_store_owned_documents_unit_i
 
 
 # ---------------------------------------------------------------------------
-# Retag requeue gate (#4969). The base `retag_document_memories` cleared the consolidation
-# marker on every retag, even one that invalidated nothing — so the document's memories were
-# re-consolidated for no reason, and the marker saying they already had been was lost.
+# Retag requeue gate. A memory is requeued exactly when the retag moves the observation scopes
+# it resolves to (#5593) — whether or not it had an observation there, since it was never
+# consolidated in its new scope (#5309). One whose scopes stay put keeps its marker (#4969).
 # ---------------------------------------------------------------------------
 
 
-async def _retag(store: InMemoryMemories) -> int:
+async def _retag(store: InMemoryMemories) -> RetagResult:
     return await store.retag_document_memories(
         conn=None,
         ops=None,
@@ -2548,14 +2558,46 @@ def _consolidated_fact(when: datetime) -> StoredMemory:
     )
 
 
-async def test_a_retag_that_deletes_no_observation_keeps_the_consolidation_marker():
+async def test_a_retag_that_moves_a_memory_requeues_it_without_an_observation():
+    store = InMemoryMemories({})
+    store.rows["fact-1"] = _consolidated_fact(datetime.now(timezone.utc))
+
+    result = await _retag(store)
+    assert result == RetagResult(invalidated_observations=0, requeued_units=1)
+    assert store.rows["fact-1"].tags == ["new"]
+    assert store.rows["fact-1"].consolidated_at is None
+
+
+async def test_a_scope_only_change_keeps_tags_and_requeues_only_what_moved():
     when = datetime.now(timezone.utc)
     store = InMemoryMemories({})
     store.rows["fact-1"] = _consolidated_fact(when)
+    store.rows["fact-2"] = StoredMemory(
+        unit_id="fact-2",
+        text="another fact",
+        fact_type="world",
+        document_id="doc-1",
+        tags=["old"],
+        observation_scopes=[["old"]],
+        consolidated_at=when,
+    )
 
-    assert await _retag(store) == 0
-    assert store.rows["fact-1"].tags == ["new"]
+    result = await store.retag_document_memories(
+        conn=None,
+        ops=None,
+        fq_table=None,
+        bank_id="bank-x",
+        document_id="doc-1",
+        tags=None,
+        retagged=lambda old: list(old or []),
+        rescoped=lambda _scopes: '[["old"]]',
+    )
+
+    # fact-1 (combined over ["old"]) and fact-2 ([["old"]]) both resolve to {"old"}: no move.
+    assert result == RetagResult()
+    assert store.rows["fact-1"].tags == ["old"]
     assert store.rows["fact-1"].consolidated_at == when
+    assert store.rows["fact-2"].consolidated_at == when
 
 
 async def test_a_retag_that_deletes_an_observation_requeues_its_sources():
@@ -2565,7 +2607,7 @@ async def test_a_retag_that_deletes_an_observation_requeues_its_sources():
         unit_id="obs-1", text="an observation", fact_type="observation", source_memory_ids=["fact-1"]
     )
 
-    assert await _retag(store) == 1
+    assert await _retag(store) == RetagResult(invalidated_observations=1, requeued_units=1)
     assert "obs-1" not in store.rows
     assert store.rows["fact-1"].consolidated_at is None
 
@@ -2583,7 +2625,7 @@ async def test_a_retag_under_shared_scopes_keeps_its_observations():
         unit_id="obs-1", text="an observation", fact_type="observation", source_memory_ids=["fact-1"]
     )
 
-    assert await _retag(store) == 0
+    assert await _retag(store) == RetagResult()
     assert "obs-1" in store.rows
     assert store.rows["fact-1"].tags == ["new"]
     assert store.rows["fact-1"].consolidated_at == when

@@ -20,6 +20,7 @@ var _ MappedNullable = &UpdateDocumentRequest{}
 // UpdateDocumentRequest Request model for updating a document's mutable fields.
 type UpdateDocumentRequest struct {
 	Tags []string `json:"tags,omitempty"`
+	ObservationScopes NullableUpdateDocumentObservationScopes `json:"observation_scopes,omitempty"`
 }
 
 // NewUpdateDocumentRequest instantiates a new UpdateDocumentRequest object
@@ -72,6 +73,48 @@ func (o *UpdateDocumentRequest) SetTags(v []string) {
 	o.Tags = v
 }
 
+// GetObservationScopes returns the ObservationScopes field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *UpdateDocumentRequest) GetObservationScopes() UpdateDocumentObservationScopes {
+	if o == nil || IsNil(o.ObservationScopes.Get()) {
+		var ret UpdateDocumentObservationScopes
+		return ret
+	}
+	return *o.ObservationScopes.Get()
+}
+
+// GetObservationScopesOk returns a tuple with the ObservationScopes field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *UpdateDocumentRequest) GetObservationScopesOk() (*UpdateDocumentObservationScopes, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.ObservationScopes.Get(), o.ObservationScopes.IsSet()
+}
+
+// HasObservationScopes returns a boolean if a field has been set.
+func (o *UpdateDocumentRequest) HasObservationScopes() bool {
+	if o != nil && o.ObservationScopes.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetObservationScopes gets a reference to the given NullableUpdateDocumentObservationScopes and assigns it to the ObservationScopes field.
+func (o *UpdateDocumentRequest) SetObservationScopes(v UpdateDocumentObservationScopes) {
+	o.ObservationScopes.Set(&v)
+}
+// SetObservationScopesNil sets the value for ObservationScopes to be an explicit nil
+func (o *UpdateDocumentRequest) SetObservationScopesNil() {
+	o.ObservationScopes.Set(nil)
+}
+
+// UnsetObservationScopes ensures that no value is present for ObservationScopes, not even an explicit nil
+func (o *UpdateDocumentRequest) UnsetObservationScopes() {
+	o.ObservationScopes.Unset()
+}
+
 func (o UpdateDocumentRequest) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -84,6 +127,9 @@ func (o UpdateDocumentRequest) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	if o.Tags != nil {
 		toSerialize["tags"] = o.Tags
+	}
+	if o.ObservationScopes.IsSet() {
+		toSerialize["observation_scopes"] = o.ObservationScopes.Get()
 	}
 	return toSerialize, nil
 }

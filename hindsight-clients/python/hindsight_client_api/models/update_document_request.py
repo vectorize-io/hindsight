@@ -19,6 +19,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from hindsight_client_api.models.update_document_observation_scopes import UpdateDocumentObservationScopes
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -27,7 +28,8 @@ class UpdateDocumentRequest(BaseModel):
     Request model for updating a document's mutable fields.
     """ # noqa: E501
     tags: Optional[List[StrictStr]] = None
-    __properties: ClassVar[List[str]] = ["tags"]
+    observation_scopes: Optional[UpdateDocumentObservationScopes] = None
+    __properties: ClassVar[List[str]] = ["tags", "observation_scopes"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -68,10 +70,18 @@ class UpdateDocumentRequest(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of observation_scopes
+        if self.observation_scopes:
+            _dict['observation_scopes'] = self.observation_scopes.to_dict()
         # set to None if tags (nullable) is None
         # and model_fields_set contains the field
         if self.tags is None and "tags" in self.model_fields_set:
             _dict['tags'] = None
+
+        # set to None if observation_scopes (nullable) is None
+        # and model_fields_set contains the field
+        if self.observation_scopes is None and "observation_scopes" in self.model_fields_set:
+            _dict['observation_scopes'] = None
 
         return _dict
 
@@ -85,7 +95,8 @@ class UpdateDocumentRequest(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "tags": obj.get("tags")
+            "tags": obj.get("tags"),
+            "observation_scopes": UpdateDocumentObservationScopes.from_dict(obj["observation_scopes"]) if obj.get("observation_scopes") is not None else None
         })
         return _obj
 

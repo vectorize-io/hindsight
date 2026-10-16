@@ -1069,11 +1069,18 @@ export class ControlPlaneClient {
   /**
    * Update tags on a document and its associated memory units
    */
-  async updateDocument(documentId: string, bankId: string, tags: string[]) {
+  async updateDocument(
+    documentId: string,
+    bankId: string,
+    update: {
+      tags?: string[];
+      observation_scopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
+    }
+  ) {
     return this.fetchApi<{ success: boolean }>(documentApi(documentId, bankId), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tags }),
+      body: JSON.stringify(update),
     });
   }
 

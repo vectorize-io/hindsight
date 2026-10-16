@@ -31,6 +31,7 @@ from ..base import (
     DocumentSourceUnits,
     DocumentTags,
     ObservationChunkIds,
+    RetagResult,
     StoredMemory,
 )
 from . import counts
@@ -371,9 +372,16 @@ async def documents_tags(
 
 
 async def update_document_tags(
-    *, conn, fq_table: Callable[[str], str], bank_id: str, document_id: str, tags: list[str] | None
+    *,
+    conn,
+    fq_table: Callable[[str], str],
+    bank_id: str,
+    document_id: str,
+    tags: list[str] | None,
+    observation_scopes: list | str | None = None,
 ) -> bool:
-    """Stamp the `documents` row (and set its tags when given). ``False`` when there is no row."""
+    """Stamp the `documents` row (and set its tags, and the observation scopes its retain params
+    carry, when given). ``False`` when there is no row."""
     set_parts: list[str] = ["updated_at = now()"]
     params: list[Any] = []
     p = 1
@@ -393,6 +401,22 @@ async def update_document_tags(
         """,
         *params,
     )
+    if doc_id_found and observation_scopes is not None:
+        # Reprocess re-retains from these params, so a scope left behind here would quietly
+        # come back the next time the document is reprocessed. The UPDATE above holds the row.
+        raw = await conn.fetchval(
+            f"SELECT retain_params FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+            document_id,
+            bank_id,
+        )
+        retain_params = (conn.parse_json(raw) if raw else None) or {}
+        retain_params["observation_scopes"] = observation_scopes
+        await conn.execute(
+            f"UPDATE {fq_table('documents')} SET retain_params = $1 WHERE id = $2 AND bank_id = $3",
+            json.dumps(retain_params),
+            document_id,
+            bank_id,
+        )
     return bool(doc_id_found)
 
 
@@ -403,15 +427,19 @@ async def retag_document_memories(
     fq_table: Callable[[str], str],
     bank_id: str,
     document_id: str,
-    tags: list[str],
+    tags: list[str] | None,
     retagged: Callable[[list[str] | None], list[str]],
     rescoped: Callable[[Any], str | None],
-) -> int:
+) -> RetagResult:
     """Retag the document's units, then delete the observations built on the units whose
     observation scopes that moves and requeue their sources (the document's and every co-source)
     for re-consolidation. Units whose scopes stay put keep their observations (#5593).
 
-    Returns how many observations were deleted.
+    ``tags`` is ``None`` for a change of observation scopes alone (#5309): no unit's tags are
+    written, and only the units whose scopes move are stamped as edited.
+
+    Every unit that moved is requeued, whether or not it had an observation: it was consolidated
+    under scopes it no longer writes to (the same rule a re-retain follows).
     """
     invalidated_obs = 0
     # `tags` as well as `id`: the projection each unit must keep is read
@@ -452,12 +480,24 @@ async def retag_document_memories(
         ):
             unit_ids.append(str(row["id"]))
 
-    await conn.execute(
-        f"UPDATE {fq_table('memory_units')} SET tags = $1, updated_at = now() WHERE document_id = $2 AND bank_id = $3",
-        tags,
-        document_id,
-        bank_id,
-    )
+    if tags is None:
+        # A scope change alone writes no tags, so nothing above stamped the units that moved.
+        # Stamp them: an in-flight consolidation that read them under the old scopes must see
+        # the edit and drop its result (#4831), or it rebuilds the observation just deleted.
+        # Only those: stamping a unit whose scopes did not move would discard a still-valid result.
+        if unit_ids:
+            await conn.execute(
+                f"UPDATE {fq_table('memory_units')} SET updated_at = now() WHERE bank_id = $1 AND id = ANY($2::uuid[])",
+                bank_id,
+                [uuid.UUID(uid) for uid in unit_ids],
+            )
+    else:
+        await conn.execute(
+            f"UPDATE {fq_table('memory_units')} SET tags = $1, updated_at = now() WHERE document_id = $2 AND bank_id = $3",
+            tags,
+            document_id,
+            bank_id,
+        )
 
     # Restore each unit's own label projection over that blanket write.
     # A follow-up rather than one combined statement so a unit created
@@ -469,10 +509,11 @@ async def retag_document_memories(
     # 'category:durable']`, since the two would be concatenated here
     # after `retagged` had already deduped them.
     _by_final: dict[tuple[str, ...], list] = {}
-    for _row in unit_rows:
-        _final = retagged(_row["tags"])
-        if _final != list(tags):
-            _by_final.setdefault(tuple(_final), []).append(_row["id"])
+    if tags is not None:
+        for _row in unit_rows:
+            _final = retagged(_row["tags"])
+            if _final != list(tags):
+                _by_final.setdefault(tuple(_final), []).append(_row["id"])
     for _final, _ids in _by_final.items():
         await conn.execute(
             f"UPDATE {fq_table('memory_units')} SET tags = $1, updated_at = now() "
@@ -530,18 +571,8 @@ async def retag_document_memories(
                 f"DELETE FROM {fq_table('memory_units')} WHERE id = ANY($1::uuid[])",
                 obs_ids,
             )
-            # Requeue the sources: bookkeeping only, so `updated_at`
-            # stays put (see META_UPDATED_AT). The tag change above is
-            # what stamped these rows.
-            await conn.execute(
-                f"""
-                UPDATE {fq_table("memory_units")}
-                SET consolidated_at = NULL
-                WHERE id = ANY($1::uuid[])
-                  AND fact_type IN ('experience', 'world')
-                """,
-                unit_uuids,
-            )
+            # Requeue the co-sources the deleted observations strand: bookkeeping only, so
+            # `updated_at` stays put (see META_UPDATED_AT).
             if other_source_uuids:
                 await conn.execute(
                     f"""
@@ -559,7 +590,18 @@ async def retag_document_memories(
                 f"{len(other_source_uuids)} co-source memories for re-consolidation "
                 f"after document update on '{document_id}' in bank {bank_id}"
             )
-    return invalidated_obs
+        # Requeue every unit that moved — bookkeeping only, so `updated_at` stays put (see
+        # META_UPDATED_AT); the write above is what stamped these rows.
+        await conn.execute(
+            f"""
+            UPDATE {fq_table("memory_units")}
+            SET consolidated_at = NULL
+            WHERE id = ANY($1::uuid[])
+              AND fact_type IN ('experience', 'world')
+            """,
+            unit_uuids,
+        )
+    return RetagResult(invalidated_observations=invalidated_obs, requeued_units=len(unit_ids))
 
 
 async def list_documents(

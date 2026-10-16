@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import pytest
 
+from hindsight_client_api.models.update_document_observation_scopes import UpdateDocumentObservationScopes
 from hindsight_client_api.models.update_document_request import UpdateDocumentRequest
 
 from hindsight_system_tests.payloads import Consolidation, Observation, extracted, fact, fact_ids_in
@@ -120,6 +121,53 @@ async def test_renaming_a_tag_moves_the_explicit_scopes_with_it(client, bank_id,
     await settled(bank_id)
 
     assert await _observation_tags(client, bank_id) == [[renamed], sorted([renamed, TEACHER])]
+
+
+async def test_existing_documents_can_move_to_the_shared_scope(client, bank_id, settled):
+    """The migration of #5309: a bank retained one document per session, each under its
+    session tag with the default scoping, so every session consolidated alone. Moving the
+    documents to `shared` rebuilds their observations in one global scope — without
+    re-extracting a fact, and with the session tags still on the facts for filtering."""
+    for session in ("s1", "s2"):
+        await _retain(client, bank_id, settled, document_id=f"chat-{session}", tags=[f"session-id:{session}"])
+    assert await _observation_tags(client, bank_id) == [["session-id:s1"], ["session-id:s2"]]
+
+    for session in ("s1", "s2"):
+        await client.documents.update_document(
+            bank_id,
+            f"chat-{session}",
+            UpdateDocumentRequest(observation_scopes=UpdateDocumentObservationScopes(actual_instance="shared")),
+        )
+    await settled(bank_id)
+
+    tags = await _observation_tags(client, bank_id)
+    assert tags and all(t == [] for t in tags), f"per-session observations survived the move: {tags}"
+    memories = await client.memory.list_memories(bank_id, limit=100)
+    assert sorted(sorted(m.tags) for m in memories.items if m.fact_type != "observation") == [
+        ["session-id:s1"],
+        ["session-id:s2"],
+    ]
+    document = await client.documents.get_document(bank_id, "chat-s1")
+    assert document.observation_scopes.actual_instance == "shared"
+
+
+async def test_moving_to_the_same_scopes_rebuilds_nothing(client, bank_id, settled):
+    """`combined` over one tag and `[[that tag]]` are the same scope, so the change keeps the
+    observation it already has instead of deleting and rebuilding it."""
+    await _retain(client, bank_id, settled, document_id="lesson", tags=[STUDENT])
+    before = await client.memory.list_memories(bank_id, limit=100)
+    observation_ids = {m.id for m in before.items if m.fact_type == "observation"}
+    assert observation_ids
+
+    await client.documents.update_document(
+        bank_id,
+        "lesson",
+        UpdateDocumentRequest(observation_scopes=UpdateDocumentObservationScopes(actual_instance=[[STUDENT]])),
+    )
+    await settled(bank_id)
+
+    after = await client.memory.list_memories(bank_id, limit=100)
+    assert {m.id for m in after.items if m.fact_type == "observation"} == observation_ids
 
 
 async def test_the_bank_lists_the_scopes_it_holds(client, bank_id, settled):

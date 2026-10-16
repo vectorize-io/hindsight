@@ -2791,6 +2791,15 @@ class UpdateDocumentRequest(BaseModel):
         "REPLACES the existing tags rather than adding to them, so omitting a tag drops it and "
         "`[]` clears them all. Triggers observation invalidation and re-consolidation.",
     )
+    observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = Field(
+        default=None,
+        title="UpdateDocumentObservationScopes",
+        description="New observation scoping for the document's memories, with the same values retain "
+        "accepts (send 'combined' to return to the default). Use it to move memories retained under one "
+        "scoping to another — e.g. per-session documents to 'shared' — without re-extracting them. "
+        "Memories whose resolved scopes change lose their observations and are re-consolidated; the rest "
+        "keep theirs. Also becomes the scoping a later reprocess of the document uses.",
+    )
 
 
 class UpdateDocumentResponse(BaseModel):
@@ -8152,11 +8161,16 @@ def _register_routes(app: FastAPI):
         "send the complete set you want the document to end up with, and any tag you leave out is "
         "dropped. An empty array (`[]`) therefore clears every tag; only omitting the field "
         "entirely is rejected (422).\n\n"
-        "The new tags are propagated to all associated memory units. Observations derived from "
-        "those units are invalidated and queued for re-consolidation under the new tags. "
-        "Co-source memories from other documents that shared those observations are also reset. "
-        "Tags are compared as a set, so re-sending the tags a document already has (in any order) "
-        "changes nothing and queues no re-consolidation.\n\n"
+        "The new tags are propagated to all associated memory units.\n\n"
+        "**Observation scopes** (`observation_scopes`): Replaces how the document's memories are "
+        "scoped during consolidation, with the same values retain accepts. Use it to move a bank "
+        "whose documents were retained under per-session tags to `shared` without re-extracting "
+        "anything. It is also what a later reprocess of the document retains with.\n\n"
+        "A memory is re-consolidated only when the change moves the observation scopes it resolves "
+        "to: its observations are deleted and it is queued again, along with co-source memories from "
+        "other documents that shared those observations. A change that resolves to the same scopes "
+        "(a tag change under `shared`, `combined` over one tag vs `[[that tag]]`, re-sending the "
+        "current values) keeps every observation and queues nothing.\n\n"
         "At least one field must be provided.",
         operation_id="update_document",
         tags=["Documents"],
@@ -8174,15 +8188,18 @@ def _register_routes(app: FastAPI):
         Args:
             bank_id: Memory Bank ID (from path)
             document_id: Document ID (from path)
-            body: Fields to update (tags, metadata, context)
+            body: Fields to update (tags, observation_scopes)
         """
-        if body.tags is None:
-            raise HTTPException(status_code=422, detail="At least one field (tags) must be provided")
+        if body.tags is None and body.observation_scopes is None:
+            raise HTTPException(
+                status_code=422, detail="At least one field (tags, observation_scopes) must be provided"
+            )
         try:
             result = await app.state.memory.update_document(
                 document_id,
                 bank_id,
                 tags=body.tags,
+                observation_scopes=body.observation_scopes,
                 request_context=request_context,
             )
             if not result:

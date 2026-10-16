@@ -1164,7 +1164,7 @@ export function DocumentsView() {
 
     setSavingTags(true);
     try {
-      await client.updateDocument(selectedDocument.id, currentBank, newTags);
+      await client.updateDocument(selectedDocument.id, currentBank, { tags: newTags });
       setSelectedDocument({ ...selectedDocument, tags: newTags });
       // Update tags in the documents list too
       setDocuments((prev) =>

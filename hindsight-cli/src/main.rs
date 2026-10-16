@@ -782,7 +782,7 @@ enum DocumentCommands {
         document_id: String,
     },
 
-    /// Update a document (currently only supports replacing tags)
+    /// Update a document's tags or observation scopes without re-extracting it
     Update {
         /// Bank ID
         bank_id: String,
@@ -794,6 +794,11 @@ enum DocumentCommands {
         /// invalidation + re-consolidation.
         #[arg(long, value_delimiter = ',')]
         tags: Option<Vec<String>>,
+
+        /// New observation scopes: per_tag, combined, all_combinations, shared, or a JSON list
+        /// of tag lists (e.g. '[["user:alice"]]'). Memories whose scopes move are re-consolidated.
+        #[arg(long)]
+        observation_scopes: Option<String>,
     },
 }
 
@@ -1861,6 +1866,7 @@ fn run() -> Result<()> {
                 bank_id,
                 document_id,
                 tags,
+                observation_scopes,
             } => {
                 // `--tags ""` parses as one empty tag; drop blanks so it clears the set
                 // instead of storing "".
@@ -1870,6 +1876,7 @@ fn run() -> Result<()> {
                     &bank_id,
                     &document_id,
                     tags,
+                    observation_scopes,
                     verbose,
                     output_format,
                 )
