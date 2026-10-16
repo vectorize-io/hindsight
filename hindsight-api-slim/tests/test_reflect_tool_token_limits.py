@@ -42,7 +42,13 @@ def engine():
 
 def _with_bank_config(engine, **overrides):
     engine._config_resolver = SimpleNamespace(
-        resolve_full_config=AsyncMock(return_value=SimpleNamespace(llm_gemini_safety_settings=None)),
+        resolve_full_config=AsyncMock(
+            return_value=SimpleNamespace(
+                llm_gemini_safety_settings=None,
+                reflect_use_decision_model=True,
+                mental_model_refresh_use_decision_model=True,
+            )
+        ),
         get_bank_config=AsyncMock(return_value=dict(overrides)),
     )
 
