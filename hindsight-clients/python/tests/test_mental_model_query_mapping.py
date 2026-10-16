@@ -100,3 +100,25 @@ def test_get_defaults_leave_detail_unset(monkeypatch):
     client.get_mental_model("bank-1", "model-1")
 
     assert captured["kwargs"]["detail"] is None
+
+
+def _capture_refresh(monkeypatch, client, captured):
+    async def fake_refresh(bank_id, mental_model_id, **kwargs):
+        captured["bank_id"] = bank_id
+        captured["mental_model_id"] = mental_model_id
+        captured["kwargs"] = kwargs
+        return MagicMock()
+
+    monkeypatch.setattr(client._mental_models_api, "refresh_mental_model", fake_refresh)
+
+
+def test_refresh_forwards_a_full_mode_and_sends_no_body_without_one(monkeypatch):
+    client = Hindsight(base_url="http://example.invalid")
+    captured: dict[str, object] = {}
+    _capture_refresh(monkeypatch, client, captured)
+
+    client.refresh_mental_model("bank-1", "model-1", mode="full")
+    assert captured["kwargs"]["refresh_mental_model_request"].mode == "full"
+
+    client.refresh_mental_model("bank-1", "model-1")
+    assert captured["kwargs"]["refresh_mental_model_request"] is None

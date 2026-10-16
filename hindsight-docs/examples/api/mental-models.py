@@ -125,6 +125,17 @@ if mental_model_id:
     print(f"Refresh operation ID: {result.operation_id}")
     # [/docs:refresh-mental-model]
 
+    # [docs:full-refresh-mental-model]
+    # Rewrite the content from scratch this once; the model keeps its mode
+    result = client.refresh_mental_model(
+        bank_id=BANK_ID,
+        mental_model_id=mental_model_id,
+        mode="full",
+    )
+
+    print(f"Full refresh operation ID: {result.operation_id}")
+    # [/docs:full-refresh-mental-model]
+
 
     # [docs:clear-mental-model]
     # Clear a mental model's content, then refresh for a full re-synthesis

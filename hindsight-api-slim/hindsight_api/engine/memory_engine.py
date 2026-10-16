@@ -231,6 +231,14 @@ _MM_HISTORY_KIND_FAILURE = "refresh_failed"
 #: inherit somebody else's wait. ``_clear_refresh_park`` does that.
 _REFRESH_AUTOMATIC_KEY = "_automatic"
 
+#: Payload key carrying a one-run ``mode`` override ("full") for a refresh — a
+#: "full refresh now" or a ``trigger.full_refresh_cron`` tick. The second payload key a
+#: fold has to reconcile: a full refresh that folds into a queued plain one upgrades it
+#: (a full refresh covers what a delta would have done), and a plain one that folds
+#: into a queued full one simply rides along. ``_upgrade_queued_refresh_to_full`` does
+#: the upgrade.
+_REFRESH_MODE_KEY = "_mode"
+
 
 def refresh_serialization_key(mental_model_id: str) -> str:
     """The claim-time serialisation key for a mental model's refreshes.
@@ -4559,6 +4567,7 @@ class MemoryEngine(MemoryEngineInterface):
             refreshed = await self.refresh_mental_model(
                 bank_id=bank_id,
                 mental_model_id=mental_model_id,
+                mode=task_dict.get(_REFRESH_MODE_KEY),
                 request_context=internal_context,
             )
         except MentalModelRefreshError as e:
@@ -16805,7 +16814,7 @@ class MemoryEngine(MemoryEngineInterface):
             rows = await conn.fetch(
                 f"""
                 SELECT id, bank_id, name, source_query, content, tags,
-                       last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, created_at, reflect_response,
+                       last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, last_full_refreshed_at, created_at, reflect_response,
                        max_tokens, trigger, structured_content
                 FROM {fq_table("mental_models")}
                 WHERE bank_id = $1 {tag_filter}
@@ -16879,7 +16888,7 @@ class MemoryEngine(MemoryEngineInterface):
             row = await conn.fetchrow(
                 f"""
                 SELECT id, bank_id, name, source_query, content, tags,
-                       last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, created_at, reflect_response,
+                       last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, last_full_refreshed_at, created_at, reflect_response,
                        max_tokens, trigger, structured_content
                 FROM {fq_table("mental_models")}
                 WHERE bank_id = $1 AND id = $2
@@ -17215,7 +17224,7 @@ class MemoryEngine(MemoryEngineInterface):
             VALUES ($1, $2, 'pinned', $3::text, ' ', $4, $5, $6, $7, COALESCE($8, 2048),
                     COALESCE($9, '{{"refresh_after_consolidation": false}}'::jsonb), $10{sv_val})
             RETURNING id, bank_id, name, source_query, content, tags,
-                      last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, created_at, reflect_response,
+                      last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, last_full_refreshed_at, created_at, reflect_response,
                       max_tokens, trigger, structured_content
             """,
             mental_model_id,
@@ -17462,6 +17471,7 @@ class MemoryEngine(MemoryEngineInterface):
         mental_model: dict[str, Any],
         *,
         operation_label: str = "refresh_mental_model",
+        mode: RefreshMode | None = None,
         request_context: "RequestContext",
     ) -> _MentalModelRefreshRun | None:
         """Run one refresh pass over a mental model and report what it produced.
@@ -17475,6 +17485,9 @@ class MemoryEngine(MemoryEngineInterface):
         reports it and throws it away. There is deliberately no way to make this
         run behave differently for a preview: a dry run that could be configured
         would stop predicting the refresh it is supposed to predict.
+
+        ``mode`` overrides ``trigger.mode`` for this one run (a "full refresh now", a
+        ``full_refresh_cron`` tick) without touching the stored trigger.
 
         Returns None when the mental model row disappeared mid-flight.
         """
@@ -17510,7 +17523,7 @@ class MemoryEngine(MemoryEngineInterface):
         # the loop out before the raw facts are read) — see #4856.
         raw_budget = trigger_data.get("budget")
         refresh_budget = Budget(raw_budget) if raw_budget else DEFAULT_MENTAL_MODEL_REFRESH_BUDGET
-        requested_mode: RefreshMode = trigger_data.get("mode") or "full"
+        requested_mode: RefreshMode = mode or trigger_data.get("mode") or "full"
 
         current_content = (mental_model.get("content") or "").strip()
         source_query = mental_model["source_query"]
@@ -18314,6 +18327,7 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id: str,
         mental_model_id: str,
         *,
+        mode: RefreshMode | None = None,
         request_context: "RequestContext",
     ) -> dict[str, Any] | None:
         """Refresh a pinned mental model by re-running its source query.
@@ -18361,7 +18375,9 @@ class MemoryEngine(MemoryEngineInterface):
         # Create parent span for mental model refresh operation
         with create_operation_span("mental_model_refresh", bank_id):
             try:
-                run = await self._execute_mental_model_refresh(bank_id, mental_model, request_context=request_context)
+                run = await self._execute_mental_model_refresh(
+                    bank_id, mental_model, mode=mode, request_context=request_context
+                )
             except (ReflectToolExecutionError, ReflectNoAnswerError) as exc:
                 # Reflect failed before there was a run: a retrieval tool raised
                 # (#2894) or the agent produced no answer (#2959). Nothing was
@@ -18439,6 +18455,10 @@ class MemoryEngine(MemoryEngineInterface):
                     # This refresh ran and succeeded; it just had nothing to change.
                     # A caller polling "did my refresh happen?" must see that.
                     refresh_completed=True,
+                    # A full run that found nothing in scope still read everything
+                    # there is, so it counts. Left unstamped, a full_refresh_cron on a
+                    # quiet scope would come due again on every scheduler tick.
+                    full_refresh_completed=run.effective_mode == "full",
                     request_context=request_context,
                 )
 
@@ -18535,6 +18555,7 @@ class MemoryEngine(MemoryEngineInterface):
                 last_refreshed_source_query=run.source_query,
                 refresh_watermark=run.processed_watermark,
                 refresh_completed=True,
+                full_refresh_completed=run.effective_mode == "full",
                 structured_content=(run.final_structured.model_dump() if run.final_structured is not None else None),
                 request_context=request_context,
             )
@@ -18651,6 +18672,7 @@ class MemoryEngine(MemoryEngineInterface):
         last_refreshed_source_query: str | None = None,
         refresh_watermark: datetime | None = None,
         refresh_completed: bool = False,
+        full_refresh_completed: bool = False,
         structured_content: dict[str, Any] | None = None,
         conn: Any | None = None,
         request_context: "RequestContext",
@@ -18678,6 +18700,9 @@ class MemoryEngine(MemoryEngineInterface):
                 which stamps ``last_refreshed_at = NOW()`` even if the refresh preserved
                 the existing content. A refresh that failed leaves it False, so the
                 timestamp keeps pointing at the last refresh that actually finished.
+            full_refresh_completed: True when that completed refresh ran in full mode;
+                also stamps ``last_full_refreshed_at``, the clock ``full_refresh_cron``
+                comes due against.
             conn: Run on this connection instead of acquiring one, so the write joins
                 the caller's open transaction and rolls back with it. Used by the
                 knowledge-base patch, where the backing model and its node row have to
@@ -18898,6 +18923,8 @@ class MemoryEngine(MemoryEngineInterface):
                 # no longer the one that keeps failing: let the automatic triggers have it
                 # back rather than making the next reader wonder why it never refreshes.
                 updates.append("last_refresh_failed_at = NULL")
+            if full_refresh_completed:
+                updates.append("last_full_refreshed_at = NOW()")
             # last_memory_seen_at — data watermark, "how far through the bank's memories
             # this document is written". Staleness keys off it. A row that commits after
             # the refresh snapshot stays newer than the watermark and is caught next
@@ -18961,7 +18988,7 @@ class MemoryEngine(MemoryEngineInterface):
                 SET {", ".join(updates)}
                 WHERE bank_id = $1 AND id = $2
                 RETURNING id, bank_id, name, source_query, content, tags,
-                          last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, created_at, reflect_response,
+                          last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, last_full_refreshed_at, created_at, reflect_response,
                           max_tokens, trigger, structured_content
             """
 
@@ -19208,7 +19235,7 @@ class MemoryEngine(MemoryEngineInterface):
                     embedding = $3{sv_clause}
                 WHERE bank_id = $1 AND id = $2
                 RETURNING id, bank_id, name, source_query, content, tags,
-                          last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, created_at, reflect_response,
+                          last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, last_full_refreshed_at, created_at, reflect_response,
                           max_tokens, trigger, structured_content
                 """,
                 bank_id,
@@ -20651,6 +20678,9 @@ class MemoryEngine(MemoryEngineInterface):
             # reader the model is not refreshing itself any more (#4532).
             "last_refresh_failed_at": (
                 row["last_refresh_failed_at"].isoformat() if row.get("last_refresh_failed_at") else None
+            ),
+            "last_full_refreshed_at": (
+                row["last_full_refreshed_at"].isoformat() if row.get("last_full_refreshed_at") else None
             ),
             "created_at": row["created_at"].isoformat() if row["created_at"] else None,
         }
@@ -23395,6 +23425,7 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
         skip_if_in_flight: bool = False,
         automatic: bool = False,
+        mode: Literal["full"] | None = None,
     ) -> dict[str, Any]:
         """Submit an async mental model refresh operation.
 
@@ -23409,6 +23440,10 @@ class MemoryEngine(MemoryEngineInterface):
                 ``min_refresh_interval_seconds``; an explicit refresh asked for a refresh
                 *now* and gets one, and additionally releases a parked automatic refresh
                 it folds into.
+            mode: "full" forces this one refresh to regenerate the content from scratch
+                whatever ``trigger.mode`` says; the stored trigger is untouched. Used by
+                "full refresh now" and the ``full_refresh_cron`` scan. None runs the
+                model's own mode.
             skip_if_in_flight: If True, an operation that is already *processing* for this
                 model also suppresses the submit. Used by the automatic triggers — the
                 scheduled (cron) refresh, which runs in every process of the fleet and
@@ -23419,10 +23454,11 @@ class MemoryEngine(MemoryEngineInterface):
                 run of its own.
 
                 A *pending* operation for the model always suppresses the submit,
-                whatever this flag says (#3487). Refreshes carry no per-request options —
-                every queued one does exactly the same work — so a queued-but-unstarted
-                refresh already covers the caller's intent, and letting a second one
-                through only pays for the same recall + LLM call twice. Without that
+                whatever this flag says (#3487). The only per-request option a refresh
+                carries is ``mode="full"``, and a full refresh covers a plain one, so a
+                queued-but-unstarted refresh still covers the caller's intent once a full
+                submit has upgraded it — letting a second one through only pays for the
+                same recall + LLM call twice. Without that
                 floor, any submit path that forgets this flag piles up unbounded pending
                 copies on a bank whose refresh queue drains slower than it fills.
 
@@ -23482,6 +23518,8 @@ class MemoryEngine(MemoryEngineInterface):
         }
         if automatic:
             task_payload[_REFRESH_AUTOMATIC_KEY] = True
+        if mode == "full":
+            task_payload[_REFRESH_MODE_KEY] = "full"
         if request_context.tenant_id:
             task_payload["_tenant_id"] = request_context.tenant_id
         if request_context.api_key_id:
@@ -23504,8 +23542,53 @@ class MemoryEngine(MemoryEngineInterface):
         # either way, it just stops waiting out somebody else's rate limit.
         if not automatic and submitted.get("deduplicated"):
             await self._clear_refresh_park(submitted["operation_id"], bank_id)
+        # A full refresh that folded into a queued plain one makes that one full, or
+        # the caller's "full" would be silently dropped.
+        if mode == "full" and submitted.get("deduplicated"):
+            await self._upgrade_queued_refresh_to_full(submitted["operation_id"], bank_id)
 
         return submitted
+
+    async def _upgrade_queued_refresh_to_full(self, operation_id: str, bank_id: str) -> None:
+        """Make a queued refresh run in full mode.
+
+        Only touches a row that is still ``pending``. A fold into a *processing*
+        refresh (automatic submits pass ``skip_if_in_flight``) changes nothing: that
+        run has already chosen its mode, and the ``full_refresh_cron`` scan simply
+        finds the model due again on its next tick, because only a full run moves
+        ``last_full_refreshed_at``. Read-modify-write for the same Oracle reason as
+        ``_clear_refresh_park``; every writer of this key writes the same value.
+        """
+        op_uuid = uuid.UUID(operation_id)
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            row = await conn.fetchrow(
+                f"""
+                SELECT task_payload
+                FROM {fq_table("async_operations")}
+                WHERE operation_id = $1 AND bank_id = $2 AND status = 'pending'
+                """,
+                op_uuid,
+                bank_id,
+            )
+            if row is None:
+                return
+            payload = row["task_payload"]
+            payload = json.loads(payload) if isinstance(payload, str) else (payload or {})
+            if payload.get(_REFRESH_MODE_KEY) == "full":
+                return
+            payload[_REFRESH_MODE_KEY] = "full"
+            await conn.execute(
+                f"""
+                UPDATE {fq_table("async_operations")}
+                SET task_payload = $1::jsonb,
+                    updated_at = now()
+                WHERE operation_id = $2 AND bank_id = $3 AND status = 'pending'
+                """,
+                json.dumps(payload, default=_json_default),
+                op_uuid,
+                bank_id,
+            )
 
     async def _automatic_refresh_paused(self, bank_id: str, mental_model_id: str) -> bool:
         """True when the model's last refresh failed, so automatic triggers must skip it.

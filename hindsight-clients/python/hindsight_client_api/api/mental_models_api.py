@@ -25,6 +25,7 @@ from hindsight_client_api.models.create_mental_model_response import CreateMenta
 from hindsight_client_api.models.mental_model_dry_run_refresh_result import MentalModelDryRunRefreshResult
 from hindsight_client_api.models.mental_model_list_response import MentalModelListResponse
 from hindsight_client_api.models.mental_model_response import MentalModelResponse
+from hindsight_client_api.models.refresh_mental_model_request import RefreshMentalModelRequest
 from hindsight_client_api.models.update_mental_model_request import UpdateMentalModelRequest
 
 from hindsight_client_api.api_client import ApiClient, RequestSerialized
@@ -2206,6 +2207,7 @@ class MentalModelsApi:
         bank_id: StrictStr,
         mental_model_id: StrictStr,
         authorization: Optional[StrictStr] = None,
+        refresh_mental_model_request: Optional[RefreshMentalModelRequest] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -2221,7 +2223,7 @@ class MentalModelsApi:
     ) -> AsyncOperationSubmitResponse:
         """Refresh mental model
 
-        Submit an async task to re-run the source query through reflect and update the content.
+        Submit an async task to re-run the source query through reflect and update the content. With no body the refresh runs in the model's own `trigger.mode`. Send `{\"mode\": \"full\"}` for a full refresh: the content is regenerated from scratch this once (to clear the drift delta edits accumulate) while the stored trigger keeps its mode. Unlike clearing the model first, a full refresh that fails leaves the previous content in place.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2229,6 +2231,8 @@ class MentalModelsApi:
         :type mental_model_id: str
         :param authorization:
         :type authorization: str
+        :param refresh_mental_model_request:
+        :type refresh_mental_model_request: RefreshMentalModelRequest
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -2255,6 +2259,7 @@ class MentalModelsApi:
             bank_id=bank_id,
             mental_model_id=mental_model_id,
             authorization=authorization,
+            refresh_mental_model_request=refresh_mental_model_request,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -2282,6 +2287,7 @@ class MentalModelsApi:
         bank_id: StrictStr,
         mental_model_id: StrictStr,
         authorization: Optional[StrictStr] = None,
+        refresh_mental_model_request: Optional[RefreshMentalModelRequest] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -2297,7 +2303,7 @@ class MentalModelsApi:
     ) -> ApiResponse[AsyncOperationSubmitResponse]:
         """Refresh mental model
 
-        Submit an async task to re-run the source query through reflect and update the content.
+        Submit an async task to re-run the source query through reflect and update the content. With no body the refresh runs in the model's own `trigger.mode`. Send `{\"mode\": \"full\"}` for a full refresh: the content is regenerated from scratch this once (to clear the drift delta edits accumulate) while the stored trigger keeps its mode. Unlike clearing the model first, a full refresh that fails leaves the previous content in place.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2305,6 +2311,8 @@ class MentalModelsApi:
         :type mental_model_id: str
         :param authorization:
         :type authorization: str
+        :param refresh_mental_model_request:
+        :type refresh_mental_model_request: RefreshMentalModelRequest
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -2331,6 +2339,7 @@ class MentalModelsApi:
             bank_id=bank_id,
             mental_model_id=mental_model_id,
             authorization=authorization,
+            refresh_mental_model_request=refresh_mental_model_request,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -2358,6 +2367,7 @@ class MentalModelsApi:
         bank_id: StrictStr,
         mental_model_id: StrictStr,
         authorization: Optional[StrictStr] = None,
+        refresh_mental_model_request: Optional[RefreshMentalModelRequest] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -2373,7 +2383,7 @@ class MentalModelsApi:
     ) -> RESTResponseType:
         """Refresh mental model
 
-        Submit an async task to re-run the source query through reflect and update the content.
+        Submit an async task to re-run the source query through reflect and update the content. With no body the refresh runs in the model's own `trigger.mode`. Send `{\"mode\": \"full\"}` for a full refresh: the content is regenerated from scratch this once (to clear the drift delta edits accumulate) while the stored trigger keeps its mode. Unlike clearing the model first, a full refresh that fails leaves the previous content in place.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2381,6 +2391,8 @@ class MentalModelsApi:
         :type mental_model_id: str
         :param authorization:
         :type authorization: str
+        :param refresh_mental_model_request:
+        :type refresh_mental_model_request: RefreshMentalModelRequest
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -2407,6 +2419,7 @@ class MentalModelsApi:
             bank_id=bank_id,
             mental_model_id=mental_model_id,
             authorization=authorization,
+            refresh_mental_model_request=refresh_mental_model_request,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -2429,6 +2442,7 @@ class MentalModelsApi:
         bank_id,
         mental_model_id,
         authorization,
+        refresh_mental_model_request,
         _request_auth,
         _content_type,
         _headers,
@@ -2460,6 +2474,8 @@ class MentalModelsApi:
             _header_params['authorization'] = authorization
         # process the form parameters
         # process the body parameter
+        if refresh_mental_model_request is not None:
+            _body_params = refresh_mental_model_request
 
 
         # set the HTTP header `Accept`
@@ -2470,6 +2486,19 @@ class MentalModelsApi:
                 ]
             )
 
+        # set the HTTP header `Content-Type`
+        if _content_type:
+            _header_params['Content-Type'] = _content_type
+        else:
+            _default_content_type = (
+                self.api_client.select_header_content_type(
+                    [
+                        'application/json'
+                    ]
+                )
+            )
+            if _default_content_type is not None:
+                _header_params['Content-Type'] = _default_content_type
 
         # authentication setting
         _auth_settings: List[str] = [

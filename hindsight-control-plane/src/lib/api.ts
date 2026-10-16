@@ -258,6 +258,7 @@ export interface MentalModel {
     mode?: "full" | "delta";
     refresh_after_consolidation: boolean;
     refresh_cron?: string | null;
+    full_refresh_cron?: string | null;
     min_refresh_interval_seconds?: number | null;
     fact_types?: Array<"world" | "experience" | "observation">;
     exclude_mental_models?: boolean;
@@ -281,6 +282,8 @@ export interface MentalModel {
   is_stale?: boolean | null;
   /** When the last refresh failed. Set = automatic refreshes are paused for this model. */
   last_refresh_failed_at?: string | null;
+  /** When a refresh last ran in full mode. `trigger.full_refresh_cron` comes due against this. */
+  last_full_refreshed_at?: string | null;
 }
 
 /** How a refresh resolved full-vs-delta, and why it did not stay in delta. */
@@ -988,6 +991,7 @@ export class ControlPlaneClient {
         mode?: "full" | "delta";
         refresh_after_consolidation?: boolean;
         refresh_cron?: string | null;
+        full_refresh_cron?: string | null;
         min_refresh_interval_seconds?: number | null;
         fact_types?: Array<"world" | "experience" | "observation">;
         exclude_mental_models?: boolean;
@@ -1775,6 +1779,7 @@ export class ControlPlaneClient {
           mode?: "full" | "delta";
           refresh_after_consolidation: boolean;
           refresh_cron?: string | null;
+          full_refresh_cron?: string | null;
           min_refresh_interval_seconds?: number | null;
           fact_types?: Array<"world" | "experience" | "observation">;
           exclude_mental_models?: boolean;
@@ -1845,6 +1850,7 @@ export class ControlPlaneClient {
         mode?: "full" | "delta";
         refresh_after_consolidation: boolean;
         refresh_cron?: string | null;
+        full_refresh_cron?: string | null;
         min_refresh_interval_seconds?: number | null;
         fact_types?: Array<"world" | "experience" | "observation"> | null;
         exclude_mental_models?: boolean;
@@ -1894,6 +1900,7 @@ export class ControlPlaneClient {
         mode?: "full" | "delta";
         refresh_after_consolidation: boolean;
         refresh_cron?: string | null;
+        full_refresh_cron?: string | null;
         min_refresh_interval_seconds?: number | null;
         fact_types?: Array<"world" | "experience" | "observation"> | null;
         exclude_mental_models?: boolean;
@@ -1922,6 +1929,7 @@ export class ControlPlaneClient {
       trigger: {
         refresh_after_consolidation: boolean;
         refresh_cron?: string | null;
+        full_refresh_cron?: string | null;
         min_refresh_interval_seconds?: number | null;
         fact_types?: Array<"world" | "experience" | "observation">;
         exclude_mental_models?: boolean;
@@ -1962,11 +1970,13 @@ export class ControlPlaneClient {
   /**
    * Refresh a mental model (re-run source query) - async operation
    */
-  async refreshMentalModel(bankId: string, mentalModelId: string) {
+  async refreshMentalModel(bankId: string, mentalModelId: string, options?: { mode?: "full" }) {
     return this.fetchApi<{
       operation_id: string;
     }>(bankApi(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}/refresh`), {
       method: "POST",
+      // "full" rewrites the document from scratch this once; the model keeps its mode.
+      ...(options?.mode ? { body: JSON.stringify({ mode: options.mode }) } : {}),
     });
   }
 

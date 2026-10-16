@@ -19,9 +19,19 @@ export async function POST(
       );
     }
 
+    // Optional body: { mode: "full" } for a one-off full refresh. A bodiless POST
+    // (every caller before it existed) still refreshes in the model's own mode.
+    const body = await request.json().catch(() => null);
+    const mode = body?.mode === "full" ? "full" : undefined;
     const response = await fetch(
       dataplaneBankUrl(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}/refresh`),
-      { method: "POST", headers: getDataplaneHeaders() }
+      mode
+        ? {
+            method: "POST",
+            headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ mode }),
+          }
+        : { method: "POST", headers: getDataplaneHeaders() }
     );
 
     if (!response.ok) {

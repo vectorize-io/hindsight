@@ -4599,6 +4599,12 @@ export type MentalModelResponse = {
    */
   last_refresh_failed_at?: string | null;
   /**
+   * Last Full Refreshed At
+   *
+   * When a refresh last ran in full mode for this model, in ISO format — requested (`mode: 'full'`, a `full_refresh_cron` tick, a full-mode model) or fallen back to by a delta refresh. `trigger.full_refresh_cron` comes due against this, not `last_refreshed_at`, which every delta refresh moves. Null when no full refresh has completed since this was first tracked.
+   */
+  last_full_refreshed_at?: string | null;
+  /**
    * Created At
    */
   created_at?: string | null;
@@ -4757,6 +4763,12 @@ export type MentalModelTriggerInput = {
    */
   refresh_cron?: string | null;
   /**
+   * Full Refresh Cron
+   *
+   * Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * 0' for Sundays at 03:00 UTC) for a scheduled full refresh: on this schedule the model is refreshed in 'full' mode whatever its `mode` says, regenerating the content from scratch to clear the drift many delta edits accumulate. Independent of `refresh_cron` and `refresh_after_consolidation` — a delta model can refresh after consolidation and still get a weekly full refresh — and it does not change `mode`. A tick is skipped when no refresh has run since the last full one (there is nothing to correct). Like `refresh_cron`, it honours `min_refresh_interval_seconds` and pauses while the last refresh failed. null = no schedule.
+   */
+  full_refresh_cron?: string | null;
+  /**
    * Min Refresh Interval Seconds
    *
    * Minimum seconds between two automatic refreshes of this mental model. A triggered refresh that arrives sooner is not dropped: it is queued and parked until the window expires, and every further trigger in the meantime folds into that one queued refresh, so a burst of retains costs one refresh instead of one per retain. Applies to both refresh_after_consolidation and refresh_cron. Explicit refreshes (API, MCP, control plane) ignore it and run immediately. 0 disables the floor for this model; null falls back to the bank/global mental_model_min_refresh_interval_seconds setting (itself 0 by default, i.e. no floor).
@@ -4873,6 +4885,12 @@ export type MentalModelTriggerOutput = {
    * Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * *' for daily at 03:00 UTC) for refreshing this mental model on a fixed schedule. Mutually exclusive with refresh_after_consolidation — a model refreshes either after consolidation or on a cron schedule, not both. A scheduled refresh only runs when the model is stale (new memories in its scope since the last refresh); if nothing changed, the tick is skipped to avoid a wasted LLM call. null = no schedule.
    */
   refresh_cron?: string | null;
+  /**
+   * Full Refresh Cron
+   *
+   * Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * 0' for Sundays at 03:00 UTC) for a scheduled full refresh: on this schedule the model is refreshed in 'full' mode whatever its `mode` says, regenerating the content from scratch to clear the drift many delta edits accumulate. Independent of `refresh_cron` and `refresh_after_consolidation` — a delta model can refresh after consolidation and still get a weekly full refresh — and it does not change `mode`. A tick is skipped when no refresh has run since the last full one (there is nothing to correct). Like `refresh_cron`, it honours `min_refresh_interval_seconds` and pauses while the last refresh failed. null = no schedule.
+   */
+  full_refresh_cron?: string | null;
   /**
    * Min Refresh Interval Seconds
    *
@@ -6155,6 +6173,20 @@ export type RefreshMentalModelOperationDetails = {
     | "no_answer"
     | "unexpected_error"
     | null;
+};
+
+/**
+ * RefreshMentalModelRequest
+ *
+ * Optional body of POST /mental-models/{id}/refresh.
+ */
+export type RefreshMentalModelRequest = {
+  /**
+   * Mode
+   *
+   * 'full' regenerates the content from scratch for this refresh only, whatever `trigger.mode` says; the stored trigger is not changed. null runs the model's own mode.
+   */
+  mode?: "full" | null;
 };
 
 /**
@@ -8342,7 +8374,10 @@ export type GetMentalModelHistoryResponses = {
 };
 
 export type RefreshMentalModelData = {
-  body?: never;
+  /**
+   * Request
+   */
+  body?: RefreshMentalModelRequest | null;
   headers?: {
     /**
      * Authorization

@@ -1140,6 +1140,13 @@ enum MentalModelCommands {
         #[arg(long)]
         trigger_refresh_cron: Option<String>,
 
+        /// Cron expression (UTC, 5-field, e.g. '0 3 * * 0') for a scheduled
+        /// FULL refresh of a delta model: on this schedule the content is
+        /// rewritten from scratch, independent of the other triggers and
+        /// without changing the mode. Empty string removes the schedule
+        #[arg(long)]
+        trigger_full_refresh_cron: Option<String>,
+
         /// Minimum seconds between two automatic refreshes (0 disables the floor)
         #[arg(long)]
         trigger_min_refresh_interval_seconds: Option<u64>,
@@ -1179,6 +1186,11 @@ enum MentalModelCommands {
 
         /// Mental model ID
         mental_model_id: String,
+
+        /// Rewrite the content from scratch this once (a full refresh), whatever
+        /// the model's mode; the mode itself is not changed
+        #[arg(long)]
+        full: bool,
     },
 
     /// Preview a refresh without changing the mental model
@@ -2009,6 +2021,7 @@ fn run() -> Result<()> {
                 trigger_refresh_after_consolidation,
                 trigger_mode,
                 trigger_refresh_cron,
+                trigger_full_refresh_cron,
                 trigger_min_refresh_interval_seconds,
                 trigger_tags_match,
                 trigger_keep_trace,
@@ -2025,6 +2038,7 @@ fn run() -> Result<()> {
                     mode: trigger_mode,
                     refresh_after_consolidation: trigger_refresh_after_consolidation,
                     refresh_cron: trigger_refresh_cron,
+                    full_refresh_cron: trigger_full_refresh_cron,
                     min_refresh_interval_seconds: trigger_min_refresh_interval_seconds,
                     tags_match: trigger_tags_match,
                     keep_trace: trigger_keep_trace,
@@ -2048,10 +2062,12 @@ fn run() -> Result<()> {
             MentalModelCommands::Refresh {
                 bank_id,
                 mental_model_id,
+                full,
             } => commands::mental_model::refresh(
                 &client,
                 &bank_id,
                 &mental_model_id,
+                full,
                 verbose,
                 output_format,
             ),

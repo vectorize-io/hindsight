@@ -38,6 +38,7 @@ import {
   Download,
   Eraser,
   RefreshCw,
+  RotateCcw,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
@@ -97,6 +98,7 @@ interface MentalModel {
     mode?: "full" | "delta";
     refresh_after_consolidation: boolean;
     refresh_cron?: string | null;
+    full_refresh_cron?: string | null;
     min_refresh_interval_seconds?: number | null;
     fact_types?: Array<"world" | "experience" | "observation">;
     exclude_mental_models?: boolean;
@@ -118,6 +120,8 @@ interface MentalModel {
   is_stale?: boolean | null;
   /** When the last refresh failed, or null when it succeeded. Set = automatic refreshes paused. */
   last_refresh_failed_at?: string | null;
+  /** When a refresh last ran in full mode. */
+  last_full_refreshed_at?: string | null;
   created_at: string;
   reflect_response?: ReflectResponse;
 }
@@ -126,6 +130,7 @@ type ViewMode = "dashboard" | "files";
 
 export function MentalModelsView() {
   const t = useTranslations("mentalModels");
+  const tDetail = useTranslations("mentalModelDetailModal");
   const { currentBank } = useBank();
   const [mentalModels, setMentalModels] = useState<MentalModel[]>([]);
   const [loading, setLoading] = useState(false);
@@ -192,12 +197,15 @@ export function MentalModelsView() {
   // reported as paused (#4532). Polled on the same cadence the list uses.
   const refreshAttempts = useRefreshAttempts(currentBank, MENTAL_MODEL_POLL_MS);
 
-  const handleRowRefresh = async (m: MentalModel) => {
+  // A full refresh costs a whole rewrite, so it is confirmed first.
+  const [fullRefreshTarget, setFullRefreshTarget] = useState<MentalModel | null>(null);
+
+  const handleRowRefresh = async (m: MentalModel, mode?: "full") => {
     if (!currentBank) return;
     const originalAt = m.last_refreshed_at;
     setRefreshingIds((prev) => new Set(prev).add(m.id));
     try {
-      await client.refreshMentalModel(currentBank, m.id);
+      await client.refreshMentalModel(currentBank, m.id, mode ? { mode } : undefined);
       const maxAttempts = 120;
       for (let i = 0; i < maxAttempts; i++) {
         await new Promise((r) => setTimeout(r, 1000));
@@ -414,6 +422,7 @@ export function MentalModelsView() {
                                 setShowUpdateDialog(true);
                               }}
                               onRefresh={handleRowRefresh}
+                              onFullRefresh={setFullRefreshTarget}
                               onClear={(target) =>
                                 setClearTarget({ id: target.id, name: target.name })
                               }
@@ -476,6 +485,7 @@ export function MentalModelsView() {
                     setShowUpdateDialog(true);
                   }}
                   onRefresh={handleRowRefresh}
+                  onFullRefresh={setFullRefreshTarget}
                   onClear={(target) => setClearTarget({ id: target.id, name: target.name })}
                   onDelete={(target) => setDeleteTarget({ id: target.id, name: target.name })}
                 />
@@ -602,6 +612,28 @@ export function MentalModelsView() {
         </AlertDialogContent>
       </AlertDialog>
 
+      <AlertDialog
+        open={!!fullRefreshTarget}
+        onOpenChange={(open) => !open && setFullRefreshTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{tDetail("fullRefreshDialogTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {tDetail("fullRefreshDialogDescription")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-row justify-end space-x-2">
+            <AlertDialogCancel className="mt-0">{t("cancelButton")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => fullRefreshTarget && handleRowRefresh(fullRefreshTarget, "full")}
+            >
+              {tDetail("fullRefreshDialogConfirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <MentalModelDetailModal
         mentalModelId={selectedMentalModel?.id ?? null}
         onClose={() => setSelectedMentalModel(null)}
@@ -642,6 +674,7 @@ function RowActionsMenu({
   refreshing,
   onEdit,
   onRefresh,
+  onFullRefresh,
   onClear,
   onDelete,
   triggerClassName,
@@ -650,11 +683,13 @@ function RowActionsMenu({
   refreshing: boolean;
   onEdit: (m: MentalModel) => void;
   onRefresh: (m: MentalModel) => void;
+  onFullRefresh: (m: MentalModel) => void;
   onClear: (m: MentalModel) => void;
   onDelete: (m: MentalModel) => void;
   triggerClassName?: string;
 }) {
   const t = useTranslations("mentalModels");
+  const tDetail = useTranslations("mentalModelDetailModal");
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -677,6 +712,13 @@ function RowActionsMenu({
           <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
           {t("actionRefresh")}
         </DropdownMenuItem>
+        {/* Only a delta model drifts; a full-mode one rewrites on every refresh. */}
+        {m.trigger?.mode === "delta" && (
+          <DropdownMenuItem onClick={() => onFullRefresh(m)} disabled={refreshing}>
+            <RotateCcw className="h-4 w-4 mr-2" />
+            {tDetail("actionFullRefresh")}
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem onClick={() => printPage(mentalModelDownload(m))} disabled={!m.content}>
           <Download className="h-4 w-4 mr-2" />
           {t("actionDownloadPdf")}
@@ -1051,6 +1093,7 @@ function FilesView({
   refreshAttempts,
   onEdit,
   onRefresh,
+  onFullRefresh,
   onClear,
   onDelete,
 }: {
@@ -1062,6 +1105,7 @@ function FilesView({
   refreshAttempts: Map<string, RefreshAttempt>;
   onEdit: (m: MentalModel) => void;
   onRefresh: (m: MentalModel) => void;
+  onFullRefresh: (m: MentalModel) => void;
   onClear: (m: MentalModel) => void;
   onDelete: (m: MentalModel) => void;
 }) {
@@ -1171,6 +1215,7 @@ function FilesView({
                     refreshing={refreshingIds.has(selected.id)}
                     onEdit={onEdit}
                     onRefresh={onRefresh}
+                    onFullRefresh={onFullRefresh}
                     onClear={onClear}
                     onDelete={onDelete}
                   />

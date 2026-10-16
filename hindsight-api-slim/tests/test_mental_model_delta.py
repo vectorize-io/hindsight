@@ -201,6 +201,85 @@ class TestDeltaRefreshPlumbing:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_full_refresh_of_a_delta_model_regenerates_and_keeps_delta(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_llm_call,
+    ):
+        """``mode="full"`` regenerates a delta model's content once, stamps
+        ``last_full_refreshed_at``, and leaves the trigger on delta — the next plain
+        refresh is a delta again (#4340)."""
+        bank_id = f"test-full-refresh-{uuid.uuid4().hex[:8]}"
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Team Info",
+            source_query="Tell me about the team",
+            content="# Team\n\nOriginal content.",
+            trigger={"mode": "delta"},
+            request_context=request_context,
+        )
+        # A delta refresh with nothing to change: delta mode, so no full stamp.
+        patch_reflect(memory, text="ignored")
+        patch_llm_call(memory, returns=[])
+        after_delta = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+        assert after_delta["last_full_refreshed_at"] is None
+
+        patch_reflect(memory, text="# Team\n\nRegenerated from scratch.")
+        llm_calls = patch_llm_call(memory, returns="should-not-be-called")
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], mode="full", request_context=request_context
+        )
+
+        assert refreshed["content"] == "# Team\n\nRegenerated from scratch.\n"
+        assert len(llm_calls) == 0, "a full refresh must not run the delta merge"
+        assert refreshed["last_full_refreshed_at"] is not None
+        assert refreshed["trigger"]["mode"] == "delta"
+
+        # The next plain refresh runs the model's own mode again: with a new fact
+        # to integrate, that is the delta merge call.
+        patch_reflect(
+            memory,
+            text="ignored",
+            facts=[{"id": "obs-bob", "text": "Bob joined the team", "type": "observation", "context": None}],
+        )
+        llm_calls = patch_llm_call(memory, returns=[])
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
+        assert len(llm_calls) == 1
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_a_full_refresh_over_an_empty_scope_still_counts_as_full(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+    ):
+        """Nothing in scope means the content is kept — but the run was a full one,
+        so it is recorded; otherwise a full_refresh_cron would fire every tick."""
+        bank_id = f"test-full-empty-{uuid.uuid4().hex[:8]}"
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Homelab",
+            source_query="What runs in the homelab?",
+            content="# Homelab\n\nA NAS.",
+            trigger={"mode": "delta"},
+            request_context=request_context,
+        )
+
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], mode="full", request_context=request_context
+        )
+
+        assert refreshed["content"].startswith("# Homelab")
+        assert refreshed["last_full_refreshed_at"] is not None
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
     async def test_creating_a_model_with_markdown_stores_its_structure(
         self,
         memory: MemoryEngine,

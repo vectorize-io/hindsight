@@ -115,6 +115,13 @@ const refreshResult = await client.refreshMentalModel(BANK_ID, mentalModelId);
 console.log(`Refresh operation ID: ${refreshResult.operation_id}`);
 // [/docs:refresh-mental-model]
 
+// [docs:full-refresh-mental-model]
+// Rewrite the content from scratch this once; the model keeps its mode
+const fullResult = await client.refreshMentalModel(BANK_ID, mentalModelId, { mode: "full" });
+
+console.log(`Full refresh operation ID: ${fullResult.operation_id}`);
+// [/docs:full-refresh-mental-model]
+
 // [docs:clear-mental-model]
 // Clear a mental model's content, then refresh for a full re-synthesis
 await client.clearMentalModel(BANK_ID, mentalModelId);

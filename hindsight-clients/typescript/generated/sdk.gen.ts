@@ -747,7 +747,7 @@ export const getMentalModelHistory = <ThrowOnError extends boolean = false>(
 /**
  * Refresh mental model
  *
- * Submit an async task to re-run the source query through reflect and update the content.
+ * Submit an async task to re-run the source query through reflect and update the content. With no body the refresh runs in the model's own `trigger.mode`. Send `{"mode": "full"}` for a full refresh: the content is regenerated from scratch this once (to clear the drift delta edits accumulate) while the stored trigger keeps its mode. Unlike clearing the model first, a full refresh that fails leaves the previous content in place.
  */
 export const refreshMentalModel = <ThrowOnError extends boolean = false>(
   options: Options<RefreshMentalModelData, ThrowOnError>
@@ -756,7 +756,14 @@ export const refreshMentalModel = <ThrowOnError extends boolean = false>(
     RefreshMentalModelResponses,
     RefreshMentalModelErrors,
     ThrowOnError
-  >({ url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh", ...options });
+  >({
+    url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
 
 /**
  * Dry-run mental model refresh (preview, no persistence)

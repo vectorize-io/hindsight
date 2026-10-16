@@ -25,6 +25,7 @@ type MentalModelTriggerInput struct {
 	// If true, refresh this mental model after observations consolidation (real-time mode)
 	RefreshAfterConsolidation *bool `json:"refresh_after_consolidation,omitempty"`
 	RefreshCron NullableString `json:"refresh_cron,omitempty"`
+	FullRefreshCron NullableString `json:"full_refresh_cron,omitempty"`
 	MinRefreshIntervalSeconds NullableInt32 `json:"min_refresh_interval_seconds,omitempty"`
 	FactTypes []string `json:"fact_types,omitempty"`
 	// If true, exclude all mental models from the reflect loop (skip search_mental_models tool).
@@ -221,6 +222,48 @@ func (o *MentalModelTriggerInput) SetRefreshCronNil() {
 // UnsetRefreshCron ensures that no value is present for RefreshCron, not even an explicit nil
 func (o *MentalModelTriggerInput) UnsetRefreshCron() {
 	o.RefreshCron.Unset()
+}
+
+// GetFullRefreshCron returns the FullRefreshCron field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *MentalModelTriggerInput) GetFullRefreshCron() string {
+	if o == nil || IsNil(o.FullRefreshCron.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.FullRefreshCron.Get()
+}
+
+// GetFullRefreshCronOk returns a tuple with the FullRefreshCron field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *MentalModelTriggerInput) GetFullRefreshCronOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.FullRefreshCron.Get(), o.FullRefreshCron.IsSet()
+}
+
+// HasFullRefreshCron returns a boolean if a field has been set.
+func (o *MentalModelTriggerInput) HasFullRefreshCron() bool {
+	if o != nil && o.FullRefreshCron.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetFullRefreshCron gets a reference to the given NullableString and assigns it to the FullRefreshCron field.
+func (o *MentalModelTriggerInput) SetFullRefreshCron(v string) {
+	o.FullRefreshCron.Set(&v)
+}
+// SetFullRefreshCronNil sets the value for FullRefreshCron to be an explicit nil
+func (o *MentalModelTriggerInput) SetFullRefreshCronNil() {
+	o.FullRefreshCron.Set(nil)
+}
+
+// UnsetFullRefreshCron ensures that no value is present for FullRefreshCron, not even an explicit nil
+func (o *MentalModelTriggerInput) UnsetFullRefreshCron() {
+	o.FullRefreshCron.Unset()
 }
 
 // GetMinRefreshIntervalSeconds returns the MinRefreshIntervalSeconds field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -734,6 +777,9 @@ func (o MentalModelTriggerInput) ToMap() (map[string]interface{}, error) {
 	}
 	if o.RefreshCron.IsSet() {
 		toSerialize["refresh_cron"] = o.RefreshCron.Get()
+	}
+	if o.FullRefreshCron.IsSet() {
+		toSerialize["full_refresh_cron"] = o.FullRefreshCron.Get()
 	}
 	if o.MinRefreshIntervalSeconds.IsSet() {
 		toSerialize["min_refresh_interval_seconds"] = o.MinRefreshIntervalSeconds.Get()

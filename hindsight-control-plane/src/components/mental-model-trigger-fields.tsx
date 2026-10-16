@@ -29,6 +29,10 @@ export type TriggerForm = {
   refreshTrigger: "manual" | "auto" | "scheduled";
   mode: "full" | "delta";
   refreshCron: string;
+  // A second, independent schedule: full refreshes for a delta model. Its own
+  // on/off flag, so emptying the cron input while typing does not hide it.
+  fullRefreshEnabled: boolean;
+  fullRefreshCron: string;
   minRefreshIntervalSeconds: string;
   factTypes: FactType[];
   excludeMentalModels: boolean;
@@ -54,6 +58,8 @@ export function triggerFormFromTrigger(trigger?: Partial<MentalModelTrigger> | n
         : "manual",
     mode: trigger?.mode || "full",
     refreshCron: trigger?.refresh_cron || "",
+    fullRefreshEnabled: Boolean(trigger?.full_refresh_cron),
+    fullRefreshCron: trigger?.full_refresh_cron || "",
     minRefreshIntervalSeconds:
       trigger?.min_refresh_interval_seconds != null
         ? String(trigger.min_refresh_interval_seconds)
@@ -113,6 +119,9 @@ export function triggerFromForm(form: TriggerForm): MentalModelTrigger | null {
     mode: form.mode,
     refresh_after_consolidation: form.refreshTrigger === "auto",
     refresh_cron: form.refreshTrigger === "scheduled" ? form.refreshCron.trim() || null : null,
+    // Only a delta model drifts; a full-mode model already rewrites on every refresh.
+    full_refresh_cron:
+      form.mode === "delta" && form.fullRefreshEnabled ? form.fullRefreshCron.trim() || null : null,
     min_refresh_interval_seconds: toInt(form.minRefreshIntervalSeconds),
     fact_types: form.factTypes.length > 0 ? form.factTypes : null,
     exclude_mental_models: form.excludeMentalModels,
@@ -157,11 +166,64 @@ function hasAdvancedValues(form: TriggerForm): boolean {
   );
 }
 
-const CRON_PRESETS = [
+type CronPreset = { key: string; cron: string };
+
+const CRON_PRESETS: CronPreset[] = [
   { key: "triggerCronPresetHourly", cron: "0 * * * *" },
   { key: "triggerCronPresetDaily", cron: "0 3 * * *" },
   { key: "triggerCronPresetWeekly", cron: "0 3 * * 1" },
-] as const;
+];
+
+// A full refresh is maintenance, so its presets are slower than the refresh ones.
+const FULL_REFRESH_CRON_PRESETS: CronPreset[] = [
+  { key: "triggerCronPresetSunday", cron: "0 3 * * 0" },
+  { key: "triggerCronPresetMonthly", cron: "0 3 1 * *" },
+];
+const DEFAULT_FULL_REFRESH_CRON = FULL_REFRESH_CRON_PRESETS[0].cron;
+
+/** A cron input with preset chips and a preview of the next runs. */
+function CronField({
+  value,
+  onChange,
+  presets,
+  label,
+}: {
+  value: string;
+  onChange: (cron: string) => void;
+  presets: CronPreset[];
+  label: string;
+}) {
+  const t = useTranslations("mentalModels");
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          aria-label={label}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={t("optionsRefreshCronPlaceholder")}
+          className="h-8 flex-1 min-w-[12rem] font-mono text-sm"
+        />
+        {presets.map((preset) => (
+          <button
+            key={preset.cron}
+            type="button"
+            onClick={() => onChange(preset.cron)}
+            className={cn(
+              "rounded-full border px-2.5 py-1 text-xs transition-colors",
+              value.trim() === preset.cron
+                ? "border-primary bg-primary/10 text-foreground"
+                : "border-border text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+            )}
+          >
+            {t(preset.key)}
+          </button>
+        ))}
+      </div>
+      <CronSchedulePreview cron={value} compact />
+    </div>
+  );
+}
 
 // "0 * * * *" -> "Every hour"; the raw expression when cronstrue can't read it.
 function describeCron(cron: string): string {
@@ -183,6 +245,9 @@ export function TriggerSummary({ form }: { form: TriggerForm }) {
         ? t("optionsRefreshTriggerAuto")
         : t("optionsRefreshTriggerManual"),
     form.mode === "delta" ? t("triggerModeDelta") : t("triggerModeFull"),
+    ...(form.mode === "delta" && form.fullRefreshEnabled && form.fullRefreshCron.trim()
+      ? [t("triggerFullRefreshChip", { schedule: describeCron(form.fullRefreshCron) })]
+      : []),
     form.factTypes.length > 0
       ? form.factTypes.map((ft) => tFact(ft)).join(", ")
       : t("triggerFactTypesAll"),
@@ -260,33 +325,12 @@ export function MentalModelTriggerFields({
           ]}
         />
         {form.refreshTrigger === "scheduled" && (
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <Input
-                aria-label={t("optionsRefreshCronLabel")}
-                value={form.refreshCron}
-                onChange={(e) => setForm({ ...form, refreshCron: e.target.value })}
-                placeholder={t("optionsRefreshCronPlaceholder")}
-                className="h-8 flex-1 min-w-[12rem] font-mono text-sm"
-              />
-              {CRON_PRESETS.map((preset) => (
-                <button
-                  key={preset.cron}
-                  type="button"
-                  onClick={() => setForm({ ...form, refreshCron: preset.cron })}
-                  className={cn(
-                    "rounded-full border px-2.5 py-1 text-xs transition-colors",
-                    form.refreshCron.trim() === preset.cron
-                      ? "border-primary bg-primary/10 text-foreground"
-                      : "border-border text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                  )}
-                >
-                  {t(preset.key)}
-                </button>
-              ))}
-            </div>
-            <CronSchedulePreview cron={form.refreshCron} compact />
-          </div>
+          <CronField
+            value={form.refreshCron}
+            onChange={(refreshCron) => setForm({ ...form, refreshCron })}
+            presets={CRON_PRESETS}
+            label={t("optionsRefreshCronLabel")}
+          />
         )}
         {form.refreshTrigger !== "manual" && (
           <Row
@@ -333,6 +377,39 @@ export function MentalModelTriggerFields({
             },
           ]}
         />
+        {form.mode === "delta" && (
+          <>
+            <Row
+              label={t("triggerFullRefreshLabel")}
+              description={t("triggerFullRefreshDescription")}
+              htmlFor={`${id}-full-refresh`}
+            >
+              <div className="flex sm:justify-end">
+                <Switch
+                  id={`${id}-full-refresh`}
+                  checked={form.fullRefreshEnabled}
+                  onCheckedChange={(checked) =>
+                    setForm({
+                      ...form,
+                      fullRefreshEnabled: checked,
+                      fullRefreshCron: checked
+                        ? form.fullRefreshCron || DEFAULT_FULL_REFRESH_CRON
+                        : form.fullRefreshCron,
+                    })
+                  }
+                />
+              </div>
+            </Row>
+            {form.fullRefreshEnabled && (
+              <CronField
+                value={form.fullRefreshCron}
+                onChange={(fullRefreshCron) => setForm({ ...form, fullRefreshCron })}
+                presets={FULL_REFRESH_CRON_PRESETS}
+                label={t("triggerFullRefreshCronLabel")}
+              />
+            )}
+          </>
+        )}
       </Section>
 
       <Section title={t("triggerSectionReads")}>
