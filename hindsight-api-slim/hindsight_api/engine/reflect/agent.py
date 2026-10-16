@@ -1275,9 +1275,14 @@ async def _run_reflect_agent_inner(
 
         def _arguments(tool: str) -> dict[str, Any]:
             arguments: dict[str, Any] = {"query": search_query, "reason": "parallel round"}
-            if tool == "recall" and prune_evidence_fn is not None:
-                # Never below the bank's own recall size.
-                arguments["max_tokens"] = max(_ROUND_RECALL_MAX_TOKENS, tool_token_limits.recall_max_tokens)
+            # Raised only when the bank's own recall size is smaller: a size passed as an argument is
+            # capped like one the model asked for, while the bank's default applies uncapped.
+            if (
+                tool == "recall"
+                and prune_evidence_fn is not None
+                and tool_token_limits.recall_max_tokens < _ROUND_RECALL_MAX_TOKENS
+            ):
+                arguments["max_tokens"] = _ROUND_RECALL_MAX_TOKENS
             return arguments
 
         return LLMToolCallResult(

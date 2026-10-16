@@ -442,9 +442,10 @@ async def test_a_failed_search_query_rewrite_searches_the_request_as_written():
 async def test_round_recall_never_goes_below_the_banks_own_recall_size():
     from dataclasses import replace
 
-    from hindsight_api.engine.reflect.agent import _ROUND_RECALL_MAX_TOKENS, _SHIPPED_DEFAULT_TOOL_LIMITS
+    from hindsight_api.engine.reflect.agent import _SHIPPED_DEFAULT_TOOL_LIMITS
 
-    bank_size = _ROUND_RECALL_MAX_TOKENS + 4000
+    # Above the 16k cap on a size passed as an argument: the bank's default is not capped.
+    bank_size = 20_000
     functions = _functions()
 
     await run_reflect_agent(
