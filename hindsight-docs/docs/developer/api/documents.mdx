@@ -184,6 +184,8 @@ Because filtering and ordering follow the same column, `total` counts only the d
 
 When `q` is set, each returned row carries `matched_fields`: `["id"]`, `["original_text"]`, or both, so a caller can tell why a document matched.
 
+A `q` search counts at most 1,000 matches. Past that, `total` is a lower bound, `total_is_estimate` is `true`, and pages stop at the cap. Narrow the search, or add a tag or time filter, to reach the rest. Some storage backends match `q` approximately — `matched_fields` always says what matched.
+
 **`tags_match` modes:**
 
 | Mode | Behaviour |

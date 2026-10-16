@@ -3484,6 +3484,12 @@ export type ListDocumentsResponse = {
    * Offset
    */
   offset: number;
+  /**
+   * Total Is Estimate
+   *
+   * True when a `q` search stopped at its match cap, so `total` is a lower bound rather than an exact count. Always false without `q`.
+   */
+  total_is_estimate?: boolean;
 };
 
 /**
@@ -9071,7 +9077,7 @@ export type ListDocumentsData = {
     /**
      * Q
      *
-     * Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
+     * Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that. Matches are capped: past the cap, `total` is a lower bound and `total_is_estimate` is true. A store-owned backend may match approximately; each item's `matched_fields` says what matched.
      */
     q?: string | null;
     /**

@@ -572,7 +572,7 @@ type ApiListDocumentsRequest struct {
 	authorization *string
 }
 
-// Case-insensitive substring filter on document ID or document text (e.g. &#39;report&#39; matches &#39;report-2024&#39; or any document containing &#39;report&#39;). Unindexed scan of the bank&#39;s documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
+// Case-insensitive substring filter on document ID or document text (e.g. &#39;report&#39; matches &#39;report-2024&#39; or any document containing &#39;report&#39;). Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that. Matches are capped: past the cap, &#x60;total&#x60; is a lower bound and &#x60;total_is_estimate&#x60; is true. A store-owned backend may match approximately; each item&#39;s &#x60;matched_fields&#x60; says what matched.
 func (r ApiListDocumentsRequest) Q(q string) ApiListDocumentsRequest {
 	r.q = &q
 	return r

@@ -744,6 +744,8 @@ export function DocumentsView() {
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [total, setTotal] = useState(0);
+  // A capped search: `total` is a lower bound, shown as "N+".
+  const [totalIsEstimate, setTotalIsEstimate] = useState(false);
 
   // Document transfer (export/import) state
   const [exporting, setExporting] = useState(false);
@@ -829,6 +831,7 @@ export function DocumentsView() {
         });
         setDocuments(data.items || []);
         setTotal(data.total || 0);
+        setTotalIsEstimate(Boolean(data.total_is_estimate));
       } catch (error) {
         // Error toast is shown automatically by the API client interceptor
       } finally {
@@ -957,7 +960,7 @@ export function DocumentsView() {
     () => pendingRows.some((upload) => upload.status === "processing"),
     [pendingRows]
   );
-  const displayTotal = total + pendingRows.length;
+  const displayTotal = `${(total + pendingRows.length).toLocaleString()}${totalIsEstimate ? "+" : ""}`;
 
   // The detail response nests the document's metadata under `retain_params`,
   // where the list response returns it flat as `document_metadata` — same map,
@@ -1820,6 +1823,7 @@ export function DocumentsView() {
               <div className="flex items-center justify-between mt-3 pt-3 border-t">
                 <div className="text-xs text-muted-foreground">
                   {offset + 1}-{Math.min(offset + ITEMS_PER_PAGE, total)} of {total}
+                  {totalIsEstimate ? "+" : ""}
                 </div>
                 <div className="flex items-center gap-1">
                   <Button

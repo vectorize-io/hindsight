@@ -1529,7 +1529,12 @@ class MemoriesExtension(Extension, ABC):
 
         ``time_field`` (``created_at`` / ``updated_at``) with ``start_date``/``end_date`` is the
         same window the SQL branch applies: half-open ``[start, end)`` on the named axis, which also
-        becomes the ordering. ``total`` counts the window, on the same terms as tags above."""
+        becomes the ordering. ``total`` counts the window, on the same terms as tags above.
+
+        ``search_query`` is a browse search, not retrieval: a store may answer it approximately and
+        from a bounded set of matches, but each row's ``matched_fields`` must say why it matched
+        (``id``, ``original_text``), and when the bound cut the matches short the result carries
+        ``total_is_estimate: True`` so ``total`` is not read as exact."""
         raise NotImplementedError
 
     async def count_documents(self, *, bank_id: str) -> int:
@@ -3093,7 +3098,7 @@ class MemoriesExtension(Extension, ABC):
         limit: int,
         offset: int,
     ) -> dict:
-        """A page of the bank's documents — ``{items, total, limit, offset}``.
+        """A page of the bank's documents — ``{items, total, limit, offset, total_is_estimate}``.
 
         Default: :meth:`list_documents` on the store's own registry. Postgres pages the
         `documents` table on a connection it acquires from ``backend``."""

@@ -293,3 +293,39 @@ async def test_list_documents_search_query_is_literal(memory, request_context):
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_list_documents_search_is_capped_and_says_so(memory, request_context, monkeypatch):
+    """A q search counts at most the cap: past it `total` is the cap, `total_is_estimate` is true,
+    and no page reaches beyond the cap. Under it the count is exact and the flag is false."""
+    from hindsight_api.engine.memories.pg import documents as pg_documents
+
+    monkeypatch.setattr(pg_documents, "DOCUMENT_SEARCH_CAP", 2)
+    bank_id = f"test_list_docs_q_cap_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        for i in range(3):
+            await _retain_doc(memory, bank_id, f"capped-{i}", None, request_context)
+
+        capped = await memory.list_documents(bank_id=bank_id, search_query="capped", request_context=request_context)
+        assert capped["total"] == 2
+        assert capped["total_is_estimate"] is True
+        assert len(capped["items"]) == 2
+
+        past = await memory.list_documents(
+            bank_id=bank_id, search_query="capped", limit=10, offset=1, request_context=request_context
+        )
+        assert len(past["items"]) == 1
+        assert past["limit"] == 10
+
+        exact = await memory.list_documents(bank_id=bank_id, search_query="capped-1", request_context=request_context)
+        assert exact["total"] == 1
+        assert exact["total_is_estimate"] is False
+
+        unfiltered = await memory.list_documents(bank_id=bank_id, request_context=request_context)
+        assert unfiltered["total"] == 3
+        assert unfiltered["total_is_estimate"] is False
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)

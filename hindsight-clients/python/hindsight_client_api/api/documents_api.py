@@ -1241,7 +1241,7 @@ class DocumentsApi:
     async def list_documents(
         self,
         bank_id: StrictStr,
-        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.")] = None,
+        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that. Matches are capped: past the cap, `total` is a lower bound and `total_is_estimate` is true. A store-owned backend may match approximately; each item's `matched_fields` says what matched.")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter documents by tags")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'")] = None,
         time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
@@ -1269,7 +1269,7 @@ class DocumentsApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param q: Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
+        :param q: Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that. Matches are capped: past the cap, `total` is a lower bound and `total_is_estimate` is true. A store-owned backend may match approximately; each item's `matched_fields` says what matched.
         :type q: str
         :param tags: Filter documents by tags
         :type tags: List[str]
@@ -1346,7 +1346,7 @@ class DocumentsApi:
     async def list_documents_with_http_info(
         self,
         bank_id: StrictStr,
-        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.")] = None,
+        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that. Matches are capped: past the cap, `total` is a lower bound and `total_is_estimate` is true. A store-owned backend may match approximately; each item's `matched_fields` says what matched.")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter documents by tags")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'")] = None,
         time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
@@ -1374,7 +1374,7 @@ class DocumentsApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param q: Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
+        :param q: Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that. Matches are capped: past the cap, `total` is a lower bound and `total_is_estimate` is true. A store-owned backend may match approximately; each item's `matched_fields` says what matched.
         :type q: str
         :param tags: Filter documents by tags
         :type tags: List[str]
@@ -1451,7 +1451,7 @@ class DocumentsApi:
     async def list_documents_without_preload_content(
         self,
         bank_id: StrictStr,
-        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.")] = None,
+        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that. Matches are capped: past the cap, `total` is a lower bound and `total_is_estimate` is true. A store-owned backend may match approximately; each item's `matched_fields` says what matched.")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter documents by tags")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'")] = None,
         time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
@@ -1479,7 +1479,7 @@ class DocumentsApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param q: Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
+        :param q: Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that. Matches are capped: past the cap, `total` is a lower bound and `total_is_estimate` is true. A store-owned backend may match approximately; each item's `matched_fields` says what matched.
         :type q: str
         :param tags: Filter documents by tags
         :type tags: List[str]

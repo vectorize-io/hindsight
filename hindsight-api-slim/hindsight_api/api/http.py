@@ -2692,6 +2692,13 @@ class ListDocumentsResponse(BaseModel):
     total: int
     limit: int
     offset: int
+    total_is_estimate: bool = Field(
+        default=False,
+        description=(
+            "True when a `q` search stopped at its match cap, so `total` is a lower bound rather than an "
+            "exact count. Always false without `q`."
+        ),
+    )
 
 
 class TagItem(BaseModel):
@@ -7851,9 +7858,10 @@ def _register_routes(app: FastAPI):
             None,
             description=(
                 "Case-insensitive substring filter on document ID or document text (e.g. 'report' matches "
-                "'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: "
-                "meant for browsing and inspection, not for high-volume or latency-sensitive workloads — "
-                "use recall for that."
+                "'report-2024' or any document containing 'report'). Meant for browsing and inspection, not "
+                "for high-volume or latency-sensitive workloads — use recall for that. Matches are capped: "
+                "past the cap, `total` is a lower bound and `total_is_estimate` is true. A store-owned backend "
+                "may match approximately; each item's `matched_fields` says what matched."
             ),
         ),
         tags: list[str] | None = Query(None, description="Filter documents by tags"),
