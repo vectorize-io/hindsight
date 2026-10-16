@@ -94,3 +94,39 @@ async def test_import_from_a_file_in_small_batches(memory, request_context, monk
         memory._operation_validator = original_validator
         await memory.delete_bank(src, request_context=request_context)
         await memory.delete_bank(dst, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_history_rows_stream_into_a_renamed_bank(memory, request_context):
+    """History rows are read one at a time and land under the target bank, with fresh ids."""
+    from hindsight_api.engine.db_utils import acquire_with_retry
+    from hindsight_api.engine.schema import fq_table
+    from hindsight_api.engine.transfer import TransferScope, export_bank
+
+    src = _unique_bank("transfer_history_src")
+    dst = _unique_bank("transfer_history_dst")
+    try:
+        await _retain(memory, src, "Alice works at Google.", request_context, "doc-1")
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            # Seeded directly: nothing in the test engine writes audit rows on its own.
+            await conn.execute(
+                f"INSERT INTO {fq_table('audit_log')} (action, transport, bank_id) VALUES ($1, 'http', $2)",
+                "streamed_history_probe",
+                src,
+            )
+            archive = await export_bank(conn, src, scope=TransferScope(history=True))
+
+        result = await memory.import_bank_async(
+            archive, request_context, target_bank_id=dst, scope=TransferScope(history=True)
+        )
+
+        assert result.history_rows_imported >= 1
+        restored = await memory.list_audit_logs(dst, request_context=request_context, action="streamed_history_probe")
+        assert restored is not None and restored.total == 1
+        source = await memory.list_audit_logs(src, request_context=request_context, action="streamed_history_probe")
+        assert source is not None and source.total == 1
+        assert restored.items[0].id != source.items[0].id
+    finally:
+        await memory.delete_bank(src, request_context=request_context)
+        await memory.delete_bank(dst, request_context=request_context)
