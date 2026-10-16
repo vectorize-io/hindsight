@@ -33,10 +33,14 @@ def test_builtin_package_exports_only_the_bundled_extensions():
 
 
 def test_no_core_module_imports_jwt():
-    """`jwt` was a direct dependency solely for the Supabase extension."""
+    """`jwt` was a direct dependency solely for the Supabase extension.
+
+    The chatgpt provider is the one core user since: it verifies the Sign in with
+    ChatGPT ID token against OpenAI's JWKS.
+    """
     importers = [
         path.relative_to(_PACKAGE_ROOT).as_posix()
         for path in _PACKAGE_ROOT.rglob("*.py")
         if any(line.startswith(("import jwt", "from jwt ")) for line in path.read_text(encoding="utf-8").splitlines())
     ]
-    assert importers == []
+    assert importers == ["engine/providers/chatgpt_auth.py"]

@@ -509,6 +509,7 @@ def test_litellm_takes_a_key_only_for_keyed_backends(model, supported):
 # the client the override is applied to.
 _OVERRIDE_ANSWERED_BY = {
     "AnthropicLLM": "AnthropicLLM",
+    "ChatGPTLLM": "LLMInterface",
     "ClaudeCodeLLM": "LLMInterface",
     "CodexLLM": "LLMInterface",
     "CursorLLM": "LLMInterface",

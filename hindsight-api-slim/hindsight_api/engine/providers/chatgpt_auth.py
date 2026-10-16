@@ -61,7 +61,7 @@ from aiohttp import web
 from pydantic import BaseModel, BeforeValidator, ConfigDict, ValidationError
 
 from ...config import get_config
-from ..aiohttp_session import LoopLocalSession, per_phase_timeout
+from ..aiohttp_session import LoopLocalSession, per_phase_timeout, proxy_env_is_set
 from .oauth_store_lock import oauth_store_lock
 
 logger = logging.getLogger(__name__)
@@ -660,7 +660,9 @@ async def _start_callback_listener(
         await web.TCPSite(runner, "127.0.0.1", port).start()
     except OSError as exc:
         await runner.cleanup()
-        raise ChatGPTAuthError(f"Cannot listen on 127.0.0.1:{port} ({exc.strerror}); try --port.") from exc
+        raise ChatGPTAuthError(
+            f"Cannot bind the sign-in callback to 127.0.0.1:{port} ({exc.strerror}); try --port."
+        ) from exc
 
     async def wait() -> dict[str, str]:
         try:
@@ -731,7 +733,9 @@ async def login(
 
     # One-shot CLI work under asyncio.run: a scoped session, not a LoopLocalSession,
     # since nothing reuses it and the loop ends with the command.
-    async with aiohttp.ClientSession(timeout=per_phase_timeout(_HTTP_TIMEOUT_SECONDS)) as session:
+    async with aiohttp.ClientSession(
+        timeout=per_phase_timeout(_HTTP_TIMEOUT_SECONDS), trust_env=proxy_env_is_set()
+    ) as session:
         tokens = await exchange_code(
             session,
             client_id=callback.client_id,
@@ -968,7 +972,9 @@ async def logout(home: Path, out: Callable[[str], None] = print, *, revoke: bool
     confirmed = False
     if revoke and credential.is_active:
         # One-shot CLI call (see login): a scoped session is enough.
-        async with aiohttp.ClientSession(timeout=per_phase_timeout(_HTTP_TIMEOUT_SECONDS)) as session:
+        async with aiohttp.ClientSession(
+            timeout=per_phase_timeout(_HTTP_TIMEOUT_SECONDS), trust_env=proxy_env_is_set()
+        ) as session:
             confirmed = await _revoke(session, credential)
     async with oauth_store_lock(path, timeout_seconds=_LOCK_TIMEOUT_SECONDS, label=_LOCK_LABEL):
         current = read_credential(path)

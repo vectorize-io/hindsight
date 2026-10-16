@@ -1094,8 +1094,12 @@ async def test_openai_org_and_project_env_are_not_sent(make_llm, monkeypatch):
 
 async def test_provider_cleanup_keeps_shared_manager_usable(make_llm):
     upstream = _Upstream([(401, {"detail": "rejected"}), (200, _completed())])
-    first = await make_llm(upstream)
-    second = await make_llm(upstream)
+    # One credential for both builds: _credential() stamps the token with the current
+    # second, so a second call can write a different token, which the 401 path then
+    # adopts from the file instead of refreshing.
+    cred = _credential()
+    first = await make_llm(upstream, cred)
+    second = await make_llm(upstream, cred)
     await first.cleanup()
     result = await second.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
     assert result.content == "hello"
