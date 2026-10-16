@@ -1489,7 +1489,18 @@ class GeminiLLM(LLMInterface):
         prompt = meta.get("promptTokenCount") or meta.get("prompt_token_count") or 0
         completion = meta.get("candidatesTokenCount") or meta.get("candidates_token_count") or 0
         total = meta.get("totalTokenCount") or meta.get("total_token_count") or 0
-        return {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": total}
+        cached = meta.get("cachedContentTokenCount") or meta.get("cached_content_token_count") or 0
+        thoughts = meta.get("thoughtsTokenCount") or meta.get("thoughts_token_count") or 0
+        # Cached and thinking counts ride in OpenAI's detail blocks so the consumer
+        # reads them the way it reads a live call (#5487). Gemini's total already
+        # includes thoughts, which is the "unfolded" shape visible_token_usage expects.
+        return {
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": total,
+            "prompt_tokens_details": {"cached_tokens": cached},
+            "completion_tokens_details": {"reasoning_tokens": thoughts},
+        }
 
     @staticmethod
     def _normalize_state(state: Any) -> str:

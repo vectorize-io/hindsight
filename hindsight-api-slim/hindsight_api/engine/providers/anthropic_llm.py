@@ -865,6 +865,7 @@ class AnthropicLLM(LLMInterface):
         usage = getattr(message, "usage", None)
         input_tokens = (usage.input_tokens or 0) if usage else 0
         output_tokens = (usage.output_tokens or 0) if usage else 0
+        cached_tokens = (getattr(usage, "cache_read_input_tokens", 0) or 0) if usage else 0
 
         return {
             "choices": [
@@ -877,6 +878,7 @@ class AnthropicLLM(LLMInterface):
                 "prompt_tokens": input_tokens,
                 "completion_tokens": output_tokens,
                 "total_tokens": input_tokens + output_tokens,
+                "prompt_tokens_details": {"cached_tokens": cached_tokens},
             },
         }
 

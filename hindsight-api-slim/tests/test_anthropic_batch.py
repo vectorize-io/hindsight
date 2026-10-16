@@ -97,7 +97,7 @@ def _succeeded_entry(custom_id: str, tool_input: dict) -> SimpleNamespace:
     block = SimpleNamespace(type="tool_use", name="structured_response", input=tool_input, text=None)
     message = SimpleNamespace(
         content=[block],
-        usage=SimpleNamespace(input_tokens=100, output_tokens=40, cache_read_input_tokens=0),
+        usage=SimpleNamespace(input_tokens=100, output_tokens=40, cache_read_input_tokens=60),
         stop_reason="tool_use",
     )
     return SimpleNamespace(custom_id=custom_id, result=SimpleNamespace(type="succeeded", message=message))
@@ -258,7 +258,13 @@ async def test_retrieve_batch_results_translates_to_openai_shape():
     # The engine reads choices[0].message.content and json.loads() it.
     assert json.loads(body["choices"][0]["message"]["content"]) == {"facts": ["Alice is an engineer."]}
     # Usage arrives under the OpenAI key names the engine sums.
-    assert body["usage"] == {"prompt_tokens": 100, "completion_tokens": 40, "total_tokens": 140}
+    # Cache reads ride in the OpenAI detail block, as a live call reports them (#5487).
+    assert body["usage"] == {
+        "prompt_tokens": 100,
+        "completion_tokens": 40,
+        "total_tokens": 140,
+        "prompt_tokens_details": {"cached_tokens": 60},
+    }
 
     failed = by_id["chunk_1"]
     assert failed["error"]
