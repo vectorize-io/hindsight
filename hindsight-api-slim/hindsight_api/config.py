@@ -896,6 +896,10 @@ ENV_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION = (
 )
 ENV_CONSOLIDATION_RECALL_BUDGET = "HINDSIGHT_API_CONSOLIDATION_RECALL_BUDGET"
 ENV_CONSOLIDATION_MAX_ATTEMPTS = "HINDSIGHT_API_CONSOLIDATION_MAX_ATTEMPTS"
+ENV_ENABLE_CONSOLIDATION_TRIAGE = "HINDSIGHT_API_ENABLE_CONSOLIDATION_TRIAGE"
+ENV_CONSOLIDATION_TRIAGE_API_KEY = "HINDSIGHT_API_CONSOLIDATION_TRIAGE_API_KEY"
+ENV_CONSOLIDATION_TRIAGE_MODEL = "HINDSIGHT_API_CONSOLIDATION_TRIAGE_MODEL"
+ENV_CONSOLIDATION_TRIAGE_BASE_URL = "HINDSIGHT_API_CONSOLIDATION_TRIAGE_BASE_URL"
 ENV_OBSERVATIONS_MISSION = "HINDSIGHT_API_OBSERVATIONS_MISSION"
 ENV_MAX_OBSERVATIONS_PER_SCOPE = "HINDSIGHT_API_MAX_OBSERVATIONS_PER_SCOPE"
 ENV_OBSERVATION_SCOPE_LIMITS = "HINDSIGHT_API_OBSERVATION_SCOPE_LIMITS"
@@ -1792,6 +1796,11 @@ DEFAULT_ENABLE_DOCUMENT_IMPORT_API = True
 # Observations defaults (consolidated knowledge from facts)
 DEFAULT_ENABLE_OBSERVATIONS = True  # Observations enabled by default
 DEFAULT_ENABLE_AUTO_CONSOLIDATION = True  # Auto-consolidation after retain enabled by default
+# Settle restatements, new facets and chatter with a TypeSafe System One judgment before the
+# LLM call; only facts that change existing observations reach the LLM. Needs the API key.
+DEFAULT_ENABLE_CONSOLIDATION_TRIAGE = False
+DEFAULT_CONSOLIDATION_TRIAGE_MODEL = "jev-latest"
+DEFAULT_CONSOLIDATION_TRIAGE_BASE_URL = "https://api.typesafe.ai"
 DEFAULT_ENABLE_OBSERVATION_HISTORY = True  # Observation history tracking enabled by default
 DEFAULT_ENABLE_MENTAL_MODEL_HISTORY = True  # Mental model history tracking enabled by default
 # Floor on how often an *automatic* mental-model refresh may run: a triggered refresh
@@ -3538,6 +3547,10 @@ class HindsightConfig:
     # Observations settings (consolidated knowledge from facts)
     enable_observations: bool
     enable_auto_consolidation: bool
+    enable_consolidation_triage: bool
+    consolidation_triage_api_key: str | None
+    consolidation_triage_model: str
+    consolidation_triage_base_url: str
     enable_observation_history: bool
     observation_history_max_entries: int
     enable_mental_model_history: bool
@@ -3877,6 +3890,9 @@ class HindsightConfig:
         # File storage credentials
         "file_storage_s3_access_key_id",
         "file_storage_s3_secret_access_key",
+        # Consolidation triage (TypeSafe)
+        "consolidation_triage_api_key",
+        "consolidation_triage_base_url",
         "file_storage_gcs_service_account_key",
         "file_storage_azure_account_key",
         # File parser credentials
@@ -3939,6 +3955,7 @@ class HindsightConfig:
         # Consolidation settings
         "enable_observations",
         "enable_auto_consolidation",
+        "enable_consolidation_triage",
         "consolidation_llm_batch_size",
         "consolidation_llm_parallelism",
         "consolidation_max_memories_per_round",
@@ -5168,6 +5185,14 @@ class HindsightConfig:
                 ENV_ENABLE_AUTO_CONSOLIDATION, str(DEFAULT_ENABLE_AUTO_CONSOLIDATION)
             ).lower()
             == "true",
+            enable_consolidation_triage=os.getenv(
+                ENV_ENABLE_CONSOLIDATION_TRIAGE, str(DEFAULT_ENABLE_CONSOLIDATION_TRIAGE)
+            ).lower()
+            == "true",
+            consolidation_triage_api_key=os.getenv(ENV_CONSOLIDATION_TRIAGE_API_KEY) or None,
+            consolidation_triage_model=os.getenv(ENV_CONSOLIDATION_TRIAGE_MODEL) or DEFAULT_CONSOLIDATION_TRIAGE_MODEL,
+            consolidation_triage_base_url=os.getenv(ENV_CONSOLIDATION_TRIAGE_BASE_URL)
+            or DEFAULT_CONSOLIDATION_TRIAGE_BASE_URL,
             enable_observation_history=os.getenv(
                 ENV_ENABLE_OBSERVATION_HISTORY, str(DEFAULT_ENABLE_OBSERVATION_HISTORY)
             ).lower()

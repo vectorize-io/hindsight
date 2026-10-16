@@ -56,6 +56,7 @@ from .prompts import (
     build_consolidation_input,
     build_consolidation_system_prompt,
 )
+from .triage import TriageResult, triage_enabled, triage_facts
 
 if TYPE_CHECKING:
     # The engine's connection abstraction, which is what every caller passes; the annotations
@@ -2493,21 +2494,43 @@ async def _process_memory_batch(
                 f"({current_count}/{max_obs}), only updates/deletes allowed"
             )
 
-    # 3. Single LLM call
+    # 2c. Triage: restatements and chatter are settled by a typed judgment, not the LLM.
+    triage = TriageResult()
+    if triage_enabled(config):
+        async with acquire_with_retry(pool) as conn:
+            entities_by_fact = await get_memories().entities_for_units(
+                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(m["id"]) for m in memories]
+            )
+        triage = await triage_facts(
+            memories,
+            [list(r.results) for r in per_fact_recalls],
+            config,
+            entities_by_fact=entities_by_fact,
+            mission=(config.observations_mission or "").strip(),
+            may_create=remaining_observation_slots is None,
+        )
+    llm_memories = [m for m in memories if not triage.settled(str(m["id"]))]
+
+    # 3. Single LLM call — skipped when triage settled every fact.
     t0 = time.perf_counter()
-    llm_result = await _consolidate_batch_with_llm(
-        llm_config=llm_config,
-        memories=memories,
-        union_observations=union_observations,
-        union_source_facts=union_source_facts,
-        config=config,
-        remaining_observation_slots=remaining_observation_slots,
-        max_observations_per_scope=max_obs,
+    llm_result = (
+        await _consolidate_batch_with_llm(
+            llm_config=llm_config,
+            memories=llm_memories,
+            union_observations=union_observations,
+            union_source_facts=union_source_facts,
+            config=config,
+            remaining_observation_slots=remaining_observation_slots,
+            max_observations_per_scope=max_obs,
+        )
+        if llm_memories
+        else _BatchLLMResult()
     )
-    if perf:
+    if perf and llm_memories:
         perf.record_timing("llm", time.perf_counter() - t0)
         perf.record_llm_call(llm_result.obs_count, llm_result.prompt_chars)
         perf.record_llm_batch_failures(llm_result.failed_attempts)
+    _apply_triage(llm_result, triage, union_observations)
 
     # 4. Prepare every action connection-free, then apply them all in ONE transaction.
     #
@@ -2867,6 +2890,8 @@ async def _process_memory_batch(
             results.append({"action": "created"})
         elif updated:
             results.append({"action": "updated"})
+        elif mid in triage.chatter:
+            results.append({"action": "skipped", "reason": "triage_chatter"})
         else:
             results.append({"action": "skipped", "reason": "no_durable_knowledge"})
 
@@ -3117,6 +3142,47 @@ async def _apply_create_action(
         record_created_memory_ids([new_id])
     logger.debug(f"Created observation from {len(prepared.source_memory_ids)} source memories")
     return created["action"]
+
+
+def _apply_triage(llm_result: _BatchLLMResult, triage: TriageResult, union_observations: list["MemoryFact"]) -> None:
+    """Write the triage verdicts as actions: a new fact is a CREATE of its own sentence, and a
+    restatement is evidence for its observation — an UPDATE that keeps the text as it is.
+
+    Folded into the LLM's own update of that observation when there is one, since two
+    updates of one observation in a response overwrite each other.
+    """
+    text_by_id = {str(o.id): o.text for o in union_observations}
+    id_by_text = {_norm_obs_text(o.text): str(o.id) for o in union_observations}
+    # An update wins over a delete of the same observation, so evidence for one the LLM deleted
+    # (retired, or merged away) on another fact's word would bring it back. A merged one's
+    # evidence goes to the survivor; a retired one's goes nowhere, like the LLM's own facts.
+    deleted = {d.observation_id: d.merged_into for d in llm_result.deletes}
+    restates = dict(triage.restates)
+    for fact_id, sentence in triage.new.items():
+        # Recorded verbatim before, an exact copy would be dropped as a duplicate create and the
+        # fact left backing nothing: it is evidence for the observation that already says it.
+        if (twin := id_by_text.get(_norm_obs_text(sentence))) is not None:
+            restates[fact_id] = twin
+            continue
+        llm_result.creates.append(
+            _CreateAction(text=sentence, source_fact_ids=[fact_id], reason="triage: a new facet, recorded as stated")
+        )
+    for fact_id, observation_id in restates.items():
+        if observation_id in deleted:
+            if (observation_id := deleted[observation_id]) is None:
+                continue
+        existing = next((u for u in llm_result.updates if u.observation_id == observation_id), None)
+        if existing is not None:
+            existing.source_fact_ids = [*existing.source_fact_ids, fact_id]
+        elif observation_id in text_by_id:
+            llm_result.updates.append(
+                _UpdateAction(
+                    observation_id=observation_id,
+                    text=text_by_id[observation_id],
+                    source_fact_ids=[fact_id],
+                    reason="triage: restates this observation",
+                )
+            )
 
 
 def _resolve_pool_id(raw: str, pool_ids: set[str]) -> str:

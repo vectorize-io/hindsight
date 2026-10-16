@@ -4035,6 +4035,11 @@ class BankTemplateConfig(BaseModel):
     enable_auto_consolidation: bool | None = Field(
         default=None, description="Automatically consolidate observations after retain"
     )
+    enable_consolidation_triage: bool | None = Field(
+        default=None,
+        description="Settle restatements, new facets and chatter with a TypeSafe judgment before the "
+        "consolidation LLM call (needs the server's consolidation triage API key)",
+    )
     consolidation_max_memories_per_round: int | None = Field(
         default=None, description="Max memory units fed into a single consolidation round"
     )

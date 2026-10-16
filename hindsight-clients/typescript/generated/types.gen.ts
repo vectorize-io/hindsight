@@ -807,6 +807,12 @@ export type BankTemplateConfig = {
    */
   enable_auto_consolidation?: boolean | null;
   /**
+   * Enable Consolidation Triage
+   *
+   * Settle restatements, new facets and chatter with a TypeSafe judgment before the consolidation LLM call (needs the server's consolidation triage API key)
+   */
+  enable_consolidation_triage?: boolean | null;
+  /**
    * Consolidation Max Memories Per Round
    *
    * Max memory units fed into a single consolidation round

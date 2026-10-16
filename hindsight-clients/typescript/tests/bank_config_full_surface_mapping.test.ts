@@ -68,6 +68,7 @@ describe("full bank config surface mapping", () => {
   test("maps the consolidation, retain and security groups onto the updates map", async () => {
     await client.updateBankConfig("bank", {
       enableAutoConsolidation: false,
+      enableConsolidationTriage: true,
       consolidationLlmBatchSize: 4,
       consolidationLlmParallelism: 2,
       consolidationMaxMemoriesPerRound: 50,
@@ -94,6 +95,7 @@ describe("full bank config surface mapping", () => {
     const body = mockedUpdateConfig.mock.calls[0][0].body as any;
     expect(body.updates).toEqual({
       enable_auto_consolidation: false,
+      enable_consolidation_triage: true,
       consolidation_llm_batch_size: 4,
       consolidation_llm_parallelism: 2,
       consolidation_max_memories_per_round: 50,

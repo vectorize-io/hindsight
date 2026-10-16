@@ -123,6 +123,9 @@ class ConsolidationCost:
     llm_seconds: float = 0.0
     #: Retain to settled, summed over waves: what a caller waits for.
     wall_seconds: float = 0.0
+    #: Decision-model triage requests (scope ``consolidation_triage``), priced apart.
+    triage_calls: int = 0
+    triage_input_tokens: int = 0
 
 
 @dataclass
@@ -152,6 +155,7 @@ class ConsolidationOutcome:
         lines.append(
             f"  cost: {c.calls} calls, {c.input_tokens} in ({c.cached_tokens} cached), {c.output_tokens} out, "
             f"llm {c.llm_seconds:.1f}s, wall {c.wall_seconds:.1f}s"
+            + (f", triage {c.triage_calls} calls, {c.triage_input_tokens} in" if c.triage_calls else "")
         )
         for i, snapshot in enumerate(self.snapshots, 1):
             lines.append(f"  observations after wave {i} ({len(snapshot)}):")
@@ -376,7 +380,11 @@ async def run_scenario(client: Hindsight, bank_id: str, settled: SettleFn, scena
                 )
         outcome.snapshots.append(observations)
 
-    calls = await _consolidation_calls(client, bank_id)
+    traced = await _consolidation_calls(client, bank_id)
+    triage = [c for c in traced if c.scope == "consolidation_triage"]
+    calls = [c for c in traced if c.scope != "consolidation_triage"]
+    outcome.cost.triage_calls = len(triage)
+    outcome.cost.triage_input_tokens = sum(c.input_tokens for c in triage)
     outcome.cost.calls = len(calls)
     outcome.cost.input_tokens = sum(c.input_tokens for c in calls)
     outcome.cost.cached_tokens = sum(c.cached_tokens for c in calls)
@@ -386,7 +394,7 @@ async def run_scenario(client: Hindsight, bank_id: str, settled: SettleFn, scena
     if dump_dir := os.getenv("HINDSIGHT_EVAL_CONSOLIDATION_DUMP"):
         os.makedirs(dump_dir, exist_ok=True)
         with open(os.path.join(dump_dir, f"{scenario.id}.json"), "w", encoding="utf-8") as f:
-            json.dump([asdict(c) for c in calls], f, indent=1, ensure_ascii=False, default=str)
+            json.dump([asdict(c) for c in traced], f, indent=1, ensure_ascii=False, default=str)
 
     rendered = _render(outcome.final, scenario.focus)
     context = (

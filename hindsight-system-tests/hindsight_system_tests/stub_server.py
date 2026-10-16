@@ -153,6 +153,26 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
         validate_systemone(body)
 
         answers = {}
+        state = body["state"]
+        if isinstance(state, dict) and "new_fact" in state:
+            # Consolidation triage: the verdict is scripted per fact (see TriageStub).
+            fact_text = state["new_fact"]["text"]
+            relation = stubs.triage.relation(fact_text)
+            fits = stubs.triage.fits(fact_text)
+            yes = {"covers_o0": relation == "restates"}
+            for question_id, question in body["questions"].items():
+                if question_id == "relation":
+                    pick = relation
+                elif question_id == "keep_as":
+                    pick = "as_stated" if fits else "reworded"
+                elif set(question["criteria"]) == {"yes", "no"}:
+                    pick = "yes" if yes.get(question_id, False) else "no"
+                else:
+                    pick = next(iter(question["criteria"]))
+                probabilities = {key: (0.99 if key == pick else 0.0) for key in question["criteria"]}
+                answers[question_id] = {"type": "choice", "choice": pick, "probabilities": probabilities}
+            return JSONResponse({"model": "stub", "answers": answers, "usage": {"input_tokens": 1, "output_tokens": 1}})
+
         for question_id, question in body["questions"].items():
             if question["type"] == "noul":
                 memory = question["instructions"]["memory"]

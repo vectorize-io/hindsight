@@ -961,6 +961,8 @@ export class HindsightClient {
       consolidationStrategies?: Record<string, unknown>[];
       /** Consolidate automatically after retain() rather than on demand. */
       enableAutoConsolidation?: boolean;
+      /** Settle restatements, new facts and chatter with a TypeSafe judgment before the consolidation LLM call. */
+      enableConsolidationTriage?: boolean;
       /** Number of LLM calls to batch during consolidation. */
       consolidationLlmBatchSize?: number;
       /** Concurrent LLM calls during consolidation. */
@@ -1068,6 +1070,8 @@ export class HindsightClient {
       updates.consolidation_strategies = options.consolidationStrategies;
     if (options.enableAutoConsolidation !== undefined)
       updates.enable_auto_consolidation = options.enableAutoConsolidation;
+    if (options.enableConsolidationTriage !== undefined)
+      updates.enable_consolidation_triage = options.enableConsolidationTriage;
     if (options.consolidationLlmBatchSize !== undefined)
       updates.consolidation_llm_batch_size = options.consolidationLlmBatchSize;
     if (options.consolidationLlmParallelism !== undefined)

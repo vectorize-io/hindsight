@@ -132,6 +132,10 @@ def stub_environment(stub_url: str) -> dict[str, str]:
         "HINDSIGHT_API_RERANKER_SILICONFLOW_API_KEY": "stub-key",
         "HINDSIGHT_API_RERANKER_SILICONFLOW_BASE_URL": stub_url,
         "HINDSIGHT_API_RERANKER_SILICONFLOW_MODEL": "stub-reranker",
+        # Consolidation triage is off unless a bank turns it on, so pointing it at the
+        # stub changes nothing for the stories that do not.
+        "HINDSIGHT_API_CONSOLIDATION_TRIAGE_API_KEY": "stub-key",
+        "HINDSIGHT_API_CONSOLIDATION_TRIAGE_BASE_URL": stub_url,
         # In production a retry earns its keep even on a 400: a model that
         # returned malformed JSON often gets it right the second time. Against a
         # deterministic stub it cannot — the same request gets the same answer —

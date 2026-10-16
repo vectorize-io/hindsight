@@ -9652,6 +9652,18 @@
             "title": "Enable Auto Consolidation",
             "description": "Automatically consolidate observations after retain"
           },
+          "enable_consolidation_triage": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Consolidation Triage",
+            "description": "Settle restatements, new facets and chatter with a TypeSafe judgment before the consolidation LLM call (needs the server's consolidation triage API key)"
+          },
           "consolidation_max_memories_per_round": {
             "anyOf": [
               {

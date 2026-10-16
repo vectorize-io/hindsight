@@ -66,6 +66,7 @@ type BankTemplateConfig struct {
 	AuditLogEnabled NullableBool `json:"audit_log_enabled,omitempty"`
 	StoreDocumentText NullableBool `json:"store_document_text,omitempty"`
 	EnableAutoConsolidation NullableBool `json:"enable_auto_consolidation,omitempty"`
+	EnableConsolidationTriage NullableBool `json:"enable_consolidation_triage,omitempty"`
 	ConsolidationMaxMemoriesPerRound NullableInt32 `json:"consolidation_max_memories_per_round,omitempty"`
 	ConsolidationLlmParallelism NullableInt32 `json:"consolidation_llm_parallelism,omitempty"`
 	RecallIncludeChunks NullableBool `json:"recall_include_chunks,omitempty"`
@@ -1994,6 +1995,48 @@ func (o *BankTemplateConfig) UnsetEnableAutoConsolidation() {
 	o.EnableAutoConsolidation.Unset()
 }
 
+// GetEnableConsolidationTriage returns the EnableConsolidationTriage field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetEnableConsolidationTriage() bool {
+	if o == nil || IsNil(o.EnableConsolidationTriage.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.EnableConsolidationTriage.Get()
+}
+
+// GetEnableConsolidationTriageOk returns a tuple with the EnableConsolidationTriage field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetEnableConsolidationTriageOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.EnableConsolidationTriage.Get(), o.EnableConsolidationTriage.IsSet()
+}
+
+// HasEnableConsolidationTriage returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasEnableConsolidationTriage() bool {
+	if o != nil && o.EnableConsolidationTriage.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetEnableConsolidationTriage gets a reference to the given NullableBool and assigns it to the EnableConsolidationTriage field.
+func (o *BankTemplateConfig) SetEnableConsolidationTriage(v bool) {
+	o.EnableConsolidationTriage.Set(&v)
+}
+// SetEnableConsolidationTriageNil sets the value for EnableConsolidationTriage to be an explicit nil
+func (o *BankTemplateConfig) SetEnableConsolidationTriageNil() {
+	o.EnableConsolidationTriage.Set(nil)
+}
+
+// UnsetEnableConsolidationTriage ensures that no value is present for EnableConsolidationTriage, not even an explicit nil
+func (o *BankTemplateConfig) UnsetEnableConsolidationTriage() {
+	o.EnableConsolidationTriage.Unset()
+}
+
 // GetConsolidationMaxMemoriesPerRound returns the ConsolidationMaxMemoriesPerRound field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *BankTemplateConfig) GetConsolidationMaxMemoriesPerRound() int32 {
 	if o == nil || IsNil(o.ConsolidationMaxMemoriesPerRound.Get()) {
@@ -2429,6 +2472,9 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.EnableAutoConsolidation.IsSet() {
 		toSerialize["enable_auto_consolidation"] = o.EnableAutoConsolidation.Get()
+	}
+	if o.EnableConsolidationTriage.IsSet() {
+		toSerialize["enable_consolidation_triage"] = o.EnableConsolidationTriage.Get()
 	}
 	if o.ConsolidationMaxMemoriesPerRound.IsSet() {
 		toSerialize["consolidation_max_memories_per_round"] = o.ConsolidationMaxMemoriesPerRound.Get()

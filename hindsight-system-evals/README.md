@@ -335,12 +335,13 @@ cost *and* outcome — a cheaper setting only counts at the same quality:
 
 ```bash
 HINDSIGHT_EVAL_CONSOLIDATION_COST=/tmp/base.jsonl uv run pytest evals/test_09_consolidation.py --full
-# any server setting, for every bank of the run: HINDSIGHT_EVAL_SET_<NAME> -> HINDSIGHT_API_<NAME>
-HINDSIGHT_EVAL_SET_CONSOLIDATION_MAX_TOKENS=256 \
-  HINDSIGHT_EVAL_CONSOLIDATION_COST=/tmp/try.jsonl uv run pytest evals/test_09_consolidation.py --full
+# consolidation triage (TypeSafe Jev) on for every bank of the run
+HINDSIGHT_EVAL_SET_ENABLE_CONSOLIDATION_TRIAGE=true HINDSIGHT_EVAL_SET_CONSOLIDATION_TRIAGE_API_KEY=... \
+  HINDSIGHT_EVAL_CONSOLIDATION_COST=/tmp/triage.jsonl uv run pytest evals/test_09_consolidation.py --full
 ```
 
-Speaker attribution is decided at
+Triage requests are traced like LLM calls (scope `consolidation_triage`) and
+reported apart from them, as `triage N calls, M in`. Speaker attribution is decided at
 retain and is out of scope; failure handling and scope mechanics are
 deterministic and live in `hindsight-system-tests`.
 
@@ -391,7 +392,7 @@ issue/PR history — and what grades it. "eval" = a `test_09` scenario (real mod
 - Deleting or replacing a document removes and rebuilds its observations (#429, #3294) — system `test_25`; unit `test_delta_retain_orphan_observations.py`
 - Trigger, dedup and serialisation of consolidation jobs (#4368) — system `test_26`, `test_28`
 - Observations in recall, `prefer_observations`, source facts (#2311) — system `test_27`
-- A bank's own observations mission on a noisy bank: keeps what the mission asks, drops the small talk it leaves out — eval `noisy-service-catalogue-mission`
+- Consolidation triage (TypeSafe Jev): restatements, new facets and chatter settled without the LLM — unit `test_consolidation_triage.py`; system `test_22_consolidation_triage`; eval suite with triage on; under a bank's own mission it records only facts the mission wants as worded — eval `noisy-service-catalogue-mission`
 
 **Out of scope here, deliberately** — speaker attribution is decided at retain (#4572, #1680)
 and belongs with the retain suites; operational behaviour (timeouts #3301/#4715, quota
