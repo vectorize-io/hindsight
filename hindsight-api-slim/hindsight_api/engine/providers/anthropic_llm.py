@@ -262,7 +262,7 @@ class AnthropicLLM(LLMInterface):
             RuntimeError: If the connection test fails.
         """
         try:
-            test_messages = [{"role": "user", "content": "test"}]
+            test_messages = [{"role": "user", "content": "Say 'ok'"}]
             await self.call(
                 messages=test_messages,
                 max_completion_tokens=10,

@@ -115,6 +115,43 @@ def decision_model_server(stub_server, tmp_path_factory: pytest.TempPathFactory)
     server.stop()
 
 
+#: What the federated server presents at the token exchange — a projected
+#: service-account token, in a real deployment.
+WIF_IDENTITY_TOKEN = "systest-projected-sa-jwt"
+WIF_FEDERATION_RULE_ID = "fdrl_systest"
+
+
+@pytest.fixture(scope="session")
+def wif_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
+    """A server on the Anthropic provider with no API key, authenticating through
+    Workload Identity Federation against the stub (issue #5502).
+
+    The LLM provider is server-level, hence a process. HTTP only, for the same reason
+    as ``typesafe_server``: a worker here would run the other servers' queued work
+    with this server's provider.
+    """
+    run_dir = tmp_path_factory.mktemp("wif-server")
+    token_file = run_dir / "identity-token"
+    token_file.write_text(WIF_IDENTITY_TOKEN)
+    server = start_hindsight_server(
+        stub_url=stub_server.url,
+        log_path=run_dir / "server.log",
+        extra_env={
+            "HINDSIGHT_API_LLM_PROVIDER": "anthropic",
+            # Empty overrides the stub key `stub_environment` sets: no static key at all.
+            "HINDSIGHT_API_LLM_API_KEY": "",
+            "HINDSIGHT_API_LLM_BASE_URL": stub_server.url,
+            "ANTHROPIC_FEDERATION_RULE_ID": WIF_FEDERATION_RULE_ID,
+            "ANTHROPIC_ORGANIZATION_ID": "org_systest",
+            "ANTHROPIC_SERVICE_ACCOUNT_ID": "svac_systest",
+            "ANTHROPIC_IDENTITY_TOKEN_FILE": str(token_file),
+            "HINDSIGHT_API_WORKER_ENABLED": "false",
+        },
+    )
+    yield server
+    server.stop()
+
+
 @pytest.fixture(scope="session")
 def scoped_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
     """A server whose operation validator confines each API key to ``user:<key>`` + ``kind:rule``.
@@ -239,6 +276,13 @@ async def keyed_client(keyed_server) -> AsyncIterator[Hindsight]:
 @pytest.fixture
 async def retrying_client(retrying_server) -> AsyncIterator[Hindsight]:
     client = Hindsight(base_url=retrying_server.url)
+    yield client
+    await client.aclose()
+
+
+@pytest.fixture
+async def wif_client(wif_server) -> AsyncIterator[Hindsight]:
+    client = Hindsight(base_url=wif_server.url)
     yield client
     await client.aclose()
 

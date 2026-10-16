@@ -202,7 +202,10 @@ def _server_env(stub_url: str, extra_env: dict[str, str] | None) -> dict[str, st
     # The repo .env is for the developer's own server; a system test must depend
     # only on what it sets here, or it passes on one machine and fails on another.
     for key in list(env):
-        if key.startswith("HINDSIGHT_API_"):
+        # ANTHROPIC_* too: with no Hindsight key the Anthropic SDK reads its own
+        # variables, and a developer's ANTHROPIC_API_KEY would outrank the federation
+        # credentials a story sets.
+        if key.startswith(("HINDSIGHT_API_", "ANTHROPIC_")):
             del env[key]
 
     env.update(stub_environment(stub_url))

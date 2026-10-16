@@ -7,6 +7,8 @@ from aiohttp import web
 
 from hindsight_api.engine.llm_wrapper import create_llm_provider, requires_api_key
 
+from tests.aiohttp_stub import stub_server
+
 _WIF_ENV = ("ANTHROPIC_FEDERATION_RULE_ID", "ANTHROPIC_ORGANIZATION_ID", "ANTHROPIC_IDENTITY_TOKEN_FILE")
 
 
@@ -28,11 +30,10 @@ def test_key_still_required_without_federation(no_anthropic_env):
 async def test_federation_exchanges_identity_token(no_anthropic_env, monkeypatch, tmp_path):
     seen: dict = {}
 
-    async def token(request: web.Request) -> web.Response:
-        seen["exchange"] = await request.json()
-        return web.json_response({"access_token": "short-lived", "token_type": "Bearer", "expires_in": 600})
-
-    async def messages(request: web.Request) -> web.Response:
+    async def handler(request: web.Request) -> web.Response:
+        if request.path == "/v1/oauth/token":
+            seen["exchange"] = await request.json()
+            return web.json_response({"access_token": "short-lived", "token_type": "Bearer", "expires_in": 600})
         seen["authorization"] = request.headers.get("Authorization")
         seen["x_api_key"] = request.headers.get("x-api-key")
         return web.json_response(
@@ -48,33 +49,18 @@ async def test_federation_exchanges_identity_token(no_anthropic_env, monkeypatch
             }
         )
 
-    app = web.Application()
-    app.router.add_post("/v1/oauth/token", token)
-    app.router.add_post("/v1/messages", messages)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
-    await site.start()
-    port = site._server.sockets[0].getsockname()[1]
-
     token_file = tmp_path / "token"
     token_file.write_text("pod-identity-jwt")
     monkeypatch.setenv("ANTHROPIC_FEDERATION_RULE_ID", "fdrl_1")
     monkeypatch.setenv("ANTHROPIC_ORGANIZATION_ID", "org_1")
     monkeypatch.setenv("ANTHROPIC_IDENTITY_TOKEN_FILE", str(token_file))
+    assert requires_api_key("anthropic") is False
 
-    try:
-        assert requires_api_key("anthropic") is False
+    async with stub_server(handler) as base_url:
         llm = create_llm_provider(
-            provider="anthropic",
-            api_key="",
-            base_url=f"http://127.0.0.1:{port}",
-            model="claude-haiku-4-5",
-            reasoning_effort=None,
+            provider="anthropic", api_key="", base_url=base_url, model="claude-haiku-4-5", reasoning_effort=None
         )
         result = await llm.call(messages=[{"role": "user", "content": "hi"}], max_completion_tokens=10, scope="test")
-    finally:
-        await runner.cleanup()
 
     assert result.content == "ok"
     assert seen["exchange"]["assertion"] == "pod-identity-jwt"

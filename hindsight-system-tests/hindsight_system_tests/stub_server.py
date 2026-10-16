@@ -9,6 +9,10 @@ even know it exists. Three environment variables point the real server here:
     HINDSIGHT_API_RERANKER_SILICONFLOW_BASE_URL -> /rerank
     HINDSIGHT_API_RERANKER_TYPESAFE_BASE_URL     -> /v1/systemone
 
+With ``HINDSIGHT_API_LLM_PROVIDER=anthropic`` the same base URL serves the
+Anthropic Messages API (``/v1/messages``) and its Workload Identity Federation
+token exchange (``/v1/oauth/token``), answered from the same rulebook.
+
 Which means the tests exercise the production provider code for real — the
 OpenAI client, the JSON-repair path, the retry and rate-limit handling, the
 structured-output plumbing. An in-process fake replaces all of that with
@@ -25,7 +29,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .lexical import EMBEDDING_DIMENSION
-from .rulebook import ChatRequest, ReceivedWebhook, Stubs
+from .rulebook import ChatRequest, ReceivedWebhook, Stubs, TokenExchange
 from .validation import RequestRejected, validate_chat, validate_embeddings, validate_rerank, validate_systemone
 
 logger = logging.getLogger(__name__)
@@ -95,6 +99,67 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
                     visible_tokens=reply.visible_tokens,
                     reasoning_tokens=reply.reasoning_tokens,
                 ),
+            }
+        )
+
+    @app.post("/v1/oauth/token")
+    async def oauth_token(request: Request) -> JSONResponse:
+        """The Workload Identity Federation exchange: identity token in, access token out.
+
+        The issued token is numbered, so a story can tell which exchange a later call's
+        bearer came from. An hour's lifetime keeps the SDK from re-exchanging mid-story.
+        """
+        body = await request.json()
+        exchange = TokenExchange(
+            assertion=body["assertion"],
+            federation_rule_id=body["federation_rule_id"],
+            organization_id=body["organization_id"],
+            service_account_id=body.get("service_account_id"),
+            access_token=f"stub-wif-access-{len(stubs.token_exchanges) + 1}",
+        )
+        stubs.token_exchanges.append(exchange)
+        return JSONResponse({"access_token": exchange.access_token, "token_type": "Bearer", "expires_in": 3600})
+
+    @app.post("/v1/messages")
+    async def messages(request: Request) -> JSONResponse:
+        """The Anthropic Messages API, answered from the chat-completions rulebook.
+
+        The request is translated into a ``ChatRequest`` (the separate ``system`` field
+        becomes a leading system message, so step anchors in it still match), and the
+        rule's text reply back into an Anthropic text block. Tool-use turns are not
+        translated yet: no story drives reflect through this provider.
+        """
+        body = await request.json()
+        system = body.get("system")
+        prefix = [{"role": "system", "content": system}] if system else []
+        authorization = request.headers.get("authorization", "")
+        chat_request = ChatRequest(
+            model=body["model"],
+            messages=[*prefix, *body["messages"]],
+            tools=tuple(tool["name"] for tool in body.get("tools") or []),
+            api_key=authorization.removeprefix("Bearer ") or request.headers.get("x-api-key"),
+            headers={k.lower(): v for k, v in request.headers.items()},
+        )
+
+        reply = stubs.llm.resolve(chat_request)
+        if reply is None:
+            unmatched = stubs.llm.unmatched[-1]
+            logger.error("No stub rule matched: %s", unmatched.suggestion())
+            return _anthropic_error(f"No stub rule matched this call. Add one:\n    {unmatched.suggestion()}", 400)
+        if reply.error_status is not None:
+            return _anthropic_error(f"stub provider error {reply.error_status}", reply.error_status)
+
+        usage = _usage(chat_request.all_text, str(reply.message.get("content") or ""))
+        return JSONResponse(
+            {
+                "id": "msg-stub",
+                "type": "message",
+                "role": "assistant",
+                "model": body["model"],
+                "content": [{"type": "text", "text": reply.message["content"]}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {"input_tokens": usage["prompt_tokens"], "output_tokens": usage["completion_tokens"]},
             }
         )
 
@@ -218,4 +283,11 @@ def _provider_error(message: str, *, code: str, status: int = 400) -> JSONRespon
     return JSONResponse(
         status_code=status,
         content={"error": {"message": message, "type": "invalid_request_error", "code": code, "param": None}},
+    )
+
+
+def _anthropic_error(message: str, status: int) -> JSONResponse:
+    """The error envelope the Anthropic SDK parses."""
+    return JSONResponse(
+        status_code=status, content={"type": "error", "error": {"type": "invalid_request_error", "message": message}}
     )
