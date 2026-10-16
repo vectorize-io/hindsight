@@ -39,7 +39,7 @@ def _tool_use_response(args: dict):
     block.input = args
     resp = MagicMock()
     resp.content = [block]
-    resp.usage = MagicMock(input_tokens=5, output_tokens=2, cache_read_input_tokens=0)
+    resp.usage = MagicMock(input_tokens=5, output_tokens=2, cache_read_input_tokens=0, cache_creation_input_tokens=0)
     resp.stop_reason = "tool_use"
     return resp
 
@@ -96,7 +96,7 @@ async def test_non_strict_keeps_text_injection_fallback():
     block.text = '{"action":"skip","reason":"d"}'
     resp = MagicMock()
     resp.content = [block]
-    resp.usage = MagicMock(input_tokens=5, output_tokens=2, cache_read_input_tokens=0)
+    resp.usage = MagicMock(input_tokens=5, output_tokens=2, cache_read_input_tokens=0, cache_creation_input_tokens=0)
     resp.stop_reason = "end_turn"
     provider._client.messages.create = AsyncMock(return_value=resp)
     with patch("hindsight_api.engine.providers.anthropic_llm.get_metrics_collector"):

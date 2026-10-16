@@ -55,6 +55,7 @@ class _FakeOptions:
 class _FakeAssistantMessage:
     def __init__(self, content: list[Any]) -> None:
         self.content = content
+        self.usage = None
 
 
 class _FakeTextBlock:
@@ -67,6 +68,7 @@ class _FakeResultMessage:
         self.subtype = subtype
         self.is_error = is_error
         self.result = result
+        self.usage = None
 
 
 def _instantiate_provider():
@@ -392,3 +394,31 @@ def test_startup_warns_about_subscription_terms(caplog):
     with caplog.at_level("WARNING", logger="hindsight_api.engine.providers.claude_code_llm"):
         _instantiate_provider()
     assert any("Anthropic's terms" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_call_reports_usage_from_result_message(monkeypatch):
+    """call() reports the CLI's billed usage, cache reads and writes counted as input (#5541)."""
+    import claude_agent_sdk
+
+    result_message = _FakeResultMessage(subtype="success", is_error=False, result="ok")
+    result_message.usage = {
+        "input_tokens": 10,
+        "cache_read_input_tokens": 1000,
+        "cache_creation_input_tokens": 200,
+        "output_tokens": 30,
+    }
+
+    async def fake_query(prompt: str, options: _FakeOptions):
+        yield _FakeAssistantMessage(content=[_FakeTextBlock(text="ok")])
+        yield result_message
+
+    monkeypatch.setattr(claude_agent_sdk, "ClaudeAgentOptions", _FakeOptions)
+    monkeypatch.setattr(claude_agent_sdk, "AssistantMessage", _FakeAssistantMessage)
+    monkeypatch.setattr(claude_agent_sdk, "TextBlock", _FakeTextBlock)
+    monkeypatch.setattr(claude_agent_sdk, "ResultMessage", _FakeResultMessage)
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    usage = (await _instantiate_provider().call(messages=[{"role": "user", "content": "hi"}], max_retries=0)).usage
+
+    assert (usage.input_tokens, usage.output_tokens, usage.total_tokens, usage.cached_tokens) == (1210, 30, 1240, 1000)

@@ -44,6 +44,7 @@ from hindsight_api.engine.providers.codex_llm import (
     CodexAuthManager,
     CodexLLM,
     CodexRefreshExpiredError,
+    _CodexStreamReply,
 )
 from tests.aiohttp_stub import stub_server
 from tests.codex_stream_stub import CodexReply, stub_codex_stream_with
@@ -682,7 +683,12 @@ async def test_call_reactively_refreshes_on_401_and_retries(tmp_path: Path, monk
     async with _serve_refresh(monkeypatch, endpoint):
         with (
             stub_codex_stream_with(llm, fake_backend_stream),
-            patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
+            patch.object(
+                llm,
+                "_parse_sse_stream",
+                new_callable=AsyncMock,
+                return_value=_CodexStreamReply(text="ok", tool_calls=[], usage=None),
+            ),
         ):
             result = (
                 await llm.call(
@@ -717,7 +723,12 @@ async def test_call_with_tools_reactively_refreshes_on_401_and_retries(tmp_path:
     async with _serve_refresh(monkeypatch, endpoint):
         with (
             stub_codex_stream_with(llm, lambda url, **kwargs: replies.pop(0)) as stream,
-            patch.object(llm, "_parse_sse_tool_stream", new_callable=AsyncMock, return_value=(None, [])),
+            patch.object(
+                llm,
+                "_parse_sse_tool_stream",
+                new_callable=AsyncMock,
+                return_value=_CodexStreamReply(text="", tool_calls=[], usage=None),
+            ),
         ):
             await llm.call_with_tools(messages=[{"role": "user", "content": "ping"}], tools=[], max_retries=0)
 
@@ -749,7 +760,12 @@ async def test_call_proactively_refreshes_when_token_is_stale(tmp_path: Path, mo
     async with _serve_refresh(monkeypatch, _RefreshEndpoint(refresh_reply)):
         with (
             stub_codex_stream_with(llm, fake_backend_stream),
-            patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
+            patch.object(
+                llm,
+                "_parse_sse_stream",
+                new_callable=AsyncMock,
+                return_value=_CodexStreamReply(text="ok", tool_calls=[], usage=None),
+            ),
         ):
             await llm.call(
                 messages=[{"role": "user", "content": "ping"}],
@@ -771,7 +787,12 @@ async def test_call_does_not_refresh_when_token_is_fresh(tmp_path: Path, monkeyp
     async with _serve_refresh(monkeypatch, endpoint):
         with (
             stub_codex_stream_with(llm, lambda url, **kwargs: CodexReply()) as stream,
-            patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
+            patch.object(
+                llm,
+                "_parse_sse_stream",
+                new_callable=AsyncMock,
+                return_value=_CodexStreamReply(text="ok", tool_calls=[], usage=None),
+            ),
         ):
             await llm.call(
                 messages=[{"role": "user", "content": "ping"}],

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from hindsight_api.engine.providers.codex_llm import CodexLLM
+from hindsight_api.engine.providers.codex_llm import CodexLLM, _CodexStreamReply
 from tests.codex_stream_stub import stub_codex_stream
 
 
@@ -30,7 +30,12 @@ async def test_call_sends_reasoning_effort_separately_from_summary() -> None:
 
     with (
         stub_codex_stream(llm, response) as mock_stream,
-        patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
+        patch.object(
+            llm,
+            "_parse_sse_stream",
+            new_callable=AsyncMock,
+            return_value=_CodexStreamReply(text="ok", tool_calls=[], usage=None),
+        ),
     ):
         await llm.call(messages=[{"role": "user", "content": "hello"}], max_retries=0)
 
@@ -49,7 +54,12 @@ async def test_call_with_tools_sends_reasoning_effort_separately_from_summary() 
 
     with (
         stub_codex_stream(llm, response) as mock_stream,
-        patch.object(llm, "_parse_sse_tool_stream", new_callable=AsyncMock, return_value=(None, [])),
+        patch.object(
+            llm,
+            "_parse_sse_tool_stream",
+            new_callable=AsyncMock,
+            return_value=_CodexStreamReply(text="", tool_calls=[], usage=None),
+        ),
     ):
         await llm.call_with_tools(
             messages=[{"role": "user", "content": "hello"}],
@@ -75,7 +85,12 @@ async def test_unconfigured_reasoning_effort_is_omitted_from_the_payload() -> No
 
     with (
         stub_codex_stream(llm, response) as mock_stream,
-        patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
+        patch.object(
+            llm,
+            "_parse_sse_stream",
+            new_callable=AsyncMock,
+            return_value=_CodexStreamReply(text="ok", tool_calls=[], usage=None),
+        ),
     ):
         await llm.call(messages=[{"role": "user", "content": "hello"}], max_retries=0)
 
@@ -93,7 +108,12 @@ async def test_prompt_cache_key_is_stable_across_calls_with_the_same_prompt() ->
 
     with (
         stub_codex_stream(llm, response) as mock_stream,
-        patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
+        patch.object(
+            llm,
+            "_parse_sse_stream",
+            new_callable=AsyncMock,
+            return_value=_CodexStreamReply(text="ok", tool_calls=[], usage=None),
+        ),
     ):
         await llm.call(messages=[system, {"role": "user", "content": "chunk one"}], max_retries=0)
         await llm.call(messages=[system, {"role": "user", "content": "chunk two"}], max_retries=0)
@@ -114,7 +134,12 @@ async def test_tool_loop_keeps_one_prompt_cache_key_as_the_conversation_grows() 
 
     with (
         stub_codex_stream(llm, response) as mock_stream,
-        patch.object(llm, "_parse_sse_tool_stream", new_callable=AsyncMock, return_value=(None, [])),
+        patch.object(
+            llm,
+            "_parse_sse_tool_stream",
+            new_callable=AsyncMock,
+            return_value=_CodexStreamReply(text="", tool_calls=[], usage=None),
+        ),
     ):
         await llm.call_with_tools(messages=[system, {"role": "user", "content": "q"}], tools=[], max_retries=0)
         await llm.call_with_tools(

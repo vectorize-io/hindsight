@@ -54,7 +54,7 @@ def _text_response(text: str = "ok"):
     block.text = text
     resp = MagicMock()
     resp.content = [block]
-    resp.usage = MagicMock(input_tokens=10, output_tokens=2, cache_read_input_tokens=0)
+    resp.usage = MagicMock(input_tokens=10, output_tokens=2, cache_read_input_tokens=0, cache_creation_input_tokens=0)
     resp.stop_reason = "end_turn"
     return resp
 
@@ -62,7 +62,7 @@ def _text_response(text: str = "ok"):
 def _tool_response():
     resp = MagicMock()
     resp.content = []
-    resp.usage = MagicMock(input_tokens=10, output_tokens=2, cache_read_input_tokens=0)
+    resp.usage = MagicMock(input_tokens=10, output_tokens=2, cache_read_input_tokens=0, cache_creation_input_tokens=0)
     resp.stop_reason = "end_turn"
     return resp
 
@@ -304,3 +304,19 @@ async def test_call_with_tools_keeps_empty_tool_result_block():
     assert [m["role"] for m in messages] == ["user", "assistant", "user"]
     assert messages[-1]["content"][0]["type"] == "tool_result"
     assert messages[-1]["content"][0]["content"] == ""
+
+
+def test_usage_counts_cache_reads_and_writes_as_input():
+    """Anthropic reports cache reads/writes apart from input_tokens; usage counts them in it (#5541)."""
+    from types import SimpleNamespace
+
+    from hindsight_api.engine.providers.anthropic_llm import _usage_from_anthropic_response
+
+    response = SimpleNamespace(
+        usage=SimpleNamespace(
+            input_tokens=10, output_tokens=30, cache_read_input_tokens=1000, cache_creation_input_tokens=200
+        )
+    )
+    usage = _usage_from_anthropic_response(response)
+
+    assert (usage.input_tokens, usage.output_tokens, usage.cached_tokens) == (1210, 30, 1000)

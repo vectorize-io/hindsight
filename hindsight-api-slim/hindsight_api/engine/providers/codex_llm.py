@@ -24,11 +24,13 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
 import aiohttp
+from pydantic import BaseModel, ValidationError
 
 from hindsight_api.engine.aiohttp_session import LoopLocalSession, UpstreamHTTPError, raise_for_status
 from hindsight_api.engine.cache_affinity import cache_affinity_id
@@ -228,6 +230,71 @@ def _raise_on_sse_failure(event_type: str | None, data: Any) -> None:
     code = error.get("code") if isinstance(error, dict) else None
     message = error.get("message") if isinstance(error, dict) else None
     raise CodexStreamError(f"Codex backend failed the response ({event_type}): {code}: {message or data}")
+
+
+class _InputTokensDetails(BaseModel):
+    cached_tokens: int | None = None
+
+
+class _OutputTokensDetails(BaseModel):
+    reasoning_tokens: int | None = None
+
+
+class _ResponsesUsage(BaseModel):
+    """The Responses API usage block a ``response.completed`` event carries."""
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    input_tokens_details: _InputTokensDetails | None = None
+    output_tokens_details: _OutputTokensDetails | None = None
+
+
+class _CompletedResponse(BaseModel):
+    usage: _ResponsesUsage | None = None
+
+
+class _CompletedEvent(BaseModel):
+    response: _CompletedResponse | None = None
+
+
+def _usage_from_completed_event(event_type: str | None, data: Any) -> TokenUsage | None:
+    """Read the token usage a ``response.completed`` event carries.
+
+    Output is visible-only, as the ``TokenUsage`` contract asks: the backend folds
+    reasoning into ``output_tokens``, so it is split out into ``thoughts_tokens``.
+    ``input_tokens`` already includes the cached prefix.
+    """
+    if not isinstance(data, dict) or "response.completed" not in (event_type, data.get("type")):
+        return None
+    try:
+        event = _CompletedEvent.model_validate(data)
+    except ValidationError:
+        logger.warning("Codex response.completed carried an unreadable usage block; estimating tokens")
+        return None
+    usage = event.response.usage if event.response else None
+    if usage is None:
+        return None
+    input_tokens = usage.input_tokens or 0
+    cached = (usage.input_tokens_details.cached_tokens if usage.input_tokens_details else None) or 0
+    reasoning = (usage.output_tokens_details.reasoning_tokens if usage.output_tokens_details else None) or 0
+    visible_output = max(0, (usage.output_tokens or 0) - reasoning)
+    return TokenUsage(
+        input_tokens=input_tokens,
+        output_tokens=visible_output,
+        total_tokens=input_tokens + visible_output,
+        cached_tokens=cached,
+        thoughts_tokens=reasoning,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _CodexStreamReply:
+    """What one Codex SSE stream carried: text, tool calls, and the backend's token usage."""
+
+    text: str
+    tool_calls: list[LLMToolCall]
+    # None when the stream ended without a ``response.completed`` usage block.
+    usage: TokenUsage | None
 
 
 class CodexLLM(LLMInterface):
@@ -619,19 +686,32 @@ class CodexLLM(LLMInterface):
                         # arguments (already a JSON string in a dedicated channel) rather
                         # than from free-form assistant text.
                         if use_forced_tool:
-                            text_content, tool_calls = await self._parse_sse_tool_stream(response)
-                            content = text_content or ""
+                            reply = await self._parse_sse_tool_stream(response)
                         else:
-                            tool_calls = []
-                            content = await self._parse_sse_stream(response)
+                            reply = await self._parse_sse_stream(response)
+                        tool_calls = reply.tool_calls
+                        content = reply.text
 
-                # Codex SSE carries no usage block; stash the same char/4 estimate
-                # the success path traces so a later parse/validate failure records
-                # consistent (estimated) token counts rather than zero (#2387).
+                # The backend reports real counts in ``response.completed``; fall back
+                # to a char/4 estimate only for a stream that ended without one.
+                # Stashed before parsing so a later parse/validate failure traces
+                # the same counts the success path does (#2387).
+                if reply.usage is not None:
+                    token_usage = reply.usage
+                else:
+                    estimated_input = sum(len(m.get("content", "")) for m in messages) // 4
+                    estimated_output = (len(content) or sum(len(json.dumps(tc.arguments)) for tc in tool_calls)) // 4
+                    token_usage = TokenUsage(
+                        input_tokens=estimated_input,
+                        output_tokens=estimated_output,
+                        total_tokens=estimated_input + estimated_output,
+                    )
                 stash_response_usage(
                     LLMResponseUsage(
-                        input_tokens=sum(len(m.get("content", "")) for m in messages) // 4,
-                        output_tokens=len(content) // 4,
+                        input_tokens=token_usage.input_tokens,
+                        output_tokens=token_usage.output_tokens,
+                        cached_tokens=token_usage.cached_tokens,
+                        thoughts_tokens=token_usage.thoughts_tokens,
                     )
                 )
 
@@ -696,18 +776,17 @@ class CodexLLM(LLMInterface):
                     model=self.model,
                     scope=scope,
                     duration=duration,
-                    input_tokens=0,  # Codex doesn't report token counts in SSE
-                    output_tokens=0,
+                    input_tokens=token_usage.input_tokens,
+                    output_tokens=token_usage.output_tokens,
                     success=True,
+                    cached_input_tokens=token_usage.cached_tokens,
+                    thoughts_tokens=token_usage.thoughts_tokens,
                 )
 
                 # Record trace span
                 try:
                     from hindsight_api.tracing import _serialize_for_span, get_span_recorder
 
-                    # Estimate tokens for tracing
-                    estimated_input = sum(len(m.get("content", "")) for m in messages) // 4
-                    estimated_output = len(content) // 4
                     span_recorder = get_span_recorder()
                     span_recorder.record_llm_call(
                         provider=self.provider,
@@ -715,24 +794,19 @@ class CodexLLM(LLMInterface):
                         scope=scope,
                         messages=messages,
                         response_content=_serialize_for_span(result),
-                        input_tokens=estimated_input,
-                        output_tokens=estimated_output,
+                        input_tokens=token_usage.input_tokens,
+                        output_tokens=token_usage.output_tokens,
                         duration=duration,
                         finish_reason=None,
                         error=None,
+                        cached_tokens=token_usage.cached_tokens,
+                        thoughts_tokens=token_usage.thoughts_tokens,
                     )
                 except Exception as span_error:
                     # Tracing must remain best-effort, but expose instrumentation
                     # bugs that would otherwise silently erase spans (#3025).
                     logger.debug("Codex span recording failed: %s", span_error, exc_info=True)
 
-                estimated_input = sum(len(m.get("content", "")) for m in messages) // 4
-                estimated_output = len(content) // 4
-                token_usage = TokenUsage(
-                    input_tokens=estimated_input,
-                    output_tokens=estimated_output,
-                    total_tokens=estimated_input + estimated_output,
-                )
                 return LLMCallResult(content=result, usage=token_usage)
 
             except UpstreamHTTPError as e:
@@ -895,7 +969,7 @@ class CodexLLM(LLMInterface):
         for line in rest.splitlines():
             yield line
 
-    async def _parse_sse_stream(self, response: aiohttp.ClientResponse) -> str:
+    async def _parse_sse_stream(self, response: aiohttp.ClientResponse) -> _CodexStreamReply:
         """
         Parse Server-Sent Events (SSE) stream from Codex API.
 
@@ -903,9 +977,10 @@ class CodexLLM(LLMInterface):
             response: HTTP response with SSE stream.
 
         Returns:
-            Extracted text content from stream.
+            The text content and token usage the stream carried.
         """
         full_text = ""
+        usage: TokenUsage | None = None
         event_type = None
 
         async for line in self._iter_sse_lines(response):
@@ -925,6 +1000,7 @@ class CodexLLM(LLMInterface):
                 try:
                     data = json.loads(data_str)
                     _raise_on_sse_failure(event_type, data)
+                    usage = _usage_from_completed_event(event_type, data) or usage
 
                     # Extract content based on event type
                     if event_type == "response.text.delta" and "delta" in data:
@@ -947,7 +1023,7 @@ class CodexLLM(LLMInterface):
                     # Skip malformed JSON events
                     pass
 
-        return full_text
+        return _CodexStreamReply(text=full_text, tool_calls=[], usage=usage)
 
     async def call_with_tools(
         self,
@@ -1062,7 +1138,7 @@ class CodexLLM(LLMInterface):
         # surfaces immediately to keep behavior identical for callers.
         attempted_refresh_after_auth_error = False
 
-        async def _request_attempt(attempt: int) -> tuple[str | None, list[LLMToolCall]]:
+        async def _request_attempt(attempt: int) -> _CodexStreamReply:
             async with attempt_context() if attempt_context is not None else nullcontext():
                 set_stage(f"llm.codex.tools.attempt={attempt}/2")
                 try:
@@ -1087,7 +1163,7 @@ class CodexLLM(LLMInterface):
 
         try:
             try:
-                content, tool_calls = await _request_attempt(1)
+                reply = await _request_attempt(1)
             except UpstreamHTTPError as auth_error:
                 if auth_error.status_code not in (401, 403) or attempted_refresh_after_auth_error:
                     raise
@@ -1099,7 +1175,7 @@ class CodexLLM(LLMInterface):
                     )
                     headers["Authorization"] = f"Bearer {self.access_token}"
                     logger.info("Codex auth refreshed after auth error; retrying tool-call request once")
-                    content, tool_calls = await _request_attempt(2)
+                    reply = await _request_attempt(2)
                 except CodexRefreshExpiredError as refresh_err:
                     logger.error(
                         "Codex refresh_token is permanently invalid; cannot recover from auth error in tool-call path"
@@ -1114,6 +1190,10 @@ class CodexLLM(LLMInterface):
                     )
                     raise auth_error
 
+            content = reply.text or None
+            tool_calls = reply.tool_calls
+            usage = reply.usage or TokenUsage()
+
             duration = time.perf_counter() - start_time
             metrics = get_metrics_collector()
             metrics.record_llm_call(
@@ -1121,9 +1201,11 @@ class CodexLLM(LLMInterface):
                 model=self.model,
                 scope=scope,
                 duration=duration,
-                input_tokens=0,
-                output_tokens=0,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
                 success=True,
+                cached_input_tokens=usage.cached_tokens,
+                thoughts_tokens=usage.thoughts_tokens,
             )
 
             # Record OpenTelemetry span
@@ -1143,12 +1225,14 @@ class CodexLLM(LLMInterface):
                     scope=scope,
                     messages=messages,
                     response_content=content,
-                    input_tokens=0,  # Codex doesn't provide token counts
-                    output_tokens=0,
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
                     duration=duration,
                     finish_reason="tool_calls" if tool_calls else "stop",
                     error=None,
                     tool_calls=tool_calls_dict,
+                    cached_tokens=usage.cached_tokens,
+                    thoughts_tokens=usage.thoughts_tokens,
                 )
             except Exception:
                 pass  # logging failure must never affect the operation
@@ -1157,8 +1241,10 @@ class CodexLLM(LLMInterface):
                 content=content,
                 tool_calls=tool_calls,
                 finish_reason="tool_calls" if tool_calls else "stop",
-                input_tokens=0,
-                output_tokens=0,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                cached_tokens=usage.cached_tokens,
+                thoughts_tokens=usage.thoughts_tokens,
             )
 
         except Exception as e:
@@ -1167,15 +1253,16 @@ class CodexLLM(LLMInterface):
             logger.error(f"Codex tool call error: {e}")
             raise
 
-    async def _parse_sse_tool_stream(self, response: aiohttp.ClientResponse) -> tuple[str | None, list[LLMToolCall]]:
+    async def _parse_sse_tool_stream(self, response: aiohttp.ClientResponse) -> _CodexStreamReply:
         """
         Parse SSE stream for tool calls and content.
 
         Returns:
-            Tuple of (content, tool_calls).
+            The text content, tool calls and token usage the stream carried.
         """
         content = ""
         tool_calls: list[LLMToolCall] = []
+        usage: TokenUsage | None = None
         event_type = None
 
         async for line in self._iter_sse_lines(response):
@@ -1193,6 +1280,7 @@ class CodexLLM(LLMInterface):
                 try:
                     data = json.loads(data_str)
                     _raise_on_sse_failure(event_type, data)
+                    usage = _usage_from_completed_event(event_type, data) or usage
 
                     # Extract text content
                     if event_type == "response.text.delta" and "delta" in data:
@@ -1228,7 +1316,7 @@ class CodexLLM(LLMInterface):
                 except json.JSONDecodeError as e:
                     logger.warning(f"Failed to parse SSE data: {e}, data_str: {data_str[:200]}")
 
-        return content if content else None, tool_calls
+        return _CodexStreamReply(text=content, tool_calls=tool_calls, usage=usage)
 
     async def cleanup(self) -> None:
         """Clean up HTTP sessions."""

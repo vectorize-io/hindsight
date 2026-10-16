@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from hindsight_api.engine.llm_interface import LLMToolChoice
-from hindsight_api.engine.providers.codex_llm import CodexLLM
+from hindsight_api.engine.providers.codex_llm import CodexLLM, _CodexStreamReply
 from tests.codex_stream_stub import stub_codex_stream
 
 TOOLS = [
@@ -52,7 +52,7 @@ async def test_codex_serializes_named_tool_choice_for_responses():
     response.raise_for_status.return_value = None
     with stub_codex_stream(llm, response) as mock_stream:
         with patch.object(llm, "_parse_sse_tool_stream", new_callable=AsyncMock) as mock_parse:
-            mock_parse.return_value = (None, [])
+            mock_parse.return_value = _CodexStreamReply(text="", tool_calls=[], usage=None)
             await llm.call_with_tools(
                 messages=[{"role": "user", "content": "recall the memory"}],
                 tools=TOOLS,
@@ -73,7 +73,7 @@ async def test_codex_forced_tool_choice_still_yields_tool_calls():
     tool_call = {"id": "call-1", "name": "recall", "arguments": {"query": "memory"}}
     with stub_codex_stream(llm, response) as mock_stream:
         with patch.object(llm, "_parse_sse_tool_stream", new_callable=AsyncMock) as mock_parse:
-            mock_parse.return_value = (None, [tool_call])
+            mock_parse.return_value = _CodexStreamReply(text="", tool_calls=[tool_call], usage=None)
             result = await llm.call_with_tools(
                 messages=[{"role": "user", "content": "recall the memory"}],
                 tools=TOOLS,

@@ -258,11 +258,12 @@ async def test_retrieve_batch_results_translates_to_openai_shape():
     # The engine reads choices[0].message.content and json.loads() it.
     assert json.loads(body["choices"][0]["message"]["content"]) == {"facts": ["Alice is an engineer."]}
     # Usage arrives under the OpenAI key names the engine sums.
-    # Cache reads ride in the OpenAI detail block, as a live call reports them (#5487).
+    # Cache reads ride in the OpenAI detail block, as a live call reports them (#5487),
+    # and count in prompt_tokens, which Anthropic reports without them (#5541).
     assert body["usage"] == {
-        "prompt_tokens": 100,
+        "prompt_tokens": 160,
         "completion_tokens": 40,
-        "total_tokens": 140,
+        "total_tokens": 200,
         "prompt_tokens_details": {"cached_tokens": 60},
     }
 

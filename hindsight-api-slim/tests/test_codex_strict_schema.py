@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from hindsight_api.engine.providers.codex_llm import (
     CodexLLM,
+    _CodexStreamReply,
     _repair_invalid_json_escapes,
 )
 from hindsight_api.engine.response_models import LLMToolCall
@@ -92,7 +93,7 @@ async def test_strict_schema_uses_forced_function_tool():
 
     with stub_codex_stream(llm, response) as mock_stream:
         with patch.object(llm, "_parse_sse_tool_stream", new_callable=AsyncMock) as mock_parse:
-            mock_parse.return_value = (None, [tool_call])
+            mock_parse.return_value = _CodexStreamReply(text="", tool_calls=[tool_call], usage=None)
             result = (
                 await llm.call(
                     messages=[{"role": "user", "content": "The sky is blue"}],
@@ -129,7 +130,7 @@ async def test_strict_schema_skip_validation_returns_dict():
     with patch("hindsight_api.tracing.get_span_recorder", return_value=span_recorder):
         with stub_codex_stream(llm, response) as mock_stream:
             with patch.object(llm, "_parse_sse_tool_stream", new_callable=AsyncMock) as mock_parse:
-                mock_parse.return_value = (None, [tool_call])
+                mock_parse.return_value = _CodexStreamReply(text="", tool_calls=[tool_call], usage=None)
                 result = (
                     await llm.call(
                         messages=[{"role": "user", "content": "hi"}],
@@ -153,7 +154,7 @@ async def test_strict_schema_retries_when_forced_tool_missing():
     with stub_codex_stream(llm, response) as mock_stream:
         # Model returns no tool call at all — should raise after retries exhausted.
         with patch.object(llm, "_parse_sse_tool_stream", new_callable=AsyncMock) as mock_parse:
-            mock_parse.return_value = ("some prose", [])
+            mock_parse.return_value = _CodexStreamReply(text="some prose", tool_calls=[], usage=None)
             with pytest.raises(RuntimeError, match="structured_response"):
                 await llm.call(
                     messages=[{"role": "user", "content": "hi"}],
@@ -178,7 +179,7 @@ async def test_non_strict_repairs_invalid_escapes_without_retrying():
 
     with stub_codex_stream(llm, response) as mock_stream:
         with patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock) as mock_parse:
-            mock_parse.return_value = escape_heavy
+            mock_parse.return_value = _CodexStreamReply(text=escape_heavy, tool_calls=[], usage=None)
             result = (
                 await llm.call(
                     messages=[{"role": "user", "content": "coding transcript"}],
@@ -203,7 +204,9 @@ async def test_non_strict_keeps_a_fence_marker_inside_a_json_value():
 
     with stub_codex_stream(llm, response):
         with patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock) as mock_parse:
-            mock_parse.return_value = '```json\n{"fact": "wrap it in ```json fences"}\n```'
+            mock_parse.return_value = _CodexStreamReply(
+                text='```json\n{"fact": "wrap it in ```json fences"}\n```', tool_calls=[], usage=None
+            )
             result = (
                 await llm.call(
                     messages=[{"role": "user", "content": "hi"}],

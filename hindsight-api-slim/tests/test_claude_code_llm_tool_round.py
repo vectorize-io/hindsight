@@ -45,6 +45,7 @@ class _FakeOptions:
 class _FakeAssistantMessage:
     def __init__(self, content: list[Any]) -> None:
         self.content = content
+        self.usage = None
 
 
 class _FakeTextBlock:
@@ -64,6 +65,7 @@ class _FakeResultMessage:
         self.subtype = subtype
         self.is_error = is_error
         self.result = result
+        self.usage = None
 
 
 @dataclass
@@ -394,3 +396,39 @@ async def test_successful_tool_round_records_a_trace_span(monkeypatch):
     assert kwargs["scope"] == "reflect"
     assert kwargs["finish_reason"] == "tool_calls"
     assert kwargs["tool_calls"] == [{"id": "tu_1", "name": "recall", "arguments": {"query": "q"}}]
+
+
+@pytest.mark.asyncio
+async def test_tool_round_reports_usage_of_the_assistant_message(monkeypatch):
+    """A tool round stops before the ResultMessage, so it reports the API message's usage (#5541)."""
+
+    class _FakeClient:
+        def __init__(self, options: _FakeOptions) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def query(self, prompt: str) -> None:
+            return None
+
+        async def receive_response(self):
+            message = _FakeAssistantMessage(
+                content=[_FakeToolUseBlock(id="tu_1", name="mcp__hindsight_tools__recall", input={"query": "q"})]
+            )
+            message.usage = {"input_tokens": 5, "cache_read_input_tokens": 500, "output_tokens": 20}
+            yield message
+
+    _install_fake_sdk(monkeypatch, _FakeClient)
+
+    result = await _instantiate_provider().call_with_tools(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[_RECALL_TOOL],
+        max_retries=0,
+        tool_choice=LLM_TOOL_CHOICE_AUTO,
+    )
+
+    assert (result.input_tokens, result.output_tokens, result.cached_tokens) == (505, 20, 500)

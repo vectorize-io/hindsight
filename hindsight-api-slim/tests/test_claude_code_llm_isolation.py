@@ -36,6 +36,7 @@ class _FakeOptions:
 class _FakeAssistantMessage:
     def __init__(self, content: list[Any]) -> None:
         self.content = content
+        self.usage = None
 
 
 class _FakeTextBlock:
