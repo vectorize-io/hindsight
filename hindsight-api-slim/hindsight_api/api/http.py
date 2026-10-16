@@ -7853,7 +7853,7 @@ def _register_routes(app: FastAPI):
             bank_id: Memory Bank ID (from path)
             q: Case-insensitive substring filter on document ID
             tags: Filter documents by tags
-            tags_match: How to match tags (any, all, any_strict, all_strict)
+            tags_match: How to match tags (any, all, any_strict, all_strict, exact)
             time_field: Time axis to filter and order by (created_at, updated_at)
             start_date: Inclusive lower bound on time_field (ISO-8601)
             end_date: Exclusive upper bound on time_field (ISO-8601)
