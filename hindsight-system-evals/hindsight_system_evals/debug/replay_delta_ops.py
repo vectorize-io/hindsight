@@ -56,7 +56,7 @@ class CapturedRequest:
     def document(self) -> str:
         """The CURRENT DOCUMENT section, so an untouched claim counts as surviving."""
         start = self.user.find("CURRENT DOCUMENT")
-        end = self.user.find("## NEW INFORMATION")
+        end = self.user.find("## SUPPORTING FACTS")
         return self.user[start:end] if start != -1 and end != -1 else ""
 
 
