@@ -392,3 +392,69 @@ async def test_oversized_edited_reretain_reports_only_what_was_extracted(memory,
     finally:
         memory._operation_validator = None
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+# Issue #5485: a sliced retain that crashed part-way is retried with the SAME body. Slice 1 used to
+# take the delta path, which diffs the complete body and extracts every chunk the crash left
+# unwritten in one step that commits only at the end — hundreds of calls queued at once, and all of
+# them lost if the retry is interrupted too. The retry must resume slice by slice instead.
+
+
+class _CrashAfter:
+    """Extraction spy that fails the retain after ``n`` calls and records each call's item count."""
+
+    _original = staticmethod(fact_extraction.extract_facts_from_contents)
+
+    def __init__(self, n: int | None) -> None:
+        self.n = n
+        self.items_per_call: list[int] = []
+        self.texts: list[str] = []
+
+    def install(self, monkeypatch) -> None:
+        original = self._original
+
+        async def _spy(contents, *args, **kwargs):
+            if self.n is not None and len(self.items_per_call) >= self.n:
+                raise RuntimeError("simulated worker crash")
+            self.items_per_call.append(len(contents))
+            self.texts.extend(c.content for c in contents)
+            return await original(contents, *args, **kwargs)
+
+        monkeypatch.setattr(fact_extraction, "extract_facts_from_contents", _spy)
+
+
+@pytest.mark.asyncio
+async def test_recovering_partially_written_oversized_document_resumes_slice_by_slice(
+    memory, request_context, monkeypatch
+):
+    bank_id = f"test_5485_recovery_{_ts()}"
+    document_id = "doc-5485"
+    body = _body()
+    monkeypatch.setenv("HINDSIGHT_API_RETAIN_BATCH_TOKENS", str(_OVERSIZED_BATCH_TOKENS))
+    clear_config_cache()
+
+    try:
+        first = _CrashAfter(3)
+        first.install(monkeypatch)
+        with pytest.raises(RuntimeError, match="simulated worker crash"):
+            await memory.retain_async(
+                bank_id=bank_id, content=body, context="notes", document_id=document_id, request_context=request_context
+            )
+        committed = [m for m in (f"MARKER{i:02d}" for i in range(_BASE_SECTIONS)) if m in "\n".join(first.texts)]
+        assert 0 < len(committed) < _BASE_SECTIONS, "premise: the first run must commit only part of the document"
+
+        retry = _CrashAfter(None)
+        retry.install(monkeypatch)
+        await memory.retain_async(
+            bank_id=bank_id, content=body, context="notes", document_id=document_id, request_context=request_context
+        )
+
+        assert max(retry.items_per_call) == 1, (
+            f"the retry extracted {max(retry.items_per_call)} chunks in one step (calls: {retry.items_per_call}); "
+            f"it must resume one slice at a time, committing as it goes"
+        )
+        seen = "\n".join(retry.texts)
+        missing = [f"MARKER{i:02d}" for i in range(_BASE_SECTIONS) if f"MARKER{i:02d}" not in committed]
+        assert all(m in seen for m in missing), "every chunk the crash left unwritten must be extracted"
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
