@@ -13076,11 +13076,17 @@ class MemoryEngine(MemoryEngineInterface):
         in ``context`` instead) but still overrides the narrator when supplied, for backwards compatibility.
         Side-effect-free and idempotent.
         """
+        from hindsight_api.extensions import BankReadOperation
+
         from .response_models import ExtractedFact, ExtractedFactAttachment, ExtractionChunk
         from .retain import fact_extraction
 
         # Resolve the tenant schema before touching any bank-scoped data (config).
         await self._authenticate_tenant(request_context)
+        # The extraction runs under this bank's settings, so it sits behind the same
+        # gate as reading them (GET /config, the prompt preview) — otherwise a
+        # validator scoping callers to their banks can't stop it (issue #5448).
+        await self._authorize_bank_read(bank_id, BankReadOperation.GET_BANK_CONFIG, request_context)
         # Through the same resolver retain uses, so a named strategy — and, with none
         # named, the bank's retain_default_strategy — lands the way it will in a real
         # retain. Resolving the config directly skipped strategies entirely, which

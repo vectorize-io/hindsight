@@ -313,6 +313,10 @@ def _internal_error(exc: Exception, where: str) -> HTTPException:
     ``raise _internal_error(e, ...)`` and keep the ``raise`` visible at the
     handler instead of hidden behind a call.
     """
+    # A validator rejection raised past a route's own catch must keep the
+    # validator's status, not turn into a 500 (issue #5448).
+    if isinstance(exc, OperationValidationError):
+        return HTTPException(status_code=exc.status_code, detail=exc.reason)
     unavailable = _store_unavailable(exc)
     if unavailable is not None:
         logger.warning(f"Store unavailable in {where}, answering 503: {exc}")
