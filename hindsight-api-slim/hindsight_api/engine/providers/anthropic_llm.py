@@ -26,12 +26,12 @@ from hindsight_api.engine.llm_interface import (
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_llm_error
-from hindsight_api.engine.provider_auth import requires_api_key
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.remote_retry import jittered_backoff
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema
 from hindsight_api.metrics import get_metrics_collector
+from hindsight_api.provider_auth import requires_api_key
 from hindsight_api.worker.stage import set_stage
 
 from ..response_models import LLMCallResult
