@@ -140,9 +140,21 @@ function InlineAttachment({
 }
 
 /** Case-insensitive matcher for a literal search string, or null when there is nothing to find. */
-export function searchMatcher(query: string | undefined): RegExp | null {
+function searchMatcher(query: string | undefined): RegExp | null {
   const q = query?.trim();
   return q ? new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi") : null;
+}
+
+/** How many highlights `InlineAttachmentText` draws for `query`, or null when there is no query.
+ * Placeholders are stripped first: they render as attachments, so a match inside one is never shown. */
+export function countMatches(text: string, query: string | undefined): number | null {
+  const matcher = searchMatcher(query);
+  if (!matcher) return null;
+  return text.split(new RegExp(PLACEHOLDER_RE.source, "g")).reduce(
+    // split() with the capture group interleaves ids at odd indexes; only prose counts.
+    (n, part, i) => (i % 2 === 0 ? n + (part.match(matcher)?.length ?? 0) : n),
+    0
+  );
 }
 
 /** Wrap every match of `matcher` in a <mark>. With a capture group, split() puts matches at odd indexes. */

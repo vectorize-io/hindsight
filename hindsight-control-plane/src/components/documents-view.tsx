@@ -86,7 +86,7 @@ import { TagFilterInput } from "./tag-filter-input";
 import { FacetLegend, MetadataChip, TagChip } from "@/components/ui/facet-chip";
 import { Spinner } from "@/components/ui/spinner";
 import { HarnessLogo } from "@/components/ui/harness-logo";
-import { InlineAttachmentText, searchMatcher } from "@/components/ui/inline-attachment-text";
+import { InlineAttachmentText, countMatches } from "@/components/ui/inline-attachment-text";
 import { documentHarness, resolveHarnessLogo } from "@/lib/harness-logo";
 
 const ITEMS_PER_PAGE = 50;
@@ -963,6 +963,8 @@ export function DocumentsView() {
         );
       });
   }, [documents, pendingUploads, searchQuery, selectedTags, hasTimeWindow]);
+
+  const contentMatchCount = countMatches(selectedDocument?.original_text ?? "", contentSearch);
 
   const hasActiveFilters =
     searchQuery.trim().length > 0 || selectedTags.length > 0 || dateRange !== "all";
@@ -2294,14 +2296,9 @@ export function DocumentsView() {
                                   </button>
                                 )}
                               </div>
-                              {searchMatcher(contentSearch) && (
+                              {contentMatchCount !== null && (
                                 <span className="whitespace-nowrap text-muted-foreground/70">
-                                  {t("contentSearchMatches", {
-                                    count:
-                                      selectedDocument.original_text?.match(
-                                        searchMatcher(contentSearch)!
-                                      )?.length ?? 0,
-                                  })}
+                                  {t("contentSearchMatches", { count: contentMatchCount })}
                                 </span>
                               )}
                             </div>
