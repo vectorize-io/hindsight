@@ -6,6 +6,7 @@ the FastAPI application with all API endpoints.
 """
 
 import asyncio
+import gc
 import json
 import logging
 import os
@@ -5195,6 +5196,12 @@ def create_app(
         if initialize_memory:
             await memory.initialize()
             logging.info("Memory system initialized")
+            # Startup leaves ~800k long-lived objects (models, config, pools). Left
+            # tracked, every full GC pass walks them all, which turns a request that
+            # allocates heavily (a 1000-memory graph read) into 2-3x its real cost.
+            # Freezing moves them out of the collector's view; they live forever anyway.
+            gc.collect()
+            gc.freeze()
 
             # Set up DB pool metrics after memory initialization
             metrics_collector = get_metrics_collector()
@@ -5815,6 +5822,7 @@ def _register_routes(app: FastAPI):
         responses=_BANK_NOT_FOUND_RESPONSES,
     )
     async def api_graph(
+        http_request: Request,
         bank_id: str,
         type: str | None = None,
         limit: int = Query(default=1000, ge=0),
@@ -5827,17 +5835,29 @@ def _register_routes(app: FastAPI):
     ):
         """Get graph data from database, filtered by bank_id and optionally by type."""
         try:
-            data = await app.state.memory.get_graph_data(
-                bank_id,
-                type,
-                limit=limit,
-                q=q,
-                tags=tags,
-                tags_match=tags_match,
-                document_id=document_id,
-                chunk_id=chunk_id,
-                request_context=request_context,
+            # The control plane cancels this read whenever the user switches tab; on a
+            # big bank it is seconds of work and a multi-MB answer, and left running it
+            # competes with the read the user switched to.
+            data = await run_task_cancellable_on_disconnect(
+                http_request,
+                app.state.memory.get_graph_data(
+                    bank_id,
+                    type,
+                    limit=limit,
+                    q=q,
+                    tags=tags,
+                    tags_match=tags_match,
+                    document_id=document_id,
+                    chunk_id=chunk_id,
+                    request_context=request_context,
+                ),
+                operation="graph",
+                bank_id=bank_id,
             )
+            # Built, but the client left while it was: skip serializing it.
+            token = get_scope_cancellation_token(http_request.scope)
+            if token is not None and token.cancelled:
+                raise HTTPException(status_code=_CLIENT_CLOSED_REQUEST_STATUS_CODE, detail=token.reason)
             return data
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)

@@ -20,7 +20,7 @@ reflect also copy the token onto their ``RequestContext`` so the engine checks i
 at stage boundaries, which is what stops work running in worker threads. Either
 way, abandoned work stops instead of running to completion.
 
-It only wraps recall, reflect and the retain POST (small-to-moderate JSON
+It only wraps recall, reflect, the retain POST and the graph GET (small or no
 bodies); every other request — uploads, MCP streams, etc. — passes straight
 through untouched, so there is no buffering or latency cost elsewhere. The pump
 queue is bounded at one message so a monitored request's body is never held in
@@ -59,6 +59,10 @@ def _should_monitor(scope: Scope) -> bool:
     """
     path = scope.get("path", "")
     if path.endswith("/memories/recall") or path.endswith("/reflect"):
+        return True
+    # The graph read behind the control plane's Memories tabs: several MB and
+    # seconds of work on a big bank, abandoned whenever the user switches tab.
+    if path.endswith("/graph") and scope.get("method") == "GET":
         return True
     return path.endswith("/memories") and scope.get("method") == "POST"
 

@@ -88,6 +88,17 @@ type BankConfigTab =
   | "audit-logs"
   | "llm-requests";
 
+const LAST_DATA_SUB_TAB_KEY = "hindsight.memories.subTab";
+
+function readLastDataSubTab(): DataSubTab | null {
+  try {
+    const v = localStorage.getItem(LAST_DATA_SUB_TAB_KEY);
+    return v === "world" || v === "experience" || v === "observations" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function BankPage() {
   const params = useParams();
   const router = useRouter();
@@ -98,7 +109,15 @@ export default function BankPage() {
   const { currentBank: bankId, setCurrentBank, loadBanks } = useBank();
 
   const view = (searchParams.get("view") || "home") as NavItem;
-  const subTab = (searchParams.get("subTab") || "world") as DataSubTab;
+  // Memories reopens on the sub-tab the user last picked, not always World —
+  // unless the URL names one, so a shared link still wins. `undefined` until
+  // storage has been read after mount (it can't be read during server render),
+  // and the tab body waits for it so World isn't loaded only to be thrown away.
+  const urlSubTab = searchParams.get("subTab") as DataSubTab | null;
+  const [lastSubTab, setLastSubTab] = useState<DataSubTab | null | undefined>(undefined);
+  useEffect(() => setLastSubTab(readLastDataSubTab()), []);
+  const subTab: DataSubTab = urlSubTab || lastSubTab || "world";
+  const subTabReady = urlSubTab !== null || lastSubTab !== undefined;
   const knowledgeTab = (searchParams.get("knowledgeTab") || "pages") as KnowledgeTab;
   const bankConfigTab = (searchParams.get("bankConfigTab") || "general") as BankConfigTab;
   const bankConfigEnabled = features?.bank_config_api ?? false;
@@ -144,6 +163,10 @@ export default function BankPage() {
   }, [bankId, bankConfigEnabled]);
   const auditLogEnabled = bankAuditLogEnabled ?? features?.audit_log ?? false;
   const observationsEnabled = bankObservationsEnabled ?? features?.observations ?? false;
+  // The fact types behind the Memories tabs, so each tab can warm the others.
+  const memoryTabTypes: ("world" | "experience" | "observation")[] = observationsEnabled
+    ? ["world", "experience", "observation"]
+    : ["world", "experience"];
 
   // Bank actions state
   const [showLlmHealthDialog, setShowLlmHealthDialog] = useState(false);
@@ -172,7 +195,14 @@ export default function BankPage() {
 
   const handleDataSubTabChange = (newSubTab: DataSubTab) => {
     if (!bankId) return;
-    router.push(bankRoute(bankId, `?view=data&subTab=${newSubTab}`));
+    try {
+      localStorage.setItem(LAST_DATA_SUB_TAB_KEY, newSubTab);
+    } catch {
+      // Storage blocked: the tab just won't be remembered.
+    }
+    // The native history API updates useSearchParams without a router round
+    // trip, so the tab switches on the click instead of after a navigation.
+    window.history.pushState(null, "", `?view=data&subTab=${newSubTab}`);
   };
 
   const handleKnowledgeTabChange = (tab: KnowledgeTab) => {
@@ -703,29 +733,42 @@ export default function BankPage() {
                   </div>
 
                   <div>
-                    {subTab === "world" && (
+                    {subTabReady && subTab === "world" && (
                       <div>
                         <p className="text-sm text-muted-foreground mb-4">
                           {t("worldFactsDescription")}
                         </p>
-                        <DataView key="world" factType="world" />
+                        <DataView
+                          key="world"
+                          factType="world"
+                          prefetchTypes={memoryTabTypes.filter((ft) => ft !== "world")}
+                        />
                       </div>
                     )}
-                    {subTab === "experience" && (
+                    {subTabReady && subTab === "experience" && (
                       <div>
                         <p className="text-sm text-muted-foreground mb-4">
                           {t("experienceDescription")}
                         </p>
-                        <DataView key="experience" factType="experience" />
+                        <DataView
+                          key="experience"
+                          factType="experience"
+                          prefetchTypes={memoryTabTypes.filter((ft) => ft !== "experience")}
+                        />
                       </div>
                     )}
-                    {subTab === "observations" &&
+                    {subTabReady &&
+                      subTab === "observations" &&
                       (observationsEnabled ? (
                         <div>
                           <p className="text-sm text-muted-foreground mb-4">
                             {t("observationsDescription")}
                           </p>
-                          <DataView key="observations" factType="observation" />
+                          <DataView
+                            key="observations"
+                            factType="observation"
+                            prefetchTypes={memoryTabTypes.filter((ft) => ft !== "observation")}
+                          />
                         </div>
                       ) : (
                         <FeatureNotEnabled

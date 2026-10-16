@@ -502,8 +502,10 @@ export class ControlPlaneClient {
 
       return response.json();
     } catch (error) {
-      // If it's not a response error (network error, etc.), show toast
-      if (!(error as any).status && !suppressErrorToast) {
+      // If it's not a response error (network error, etc.), show toast. A request
+      // the caller cancelled is not an error worth telling anyone about.
+      const aborted = (error as any)?.name === "AbortError";
+      if (!(error as any).status && !suppressErrorToast && !aborted) {
         toast.error("Network Error", {
           description: error instanceof Error ? error.message : "Failed to connect to server",
           duration: 5000,
@@ -714,16 +716,19 @@ export class ControlPlaneClient {
   /**
    * Get graph data
    */
-  async getGraph(params: {
-    bank_id: string;
-    type?: string;
-    limit?: number;
-    q?: string;
-    tags?: string[];
-    tags_match?: string;
-    document_id?: string;
-    chunk_id?: string;
-  }) {
+  async getGraph(
+    params: {
+      bank_id: string;
+      type?: string;
+      limit?: number;
+      q?: string;
+      tags?: string[];
+      tags_match?: string;
+      document_id?: string;
+      chunk_id?: string;
+    },
+    signal?: AbortSignal
+  ) {
     const queryParams = new URLSearchParams();
     queryParams.append("bank_id", params.bank_id);
     if (params.type) queryParams.append("type", params.type);
@@ -738,7 +743,7 @@ export class ControlPlaneClient {
     if (params.tags_match) queryParams.append("tags_match", params.tags_match);
     if (params.document_id) queryParams.append("document_id", params.document_id);
     if (params.chunk_id) queryParams.append("chunk_id", params.chunk_id);
-    return this.fetchApi(`/api/graph?${queryParams}`);
+    return this.fetchApi(`/api/graph?${queryParams}`, { signal });
   }
 
   /**
