@@ -3306,8 +3306,8 @@ class MentalModelTrigger(BaseModel):
             "Minimum seconds between two automatic refreshes of this mental model. A triggered "
             "refresh that arrives sooner is not dropped: it is queued and parked until the window "
             "expires, and every further trigger in the meantime folds into that one queued refresh, "
-            "so a burst of retains costs one refresh instead of one per retain. Applies to both "
-            "refresh_after_consolidation and refresh_cron. Explicit refreshes (API, MCP, control "
+            "so a burst of retains costs one refresh instead of one per retain. Applies to every "
+            "automatic trigger: refresh_after_consolidation, refresh_cron and full_refresh_cron. Explicit refreshes (API, MCP, control "
             "plane) ignore it and run immediately. 0 disables the floor for this model; null falls "
             "back to the bank/global mental_model_min_refresh_interval_seconds setting (itself 0 by "
             "default, i.e. no floor)."
@@ -3513,7 +3513,7 @@ class MentalModelResponse(BaseModel):
         description=(
             "When this model's most recent refresh failed, in ISO format, or null when the last one "
             "succeeded. While this is set the automatic triggers (`refresh_after_consolidation`, "
-            "`refresh_cron`) skip the model — a refresh that cannot succeed is not retried on every "
+            "`refresh_cron`, `full_refresh_cron`) skip the model — a refresh that cannot succeed is not retried on every "
             "tick. An explicit refresh still runs, and a successful one clears this. The failure "
             "itself, with its reason, is in the model's history."
         ),
@@ -3593,7 +3593,8 @@ class KnowledgeNode(BaseModel):
     trigger: MentalModelTrigger | None = Field(
         default=None,
         description="Pages only: the page's refresh settings — when it rebuilds itself "
-        "(`refresh_after_consolidation` or `refresh_cron`), in which mode, and over which facts. "
+        "(`refresh_after_consolidation` or `refresh_cron`, plus any `full_refresh_cron`), in which mode, "
+        "and over which facts. "
         "This is the EFFECTIVE policy: a setting the page never stored is reported at its default, "
         "so compare the fields you care about rather than the whole object against a patch you "
         "sent. Absent on folders, which have no backing mental model, and on a page with no "

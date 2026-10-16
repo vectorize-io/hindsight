@@ -224,9 +224,9 @@ _MM_HISTORY_KIND_FAILURE = "refresh_failed"
 #: consolidation or by the cron scan — and therefore subject to the minimum-interval
 #: floor. Explicit refreshes omit it and always run at once.
 #:
-#: This is the one payload key a fold has to reconcile. Refreshes otherwise carry no
-#: per-request options, which is what lets any submit fold into an already-queued one
-#: (#3487); here an explicit submit that folds into a parked automatic refresh must
+#: One of the two payload keys a fold has to reconcile (``_REFRESH_MODE_KEY`` is the
+#: other). Refreshes otherwise carry no per-request options, which is what lets any
+#: submit fold into an already-queued one (#3487); here an explicit submit that folds into a parked automatic refresh must
 #: also clear the flag and release the park, or the caller's "refresh now" would
 #: inherit somebody else's wait. ``_clear_refresh_park`` does that.
 _REFRESH_AUTOMATIC_KEY = "_automatic"

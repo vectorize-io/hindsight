@@ -138,7 +138,7 @@ When `refresh_cron` is set, Hindsight checks the schedule on the server's mental
 
 `last_refresh_failed_at` on the model (and on a page in the knowledge tree) carries when that happened, so a list view can show which models have stopped refreshing themselves without reading each one's history.
 
-**A failed refresh pauses the automatic ones.** A failed refresh is retried by the worker (`HINDSIGHT_API_WORKER_MAX_RETRIES`, 3 by default) and then stops. Neither `refresh_after_consolidation` nor `refresh_cron` queues that model again until a refresh succeeds, so a refresh that cannot work (a prompt too large for the model, an empty account, a delta that will not apply) costs a few attempts instead of an LLM bill every tick. The failure shows in the model's [history](#history). Fix the cause and refresh the model yourself: a successful refresh resumes the automatic ones. A refresh cut off by `HINDSIGHT_API_REFLECT_WALL_TIMEOUT`, which bounds a whole refresh the same way it bounds a reflect, counts as a failure too.
+**A failed refresh pauses the automatic ones.** A failed refresh is retried by the worker (`HINDSIGHT_API_WORKER_MAX_RETRIES`, 3 by default) and then stops. None of `refresh_after_consolidation`, `refresh_cron` or `full_refresh_cron` queues that model again until a refresh succeeds, so a refresh that cannot work (a prompt too large for the model, an empty account, a delta that will not apply) costs a few attempts instead of an LLM bill every tick. The failure shows in the model's [history](#history). Fix the cause and refresh the model yourself: a successful refresh resumes the automatic ones. A refresh cut off by `HINDSIGHT_API_REFLECT_WALL_TIMEOUT`, which bounds a whole refresh the same way it bounds a reflect, counts as a failure too.
 
 ### Rate-limiting automatic refreshes
 
@@ -164,8 +164,8 @@ queued refresh — so a burst of twenty retains costs one refresh, and that refr
 reads everything the twenty retains added. The only thing you trade away is immediacy: the
 model can lag its memories by up to the interval.
 
-The floor applies to both automatic triggers (`refresh_after_consolidation` and
-`refresh_cron`). It never applies to a refresh you ask for — the refresh endpoint, the MCP
+The floor applies to every automatic trigger (`refresh_after_consolidation`,
+`refresh_cron` and `full_refresh_cron`). It never applies to a refresh you ask for — the refresh endpoint, the MCP
 tool, and the control plane's refresh button all run immediately, and additionally release a
 parked refresh if one is waiting.
 
@@ -548,7 +548,7 @@ and takes the same time. It is validated and billed like a refresh.
 ### Keep traces: record every refresh as it happens
 
 A dry run only explains a refresh you run yourself. Refreshes driven by
-`refresh_after_consolidation` or `refresh_cron` happen with nobody watching, and by
+`refresh_after_consolidation`, `refresh_cron` or `full_refresh_cron` happen with nobody watching, and by
 the time you notice a bad document, the run that produced it is gone.
 
 Setting `trigger.keep_trace` records the same reasoning on every refresh of that

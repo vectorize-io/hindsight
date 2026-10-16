@@ -610,6 +610,8 @@ async def test_when_both_schedules_are_due_the_full_refresh_wins(memory: MemoryE
 
 
 async def _queued_payload(memory: MemoryEngine, operation_id: str) -> dict:
+    # Raw read: the task payload is internal to the queue and no engine method exposes it,
+    # and the payload's mode is exactly what the fold is supposed to change.
     async with memory._pool.acquire() as conn:
         raw = await conn.fetchval(
             "SELECT task_payload FROM async_operations WHERE operation_id = $1", uuid.UUID(operation_id)
