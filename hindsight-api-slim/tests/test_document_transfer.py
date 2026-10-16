@@ -1463,6 +1463,63 @@ async def test_export_import_observations(memory, request_context):
 
 
 @pytest.mark.asyncio
+async def test_import_observations_in_bounded_batches(memory, request_context, monkeypatch):
+    """Observations go in one transaction per batch, and every batch is counted (#5418).
+
+    One insert for the whole set outgrew PostgreSQL's 1 GB message on a large bank.
+    """
+    from hindsight_api.engine.transfer import importer
+
+    src = _unique_bank("transfer_obs_batch_src")
+    dst = _unique_bank("transfer_obs_batch_dst")
+    try:
+        created = await _retain(memory, src, "Alice works at Google. Bob works at Microsoft.", request_context, "doc-1")
+        assert len(created) >= 2, f"setup: retain created {len(created)} facts, need at least 2"
+        backend = await memory._get_backend()
+        for index, text in enumerate(["Alice is employed.", "Bob is employed."]):
+            await _seed_observation(
+                pool=backend,
+                memory=memory,
+                bank_id=src,
+                source_memory_ids=[uuid.UUID(str(created[index]))],
+                observation_text=text,
+            )
+        archive = await memory.export_documents_async(src, request_context, include_observations=True)
+        exported = parse_archive(archive).manifest.observation_count
+        assert exported >= 2
+
+        monkeypatch.setattr(importer, "_OBSERVATION_BATCH_SIZE", 1)
+        result = await _import(memory, dst, archive, request_context)
+
+        assert result["observations_imported"] == exported
+        async with acquire_with_retry(backend) as conn:
+            stored = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {fq_store_table('memory_units')} WHERE bank_id = $1 AND fact_type = 'observation'",
+                dst,
+            )
+        assert stored == exported
+    finally:
+        await memory.delete_bank(src, request_context=request_context)
+        await memory.delete_bank(dst, request_context=request_context)
+
+
+def test_document_batches_cap_documents_and_facts(monkeypatch):
+    """A batch closes at the document cap or the fact cap; a document over the fact cap rides alone."""
+    from hindsight_api.engine.transfer import importer
+
+    monkeypatch.setattr(importer, "_DOCUMENT_BATCH_SIZE", 3)
+    monkeypatch.setattr(importer, "_FACT_BATCH_SIZE", 10)
+
+    def doc(doc_id: str, facts: int) -> tuple[TransferDocument, str]:
+        return TransferDocument(id=doc_id, facts=[TransferFact(text="f", fact_type="world")] * facts), doc_id
+
+    docs = [doc("a", 4), doc("b", 4), doc("c", 4), doc("d", 25), doc("e", 1), doc("f", 1), doc("g", 1), doc("h", 1)]
+    batches = [[target for _doc, target in batch] for batch in importer._document_batches(docs)]
+
+    assert batches == [["a", "b"], ["c"], ["d"], ["e", "f", "g"], ["h"]]
+
+
+@pytest.mark.asyncio
 @pytest.mark.memory_backend_incompatible
 async def test_export_import_mental_models_and_knowledge_pages(memory, request_context):
     """The document-transfer flags carry optional bank knowledge into a target bank."""
