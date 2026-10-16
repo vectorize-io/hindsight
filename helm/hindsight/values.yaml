@@ -390,7 +390,7 @@ ingress:
   #      - hindsight.example.com
 
 # Gateway API: an HTTPRoute attached to an existing Gateway, as an alternative
-# to the Ingress above (enable one or the other). TLS is terminated by the
+# to the Ingress above (both can be on while migrating). TLS is terminated by the
 # Gateway's listener, so certificates are configured there, not here.
 gatewayApi:
   enabled: false
