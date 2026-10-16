@@ -776,7 +776,7 @@ def create_llm_provider(
 
     elif provider_lower == "chatgpt-plan":
         # The public Responses API billed to a ChatGPT plan through OpenAI's
-        # Sign in with ChatGPT flow (credentials from chatgpt_plan_auth login).
+        # Sign in with ChatGPT flow (credentials from `hindsight-admin chatgpt-plan login`).
         from hindsight_api.engine.providers.chatgpt_plan_llm import ChatGPTPlanLLM
 
         return ChatGPTPlanLLM(

@@ -24,7 +24,7 @@ Refresh tokens rotate, so every refresh happens under :func:`oauth_store_lock`
 and re-reads the file first: a sibling process may already have rotated it.
 
 Interactive commands (``login``, ``status``, ``logout``, ``import``) run as
-``python -m hindsight_api.engine.providers.chatgpt_plan_auth <command>``. The
+``hindsight-admin chatgpt-plan <command>``. The
 server never starts a login.
 
 Token values are never logged or printed.
@@ -85,7 +85,7 @@ DEFAULT_CALLBACK_PORT = 1455
 CALLBACK_PATH = "/auth/callback"
 CREDENTIAL_FILE = "credentials.json"
 HOST_ID_FILE = "host_id"
-LOGIN_COMMAND = "python -m hindsight_api.engine.providers.chatgpt_plan_auth login"
+LOGIN_COMMAND = "hindsight-admin chatgpt-plan login"
 
 #: Refresh errors after which only a new login helps (``invalid_client`` included:
 #: the registration itself is unusable).
@@ -1047,9 +1047,9 @@ def status_lines(home: Path) -> list[str]:
     return lines
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, prog: str = "chatgpt_plan_auth") -> int:
     parser = argparse.ArgumentParser(
-        prog="chatgpt_plan_auth", description="Manage the chatgpt-plan (Sign in with ChatGPT) credentials."
+        prog=prog, description="Manage the chatgpt-plan (Sign in with ChatGPT) credentials."
     )
     parser.add_argument(
         "--home",

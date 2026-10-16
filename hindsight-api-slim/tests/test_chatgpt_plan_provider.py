@@ -15,7 +15,7 @@ import json
 import socket
 import stat
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -218,6 +218,22 @@ def test_status_never_prints_tokens(tmp_path):
     assert "rt-1" not in text and "id.token.value" not in text
     stored_token = auth.read_credential(tmp_path / auth.CREDENTIAL_FILE).access_token
     assert stored_token and stored_token not in text
+
+
+def test_hindsight_admin_exposes_the_sign_in_commands(tmp_path):
+    from typer.testing import CliRunner
+
+    from hindsight_api.admin import cli
+
+    runner = CliRunner()
+    missing = runner.invoke(cli.app, ["chatgpt-plan", "--home", str(tmp_path), "status"])
+    assert missing.exit_code == 1
+    assert "hindsight-admin chatgpt-plan login" in missing.output
+
+    _write(tmp_path, _credential())
+    found = runner.invoke(cli.app, ["chatgpt-plan", "--home", str(tmp_path), "status"])
+    assert found.exit_code == 0
+    assert "user@example.com" in found.output
 
 
 # ---------------------------------------------------------------------------
@@ -789,8 +805,10 @@ async def test_usage_limit_in_stream_defers(make_llm):
     before = datetime.now(UTC)
     with pytest.raises(ProviderRateLimitResetError) as excinfo:
         await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=3, initial_backoff=0.01)
-    pause = (excinfo.value.retry_at - before).total_seconds()
-    assert plan.USAGE_LIMIT_DEFER_SECONDS - 5 <= pause <= plan.USAGE_LIMIT_DEFER_SECONDS + 5
+    after = datetime.now(UTC)
+    retry_at = excinfo.value.retry_at
+    assert before + timedelta(seconds=plan.USAGE_LIMIT_DEFER_SECONDS) <= retry_at
+    assert retry_at <= after + timedelta(seconds=plan.USAGE_LIMIT_DEFER_SECONDS)
     assert "chatgpt.com/settings/usage" in str(excinfo.value)
     assert len(upstream.requests) == 1
 
@@ -901,7 +919,7 @@ def test_missing_credentials_fail_with_login_command(tmp_path, monkeypatch):
     monkeypatch.setenv("HINDSIGHT_API_LLM_CHATGPT_PLAN_HOME", str(tmp_path / "empty"))
     clear_config_cache()
     try:
-        with pytest.raises(RuntimeError, match="chatgpt_plan_auth login"):
+        with pytest.raises(RuntimeError, match="hindsight-admin chatgpt-plan login"):
             create_llm_provider(
                 provider="chatgpt-plan", api_key="", base_url="", model="gpt-6-luna", reasoning_effort=None
             )

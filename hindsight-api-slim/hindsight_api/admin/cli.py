@@ -1651,6 +1651,17 @@ def worker_status(
         typer.echo("")
 
 
+@app.command(
+    name="chatgpt-plan",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True, "help_option_names": []},
+)
+def chatgpt_plan(ctx: typer.Context):
+    """Sign in with ChatGPT for the chatgpt-plan LLM provider (login | status | logout | import)."""
+    from ..engine.providers.chatgpt_plan_auth import main as chatgpt_plan_main
+
+    raise typer.Exit(chatgpt_plan_main(ctx.args, prog="hindsight-admin chatgpt-plan"))
+
+
 def main():
     load_dotenv_for_entrypoint()
     app()

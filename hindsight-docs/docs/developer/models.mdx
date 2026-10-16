@@ -331,7 +331,7 @@ credentials, so it never shares or rotates the Codex CLI's tokens.
 
 1. **Sign in:**
    ```bash
-   python -m hindsight_api.engine.providers.chatgpt_plan_auth login
+   hindsight-admin chatgpt-plan login
    ```
    This opens your browser and waits for the callback on `http://127.0.0.1:1455/auth/callback`
    (`--port` changes the port; `--no-browser` prints the URL instead). Approve the request, including
@@ -348,7 +348,7 @@ credentials, so it never shares or rotates the Codex CLI's tokens.
 
 3. **Check the stored session** (prints account, client id, scopes and expiry, never token values):
    ```bash
-   python -m hindsight_api.engine.providers.chatgpt_plan_auth status
+   hindsight-admin chatgpt-plan status
    ```
 
 **Self-hosted server or VM (no browser):** the `127.0.0.1` callback reaches the machine running the
@@ -360,11 +360,11 @@ browser, so sign in on your laptop and move the credential file to the server.
    `import` keeps the server's own `host_id` (creating one on first use) instead of the laptop's:
    ```bash
    scp ~/.hindsight/chatgpt-plan/credentials.json server:/tmp/chatgpt-plan.json
-   ssh server 'python -m hindsight_api.engine.providers.chatgpt_plan_auth import /tmp/chatgpt-plan.json && rm /tmp/chatgpt-plan.json'
+   ssh server 'hindsight-admin chatgpt-plan import /tmp/chatgpt-plan.json && rm /tmp/chatgpt-plan.json'
    ```
 3. On the laptop, stop using that copy without revoking it:
    ```bash
-   python -m hindsight_api.engine.providers.chatgpt_plan_auth logout --local-only
+   hindsight-admin chatgpt-plan logout --local-only
    ```
    Refresh tokens rotate, so after the copy only the server may use and refresh this session. A plain
    `logout` would revoke it and end the server's session too. `--local-only` clears the laptop's
