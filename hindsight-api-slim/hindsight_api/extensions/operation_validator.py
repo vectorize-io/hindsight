@@ -498,6 +498,15 @@ class CreateBankContext:
 
 
 @dataclass
+class ImportArchiveDocument:
+    """One document of a transfer archive, as the import gate sees it."""
+
+    document_id: str
+    #: The document's original text ("" when the archive carries none).
+    content: str
+
+
+@dataclass
 class ImportContext:
     """Context for validating a transfer-archive import before it is accepted.
 
@@ -508,10 +517,9 @@ class ImportContext:
 
     bank_id: str
     request_context: "RequestContext"
-    #: One ``{"document_id", "content"}`` per document in the archive, ``content``
-    #: being the document's original text. Documents a ``skip`` import later passes
-    #: over are still listed: which ones exist is only known when the import runs.
-    contents: list[dict]
+    #: Every document in the archive. Documents a ``skip`` import later passes over
+    #: are still listed: which ones exist is only known when the import runs.
+    documents: list[ImportArchiveDocument]
 
 
 @dataclass
@@ -1220,7 +1228,7 @@ class OperationValidatorExtension(Extension, ABC):
             ctx: Context containing:
                 - bank_id: Bank the archive is imported into
                 - request_context: Request context with auth info
-                - contents: The archive's documents (document_id, content)
+                - documents: The archive's documents (document_id, content)
 
         Returns:
             ValidationResult indicating whether the import may proceed.

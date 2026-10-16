@@ -58,6 +58,7 @@ from hindsight_api.extensions.operation_validator import (
     # File Conversion
     FileConvertResult,
     # Transfer imports
+    ImportArchiveDocument,
     ImportContext,
     # Memory curation
     MemoryCurationAction,
@@ -124,6 +125,7 @@ __all__ = [
     "RetainContext",
     "RetainResult",
     "RetainSource",
+    "ImportArchiveDocument",
     "ImportContext",
     "ValidationResult",
     # Operation Validator - Bank Management

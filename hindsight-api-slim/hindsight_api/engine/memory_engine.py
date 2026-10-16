@@ -7849,7 +7849,9 @@ class MemoryEngine(MemoryEngineInterface):
                     CreateBankContext(bank_id=target, request_context=request_context)
                 )
             )
-        if scope.data:
+        # Only parse the documents when a validator will look at them: restore parses the
+        # archive again when it runs, so without a gate this would be wasted work.
+        if scope.data and self._operation_validator:
             from .transfer.importer import parse_archive
 
             await self._validate_import(target, parse_archive(archive_bytes).documents, request_context)
@@ -8750,12 +8752,15 @@ class MemoryEngine(MemoryEngineInterface):
         """Run the validator's import gate over the archive's documents."""
         if not self._operation_validator:
             return
-        from hindsight_api.extensions import ImportContext
+        from hindsight_api.extensions import ImportArchiveDocument, ImportContext
 
-        contents = [{"document_id": document.id, "content": document.original_text or ""} for document in documents]
+        archive_documents = [
+            ImportArchiveDocument(document_id=document.id, content=document.original_text or "")
+            for document in documents
+        ]
         await self._validate_operation(
             self._operation_validator.validate_import(
-                ImportContext(bank_id=bank_id, request_context=request_context, contents=contents)
+                ImportContext(bank_id=bank_id, request_context=request_context, documents=archive_documents)
             )
         )
 

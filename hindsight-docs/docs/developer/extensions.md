@@ -350,8 +350,8 @@ Importing a transfer archive (a document import, or a whole-bank restore) brings
 pre-extracted facts into a bank without running fact extraction:
 
 - `validate_import(ctx: ImportContext)` runs at submission, before the archive
-  is stored or queued. `ctx.contents` lists the archive's documents
-  (`document_id` and the original `content`), so a validator can size the import
+  is stored or queued. `ctx.documents` lists the archive's documents
+  (`ImportArchiveDocument`: `document_id` and the original `content`), so a validator can size the import
   for a quota or cost check. A rejection reaches the caller directly. The
   default accepts.
 - Each imported document is then reported to `on_retain_complete` with

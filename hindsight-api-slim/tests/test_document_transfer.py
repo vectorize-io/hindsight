@@ -43,6 +43,7 @@ from hindsight_api.engine.transfer.schema import (
 from hindsight_api.extensions import (
     BankWriteContext,
     BankWriteOperation,
+    ImportArchiveDocument,
     ImportContext,
     OperationValidationError,
     RetainSource,
@@ -1631,7 +1632,7 @@ async def test_bank_restore_reports_each_document_as_imported(memory, request_co
         status = await memory.get_operation_status(source, submission["operation_id"], request_context=request_context)
         assert status["status"] == "completed", status
 
-        assert [(c.bank_id, sorted(d["document_id"] for d in c.contents)) for c in gate.imports] == [
+        assert [(c.bank_id, sorted(d.document_id for d in c.documents)) for c in gate.imports] == [
             (target, ["doc-1", "doc-2"])
         ]
         assert sorted(r.document_id for r in gate.results) == ["doc-1", "doc-2"]
@@ -1689,8 +1690,8 @@ async def test_import_gate_sees_the_archive_and_can_refuse_a_document_import(mem
         with pytest.raises(OperationValidationError) as exc:
             await memory.import_documents_async(dst, archive, request_context)
         assert exc.value.status_code == 402
-        assert [(c.bank_id, c.contents) for c in gate.imports] == [
-            (dst, [{"document_id": "doc-1", "content": "Alice works at Google."}])
+        assert [(c.bank_id, c.documents) for c in gate.imports] == [
+            (dst, [ImportArchiveDocument(document_id="doc-1", content="Alice works at Google.")])
         ]
         assert gate.results == []
         backend = await memory._get_backend()
