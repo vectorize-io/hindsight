@@ -1453,11 +1453,27 @@ def build_structured_delta_prompt(
                 "where the new facts update something the document already covers."
             )
 
+    # The re-read line (#5228): a refresh rewrote the block a new fact was about and
+    # left the opening summary still saying "Alice owns it, no owner change recorded".
+    # On gemini-2.5-flash-lite the system eval (test_10) kept a stale line in 10/16
+    # pages without this line and 3/16 with it. A system-prompt rule to "update
+    # every block about the changed item" did not move it (8/16) and made
+    # gemini-3.1-flash-lite rewrite the unrefuted release in
+    # test_delta_keeps_unrefuted_claims_llm (pass 4/4 -> 0/4); this line alone keeps it
+    # at 6/6. It sits before the date-order rule, which must stay last.
     task_footer = (
         "## Task\n"
         "Output a JSON object matching the operations schema. Integrate the new "
         "supporting facts into CURRENT DOCUMENT. Add, update, or remove content "
         "as needed. Preserve unchanged sections and blocks by not mentioning them.\n"
+        "Then re-read CURRENT DOCUMENT from its FIRST block to its last — the untitled "
+        "opening summary (section id 'preamble'), every 'Sources' / 'Dated changes' / "
+        "'Information gaps' block, and every table. The opening summary restates the "
+        "page's key values, so it is almost always affected when a value changes. For "
+        "each block that still presents an old value as current (or as the only value), "
+        "or says a change has not happened / no change was recorded / an old source is "
+        "the only one, emit a replace_block that corrects just that part and keeps the "
+        "rest. Dated history stays.\n"
         "Facts arrive out of date order. Before changing what the document says is "
         "current (an owner, version, status or count), put the dated events from the "
         "document and the new facts on one timeline: the latest-dated event is the "

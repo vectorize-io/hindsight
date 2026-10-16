@@ -362,6 +362,18 @@ issue/PR history — and what grades it. "eval" = a `test_09` scenario (real mod
 and belongs with the retain suites; operational behaviour (timeouts #3301/#4715, quota
 handling #4160, wall-clock ceilings) is not a quality property.
 
+### `test_10` — a changed value changes everywhere
+
+A pump page is built from a
+manual (wave one), then refreshed with a notice that changes the filter interval
+and the owner (wave two). The trap is a block the refresh left untouched that
+still states the old value as current, or still says no change was recorded —
+in practice the opening summary. The regression behind it (#5228): the delta
+rewrote the paragraph the fact was about and left the rest, so the page
+contradicted itself under a clean refresh. One English and one Chinese case (the
+reporter's); `HINDSIGHT_EVAL_CONSISTENCY_REPEATS` (default 1) repeats each on
+fresh pages, which is how to read a rate.
+
 ## The corpus
 
 `hindsight_system_evals/corpus.py` generates facts and their gold labels
