@@ -5,6 +5,7 @@
 
 import { toast } from "sonner";
 import { bankApi, bankStatsApi, chunkApi, documentApi, memoryApi } from "./bank-url";
+import { SESSION_REQUIRED_HEADER } from "./auth/session";
 import { stripBasePath, withBasePath } from "./base-path";
 import { appendTagFilter, type TagFilter, type TagsMatch } from "./tag-filter-params";
 
@@ -427,9 +428,14 @@ export class ControlPlaneClient {
 
       if (!response.ok) {
         const isClientError = response.status >= 400 && response.status < 500;
-        // Redirect to login on 401 (session expired or not authenticated)
+        // Redirect to login only when the UI session itself was refused. A 401 the
+        // dataplane returned is shown as an error: a new UI key can't fix it.
         const currentPath = stripBasePath(`${window.location.pathname}${window.location.search}`);
-        if (response.status === 401 && !currentPath.startsWith("/login")) {
+        if (
+          response.status === 401 &&
+          response.headers.get(SESSION_REQUIRED_HEADER) &&
+          !currentPath.startsWith("/login")
+        ) {
           window.location.href = withBasePath(`/login?returnTo=${encodeURIComponent(currentPath)}`);
           throw new Error("Unauthorized");
         }

@@ -60,6 +60,30 @@ describe("ControlPlaneClient error handling", () => {
     );
   });
 
+  it("sends a refused UI session to the login form", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "x-hindsight-session-required": "1" },
+      })
+    );
+
+    await expect(client.getBankConfig("bank-a")).rejects.toThrow("Unauthorized");
+    expect(window.location.href).toBe("/login?returnTo=%2Fen%2Fdashboard");
+  });
+
+  it("keeps a valid session on the page when the dataplane answers 401", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ error: "Failed to fetch bank config", upstream: { status: 401 } }),
+        { status: 401 }
+      )
+    );
+
+    await expect(client.getBankConfig("bank-a")).rejects.toMatchObject({ status: 401 });
+    expect(window.location.href).toBe("");
+  });
+
   it("does not show upstream response details for 5xx failures", async () => {
     fetchSpy.mockResolvedValueOnce(
       new Response(

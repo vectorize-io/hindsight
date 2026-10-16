@@ -3,8 +3,8 @@ import type { NextRequest } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import createIntlMiddleware from "next-intl/middleware";
 
-import { ACCESS_KEY_COOKIE, verifySessionToken } from "@/lib/auth/session";
-import { stripBasePath, withBasePath } from "@/lib/base-path";
+import { ACCESS_KEY_COOKIE, SESSION_REQUIRED_HEADER, verifySessionToken } from "@/lib/auth/session";
+import { sanitizeReturnTo, stripBasePath, withBasePath } from "@/lib/base-path";
 import { routing } from "@/i18n/routing";
 
 // Routes that don't require authentication
@@ -47,7 +47,10 @@ export async function middleware(request: NextRequest) {
           error: "Unauthorized",
           errorKey: "api.errors.auth.unauthorized",
         }),
-        { status: 401 }
+        // The header tells the browser this 401 is about its own session, so only
+        // this one sends it to the login form. A 401 forwarded from the dataplane
+        // can't be fixed by re-entering the UI key.
+        { status: 401, headers: { [SESSION_REQUIRED_HEADER]: "1" } }
       );
     }
 
@@ -59,12 +62,19 @@ export async function middleware(request: NextRequest) {
   // never in the path, so appPathname is already the canonical route.
   if (accessKey) {
     const isPublic = PUBLIC_PATTERNS.some((pattern) => appPathname.startsWith(pattern));
+    const isLogin = appPathname === "/login";
 
-    if (!isPublic) {
+    if (!isPublic || isLogin) {
       const sessionCookie = request.cookies.get(ACCESS_KEY_COOKIE)?.value;
       const isAuthenticated = await verifySessionToken(sessionCookie, accessKey);
 
-      if (!isAuthenticated) {
+      if (isLogin) {
+        // Already signed in: skip the key form and continue where the link pointed.
+        if (isAuthenticated) {
+          const target = sanitizeReturnTo(request.nextUrl.searchParams.get("returnTo"));
+          return NextResponse.redirect(new URL(withBasePath(target), request.url));
+        }
+      } else if (!isAuthenticated) {
         // Next.js middleware redirects do not automatically inherit next.config basePath.
         // Prefix the target explicitly, but keep returnTo as the app-relative path so
         // client-side router.push() does not double-prefix after login.
