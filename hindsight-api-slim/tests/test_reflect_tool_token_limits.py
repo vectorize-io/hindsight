@@ -187,3 +187,29 @@ async def test_request_overrides_win_over_bank_reflect_default_options(engine, m
 
     assert captured["limits"].observations_max_tokens == 7000
     assert captured["include_entities"] is True
+
+
+@pytest.mark.asyncio
+async def test_reflect_response_keeps_cached_and_thoughts_tokens(engine, monkeypatch):
+    """The agent's cached/thinking token totals must reach the reflect response (#5487)."""
+    from hindsight_api.engine.reflect.models import ReflectAgentResult, TokenUsageSummary
+
+    _with_bank_config(engine)
+
+    async def fake_run_reflect_agent(**kwargs):
+        return ReflectAgentResult(
+            text="ok",
+            usage=TokenUsageSummary(
+                input_tokens=1000, output_tokens=200, total_tokens=1200, cached_tokens=123, thoughts_tokens=45
+            ),
+        )
+
+    monkeypatch.setattr("hindsight_api.engine.memory_engine.run_reflect_agent", fake_run_reflect_agent)
+
+    result = await engine.reflect_async(
+        bank_id="bank-1", query="test", request_context=RequestContext(), exclude_mental_models=True
+    )
+
+    assert result.usage.cached_tokens == 123
+    assert result.usage.thoughts_tokens == 45
+    assert result.usage.input_tokens == 1000

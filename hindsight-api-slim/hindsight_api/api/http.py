@@ -10277,7 +10277,7 @@ def _register_routes(app: FastAPI):
 
                 # Synchronous processing: one batch per strategy group, aggregate results
                 total_items_count = 0
-                total_usage = TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0)
+                total_usage = TokenUsage()
 
                 # A coroutine rather than an inline loop so the whole thing can be run
                 # as one cancellable task below; the totals stay in the enclosing scope
@@ -10301,11 +10301,7 @@ def _register_routes(app: FastAPI):
                         )
                         total_items_count += len(contents)
                         if usage:
-                            total_usage = TokenUsage(
-                                input_tokens=total_usage.input_tokens + usage.input_tokens,
-                                output_tokens=total_usage.output_tokens + usage.output_tokens,
-                                total_tokens=total_usage.total_tokens + usage.total_tokens,
-                            )
+                            total_usage = total_usage + usage
 
                 with metrics.record_operation("retain", bank_id=bank_id, source="api"):
                     # A sync retain has no operation row and no ack, so nothing else can

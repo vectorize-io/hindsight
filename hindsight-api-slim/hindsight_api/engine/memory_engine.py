@@ -15917,6 +15917,8 @@ class MemoryEngine(MemoryEngineInterface):
                 input_tokens=agent_result.usage.input_tokens,
                 output_tokens=agent_result.usage.output_tokens,
                 total_tokens=agent_result.usage.total_tokens,
+                cached_tokens=agent_result.usage.cached_tokens,
+                thoughts_tokens=agent_result.usage.thoughts_tokens,
             )
 
             # Return response (compatible with existing API)
