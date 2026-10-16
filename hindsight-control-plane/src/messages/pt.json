@@ -840,6 +840,8 @@
     "seeAllInDocument": "Abra o documento para ver todas as tags e metadados",
     "colSize": "Tamanho",
     "matchedInText": "Corresponde no texto",
+    "contentSearchPlaceholder": "Procurar no texto…",
+    "contentSearchMatches": "{count, plural, one {# correspondência} other {# correspondências}}",
     "colMemoryUnits": "Unidades de Memória",
     "showingRange": "Exibindo {from}-{to} de {total}",
     "previousPage": "Anterior",

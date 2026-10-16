@@ -86,7 +86,7 @@ import { TagFilterInput } from "./tag-filter-input";
 import { FacetLegend, MetadataChip, TagChip } from "@/components/ui/facet-chip";
 import { Spinner } from "@/components/ui/spinner";
 import { HarnessLogo } from "@/components/ui/harness-logo";
-import { InlineAttachmentText } from "@/components/ui/inline-attachment-text";
+import { InlineAttachmentText, searchMatcher } from "@/components/ui/inline-attachment-text";
 import { documentHarness, resolveHarnessLogo } from "@/lib/harness-logo";
 
 const ITEMS_PER_PAGE = 50;
@@ -791,6 +791,8 @@ export function DocumentsView() {
   const [editingContent, setEditingContent] = useState(false);
   const [contentInput, setContentInput] = useState("");
   const [savingContent, setSavingContent] = useState(false);
+  // Find-in-text for the open document: local only, highlights matches in the content card.
+  const [contentSearch, setContentSearch] = useState("");
 
   // Chunks state
   const [chunks, setChunks] = useState<any[]>([]);
@@ -1012,6 +1014,8 @@ export function DocumentsView() {
 
     setLoadingDocument(true);
     setSelectedDocument({ id: documentId }); // Set placeholder to show loading
+    // Carry the list search into the dialog so a "Match in text" row opens with the match highlighted.
+    setContentSearch(searchQuery.trim());
     setEditingTags(false);
     setTagInput("");
     setEditingContent(false);
@@ -2270,6 +2274,36 @@ export function DocumentsView() {
                                 {selectedDocument.original_text?.length?.toLocaleString() ?? 0}{" "}
                                 chars
                               </span>
+                              <div className="relative ml-2 w-48">
+                                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
+                                <Input
+                                  type="text"
+                                  value={contentSearch}
+                                  onChange={(e) => setContentSearch(e.target.value)}
+                                  placeholder={t("contentSearchPlaceholder")}
+                                  className="h-6 pl-6 pr-6 text-xs"
+                                />
+                                {contentSearch && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setContentSearch("")}
+                                    aria-label={t("clearSearch")}
+                                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                )}
+                              </div>
+                              {searchMatcher(contentSearch) && (
+                                <span className="whitespace-nowrap text-muted-foreground/70">
+                                  {t("contentSearchMatches", {
+                                    count:
+                                      selectedDocument.original_text?.match(
+                                        searchMatcher(contentSearch)!
+                                      )?.length ?? 0,
+                                  })}
+                                </span>
+                              )}
                             </div>
                             <Button
                               variant="ghost"
@@ -2285,6 +2319,7 @@ export function DocumentsView() {
                             text={selectedDocument.original_text}
                             bankId={currentBank ?? ""}
                             attachments={selectedDocument.attachments}
+                            highlight={contentSearch}
                             className="p-4 text-[11px] leading-5 text-foreground/80 whitespace-pre-wrap font-mono"
                           />
                         </div>

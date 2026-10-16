@@ -840,6 +840,8 @@
     "seeAllInDocument": "すべてのタグとメタデータはドキュメントを開くと確認できます",
     "colSize": "サイズ",
     "matchedInText": "本文に一致",
+    "contentSearchPlaceholder": "本文内を検索…",
+    "contentSearchMatches": "{count, plural, other {#件一致}}",
     "colMemoryUnits": "メモリユニット",
     "showingRange": "{total}件中{from}〜{to}件を表示",
     "previousPage": "前へ",

@@ -69,6 +69,13 @@ describe("list time window mapping", () => {
     expect(query.start_date).toBe("2024-01-01T00:00:00Z");
   });
 
+  test("listDocuments forwards the search text", async () => {
+    await client.listDocuments("bank", { q: "onboarding" });
+
+    const query = mockedListDocuments.mock.calls[0][0].query as any;
+    expect(query.q).toBe("onboarding");
+  });
+
   test("the window is absent unless asked for", async () => {
     await client.listMemories("bank");
 

@@ -840,6 +840,8 @@
     "seeAllInDocument": "打开文档可查看全部标签与元数据",
     "colSize": "大小",
     "matchedInText": "内容匹配",
+    "contentSearchPlaceholder": "在内容中查找…",
+    "contentSearchMatches": "{count, plural, other {# 处匹配}}",
     "colMemoryUnits": "记忆单元",
     "showingRange": "显示第 {from}-{to} 条，共 {total} 条",
     "previousPage": "上一页",

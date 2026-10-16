@@ -840,6 +840,8 @@
     "seeAllInDocument": "開啟文件就可以睇晒所有標籤同中繼資料",
     "colSize": "大小",
     "matchedInText": "內容有符合",
+    "contentSearchPlaceholder": "喺內容入面搵…",
+    "contentSearchMatches": "{count, plural, other {# 個符合}}",
     "colMemoryUnits": "記憶單元",
     "showingRange": "顯示第 {from}-{to} 條，共 {total} 條",
     "previousPage": "上一頁",
