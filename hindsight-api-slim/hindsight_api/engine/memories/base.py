@@ -2151,6 +2151,28 @@ class MemoriesExtension(Extension, ABC):
         with nothing to read, which is silent rather than wrong-looking.
         """
 
+    async def memories_updated_between(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        until: datetime,
+        since: datetime,
+        limit: int,
+        fact_types: list[str] | None = None,
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
+        tag_groups: list | None = None,
+    ) -> list[StoredMemory] | None:
+        """The memories in :meth:`newest_memory_updated_at`'s scope and window, oldest first.
+
+        A delta knowledge-page refresh reads them to ask a decision model which could
+        change the page, instead of searching for them. None means this store cannot
+        list them, and the refresh searches as it always has.
+        """
+        return None
+
     async def latest_memory_write_at(self, *, conn, fq_table, bank_id: str) -> datetime | None:
         """The newest ``updated_at`` across the bank's memories, or None if it has none.
 

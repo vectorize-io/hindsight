@@ -209,7 +209,8 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
 
         A ``choice`` whose options are the candidates is the ranking: every option
         gets a probability, and they sum to 1, so the stub scores each option's text
-        lexically and normalises. A ``noul`` asks about one memory, and is answered
+        lexically and normalises, except the ``impact`` choice, a delta refresh's gate,
+        which is the rulebook's verdict on the memory as yes or no. A ``noul`` asks about one memory, and is answered
         with the rulebook's verdict for it, else its lexical relevance to the state. A
         ``score`` is the cut: its answer is a level, and the rulebook decides which
         one.
@@ -243,6 +244,18 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
                 memory = question["instructions"]["memory"]
                 stubs.rerank.states.append(body["state"])
                 answers[question_id] = {"type": "noul", "noul": stubs.rerank.verdict(body["state"], memory)}
+            elif question_id == "impact":
+                # A delta refresh's gate: could this new memory change the page? The memory
+                # is a line of the state, and the rulebook's verdict for it decides.
+                memory = body["state"].split("New memory: ", 1)[1].split("\n", 1)[0]
+                stubs.rerank.states.append(body["state"])
+                keep = stubs.rerank.verdict(body["state"], memory) >= 0.5
+                answers[question_id] = {
+                    "type": "choice",
+                    "choice": "yes" if keep else "no",
+                    "probabilities": {"yes": 0.9, "no": 0.1} if keep else {"yes": 0.1, "no": 0.9},
+                    "confidence": 0.9,
+                }
             elif question["type"] == "choice":
                 criteria = question["criteria"]
                 scores = {

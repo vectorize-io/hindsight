@@ -1819,6 +1819,28 @@ class KnowledgeTagFilter:
         )
 
 
+#: Above this many new memories a delta refresh searches instead of asking about each:
+#: search and pruning are what handle volume, and the per-memory questions add up.
+# ponytail: one question per memory, run in parallel; batch several memories per request
+# if a burst this size turns out slow.
+_DELTA_GATE_MAX_MEMORIES = 200
+
+
+@dataclass(frozen=True)
+class _DeltaGate:
+    """What the decision model kept of the memories new since a page's last refresh."""
+
+    listed: dict[str, int]
+    """New memories in the page's scope and window, per fact type."""
+    kept: dict[str, list[MemoryFact]]
+    """The ones it said could change the page, plus the bank's directives when any were
+    kept, shaped like reflect's ``based_on``."""
+
+    @property
+    def memories_kept(self) -> int:
+        return sum(len(v) for k, v in self.kept.items() if k != "directives")
+
+
 @dataclass(frozen=True)
 class _MentalModelScopeWatermark:
     """What one ``MAX(updated_at)`` over a mental model's scope tells a refresh.
@@ -17540,6 +17562,99 @@ class MemoryEngine(MemoryEngineInterface):
             )
         return _MentalModelScopeWatermark(newest_in_scope=newest_in_scope, watermark=newest_in_scope)
 
+    async def _gate_delta_refresh(
+        self,
+        bank_id: str,
+        *,
+        source_query: str,
+        current_content: str,
+        tag_filtering: RefreshTagFiltering,
+        fact_types: list[str] | None,
+        created_after: datetime,
+        refresh_cutoff: datetime,
+        request_context: "RequestContext",
+    ) -> _DeltaGate | None:
+        """Pick the new memories that could change a page, without running reflect.
+
+        A delta refresh only needs the memories written since its last run, and those are
+        one read away: the scope and window are the ones the watermark is taken over. The
+        decision model is asked, per memory, whether it could change the page, and only
+        those reach the delta LLM call. None of them means no LLM call at all.
+
+        None when the gate does not apply (switched off, no decision model, a store that
+        cannot list, more memories than it is worth asking about) or a question failed:
+        the refresh then runs reflect as it always has.
+
+        Sibling pages are not offered, as reflect would: a sibling changes only when its
+        own memories do, and the memories in this page's scope are already here.
+        """
+        if not get_config().mental_model_refresh_delta_gate:
+            return None
+        resolved = await self._config_resolver.resolve_full_config(bank_id, request_context)
+        if not resolved.mental_model_refresh_use_decision_model:
+            return None
+        decision_model = self._reflect_decision_model()
+        if decision_model is None:
+            return None
+        from .memories import get_memories
+
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            memories = await get_memories().memories_updated_between(
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                until=refresh_cutoff,
+                since=created_after,
+                limit=_DELTA_GATE_MAX_MEMORIES + 1,
+                fact_types=fact_types,
+                tags=tag_filtering.tags,
+                tags_match=tag_filtering.tags_match,
+                tag_groups=tag_filtering.tag_groups,
+            )
+        if memories is None or len(memories) > _DELTA_GATE_MAX_MEMORIES:
+            return None
+        try:
+            # A TaskGroup, not gather: one failed question cancels the rest instead of
+            # letting up to 199 retry on their own for a result that is thrown away.
+            # ponytail: these calls are not added to the refresh's usage or llm_calls, like
+            # every other decision-model call; count them there if their cost needs watching.
+            async with asyncio.TaskGroup() as group:
+                questions = [
+                    group.create_task(decision_model.could_change_page(source_query, current_content, m.text))
+                    for m in memories
+                ]
+            verdicts = [q.result() for q in questions]
+        except Exception as exc:
+            cause = exc.exceptions[0] if isinstance(exc, ExceptionGroup) else exc
+            logger.warning(f"[MENTAL_MODELS] Delta gate failed ({cause!r}); searching instead")
+            return None
+        listed: dict[str, int] = {}
+        kept: dict[str, list[MemoryFact]] = {}
+        for memory, could_change in zip(memories, verdicts):
+            listed[memory.fact_type] = listed.get(memory.fact_type, 0) + 1
+            if could_change:
+                kept.setdefault(memory.fact_type, []).append(
+                    MemoryFact(id=memory.unit_id, text=memory.text, fact_type=memory.fact_type, context=memory.context)
+                )
+        if kept:
+            # Reflect hands the delta edit the bank's directives too, scoped like the
+            # memories; without them a gated edit would stop following them.
+            directives = await self.list_directives(
+                bank_id=bank_id,
+                tags=tag_filtering.tags,
+                tags_match=tag_filtering.tags_match,
+                tag_groups=tag_filtering.tag_groups,
+                active_only=True,
+                request_context=request_context,
+                isolation_mode=True,
+            )
+            if directives.items:
+                kept["directives"] = [
+                    MemoryFact(id=str(d["id"]), text=d["content"], fact_type="directives") for d in directives.items
+                ]
+        return _DeltaGate(listed=listed, kept=kept)
+
     async def _bank_has_readable_document(self, bank_id: str, *, excluding_id: str) -> bool:
         """Does this bank hold another mental model the reflect agent could read?
 
@@ -17798,7 +17913,26 @@ class MemoryEngine(MemoryEngineInterface):
         has_sources = scope_watermark.newest_in_scope is not None
         if not has_sources and not exclude_mental_models:
             has_sources = await self._bank_has_readable_document(bank_id, excluding_id=mental_model_id)
-        if has_sources:
+        gate: _DeltaGate | None = None
+        if created_after is not None and scope_watermark.newest_in_scope is not None:
+            gate = await self._gate_delta_refresh(
+                bank_id,
+                source_query=source_query,
+                current_content=current_content,
+                tag_filtering=tag_filtering,
+                fact_types=fact_types,
+                created_after=created_after,
+                refresh_cutoff=refresh_cutoff,
+                request_context=request_context,
+            )
+        if gate is not None:
+            logger.info(
+                f"[MENTAL_MODELS] Refresh for {mental_model_id}: delta gate kept "
+                f"{gate.memories_kept} of {sum(gate.listed.values())} new memories; "
+                f"skipping the reflect loop"
+            )
+            reflect_result = ReflectResult(text="", based_on=gate.kept)
+        elif has_sources:
             reflect_result = await self.reflect_async(**reflect_kwargs)
         else:
             # An empty result, not a shortcut around the rest of the pipeline: the
@@ -17845,7 +17979,7 @@ class MemoryEngine(MemoryEngineInterface):
         # Counted before the delta merge below, which folds in facts from
         # *previous* refreshes — those would misreport this run's evidence.
         facts = MentalModelFactCounts(
-            retrieved=_count_retrieved_facts(reflect_result.tool_trace),
+            retrieved=gate.listed if gate else _count_retrieved_facts(reflect_result.tool_trace),
             used={
                 fact_type: len(serialized)
                 for fact_type, serialized in based_on_serialized_payload.items()
@@ -17929,6 +18063,11 @@ class MemoryEngine(MemoryEngineInterface):
             # Recorded on the model so a refresh that did nothing says why it did
             # nothing — distinct from a reflect that ran and came back empty-handed.
             reflect_response_payload["reflect_skipped"] = "no_sources_in_scope"
+        if gate is not None:
+            reflect_response_payload["delta_gate"] = {
+                "memories": sum(gate.listed.values()),
+                "kept": gate.memories_kept,
+            }
 
         warnings: list[str] = []
         retrieved_total = sum(facts.retrieved.values())
@@ -17945,7 +18084,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "Retrieval returned no facts at all. Check the resolved scope and the time window — "
                 "in delta mode nothing created after the last refresh is in range."
             )
-        elif used_total == 0:
+        elif used_total == 0 and gate is None:
             warnings.append(
                 f"Retrieval returned {retrieved_total} fact(s) but the reflect agent used none of them, "
                 "so the document was written from an empty evidence set. The source query may not match "
@@ -18348,7 +18487,9 @@ class MemoryEngine(MemoryEngineInterface):
         # other hand silently returning the previous content masks upstream
         # failures from callers (workers, tests). So the caller preserves the
         # existing content and raises, rather than persisting the empty render.
-        if not final_content.strip():
+        # A gated delta has no reflect candidate at all, so its empty text says nothing
+        # about the LLM: a failed edit there is reported by the delta guard below.
+        if not final_content.strip() and gate is None:
             warnings.append(
                 "The refresh produced empty content, which usually means an upstream LLM failure. "
                 "A real refresh would preserve the existing content and fail."

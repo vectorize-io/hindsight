@@ -46,6 +46,8 @@ STEP_ANCHORS: dict[str, str] = {
     # A decision-orchestrated reflect's first call rewrites the request into one search query (or answers
     # that there is nothing to search). Tool-less, so it never matches `reflect`.
     "reflect_round_query": "You write search queries for a memory bank.",
+    # A delta knowledge-page refresh's edit: the operations that fold new facts into the page.
+    "mental_model_delta": "You are integrating *new information* into an existing structured document.",
     "connection_probe": "Say 'ok'",
 }
 

@@ -594,6 +594,12 @@ async def any_memory_updated_since(
     return row is not None
 
 
+@dataclass(frozen=True)
+class _ScopeWhere:
+    sql: str
+    params: list[Any]
+
+
 async def newest_memory_updated_at(
     *,
     conn,
@@ -613,6 +619,47 @@ async def newest_memory_updated_at(
     commits it is still newer than the watermark the refresh persists and the next
     staleness check catches it.
     """
+    scope = _refresh_scope_where(bank_id, until, since, fact_types, tags, tags_match, tag_groups)
+    return await conn.fetchval(
+        f"SELECT MAX(updated_at) FROM {fq_table('memory_units')} WHERE {scope.sql}",
+        *scope.params,
+    )
+
+
+async def memories_updated_between(
+    *,
+    conn,
+    fq_table: Callable[[str], str],
+    bank_id: str,
+    until: datetime,
+    since: datetime,
+    limit: int,
+    fact_types: list[str] | None = None,
+    tags: list[str] | None = None,
+    tags_match: TagsMatch = "any",
+    tag_groups: list | None = None,
+) -> list[StoredMemory]:
+    """The memories :func:`newest_memory_updated_at` takes the max over, oldest first, at most ``limit``."""
+    scope = _refresh_scope_where(bank_id, until, since, fact_types, tags, tags_match, tag_groups)
+    rows = await conn.fetch(
+        f"SELECT {_MEMORY_COLUMNS} FROM {fq_table('memory_units')} WHERE {scope.sql} "
+        f"ORDER BY updated_at, id LIMIT ${len(scope.params) + 1}",
+        *scope.params,
+        limit,
+    )
+    return [_stored_from_row(row) for row in rows]
+
+
+def _refresh_scope_where(
+    bank_id: str,
+    until: datetime,
+    since: datetime | None,
+    fact_types: list[str] | None,
+    tags: list[str] | None,
+    tags_match: TagsMatch,
+    tag_groups: list | None,
+) -> _ScopeWhere:
+    """A refresh's scope within ``(since, until]`` as a WHERE clause and its params."""
     params: list[Any] = [bank_id, until]
     where = ["bank_id = $1", "updated_at <= $2"]
     if since is not None:
@@ -633,11 +680,7 @@ async def newest_memory_updated_at(
     if fact_types:
         params.append(list(fact_types))
         where.append(f"fact_type = ANY(${len(params)}::text[])")
-
-    return await conn.fetchval(
-        f"SELECT MAX(updated_at) FROM {fq_table('memory_units')} WHERE {' AND '.join(where)}",
-        *params,
-    )
+    return _ScopeWhere(sql=" AND ".join(where), params=params)
 
 
 async def latest_memory_write_at(

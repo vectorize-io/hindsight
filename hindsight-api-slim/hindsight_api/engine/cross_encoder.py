@@ -1112,6 +1112,16 @@ _SUFFICIENCY_INSTRUCTIONS = (
     "not what could be guessed from it."
 )
 
+_PAGE_IMPACT_INSTRUCTIONS = (
+    "Could the new memory change this page? Answer yes if it adds to, updates, corrects or "
+    "contradicts anything the page says, or is about the page's topic in a way the page does "
+    "not cover yet. Answer no only if the page would read the same with or without it."
+)
+_PAGE_IMPACT_OPTIONS = {
+    "yes": "Yes, the page could change because of it",
+    "no": "No, it has nothing to do with this page",
+}
+
 _OPTION_KEY_OVERHEAD = 7  # JSON envelope overhead per choice option: '"c249": "' + comma/newline
 _LISTING_ITEM_OVERHEAD = 10  # Formatting overhead per item in cut listing: "[1] ...\n\n"
 _MAX_QUERY_TOKENS = 2_000  # Defensive ceiling on query tokens in reranker
@@ -1394,6 +1404,48 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         else:
             level = round(float(answer["score"]))
         return level >= len(self.SUFFICIENCY_LEVELS) - 1
+
+    async def could_change_page(self, topic: str, page: str, memory: str) -> bool:
+        """Whether ``memory`` could change a page about ``topic`` that reads ``page``: one Choice.
+
+        Gates a delta knowledge-page refresh: a memory answered "no" is never shown to
+        the LLM. Worded so a doubt is a "yes", because a wrong "no" is silent and
+        permanent (the refresh moves past the memory) while a wrong "yes" costs one
+        LLM call, which is what every refresh pays without the gate.
+        """
+        prefix = f"Page topic: {topic}\n\nNew memory: {memory}\n\nThe page as it reads now:\n"
+        overhead = (
+            count_tokens(_PAGE_IMPACT_INSTRUCTIONS)
+            + sum(count_tokens(option) for option in _PAGE_IMPACT_OPTIONS.values())
+            + count_tokens(prefix)
+            + 50
+        )
+        budget = max(100, self.MAX_QUESTION_TOKENS - overhead)
+        if count_tokens(page) > budget:
+            # ponytail: keeps the head of the page (its first sections); a page past
+            # ~25k tokens is already far over its own budget.
+            page = truncate_to_tokens(page, budget).text
+        body = {
+            "state": f"{prefix}{page}",
+            "model": self.model,
+            "questions": {
+                "impact": {
+                    "type": "choice",
+                    "instructions": _PAGE_IMPACT_INSTRUCTIONS,
+                    "criteria": _PAGE_IMPACT_OPTIONS,
+                }
+            },
+        }
+        # A refresh asks this once per new memory, all at once, so a rate limit is the
+        # expected failure rather than a rare one: retried, not handed back as "search".
+        policy = self.retry_policy or RetryPolicy()
+        result = await acall_with_retry(
+            lambda: self._ask(body), policy=policy, budget=policy.new_budget(), provider=self.provider_name
+        )
+        answer = result["answers"]["impact"]
+        probabilities = answer.get("probabilities") or {}
+        choice = answer.get("choice") or max(probabilities, key=lambda key: float(probabilities[key]), default="yes")
+        return choice != "no"
 
     async def _cut(self, query: str, docs: list[str], order: list[int]) -> int:
         """How many of the ranked candidates are relevant, as the model sees it."""

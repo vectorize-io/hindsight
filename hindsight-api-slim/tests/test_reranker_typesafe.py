@@ -7,7 +7,7 @@ the requests we build and the order and cut we derive from the answers.
 """
 
 from contextlib import asynccontextmanager
-from dataclasses import fields
+from dataclasses import dataclass, fields
 from unittest.mock import patch
 
 import pytest
@@ -284,6 +284,66 @@ class TestSufficiency:
     async def test_without_probabilities_the_score_is_rounded(self):
         assert await self._verdict(1.6, None) is True
         assert await self._verdict(1.4, None) is False
+
+
+class _PageImpactSession(_FakeSession):
+    """Answers the page-impact choice with a fixed answer and records each request."""
+
+    def __init__(self, answer: dict):
+        super().__init__({})
+        self.answer = answer
+
+    @asynccontextmanager
+    async def _post(self, url, headers=None, json=None):
+        self.posted.append(json)
+        yield _FakeResponse({"answers": {"impact": {"type": "choice", **self.answer}}})
+
+
+@dataclass(frozen=True)
+class _PageImpactCall:
+    verdict: bool
+    request: dict
+
+
+class TestPageImpact:
+    @staticmethod
+    async def _ask(answer: dict, page: str = "# Page\n\nDana is on call.") -> _PageImpactCall:
+        encoder = TypeSafeCrossEncoder(api_key="k")
+        session = _PageImpactSession(answer)
+        encoder._session = session
+        verdict = await encoder.could_change_page("Who is on call?", page, "Dana left the company.")
+        return _PageImpactCall(verdict=verdict, request=session.posted[0])
+
+    @pytest.mark.asyncio
+    async def test_no_drops_the_memory(self):
+        assert (await self._ask({"choice": "no", "probabilities": {"yes": 0.1, "no": 0.9}})).verdict is False
+
+    @pytest.mark.asyncio
+    async def test_yes_keeps_it(self):
+        assert (await self._ask({"choice": "yes"})).verdict is True
+
+    @pytest.mark.asyncio
+    async def test_without_a_choice_the_likeliest_option_decides(self):
+        assert (await self._ask({"probabilities": {"yes": 0.2, "no": 0.8}})).verdict is False
+
+    @pytest.mark.asyncio
+    async def test_an_empty_answer_keeps_it(self):
+        """A wrong "no" is permanent, a wrong "yes" costs one LLM call: doubt keeps."""
+        assert (await self._ask({})).verdict is True
+
+    @pytest.mark.asyncio
+    async def test_the_state_carries_topic_memory_and_page(self):
+        body = (await self._ask({"choice": "yes"})).request
+        state = body["state"]
+        assert "Who is on call?" in state and "Dana left the company." in state and "Dana is on call." in state
+        assert set(body["questions"]["impact"]["criteria"]) == {"yes", "no"}
+
+    @pytest.mark.asyncio
+    async def test_an_oversized_page_keeps_its_head(self):
+        page = "HEAD " + "filler " * 40_000 + "TAIL"
+        body = (await self._ask({"choice": "yes"}, page=page)).request
+        assert "HEAD" in body["state"] and "TAIL" not in body["state"]
+        assert count_tokens(body["state"]) <= TypeSafeCrossEncoder.MAX_QUESTION_TOKENS
 
 
 class TestMinKeep:
