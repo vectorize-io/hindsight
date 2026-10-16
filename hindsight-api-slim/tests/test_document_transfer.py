@@ -1492,12 +1492,8 @@ async def test_import_observations_in_bounded_batches(memory, request_context, m
         result = await _import(memory, dst, archive, request_context)
 
         assert result["observations_imported"] == exported
-        async with acquire_with_retry(backend) as conn:
-            stored = await conn.fetchval(
-                f"SELECT COUNT(*) FROM {fq_store_table('memory_units')} WHERE bank_id = $1 AND fact_type = 'observation'",
-                dst,
-            )
-        assert stored == exported
+        stored = await memory.list_memory_units(dst, fact_type="observation", request_context=request_context)
+        assert stored["total"] == exported
     finally:
         await memory.delete_bank(src, request_context=request_context)
         await memory.delete_bank(dst, request_context=request_context)

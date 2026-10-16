@@ -66,8 +66,8 @@ OnConflict = Literal["skip", "replace", "new-id"]
 _VALID_CONFLICT_MODES: tuple[OnConflict, ...] = ("skip", "replace", "new-id")
 
 #: Texts per embedding call for the import phases that are sized by the *bank* rather
-#: than by a document: observations and mental models arrive as one list covering the
-#: whole archive. Slicing here, above the provider, bounds peak memory for every
+#: than by a document: mental models arrive as one list covering the whole archive, and
+#: observations in ``_OBSERVATION_BATCH_SIZE`` slices of theirs. Slicing here, above the provider, bounds peak memory for every
 #: provider — including in-process ones with nothing downstream to slice for them
 #: (issue #3891). Retain bounds itself the same way (#3763).
 _EMBED_BATCH_SIZE = 128
@@ -1744,6 +1744,8 @@ async def _import_observations(
     store = get_memories()
     # One transaction per batch: the source facts are already committed, so a batch only
     # needs its own sources, and a whole-set insert outgrew PostgreSQL's 1 GB message (#5418).
+    # A failure midway leaves the earlier batches in place, as a failed document batch does;
+    # an import-bank retry discards the half-restored bank and starts over.
     for start in range(0, len(resolved), _OBSERVATION_BATCH_SIZE):
         batch = resolved[start : start + _OBSERVATION_BATCH_SIZE]
         # Observations embed the raw text (matching consolidation), not the
