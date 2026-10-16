@@ -460,7 +460,8 @@ export function BankOperationsView() {
       }
     }
     setRetryingAll(false);
-    toast.success(t("retryAllDone", { done, total: failed.length }));
+    const notify = done === failed.length ? toast.success : toast.error;
+    notify(t("retryAllDone", { done, total: failed.length }));
     await loadOperations();
   };
   const failedOnPage = operations.filter((op) => op.status === "failed").length;
