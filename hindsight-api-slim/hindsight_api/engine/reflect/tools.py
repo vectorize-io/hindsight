@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, cast
 
 from ..prompt_utils import truncate_context_for_prompt
+from ..response_models import MemoryFact
 from ..search.tags import TagGroup, TagsMatch, tag_filter_active, tags_satisfy_groups
 from ..source_scope import ids_passing, visible_document_ids
 from .tokenization import count_prompt_tokens
@@ -537,6 +538,35 @@ async def tool_recall(
         # test_chunk_info_carries_no_unread_fields.
         "chunks": {k: _prune_nulls(v.model_dump()) for k, v in (result.chunks or {}).items()},
     }
+
+
+def returned_memories(tool: str, output: dict[str, Any]) -> list[MemoryFact]:
+    """The memories a `recall` or `expand` call actually handed back.
+
+    Both are evidence the agent read, so both are citable and both reach `based_on`
+    (#5474: only recall's were, so a fact read through `expand` lost its citation).
+    Ids `expand` reported as malformed, missing or outside the tag scope carry no
+    `memory` and stay uncitable.
+    """
+    if tool == "recall":
+        raw = output.get("memories") or []
+    elif tool == "expand":
+        # expand names the fact type `type`; recall, like MemoryFact, `fact_type`.
+        raw = [{**r["memory"], "fact_type": r["memory"]["type"]} for r in output.get("results") or [] if "memory" in r]
+    else:
+        return []
+    return [
+        MemoryFact(
+            id=m["id"],
+            text=m.get("text", ""),
+            fact_type=m.get("fact_type", "world"),
+            context=m.get("context"),
+            occurred_start=m.get("occurred_start"),
+            occurred_end=m.get("occurred_end"),
+        )
+        for m in raw
+        if m.get("id")
+    ]
 
 
 async def tool_expand(

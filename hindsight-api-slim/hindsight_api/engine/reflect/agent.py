@@ -51,6 +51,7 @@ from .structured_doc import (
     render_document,
 )
 from .tokenization import count_prompt_tokens
+from .tools import returned_memories
 from .tools_schema import get_reflect_tools
 
 #: Bounds on any token argument the model supplies to a retrieval tool. Below the
@@ -1706,10 +1707,8 @@ async def _run_reflect_agent_inner(
                             available_observation_ids.add(obs["id"])
                 if normalized_tool_name == "recall":
                     recall_ran = True
-                    if isinstance(output, dict):
-                        for memory in output.get("memories", []):
-                            if "id" in memory:
-                                available_memory_ids.add(memory["id"])
+                if isinstance(output, dict):
+                    available_memory_ids.update(m.id for m in returned_memories(normalized_tool_name, output))
 
                 # Record the serialized result; emitted in original order below. The
                 # model reads the presented form (see presentation.py); the trace

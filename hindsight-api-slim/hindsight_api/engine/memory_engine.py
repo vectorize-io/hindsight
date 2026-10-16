@@ -683,6 +683,7 @@ from .reflect.retractions import (
 )
 from .reflect.structured_doc import StructuredDocument
 from .reflect.tools import (
+    returned_memories,
     tool_expand,
     tool_read_mental_models,
     tool_recall,
@@ -2105,10 +2106,9 @@ def _count_retrieved_facts(tool_trace: list[ToolCallTrace]) -> dict[str, int]:
 
     for tc in tool_trace:
         output = tc.output or {}
-        if tc.tool == "recall":
-            for memory in output.get("memories") or []:
-                _tally(memory.get("fact_type", "world"), memory.get("id"))
-        elif tc.tool == "search_observations":
+        for memory in returned_memories(tc.tool, output):
+            _tally(memory.fact_type, memory.id)
+        if tc.tool == "search_observations":
             for obs in output.get("observations") or []:
                 _tally("observation", obs.get("id"))
         elif tc.tool == "search_mental_models":
@@ -15825,26 +15825,15 @@ class MemoryEngine(MemoryEngineInterface):
             }
             seen_memory_ids: set[str] = set()
             for tc in agent_result.tool_trace:
-                if tc.tool == "recall" and "memories" in tc.output:
-                    for memory_data in tc.output["memories"]:
-                        memory_id = memory_data.get("id")
+                if tc.tool in ("recall", "expand"):
+                    for memory in returned_memories(tc.tool, tc.output):
                         # Only include memories that the agent declared as used (or all if none specified)
-                        if memory_id and memory_id not in seen_memory_ids:
-                            if used_memory_ids_set and memory_id not in used_memory_ids_set:
+                        if memory.id not in seen_memory_ids:
+                            if used_memory_ids_set and memory.id not in used_memory_ids_set:
                                 continue  # Skip memories not actually used by the agent
-                            seen_memory_ids.add(memory_id)
-                            fact_type = memory_data.get("fact_type", "world")
-                            if fact_type in based_on:
-                                based_on[fact_type].append(
-                                    MemoryFact(
-                                        id=memory_id,
-                                        text=memory_data.get("text", ""),
-                                        fact_type=fact_type,
-                                        context=memory_data.get("context"),
-                                        occurred_start=memory_data.get("occurred_start"),
-                                        occurred_end=memory_data.get("occurred_end"),
-                                    )
-                                )
+                            seen_memory_ids.add(memory.id)
+                            if memory.fact_type in based_on:
+                                based_on[memory.fact_type].append(memory)
                 elif tc.tool == "search_observations" and "observations" in tc.output:
                     for obs_data in tc.output["observations"]:
                         obs_id = obs_data.get("id")

@@ -1174,6 +1174,42 @@ class TestReflectAgentMocked:
         assert "mem-1" in result.used_memory_ids
 
     @pytest.mark.asyncio
+    async def test_expanded_memory_is_citable(self, mock_llm, mock_functions):
+        """An id first returned by expand can be cited; one expand reported missing cannot (#5474)."""
+        mock_functions["expand_fn"].return_value = {
+            "results": [
+                {"memory_id": "mem-x", "memory": {"id": "mem-x", "text": "Expanded", "type": "experience"}},
+                {"memory_id": "mem-gone", "error": "Memory not found: mem-gone"},
+            ]
+        }
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "test"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="2", name="expand", arguments={"memory_ids": ["mem-x", "mem-gone"]})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="3", name="done", arguments={"answer": "A", "memory_ids": ["mem-x", "mem-gone"]})
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            **mock_functions,
+        )
+
+        assert result.used_memory_ids == ["mem-x"]
+
+    @pytest.mark.asyncio
     async def test_handles_call_equals_functions_prefix(self, mock_llm, mock_functions):
         """Test that 'call=functions.done' is handled correctly."""
         mock_llm.call_with_tools.side_effect = [
@@ -3470,3 +3506,32 @@ class TestReflectKeepsItsPrefixStable:
         assert len(sent) >= 3, f"expected several turns, got {len(sent)}"
         assert len({s for s, _ in sent}) == 1, "the system prompt changed mid-reflect"
         assert len({t for _, t in sent}) == 1, "the tools array changed mid-reflect"
+
+
+def test_retrieval_counts_include_expanded_memories():
+    """Refresh retrieval counts tally facts read through expand, deduped against recall (#5474)."""
+    from hindsight_api.engine.memory_engine import _count_retrieved_facts
+    from hindsight_api.engine.response_models import ToolCallTrace
+
+    trace = [
+        ToolCallTrace(
+            tool="recall",
+            input={},
+            output={"memories": [{"id": "mem-1", "text": "a", "fact_type": "world"}]},
+            duration_ms=0,
+        ),
+        ToolCallTrace(
+            tool="expand",
+            input={},
+            output={
+                "results": [
+                    {"memory_id": "mem-1", "memory": {"id": "mem-1", "text": "a", "type": "world"}},
+                    {"memory_id": "mem-2", "memory": {"id": "mem-2", "text": "b", "type": "experience"}},
+                    {"memory_id": "mem-3", "error": "Memory not found: mem-3"},
+                ]
+            },
+            duration_ms=0,
+        ),
+    ]
+
+    assert _count_retrieved_facts(trace) == {"world": 1, "experience": 1}
