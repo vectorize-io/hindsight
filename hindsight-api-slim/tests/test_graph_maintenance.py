@@ -872,9 +872,9 @@ class TestStaleCooccurrencePrune:
         """``live`` is built from the candidate's side of each pair and
         normalised with LEAST/GREATEST. When the candidate sorts second, the
         pair it forms must still be emitted in (entity_id_1, entity_id_2) order,
-        or the anti-join misses it and a grounded edge is deleted. A third
-        non-candidate entity in the same unit pins that pairs between
-        non-candidates are not needed for the decision."""
+        or the anti-join misses it and a grounded edge is deleted. The third
+        entity gives the candidate a second pair in the same unit, so the
+        grounded pair is not the only row ``live`` emits."""
         bank_id = f"test-gm-keep2-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
 
