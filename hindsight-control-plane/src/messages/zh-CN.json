@@ -805,6 +805,8 @@
     "granularityMonth": "月",
     "granularityWeek": "周",
     "granularityDay": "天",
+    "sortNewestFirst": "最新优先",
+    "sortOldestFirst": "最早优先",
     "recencyLabel": "时效性 · {basis}",
     "recencyBasisMentioned": "提及时间",
     "recencyBasisOccurredStart": "发生时间（起始）",

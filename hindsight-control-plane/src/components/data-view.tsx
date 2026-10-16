@@ -15,6 +15,8 @@ import { Input } from "@/components/ui/input";
 import {
   Calendar,
   ZoomIn,
+  ArrowDownWideNarrow,
+  ArrowUpNarrowWide,
   ZoomOut,
   ChevronLeft,
   ChevronRight,
@@ -1124,6 +1126,7 @@ export function TimelineView({
   const t = useTranslations("dataView");
   const locale = useLocale();
   const [granularity, setGranularity] = useState<Granularity>("month");
+  const [newestFirst, setNewestFirst] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
   const timelineRef = useRef<HTMLDivElement>(null);
 
@@ -1137,13 +1140,13 @@ export function TimelineView({
       .sort((a: any, b: any) => {
         const dateA = new Date(a.occurred_start).getTime();
         const dateB = new Date(b.occurred_start).getTime();
-        return dateA - dateB;
+        return newestFirst ? dateB - dateA : dateA - dateB;
       });
 
     const withoutDates = filteredRows.filter((row: any) => !row.occurred_start);
 
     return { sortedItems: withDates, itemsWithoutDates: withoutDates };
-  }, [filteredRows]);
+  }, [filteredRows, newestFirst]);
 
   // Group items by granularity
   const timelineGroups = useMemo(() => {
@@ -1205,7 +1208,9 @@ export function TimelineView({
     });
 
     return Object.entries(groups)
-      .sort(([, a], [, b]) => a.date.getTime() - b.date.getTime())
+      .sort(([, a], [, b]) =>
+        newestFirst ? b.date.getTime() - a.date.getTime() : a.date.getTime() - b.date.getTime()
+      )
       .map(([key, { items, date }]) => ({
         key,
         label: getGroupLabel(key, date),
@@ -1300,6 +1305,25 @@ export function TimelineView({
           </div>
 
           <div className="flex items-center gap-1">
+            {/* Sort order */}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setNewestFirst((v) => !v);
+                setCurrentIndex(0);
+              }}
+              className="h-7 px-2 mr-2 text-[10px] gap-1"
+              title={newestFirst ? t("sortNewestFirst") : t("sortOldestFirst")}
+            >
+              {newestFirst ? (
+                <ArrowDownWideNarrow className="h-3 w-3" />
+              ) : (
+                <ArrowUpNarrowWide className="h-3 w-3" />
+              )}
+              {newestFirst ? t("sortNewestFirst") : t("sortOldestFirst")}
+            </Button>
+
             {/* Zoom controls */}
             <div className="flex items-center border border-border rounded mr-2">
               <Button

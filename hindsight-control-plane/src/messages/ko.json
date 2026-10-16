@@ -805,6 +805,8 @@
     "granularityMonth": "월",
     "granularityWeek": "주",
     "granularityDay": "일",
+    "sortNewestFirst": "최신순",
+    "sortOldestFirst": "오래된순",
     "recencyLabel": "최신성 · {basis}",
     "recencyBasisMentioned": "언급됨",
     "recencyBasisOccurredStart": "발생 (시작)",
