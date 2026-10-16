@@ -11,11 +11,9 @@ hide_table_of_contents: true
 
 ![Hindsight as a memory provider for a Vercel Eve memory slot](/img/blog/eve-memory-provider.png)
 
-Partway through [Vercel Eve's](https://eve.dev) own tutorial, the analytics agent learns the team's vocabulary. Active means a purchase in the last 30 days. Revenue is net of refunds. A week starts Monday. The tutorial stores them with `defineState`, which it describes as surviving across step and turn boundaries *within a session*.
+Tell a [Vercel Eve](https://eve.dev) agent that revenue is net of refunds and a week starts Monday, and for the rest of that conversation it gets your numbers right. Tomorrow it asks again. The colleague sitting next to you never gets the benefit at all.
 
-That is the right instinct in a container one size too small. The glossary is not a fact about this conversation. It is a fact about the team, and it should still be true tomorrow, for the person who did not have the conversation.
-
-Swap the container and four things get easier. Here they are, with what each one actually takes.
+Eve gives memory a first-class home — a slot, a scope, and a provider — and [Hindsight](https://vectorize.io/hindsight) is one you can drop into it. Here are four things that get easier once an agent's memory outlives the session, and what each one takes.
 
 <!-- truncate -->
 
@@ -28,7 +26,9 @@ Swap the container and four things get easier. Here they are, with what each one
 
 ## 1. A glossary that outlives the session
 
-Eve's tutorial is right that re-explaining house definitions every turn is a waste. It is also a waste to re-explain them every *session*, and worse to have each colleague teach the agent privately, so that what it knows depends on who it is talking to.
+Eve's own tutorial has the analytics agent learn exactly this kind of vocabulary, and stores it with `defineState`, which their docs describe as surviving across step and turn boundaries *within a session*. Right instinct, wrong lifetime. The glossary is not a fact about this conversation; it is a fact about the team.
+
+Re-explaining it every session is a waste, and having each colleague teach the agent privately is worse, because what the agent knows then depends on who it is talking to.
 
 Move the glossary into a memory slot scoped to the team and both problems go at once:
 
