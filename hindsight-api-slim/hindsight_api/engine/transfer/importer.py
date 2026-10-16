@@ -328,6 +328,9 @@ async def import_documents(
         result.remapped_unit_ids.update(outcome.remapped_unit_ids)
 
     if restore_bank_scoped_rows and (parsed.mental_models or parsed.knowledge_pages):
+        # Facts and observations were replayed under fresh ids: point the models'
+        # based_on evidence at them, as the whole-bank restore does (#5298).
+        _remap_mental_model_evidence(parsed.mental_models, result.remapped_unit_ids)
         mm_embeddings = await _regenerate_mental_model_embeddings(embeddings_model, parsed.mental_models)
         async with acquire_with_retry(backend) as conn:
             # Document archives serialize bank-row JSON values directly. Keep
