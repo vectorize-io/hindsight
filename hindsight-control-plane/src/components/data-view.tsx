@@ -1126,6 +1126,8 @@ export function TimelineView({
   const t = useTranslations("dataView");
   const locale = useLocale();
   const [granularity, setGranularity] = useState<Granularity>("month");
+  // Newest first by default, like `memories/list?order=desc`: the timeline used to be
+  // oldest-first only, which put today's memories on the last page (#5475).
   const [newestFirst, setNewestFirst] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
   const timelineRef = useRef<HTMLDivElement>(null);
