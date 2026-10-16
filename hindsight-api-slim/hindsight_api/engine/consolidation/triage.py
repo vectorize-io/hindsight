@@ -1,4 +1,4 @@
-"""Decide the easy consolidation cases with a System One model before the LLM sees them.
+"""Decide the easy consolidation cases with a decision model before the LLM sees them.
 
 Most facts reaching a bank fall in one of three easy cases: they restate what an
 observation already says, they add something no observation holds yet (a new entity,
@@ -18,12 +18,12 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field
-
+from ...config import DecisionModelConfig, get_config
 from ...tracing import get_span_recorder
-from ..aiohttp_session import LoopLocalSession, per_phase_timeout, raise_for_status
+from ..decision_model import DecisionModel, DecisionQuestion, DecisionResponse
 
 if TYPE_CHECKING:
     from ..response_models import MemoryFact
@@ -99,32 +99,6 @@ _KEEP_AS_OPTIONS = {
 }
 
 
-class _Answer(BaseModel):
-    """One Choice answer: the probability of each option."""
-
-    probabilities: dict[str, float] = Field(default_factory=dict)
-
-    def top(self) -> str:
-        return max(self.probabilities, key=lambda option: self.probabilities[option])
-
-
-class _Usage(BaseModel):
-    input_tokens: int = 0
-
-
-class _SystemOneResponse(BaseModel):
-    answers: dict[str, _Answer]
-    usage: _Usage = Field(default_factory=_Usage)
-
-    def yes(self, question_id: str) -> bool:
-        return _picked(self, question_id) == "yes"
-
-
-#: One session per event loop for the whole process; the key travels per request, so a
-#: config change needs no new session.
-_SESSION = LoopLocalSession(timeout=per_phase_timeout(20))
-
-
 @dataclass
 class TriageResult:
     #: fact id -> observation id the fact restates; attach it as evidence.
@@ -140,9 +114,24 @@ class TriageResult:
         return fact_id in self.restates or fact_id in self.new or fact_id in self.chatter
 
 
-def triage_enabled(config: Any) -> bool:
+@lru_cache(maxsize=4)
+def _client(setup: DecisionModelConfig) -> DecisionModel:
+    # One client per setup for the process, so its connection pool and concurrency cap are shared.
+    return DecisionModel.from_config(setup)
+
+
+def triage_model(config: Any) -> DecisionModel | None:
+    """The decision model that triages this bank's facts, or None to send every fact to the LLM.
+
+    On whenever the server has a decision model for consolidation (HINDSIGHT_API_DECISION_MODEL_*,
+    with HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_* overrides); a bank opts out with
+    ``consolidation_use_decision_model``.
+    """
     # getattr: callers may pass a partial config (the batch tests pass a bare object).
-    return bool(getattr(config, "enable_consolidation_triage", False) and config.consolidation_triage_api_key)
+    if not getattr(config, "consolidation_use_decision_model", False):
+        return None
+    setup = get_config().decision_model_config("consolidation")
+    return _client(setup) if setup is not None else None
 
 
 def _sentence(fact: dict[str, Any]) -> str:
@@ -150,9 +139,9 @@ def _sentence(fact: dict[str, Any]) -> str:
     return str(fact.get("text") or "").split(" | ")[0].strip()
 
 
-def _yes_no(instructions: str, yes: str, no: str) -> dict[str, Any]:
+def _yes_no(instructions: str, yes: str, no: str) -> DecisionQuestion:
     """One choice with two options; only the picked one counts."""
-    return {"type": "choice", "instructions": instructions, "criteria": {"yes": yes, "no": no}}
+    return DecisionQuestion(type="choice", instructions=instructions, criteria={"yes": yes, "no": no})
 
 
 def _day(value: Any) -> str | None:
@@ -170,22 +159,22 @@ def _dated(text: str, item: Any, *, stated: str) -> dict[str, Any]:
     return {"text": text, **{k: v for k, v in dates.items() if v}}
 
 
-async def _ask(config: Any, fact: dict[str, Any], candidates: list[MemoryFact], mission: str) -> _SystemOneResponse:
+async def _ask(
+    model: DecisionModel, fact: dict[str, Any], candidates: list[MemoryFact], mission: str
+) -> DecisionResponse:
     keys = [f"o{i}" for i in range(len(candidates))]
-    questions: dict[str, Any] = {
-        "relation": {
-            "type": "choice",
-            "instructions": "How does `new_fact` relate to `existing_observations`?",
-            "criteria": _RELATION,
-        }
+    questions: dict[str, DecisionQuestion] = {
+        "relation": DecisionQuestion(
+            type="choice",
+            instructions="How does `new_fact` relate to `existing_observations`?",
+            criteria=dict(_RELATION),
+        )
     }
     if len(keys) > 1:
         # A choice needs two options; with one candidate its own covers question decides alone.
-        questions["match"] = {
-            "type": "choice",
-            "instructions": _MATCH,
-            "criteria": {k: f"`existing_observations.{k}`" for k in keys},
-        }
+        questions["match"] = DecisionQuestion(
+            type="choice", instructions=_MATCH, criteria={k: f"`existing_observations.{k}`" for k in keys}
+        )
     for k in keys:
         questions[f"covers_{k}"] = _yes_no(_COVERS.format(key=k), _COVERS_YES.format(key=k), _COVERS_NO.format(key=k))
         questions[f"touches_{k}"] = _yes_no(
@@ -197,31 +186,31 @@ async def _ask(config: Any, fact: dict[str, Any], candidates: list[MemoryFact], 
     }
     if mission:
         state["mission"] = mission
-        questions["keep_as"] = {"type": "choice", "instructions": _KEEP_AS, "criteria": _KEEP_AS_OPTIONS}
-    body = {"model": config.consolidation_triage_model, "state": state, "questions": questions}
+        questions["keep_as"] = DecisionQuestion(type="choice", instructions=_KEEP_AS, criteria=dict(_KEEP_AS_OPTIONS))
     started = time.monotonic()
-    answer: _SystemOneResponse | None = None
+    answer: DecisionResponse | None = None
     error: BaseException | None = None
     try:
-        async with _SESSION.get().post(
-            f"{config.consolidation_triage_base_url.rstrip('/')}/v1/systemone",
-            json=body,
-            headers={"Authorization": f"Bearer {config.consolidation_triage_api_key}"},
-        ) as response:
-            await raise_for_status(response)
-            answer = _SystemOneResponse.model_validate(await response.json(content_type=None))
-            return answer
+        answer = await model.ask(state, questions)
+        return answer
     except BaseException as e:
         error = e
         raise
     finally:
         # Traced like any LLM call, so its cost shows next to the consolidation calls it saves.
         get_span_recorder().record_llm_call(
-            provider="typesafe",
-            model=config.consolidation_triage_model,
+            provider=model.provider,
+            model=model.model,
             scope="consolidation_triage",
             # One JSON message, the shape every recorder takes; the request is not a chat.
-            messages=[{"role": "user", "content": json.dumps(body)}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {"state": state, "questions": {k: q.system_one() for k, q in questions.items()}}
+                    ),
+                }
+            ],
             response_content=answer.model_dump_json() if answer is not None else None,
             input_tokens=answer.usage.input_tokens if answer is not None else 0,
             output_tokens=0,
@@ -230,9 +219,17 @@ async def _ask(config: Any, fact: dict[str, Any], candidates: list[MemoryFact], 
         )
 
 
-def _picked(answer: _SystemOneResponse, question_id: str) -> str | None:
-    choice = answer.answers.get(question_id)
-    return choice.top() if choice is not None and choice.probabilities else None
+def _picked(answer: DecisionResponse, question_id: str) -> str | None:
+    picked = answer.answers.get(question_id)
+    if picked is None:
+        return None
+    if picked.probabilities:
+        return max(picked.probabilities, key=lambda option: picked.probabilities[option])
+    return picked.choice
+
+
+def _yes(answer: DecisionResponse, question_id: str) -> bool:
+    return _picked(answer, question_id) == "yes"
 
 
 def stated_after(observation_at: Any, fact_at: Any) -> bool:
@@ -249,7 +246,7 @@ def stated_after(observation_at: Any, fact_at: Any) -> bool:
 async def triage_facts(
     memories: list[dict[str, Any]],
     candidates_per_fact: list[list[MemoryFact]],
-    config: Any,
+    model: DecisionModel,
     *,
     entities_by_fact: dict[str, list[str]],
     mission: str,
@@ -267,7 +264,7 @@ async def triage_facts(
     started = time.monotonic()
     pending = [(m, c[:MAX_CANDIDATES]) for m, c in zip(memories, candidates_per_fact)]
     # return_exceptions: one failed request must not cancel the others; its fact goes to the LLM.
-    answers = await asyncio.gather(*(_ask(config, m, c, mission) for m, c in pending), return_exceptions=True)
+    answers = await asyncio.gather(*(_ask(model, m, c, mission) for m, c in pending), return_exceptions=True)
 
     new_candidates: list[dict[str, Any]] = []
     for (memory, candidates), answer in zip(pending, answers):
@@ -282,7 +279,7 @@ async def triage_facts(
         # confidence bars as the guard against a wrong verdict. An observation stated after the
         # fact does not count: older news never rewrites a newer belief (prompt rule 10).
         if any(
-            answer.yes(f"touches_o{i}") and not stated_after(c.mentioned_at, memory.get("mentioned_at"))
+            _yes(answer, f"touches_o{i}") and not stated_after(c.mentioned_at, memory.get("mentioned_at"))
             for i, c in enumerate(candidates)
         ):
             continue
@@ -295,7 +292,7 @@ async def triage_facts(
             result.chatter.add(fact_id)
         elif relation == "restates" and candidates:
             target = _picked(answer, "match") or "o0"
-            if answer.yes(f"covers_{target}"):
+            if _yes(answer, f"covers_{target}"):
                 result.restates[fact_id] = str(candidates[int(target[1:])].id)
         elif (
             relation == "new"
@@ -318,6 +315,6 @@ async def triage_facts(
     result.seconds = time.monotonic() - started
     logger.info(
         f"[CONSOLIDATION][triage] facts={len(memories)} restates={len(result.restates)} new={len(result.new)} "
-        f"chatter={len(result.chatter)} jev_input_tokens={result.input_tokens} seconds={result.seconds:.2f}"
+        f"chatter={len(result.chatter)} decision_input_tokens={result.input_tokens} seconds={result.seconds:.2f}"
     )
     return result

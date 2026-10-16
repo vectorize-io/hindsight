@@ -17,16 +17,23 @@ from typing import Any
 import pytest
 from aiohttp import web
 
+from hindsight_api.config import DecisionModelConfig
 from hindsight_api.engine.consolidation import consolidator, triage
+from hindsight_api.engine.decision_model import DecisionModel, DecisionResponse
 from hindsight_api.tracing import LLMSpanRecorder
 from tests.aiohttp_stub import stub_server
 
-CONFIG = SimpleNamespace(
-    enable_consolidation_triage=True,
-    consolidation_triage_api_key="key",
-    consolidation_triage_model="jev-latest",
-    consolidation_triage_base_url="https://example.invalid",
-)
+
+def _setup(base_url: str = "https://example.invalid") -> DecisionModelConfig:
+    return DecisionModelConfig(
+        provider="typesafe",
+        api_key="key",
+        model="jev-latest",
+        base_url=base_url,
+        timeout=5,
+        max_concurrent=2,
+        max_request_tokens=26_000,
+    )
 
 
 @dataclass
@@ -62,13 +69,13 @@ def _answer(
         answers[f"covers_{match}"] = _yes(covers)
     for key in ("o0", "o1"):
         answers[f"touches_{key}"] = _yes(key in affected)
-    return triage._SystemOneResponse.model_validate({"answers": answers, "usage": {"input_tokens": 10}})
+    return DecisionResponse.model_validate({"answers": answers, "usage": {"input_tokens": 10}})
 
 
 async def _run(monkeypatch, facts, candidates, answers, *, entities=None, mission="", may_create=True):
     replies = iter(answers)
 
-    async def fake_ask(config, fact, cands, mission):
+    async def fake_ask(model, fact, cands, mission):
         reply = next(replies)
         if isinstance(reply, BaseException):
             raise reply
@@ -78,17 +85,21 @@ async def _run(monkeypatch, facts, candidates, answers, *, entities=None, missio
     return await triage.triage_facts(
         facts,
         candidates,
-        CONFIG,
+        DecisionModel.from_config(_setup()),
         entities_by_fact=entities or {},
         mission=mission,
         may_create=may_create,
     )
 
 
-def test_triage_needs_both_the_switch_and_a_key():
-    assert triage.triage_enabled(CONFIG)
-    assert not triage.triage_enabled(SimpleNamespace(**{**vars(CONFIG), "consolidation_triage_api_key": None}))
-    assert not triage.triage_enabled(SimpleNamespace(**{**vars(CONFIG), "enable_consolidation_triage": False}))
+def test_triage_runs_whenever_a_decision_model_is_set_up_unless_the_bank_opts_out(monkeypatch):
+    setups = {"consolidation": _setup()}
+    monkeypatch.setattr(triage, "get_config", lambda: SimpleNamespace(decision_model_config=lambda op: setups.get(op)))
+    bank = SimpleNamespace(consolidation_use_decision_model=True)
+    assert triage.triage_model(bank) is not None
+    assert triage.triage_model(SimpleNamespace(consolidation_use_decision_model=False)) is None
+    setups.clear()
+    assert triage.triage_model(bank) is None
 
 
 @pytest.mark.asyncio
@@ -212,7 +223,7 @@ async def test_a_failed_request_leaves_the_fact_to_the_llm(monkeypatch):
 @pytest.mark.asyncio
 async def test_an_answer_without_a_relation_leaves_the_fact_to_the_llm(monkeypatch):
     fact = _fact("anything")
-    empty = triage._SystemOneResponse.model_validate({"answers": {}})
+    empty = DecisionResponse.model_validate({"answers": {}})
     result = await _run(monkeypatch, [fact], [[]], [empty])
     assert not result.settled(str(fact["id"]))
 
@@ -248,9 +259,7 @@ async def test_a_request_is_traced_in_the_shape_every_recorder_takes(monkeypatch
         )
 
     async with stub_server(handler) as base_url:
-        await triage._ask(
-            SimpleNamespace(**{**vars(CONFIG), "consolidation_triage_base_url": base_url}), _fact("x"), [], ""
-        )
+        await triage._ask(DecisionModel.from_config(_setup(base_url)), _fact("x"), [], "")
 
     [call] = calls
     assert call.arguments["scope"] == "consolidation_triage"

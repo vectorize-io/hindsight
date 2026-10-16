@@ -127,7 +127,7 @@ _SAMPLE_VALUES: dict[str, Any] = {
     "audit_log_enabled": True,
     "store_document_text": False,
     "enable_auto_consolidation": False,
-    "enable_consolidation_triage": True,
+    "consolidation_use_decision_model": False,
     "consolidation_max_memories_per_round": 42,
     "consolidation_llm_parallelism": 3,
     "recall_include_chunks": True,

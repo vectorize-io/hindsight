@@ -66,7 +66,7 @@ type BankTemplateConfig struct {
 	AuditLogEnabled NullableBool `json:"audit_log_enabled,omitempty"`
 	StoreDocumentText NullableBool `json:"store_document_text,omitempty"`
 	EnableAutoConsolidation NullableBool `json:"enable_auto_consolidation,omitempty"`
-	EnableConsolidationTriage NullableBool `json:"enable_consolidation_triage,omitempty"`
+	ConsolidationUseDecisionModel NullableBool `json:"consolidation_use_decision_model,omitempty"`
 	ConsolidationMaxMemoriesPerRound NullableInt32 `json:"consolidation_max_memories_per_round,omitempty"`
 	ConsolidationLlmParallelism NullableInt32 `json:"consolidation_llm_parallelism,omitempty"`
 	RecallIncludeChunks NullableBool `json:"recall_include_chunks,omitempty"`
@@ -1995,46 +1995,46 @@ func (o *BankTemplateConfig) UnsetEnableAutoConsolidation() {
 	o.EnableAutoConsolidation.Unset()
 }
 
-// GetEnableConsolidationTriage returns the EnableConsolidationTriage field value if set, zero value otherwise (both if not set or set to explicit null).
-func (o *BankTemplateConfig) GetEnableConsolidationTriage() bool {
-	if o == nil || IsNil(o.EnableConsolidationTriage.Get()) {
+// GetConsolidationUseDecisionModel returns the ConsolidationUseDecisionModel field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetConsolidationUseDecisionModel() bool {
+	if o == nil || IsNil(o.ConsolidationUseDecisionModel.Get()) {
 		var ret bool
 		return ret
 	}
-	return *o.EnableConsolidationTriage.Get()
+	return *o.ConsolidationUseDecisionModel.Get()
 }
 
-// GetEnableConsolidationTriageOk returns a tuple with the EnableConsolidationTriage field value if set, nil otherwise
+// GetConsolidationUseDecisionModelOk returns a tuple with the ConsolidationUseDecisionModel field value if set, nil otherwise
 // and a boolean to check if the value has been set.
 // NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *BankTemplateConfig) GetEnableConsolidationTriageOk() (*bool, bool) {
+func (o *BankTemplateConfig) GetConsolidationUseDecisionModelOk() (*bool, bool) {
 	if o == nil {
 		return nil, false
 	}
-	return o.EnableConsolidationTriage.Get(), o.EnableConsolidationTriage.IsSet()
+	return o.ConsolidationUseDecisionModel.Get(), o.ConsolidationUseDecisionModel.IsSet()
 }
 
-// HasEnableConsolidationTriage returns a boolean if a field has been set.
-func (o *BankTemplateConfig) HasEnableConsolidationTriage() bool {
-	if o != nil && o.EnableConsolidationTriage.IsSet() {
+// HasConsolidationUseDecisionModel returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasConsolidationUseDecisionModel() bool {
+	if o != nil && o.ConsolidationUseDecisionModel.IsSet() {
 		return true
 	}
 
 	return false
 }
 
-// SetEnableConsolidationTriage gets a reference to the given NullableBool and assigns it to the EnableConsolidationTriage field.
-func (o *BankTemplateConfig) SetEnableConsolidationTriage(v bool) {
-	o.EnableConsolidationTriage.Set(&v)
+// SetConsolidationUseDecisionModel gets a reference to the given NullableBool and assigns it to the ConsolidationUseDecisionModel field.
+func (o *BankTemplateConfig) SetConsolidationUseDecisionModel(v bool) {
+	o.ConsolidationUseDecisionModel.Set(&v)
 }
-// SetEnableConsolidationTriageNil sets the value for EnableConsolidationTriage to be an explicit nil
-func (o *BankTemplateConfig) SetEnableConsolidationTriageNil() {
-	o.EnableConsolidationTriage.Set(nil)
+// SetConsolidationUseDecisionModelNil sets the value for ConsolidationUseDecisionModel to be an explicit nil
+func (o *BankTemplateConfig) SetConsolidationUseDecisionModelNil() {
+	o.ConsolidationUseDecisionModel.Set(nil)
 }
 
-// UnsetEnableConsolidationTriage ensures that no value is present for EnableConsolidationTriage, not even an explicit nil
-func (o *BankTemplateConfig) UnsetEnableConsolidationTriage() {
-	o.EnableConsolidationTriage.Unset()
+// UnsetConsolidationUseDecisionModel ensures that no value is present for ConsolidationUseDecisionModel, not even an explicit nil
+func (o *BankTemplateConfig) UnsetConsolidationUseDecisionModel() {
+	o.ConsolidationUseDecisionModel.Unset()
 }
 
 // GetConsolidationMaxMemoriesPerRound returns the ConsolidationMaxMemoriesPerRound field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -2473,8 +2473,8 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	if o.EnableAutoConsolidation.IsSet() {
 		toSerialize["enable_auto_consolidation"] = o.EnableAutoConsolidation.Get()
 	}
-	if o.EnableConsolidationTriage.IsSet() {
-		toSerialize["enable_consolidation_triage"] = o.EnableConsolidationTriage.Get()
+	if o.ConsolidationUseDecisionModel.IsSet() {
+		toSerialize["consolidation_use_decision_model"] = o.ConsolidationUseDecisionModel.Get()
 	}
 	if o.ConsolidationMaxMemoriesPerRound.IsSet() {
 		toSerialize["consolidation_max_memories_per_round"] = o.ConsolidationMaxMemoriesPerRound.Get()

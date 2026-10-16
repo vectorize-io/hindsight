@@ -56,7 +56,7 @@ from .prompts import (
     build_consolidation_input,
     build_consolidation_system_prompt,
 )
-from .triage import TriageResult, triage_enabled, triage_facts
+from .triage import TriageResult, triage_facts, triage_model
 
 if TYPE_CHECKING:
     # The engine's connection abstraction, which is what every caller passes; the annotations
@@ -2496,7 +2496,7 @@ async def _process_memory_batch(
 
     # 2c. Triage: restatements and chatter are settled by a typed judgment, not the LLM.
     triage = TriageResult()
-    if triage_enabled(config):
+    if (decision_model := triage_model(config)) is not None:
         async with acquire_with_retry(pool) as conn:
             entities_by_fact = await get_memories().entities_for_units(
                 conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(m["id"]) for m in memories]
@@ -2504,7 +2504,7 @@ async def _process_memory_batch(
         triage = await triage_facts(
             memories,
             [list(r.results) for r in per_fact_recalls],
-            config,
+            decision_model,
             entities_by_fact=entities_by_fact,
             mission=(config.observations_mission or "").strip(),
             may_create=remaining_observation_slots is None,

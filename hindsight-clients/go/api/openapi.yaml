@@ -6485,7 +6485,7 @@ components:
         enable_auto_consolidation:
           nullable: true
           type: boolean
-        enable_consolidation_triage:
+        consolidation_use_decision_model:
           nullable: true
           type: boolean
         consolidation_max_memories_per_round:

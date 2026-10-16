@@ -1,9 +1,10 @@
 """Consolidation triage: the easy facts settled without the consolidation LLM.
 
-A bank with ``enable_consolidation_triage`` asks a TypeSafe judgment, per new fact,
-how it relates to the observations it would be consolidated against. A restatement
-becomes evidence for its observation, a new entity or attribute becomes an
-observation of its own, chatter is dropped — none of them costs a consolidation
+With a decision model set up for consolidation (and ``consolidation_use_decision_model``
+on, its default), consolidation asks it, per new fact, how it relates to the
+observations it would be consolidated against. A restatement becomes evidence for its
+observation, a new entity or attribute becomes an observation of its own, chatter is
+dropped — none of them costs a consolidation
 call. Only a fact that changes what an observation says reaches the LLM.
 
 The verdicts are scripted (``stubs.triage``); what these stories pin is what the
@@ -26,7 +27,7 @@ async def _observations(client, bank: str) -> list:
 
 
 async def _with_triage(client, bank: str, **updates) -> None:
-    await client.banks.update_bank_config(bank, {"updates": {"enable_consolidation_triage": True, **updates}})
+    await client.banks.update_bank_config(bank, {"updates": {"consolidation_use_decision_model": True, **updates}})
 
 
 async def test_new_facts_and_restatements_never_reach_the_llm(client, llm, stubs, bank_id, settled):

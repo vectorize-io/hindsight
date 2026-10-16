@@ -335,8 +335,8 @@ cost *and* outcome — a cheaper setting only counts at the same quality:
 
 ```bash
 HINDSIGHT_EVAL_CONSOLIDATION_COST=/tmp/base.jsonl uv run pytest evals/test_09_consolidation.py --full
-# consolidation triage (TypeSafe Jev) on for every bank of the run
-HINDSIGHT_EVAL_SET_ENABLE_CONSOLIDATION_TRIAGE=true HINDSIGHT_EVAL_SET_CONSOLIDATION_TRIAGE_API_KEY=... \
+# consolidation triage: a decision model (TypeSafe Jev) for consolidation, on for every bank
+HINDSIGHT_EVAL_SET_CONSOLIDATION_DECISION_MODEL_PROVIDER=typesafe HINDSIGHT_EVAL_SET_CONSOLIDATION_DECISION_MODEL_API_KEY=... \
   HINDSIGHT_EVAL_CONSOLIDATION_COST=/tmp/triage.jsonl uv run pytest evals/test_09_consolidation.py --full
 ```
 
@@ -392,7 +392,7 @@ issue/PR history — and what grades it. "eval" = a `test_09` scenario (real mod
 - Deleting or replacing a document removes and rebuilds its observations (#429, #3294) — system `test_25`; unit `test_delta_retain_orphan_observations.py`
 - Trigger, dedup and serialisation of consolidation jobs (#4368) — system `test_26`, `test_28`
 - Observations in recall, `prefer_observations`, source facts (#2311) — system `test_27`
-- Consolidation triage (TypeSafe Jev): restatements, new facets and chatter settled without the LLM — unit `test_consolidation_triage.py`; system `test_22_consolidation_triage`; eval suite with triage on; under a bank's own mission it records only facts the mission wants as worded — eval `noisy-service-catalogue-mission`
+- Consolidation triage (a decision model, e.g. TypeSafe Jev): restatements, new facets and chatter settled without the LLM — unit `test_consolidation_triage.py`; system `test_22_consolidation_triage`; eval suite with triage on; under a bank's own mission it records only facts the mission wants as worded — eval `noisy-service-catalogue-mission`
 
 **Out of scope here, deliberately** — speaker attribution is decided at retain (#4572, #1680)
 and belongs with the retain suites; operational behaviour (timeouts #3301/#4715, quota
