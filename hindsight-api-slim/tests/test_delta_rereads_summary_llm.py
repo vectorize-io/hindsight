@@ -128,20 +128,22 @@ async def test_the_opening_summary_is_updated_with_the_value_it_restates():
         # stale summary reproducible on this request.
         temperature=0.0,
     )
-    page = render_document(apply_operations(_WAVE_ONE_PAGE, op_list.operations).document)
-
+    updated = apply_operations(_WAVE_ONE_PAGE, op_list.operations).document
+    # The summary is judged on its own: shown the whole page, the judge drifted onto
+    # unrelated details (it failed a page for its V1/V2 timeline).
+    summary = updated.sections[0]
     await assert_meets_criteria(
-        response=page,
+        response="\n\n".join(block.text for block in summary.blocks),
         # Stated positively: phrased as "nowhere is X presented as current", the judge
-        # failed pages that mention 1,000 hours as the superseded value.
+        # failed summaries that mention 1,000 hours as the superseded value.
         criteria=(
-            "The page's opening paragraph names Brian Lee as the current maintenance owner, and does not claim "
-            "that no owner change has been recorded. Mentioning Alice Morgan or 1,000 hours as the earlier values "
-            "is fine. Somewhere the page still says the filter type / part number and the electrical isolation "
-            "instructions are not documented."
+            "The paragraph names Brian Lee as the current maintenance owner and does not claim that no owner "
+            "change has been recorded. Mentioning Alice Morgan as the earlier owner is fine."
         ),
-        context=(
-            "A maintenance page refreshed with notice V2 (effective 2026-10-05): interval 1,000 -> 800 hours, owner "
-            "Alice Morgan -> Brian Lee; V2 adds no part number and no isolation procedure."
-        ),
+        context="The opening summary of a pump maintenance page. Ownership moved from Alice Morgan to Brian Lee.",
+    )
+    await assert_meets_criteria(
+        response=render_document(updated),
+        criteria="The page says the filter part number and the electrical isolation instructions are not documented.",
+        context="A pump maintenance page. None of its sources gives a filter part number or isolation steps.",
     )
