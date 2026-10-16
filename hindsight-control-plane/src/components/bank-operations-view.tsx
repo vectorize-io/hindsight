@@ -442,8 +442,10 @@ export function BankOperationsView() {
   };
 
   // Retries only the failed operations on the current page, oldest first.
-  // One call at a time so a partial failure stops in a predictable place;
-  // a failed call is skipped (the client already toasts it) and the rest go on.
+  // Sequential rather than Promise.all so a page of retries doesn't hit the API
+  // at once; a failed call is skipped (the client already toasts it) and the
+  // rest go on. Workers claim by created_at, which a retry keeps, so the oldest
+  // also runs first.
   const handleRetryAll = async () => {
     if (!currentBank) return;
     const failed = operations
