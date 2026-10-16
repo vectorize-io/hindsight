@@ -79,3 +79,22 @@ async def test_live_nvidia_reranker_ranks_relevant_passage_first():
     )
     assert len(scores) == 3
     assert scores[1] == max(scores)
+
+
+@pytest.mark.asyncio
+async def test_nvidia_reranker_failing_slice_raises_upstream_error():
+    """A 4xx on any slice surfaces as UpstreamHTTPError (what the shared retry classifies on)."""
+    from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        body = await request.json()
+        if body["passages"][0]["text"] == "bad":
+            return web.json_response({"error": "too_long"}, status=422)
+        return web.json_response({"rankings": [{"index": i, "logit": 0.0} for i in range(len(body["passages"]))]})
+
+    async with stub_server(handler) as base_url:
+        encoder = NvidiaCrossEncoder(api_key="k", model="nvidia/m", base_url=base_url, batch_size=1)
+        await encoder.initialize()
+        with pytest.raises(UpstreamHTTPError) as exc_info:
+            await encoder.predict([("q", "ok"), ("q", "bad"), ("q", "ok2")])
+    assert exc_info.value.status_code == 422

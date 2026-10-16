@@ -1079,9 +1079,20 @@ class NvidiaCrossEncoder(CrossEncoderModel):
             for query, indices in query_groups.items()
             for i in range(0, len(indices), self.batch_size)
         ]
-        results = await asyncio.gather(
-            *(self._rerank_batch(query, [pairs[idx][1] for idx in indices]) for query, indices in slices)
-        )
+        # create_task copies contextvars, so the per-bank attribution header reaches every slice.
+        tasks = [
+            asyncio.create_task(self._rerank_batch(query, [pairs[idx][1] for idx in indices]))
+            for query, indices in slices
+        ]
+        try:
+            # Awaited in order, so the earliest failing slice is the one raised; its
+            # siblings are cancelled rather than left running unobserved.
+            results = [await task for task in tasks]
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
         all_scores = [0.0] * len(pairs)
         for (_, indices), scores in zip(slices, results):
             for idx, score in zip(indices, scores):
