@@ -105,3 +105,28 @@ async def test_reprocessing_reports_an_operation_to_wait_on(client, llm, bank_id
     assert result.operation_id
     assert result.items_count == 1
     await settled(bank_id)
+
+
+async def test_reprocessing_keeps_an_undated_document_undated(client, llm, bank_id, settled):
+    """`timestamp="unset"` means the material has no date. The reprocess rebuilds
+    its retain from what the first one stored, and used to store nothing for a
+    missing date — so the replay read as "no date given", and every fact came back
+    dated with the moment of the reprocess (#5473)."""
+    llm.on_step("extract_facts").returns(
+        extracted(fact("Alice moved to Berlin", who="Alice", entities=["Alice", "Berlin"]))
+    )
+    llm.on_step("consolidate").returns(consolidation())
+
+    await client.aretain(bank_id=bank_id, content=CONTENT, document_id=DOCUMENT_ID, timestamp="unset")
+    await settled(bank_id)
+
+    async def mentioned_at() -> dict[str, str | None]:
+        response = await client.arecall(bank_id=bank_id, query="Where did Alice move?", types=["world"])
+        return {result.text: result.mentioned_at for result in response.results}
+
+    assert await mentioned_at() == {ORIGINAL_FACT: None}
+
+    await client.documents.reprocess_document(bank_id, DOCUMENT_ID)
+    await settled(bank_id)
+
+    assert await mentioned_at() == {ORIGINAL_FACT: None}, "the reprocess dated an undated document"

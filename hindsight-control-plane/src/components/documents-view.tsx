@@ -89,6 +89,7 @@ import { HarnessLogo } from "@/components/ui/harness-logo";
 import { InlineAttachmentText, countMatches } from "@/components/ui/inline-attachment-text";
 import { documentHarness, resolveHarnessLogo } from "@/lib/harness-logo";
 import { pendingUploadsFromOperations, type PendingUpload } from "@/lib/pending-uploads";
+import { editedRetainItem } from "@/lib/edited-retain-item";
 
 const ITEMS_PER_PAGE = 50;
 
@@ -1120,34 +1121,7 @@ export function DocumentsView() {
     const newContent = contentInput;
     if (!newContent.trim()) return;
 
-    const retainParams = selectedDocument.retain_params ?? {};
-    const item: Parameters<typeof client.retain>[0]["items"][number] = {
-      content: newContent,
-      document_id: selectedDocument.id,
-    };
-    if (retainParams.context) item.context = retainParams.context;
-    // A stored `event_date: null` means the document was retained undated; a
-    // missing key would let the server date the edit "now" instead (#5473).
-    if (retainParams.event_date === null) item.timestamp = "unset";
-    else if (retainParams.event_date) item.timestamp = retainParams.event_date;
-    if (retainParams.metadata && Object.keys(retainParams.metadata).length > 0) {
-      item.metadata = retainParams.metadata;
-    }
-    if (selectedDocument.tags && selectedDocument.tags.length > 0) {
-      item.tags = selectedDocument.tags;
-    }
-    // The rest of what the original retain supplied, so an edit re-extracts the
-    // way the document was first extracted rather than under bank defaults.
-    if (retainParams.strategy) item.strategy = retainParams.strategy;
-    if (retainParams.entities?.length) {
-      item.entities = retainParams.entities;
-      if (retainParams.resolve_entities !== undefined) {
-        item.resolve_entities = retainParams.resolve_entities;
-      }
-    }
-    if (retainParams.observation_scopes != null) {
-      item.observation_scopes = retainParams.observation_scopes;
-    }
+    const item = editedRetainItem(newContent, selectedDocument);
 
     setSavingContent(true);
     try {

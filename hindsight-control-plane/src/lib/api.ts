@@ -659,6 +659,7 @@ export class ControlPlaneClient {
       document_id?: string;
       metadata?: Record<string, string>;
       entities?: Array<{ text: string; type?: string }>;
+      resolve_entities?: boolean;
       tags?: string[];
       observation_scopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
       strategy?: string;
