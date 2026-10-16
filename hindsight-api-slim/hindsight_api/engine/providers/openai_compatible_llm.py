@@ -1254,6 +1254,8 @@ class OpenAICompatibleLLM(LLMInterface):
         # Provider-specific parameters
         extra_body: dict[str, Any] = {**self._config_extra_body}
         self._apply_provider_extra_body_defaults(extra_body)
+        if self.provider == "openai" and self.openai_service_tier:
+            call_params["service_tier"] = self.openai_service_tier
         if self.provider == "groq":
             call_params["seed"] = DEFAULT_LLM_SEED
             # Add service_tier if configured
@@ -1746,6 +1748,8 @@ class OpenAICompatibleLLM(LLMInterface):
         # request and response shapes both ways, so it is deliberately not done.
         extra_body: dict[str, Any] = {**self._config_extra_body}
         self._apply_provider_extra_body_defaults(extra_body)
+        if self.provider == "openai" and self.openai_service_tier:
+            call_params["service_tier"] = self.openai_service_tier
         if self.provider == "groq":
             call_params["seed"] = DEFAULT_LLM_SEED
         if extra_body:
