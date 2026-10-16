@@ -6561,35 +6561,37 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Validate operation if validator is configured
         contents_copy = [dict(c) for c in contents]  # Convert TypedDict to regular dict for extension
-        if self._operation_validator:
-            from hindsight_api.extensions import RetainContext
+        try:
+            if self._operation_validator:
+                from hindsight_api.extensions import RetainContext
 
-            attachment_info = await self._retain_attachment_info(bank_id, contents_copy, request_context)
-            ctx = RetainContext(
-                bank_id=bank_id,
-                contents=contents_copy,
-                request_context=request_context,
-                document_id=document_id or _shared_document_id(contents_copy),
-                fact_type_override=fact_type_override,
-                attachments=attachment_info,
-            )
-            try:
+                attachment_info = await self._retain_attachment_info(bank_id, contents_copy, request_context)
+                ctx = RetainContext(
+                    bank_id=bank_id,
+                    contents=contents_copy,
+                    request_context=request_context,
+                    document_id=document_id or _shared_document_id(contents_copy),
+                    fact_type_override=fact_type_override,
+                    attachments=attachment_info,
+                )
                 result = await self._validate_operation(self._operation_validator.validate_retain(ctx))
-            except Exception:
-                # A refused retain must not leave its bytes behind. They are
-                # written at the API ingress, before this hook can run — the
-                # async path cannot carry megabytes of base64 through its
-                # operation row — so the only way a content policy can actually
-                # keep them out of the bank is to take them back out here.
-                # Nothing else would: reclaim is otherwise driven by document
-                # deletion, and a rejected retain never creates a document.
-                await self._discard_unreferenced_attachments(bank_id, ingress_attachments, request_context)
-                raise
-            if result and result.contents is not None:
-                contents = cast(list[RetainContentDict], result.contents)
-        await self._check_retain_writes(
-            bank_id, contents, request_context, strategy=strategy, document_tags=document_tags
-        )
+                if result and result.contents is not None:
+                    contents = cast(list[RetainContentDict], result.contents)
+            await self._check_retain_writes(
+                bank_id, contents, request_context, strategy=strategy, document_tags=document_tags
+            )
+        except Exception:
+            # A refused retain must not leave its bytes behind. They are
+            # written at the API ingress, before these checks can run — the
+            # async path cannot carry megabytes of base64 through its
+            # operation row — so the only way a content policy or a write
+            # scope can actually keep them out of the bank is to take them
+            # back out here. Nothing else would: reclaim is otherwise driven
+            # by document deletion, and a rejected retain never creates a
+            # document. `contents_copy` is what the caller sent: the
+            # validator may have rewritten `contents`.
+            await self._discard_unreferenced_attachments(bank_id, ingress_attachments, contents_copy, request_context)
+            raise
 
         await self._ensure_bank_exists(bank_id, request_context)
 
@@ -8029,6 +8031,7 @@ class MemoryEngine(MemoryEngineInterface):
         self,
         bank_id: str,
         ingress_attachments: "Mapping[str, Sequence[str]] | None",
+        contents: "Sequence[Mapping[str, Any]]",
         request_context: "RequestContext",
     ) -> None:
         """Take back the attachments this request stored — used when a retain is refused.
@@ -8037,7 +8040,14 @@ class MemoryEngine(MemoryEngineInterface):
         rather than to everything the refused text references. A retain that adds
         a screenshot to a document that already carries one must not, on refusal,
         take away the one the document already had.
+
+        And only for the documents in ``contents``, the refused call: the HTTP
+        ingress stores a whole request's attachments at once, then retains it in
+        one call per strategy group. A refusal in a later group must not take the
+        attachments of a group that already landed.
         """
+        refused = {str(c["document_id"]) for c in contents if c.get("document_id")}
+        ingress_attachments = {d: ids for d, ids in (ingress_attachments or {}).items() if d in refused}
         if not ingress_attachments:
             return
         await self._authenticate_tenant(request_context)
@@ -22505,30 +22515,32 @@ class MemoryEngine(MemoryEngineInterface):
         # Run operation validator (bank access, credits, etc.) before queuing.
         # This runs on every retry too, so a replay cannot bypass access/credit
         # checks even though it performs no ingestion work.
-        if self._operation_validator:
-            from hindsight_api.extensions import RetainContext
+        # The documents the caller sent, for the reclaim below: the validator may rewrite `contents`.
+        submitted = contents
+        try:
+            if self._operation_validator:
+                from hindsight_api.extensions import RetainContext
 
-            contents_copy = [dict(c) for c in contents]
-            attachment_info = await self._retain_attachment_info(bank_id, contents_copy, request_context)
-            ctx = RetainContext(
-                bank_id=bank_id,
-                contents=contents_copy,
-                request_context=request_context,
-                document_id=_shared_document_id(contents_copy),
-                attachments=attachment_info,
-            )
-            try:
+                contents_copy = [dict(c) for c in contents]
+                attachment_info = await self._retain_attachment_info(bank_id, contents_copy, request_context)
+                ctx = RetainContext(
+                    bank_id=bank_id,
+                    contents=contents_copy,
+                    request_context=request_context,
+                    document_id=_shared_document_id(contents_copy),
+                    attachments=attachment_info,
+                )
                 result = await self._validate_operation(self._operation_validator.validate_retain(ctx))
-            except Exception:
-                # Same reclaim as the synchronous path: the bytes were stored at
-                # ingress, so a refusal here is the only chance to take them back.
-                await self._discard_unreferenced_attachments(bank_id, ingress_attachments, request_context)
-                raise
-            if result and result.contents is not None:
-                contents = result.contents
-        await self._check_retain_writes(
-            bank_id, contents, request_context, strategy=strategy, document_tags=document_tags
-        )
+                if result and result.contents is not None:
+                    contents = result.contents
+            await self._check_retain_writes(
+                bank_id, contents, request_context, strategy=strategy, document_tags=document_tags
+            )
+        except Exception:
+            # Same reclaim as the synchronous path: the bytes were stored at
+            # ingress, so a refusal here is the only chance to take them back.
+            await self._discard_unreferenced_attachments(bank_id, ingress_attachments, submitted, request_context)
+            raise
 
         # Sanitize at the same ingress point the synchronous path does, and for a
         # second reason on top of it: the whole item is serialized into
