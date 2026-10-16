@@ -18,7 +18,7 @@ from runpy import run_path
 import pytest
 
 from hindsight_api.config import PROVIDER_DEFAULT_MODELS
-from hindsight_api.engine.provider_auth import _PROVIDERS_WITHOUT_API_KEY
+from hindsight_api.provider_auth import _PROVIDERS_WITHOUT_API_KEY
 
 #: Server-only backends: no API key either, but a coding-agent hook never runs the
 #: model locally through them, so the hook registries deliberately do not offer them.

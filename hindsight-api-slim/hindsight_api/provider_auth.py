@@ -3,7 +3,10 @@
 A leaf module on purpose. ``config.py`` needs this answer while it builds
 ``HindsightConfig``, and ``llm_wrapper`` needs the built config at import time to
 size its process-wide semaphores; keeping the fact here is what stops those two
-from importing each other in a cycle.
+from importing each other in a cycle. It sits outside ``engine/`` because importing
+anything under that package first runs ``engine/__init__``, which loads the whole
+engine (and torch, via sentence-transformers) — seconds of work that config parsing,
+and so ``hindsight-api --help``, must not pay.
 """
 
 from __future__ import annotations

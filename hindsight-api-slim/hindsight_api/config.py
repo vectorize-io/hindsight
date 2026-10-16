@@ -4,6 +4,7 @@ Centralized configuration for Hindsight API.
 All environment variables and their defaults are defined here.
 """
 
+import importlib.util
 import json
 import logging
 import os
@@ -2685,7 +2686,7 @@ def _parse_llm_members(prefix: str) -> list[LLMMemberConfig]:
     ``_TIMEOUT`` and ``_MAX_RETRIES`` are optional per-member overrides of the
     operation's request policy; unset means inherit it.
     """
-    from .engine.provider_auth import requires_api_key
+    from .provider_auth import requires_api_key
 
     members: list[LLMMemberConfig] = []
     index = 1
@@ -4238,11 +4239,9 @@ class HindsightConfig:
         # Don't hard-fail here — the actual ImportError fires at model init time
         # with a clear message. This early warning catches it before startup proceeds.
         if self.embeddings_provider == "local" or self.reranker_provider == "local":
-            try:
-                import importlib
-
-                importlib.import_module("sentence_transformers")
-            except ImportError:
+            # find_spec, not import: importing sentence_transformers pulls in torch and costs
+            # ~15 s, which every process (even `--help`) would pay just to run this check.
+            if importlib.util.find_spec("sentence_transformers") is None:
                 missing = []
                 if self.embeddings_provider == "local":
                     missing.append("embeddings")
@@ -4259,12 +4258,7 @@ class HindsightConfig:
                 )
 
         if self.embeddings_provider == "onnx":
-            try:
-                import importlib
-
-                importlib.import_module("onnxruntime")
-                importlib.import_module("transformers")
-            except ImportError:
+            if importlib.util.find_spec("onnxruntime") is None or importlib.util.find_spec("transformers") is None:
                 logger.warning(
                     "ONNX embeddings provider configured, but 'onnxruntime' and/or "
                     "'transformers' is not installed. The API will fail at model init time. Either:\n"

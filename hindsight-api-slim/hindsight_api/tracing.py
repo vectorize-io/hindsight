@@ -17,14 +17,11 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Optional, cast
 
 from opentelemetry import trace
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import Status, StatusCode
 
 if TYPE_CHECKING:
     from opentelemetry.context import Context
+    from opentelemetry.sdk.trace import TracerProvider
 
     from .config import HindsightConfig, StaticConfigProxy
 
@@ -100,7 +97,7 @@ _tracing_enabled: bool = False
 # The SDK provider created by initialize_tracing(). Kept so shutdown_tracing()
 # can flush the BatchSpanProcessor directly instead of going through the global
 # provider, which may be a proxy that never exposes shutdown().
-_provider: TracerProvider | None = None
+_provider: "TracerProvider | None" = None
 
 
 # GenAI semantic convention attribute names (based on v1.37 spec)
@@ -168,6 +165,13 @@ def initialize_tracing(
 
     # Imported lazily: __version__ is defined at the end of hindsight_api/__init__.py,
     # after the imports that pull in this module.
+    # The SDK and OTLP exporter load here, not at module import: tracing is off by
+    # default, and every process would otherwise pay for them on startup.
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
     from hindsight_api import __version__
 
     # Create resource with service information

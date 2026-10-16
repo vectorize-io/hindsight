@@ -2,6 +2,7 @@
 LLM wrapper for unified configuration across providers.
 """
 
+import importlib.util
 import json
 import logging
 import re
@@ -16,12 +17,11 @@ from pydantic import BaseModel
 from .._cross_loop import CrossLoopSemaphore
 from .response_models import LLMCallResult
 
-# Vertex AI imports (conditional - for LLMProvider to pass credentials to GeminiLLM)
+# Vertex AI credentials (for LLMProvider to pass to GeminiLLM). Only checked for
+# here; google-auth is imported where a key is actually loaded, not on every start.
 try:
-    from google.oauth2 import service_account
-
-    VERTEXAI_AVAILABLE = True
-except ImportError:
+    VERTEXAI_AVAILABLE = importlib.util.find_spec("google.oauth2") is not None
+except ModuleNotFoundError:  # no `google` namespace package at all
     VERTEXAI_AVAILABLE = False
 
 from ..config import (
@@ -31,6 +31,9 @@ from ..config import (
     ENV_RETAIN_LLM_MAX_CONCURRENT,
     _get_raw_config,
 )
+
+# Re-exported: this module is where callers have always imported it from.
+from ..provider_auth import requires_api_key as requires_api_key
 from .cache_affinity import parse_cache_affinity
 from .llm_interface import (
     LLM_TOOL_CHOICE_AUTO,
@@ -43,9 +46,6 @@ from .llm_interface import (
     OutputTooLongError as OutputTooLongError,
 )
 from .llm_transport import configure_http_logging
-
-# Re-exported: this module is where callers have always imported it from.
-from .provider_auth import requires_api_key as requires_api_key
 
 if TYPE_CHECKING:
     from .multi_llm import MultiLLMProvider
@@ -538,22 +538,8 @@ def create_llm_provider(
     """
     ollama_num_ctx = _validate_ollama_num_ctx(ollama_num_ctx)
 
-    from .providers import (
-        AnthropicLLM,
-        ClaudeCodeLLM,
-        CodexLLM,
-        CursorLLM,
-        FireworksLLM,
-        GeminiLLM,
-        GitHubCopilotLLM,
-        LiteLLMLLM,
-        LiteLLMRouterLLM,
-        LlamaCppLLM,
-        MockLLM,
-        NoneLLM,
-        OpenAICompatibleLLM,
-        OpenAIResponsesLLM,
-    )
+    # Each provider (and its SDK) loads only when chosen; see providers/__init__.py.
+    from . import providers
 
     provider_lower = provider.lower()
     if provider_lower == "gemini":
@@ -564,7 +550,7 @@ def create_llm_provider(
         gemini_service_tier = None
 
     if provider_lower == "openai-codex":
-        return CodexLLM(
+        return providers.CodexLLM(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
@@ -576,7 +562,7 @@ def create_llm_provider(
         )
 
     elif provider_lower == "cursor":
-        return CursorLLM(
+        return providers.CursorLLM(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
@@ -586,7 +572,7 @@ def create_llm_provider(
         )
 
     elif provider_lower == "claude-code":
-        return ClaudeCodeLLM(
+        return providers.ClaudeCodeLLM(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
@@ -595,7 +581,7 @@ def create_llm_provider(
         )
 
     elif provider_lower == "github-copilot":
-        return GitHubCopilotLLM(
+        return providers.GitHubCopilotLLM(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
@@ -605,7 +591,7 @@ def create_llm_provider(
         )
 
     elif provider_lower == "mock":
-        return MockLLM(
+        return providers.MockLLM(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
@@ -614,7 +600,7 @@ def create_llm_provider(
         )
 
     elif provider_lower == "none":
-        return NoneLLM(
+        return providers.NoneLLM(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
@@ -623,7 +609,7 @@ def create_llm_provider(
         )
 
     elif provider_lower in ("gemini", "vertexai"):
-        return GeminiLLM(
+        return providers.GeminiLLM(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
@@ -640,7 +626,7 @@ def create_llm_provider(
         )
 
     elif provider_lower == "anthropic":
-        return AnthropicLLM(
+        return providers.AnthropicLLM(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
@@ -652,7 +638,7 @@ def create_llm_provider(
         )
 
     elif provider_lower == "litellm":
-        return LiteLLMLLM(
+        return providers.LiteLLMLLM(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
@@ -672,7 +658,7 @@ def create_llm_provider(
                 "to a JSON object accepted by litellm.Router. "
                 "See https://docs.litellm.ai/docs/routing."
             )
-        return LiteLLMRouterLLM(
+        return providers.LiteLLMRouterLLM(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
@@ -688,7 +674,7 @@ def create_llm_provider(
     elif provider_lower == "bedrock":
         # Bedrock is a first-class alias backed by LiteLLM with auto-prefixed model names
         bedrock_model = model if model.startswith("bedrock/") else f"bedrock/{model}"
-        return LiteLLMLLM(
+        return providers.LiteLLMLLM(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
@@ -705,7 +691,7 @@ def create_llm_provider(
         from ..config import get_config
 
         config = get_config()
-        return LlamaCppLLM(
+        return providers.LlamaCppLLM(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
@@ -725,7 +711,7 @@ def create_llm_provider(
         # Fireworks online inference is OpenAI-compatible; FireworksLLM adds the
         # native (non-OpenAI) batch API on top. The existing LiteLLM
         # ``fireworks_ai/...`` online path (provider="litellm") is untouched.
-        return FireworksLLM(
+        return providers.FireworksLLM(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
@@ -778,7 +764,7 @@ def create_llm_provider(
         # OpenAI Responses API (/v1/responses). Unlike chat/completions, it
         # supports reasoning + function tools together, so reflect's tool loop
         # can run with a real reasoning_effort. See OpenAIResponsesLLM.
-        return OpenAIResponsesLLM(
+        return providers.OpenAIResponsesLLM(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
@@ -806,7 +792,7 @@ def create_llm_provider(
         "atlas",
         "meta",
     ):
-        return OpenAICompatibleLLM(
+        return providers.OpenAICompatibleLLM(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
@@ -1059,6 +1045,8 @@ class LLMProvider:
                         "Vertex AI service account auth requires 'google-auth' package. "
                         "Install with: pip install google-auth"
                     )
+                from google.oauth2 import service_account
+
                 vertexai_credentials = service_account.Credentials.from_service_account_file(
                     service_account_key,
                     scopes=["https://www.googleapis.com/auth/cloud-platform"],
