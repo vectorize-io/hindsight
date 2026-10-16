@@ -1761,6 +1761,19 @@ jobs:
     - name: Lint Helm chart
       run: helm lint helm/hindsight
 
+    # Default values leave extraObjects empty, so render both entry forms
+    # (map and templated string) to prove they reach the output.
+    - name: Render extraObjects
+      run: |
+        out=$(helm template rel helm/hindsight -s templates/extra-objects.yaml --set-json 'extraObjects=[
+          {"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"{{ include \"hindsight.fullname\" . }}-map"}},
+          "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ include \"hindsight.fullname\" . }}-str\ndata:\n  port: \"{{ .Values.api.service.port }}\""
+        ]')
+        echo "$out"
+        grep -q "name: 'rel-hindsight-map'" <<<"$out"
+        grep -q "name: rel-hindsight-str" <<<"$out"
+        grep -q 'port: "8888"' <<<"$out"
+
   test-standalone-start-script:
     needs: [detect-changes]
     if: >-
