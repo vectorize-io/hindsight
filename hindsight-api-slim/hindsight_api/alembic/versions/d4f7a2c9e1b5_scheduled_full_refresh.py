@@ -1,7 +1,7 @@
 """Scheduled full refresh for mental models
 
 Revision ID: d4f7a2c9e1b5
-Revises: c8e2f4a6b1d3
+Revises: b2429c65cc20
 Create Date: 2026-10-16
 
 A delta-mode mental model can also carry ``trigger.full_refresh_cron``: a second,
@@ -40,7 +40,7 @@ from hindsight_api.alembic._owned import execute_unless_owned
 from hindsight_api.config import get_config
 
 revision: str = "d4f7a2c9e1b5"
-down_revision: str | Sequence[str] | None = "c8e2f4a6b1d3"
+down_revision: str | Sequence[str] | None = "b2429c65cc20"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
