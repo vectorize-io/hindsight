@@ -1126,12 +1126,27 @@ export function DocumentsView() {
       document_id: selectedDocument.id,
     };
     if (retainParams.context) item.context = retainParams.context;
-    if (retainParams.event_date) item.timestamp = retainParams.event_date;
+    // A stored `event_date: null` means the document was retained undated; a
+    // missing key would let the server date the edit "now" instead (#5473).
+    if (retainParams.event_date === null) item.timestamp = "unset";
+    else if (retainParams.event_date) item.timestamp = retainParams.event_date;
     if (retainParams.metadata && Object.keys(retainParams.metadata).length > 0) {
       item.metadata = retainParams.metadata;
     }
     if (selectedDocument.tags && selectedDocument.tags.length > 0) {
       item.tags = selectedDocument.tags;
+    }
+    // The rest of what the original retain supplied, so an edit re-extracts the
+    // way the document was first extracted rather than under bank defaults.
+    if (retainParams.strategy) item.strategy = retainParams.strategy;
+    if (retainParams.entities?.length) {
+      item.entities = retainParams.entities;
+      if (retainParams.resolve_entities !== undefined) {
+        item.resolve_entities = retainParams.resolve_entities;
+      }
+    }
+    if (retainParams.observation_scopes != null) {
+      item.observation_scopes = retainParams.observation_scopes;
     }
 
     setSavingContent(true);

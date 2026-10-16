@@ -59,6 +59,18 @@ def test_event_date_is_normalised_for_json():
     assert p["event_date"] == "2026-01-02T03:04:05"
 
 
+def test_unknown_event_date_survives_the_round_trip():
+    """timestamp "unset" arrives as event_date=None. Dropping it made the replay
+    look like "no date supplied", which _build_contents dates with utcnow() (#5473)."""
+    item = {"content": "An undated note", "event_date": None}
+    p = _params(**item)
+    assert "event_date" in p and p["event_date"] is None
+    replayed = orch._build_contents([{"content": item["content"], **p}], None)[0]
+    assert replayed.event_date is None
+    # An omitted date still means "now", and stays omitted.
+    assert "event_date" not in _params(content="x")
+
+
 def test_a_new_field_round_trips_without_being_listed():
     """The point of inverting the rule: the failure mode is now a deliberate
     exclusion, not a silent omission."""
