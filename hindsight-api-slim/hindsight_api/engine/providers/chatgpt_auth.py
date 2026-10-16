@@ -1047,8 +1047,10 @@ def status_lines(home: Path) -> list[str]:
     return lines
 
 
-def main(argv: list[str] | None = None, prog: str = "chatgpt_auth") -> int:
-    parser = argparse.ArgumentParser(prog=prog, description="Manage the chatgpt (Sign in with ChatGPT) credentials.")
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="hindsight-admin chatgpt", description="Manage the chatgpt (Sign in with ChatGPT) credentials."
+    )
     parser.add_argument(
         "--home",
         type=Path,
@@ -1115,7 +1117,3 @@ def main(argv: list[str] | None = None, prog: str = "chatgpt_auth") -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     return 0
-
-
-if __name__ == "__main__":  # pragma: no cover - process entrypoint
-    sys.exit(main())
