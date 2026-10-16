@@ -315,7 +315,7 @@ One consolidation pass over a single global, **untagged** scope. The memory's ow
 - ✓ Untagged observations match every recall regardless of tag filter
 - Deduplicates across volatile per-call tags: if each session is retained with a unique `session-id:…` tag, `combined` and `per_tag` create a fresh observation every session (the tag never repeats), whereas `shared` folds them all into one.
 
-**Use when** your tags are per-call provenance (e.g. session ids) that you want for recall filtering and debugging but not as a consolidation boundary — keep the tag on `tags` and set `observation_scopes: "shared"`.
+**Use when** your tags are per-call provenance (e.g. session ids) that you want for recall filtering and debugging but not as a consolidation boundary — keep the tag on `tags` and set `observation_scopes: "shared"`. Documents already retained without it can be moved in place with a [document PATCH](../observations.md#changing-scopes).
 
 > **🚨 `shared` vs `[[]]` vs `[]`**
 >

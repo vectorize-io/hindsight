@@ -198,6 +198,28 @@ See [`observation_scopes` in the Retain API](./api/retain.md#observation_scopes)
 
 To inspect the scopes that already exist in a bank, call `GET /v1/default/banks/{bank_id}/observations/scopes`. The response lists each exact tag set with its observation count; the empty tag list is the global scope. The listing is paged (`limit`, default 100, and `offset`), with `total` reporting how many distinct scopes the bank holds. Use a returned scope as `tags` with `tags_match: "exact"` when you need to filter to that precise observation scope without also matching observations that carry extra tags. To recall **only** the global scope — the untagged observations written by `observation_scopes: "shared"` — pass an empty list with exact matching: `tags: []`, `tags_match: "exact"`.
 
+### Changing the Scopes of Existing Documents {#changing-scopes}
+
+The scoping is stored on each memory when it is retained. To move documents that are already in the bank, for example a bank retained with per-session tags under the default `combined` scoping that should now consolidate across sessions, send the new value on the document:
+
+```python
+# Move a document retained under its session tag to the shared scope
+await client.documents.update_document(
+    bank_id=BANK_ID,
+    document_id="session-123",
+    update_document_request=UpdateDocumentRequest(
+        observation_scopes=UpdateDocumentObservationScopes(actual_instance="shared")
+    ),
+)
+```
+
+It takes the same values as retain (`"combined"` returns to the default). Nothing is re-extracted, and the memories keep their tags. A memory is consolidated again only if the change moves the scopes it resolves to. In that case its observations are deleted and rebuilt in the new scope by the next consolidation, and so are observations that other documents' memories shared with it. A change that resolves to the same scopes deletes nothing and queues nothing. Examples: `combined` over a single tag versus `[["that-tag"]]`, or re-sending the current value. The new value is also saved on the document, so a later reprocess keeps it.
+
+To move a whole bank, list its documents (filtering by tag if needed) and send one PATCH per document. Two things to know first:
+
+- **Update the client first.** A retain that appends to a document sends its own `observation_scopes`. If your client still retains without the new value, the next append moves that document back.
+- **Expect a rebuild.** Every moved memory loses its observations until consolidation runs again. On a large bank that is one LLM pass over most of its facts, and recall returns fewer observations meanwhile. Mental models citing the deleted observations refresh as usual. Moving documents in batches spreads the cost.
+
 ---
 
 ## Observations Mission
