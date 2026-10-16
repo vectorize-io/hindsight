@@ -153,6 +153,29 @@ def wif_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterato
 
 
 @pytest.fixture(scope="session")
+def delta_gate_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
+    """A server whose delta page refreshes ask a decision model which new memories to read.
+
+    The gate is a server-level switch, so it costs a process. HTTP only, for the same reason
+    as ``typesafe_server``; its stories refresh by dry run, which runs in this process.
+    """
+    log_path: Path = tmp_path_factory.mktemp("delta-gate-server") / "server.log"
+    server = start_hindsight_server(
+        stub_url=stub_server.url,
+        log_path=log_path,
+        extra_env={
+            "HINDSIGHT_API_DECISION_MODEL_PROVIDER": "typesafe",
+            "HINDSIGHT_API_DECISION_MODEL_API_KEY": "stub-key",
+            "HINDSIGHT_API_DECISION_MODEL_BASE_URL": stub_server.url,
+            "HINDSIGHT_API_MENTAL_MODEL_REFRESH_DELTA_GATE": "true",
+            "HINDSIGHT_API_WORKER_ENABLED": "false",
+        },
+    )
+    yield server
+    server.stop()
+
+
+@pytest.fixture(scope="session")
 def scoped_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
     """A server whose operation validator confines each API key to ``user:<key>`` + ``kind:rule``.
 
@@ -290,6 +313,13 @@ async def wif_client(wif_server) -> AsyncIterator[Hindsight]:
 @pytest.fixture
 async def typesafe_client(typesafe_server) -> AsyncIterator[Hindsight]:
     client = Hindsight(base_url=typesafe_server.url)
+    yield client
+    await client.aclose()
+
+
+@pytest.fixture
+async def delta_gate_client(delta_gate_server) -> AsyncIterator[Hindsight]:
+    client = Hindsight(base_url=delta_gate_server.url)
     yield client
     await client.aclose()
 

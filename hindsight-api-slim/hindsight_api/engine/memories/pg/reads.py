@@ -594,6 +594,12 @@ async def any_memory_updated_since(
     return row is not None
 
 
+@dataclass(frozen=True)
+class _ScopeWhere:
+    sql: str
+    params: list[Any]
+
+
 async def newest_memory_updated_at(
     *,
     conn,
@@ -642,12 +648,6 @@ async def memories_updated_between(
         limit,
     )
     return [_stored_from_row(row) for row in rows]
-
-
-@dataclass(frozen=True)
-class _ScopeWhere:
-    sql: str
-    params: list[Any]
 
 
 def _refresh_scope_where(
