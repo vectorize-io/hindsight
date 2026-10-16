@@ -465,7 +465,7 @@ class LLMSpanRecorder:
                 span_name = f"{operation_name} {model}"
 
             # Calculate timestamps
-            end_time_ns = time.time_ns()
+            end_time_ns = time.time_ns()  # noqa: TID251
             start_time_ns = end_time_ns - int(duration * 1_000_000_000)
 
             # Create span with explicit timestamps

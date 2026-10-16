@@ -2243,7 +2243,7 @@ async def _execute_tool_with_timing(
     span_name = f"hindsight.reflect_tool_exec.{normalized_name}"
 
     # Calculate timestamps
-    start_time_ns = time.time_ns()
+    start_time_ns = time.time_ns()  # noqa: TID251
 
     with tracer.start_as_current_span(
         span_name,
@@ -2283,7 +2283,7 @@ async def _execute_tool_with_timing(
             span.set_attribute("hindsight.tool.duration_ms", duration_ms)
 
             # End span with correct timestamp
-            end_time_ns = time.time_ns()
+            end_time_ns = time.time_ns()  # noqa: TID251
             span.end(end_time=end_time_ns)
 
             return result, duration_ms
@@ -2294,7 +2294,7 @@ async def _execute_tool_with_timing(
             span.record_exception(e)
             duration_ms = int((time.perf_counter() - start_time) * 1000)
             span.set_attribute("hindsight.tool.duration_ms", duration_ms)
-            end_time_ns = time.time_ns()
+            end_time_ns = time.time_ns()  # noqa: TID251
             span.end(end_time=end_time_ns)
             raise
 

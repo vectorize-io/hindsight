@@ -6210,20 +6210,20 @@ def _register_routes(app: FastAPI):
         # them) — is outside every timer the endpoint sets, so `pre=` cannot see it and a cost
         # there reads as unattributed request time.
         _asgi_t0 = http_request.scope.get("hs_asgi_t0")
-        if _asgi_t0:
-            metrics.record_recall_phase("http_to_handler", max(0.0, handler_start - _asgi_t0))
+        if _asgi_t0 is not None:
+            metrics.record_recall_phase("http_to_handler", handler_start - _asgi_t0)
             # Split it: middleware+routing, dependency resolution, then body read + validation.
             # `http_to_handler` was a third of a recall with only its auth call timed, so the rest
             # of it — Starlette routing, the two dependencies, and reading the request body off the
             # socket — was a single opaque block.
             _deps_t0 = http_request.scope.get("hs_deps_t0")
             _deps_done = http_request.scope.get("hs_deps_done")
-            if _deps_t0:
-                metrics.record_recall_phase("mw_and_routing", max(0.0, _deps_t0 - _asgi_t0))
-            if _deps_t0 and _deps_done:
-                metrics.record_recall_phase("deps_total", max(0.0, _deps_done - _deps_t0))
-            if _deps_done:
-                metrics.record_recall_phase("body_parse", max(0.0, handler_start - _deps_done))
+            if _deps_t0 is not None:
+                metrics.record_recall_phase("mw_and_routing", _deps_t0 - _asgi_t0)
+            if _deps_t0 is not None and _deps_done is not None:
+                metrics.record_recall_phase("deps_total", _deps_done - _deps_t0)
+            if _deps_done is not None:
+                metrics.record_recall_phase("body_parse", handler_start - _deps_done)
 
         try:
             # Default to all fact types if not specified
