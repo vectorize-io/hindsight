@@ -15,6 +15,8 @@ from .base import FileParser, UnsupportedFileTypeError
 
 logger = logging.getLogger(__name__)
 
+# v2 parse API. v1 (/api/parsing, status SUCCESS/ERROR, /result/markdown) returns
+# HTTP 410 for v2-only accounts (#5447).
 _LLAMA_PARSE_BASE_URL = "https://api.cloud.llamaindex.ai/api/v2/parse"
 # v2 requires an explicit tier and version (v1 had a default mode). cost_effective
 # is the closest to v1's default parse at a comparable per-page cost.
@@ -25,6 +27,12 @@ _DEFAULT_TIMEOUT = 300.0  # seconds
 # HTTP status codes that indicate the file type is not supported.
 # Other 4xx codes (401, 403, 429, etc.) are operational errors, not file-type issues.
 _UNSUPPORTED_FILE_STATUS_CODES = {400, 415, 422}
+
+
+class _UploadResult(BaseModel):
+    """``POST /api/v2/parse/upload``: the new job's id."""
+
+    id: str
 
 
 class _ParseJob(BaseModel):
@@ -91,8 +99,7 @@ class LlamaParseParser(FileParser):
         form.add_field("file", bytes(file_data), filename=filename, content_type=content_type)
         form.add_field("configuration", _PARSE_CONFIGURATION)
         async with session.post(f"{_LLAMA_PARSE_BASE_URL}/upload", headers=self._auth_headers, data=form) as resp:
-            upload_data = await _json_or_raise(resp, filename, "upload")
-        job_id: str = upload_data["id"]
+            job_id = _UploadResult.model_validate(await _json_or_raise(resp, filename, "upload")).id
 
         # Step 2: Poll job status until COMPLETED, FAILED or CANCELLED
         deadline = time.monotonic() + self._timeout
