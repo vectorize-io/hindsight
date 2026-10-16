@@ -30,10 +30,12 @@ from unittest.mock import patch
 import pytest
 
 from hindsight_api.engine.chunk_ids import build_chunk_id
+from hindsight_api.extensions import OperationValidationError
 from hindsight_api.engine.memories import create_memories, get_memories, set_memories
 from hindsight_api.engine.memories.base import (
     DOC_META_FILE_STORAGE_KEY,
     DOC_META_RETAIN_PARAMS,
+    META_OBSERVATION_SCOPES,
     EntityPrunePassResult,
     MemoriesExtension,
     RecallArms,
@@ -2727,3 +2729,53 @@ async def test_the_engine_resolves_entities_in_sql_whatever_store_is_configured(
             await _teardown_memory_engine(engine)
     finally:
         set_memories(real_store)
+
+
+async def _store_owned_document(memory, request_context, store: InMemoryMemories) -> None:
+    class _Fact:
+        fact_text = "the cat sat on the mat"
+        fact_type = "world"
+        tags = ["session:1"]
+
+    await store.put_document(
+        bank_id="seam-bank", document_id="d", content_hash="h", original_text="x", chunk_texts=["x"], tags=["session:1"]
+    )
+    await store.insert_facts(conn=None, ops=None, bank_id="seam-bank", facts=[_Fact()], document_id="d")
+    await memory.ensure_bank_profile("seam-bank", request_context=request_context)
+
+
+async def test_engine_scope_patch_writes_the_store_record_and_its_memories(
+    memory, request_context, restore_default_store
+):
+    """#5309 on a store-owned bank: the record's retain params carry the new scope (what reprocess
+    replays) and the memories are rescoped, all through the seam."""
+    store = InMemoryMemories({})
+    set_memories(store)
+    await _store_owned_document(memory, request_context, store)
+
+    assert await memory.update_document("d", "seam-bank", observation_scopes="shared", request_context=request_context)
+
+    params = json.loads(store.documents["d"]["metadata"][DOC_META_RETAIN_PARAMS])
+    assert params["observation_scopes"] == "shared"
+    # The change queues consolidation, which runs inline here and adds an observation row.
+    facts = [m for m in store.rows.values() if m.fact_type == "world"]
+    # The seam carries a memory's scopes in its metadata bag (META_OBSERVATION_SCOPES).
+    assert [(m.metadata or {}).get(META_OBSERVATION_SCOPES) for m in facts] == ['"shared"']
+    assert facts[0].tags == ["session:1"], "a scope-only change keeps the tags"
+
+
+async def test_engine_scope_patch_is_refused_by_a_store_without_support(memory, request_context, restore_default_store):
+    """A store that cannot rewrite the record's params answers 400 and nothing moves — rescoping
+    the memories alone would be undone by the next reprocess."""
+
+    class _NoScopeWrites(InMemoryMemories):
+        set_document_observation_scopes = MemoriesExtension.set_document_observation_scopes
+
+    store = _NoScopeWrites({})
+    set_memories(store)
+    await _store_owned_document(memory, request_context, store)
+
+    with pytest.raises(OperationValidationError) as e:
+        await memory.update_document("d", "seam-bank", observation_scopes="shared", request_context=request_context)
+    assert e.value.status_code == 400
+    assert [(m.metadata or {}).get(META_OBSERVATION_SCOPES) for m in store.rows.values()] == [None]
