@@ -384,7 +384,12 @@ class LocalSTEmbeddings(Embeddings):
             # property of its header length, so check every model rather than a known list.
             align_local_model_weights(self._model, label=f"Embeddings[{self.model_name}]")
 
-            self._dimension = self._model.get_sentence_embedding_dimension()
+            # sentence-transformers 5.4 renamed the method and deprecated the old name
+            # with a FutureWarning; 5.0-5.3 (still allowed by local-ml) only have the old one.
+            get_dimension = getattr(self._model, "get_embedding_dimension", None)
+            if get_dimension is None:
+                get_dimension = self._model.get_sentence_embedding_dimension
+            self._dimension = get_dimension()
             self._device_type = resolve_model_device_type(self._model)
 
             # Smoke-test before serving: a NaN embedding is invisible downstream (it

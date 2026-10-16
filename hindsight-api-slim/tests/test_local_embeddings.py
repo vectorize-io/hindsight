@@ -39,3 +39,21 @@ def test_sentence_transformer_exposes_input_type_entry_points():
 
     assert hasattr(sentence_transformers.SentenceTransformer, "encode_query")
     assert hasattr(sentence_transformers.SentenceTransformer, "encode_document")
+
+
+async def test_local_embeddings_prefer_the_renamed_dimension_method():
+    """sentence-transformers 5.4+ warns on get_sentence_embedding_dimension; use the new name."""
+    model = MagicMock(spec=["get_embedding_dimension", "get_sentence_embedding_dimension", "encode"])
+    model.get_embedding_dimension.return_value = 8
+    model.get_sentence_embedding_dimension.side_effect = AssertionError("deprecated method called")
+    model.encode.side_effect = lambda texts, **_: np.zeros((len(texts), 8), dtype=np.float32)
+    embeddings = LocalSTEmbeddings(model_name="test-model", force_cpu=True)
+
+    with (
+        patch("sentence_transformers.SentenceTransformer", return_value=model),
+        patch("hindsight_api.engine.embeddings.align_local_model_weights"),
+        patch("hindsight_api.engine.embeddings.resolve_model_device_type", return_value="cpu"),
+    ):
+        await embeddings.initialize()
+
+    assert embeddings.dimension == 8
