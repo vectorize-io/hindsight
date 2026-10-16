@@ -413,7 +413,7 @@ def test_cli_status_import_and_no_browser_url(tmp_path, capsys, monkeypatch):
 
     source = tmp_path / "laptop.json"
     source.write_text(json.dumps(_credential()))
-    assert auth.main(["--home", str(home), "import", str(source)]) == 0
+    assert auth.main(["--home", str(home), "login", "--from-file", str(source)]) == 0
     assert auth.main(["--home", str(home), "status"]) == 0
     out = capsys.readouterr().out
     assert "Plan usage enabled: yes" in out and "rt-1" not in out

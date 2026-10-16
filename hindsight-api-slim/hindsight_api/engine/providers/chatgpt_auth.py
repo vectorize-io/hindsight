@@ -23,7 +23,7 @@ default, ``HINDSIGHT_API_LLM_CHATGPT_HOME`` to relocate) holding:
 Refresh tokens rotate, so every refresh happens under :func:`oauth_store_lock`
 and re-reads the file first: a sibling process may already have rotated it.
 
-Interactive commands (``login``, ``status``, ``logout``, ``import``) run as
+Interactive commands (``login``, ``status``, ``logout``) run as
 ``hindsight-admin chatgpt <command>``. The
 server never starts a login.
 
@@ -1056,11 +1056,22 @@ def main(argv: list[str] | None = None, prog: str = "chatgpt_auth") -> int:
         help="Credential directory (default: HINDSIGHT_API_LLM_CHATGPT_HOME or ~/.hindsight/chatgpt)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    login_parser = sub.add_parser("login", help="Sign in with ChatGPT in a browser on this machine.")
+    login_parser = sub.add_parser(
+        "login", help="Sign in with ChatGPT in a browser, or install a credential file made on another machine."
+    )
     login_parser.add_argument("--port", type=int, default=DEFAULT_CALLBACK_PORT, help="Loopback callback port.")
     login_parser.add_argument("--no-browser", action="store_true", help="Print the sign-in URL instead of opening it.")
     login_parser.add_argument(
         "--enable-plan-usage", action="store_true", help="Ask for consent again, to allow ChatGPT plan usage."
+    )
+    login_parser.add_argument(
+        "--from-file",
+        type=Path,
+        default=None,
+        help="Install a credential file from a machine with a browser instead of signing in here (headless servers).",
+    )
+    login_parser.add_argument(
+        "--force", action="store_true", help="With --from-file: replace a different account's registration."
     )
     sub.add_parser("status", help="Show the stored account, client, scopes and expiry (no token values).")
     logout_parser = sub.add_parser("logout", help="Revoke the session and clear local tokens.")
@@ -1069,14 +1080,17 @@ def main(argv: list[str] | None = None, prog: str = "chatgpt_auth") -> int:
         action="store_true",
         help="Clear local tokens without revoking (after moving the credentials to another host).",
     )
-    import_parser = sub.add_parser("import", help="Install a credential file made on another machine.")
-    import_parser.add_argument("source", type=Path)
-    import_parser.add_argument("--force", action="store_true", help="Replace a different account's registration.")
     args = parser.parse_args(argv)
     home: Path = args.home.expanduser() if args.home else default_home()
 
     try:
-        if args.command == "login":
+        if args.command == "login" and args.from_file:
+            source = args.from_file.expanduser()
+            if source.resolve() == (home / CREDENTIAL_FILE).resolve():
+                print("Source is already the local credential file.", file=sys.stderr)
+                return 1
+            asyncio.run(import_credential(home, source, force=args.force))
+        elif args.command == "login":
             credential = asyncio.run(
                 login(
                     home,
@@ -1097,11 +1111,6 @@ def main(argv: list[str] | None = None, prog: str = "chatgpt_auth") -> int:
             print("\n".join(status_lines(home)))
         elif args.command == "logout":
             asyncio.run(logout(home, revoke=not args.local_only))
-        elif args.command == "import":
-            if args.source.expanduser().resolve() == (home / CREDENTIAL_FILE).resolve():
-                print("Source is already the local credential file.", file=sys.stderr)
-                return 1
-            asyncio.run(import_credential(home, args.source.expanduser(), force=args.force))
     except ChatGPTAuthError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

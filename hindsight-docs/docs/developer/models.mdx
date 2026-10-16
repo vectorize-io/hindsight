@@ -355,12 +355,12 @@ credentials, so it never shares or rotates the Codex CLI's tokens.
 browser, so sign in on your laptop and move the credential file to the server.
 
 1. On the laptop: run `login` as above.
-2. Copy the file over SSH and import it on the server as the user that runs Hindsight (add
-   `--home <dir>` before `import` if the server sets `HINDSIGHT_API_LLM_CHATGPT_HOME`).
-   `import` keeps the server's own `host_id` (creating one on first use) instead of the laptop's:
+2. Copy the file over SSH and install it on the server with `login --from-file`, as the user that runs Hindsight (add
+   `--home <dir>` before `login` if the server sets `HINDSIGHT_API_LLM_CHATGPT_HOME`).
+   `--from-file` keeps the server's own `host_id` (creating one on first use) instead of the laptop's:
    ```bash
    scp ~/.hindsight/chatgpt/credentials.json server:/tmp/chatgpt.json
-   ssh server 'hindsight-admin chatgpt import /tmp/chatgpt.json && rm /tmp/chatgpt.json'
+   ssh server 'hindsight-admin chatgpt login --from-file /tmp/chatgpt.json && rm /tmp/chatgpt.json'
    ```
 3. On the laptop, stop using that copy without revoking it:
    ```bash
@@ -368,7 +368,7 @@ browser, so sign in on your laptop and move the credential file to the server.
    ```
    Refresh tokens rotate, so after the copy only the server may use and refresh this session. A plain
    `logout` would revoke it and end the server's session too. `--local-only` clears the laptop's
-   tokens but keeps its client registration for a later `login`. `import` refuses to replace a
+   tokens but keeps its client registration for a later `login`. `--from-file` refuses to replace a
    different account's registration on the server unless you pass `--force`.
 
 The server then owns refreshes. Sign in again on the laptop later if you also want Hindsight there.
