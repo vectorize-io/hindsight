@@ -523,6 +523,16 @@ class RetainOperationConflictError(ValueError):
     """
 
 
+class InvalidRetainRequestError(ValueError):
+    """Raised when a retain item can never succeed as sent (e.g. ``update_mode='append'``
+    without a ``document_id``).
+
+    A ``ValueError`` so the HTTP layer answers 400. Checked before an async retain
+    is queued, and classed non-retryable in the worker: the same payload fails the
+    same way on every attempt, so a retry only delays the failure (issue #5415).
+    """
+
+
 class MentalModelRefreshError(Exception):
     """Raised when refresh_mental_model cannot produce new content.
 
@@ -1580,7 +1590,8 @@ def _is_non_retryable_task_error(e: Exception) -> bool:
     if _is_foreign_key_violation(e):
         return False
     return (
-        isinstance(e, asyncpg.exceptions.IntegrityConstraintViolationError)
+        isinstance(e, InvalidRetainRequestError)
+        or isinstance(e, asyncpg.exceptions.IntegrityConstraintViolationError)
         or _is_oracledb_integrity_error(e)
         or _is_invalid_embedding_dimension_error(e)
         # A provider content-policy refusal is a function of the content, not of
@@ -6637,24 +6648,7 @@ class MemoryEngine(MemoryEngineInterface):
         # race each other — unlike the queued path, which still rejects
         # duplicates (see submit_async_retain).
 
-        # Validate update_mode=append requires document_id
-        for item in contents:
-            if item.get("update_mode") == "append" and not item.get("document_id"):
-                raise ValueError("update_mode='append' requires a document_id")
-
-        # Append mode rebuilds the full document by reading back the previously
-        # stored original_text and prepending it. With store_document_text
-        # disabled there is no stored text to read, so the append would silently
-        # drop all prior content — reject it explicitly instead. Resolve the
-        # per-bank setting only when an append is actually requested.
-        if any(item.get("update_mode") == "append" for item in contents):
-            bank_cfg = await self._config_resolver.get_bank_config(bank_id, request_context)
-            if not bank_cfg.get("store_document_text", DEFAULT_STORE_DOCUMENT_TEXT):
-                raise ValueError(
-                    "update_mode='append' is not supported when document text storage "
-                    "(store_document_text / HINDSIGHT_API_STORE_DOCUMENT_TEXT) is disabled: the prior "
-                    "document text is not stored and cannot be appended to. Use update_mode='replace' instead."
-                )
+        await self._validate_retain_update_modes(bank_id, contents, request_context)
 
         # Fold items that share an explicit document_id into one document. On the
         # synchronous in-process path this is safe — sub-batches run sequentially,
@@ -22478,6 +22472,32 @@ class MemoryEngine(MemoryEngineInterface):
         items_count = int(metadata.get("items_count", 0)) if metadata else 0
         return {"operation_id": str(operation_id), "items_count": items_count}
 
+    async def _validate_retain_update_modes(
+        self, bank_id: str, contents: "Sequence[Mapping[str, Any]]", request_context: "RequestContext"
+    ) -> None:
+        """Reject ``update_mode='append'`` items that can never succeed.
+
+        Shared by the synchronous path and ``submit_async_retain``, so a queued
+        retain is refused at submit time instead of failing after its retries.
+        """
+        for item in contents:
+            if item.get("update_mode") == "append" and not item.get("document_id"):
+                raise InvalidRetainRequestError("update_mode='append' requires a document_id")
+
+        # Append mode rebuilds the full document by reading back the previously
+        # stored original_text and prepending it. With store_document_text
+        # disabled there is no stored text to read, so the append would silently
+        # drop all prior content — reject it explicitly instead. Resolve the
+        # per-bank setting only when an append is actually requested.
+        if any(item.get("update_mode") == "append" for item in contents):
+            bank_cfg = await self._config_resolver.get_bank_config(bank_id, request_context)
+            if not bank_cfg.get("store_document_text", DEFAULT_STORE_DOCUMENT_TEXT):
+                raise InvalidRetainRequestError(
+                    "update_mode='append' is not supported when document text storage "
+                    "(store_document_text / HINDSIGHT_API_STORE_DOCUMENT_TEXT) is disabled: the prior "
+                    "document text is not stored and cannot be appended to. Use update_mode='replace' instead."
+                )
+
     async def submit_async_retain(
         self,
         bank_id: str,
@@ -22545,6 +22565,7 @@ class MemoryEngine(MemoryEngineInterface):
         contents = cast(list[dict[str, Any]], sanitize_value(contents))
         document_tags = sanitize_value(document_tags)
         strategy = sanitize_value(strategy)
+        await self._validate_retain_update_modes(bank_id, contents, request_context)
 
         # Idempotency fast path: a caller-supplied id that already resolves to a
         # prior submission is a retried request — return the original operation.
