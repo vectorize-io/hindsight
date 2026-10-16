@@ -556,7 +556,7 @@ async def run_reflect_agent(
     cache TTL is the backstop if the teardown never runs; the delete is
     best-effort and never allowed to fail a reflect.
     """
-    reflect_id = reflect_id or f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"
+    reflect_id = reflect_id or f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"  # noqa: TID251
     provider_impl = getattr(llm_config, "_provider_impl", None)
     # Reflect step-by-step caching needs the provider to support it AND the
     # dedicated reflect flag (on by default; distinct from the global prompt-cache
@@ -664,7 +664,7 @@ async def _run_reflect_agent_inner(
     Returns:
         ReflectAgentResult with final answer and metadata
     """
-    start_time = time.time()
+    start_time = time.perf_counter()
 
     # Transport-level output cap for the synthesis calls. Decoupled from
     # ``max_tokens`` (a page-length target enforced via prompt + rewrite): None by
@@ -838,7 +838,7 @@ async def _run_reflect_agent_inner(
         )
 
     def _log_completion(answer: str, iterations: int, forced: bool = False):
-        elapsed_ms = int((time.time() - start_time) * 1000)
+        elapsed_ms = int((time.perf_counter() - start_time) * 1000)
         tools_summary = (
             ", ".join(
                 f"{t['tool']}({t['input_summary']})={t['duration_ms']}ms/{t.get('output_chars', 0)}c"
@@ -881,7 +881,7 @@ async def _run_reflect_agent_inner(
         writing an answer; callers that extract rather than write override it.
         """
         nonlocal total_input_tokens, total_output_tokens, total_cached_tokens, total_thoughts_tokens
-        llm_start = time.time()
+        llm_start = time.perf_counter()
         call_result = await llm_config.call(
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -893,7 +893,7 @@ async def _run_reflect_agent_inner(
         )
         response = call_result.content
         usage = call_result.usage
-        llm_duration = int((time.time() - llm_start) * 1000)
+        llm_duration = int((time.perf_counter() - llm_start) * 1000)
         total_input_tokens += usage.input_tokens
         total_output_tokens += usage.output_tokens
         total_cached_tokens += getattr(usage, "cached_tokens", 0) or 0
@@ -964,7 +964,7 @@ async def _run_reflect_agent_inner(
         nonlocal total_input_tokens, total_output_tokens, total_cached_tokens, total_thoughts_tokens
         if not messages or messages[-1].get("role") != "tool":
             return None
-        llm_start = time.time()
+        llm_start = time.perf_counter()
         try:
             result = await llm_config.call_with_tools(
                 messages=[
@@ -996,7 +996,7 @@ async def _run_reflect_agent_inner(
                 # prefix the provider already holds — and a reader (or a test) has to
                 # be able to tell which path produced the answer.
                 "scope": "closing_done",
-                "duration_ms": int((time.time() - llm_start) * 1000),
+                "duration_ms": int((time.perf_counter() - llm_start) * 1000),
                 "input_tokens": result.input_tokens,
                 "output_tokens": result.output_tokens,
             }
@@ -1278,7 +1278,7 @@ async def _run_reflect_agent_inner(
             return await _forced_final_synthesis(iteration + 1)
 
         # Call LLM with tools
-        llm_start = time.time()
+        llm_start = time.perf_counter()
 
         # Will the NEXT turn be an ``auto`` turn (the only kind that references a
         # cache)? The cache we schedule this turn covers this turn's input and is
@@ -1319,7 +1319,7 @@ async def _run_reflect_agent_inner(
                 ct_kwargs["cached_prefix"] = rolling_cache_name
                 ct_kwargs["cached_prefix_message_count"] = rolling_cache_boundary
             result = await llm_config.call_with_tools(**ct_kwargs)
-            llm_duration = int((time.time() - llm_start) * 1000)
+            llm_duration = int((time.perf_counter() - llm_start) * 1000)
             queued_ms = int(queue_wait.seconds * 1000)
             consecutive_errors = 0
             total_input_tokens += result.input_tokens
@@ -1342,7 +1342,7 @@ async def _run_reflect_agent_inner(
             # client disconnect stays a 499 (issue #2122).
             raise
         except Exception as e:
-            err_duration = int((time.time() - llm_start) * 1000)
+            err_duration = int((time.perf_counter() - llm_start) * 1000)
             queued_ms = int(queue_wait.seconds * 1000)
             consecutive_errors += 1
             logger.warning(
@@ -1922,7 +1922,7 @@ async def _rewrite_to_length_budget(
     if not llm_config or max_tokens is None or count_prompt_tokens(answer) <= max_tokens:
         return LengthRewrite(applied=False, markdown=answer, structure=document)
 
-    rewrite_start = time.time()
+    rewrite_start = time.perf_counter()
     # In document mode the trim is asked for as a document too. Asking for
     # prose here would put the model back in the business of writing the
     # markdown that gets stored — on the one path where the answer is long
@@ -1967,7 +1967,7 @@ async def _rewrite_to_length_budget(
             applied=True,
             markdown=markdown,
             structure=structure,
-            duration_ms=int((time.time() - rewrite_start) * 1000),
+            duration_ms=int((time.perf_counter() - rewrite_start) * 1000),
             input_tokens=totals.input_tokens,
             output_tokens=totals.output_tokens,
             cached_tokens=totals.cached_tokens,
@@ -2234,7 +2234,7 @@ async def _execute_tool_with_timing(
     """Execute a tool call and return result with timing."""
     from hindsight_api.tracing import get_tracer
 
-    start_time = time.time()
+    start_time = time.perf_counter()
 
     # Create span for tool execution
     tracer = get_tracer()
@@ -2279,7 +2279,7 @@ async def _execute_tool_with_timing(
 
                 span.set_status(Status(StatusCode.OK))
 
-            duration_ms = int((time.time() - start_time) * 1000)
+            duration_ms = int((time.perf_counter() - start_time) * 1000)
             span.set_attribute("hindsight.tool.duration_ms", duration_ms)
 
             # End span with correct timestamp
@@ -2292,7 +2292,7 @@ async def _execute_tool_with_timing(
 
             span.set_status(Status(StatusCode.ERROR, str(e)))
             span.record_exception(e)
-            duration_ms = int((time.time() - start_time) * 1000)
+            duration_ms = int((time.perf_counter() - start_time) * 1000)
             span.set_attribute("hindsight.tool.duration_ms", duration_ms)
             end_time_ns = time.time_ns()
             span.end(end_time=end_time_ns)

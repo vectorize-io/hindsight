@@ -5490,7 +5490,7 @@ def _register_routes(app: FastAPI):
         operator opts in.
         """
         # Dependency-resolution start, read by api_recall to split `http_to_handler`.
-        request.scope.setdefault("hs_deps_t0", time.time())
+        request.scope.setdefault("hs_deps_t0", time.perf_counter())
         api_key = None
         if authorization:
             if authorization.lower().startswith("bearer "):
@@ -5608,9 +5608,9 @@ def _register_routes(app: FastAPI):
                 return
             from hindsight_api.extensions import PrecheckContext
 
-            _t0_dep_auth = time.time()
+            _t0_dep_auth = time.perf_counter()
             await app.state.memory._authenticate_tenant(request_context)
-            get_metrics_collector().record_recall_phase("dep_auth", time.time() - _t0_dep_auth)
+            get_metrics_collector().record_recall_phase("dep_auth", time.perf_counter() - _t0_dep_auth)
             cl_header = request.headers.get("content-length")
             content_length: int | None = None
             if cl_header is not None:
@@ -5626,16 +5626,16 @@ def _register_routes(app: FastAPI):
                 request_context=request_context,
                 content_length=content_length,
             )
-            _t0_dep_precheck = time.time()
+            _t0_dep_precheck = time.perf_counter()
             result = await validator.precheck(ctx)
-            get_metrics_collector().record_recall_phase("dep_precheck", time.time() - _t0_dep_precheck)
+            get_metrics_collector().record_recall_phase("dep_precheck", time.perf_counter() - _t0_dep_precheck)
             if not result.allowed:
                 raise HTTPException(
                     status_code=result.status_code,
                     detail=result.reason or "Operation not allowed",
                 )
 
-            request.scope["hs_deps_done"] = time.time()
+            request.scope["hs_deps_done"] = time.perf_counter()
 
         return _precheck_dep
 
@@ -6204,7 +6204,7 @@ def _register_routes(app: FastAPI):
         """Run a recall and return results with trace."""
         import time
 
-        handler_start = time.time()
+        handler_start = time.perf_counter()
         metrics = get_metrics_collector()
         # Everything before this line — routing, body parsing, dependency resolution (auth among
         # them) — is outside every timer the endpoint sets, so `pre=` cannot see it and a cost
@@ -6255,12 +6255,12 @@ def _register_routes(app: FastAPI):
                 request.include.source_facts.max_tokens_per_observation if include_source_facts else -1
             )
 
-            pre_recall = time.time() - handler_start
+            pre_recall = time.perf_counter() - handler_start
             # Run recall with tracing (record metrics)
             with metrics.record_operation(
                 "recall", bank_id=bank_id, source="api", budget=request.budget.value, max_tokens=request.max_tokens
             ):
-                recall_start = time.time()
+                recall_start = time.perf_counter()
                 # Cancel the recall if the client disconnects: the engine checks
                 # request_context at each stage boundary and aborts abandoned
                 # work rather than running it to completion (issue #2122).
@@ -6293,7 +6293,7 @@ def _register_routes(app: FastAPI):
                     operation="recall",
                     bank_id=bank_id,
                 )
-                engine_done = time.time()
+                engine_done = time.perf_counter()
                 metrics.record_recall_phase("engine_call", engine_done - recall_start, diagnostic=True)
 
             # Convert core MemoryFact objects to API RecallResult objects (excluding internal metrics)
@@ -6381,12 +6381,12 @@ def _register_routes(app: FastAPI):
                 source_facts_truncated=core_result.source_facts_truncated,
             )
 
-            handler_duration = time.time() - handler_start
+            handler_duration = time.perf_counter() - handler_start
             # END OF THE ENGINE CALL, not end of handler. Measured at the end, this window also
             # covered response building, and `post_recall` — computed as the remainder — was then
             # ~0 by construction. That made a slow response-assembly path unreadable: the line
             # said pre=0 post=0 and put every millisecond into `recall`, whatever spent it.
-            metrics.record_recall_phase("post_engine", max(0.0, time.time() - engine_done))
+            metrics.record_recall_phase("post_engine", max(0.0, time.perf_counter() - engine_done))
             recall_duration = engine_done - recall_start
             post_recall = handler_duration - pre_recall - recall_duration
             if handler_duration > 1.0:
@@ -6404,7 +6404,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except (asyncio.TimeoutError, TimeoutError):
-            handler_duration = time.time() - handler_start
+            handler_duration = time.perf_counter() - handler_start
             logger.error(
                 f"[RECALL TIMEOUT] bank={bank_id} handler_duration={handler_duration:.3f}s - database query timed out"
             )
@@ -6417,7 +6417,7 @@ def _register_routes(app: FastAPI):
                 raise unavailable
             import traceback
 
-            handler_duration = time.time() - handler_start
+            handler_duration = time.perf_counter() - handler_start
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(
                 f"[RECALL ERROR] bank={bank_id} handler_duration={handler_duration:.3f}s error={str(e)}\n{error_detail}"

@@ -198,8 +198,8 @@ async def test_slow_acquire_warning_honours_configured_threshold(monkeypatch, ca
     from types import SimpleNamespace
 
     clock = iter([100.0, 100.064])
-    # Swap the module's ``time`` binding, not ``time.time`` itself: logging stamps records with it too.
-    monkeypatch.setattr("hindsight_api.engine.db_utils.time", SimpleNamespace(time=lambda: next(clock)))
+    # Swap the module's ``time`` binding, not ``time.perf_counter`` itself, so only this module sees the fake clock.
+    monkeypatch.setattr("hindsight_api.engine.db_utils.time", SimpleNamespace(perf_counter=lambda: next(clock)))
     monkeypatch.setattr(
         "hindsight_api.engine.db_utils._get_raw_config",
         lambda: SimpleNamespace(db_pool_slow_acquire_threshold_seconds=threshold),

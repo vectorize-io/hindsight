@@ -61,6 +61,7 @@ from hindsight_api.engine.llm_transport import (
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.providers.openai_compatible_headers import with_openai_compatible_user_agent
+from hindsight_api.engine.remote_retry import jittered_backoff
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
@@ -1221,7 +1222,7 @@ class OpenAICompatibleLLM(LLMInterface):
                 attempt_context=attempt_context,
             )
 
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         # Build call parameters
         call_params: dict[str, Any] = {
@@ -1437,7 +1438,7 @@ class OpenAICompatibleLLM(LLMInterface):
                     result = _strip_reasoning_tags(result)
 
                 # Record token usage metrics
-                duration = time.time() - start_time
+                duration = time.perf_counter() - start_time
                 usage = response.usage
                 # ``output_tokens``/``total_tokens`` are visible-only past this
                 # point, with reasoning surfaced separately in
@@ -1554,7 +1555,7 @@ class OpenAICompatibleLLM(LLMInterface):
                                         result = response_format.model_validate(converted)
 
                                     # Record metrics
-                                    duration = time.time() - start_time
+                                    duration = time.perf_counter() - start_time
                                     metrics = get_metrics_collector()
                                     metrics.record_llm_call(
                                         provider=self.provider,
@@ -1597,10 +1598,7 @@ class OpenAICompatibleLLM(LLMInterface):
                         f"APIStatusError ({self.provider}/{self.model}, scope={scope}, "
                         f"attempt {attempt + 1}/{max_retries + 1}): {_summarize_status_error(e)}"
                     )
-                    backoff = min(initial_backoff * (2**attempt), max_backoff)
-                    jitter = backoff * 0.2 * (2 * (time.time() % 1) - 1)
-                    sleep_time = backoff + jitter
-                    await asyncio.sleep(sleep_time)
+                    await asyncio.sleep(jittered_backoff(attempt, initial_backoff, max_backoff))
                 else:
                     logger.error(
                         f"API error after {max_retries + 1} attempts ({self.provider}/{self.model}, "
@@ -1660,7 +1658,7 @@ class OpenAICompatibleLLM(LLMInterface):
         Returns:
             LLMToolCallResult with content and/or tool_calls.
         """
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         request_tool_choice: str | None
         if tool_choice.mode is LLMToolChoiceMode.NAMED:
@@ -1793,7 +1791,7 @@ class OpenAICompatibleLLM(LLMInterface):
                 content = message.content
 
                 # Record metrics
-                duration = time.time() - start_time
+                duration = time.perf_counter() - start_time
                 # See ``visible_token_usage``: ``output_tokens`` is visible-only,
                 # with reasoning surfaced separately in ``thoughts_tokens``.
                 token_counts = visible_token_usage(response)
@@ -1952,7 +1950,7 @@ class OpenAICompatibleLLM(LLMInterface):
         message text, so free-form calls can reach the one endpoint that honours
         ``options.num_ctx``.
         """
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         # Get the JSON schema from the Pydantic model
         schema = provider_json_schema(response_format) if hasattr(response_format, "model_json_schema") else None
@@ -2111,7 +2109,7 @@ class OpenAICompatibleLLM(LLMInterface):
                                 raise
 
                 # Extract token usage from Ollama response
-                duration = time.time() - start_time
+                duration = time.perf_counter() - start_time
                 input_tokens = result.get("prompt_eval_count", 0) or 0
                 output_tokens = result.get("eval_count", 0) or 0
                 total_tokens = input_tokens + output_tokens

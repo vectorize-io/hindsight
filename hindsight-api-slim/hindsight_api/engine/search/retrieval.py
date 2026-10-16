@@ -153,12 +153,12 @@ async def retrieve_all_fact_types_parallel(
     import time
 
     config = get_config()
-    start_time = time.time()
+    start_time = time.perf_counter()
     timings: dict[str, float] = {}
 
     # Step 1: Extract temporal constraint first (CPU work, no DB)
     # Do this before the store call so we know whether the temporal arm is needed at all.
-    temporal_extraction_start = time.time()
+    temporal_extraction_start = time.perf_counter()
     temporal_constraint = None
     if enable_temporal_retrieval:
         if temporal_window is not None:
@@ -175,7 +175,7 @@ async def retrieve_all_fact_types_parallel(
             temporal_constraint = await extract_temporal_constraint_async(
                 query_text, reference_date=question_date, analyzer=query_analyzer
             )
-    temporal_extraction_time = time.time() - temporal_extraction_start
+    temporal_extraction_time = time.perf_counter() - temporal_extraction_start
     timings["temporal_extraction"] = temporal_extraction_time
 
     # Step 2: Run every arm for every fact type through the store's single recall method.
@@ -187,7 +187,7 @@ async def retrieve_all_fact_types_parallel(
     # query) or the host adding overhead around it. The nine per-arm rows below cannot answer that
     # either -- a store-owned recall returns every arm from a single call, so their durations are
     # literals.
-    _unified_start = time.time()
+    _unified_start = time.perf_counter()
     unified = await get_memories().recall_unified(
         conn=pool,
         bank_id=bank_id,
@@ -208,7 +208,7 @@ async def retrieve_all_fact_types_parallel(
         enable_graph=enable_graph_retrieval,
     )
 
-    _unified_elapsed = time.time() - _unified_start
+    _unified_elapsed = time.perf_counter() - _unified_start
 
     results_by_fact_type: dict[str, ParallelRetrievalResult] = {}
     for ft in fact_types:
@@ -237,7 +237,7 @@ async def retrieve_all_fact_types_parallel(
             max_conn_wait=0.0,
         )
 
-    timings["total"] = time.time() - start_time
+    timings["total"] = time.perf_counter() - start_time
     return MultiFactTypeRetrievalResult(
         results_by_fact_type=results_by_fact_type,
         timings=timings,

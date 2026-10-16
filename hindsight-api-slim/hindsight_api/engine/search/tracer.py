@@ -101,7 +101,7 @@ class SearchTracer:
 
     def start(self):
         """Start timing the search."""
-        self.start_time = time.time()
+        self.start_time = time.perf_counter()
 
     def record_query_embedding(self, embedding: list[float]):
         """Record the query embedding."""
@@ -383,7 +383,7 @@ class SearchTracer:
         if self.start_time is None:
             raise ValueError("Tracer not started - call start() first")
 
-        total_duration = time.time() - self.start_time
+        total_duration = time.perf_counter() - self.start_time
 
         # Set final ranks on visits based on results
         for rank, result in enumerate(final_results, 1):

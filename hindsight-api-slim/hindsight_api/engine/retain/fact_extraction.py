@@ -3033,12 +3033,12 @@ async def extract_facts_from_contents_batch_api(
     # Step 3: Poll until complete
     import time
 
-    start_time = time.time()
+    start_time = time.perf_counter()
     while True:
         status_info = await batch_impl.get_batch_status(batch_id)
         status = status_info["status"]
 
-        elapsed = time.time() - start_time
+        elapsed = time.perf_counter() - start_time
         logger.info(
             f"Batch {batch_id}: status={status}, "
             f"completed={status_info['request_counts']['completed']}/{status_info['request_counts']['total']}, "

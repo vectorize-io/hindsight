@@ -26,6 +26,7 @@ from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterfac
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
+from hindsight_api.engine.remote_retry import jittered_backoff
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import has_tagged_union, provider_json_schema
 from hindsight_api.metrics import get_metrics_collector
@@ -455,7 +456,7 @@ class GeminiLLM(LLMInterface):
 
         Returns:
         """
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         # Convert OpenAI-style messages to Gemini format. We ALWAYS build
         # system_instruction (even when a cache is in use): the config builder
@@ -615,7 +616,7 @@ class GeminiLLM(LLMInterface):
                     cached_tokens = cached_input_tokens
 
                 # Record metrics
-                duration = time.time() - start_time
+                duration = time.perf_counter() - start_time
                 metrics = get_metrics_collector()
                 metrics.record_llm_call(
                     provider=self.provider,
@@ -760,9 +761,7 @@ class GeminiLLM(LLMInterface):
                 if e.code in (429, 500, 502, 503, 504) or (e.code and e.code >= 500):
                     last_exception = e
                     if attempt < max_retries:
-                        backoff = min(initial_backoff * (2**attempt), max_backoff)
-                        jitter = backoff * 0.2 * (2 * (time.time() % 1) - 1)
-                        await asyncio.sleep(backoff + jitter)
+                        await asyncio.sleep(jittered_backoff(attempt, initial_backoff, max_backoff))
                     else:
                         logger.error(f"Gemini API error after {max_retries + 1} attempts: {str(e)}")
                         raise
@@ -851,7 +850,7 @@ class GeminiLLM(LLMInterface):
         Returns:
             LLMToolCallResult with content and/or tool_calls.
         """
-        start_time = time.time()
+        start_time = time.perf_counter()
         using_cache = cached_prefix is not None
 
         # Convert tools to Gemini format. While the cache is in use the tool
@@ -1015,7 +1014,7 @@ class GeminiLLM(LLMInterface):
                     thoughts_tokens = getattr(response.usage_metadata, "thoughts_token_count", 0) or 0
 
                 # Record metrics
-                duration = time.time() - start_time
+                duration = time.perf_counter() - start_time
                 metrics = get_metrics_collector()
                 metrics.record_llm_call(
                     provider=self.provider,

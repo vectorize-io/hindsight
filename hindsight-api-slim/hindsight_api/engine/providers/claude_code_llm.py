@@ -326,7 +326,7 @@ class ClaudeCodeLLM(LLMInterface):
             query,
         )
 
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         # Build system prompt
         system_prompt = ""
@@ -439,7 +439,7 @@ class ClaudeCodeLLM(LLMInterface):
                     result = full_text
 
                 # Record metrics
-                duration = time.time() - start_time
+                duration = time.perf_counter() - start_time
                 metrics = get_metrics_collector()
 
                 # Estimate token usage (Claude Agent SDK doesn't report exact counts)
@@ -576,7 +576,7 @@ class ClaudeCodeLLM(LLMInterface):
             create_sdk_mcp_server,
         )
 
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         # Convert OpenAI tool format to Claude Agent SDK SdkMcpTool format
         sdk_tools: list[SdkMcpTool] = []
@@ -760,7 +760,7 @@ class ClaudeCodeLLM(LLMInterface):
                                     raise _result_error(message)
 
                 # Record metrics
-                duration = time.time() - start_time
+                duration = time.perf_counter() - start_time
                 metrics = get_metrics_collector()
 
                 # Estimate token usage (Claude Agent SDK doesn't report exact counts)

@@ -162,7 +162,7 @@ class WorkerMetrics:
     def render(self, *, stale_after_s: float = STALE_AFTER_S) -> bytes:
         """Every live worker's series, each labelled with its slot. This worker's are read live."""
         parts: list[tuple[str, str]] = [(str(self.slot), generate_latest(self._registry).decode())]
-        now = time.time()
+        now = time.time()  # noqa: TID251
         for path in sorted(glob.glob(os.path.join(self.directory, "worker-*.prom"))):
             slot = os.path.basename(path)[len("worker-") : -len(".prom")]
             if slot == str(self.slot):

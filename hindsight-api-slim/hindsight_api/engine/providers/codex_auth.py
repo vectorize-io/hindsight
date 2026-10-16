@@ -264,12 +264,12 @@ class CodexAuthManager:
         exp = self._decode_jwt_exp_unixtime(self.access_token)
         if exp is None:
             return False
-        return exp <= int(time.time()) + skew_seconds
+        return exp <= int(time.time()) + skew_seconds  # noqa: TID251
 
     def _token_is_fresh_with_known_expiry(self, skew_seconds: int = _CODEX_TOKEN_REFRESH_SKEW_SECONDS) -> bool:
         """True only when the cached token has a known expiry outside the skew window."""
         exp = self._decode_jwt_exp_unixtime(self.access_token)
-        return exp is not None and exp > int(time.time()) + skew_seconds
+        return exp is not None and exp > int(time.time()) + skew_seconds  # noqa: TID251
 
     # ------------------------------------------------------------------
     # Persistence

@@ -144,7 +144,10 @@ class HttpObservabilityMiddleware:
         # BEFORE their body ran. `handler_start` is set inside the endpoint, so routing, body
         # parsing and dependency resolution (auth among them) are invisible to any timer the
         # endpoint sets — which is exactly where an unexplained request cost can hide.
-        scope["hs_asgi_t0"] = time.time()
+        # perf_counter, like `hs_deps_t0`, `hs_deps_done` and `handler_start`: api_recall subtracts these
+        # four from one another, so converting only one of them would mix two clocks and give a value
+        # about 1.8e9 s off.
+        scope["hs_asgi_t0"] = time.perf_counter()
         endpoint = http_endpoint_label(scope)
         method = scope.get("method", "GET")
 

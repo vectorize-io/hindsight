@@ -1245,7 +1245,7 @@ class ConsolidationPerfLog:
 
     def __init__(self, bank_id: str):
         self.bank_id = bank_id
-        self.start_time = time.time()
+        self.start_time = time.perf_counter()
         self.lines: list[str] = []
         self.timings: dict[str, float] = {}
         self.timing_counts: dict[str, int] = {}
@@ -1303,7 +1303,7 @@ class ConsolidationPerfLog:
 
     def flush(self) -> None:
         """Flush all log lines to the logger."""
-        total_time = time.time() - self.start_time
+        total_time = time.perf_counter() - self.start_time
         header = f"\n{'=' * 60}\nCONSOLIDATION for bank {self.bank_id}"
         footer = f"{'=' * 60}\nCONSOLIDATION COMPLETE: {total_time:.3f}s total\n{'=' * 60}"
 
@@ -1593,7 +1593,7 @@ async def _run_consolidation_job(
 
     # Get bank profile
     async with acquire_with_retry(pool) as conn:
-        t0 = time.time()
+        t0 = time.perf_counter()
         bank_row = await conn.fetchrow(
             f"""
             SELECT bank_id, name
@@ -1607,7 +1607,7 @@ async def _run_consolidation_job(
             logger.warning(f"Bank {bank_id} not found for consolidation")
             return {"status": "bank_not_found", "bank_id": bank_id}
 
-        perf.record_timing("fetch_bank", time.time() - t0)
+        perf.record_timing("fetch_bank", time.perf_counter() - t0)
 
         # Count total unconsolidated memories for progress logging — through the store.
         total_count = await _count_unconsolidated_rows(conn, bank_id, ["experience", "world"], observation_scopes)
@@ -1694,7 +1694,7 @@ async def _run_consolidation_job(
         # Fetch next batch of unconsolidated memories — through the store, so a store that
         # keeps its rows outside Postgres is read too.
         async with acquire_with_retry(pool) as conn:
-            t0 = time.time()
+            t0 = time.perf_counter()
             memories = await _fetch_unconsolidated_rows(
                 conn,
                 bank_id,
@@ -1703,7 +1703,7 @@ async def _run_consolidation_job(
                 observation_scopes,
                 max(1, config.consolidation_llm_parallelism),
             )
-            perf.record_timing("fetch_memories", time.time() - t0)
+            perf.record_timing("fetch_memories", time.perf_counter() - t0)
 
         if not memories:
             break  # No more unconsolidated memories
@@ -1749,7 +1749,7 @@ async def _run_consolidation_job(
             job-level ``perf`` once at the end so the final summary still totals
             everything.
             """
-            llm_batch_start = time.time()
+            llm_batch_start = time.perf_counter()
             batch_perf = ConsolidationPerfLog(bank_id)
 
             local_tags: set[str] = set()
@@ -2009,7 +2009,7 @@ async def _run_consolidation_job(
             # cumulative count across all batches that have finished so far in
             # this job (monotonic, may be reported out of strict batch-number
             # order under parallelism).
-            llm_batch_time = time.time() - llm_batch_start
+            llm_batch_time = time.perf_counter() - llm_batch_start
             timing_parts = [
                 f"{key}={batch_perf.timings[key]:.3f}s"
                 for key in ("recall", "llm", "embedding", "db_write")
@@ -2440,7 +2440,7 @@ async def _process_memory_batch(
 
     # 1. Parallel recalls — one per fact
     # When obs_tags_override is set, use it as the observation scope for all facts.
-    t0 = time.time()
+    t0 = time.perf_counter()
     observation_scope_tags = obs_tags_override if obs_tags_override is not None else None
     recall_tasks = [
         _find_related_observations(
@@ -2459,7 +2459,7 @@ async def _process_memory_batch(
     # The batch's memories stay unconsolidated and are picked up on retry.
     per_fact_recalls = await _gather_or_cancel(recall_tasks)
     if perf:
-        perf.record_timing("recall", time.time() - t0)
+        perf.record_timing("recall", time.perf_counter() - t0)
 
     # Union all observations (deduped by id)
     seen_ids: set[str] = set()
@@ -2494,7 +2494,7 @@ async def _process_memory_batch(
             )
 
     # 3. Single LLM call
-    t0 = time.time()
+    t0 = time.perf_counter()
     llm_result = await _consolidate_batch_with_llm(
         llm_config=llm_config,
         memories=memories,
@@ -2505,7 +2505,7 @@ async def _process_memory_batch(
         max_observations_per_scope=max_obs,
     )
     if perf:
-        perf.record_timing("llm", time.time() - t0)
+        perf.record_timing("llm", time.perf_counter() - t0)
         perf.record_llm_call(llm_result.obs_count, llm_result.prompt_chars)
         perf.record_llm_batch_failures(llm_result.failed_attempts)
 
@@ -3020,7 +3020,7 @@ async def _apply_update_action(
     source_tags = set(source_fact_tags or [])
     merged_tags = list(existing_tags | source_tags)
 
-    t0 = time.time()
+    t0 = time.perf_counter()
     rewritten = await store.rewrite_observation(
         conn=conn,
         fq_table=fq_table,
@@ -3074,7 +3074,7 @@ async def _apply_update_action(
             )
 
     if perf:
-        perf.record_timing("db_write", time.time() - t0)
+        perf.record_timing("db_write", time.perf_counter() - t0)
 
     # Map the updated observation onto the consolidation trace as a produced memory.
     record_created_memory_ids([observation_id])
@@ -3217,10 +3217,10 @@ async def _embed_observation_text(
     thing consolidation does per action, and it must finish before the batch's single write
     transaction opens.
     """
-    t0 = time.time()
+    t0 = time.perf_counter()
     embeddings = await embedding_utils.generate_embeddings_batch(memory_engine.embeddings, [text])
     if perf:
-        perf.record_timing("embedding", time.time() - t0)
+        perf.record_timing("embedding", time.perf_counter() - t0)
     return str(embeddings[0]) if embeddings else None
 
 
@@ -3683,7 +3683,7 @@ async def _apply_create_observation(
     # write a literal 1, so a multi-source observation was undercounted until updated (#4955).
     source_memory_ids = list(dict.fromkeys(live_source_memory_ids))
 
-    t0 = time.time()
+    t0 = time.perf_counter()
     created_id = await store.insert_observation(
         conn=conn,
         ops=memory_engine._backend.ops,
@@ -3702,7 +3702,7 @@ async def _apply_create_observation(
     )
 
     if perf:
-        perf.record_timing("db_write", time.time() - t0)
+        perf.record_timing("db_write", time.perf_counter() - t0)
 
     logger.debug(f"Created observation {observation_id} from {len(source_memory_ids)} memories (tags: {obs_tags})")
 

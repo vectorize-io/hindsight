@@ -27,6 +27,7 @@ from hindsight_api.engine.llm_interface import (
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_llm_error
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
+from hindsight_api.engine.remote_retry import jittered_backoff
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema
 from hindsight_api.metrics import get_metrics_collector
@@ -307,7 +308,7 @@ class AnthropicLLM(LLMInterface):
         """
         from anthropic import APIConnectionError, APIStatusError, RateLimitError
 
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         # Convert OpenAI-style messages to Anthropic format
         system_prompt = None
@@ -431,7 +432,7 @@ class AnthropicLLM(LLMInterface):
                         result = content
 
                 # Record metrics and log slow calls
-                duration = time.time() - start_time
+                duration = time.perf_counter() - start_time
                 response_usage = _usage_from_anthropic_response(response)
                 input_tokens = response_usage.input_tokens
                 output_tokens = response_usage.output_tokens
@@ -513,9 +514,7 @@ class AnthropicLLM(LLMInterface):
                     )
 
                     if should_retry:
-                        backoff = min(initial_backoff * (2**attempt), max_backoff)
-                        jitter = backoff * 0.2 * (2 * (time.time() % 1) - 1)
-                        await asyncio.sleep(backoff + jitter)
+                        await asyncio.sleep(jittered_backoff(attempt, initial_backoff, max_backoff))
                         continue
 
                 logger.error(f"Anthropic API error after {max_retries + 1} attempts: {describe_llm_error(e)}")
@@ -565,7 +564,7 @@ class AnthropicLLM(LLMInterface):
         """
         from anthropic import APIConnectionError, APIStatusError
 
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         # Convert OpenAI tool format to Anthropic format
         anthropic_tools = []
@@ -696,7 +695,7 @@ class AnthropicLLM(LLMInterface):
 
                 # Record metrics
                 metrics = get_metrics_collector()
-                duration = time.time() - start_time
+                duration = time.perf_counter() - start_time
                 metrics.record_llm_call(
                     provider=self.provider,
                     model=self.model,

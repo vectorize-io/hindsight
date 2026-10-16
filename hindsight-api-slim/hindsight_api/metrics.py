@@ -686,7 +686,7 @@ class MetricsCollector(MetricsCollectorBase):
             budget: Optional budget level (low, mid, high)
             max_tokens: Optional max tokens for the operation
         """
-        start_time = time.time()
+        start_time = time.perf_counter()
         success = True
         cancelled = False
         # Resolved once, and published for the length of the operation so the recall phases
@@ -715,7 +715,7 @@ class MetricsCollector(MetricsCollectorBase):
                     operation,
                     bank_id,
                     success=success,
-                    duration=time.time() - start_time,
+                    duration=time.perf_counter() - start_time,
                     source=source,
                     budget=budget,
                     max_tokens=max_tokens,
@@ -864,7 +864,7 @@ class MetricsCollector(MetricsCollectorBase):
             endpoint: Request endpoint path
             status_code_getter: Callable that returns the status code after request completes
         """
-        start_time = time.time()
+        start_time = time.perf_counter()
         base_attributes = {"method": method, "endpoint": endpoint}
 
         # Track in-progress
@@ -873,7 +873,7 @@ class MetricsCollector(MetricsCollectorBase):
         try:
             yield
         finally:
-            duration = time.time() - start_time
+            duration = time.perf_counter() - start_time
             status_code = status_code_getter()
             status_class = f"{status_code // 100}xx"
 

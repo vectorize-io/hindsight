@@ -64,6 +64,7 @@ from hindsight_api.engine.providers.openai_compatible_llm import (
     _strip_code_fences,
     _strip_reasoning_tags,
 )
+from hindsight_api.engine.remote_retry import jittered_backoff
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
@@ -426,9 +427,7 @@ class OpenAIResponsesLLM(LLMInterface):
                         f"APIStatusError ({self.provider}/{self.model}, scope={scope}, "
                         f"attempt {attempt + 1}/{max_retries + 1}): HTTP {e.status_code}"
                     )
-                    backoff = min(initial_backoff * (2**attempt), max_backoff)
-                    jitter = backoff * 0.2 * (2 * (time.time() % 1) - 1)
-                    await asyncio.sleep(backoff + jitter)
+                    await asyncio.sleep(jittered_backoff(attempt, initial_backoff, max_backoff))
                     continue
                 logger.error(
                     f"API error after {max_retries + 1} attempts "
@@ -455,7 +454,7 @@ class OpenAIResponsesLLM(LLMInterface):
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> LLMCallResult:
         """Make a Responses API call with retry logic (see ``LLMInterface.call``)."""
-        start_time = time.time()
+        start_time = time.perf_counter()
         is_reasoning_model = self._supports_reasoning_model()
 
         input_items = _messages_to_responses_input(messages)
@@ -503,7 +502,7 @@ class OpenAIResponsesLLM(LLMInterface):
         def parse(response: Any) -> Any:
             self._raise_if_truncated(response)
             usage = self._extract_usage(response)
-            duration = time.time() - start_time
+            duration = time.perf_counter() - start_time
             content = _strip_reasoning_tags(response.output_text or "")
 
             if response_format is not None:
@@ -555,7 +554,7 @@ class OpenAIResponsesLLM(LLMInterface):
         Unlike chat/completions, ``reasoning`` and ``tools`` are sent together —
         the reason this provider exists.
         """
-        start_time = time.time()
+        start_time = time.perf_counter()
         is_reasoning_model = self._supports_reasoning_model()
 
         responses_tools = _tools_to_responses(tools)
@@ -613,7 +612,7 @@ class OpenAIResponsesLLM(LLMInterface):
         def parse(response: Any) -> LLMToolCallResult:
             self._raise_if_truncated(response)
             usage = self._extract_usage(response)
-            duration = time.time() - start_time
+            duration = time.perf_counter() - start_time
 
             tool_calls: list[LLMToolCall] = []
             for item in getattr(response, "output", None) or []:

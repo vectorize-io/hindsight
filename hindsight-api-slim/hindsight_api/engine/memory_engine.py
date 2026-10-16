@@ -286,14 +286,14 @@ def _bind_bank_id(
             # "between the handler's timer and the body running". Every await inside the body is
             # already a phase and they summed to about half of `engine_call`, with no CPU to
             # explain the rest — so the split has to be measured rather than reasoned about.
-            _t0_body = time.time()
+            _t0_body = time.perf_counter()
             try:
                 return await func(*args, **kwargs)
             finally:
                 _current_bank_id.reset(token)
                 if times_recall_body:
                     get_metrics_collector().record_recall_phase(
-                        "recall_async_body", time.time() - _t0_body, diagnostic=True
+                        "recall_async_body", time.perf_counter() - _t0_body, diagnostic=True
                     )
 
         return wrapper
@@ -6560,7 +6560,7 @@ class MemoryEngine(MemoryEngineInterface):
             )
             # Returns: [["unit-id-1"], ["unit-id-2"]]
         """
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         if not contents:
             if return_usage:
@@ -7375,7 +7375,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # retain pipeline emits finer-grained "storing N/total chunks" snapshots
                 # via progress_callback as each sub-batch's chunks commit.
 
-            total_time = time.time() - start_time
+            total_time = time.perf_counter() - start_time
             logger.info(
                 f"RETAIN_BATCH_ASYNC (chunked) COMPLETE: {len(per_input_results)} results from "
                 f"{len(contents)} contents across {sub_batches_run} sub-batches in {total_time:.3f}s"
@@ -8945,9 +8945,9 @@ class MemoryEngine(MemoryEngineInterface):
         # reports as `recall=`. On a loaded fleet the existing phases covered 10% of a recall's
         # wall time (store hop 32ms, embedding 5ms of a 356ms mean) while event-loop lag stayed at
         # 0.2ms — so the other 90% is a real await, and every untimed await here is a candidate.
-        _auth_t0 = time.time()
+        _auth_t0 = time.perf_counter()
         await self._authenticate_tenant(request_context)
-        _auth_s = time.time() - _auth_t0
+        _auth_s = time.perf_counter() - _auth_t0
         get_metrics_collector().record_recall_phase("engine_auth", _auth_s)
         if _auth_s > 0.025:
             logger.info("[RECALL AUTH] bank=%s tenant_auth=%.3fs", bank_id, _auth_s)
@@ -9036,9 +9036,9 @@ class MemoryEngine(MemoryEngineInterface):
                 tags_match=tags_match,
                 tag_groups=tag_groups,
             )
-            _t0 = time.time()
+            _t0 = time.perf_counter()
             result = await self._validate_operation(self._operation_validator.validate_recall(ctx))
-            _d = time.time() - _t0
+            _d = time.perf_counter() - _t0
             get_metrics_collector().record_recall_phase("validate_pre", _d)
             if _d > 0.100:
                 logger.info("[RECALL PHASE] validate_pre=%.3fs bank=%s", _d, bank_id)
@@ -9067,9 +9067,9 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Resolve fuzzy tag tokens into real tags before anything builds SQL. Runs after
         # the validator so a validator-supplied tag_groups is resolved too.
-        _t0 = time.time()
+        _t0 = time.perf_counter()
         tag_groups = await self._resolve_fuzzy_tag_groups(bank_id, tag_groups)
-        _d = time.time() - _t0
+        _d = time.perf_counter() - _t0
         get_metrics_collector().record_recall_phase("fuzzy_tags", _d)
         if _d > 0.100:
             logger.info("[RECALL PHASE] fuzzy_tags=%.3fs bank=%s", _d, bank_id)
@@ -9077,9 +9077,9 @@ class MemoryEngine(MemoryEngineInterface):
         # Map budget enum to thinking_budget number using bank-resolved config.
         # Function "fixed" preserves legacy {LOW: 100, MID: 300, HIGH: 1000}; function "adaptive"
         # derives from max_tokens and clamps to [recall_budget_min, recall_budget_max].
-        _t0 = time.time()
+        _t0 = time.perf_counter()
         budget_config_dict = await self._config_resolver.get_bank_config(bank_id, request_context)
-        _d = time.time() - _t0
+        _d = time.perf_counter() - _t0
         get_metrics_collector().record_recall_phase("bank_config", _d)
         if _d > 0.100:
             logger.info("[RECALL PHASE] bank_config=%.3fs bank=%s", _d, bank_id)
@@ -9119,15 +9119,15 @@ class MemoryEngine(MemoryEngineInterface):
             # Backpressure: limit concurrent recalls to prevent overwhelming the database
             result = None
             error_msg = None
-            semaphore_wait_start = time.time()
+            semaphore_wait_start = time.perf_counter()
             async with self._search_semaphore:
-                semaphore_wait = time.time() - semaphore_wait_start
+                semaphore_wait = time.perf_counter() - semaphore_wait_start
                 get_metrics_collector().record_recall_phase("semaphore_acquire", semaphore_wait)
                 # Retry loop for connection errors
                 max_retries = 3
                 for attempt in range(max_retries + 1):
                     try:
-                        _t0_swr2 = time.time()
+                        _t0_swr2 = time.perf_counter()
                         result = await self._search_with_retries(
                             bank_id,
                             query,
@@ -9162,7 +9162,7 @@ class MemoryEngine(MemoryEngineInterface):
                             enable_graph_retrieval=enable_graph_retrieval,
                         )
                         get_metrics_collector().record_recall_phase(
-                            "search_with_retries", time.time() - _t0_swr2, diagnostic=True
+                            "search_with_retries", time.perf_counter() - _t0_swr2, diagnostic=True
                         )
                         break  # Success - exit retry loop
                     except OperationCancelledError:
@@ -9218,9 +9218,9 @@ class MemoryEngine(MemoryEngineInterface):
                                     error=error_msg,
                                 )
                                 try:
-                                    _t0 = time.time()
+                                    _t0 = time.perf_counter()
                                     await self._operation_validator.on_recall_complete(result_ctx)
-                                    _d = time.time() - _t0
+                                    _d = time.perf_counter() - _t0
                                     get_metrics_collector().record_recall_phase("validate_post", _d)
                                     if _d > 0.100:
                                         logger.info("[RECALL PHASE] validate_post=%.3fs bank=%s", _d, bank_id)
@@ -9251,9 +9251,9 @@ class MemoryEngine(MemoryEngineInterface):
                             error=error_msg,
                         )
                         try:
-                            _t0_vp = time.time()
+                            _t0_vp = time.perf_counter()
                             await self._operation_validator.on_recall_complete(result_ctx)
-                            get_metrics_collector().record_recall_phase("validate_post", time.time() - _t0_vp)
+                            get_metrics_collector().record_recall_phase("validate_post", time.perf_counter() - _t0_vp)
                         except Exception as hook_err:
                             logger.warning(f"Post-recall hook error (non-fatal): {hook_err}")
                     raise Exception(error_msg)
@@ -9292,9 +9292,9 @@ class MemoryEngine(MemoryEngineInterface):
                     error=None,
                 )
                 try:
-                    _t0_vp = time.time()
+                    _t0_vp = time.perf_counter()
                     await self._operation_validator.on_recall_complete(result_ctx)
-                    get_metrics_collector().record_recall_phase("validate_post", time.time() - _t0_vp)
+                    get_metrics_collector().record_recall_phase("validate_post", time.perf_counter() - _t0_vp)
                 except Exception as e:
                     logger.warning(f"Post-recall hook error (non-fatal): {e}")
 
@@ -9393,16 +9393,16 @@ class MemoryEngine(MemoryEngineInterface):
         tracer.phases_only = not enable_trace
         tracer.start()
 
-        backend_acquire_start = time.time()
+        backend_acquire_start = time.perf_counter()
         backend = await self._get_read_backend()
-        tracer.add_phase_metric("backend_acquisition", time.time() - backend_acquire_start)
-        recall_start = time.time()
+        tracer.add_phase_metric("backend_acquisition", time.perf_counter() - backend_acquire_start)
+        recall_start = time.perf_counter()
 
         # Buffer logs for clean output in concurrent scenarios.
         # Include a uuid suffix so two recalls on the same bank within the
         # same millisecond don't collide on the budgeted_operation key
         # (`recall-{recall_id}`), which would raise "Operation ... already exists".
-        recall_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}-{uuid.uuid4().hex[:6]}"
+        recall_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}-{uuid.uuid4().hex[:6]}"  # noqa: TID251
         log_buffer = []
         tags_info = f", tags={tags}, tags_match={tags_match}" if tags else ""
         log_buffer.append(
@@ -9416,21 +9416,21 @@ class MemoryEngine(MemoryEngineInterface):
 
         try:
             # Step 1: Generate query embedding (for semantic search)
-            step_start = time.time()
+            step_start = time.perf_counter()
 
             embedding_span = tracer_otel.start_span("hindsight.recall_embedding")
             embedding_span.set_attribute("hindsight.bank_id", bank_id)
             embedding_span.set_attribute("hindsight.query", query[:100])
 
             try:
-                get_metrics_collector().record_recall_phase("swr_prelude", time.time() - backend_acquire_start)
+                get_metrics_collector().record_recall_phase("swr_prelude", time.perf_counter() - backend_acquire_start)
                 query_embeddings = await embedding_utils.generate_embeddings_batch(
                     self.embeddings,
                     [query],
                     input_type="query",
                 )
                 query_embedding = query_embeddings[0]
-                step_duration = time.time() - step_start
+                step_duration = time.perf_counter() - step_start
                 log_buffer.append(f"  [1] Generate query embedding: {step_duration:.3f}s")
             finally:
                 embedding_span.end()
@@ -9466,7 +9466,7 @@ class MemoryEngine(MemoryEngineInterface):
             from .memories import FullRecallRequest
             from .memories import get_memories as _get_memories_for_full_recall
 
-            _full_start = time.time()
+            _full_start = time.perf_counter()
             _store_result = await _get_memories_for_full_recall().full_recall(
                 FullRecallRequest(
                     bank_id=bank_id,
@@ -9524,14 +9524,14 @@ class MemoryEngine(MemoryEngineInterface):
                 )
             )
             if _store_result is not None:
-                _full_elapsed = time.time() - _full_start
-                _t0_tail = time.time()
+                _full_elapsed = time.perf_counter() - _full_start
+                _t0_tail = time.perf_counter()
                 log_buffer.append(
                     f"  [1.5] Store-answered recall: {len(_store_result.results)} results in {_full_elapsed:.3f}s"
                 )
                 if not quiet:
                     logger.info("\n" + "\n".join(log_buffer))
-                    get_metrics_collector().record_recall_phase("store_branch_tail", time.time() - _t0_tail)
+                    get_metrics_collector().record_recall_phase("store_branch_tail", time.perf_counter() - _t0_tail)
                 # The store's own per-stage timings become this recall's phase breakdown.
                 # Without this the trace goes dark exactly where the work moved to, and the
                 # only thing left to compare between the two paths is a total.
@@ -9568,7 +9568,7 @@ class MemoryEngine(MemoryEngineInterface):
             # - Semantic + BM25 combined in 1 CTE query for ALL fact types
             # - Graph runs per fact type (complex traversal)
             # - Temporal runs per fact type (if constraint detected)
-            step_start = time.time()
+            step_start = time.perf_counter()
             query_embedding_str = str(query_embedding)
 
             from .search.retrieval import (
@@ -9592,7 +9592,7 @@ class MemoryEngine(MemoryEngineInterface):
                     operation_id=f"recall-{recall_id}",
                 ) as op:
                     budgeted_pool = op.wrap_pool(backend)
-                    parallel_start = time.time()
+                    parallel_start = time.perf_counter()
                     multi_result = await retrieve_all_fact_types_parallel(
                         budgeted_pool,
                         query,
@@ -9614,7 +9614,7 @@ class MemoryEngine(MemoryEngineInterface):
                         enable_temporal_retrieval=enable_temporal_retrieval,
                         enable_graph_retrieval=enable_graph_retrieval,
                     )
-                    parallel_duration = time.time() - parallel_start
+                    parallel_duration = time.perf_counter() - parallel_start
             finally:
                 retrieval_span.end()
 
@@ -9692,7 +9692,7 @@ class MemoryEngine(MemoryEngineInterface):
                         f"graph {pre_cap_counts[2]}->{len(graph_results)}"
                     )
 
-            step_duration = time.time() - step_start
+            step_duration = time.perf_counter() - step_start
             # The store call is the one term inside this block that IS measured. Showing it next to
             # the block total is what separates "the store is slow" from "we are slow around it" --
             # the per-arm numbers cannot, because a store-owned recall returns them all from one
@@ -9882,7 +9882,7 @@ class MemoryEngine(MemoryEngineInterface):
             # result down and buried the near-identical "twin" observation below budget
             # (semantic #1 -> outside the shown set), whereas interleave guarantees each
             # arm's top hits a slot. See interleave_fusion docstring.
-            step_start = time.time()
+            step_start = time.perf_counter()
             from .search.fusion import interleave_fusion, reciprocal_rank_fusion
 
             fusion_span = tracer_otel.start_span("hindsight.recall_fusion")
@@ -9900,7 +9900,7 @@ class MemoryEngine(MemoryEngineInterface):
                 fuse = interleave_fusion if reranking == "interleave" else reciprocal_rank_fusion
                 merged_candidates = fuse(result_lists)
 
-                step_duration = time.time() - step_start
+                step_duration = time.perf_counter() - step_start
                 log_buffer.append(
                     f"  [3] {'interleave' if reranking == 'interleave' else 'RRF'} merge: "
                     f"{len(merged_candidates)} unique candidates in {step_duration:.3f}s"
@@ -9923,7 +9923,7 @@ class MemoryEngine(MemoryEngineInterface):
             tracer.add_phase_metric("rrf_merge", step_duration, {"candidates_merged": len(merged_candidates)})
 
             # Step 4: Rerank using cross-encoder (MergedCandidate -> ScoredResult)
-            step_start = time.time()
+            step_start = time.perf_counter()
             reranker_instance = self._cross_encoder_reranker
 
             rerank_span = tracer_otel.start_span("hindsight.recall_rerank")
@@ -9986,7 +9986,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # text, the boosts read timestamps, the response returns both. Nothing between
                 # retrieval and here touches it except the tracer's entry-point log.
                 # A store that already returns full results makes this a single `return`.
-                _hydrate_start = time.time()
+                _hydrate_start = time.perf_counter()
                 from .memories import get_memories as _get_memories_for_hydrate
 
                 await _get_memories_for_hydrate().hydrate_results(
@@ -9994,7 +9994,7 @@ class MemoryEngine(MemoryEngineInterface):
                 )
                 tracer.add_phase_metric(
                     "hydrate_results",
-                    time.time() - _hydrate_start,
+                    time.perf_counter() - _hydrate_start,
                     {"candidates": len(merged_candidates)},
                 )
 
@@ -10035,7 +10035,7 @@ class MemoryEngine(MemoryEngineInterface):
                         for mc in sorted(merged_candidates, key=lambda mc: mc.rrf_score, reverse=True)
                     ]
 
-                step_duration = time.time() - step_start
+                step_duration = time.perf_counter() - step_start
                 pre_filter_note = f" (pre-filtered {pre_filtered_count})" if pre_filtered_count > 0 else ""
                 log_buffer.append(
                     f"  [4] Reranking [{rerank_kind}]: {len(scored_results)} candidates "
@@ -10057,7 +10057,7 @@ class MemoryEngine(MemoryEngineInterface):
             # (step_duration) is captured before this block runs, so the scoring
             # math, additive boosts and final sort would otherwise be invisible in
             # the phase metrics (issue #2361).
-            scoring_start = time.time()
+            scoring_start = time.perf_counter()
             if scored_results and reranking == "cross_encoder" and served_provider == DECISION_MODEL_RERANKER:
                 # A decision model judged every candidate in the pool; its order
                 # is final. The recency / temporal / proof-count boosts would only second-guess it.
@@ -10150,7 +10150,7 @@ class MemoryEngine(MemoryEngineInterface):
             # asked for -- the serialization of reranked entries done just above.
             tracer.add_phase_metric(
                 "combined_scoring",
-                time.time() - scoring_start,
+                time.perf_counter() - scoring_start,
                 {"candidates_scored": len(scored_results)},
             )
 
@@ -10176,7 +10176,7 @@ class MemoryEngine(MemoryEngineInterface):
                 ]
                 observation_ids = [uuid.UUID(sr.id) for sr in observation_srs]
                 if observation_ids:
-                    dedup_start = time.time()
+                    dedup_start = time.perf_counter()
                     superseded_ids: set[str] = set()
                     from .memories import get_memories
 
@@ -10204,7 +10204,7 @@ class MemoryEngine(MemoryEngineInterface):
                                     sr.retrieval.source_memory_ids = obs_by_id[sr.id]
                     tracer.add_phase_metric(
                         "prefer_observations_dedup",
-                        time.time() - dedup_start,
+                        time.perf_counter() - dedup_start,
                         {"observations_considered": len(observation_ids)},
                     )
                     for sr in observation_srs:
@@ -10231,7 +10231,7 @@ class MemoryEngine(MemoryEngineInterface):
             # Chunks are fetched independently of max_tokens filtering
             chunks_dict = None
             total_chunk_tokens = 0
-            chunk_fetch_start = time.time()
+            chunk_fetch_start = time.perf_counter()
             if include_chunks and top_scored:
                 from .response_models import ChunkInfo
 
@@ -10350,12 +10350,12 @@ class MemoryEngine(MemoryEngineInterface):
             if include_chunks:
                 tracer.add_phase_metric(
                     "chunk_fetch",
-                    time.time() - chunk_fetch_start,
+                    time.perf_counter() - chunk_fetch_start,
                     {"chunks_returned": len(chunks_dict or {}), "chunk_tokens": total_chunk_tokens},
                 )
 
             # Step 6: Token budget filtering
-            step_start = time.time()
+            step_start = time.perf_counter()
 
             selection = select_facts_within_budget(
                 fact_ids_ordered=[sr.id for sr in top_scored],
@@ -10367,7 +10367,7 @@ class MemoryEngine(MemoryEngineInterface):
             selected_ids = set(selection.ids)
             top_scored = [sr for sr in top_scored if sr.id in selected_ids]
 
-            step_duration = time.time() - step_start
+            step_duration = time.perf_counter() - step_start
             truncated_note = " (truncated)" if selection.truncated else ""
             log_buffer.append(
                 f"  [6] Token filtering: {len(top_scored)} results, {total_tokens}/{max_tokens} tokens"
@@ -10387,7 +10387,7 @@ class MemoryEngine(MemoryEngineInterface):
 
             # Record visits + build the JSON-serializable result dicts. Timed as one
             # phase: the visit loop alone walks every scored result (issue #2361).
-            assembly_start = time.time()
+            assembly_start = time.perf_counter()
 
             # Record visits for all retrieved nodes.
             # `enable_trace`, NOT `if tracer`: see the retrieval-results guard above. `visit_node`
@@ -10442,12 +10442,12 @@ class MemoryEngine(MemoryEngineInterface):
 
             tracer.add_phase_metric(
                 "result_serialization",
-                time.time() - assembly_start,
+                time.perf_counter() - assembly_start,
                 {"results_serialized": len(top_results_dicts)},
             )
 
             # Fetch source facts for observation-type results (mirrors chunks pattern)
-            source_fact_start = time.time()
+            source_fact_start = time.perf_counter()
             source_fact_ids_by_obs: dict[str, list[str]] = {}  # obs_id -> [source_id, ...]
             source_facts_dict: dict[str, MemoryFact] | None = None
             source_facts_truncated = False
@@ -10527,12 +10527,12 @@ class MemoryEngine(MemoryEngineInterface):
             if include_source_facts:
                 tracer.add_phase_metric(
                     "source_fact_fetch",
-                    time.time() - source_fact_start,
+                    time.perf_counter() - source_fact_start,
                     {"source_facts_returned": len(source_facts_dict or {})},
                 )
 
             # entity fetch + MemoryFact construction + entity-state build, timed together.
-            entity_build_start = time.time()
+            entity_build_start = time.perf_counter()
 
             # Get entities for each fact if include_entities is requested.
             # The store resolves both a memory's direct entity postings and an
@@ -10652,7 +10652,7 @@ class MemoryEngine(MemoryEngineInterface):
 
             tracer.add_phase_metric(
                 "entity_build",
-                time.time() - entity_build_start,
+                time.perf_counter() - entity_build_start,
                 {"entities_returned": len(entities_dict or {})},
             )
 
@@ -10676,20 +10676,20 @@ class MemoryEngine(MemoryEngineInterface):
             if enable_trace:
                 from .search.trace import SearchPhaseMetrics
 
-                finalize_start = time.time()
+                finalize_start = time.perf_counter()
                 trace = tracer.finalize(top_results_dicts)
                 trace_dict = trace.to_dict() if trace else None
                 if trace_dict is not None:
                     trace_dict["summary"]["phase_metrics"].append(
                         SearchPhaseMetrics(
                             phase_name="trace_finalize",
-                            duration_seconds=time.time() - finalize_start,
+                            duration_seconds=time.perf_counter() - finalize_start,
                             details={"diagnostic": True},
                         ).model_dump()
                     )
 
             # Log final recall stats
-            total_time = time.time() - recall_start
+            total_time = time.perf_counter() - recall_start
             num_chunks = len(chunks_dict) if chunks_dict else 0
             num_entities = len(entities_dict) if entities_dict else 0
             # Include wait times in log if significant
@@ -10767,7 +10767,7 @@ class MemoryEngine(MemoryEngineInterface):
             # Use repr(e) so exceptions with empty __str__ (e.g. raise SomeError())
             # still emit a discriminating class+args string into operations.error_message.
             log_buffer.append(
-                f"[RECALL {recall_id}] ERROR after {time.time() - recall_start:.3f}s: {type(e).__name__}: {e!r}"
+                f"[RECALL {recall_id}] ERROR after {time.perf_counter() - recall_start:.3f}s: {type(e).__name__}: {e!r}"
             )
             if not quiet:
                 logger.error("\n" + "\n".join(log_buffer), exc_info=True)
@@ -15415,10 +15415,10 @@ class MemoryEngine(MemoryEngineInterface):
         # and each must see the same resolved tags.
         tag_groups = await self._resolve_fuzzy_tag_groups(bank_id, tag_groups)
 
-        reflect_start = time.time()
+        reflect_start = time.perf_counter()
         # The random suffix, as recall's id has: the clock alone gave two reflects on
         # one bank started in the same millisecond the same id.
-        reflect_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}-{uuid.uuid4().hex[:6]}"
+        reflect_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}-{uuid.uuid4().hex[:6]}"  # noqa: TID251
         tags_info = f", tags={tags} ({tags_match})" if tags else ""
         logger.info(f"[REFLECT {reflect_id}] Starting agentic reflect for query: {query[:50]}...{tags_info}")
 
@@ -15703,10 +15703,12 @@ class MemoryEngine(MemoryEngineInterface):
                 # bank's concurrent reflects it was (#5128).
                 token = request_context.cancellation
                 reason = token.reason if token is not None and token.cancelled else "task cancelled"
-                logger.info("[REFLECT %s] Cancelled after %.1fs: %s", reflect_id, time.time() - reflect_start, reason)
+                logger.info(
+                    "[REFLECT %s] Cancelled after %.1fs: %s", reflect_id, time.perf_counter() - reflect_start, reason
+                )
                 raise
             except asyncio.TimeoutError:
-                total_time = time.time() - reflect_start
+                total_time = time.perf_counter() - reflect_start
                 logger.error(
                     "[REFLECT %s] Wall-clock timeout after %.1fs (limit: %ss) for query: %.50s...",
                     reflect_id,
@@ -15719,7 +15721,7 @@ class MemoryEngine(MemoryEngineInterface):
                     f"Consider reducing the budget or simplifying the query."
                 )
 
-            total_time = time.time() - reflect_start
+            total_time = time.perf_counter() - reflect_start
             logger.info(
                 "[REFLECT %s] Complete: %d chars, %d iterations, %d tool calls | %.3fs",
                 reflect_id,
@@ -17429,7 +17431,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         Returns None when the mental model row disappeared mid-flight.
         """
-        started = time.time()
+        started = time.perf_counter()
         mental_model_id = mental_model["id"]
 
         trigger_data: dict[str, Any] = dict(mental_model.get("trigger") or {})
@@ -17823,7 +17825,7 @@ class MemoryEngine(MemoryEngineInterface):
                 tool_calls=_summarize_refresh_tool_calls(reflect_result.tool_trace, created_after),
                 llm_calls=list(reflect_result.llm_trace),
                 usage=reflect_result.usage or TokenUsage(),
-                duration_ms=int((time.time() - started) * 1000),
+                duration_ms=int((time.perf_counter() - started) * 1000),
                 warnings=warnings,
             )
 
