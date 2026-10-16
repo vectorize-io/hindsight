@@ -10,6 +10,7 @@ import pytest
 
 from hindsight_embed.profile_manager import (
     ProfileManager,
+    parse_env_file,
     resolve_active_profile,
     validate_profile_exists,
 )
@@ -506,3 +507,25 @@ class TestValidateProfileExists:
         captured = capsys.readouterr()
         assert "Profile 'nonexistent' not found" in captured.err
         assert "hindsight-embed configure --profile nonexistent" in captured.err
+
+
+def test_parse_env_file_strips_dotenv_quotes(tmp_path):
+    """A hand-written KEY="value" must not forward its quotes (#5301)."""
+    env_file = tmp_path / "p.env"
+    env_file.write_text(
+        'HINDSIGHT_API_LLM_API_KEY="test-key"\n'
+        "export HINDSIGHT_API_LLM_MODEL='gpt-4.1-mini'\n"
+        'HINDSIGHT_API_PORT="9100"\n'
+        "# comment\n"
+        'MISMATCHED="value\n'
+        "PLAIN=a=b\n",
+        encoding="utf-8",
+    )
+    assert parse_env_file(env_file) == {
+        "HINDSIGHT_API_LLM_API_KEY": "test-key",
+        "HINDSIGHT_API_LLM_MODEL": "gpt-4.1-mini",
+        "HINDSIGHT_API_PORT": "9100",
+        "MISMATCHED": '"value',
+        "PLAIN": "a=b",
+    }
+    assert parse_env_file(tmp_path / "missing.env") == {}
