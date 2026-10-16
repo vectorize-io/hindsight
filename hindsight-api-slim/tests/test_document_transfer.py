@@ -1528,11 +1528,11 @@ def test_document_batches_cap_documents_and_facts(monkeypatch):
     monkeypatch.setattr(importer, "_DOCUMENT_BATCH_SIZE", 3)
     monkeypatch.setattr(importer, "_FACT_BATCH_SIZE", 10)
 
-    def doc(doc_id: str, facts: int) -> tuple[TransferDocument, str]:
-        return TransferDocument(id=doc_id, facts=[TransferFact(text="f", fact_type="world")] * facts), doc_id
+    def doc(doc_id: str, facts: int) -> TransferDocument:
+        return TransferDocument(id=doc_id, facts=[TransferFact(text="f", fact_type="world")] * facts)
 
     docs = [doc("a", 4), doc("b", 4), doc("c", 4), doc("d", 25), doc("e", 1), doc("f", 1), doc("g", 1), doc("h", 1)]
-    batches = [[target for _doc, target in batch] for batch in importer._document_batches(docs)]
+    batches = [[document.id for document in batch] for batch in importer._document_batches(iter(docs))]
 
     assert batches == [["a", "b"], ["c"], ["d"], ["e", "f", "g"], ["h"]]
 
@@ -2128,7 +2128,7 @@ async def test_import_rejects_invalid_on_conflict(memory, request_context):
             config=None,
             format_date_fn=memory._format_readable_date,
             bank_id="any-bank",
-            archive_bytes=buffer.getvalue(),
+            archive=buffer.getvalue(),
             on_conflict="bogus",
         )
 

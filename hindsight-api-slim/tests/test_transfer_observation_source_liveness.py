@@ -21,8 +21,8 @@ from .test_document_transfer import _import, _retain, _seed_observation, _unique
 pytestmark = pytest.mark.asyncio
 
 
-async def _import_one(memory, bank_id, ref_map, source_refs):
-    """Run the observation import phase directly against a hand-built ref_map."""
+async def _import_one(memory, bank_id, fact_unit_ids, source_refs):
+    """Run the observation import phase directly against hand-built fact unit ids."""
     backend = await memory._get_backend()
     observation = TransferObservation(
         text=OBSERVATION_TEXT,
@@ -34,7 +34,8 @@ async def _import_one(memory, bank_id, ref_map, source_refs):
         embeddings_model=memory.embeddings,
         bank_id=bank_id,
         observations=[observation],
-        ref_map=ref_map,
+        fact_unit_ids=fact_unit_ids,
+        keep_unit_ids=set(),
         ops=backend.ops,
     )
 
@@ -66,7 +67,7 @@ async def test_observation_with_a_missing_source_is_skipped(memory, request_cont
     outcome = await _import_one(
         memory,
         bank,
-        ref_map={("doc-1", 0): live_id, ("doc-1", 1): ghost_id},
+        fact_unit_ids={"doc-1": [live_id, ghost_id]},
         source_refs=[("doc-1", 0), ("doc-1", 1)],
     )
 
@@ -86,7 +87,7 @@ async def test_observation_with_live_sources_is_imported(memory, request_context
     outcome = await _import_one(
         memory,
         bank,
-        ref_map={("doc-1", 0): live_ids[0], ("doc-1", 1): live_ids[1]},
+        fact_unit_ids={"doc-1": live_ids},
         source_refs=[("doc-1", 0), ("doc-1", 1)],
     )
 

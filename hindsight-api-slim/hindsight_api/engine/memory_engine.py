@@ -20,6 +20,7 @@ import json
 import logging
 import random
 import sys
+import tempfile
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
@@ -27,7 +28,7 @@ from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Literal, NoReturn, ParamSpec, TypeVar, cast
+from typing import IO, TYPE_CHECKING, Any, Literal, NoReturn, ParamSpec, TypeVar, cast
 
 import asyncpg
 from pydantic import TypeAdapter, ValidationError
@@ -631,8 +632,7 @@ if TYPE_CHECKING:
     from .retain.attachment_content import AttachmentOccurrence, LoadedAttachment, RetainAttachment
     from .retain.attachment_store import StoredAttachment
     from .transfer import BankImportResult, ImportResult, TransferScope
-    from .transfer.importer import ImportedDocument, OnConflict
-    from .transfer.schema import TransferDocument
+    from .transfer.importer import Archive, OnConflict
     from .vector_index_health import CoverageTrigger
 
 
@@ -3640,8 +3640,8 @@ class MemoryEngine(MemoryEngineInterface):
             retry_count=task_dict.get("_retry_count", 0),
         )
 
-        archive_bytes = await self._file_storage.retrieve(storage_key)
-        result = await self._run_import_documents(bank_id, archive_bytes, on_conflict, context)
+        async with self._retrieve_archive(storage_key) as archive:
+            result = await self._run_import_documents(bank_id, archive, on_conflict, context)
 
         if operation_id:
             counts = {
@@ -3825,22 +3825,22 @@ class MemoryEngine(MemoryEngineInterface):
             retry_count=task_dict.get("_retry_count", 0),
         )
 
-        archive_bytes = await self._file_storage.retrieve(storage_key)
-        result = await self.import_bank_async(
-            archive_bytes,
-            context,
-            target_bank_id=target_bank_id,
-            scope=TransferScope(
-                data=task_dict.get("include_data", True),
-                bank_config=task_dict.get("include_bank_config", True),
-                history=task_dict.get("include_history", False),
-            ),
-            operation_id=operation_id,
-        )
-        # Restored documents are reported like imported ones. Only here, not in
-        # import_bank_async: a clone reuses that restore, but copies documents the
-        # tenant already has rather than bringing in new ones.
-        await self._report_imported_documents(result.bank_id, result.imported_documents, context)
+        async with self._retrieve_archive(storage_key) as archive:
+            result = await self.import_bank_async(
+                archive,
+                context,
+                target_bank_id=target_bank_id,
+                scope=TransferScope(
+                    data=task_dict.get("include_data", True),
+                    bank_config=task_dict.get("include_bank_config", True),
+                    history=task_dict.get("include_history", False),
+                ),
+                operation_id=operation_id,
+            )
+            # Restored documents are reported like imported ones. Only here, not in
+            # import_bank_async: a clone reuses that restore, but copies documents the
+            # tenant already has rather than bringing in new ones.
+            await self._report_imported_documents(result.bank_id, archive, result.fact_unit_ids, {}, context)
 
         if operation_id:
             counts = {
@@ -7813,7 +7813,7 @@ class MemoryEngine(MemoryEngineInterface):
     async def submit_bank_import_async(
         self,
         bank_id: str,
-        archive_bytes: bytes,
+        archive: "Archive",
         request_context: "RequestContext",
         *,
         target_bank_id: str | None = None,
@@ -7828,13 +7828,12 @@ class MemoryEngine(MemoryEngineInterface):
         immediate error rather than a task that fails in the background.
         """
         from .transfer import TransferScope
-        from .transfer.importer import parse_bank_archive
+        from .transfer.importer import read_bank_manifest
 
         scope = scope or TransferScope()
         # Validate the archive synchronously: a malformed or documents-only zip is
         # a caller error (400), not a background failure.
-        parsed = parse_bank_archive(archive_bytes)
-        target = target_bank_id or parsed.manifest.source_bank_id
+        target = target_bank_id or read_bank_manifest(archive).source_bank_id
 
         await self._authenticate_tenant(request_context)
         await self._refuse_bank_wide_if_scoped(bank_id, request_context, "import into the bank")
@@ -7857,16 +7856,10 @@ class MemoryEngine(MemoryEngineInterface):
         # Only parse the documents when a validator will look at them: restore parses the
         # archive again when it runs, so without a gate this would be wasted work.
         if scope.data and self._operation_validator:
-            from .transfer.importer import parse_archive
-
-            await self._validate_import(target, parse_archive(archive_bytes).documents, request_context)
+            await self._validate_import(target, archive, request_context)
 
         storage_key = f"banks/{bank_id}/imports/{uuid.uuid4()}/transfer.zip"
-        await self._file_storage.store(
-            file_data=archive_bytes,
-            key=storage_key,
-            metadata={"content_type": "application/zip", "bank_id": bank_id},
-        )
+        await self._stash_archive(archive, storage_key, bank_id)
 
         task_payload: dict[str, Any] = {
             "storage_key": storage_key,
@@ -8567,7 +8560,7 @@ class MemoryEngine(MemoryEngineInterface):
 
     async def import_bank_async(
         self,
-        archive_bytes: bytes,
+        archive: "Archive",
         request_context: "RequestContext",
         *,
         target_bank_id: str | None = None,
@@ -8589,14 +8582,12 @@ class MemoryEngine(MemoryEngineInterface):
         create is never touched.
         """
         from .transfer import import_bank
-        from .transfer.importer import parse_bank_archive
+        from .transfer.importer import read_bank_manifest
 
         await self._authenticate_tenant(request_context)
         backend = await self._get_backend()
-        # Parse up front so a bad archive fails fast and we can resolve the
-        # target bank's config before the restore.
-        parsed = parse_bank_archive(archive_bytes)
-        bank_id = target_bank_id or parsed.manifest.source_bank_id
+        # Read the manifest up front so a bad archive fails fast and we know the target bank.
+        bank_id = target_bank_id or read_bank_manifest(archive).source_bank_id
 
         on_bank_created = None
         if operation_id:
@@ -8652,7 +8643,7 @@ class MemoryEngine(MemoryEngineInterface):
             entity_resolver=self.entity_resolver,
             resolve_config=_resolve_restored_config,
             format_date_fn=self._format_readable_date,
-            archive_bytes=archive_bytes,
+            archive=archive,
             target_bank_id=target_bank_id,
             scope=scope,
             # Attachment bytes ride in the archive; the target writes them to its
@@ -8664,7 +8655,7 @@ class MemoryEngine(MemoryEngineInterface):
     async def import_documents_async(
         self,
         bank_id: str,
-        archive_bytes: bytes,
+        archive: "Archive",
         request_context: "RequestContext",
         on_conflict: str = "skip",
     ) -> dict[str, Any]:
@@ -8676,13 +8667,8 @@ class MemoryEngine(MemoryEngineInterface):
         status; the imported/skipped counts land in ``result_metadata``.
         Re-embeds facts and re-resolves entities — no LLM extraction is run.
         """
-        from .transfer.importer import parse_archive
-
         if on_conflict not in ("skip", "replace", "new-id"):
             raise ValueError(f"Invalid on_conflict '{on_conflict}'; expected skip|replace|new-id")
-        # Validate synchronously so a malformed/unsupported archive surfaces as an
-        # immediate error to the caller rather than a background task failure.
-        parsed = parse_archive(archive_bytes)
 
         await self._authenticate_tenant(request_context)
         # Gate every import, not just one that creates the bank: _ensure_bank_exists only
@@ -8695,7 +8681,9 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.IMPORT_DOCUMENTS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
-        await self._validate_import(bank_id, parsed.documents, request_context)
+        # Validate synchronously so a malformed/unsupported archive surfaces as an
+        # immediate error to the caller rather than a background task failure.
+        await self._validate_import(bank_id, archive, request_context)
         await self._refuse_bank_wide_if_scoped(bank_id, request_context, "import documents")
         await self._get_backend()
         # Ensure the bank (and its per-bank vector indexes) exist before inserts.
@@ -8706,11 +8694,7 @@ class MemoryEngine(MemoryEngineInterface):
         # Stash the archive in file storage and reference it by key in the task
         # payload, rather than base64-ing megabytes into the operation JSON.
         storage_key = f"{bank_storage_prefix(bank_id)}imports/{uuid.uuid4()}/transfer.zip"
-        await self._file_storage.store(
-            file_data=archive_bytes,
-            key=storage_key,
-            metadata={"content_type": "application/zip", "bank_id": bank_id},
-        )
+        await self._stash_archive(archive, storage_key, bank_id)
 
         task_payload: dict[str, Any] = {"storage_key": storage_key, "on_conflict": on_conflict}
         if request_context.tenant_id:
@@ -8725,23 +8709,55 @@ class MemoryEngine(MemoryEngineInterface):
             task_payload=task_payload,
         )
 
+    @asynccontextmanager
+    async def _retrieve_archive(self, storage_key: str) -> AsyncIterator[IO[bytes]]:
+        """A stashed transfer archive, copied to a local temp file for the length of the import.
+
+        The import reads it entry by entry from there, rather than holding the whole
+        archive in memory (#5524).
+        """
+        with tempfile.TemporaryFile() as archive:
+            async for chunk in self._file_storage.retrieve_stream(storage_key):
+                archive.write(chunk)
+            archive.seek(0)
+            yield archive
+
+    async def _stash_archive(self, archive: "Archive", storage_key: str, bank_id: str) -> None:
+        """Store an uploaded transfer archive for the worker, streaming it when it is a file."""
+        metadata = {"content_type": "application/zip", "bank_id": bank_id}
+        if isinstance(archive, bytes):
+            await self._file_storage.store(file_data=archive, key=storage_key, metadata=metadata)
+            return
+        archive.seek(0)
+
+        async def chunks() -> AsyncIterator[bytes]:
+            while chunk := archive.read(1 << 20):
+                yield chunk
+
+        await self._file_storage.store_stream(storage_key, chunks(), metadata=metadata)
+
     async def _report_imported_documents(
         self,
         bank_id: str,
-        documents: "Sequence[ImportedDocument]",
+        archive: "Archive",
+        fact_unit_ids: dict[str, list[str | None]],
+        remapped_document_ids: dict[str, str],
         request_context: "RequestContext",
     ) -> None:
         """Fire the post-retain hook once per imported document, as retain does.
 
         Import runs no LLM extraction, so the token counts are zero; ``source=IMPORT``
         tells an extension these are new documents rather than a re-retain the chunk
-        dedup made free (which also reports ``processed_content_tokens=0``).
+        dedup made free (which also reports ``processed_content_tokens=0``). Each
+        document's text is re-read from the archive here, one at a time.
         """
         if not self._operation_validator:
             return
         from hindsight_api.extensions import RetainResult, RetainSource
 
-        for doc in documents:
+        from .transfer.importer import iter_imported_documents
+
+        for doc in iter_imported_documents(archive, fact_unit_ids, remapped_document_ids):
             try:
                 await self._operation_validator.on_retain_complete(
                     RetainResult(
@@ -8763,14 +8779,20 @@ class MemoryEngine(MemoryEngineInterface):
             except Exception as e:
                 logger.warning(f"Post-import hook error (non-fatal): {e}")
 
-    async def _validate_import(
-        self, bank_id: str, documents: "Sequence[TransferDocument]", request_context: "RequestContext"
-    ) -> None:
-        """Run the validator's import gate over the archive's documents."""
-        if not self._operation_validator:
-            return
+    async def _validate_import(self, bank_id: str, archive: "Archive", request_context: "RequestContext") -> None:
+        """Check the archive's documents parse, then run the validator's import gate over them.
+
+        Documents are parsed one at a time; only the gate's (id, text) pairs are kept.
+        """
         from hindsight_api.extensions import ImportArchiveDocument, ImportContext
 
+        from .transfer.importer import iter_archive_documents
+
+        documents = iter_archive_documents(archive)
+        if not self._operation_validator:
+            for _document in documents:
+                pass
+            return
         archive_documents = [
             ImportArchiveDocument(document_id=document.id, content=document.original_text or "")
             for document in documents
@@ -8784,7 +8806,7 @@ class MemoryEngine(MemoryEngineInterface):
     async def _run_import_documents(
         self,
         bank_id: str,
-        archive_bytes: bytes,
+        archive: "Archive",
         # The importer's own type. Both callers validate before reaching here -- the async entry
         # point rejects anything else, and the task path replays a value it wrote itself.
         on_conflict: "OnConflict",
@@ -8819,12 +8841,14 @@ class MemoryEngine(MemoryEngineInterface):
             config=resolved_config,
             format_date_fn=self._format_readable_date,
             bank_id=bank_id,
-            archive_bytes=archive_bytes,
+            archive=archive,
             on_conflict=on_conflict,
             outbox_callback_factory=outbox_factory,
         )
 
-        await self._report_imported_documents(bank_id, result.imported_documents, request_context)
+        await self._report_imported_documents(
+            bank_id, archive, result.fact_unit_ids, result.remapped_document_ids, request_context
+        )
 
         # Same async side effects every fact insert triggers (retain or import).
         await self._submit_post_insert_maintenance(bank_id, request_context, config=resolved_config)

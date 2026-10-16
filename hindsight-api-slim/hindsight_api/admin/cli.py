@@ -1396,7 +1396,6 @@ async def _run_import_bank(archive_path: Path, schema: str, target_bank_id: str 
     from ..engine.memory_engine import MemoryEngine
     from ..models import RequestContext
 
-    archive_bytes = archive_path.read_bytes()
     # run_migrations=True so a fresh target instance is provisioned at this
     # instance's embedding dimension / vector / text-search backend before restore.
     engine = MemoryEngine(run_migrations=True)
@@ -1404,12 +1403,14 @@ async def _run_import_bank(archive_path: Path, schema: str, target_bank_id: str 
     try:
         _current_schema.set(schema)
         context = RequestContext(internal=True, user_initiated=True)
-        return await engine.import_bank_async(
-            archive_bytes,
-            context,
-            target_bank_id=target_bank_id,
-            scope=TransferScope(data=True, bank_config=True, history=include_history),
-        )
+        # The open file, not its bytes: the restore reads the archive entry by entry.
+        with archive_path.open("rb") as archive:
+            return await engine.import_bank_async(
+                archive,
+                context,
+                target_bank_id=target_bank_id,
+                scope=TransferScope(data=True, bank_config=True, history=include_history),
+            )
     finally:
         await engine.close()
 

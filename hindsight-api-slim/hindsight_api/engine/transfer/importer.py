@@ -5,20 +5,27 @@ them with the *target* bank's embedding model, then runs entity resolution
 (Phase 1) and the fact/link insert (Phase 2) — exactly the steps a multi-item
 retain runs after LLM extraction. No LLM is called. Temporal/semantic/causal links and entity merges
 are therefore computed relative to the target bank's existing memories.
+
+The archive is read as it is replayed, never parsed whole: documents one entry at a
+time, observations and history rows one array item at a time (#5524). What still
+grows with the bank is one new unit id per fact, which observations need to find
+their sources.
 """
 
 from __future__ import annotations
 
 import hashlib
 import io
+import itertools
 import json
 import logging
+import re
 import uuid
 import zipfile
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import IO, TYPE_CHECKING, Any, Literal, cast
 
 from ..causal_links import CANONICAL_CAUSAL_LINK_TYPE, LEGACY_CAUSAL_LINK_TYPES
 from ..db.ops_postgresql import pg_search_vector_expr
@@ -52,6 +59,7 @@ from .schema import (
     TransferKnowledgePage,
     TransferManifest,
     TransferObservation,
+    TransferObservationSource,
     TransferScope,
 )
 
@@ -88,14 +96,25 @@ _FACT_BATCH_SIZE = 2000
 #: (#5418). Also bounds how many embeddings are held in memory at once.
 _OBSERVATION_BATCH_SIZE = 500
 
+#: Characters read at a time from a JSON-array entry (observations, history rows).
+_JSON_READ_CHARS = 1 << 20
+
+#: Verbatim rows per ``executemany`` when restoring a bank-scoped table.
+_RESTORE_BATCH_SIZE = 500
+
+_UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+#: A transfer archive: the bytes, or a seekable binary file holding them (an upload, a temp file).
+Archive = bytes | IO[bytes]
+
 
 @dataclass
 class ImportedDocument:
     """A single document successfully imported, with the units it produced.
 
-    Carried back so the engine can fire the post-retain extension hook
-    (usage tracking / metrics / notifications) once per imported document,
-    mirroring how retain reports each completed document.
+    Built after the import by :func:`iter_imported_documents`, so the engine can fire
+    the post-retain extension hook (usage tracking / metrics / notifications) once per
+    imported document, mirroring how retain reports each completed document.
     """
 
     document_id: str
@@ -122,11 +141,12 @@ class ImportResult:
     skipped_document_ids: list[str] = field(default_factory=list)
     # Original id -> freshly generated id, for documents imported under "new-id".
     remapped_document_ids: dict[str, str] = field(default_factory=dict)
-    # Per-document outcomes, for the engine's post-retain hook. Not serialized
-    # into operation result_metadata (the worker handler writes counts only).
-    imported_documents: list[ImportedDocument] = field(default_factory=list)
-    # Source memory-unit id -> regenerated target id. Used by whole-bank import
-    # to repair mental-model evidence after the replayed facts are inserted.
+    # Source document id -> the new unit id of each of its facts, by ordinal (None
+    # for a fact the replay dropped). Every imported document has an entry. Resolves
+    # observation sources, and the post-retain hook's unit ids.
+    fact_unit_ids: dict[str, list[str | None]] = field(default_factory=dict)
+    # Source memory-unit id -> regenerated target id, kept only for the ids the
+    # caller asked for: the ones mental-model evidence and restored rows cite.
     remapped_unit_ids: dict[str, str] = field(default_factory=dict)
 
 
@@ -168,7 +188,7 @@ class ParsedArchive:
     knowledge_pages: list[TransferKnowledgePage] = field(default_factory=list)
 
 
-def _open_archive(archive_bytes: bytes, *, produced_by: str) -> zipfile.ZipFile:
+def _open_archive(archive: Archive, *, produced_by: str) -> zipfile.ZipFile:
     """Open a transfer archive, rejecting non-archives as caller errors.
 
     Both failure modes here are a wrong file, not a server fault, so they must
@@ -177,14 +197,15 @@ def _open_archive(archive_bytes: bytes, *, produced_by: str) -> zipfile.ZipFile:
     as an opaque 500 or an unexplained "manifest.json is missing".
 
     Args:
-        archive_bytes: The uploaded bytes.
+        archive: The uploaded bytes, or a seekable file holding them. A file is read
+            entry by entry as the import needs it, never loaded whole.
         produced_by: How the caller obtains a valid archive, named in the error.
     """
     try:
-        zf = zipfile.ZipFile(io.BytesIO(archive_bytes), "r")
+        zf = zipfile.ZipFile(io.BytesIO(archive) if isinstance(archive, bytes) else archive, "r")
     except zipfile.BadZipFile as e:
         raise ValueError(f"Invalid transfer archive: the uploaded file is not a readable .zip ({e})") from e
-    if "manifest.json" not in set(zf.namelist()):
+    if "manifest.json" not in zf.NameToInfo:
         zf.close()
         raise ValueError(
             f"Invalid transfer archive: manifest.json is missing. This endpoint only accepts a .zip produced "
@@ -194,34 +215,132 @@ def _open_archive(archive_bytes: bytes, *, produced_by: str) -> zipfile.ZipFile:
     return zf
 
 
-def parse_archive(archive_bytes: bytes) -> ParsedArchive:
-    """Parse and validate a transfer ZIP archive produced by ``export_documents``."""
-    with _open_archive(archive_bytes, produced_by="the document export endpoint") as zf:
-        names = set(zf.namelist())
-        manifest = TransferManifest.model_validate_json(zf.read("manifest.json"))
-        if manifest.schema_version != SCHEMA_VERSION:
-            raise ValueError(
-                f"Unsupported transfer archive schema version {manifest.schema_version} "
-                f"(this build supports {SCHEMA_VERSION})"
-            )
-        doc_names = sorted(n for n in names if n.startswith("documents/") and n.endswith(".json"))
-        documents = [TransferDocument.model_validate_json(zf.read(name)) for name in doc_names]
-        observations: list[TransferObservation] = []
-        if "observations.json" in names:
-            observations = [TransferObservation.model_validate(o) for o in json.loads(zf.read("observations.json"))]
-        mental_models = json.loads(zf.read("mental_models.json")) if "mental_models.json" in names else []
-        knowledge_pages = (
-            [TransferKnowledgePage.model_validate(p) for p in json.loads(zf.read("knowledge_pages.json"))]
-            if "knowledge_pages.json" in names
-            else []
+def _read_manifest(zf: zipfile.ZipFile) -> TransferManifest:
+    manifest = TransferManifest.model_validate_json(zf.read("manifest.json"))
+    if manifest.schema_version != SCHEMA_VERSION:
+        raise ValueError(
+            f"Unsupported transfer archive schema version {manifest.schema_version} "
+            f"(this build supports {SCHEMA_VERSION})"
         )
-    return ParsedArchive(
-        manifest=manifest,
-        documents=documents,
-        observations=observations,
-        mental_models=mental_models,
-        knowledge_pages=knowledge_pages,
-    )
+    return manifest
+
+
+def _iter_documents(zf: zipfile.ZipFile) -> Iterator[TransferDocument]:
+    """The archive's documents in entry order, one parsed at a time."""
+    for name in sorted(n for n in zf.NameToInfo if n.startswith("documents/") and n.endswith(".json")):
+        yield TransferDocument.model_validate_json(zf.read(name))
+
+
+def _iter_json_array(zf: zipfile.ZipFile, name: str) -> Iterator[Any]:
+    """The items of a top-level JSON array entry, decoded one at a time.
+
+    ``observations.json`` and the history tables are one array each, sized by the
+    bank; ``json.loads`` on them held every row at once. A missing entry is empty.
+    """
+    if name not in zf.NameToInfo:
+        return
+    decoder = json.JSONDecoder()
+    with zf.open(name) as raw, io.TextIOWrapper(raw, encoding="utf-8") as text:
+        buf, pos, opened, eof = "", 0, False, False
+        while True:
+            while pos < len(buf) and (buf[pos].isspace() or (opened and buf[pos] == ",")):
+                pos += 1
+            if pos < len(buf) and not opened:
+                if buf[pos] != "[":
+                    raise ValueError(f"Invalid transfer archive: {name} is not a JSON array")
+                opened = True
+                pos += 1
+                continue
+            if pos < len(buf) and buf[pos] == "]":
+                return
+            if pos < len(buf):
+                try:
+                    item, end = decoder.raw_decode(buf, pos)
+                except json.JSONDecodeError:
+                    item, end = None, -1
+                # An item ending exactly at the buffer's end may be a number cut short.
+                if end != -1 and (end < len(buf) or eof):
+                    yield item
+                    pos = end
+                    continue
+            if eof:
+                raise ValueError(f"Invalid transfer archive: {name} is not a complete JSON array")
+            # Read at least as much as is buffered, so an item larger than one read
+            # costs a few re-parses rather than one per read.
+            chunk = text.read(max(_JSON_READ_CHARS, len(buf) - pos))
+            eof = not chunk
+            buf, pos = buf[pos:] + chunk, 0
+
+
+def _read_json(zf: zipfile.ZipFile, name: str) -> list[Any]:
+    """A small JSON array entry read whole (mental models, the knowledge tree), or [] when absent."""
+    return json.loads(zf.read(name)) if name in zf.NameToInfo else []
+
+
+def parse_archive(archive: Archive) -> ParsedArchive:
+    """Parse a whole transfer archive into memory, to inspect one.
+
+    The import path does not use this: it reads entries as it replays them.
+    """
+    with _open_archive(archive, produced_by="the document export endpoint") as zf:
+        return ParsedArchive(
+            manifest=_read_manifest(zf),
+            documents=list(_iter_documents(zf)),
+            observations=[TransferObservation.model_validate(o) for o in _iter_json_array(zf, "observations.json")],
+            mental_models=_read_json(zf, "mental_models.json"),
+            knowledge_pages=[TransferKnowledgePage.model_validate(p) for p in _read_json(zf, "knowledge_pages.json")],
+        )
+
+
+def iter_archive_documents(archive: Archive) -> Iterator[TransferDocument]:
+    """Validate a document archive and yield its documents one at a time.
+
+    What submission runs, so a malformed archive is a 400 rather than a failed task.
+    """
+    with _open_archive(archive, produced_by="the document export endpoint") as zf:
+        _read_manifest(zf)
+        yield from _iter_documents(zf)
+
+
+def read_bank_manifest(archive: Archive) -> TransferManifest:
+    """The manifest of a whole-bank archive; raises ``ValueError`` for any other archive."""
+    with _open_archive(archive, produced_by="the bank export endpoint") as zf:
+        manifest = _read_manifest(zf)
+    if manifest.archive_type != "bank":
+        raise ValueError(
+            f"Not a whole-bank archive (archive_type={manifest.archive_type!r}); use import_documents instead"
+        )
+    return manifest
+
+
+def iter_imported_documents(
+    archive: Archive, fact_unit_ids: dict[str, list[str | None]], remapped_document_ids: dict[str, str]
+) -> Iterator[ImportedDocument]:
+    """Re-read the archive to describe each document an import wrote, one at a time.
+
+    The post-retain hook needs each document's text; holding it for every document
+    until the import ended kept the bank's whole text in memory.
+    """
+    with _open_archive(archive, produced_by="the document export endpoint") as zf:
+        for document in _iter_documents(zf):
+            unit_ids = fact_unit_ids.get(document.id)
+            if unit_ids is None:
+                continue
+            yield ImportedDocument(
+                document_id=remapped_document_ids.get(document.id, document.id),
+                unit_ids=[unit_id for unit_id in unit_ids if unit_id is not None],
+                content=document.original_text or "",
+                tags=list(document.tags),
+            )
+
+
+def _referenced_ids(*row_lists: list[dict]) -> set[str]:
+    """Every uuid-shaped string in these rows, JSON nested as text included.
+
+    The unit ids a later remap can ask for: the replay keeps source -> new id only for
+    these, instead of one entry per fact and observation in the bank.
+    """
+    return {match for rows in row_lists if rows for match in _UUID_RE.findall(json.dumps(rows, default=str))}
 
 
 async def import_documents(
@@ -232,13 +351,12 @@ async def import_documents(
     config: Any,
     format_date_fn: Any,
     bank_id: str,
-    archive_bytes: bytes,
+    archive: Archive,
     on_conflict: OnConflict = "skip",
     ops: Any = None,
     outbox_callback_factory: Any = None,
-    restore_bank_scoped_rows: bool = True,
 ) -> ImportResult:
-    """Import every document in ``archive_bytes`` into ``bank_id``.
+    """Import every document in ``archive`` into ``bank_id``.
 
     Args:
         backend: Database backend (provides ``acquire()`` and ``ops``).
@@ -248,20 +366,11 @@ async def import_documents(
         format_date_fn: Date formatter used when augmenting fact text for embedding
             (must match retain so embeddings are consistent).
         bank_id: Target bank.
-        archive_bytes: A ZIP archive produced by ``export_documents``.
+        archive: A ZIP archive produced by ``export_documents``, as bytes or a file.
         on_conflict: How to handle a document id that already exists in the target
             bank — ``skip`` (default), ``replace`` (delete old data and re-import),
             or ``new-id`` (import under a freshly generated id).
         ops: Backend ``DataAccessOps``. Defaults to ``backend.ops``.
-        restore_bank_scoped_rows: Whether to restore the archive's mental models
-            and knowledge pages. True for a documents archive, which merges them
-            into an existing bank. False for a whole-bank restore, which owns
-            those rows: ``import_bank`` carries the same ``mental_models.json``
-            in ``bank_rows``, restores it with the archive's own JSON encoding
-            alongside ``mental_model_history``, and — the reason this switch
-            exists — rewrites the persisted ``based_on`` evidence ids onto the
-            replayed facts first. ``_restore_rows`` is ON CONFLICT DO NOTHING,
-            so a copy inserted here would win and strip that repair (#3833).
 
     Returns:
         An :class:`ImportResult` with per-document counts.
@@ -271,77 +380,37 @@ async def import_documents(
     if ops is None:
         ops = backend.ops
 
-    parsed = parse_archive(archive_bytes)
-    if parsed.knowledge_pages and not parsed.mental_models:
-        raise ValueError("Knowledge Pages require their backing mental models in the transfer archive")
-    # Document transfer merges into an existing target bank. Reuse the logical
-    # mental-model ids, but always pin the carried rows to the destination bank;
-    # otherwise ON CONFLICT can silently match the source-bank row on same-schema
-    # transfers and leave the imported page without a backing model.
-    for row in parsed.mental_models:
-        row["bank_id"] = bank_id
-    result = ImportResult()
-
-    # (original document_id, fact ordinal) -> freshly inserted unit id. Used to
-    # resolve observation source references after all facts exist.
-    ref_map: dict[tuple[str, int], str] = {}
-
-    to_import: list[tuple[TransferDocument, str]] = []
-    for document in parsed.documents:
-        target_id = await _resolve_target_id(backend, bank_id, document.id, on_conflict)
-        if target_id is None:
-            result.documents_skipped += 1
-            result.skipped_document_ids.append(document.id)
-            continue
-        if target_id != document.id:
-            result.remapped_document_ids[document.id] = target_id
-        to_import.append((document, target_id))
-
-    for batch in _document_batches(to_import):
-        imported_batch = await _import_document_batch(
-            backend=backend,
-            entity_resolver=entity_resolver,
-            config=config,
-            bank_id=bank_id,
-            prepared=await _prepare_documents(embeddings_model, format_date_fn, batch),
-            ops=ops,
-            outbox_callback_factory=outbox_callback_factory,
-        )
-        for (document, target_id), imported_facts in zip(batch, imported_batch, strict=True):
-            result.documents_imported += 1
-            result.facts_imported += len(imported_facts.unit_ids)
-            result.imported_documents.append(
-                ImportedDocument(
-                    document_id=target_id,
-                    unit_ids=imported_facts.unit_ids,
-                    content=document.original_text or "",
-                    tags=list(document.tags),
-                )
-            )
-            for ordinal, unit_id in zip(imported_facts.original_ordinals, imported_facts.unit_ids, strict=True):
-                ref_map[(document.id, ordinal)] = unit_id
-                source_id = document.facts[ordinal].source_id
-                if source_id is not None:
-                    result.remapped_unit_ids[source_id] = unit_id
-
-    if parsed.observations:
-        outcome = await _import_observations(
+    with _open_archive(archive, produced_by="the document export endpoint") as zf:
+        _read_manifest(zf)
+        mental_models: list[dict] = _read_json(zf, "mental_models.json")
+        knowledge_pages = [TransferKnowledgePage.model_validate(p) for p in _read_json(zf, "knowledge_pages.json")]
+        if knowledge_pages and not mental_models:
+            raise ValueError("Knowledge Pages require their backing mental models in the transfer archive")
+        # Document transfer merges into an existing target bank. Reuse the logical
+        # mental-model ids, but always pin the carried rows to the destination bank;
+        # otherwise ON CONFLICT can silently match the source-bank row on same-schema
+        # transfers and leave the imported page without a backing model.
+        for row in mental_models:
+            row["bank_id"] = bank_id
+        result = await _replay_documents(
+            zf,
             backend=backend,
             embeddings_model=embeddings_model,
+            entity_resolver=entity_resolver,
+            config=config,
+            format_date_fn=format_date_fn,
             bank_id=bank_id,
-            observations=parsed.observations,
-            ref_map=ref_map,
+            on_conflict=on_conflict,
             ops=ops,
+            outbox_callback_factory=outbox_callback_factory,
+            keep_unit_ids=_referenced_ids(mental_models),
         )
-        result.observations_imported = outcome.imported
-        result.observations_skipped = outcome.skipped
-        result.remapped_unit_ids.update(outcome.remapped_unit_ids)
 
-    if restore_bank_scoped_rows and (parsed.mental_models or parsed.knowledge_pages):
+    if mental_models or knowledge_pages:
         # Facts and observations were replayed under fresh ids: point the models'
         # based_on evidence at them, as the whole-bank restore does (#5298).
-        _remap_mental_model_evidence(parsed.mental_models, result.remapped_unit_ids)
-        mm_embeddings = await _regenerate_mental_model_embeddings(embeddings_model, parsed.mental_models)
+        _remap_mental_model_evidence(mental_models, result.remapped_unit_ids)
+        mm_embeddings = await _regenerate_mental_model_embeddings(embeddings_model, mental_models)
         async with acquire_with_retry(backend) as conn:
             # Document archives serialize bank-row JSON values directly. Keep
             # JSON strings as raw JSON here; treating them as decoded values
@@ -350,16 +419,14 @@ async def import_documents(
             result.mental_models_imported = await _restore_rows(
                 conn,
                 "mental_models",
-                parsed.mental_models,
+                mental_models,
                 bank_rows_json_encoding="serialized",
             )
             await _apply_mental_model_derived_state(conn, bank_id, mm_embeddings, config)
-            result.knowledge_pages_imported = await _restore_knowledge_pages(conn, bank_id, parsed.knowledge_pages)
+            result.knowledge_pages_imported = await _restore_knowledge_pages(conn, bank_id, knowledge_pages)
             # After the tree AND its mental models exist: the index is derived from rows that
             # must already be there, and is read back from them rather than from the archive.
-            result.knowledge_pages_indexed = await _index_restored_pages(
-                conn, bank_id, parsed.knowledge_pages, mm_embeddings
-            )
+            result.knowledge_pages_indexed = await _index_restored_pages(conn, bank_id, knowledge_pages, mm_embeddings)
 
     logger.info(
         "[transfer] Imported %d document(s), %d fact(s), %d observation(s) into bank %s "
@@ -376,19 +443,86 @@ async def import_documents(
     return result
 
 
-def _document_batches(
-    to_import: list[tuple[TransferDocument, str]],
-) -> Iterator[list[tuple[TransferDocument, str]]]:
+async def _replay_documents(
+    zf: zipfile.ZipFile,
+    *,
+    backend: Any,
+    embeddings_model: Any,
+    entity_resolver: Any,
+    config: Any,
+    format_date_fn: Any,
+    bank_id: str,
+    on_conflict: OnConflict,
+    ops: Any,
+    outbox_callback_factory: Any,
+    keep_unit_ids: set[str],
+) -> ImportResult:
+    """Replay the archive's documents, then its observations, one bounded batch at a time.
+
+    Shared by both imports. Mental models and knowledge pages are the caller's: a
+    whole-bank restore owns those rows and remaps their evidence itself (#3833).
+    ``keep_unit_ids`` names the source unit ids whose new id the caller will ask for.
+    """
+    result = ImportResult()
+    for batch in _document_batches(_iter_documents(zf)):
+        to_import: list[tuple[TransferDocument, str]] = []
+        for document in batch:
+            target_id = await _resolve_target_id(backend, bank_id, document.id, on_conflict)
+            if target_id is None:
+                result.documents_skipped += 1
+                result.skipped_document_ids.append(document.id)
+                continue
+            if target_id != document.id:
+                result.remapped_document_ids[document.id] = target_id
+            to_import.append((document, target_id))
+        if not to_import:
+            continue
+        imported_batch = await _import_document_batch(
+            backend=backend,
+            entity_resolver=entity_resolver,
+            config=config,
+            bank_id=bank_id,
+            prepared=await _prepare_documents(embeddings_model, format_date_fn, to_import),
+            ops=ops,
+            outbox_callback_factory=outbox_callback_factory,
+        )
+        for (document, _target_id), imported_facts in zip(to_import, imported_batch, strict=True):
+            result.documents_imported += 1
+            result.facts_imported += len(imported_facts.unit_ids)
+            unit_ids: list[str | None] = [None] * len(document.facts)
+            for ordinal, unit_id in zip(imported_facts.original_ordinals, imported_facts.unit_ids, strict=True):
+                unit_ids[ordinal] = unit_id
+                source_id = document.facts[ordinal].source_id
+                if source_id is not None and source_id in keep_unit_ids:
+                    result.remapped_unit_ids[source_id] = unit_id
+            result.fact_unit_ids[document.id] = unit_ids
+
+    outcome = await _import_observations(
+        backend=backend,
+        embeddings_model=embeddings_model,
+        bank_id=bank_id,
+        observations=(TransferObservation.model_validate(o) for o in _iter_json_array(zf, "observations.json")),
+        fact_unit_ids=result.fact_unit_ids,
+        keep_unit_ids=keep_unit_ids,
+        ops=ops,
+    )
+    result.observations_imported = outcome.imported
+    result.observations_skipped = outcome.skipped
+    result.remapped_unit_ids.update(outcome.remapped_unit_ids)
+    return result
+
+
+def _document_batches(documents: Iterable[TransferDocument]) -> Iterator[list[TransferDocument]]:
     """Split documents into batches of at most ``_DOCUMENT_BATCH_SIZE`` documents and
     ``_FACT_BATCH_SIZE`` facts; a document with more facts than that gets a batch alone."""
-    batch: list[tuple[TransferDocument, str]] = []
+    batch: list[TransferDocument] = []
     facts = 0
-    for item in to_import:
-        if batch and (len(batch) >= _DOCUMENT_BATCH_SIZE or facts + len(item[0].facts) > _FACT_BATCH_SIZE):
+    for document in documents:
+        if batch and (len(batch) >= _DOCUMENT_BATCH_SIZE or facts + len(document.facts) > _FACT_BATCH_SIZE):
             yield batch
             batch, facts = [], 0
-        batch.append(item)
-        facts += len(item[0].facts)
+        batch.append(document)
+        facts += len(document.facts)
     if batch:
         yield batch
 
@@ -424,29 +558,29 @@ class BankImportResult:
     #: not reproduce are dropped rather than restored against a stale id.
     maintenance_queue_rows_imported: int = 0
     invalidated_memories_imported: int = 0
-    #: Per-document outcomes, for the engine's post-retain hook (as on ImportResult).
-    imported_documents: list[ImportedDocument] = field(default_factory=list)
+    #: Source document id -> new unit id per fact ordinal, for the post-retain hook (as on ImportResult).
+    fact_unit_ids: dict[str, list[str | None]] = field(default_factory=dict)
 
 
 @dataclass
 class ParsedBankArchive:
-    """The bank-level sections of a whole-bank archive (documents read separately)."""
+    """The bank-level sections of a whole-bank archive.
+
+    Documents, observations, history rows and attachment bytes are not here: they
+    are read from the archive as they are restored.
+    """
 
     manifest: TransferManifest
     # table name -> list of verbatim row dicts (banks, mental_models, directives, webhooks)
     bank_rows: dict[str, list[dict]] = field(default_factory=dict)
     # Typed knowledge-base tree (folders + pages), restored parent-first.
     knowledge_pages: list[TransferKnowledgePage] = field(default_factory=list)
-    # table name -> rows (audit_log, llm_requests), present only with scope.history
-    history_rows: dict[str, list[dict]] = field(default_factory=dict)
     # table name -> rows for the operational/curation tables carried with the data
     # (async_operations, the maintenance queues,
     # invalidated_memory_units). Absent on pre-scope archives.
     data_rows: dict[str, list[dict]] = field(default_factory=dict)
     # Attachment rows paired with the archive entries holding their bytes.
     attachments: list[TransferAttachment] = field(default_factory=list)
-    # archive entry -> bytes, for the attachments above.
-    blobs: dict[str, bytes] = field(default_factory=dict)
 
     @property
     def scope(self) -> TransferScope:
@@ -461,54 +595,34 @@ class ParsedBankArchive:
         return TransferScope(data=declared.data, bank_config=declared.bank_config, history=declared.history)
 
 
-def parse_bank_archive(archive_bytes: bytes) -> ParsedBankArchive:
+def parse_bank_archive(zf: zipfile.ZipFile) -> ParsedBankArchive:
     """Parse the bank-level sections of a whole-bank archive (``archive_type='bank'``)."""
-    with _open_archive(archive_bytes, produced_by="the bank export endpoint") as zf:
-        names = set(zf.namelist())
-        manifest = TransferManifest.model_validate_json(zf.read("manifest.json"))
-        if manifest.archive_type != "bank":
+    manifest = _read_manifest(zf)
+    if manifest.archive_type != "bank":
+        raise ValueError(
+            f"Not a whole-bank archive (archive_type={manifest.archive_type!r}); use import_documents instead"
+        )
+    bank_rows = {
+        table: _read_json(zf, f"{table}.json") for table in ("banks", *_BANK_CHILD_TABLES, *CARRIED_HISTORY_TABLES)
+    }
+    # Typed tree — absent on pre-tree archives, which restore with no pages.
+    knowledge_pages = [TransferKnowledgePage.model_validate(p) for p in _read_json(zf, "knowledge_pages.json")]
+    data_rows = {
+        table: _read_json(zf, f"data/{table}.json") for table in (*OPERATIONAL_TABLES, "invalidated_memory_units")
+    }
+    attachments = [TransferAttachment.model_validate(a) for a in _read_json(zf, "attachments.json")]
+    for attachment in attachments:
+        if attachment.entry not in zf.NameToInfo:
             raise ValueError(
-                f"Not a whole-bank archive (archive_type={manifest.archive_type!r}); use import_documents instead"
+                f"Invalid transfer archive: attachment {attachment.short_id} names entry "
+                f"{attachment.entry!r}, which the archive does not contain"
             )
-        bank_rows: dict[str, list[dict]] = {}
-        for table in ("banks", *_BANK_CHILD_TABLES, *CARRIED_HISTORY_TABLES):
-            fname = f"{table}.json"
-            bank_rows[table] = json.loads(zf.read(fname)) if fname in names else []
-        # Typed tree — absent on pre-tree archives, which restore with no pages.
-        knowledge_pages: list[TransferKnowledgePage] = []
-        if "knowledge_pages.json" in names:
-            knowledge_pages = [
-                TransferKnowledgePage.model_validate(p) for p in json.loads(zf.read("knowledge_pages.json"))
-            ]
-        history_rows: dict[str, list[dict]] = {}
-        for table in HISTORY_TABLES:
-            fname = f"history/{table}.json"
-            if fname in names:
-                history_rows[table] = json.loads(zf.read(fname))
-        data_rows: dict[str, list[dict]] = {}
-        for table in (*OPERATIONAL_TABLES, "invalidated_memory_units"):
-            fname = f"data/{table}.json"
-            if fname in names:
-                data_rows[table] = json.loads(zf.read(fname))
-        attachments: list[TransferAttachment] = []
-        blobs: dict[str, bytes] = {}
-        if "attachments.json" in names:
-            attachments = [TransferAttachment.model_validate(a) for a in json.loads(zf.read("attachments.json"))]
-            for attachment in attachments:
-                if attachment.entry not in names:
-                    raise ValueError(
-                        f"Invalid transfer archive: attachment {attachment.short_id} names entry "
-                        f"{attachment.entry!r}, which the archive does not contain"
-                    )
-                blobs[attachment.entry] = zf.read(attachment.entry)
     return ParsedBankArchive(
         manifest=manifest,
         bank_rows=bank_rows,
         knowledge_pages=knowledge_pages,
-        history_rows=history_rows,
         data_rows=data_rows,
         attachments=attachments,
-        blobs=blobs,
     )
 
 
@@ -520,7 +634,7 @@ def _resolve_bank_rows_json_encoding(manifest: TransferManifest) -> BankRowsJSON
 async def _restore_rows(
     conn: Any,
     table: str,
-    rows: list[dict],
+    rows: Iterable[dict],
     *,
     bank_rows_json_encoding: BankRowsJSONEncoding = "decoded",
     fq: Callable[[str], str] = fq_table,
@@ -529,9 +643,14 @@ async def _restore_rows(
     back to the column's type (timestamps, uuids, jsonb). ``ON CONFLICT DO NOTHING``
     keeps an import idempotent and safe to re-run against a partially-filled target.
 
+    ``rows`` may be a stream: they are written ``_RESTORE_BATCH_SIZE`` at a time, one
+    ``executemany`` per run of rows sharing a column set.
+
     ``fq`` resolves the table name. Only the Postgres memories store passes its own, to
     restore the one store-owned table carried this way (the curation archive)."""
-    if not rows:
+    rows = iter(rows)
+    first = next(rows, None)
+    if first is None:
         return 0
     from ..memory_engine import get_current_schema
     from ..schema import _is_oracle
@@ -552,7 +671,9 @@ async def _restore_rows(
         )
     col_types = {r["column_name"]: r["data_type"] for r in col_rows}
     inserted = 0
-    for row in rows:
+    pending_sql: str | None = None
+    pending: list[tuple[Any, ...]] = []
+    for row in itertools.chain((first,), rows):
         cols = [c for c in row if c in col_types]
         placeholders: list[str] = []
         values: list[Any] = []
@@ -581,11 +702,14 @@ async def _restore_rows(
             values.append(value)
         # Oracle folds unquoted DDL identifiers to upper case; quoted lower case would not match.
         col_list = ", ".join(f'"{c.upper()}"' if oracle else f'"{c}"' for c in cols)
-        await conn.execute(
-            f"INSERT INTO {fq(table)} ({col_list}) VALUES ({', '.join(placeholders)}) ON CONFLICT DO NOTHING",
-            *values,
-        )
+        sql = f"INSERT INTO {fq(table)} ({col_list}) VALUES ({', '.join(placeholders)}) ON CONFLICT DO NOTHING"
+        if pending and (sql != pending_sql or len(pending) >= _RESTORE_BATCH_SIZE):
+            await conn.executemany(cast(str, pending_sql), pending)
+            pending = []
+        pending_sql = sql
+        pending.append(tuple(values))
         inserted += 1
+    await conn.executemany(cast(str, pending_sql), pending)
     return inserted
 
 
@@ -804,6 +928,15 @@ def _drop_ids(rows: list[dict], column: str = "id") -> None:
         row.pop(column, None)
 
 
+def _retargeted_history(rows: Iterable[dict], bank_id: str) -> Iterator[dict]:
+    """History rows moved to ``bank_id``, their schema-wide ids dropped (see :func:`_drop_ids`)."""
+    for row in rows:
+        if "bank_id" in row:
+            row["bank_id"] = bank_id
+        row.pop("id", None)
+        yield row
+
+
 def _finished_operations(rows: list[dict]) -> list[dict]:
     """The operations log minus anything still in flight at export time.
 
@@ -825,7 +958,7 @@ async def _restore_attachments(
     conn: Any,
     bank_id: str,
     attachments: list[TransferAttachment],
-    blobs: dict[str, bytes],
+    zf: zipfile.ZipFile,
     file_storage: Any,
     document_id_map: dict[str, str],
 ) -> int:
@@ -836,7 +969,7 @@ async def _restore_attachments(
     would point a renamed clone — or a different tenant — at the source's blob,
     which bank deletion then sweeps out from under it. ``document_id_map`` is what
     an ``new-id`` import renamed each document to, so a copy lands under the
-    document the target actually wrote.
+    document the target actually wrote. Each blob is read from ``zf`` as it is written.
     """
     if not attachments:
         return 0
@@ -851,7 +984,7 @@ async def _restore_attachments(
         document_id = document_id_map.get(attachment.document_id, attachment.document_id)
         key = attachment_storage_key(bank_id, document_id, attachment.attachment_hash)
         await file_storage.store(
-            file_data=blobs[attachment.entry],
+            file_data=zf.read(attachment.entry),
             key=key,
             metadata={"content_type": attachment.media_type, "bank_id": bank_id},
         )
@@ -997,7 +1130,7 @@ async def import_bank(
     entity_resolver: Any,
     resolve_config: Callable[[], Awaitable[Any]],
     format_date_fn: Any,
-    archive_bytes: bytes,
+    archive: Archive,
     target_bank_id: str | None = None,
     scope: TransferScope | None = None,
     file_storage: Any = None,
@@ -1032,9 +1165,38 @@ async def import_bank(
     engine uses it to mark the bank as this operation's own, which is what lets a retry
     after a crash discard the half-restored bank instead of refusing it.
     """
-    if ops is None:
-        ops = backend.ops
-    parsed = parse_bank_archive(archive_bytes)
+    with _open_archive(archive, produced_by="the bank export endpoint") as zf:
+        return await _restore_bank(
+            zf,
+            backend=backend,
+            embeddings_model=embeddings_model,
+            entity_resolver=entity_resolver,
+            resolve_config=resolve_config,
+            format_date_fn=format_date_fn,
+            target_bank_id=target_bank_id,
+            scope=scope,
+            file_storage=file_storage,
+            ops=ops if ops is not None else backend.ops,
+            on_bank_created=on_bank_created,
+        )
+
+
+async def _restore_bank(
+    zf: zipfile.ZipFile,
+    *,
+    backend: Any,
+    embeddings_model: Any,
+    entity_resolver: Any,
+    resolve_config: Callable[[], Awaitable[Any]],
+    format_date_fn: Any,
+    target_bank_id: str | None,
+    scope: TransferScope | None,
+    file_storage: Any,
+    ops: Any,
+    on_bank_created: Callable[[Any], Awaitable[None]] | None,
+) -> BankImportResult:
+    """:func:`import_bank`, reading the archive from the open ``zf``."""
+    parsed = parse_bank_archive(zf)
     archive_scope = parsed.scope
     requested = scope or archive_scope
     # The intersection: what was asked for, of what is actually in the archive.
@@ -1050,7 +1212,8 @@ async def import_bank(
     # Remapping to a different id: rewrite the carried bank_id on every row so FKs
     # and PKs line up with the (also-remapped) documents/facts.
     if bank_id != source_bank_id:
-        for rows in (*parsed.bank_rows.values(), *parsed.history_rows.values(), *parsed.data_rows.values()):
+        # History rows get the same treatment as they stream in (_retargeted_history).
+        for rows in (*parsed.bank_rows.values(), *parsed.data_rows.values()):
             for row in rows:
                 if "bank_id" in row:
                     row["bank_id"] = bank_id
@@ -1059,8 +1222,6 @@ async def import_bank(
         # ON CONFLICT DO NOTHING would silently skip the copy (see _drop_ids).
         for table in ("directives", "webhooks"):
             _drop_ids(parsed.bank_rows.get(table, []))
-        for table in HISTORY_TABLES:
-            _drop_ids(parsed.history_rows.get(table, []))
         _drop_ids(parsed.data_rows.get("async_operations", []), "operation_id")
 
     # `internal_id` is a globally-unique (banks_internal_id_unique) local identifier
@@ -1147,24 +1308,29 @@ async def import_bank(
     document_id_map: dict[str, str] = {}
 
     if restoring.data:
-        doc_result = await import_documents(
+        doc_result = await _replay_documents(
+            zf,
             backend=backend,
             embeddings_model=embeddings_model,
             entity_resolver=entity_resolver,
             config=config,
             format_date_fn=format_date_fn,
             bank_id=bank_id,
-            archive_bytes=archive_bytes,
+            on_conflict="skip",
             ops=ops,
             outbox_callback_factory=None,
-            # The bank path restores mental models and knowledge pages itself, below,
-            # after remapping their evidence ids onto the facts just replayed.
-            restore_bank_scoped_rows=False,
+            # Every unit id the rows restored below can cite, so only those are remapped.
+            keep_unit_ids=_referenced_ids(
+                parsed.bank_rows.get("mental_models", []),
+                parsed.bank_rows.get("mental_model_history", []),
+                parsed.data_rows.get("graph_maintenance_queue", []),
+                parsed.data_rows.get("invalidated_memory_units", []),
+            ),
         )
         result.documents_imported = doc_result.documents_imported
         result.facts_imported = doc_result.facts_imported
         result.observations_imported = doc_result.observations_imported
-        result.imported_documents = doc_result.imported_documents
+        result.fact_unit_ids = doc_result.fact_unit_ids
         unit_id_map = doc_result.remapped_unit_ids
         document_id_map = doc_result.remapped_document_ids
 
@@ -1186,7 +1352,7 @@ async def import_bank(
             # it, and the queue/curation rows are keyed by units the replay has
             # just written.
             result.attachments_imported = await _restore_attachments(
-                conn, bank_id, parsed.attachments, parsed.blobs, file_storage, document_id_map
+                conn, bank_id, parsed.attachments, zf, file_storage, document_id_map
             )
             operational = await _restore_operational_rows(
                 conn,
@@ -1250,10 +1416,13 @@ async def import_bank(
 
         if restoring.history:
             for table in HISTORY_TABLES:
+                rows: Iterable[dict] = _iter_json_array(zf, f"history/{table}.json")
+                if bank_id != source_bank_id:
+                    rows = _retargeted_history(rows, bank_id)
                 result.history_rows_imported += await _restore_rows(
                     conn,
                     table,
-                    parsed.history_rows.get(table, []),
+                    rows,
                     bank_rows_json_encoding=bank_rows_json_encoding,
                 )
 
@@ -1712,8 +1881,9 @@ async def _import_observations(
     backend: Any,
     embeddings_model: Any,
     bank_id: str,
-    observations: list[TransferObservation],
-    ref_map: dict[tuple[str, int], str],
+    observations: Iterable[TransferObservation],
+    fact_unit_ids: dict[str, list[str | None]],
+    keep_unit_ids: set[str],
     ops: Any,
 ) -> _ObservationOutcome:
     """Insert observations whose source facts were all imported in this run.
@@ -1729,28 +1899,21 @@ async def _import_observations(
     which merges related observations). Importing into a bank that already has
     observations — or importing the same archive twice — can therefore produce
     overlapping observations over the same facts.
+
+    ``observations`` is consumed as a stream, ``_OBSERVATION_BATCH_SIZE`` at a time.
     """
-    outcome = _ObservationOutcome()
-
-    # Resolve each observation's sources to new unit ids; drop any whose sources
-    # weren't all imported (e.g. a subset/skip import).
-    resolved: list[tuple[TransferObservation, list[str]]] = []
-    for obs in observations:
-        source_ids = [ref_map.get((s.document_id, s.fact_index)) for s in obs.sources]
-        if not source_ids or any(sid is None for sid in source_ids):
-            outcome.skipped += 1
-            continue
-        resolved.append((obs, [sid for sid in source_ids if sid is not None]))
-
     from ..memories import get_memories
 
     store = get_memories()
-    # One transaction per batch: the source facts are already committed, so a batch only
-    # needs its own sources, and a whole-set insert outgrew PostgreSQL's 1 GB message (#5418).
-    # A failure midway leaves the earlier batches in place, as a failed document batch does;
-    # an import-bank retry discards the half-restored bank and starts over.
-    for start in range(0, len(resolved), _OBSERVATION_BATCH_SIZE):
-        batch = resolved[start : start + _OBSERVATION_BATCH_SIZE]
+    outcome = _ObservationOutcome()
+
+    def source_unit_id(source: TransferObservationSource) -> str | None:
+        unit_ids = fact_unit_ids.get(source.document_id)
+        if unit_ids is None or not 0 <= source.fact_index < len(unit_ids):
+            return None
+        return unit_ids[source.fact_index]
+
+    async def write(batch: list[tuple[TransferObservation, list[str]]]) -> None:
         # Observations embed the raw text (matching consolidation), not the
         # date-augmented text used for facts.
         embeddings = await _embed_in_batches(embeddings_model, [obs.text for obs, _ in batch])
@@ -1771,15 +1934,40 @@ async def _import_observations(
             )
             for (obs, _sources), embedding in zip(batch, embeddings)
         ]
-        outcome = await store.import_transfer_observations(
+        written = await store.import_transfer_observations(
             backend=backend,
             ops=ops,
             fq_table=fq_table,
             bank_id=bank_id,
             resolved=batch,
             processed=processed,
-            outcome=outcome,
+            outcome=_ObservationOutcome(),
         )
+        outcome.imported += written.imported
+        outcome.skipped += written.skipped
+        outcome.remapped_unit_ids.update(
+            (source_id, unit_id)
+            for source_id, unit_id in written.remapped_unit_ids.items()
+            if source_id in keep_unit_ids
+        )
+
+    # One transaction per batch: the source facts are already committed, so a batch only
+    # needs its own sources, and a whole-set insert outgrew PostgreSQL's 1 GB message (#5418).
+    # A failure midway leaves the earlier batches in place, as a failed document batch does;
+    # an import-bank retry discards the half-restored bank and starts over.
+    batch: list[tuple[TransferObservation, list[str]]] = []
+    for obs in observations:
+        # Drop any observation whose sources weren't all imported (e.g. a subset/skip import).
+        source_ids = [source_unit_id(s) for s in obs.sources]
+        if not source_ids or any(sid is None for sid in source_ids):
+            outcome.skipped += 1
+            continue
+        batch.append((obs, [sid for sid in source_ids if sid is not None]))
+        if len(batch) >= _OBSERVATION_BATCH_SIZE:
+            await write(batch)
+            batch = []
+    if batch:
+        await write(batch)
     return outcome
 
 

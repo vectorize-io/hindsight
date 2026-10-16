@@ -9104,10 +9104,10 @@ def _register_routes(app: FastAPI):
                 raise HTTPException(
                     status_code=400, detail=f"Invalid on_conflict '{on_conflict}' (expected skip|replace|new-id)"
                 )
-            archive_bytes = await file.read()
             try:
+                # The upload's spooled file, not its bytes: the archive is read entry by entry.
                 submission = await app.state.memory.import_documents_async(
-                    bank_id, archive_bytes, request_context, on_conflict
+                    bank_id, file.file, request_context, on_conflict
                 )
             except ValueError as e:
                 # Invalid archive / unsupported schema version — fail fast.
@@ -9284,7 +9284,8 @@ def _register_routes(app: FastAPI):
                     status_code=400,
                     detail=f"Invalid document_conflict '{document_conflict}' (expected skip|replace|new-id)",
                 )
-            archive_bytes = await file.read()
+            # The upload's spooled file, not its bytes: the archive is read entry by entry.
+            archive = file.file
 
             from hindsight_api.engine.transfer import TransferScope
 
@@ -9306,12 +9307,12 @@ def _register_routes(app: FastAPI):
                             "a merge imports the archive's documents only",
                         )
                     submission = await app.state.memory.import_documents_async(
-                        bank_id, archive_bytes, request_context, document_conflict
+                        bank_id, archive, request_context, document_conflict
                     )
                 else:
                     submission = await app.state.memory.submit_bank_import_async(
                         bank_id,
-                        archive_bytes,
+                        archive,
                         request_context,
                         target_bank_id=target_bank_id,
                         scope=TransferScope(

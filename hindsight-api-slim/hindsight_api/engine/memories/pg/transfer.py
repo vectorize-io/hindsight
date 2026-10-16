@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -568,31 +569,34 @@ async def import_observations(
             obs_unit_ids = await fact_storage.insert_facts_batch(conn, bank_id, processed, ops=ops)
 
             all_source_ids: set[uuid.UUID] = set()
+            links: list[_ObservationLinks] = []
+            created_at: list[tuple[Any, ...]] = []
+            event_date: list[tuple[Any, ...]] = []
             for (obs, sources), obs_unit_id in zip(resolved, obs_unit_ids):
                 observation_uuid = uuid.UUID(obs_unit_id)
                 if obs.created_at is not None:
-                    await conn.execute(
-                        f"UPDATE {fq_table('memory_units')} SET created_at = $1 WHERE id = $2 AND bank_id = $3",
-                        obs.created_at,
-                        observation_uuid,
-                        bank_id,
-                    )
+                    created_at.append((obs.created_at, observation_uuid, bank_id))
                 if obs.event_date is not None:
                     # insert_facts_batch derives event_date for normal writes;
                     # transfer restores the source value carried by the archive.
-                    await conn.execute(
-                        f"UPDATE {fq_table('memory_units')} SET event_date = $1 WHERE id = $2 AND bank_id = $3",
-                        obs.event_date,
-                        observation_uuid,
-                        bank_id,
-                    )
+                    event_date.append((obs.event_date, observation_uuid, bank_id))
                 source_uuids = [uuid.UUID(s) for s in sources]
                 all_source_ids.update(source_uuids)
-                await _link_observation_sources(
-                    conn, ops, fq_table, bank_id, observation_uuid, source_uuids, obs.proof_count
-                )
+                links.append(_ObservationLinks(observation_uuid, source_uuids, obs.proof_count))
                 if obs.source_id is not None:
                     outcome.remapped_unit_ids[obs.source_id] = str(observation_uuid)
+            # One executemany per statement for the batch, not up to three round trips per row.
+            if created_at:
+                await conn.executemany(
+                    f"UPDATE {fq_table('memory_units')} SET created_at = $1 WHERE id = $2 AND bank_id = $3",
+                    created_at,
+                )
+            if event_date:
+                await conn.executemany(
+                    f"UPDATE {fq_table('memory_units')} SET event_date = $1 WHERE id = $2 AND bank_id = $3",
+                    event_date,
+                )
+            await _link_observation_sources(conn, ops, fq_table, bank_id, links)
 
             # Mark source facts consolidated so the target consolidator skips
             # them. COALESCE keeps the exact source timestamp already restored by
@@ -610,38 +614,42 @@ async def import_observations(
     return outcome
 
 
+@dataclass
+class _ObservationLinks:
+    """One imported observation's sources and proof count."""
+
+    observation_id: uuid.UUID
+    source_ids: list[uuid.UUID]
+    proof_count: int
+
+
 async def _link_observation_sources(
     conn: Any,
     ops: Any,
     fq_table: Callable[[str], str],
     bank_id: str,
-    observation_id: uuid.UUID,
-    source_ids: list[uuid.UUID],
-    proof_count: int,
+    links: list[_ObservationLinks],
 ) -> None:
-    """Attach source ids + proof_count to a freshly inserted observation row.
+    """Attach source ids + proof_count to freshly inserted observation rows.
 
     PG stores the sources in the ``source_memory_ids`` array column; Oracle uses
     the ``observation_sources`` junction table (same split as consolidation).
     """
+    if not links:
+        return
     if ops.uses_observation_sources_table:
         await conn.executemany(
             f"INSERT INTO {fq_table('observation_sources')} (observation_id, source_id) "
             f"VALUES ($1, $2) ON CONFLICT (observation_id, source_id) DO NOTHING",
-            [(observation_id, sid) for sid in dict.fromkeys(source_ids)],
+            [(link.observation_id, sid) for link in links for sid in dict.fromkeys(link.source_ids)],
         )
-        await conn.execute(
+        await conn.executemany(
             f"UPDATE {fq_table('memory_units')} SET proof_count = $1 WHERE id = $2 AND bank_id = $3",
-            proof_count,
-            observation_id,
-            bank_id,
+            [(link.proof_count, link.observation_id, bank_id) for link in links],
         )
     else:
-        await conn.execute(
+        await conn.executemany(
             f"UPDATE {fq_table('memory_units')} SET source_memory_ids = $1, proof_count = $2 "
             f"WHERE id = $3 AND bank_id = $4",
-            source_ids,
-            proof_count,
-            observation_id,
-            bank_id,
+            [(link.source_ids, link.proof_count, link.observation_id, bank_id) for link in links],
         )
