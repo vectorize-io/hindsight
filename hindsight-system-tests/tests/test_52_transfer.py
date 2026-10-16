@@ -217,6 +217,6 @@ async def test_an_imported_mental_model_still_points_at_its_evidence(client, llm
     model = await client.mental_models.get_mental_model(destination, created.mental_model_id, detail="full")
     based_on = model.reflect_response["based_on"]
     evidence = [e["id"] for kind in ("world", "experience", "observation") for e in based_on[kind]]
-    assert evidence, "the imported model lost its evidence entirely"
-    here = {m.id for m in await _memories(client, destination)}
-    assert set(evidence) <= here, "an imported mental model cites memory ids that do not exist in this bank"
+    here = {m.id: m.text for m in await _memories(client, destination)}
+    assert set(evidence) <= here.keys(), "an imported mental model cites memory ids that do not exist in this bank"
+    assert sorted(here[i] for i in evidence) == sorted([BERLIN, LEASE, OBSERVATION])
