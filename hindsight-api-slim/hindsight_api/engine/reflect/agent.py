@@ -1276,7 +1276,8 @@ async def _run_reflect_agent_inner(
         def _arguments(tool: str) -> dict[str, Any]:
             arguments: dict[str, Any] = {"query": search_query, "reason": "parallel round"}
             if tool == "recall" and prune_evidence_fn is not None:
-                arguments["max_tokens"] = _ROUND_RECALL_MAX_TOKENS
+                # Never below the bank's own recall size.
+                arguments["max_tokens"] = max(_ROUND_RECALL_MAX_TOKENS, tool_token_limits.recall_max_tokens)
             return arguments
 
         return LLMToolCallResult(
@@ -1440,11 +1441,34 @@ async def _run_reflect_agent_inner(
             # of rendering rules, and searching with all of it found nothing (sde-bench
             # boltons-budget). The same call now also spots a request with nothing to look up
             # ("yes", "thanks"), which then returns at once instead of paying for a retrieval.
-            distilled = (
-                (await _tracked_llm_call(query, "round_query", ROUND_SEARCH_QUERY_SYSTEM_PROMPT, None, temperature=0.0))
-                .strip()
-                .strip('"')
-            )
+            #
+            # The caller's context goes with it: "should I go ahead with it?" names nothing without
+            # the plan it came with. The temperature is the mechanical passes' one, which stays
+            # unset for reasoning models that refuse any. If the call fails, the request is searched
+            # as written: losing the rewrite costs recall quality, failing would cost the answer.
+            request = f"{query}\n\n## Context\n{context}" if context and context.strip() else query
+            try:
+                distilled = (
+                    (
+                        await _tracked_llm_call(
+                            request,
+                            "round_query",
+                            ROUND_SEARCH_QUERY_SYSTEM_PROMPT,
+                            None,
+                            temperature=_deterministic_temperature(),
+                        )
+                    )
+                    .strip()
+                    .strip('"')
+                )
+            except OperationCancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    f"[REFLECT {reflect_id}] search-query rewrite failed, searching the request as written: "
+                    f"{describe_llm_error(exc)}"
+                )
+                distilled = ""
             # A document is never "nothing": a refresh must not store an empty page.
             if distilled == _NOTHING_TO_SEARCH and not answer_as_document:
                 logger.info(f"[REFLECT {reflect_id}] Decision-orchestrated: nothing to search for; empty answer.")
@@ -1457,7 +1481,8 @@ async def _run_reflect_agent_inner(
                     usage=_get_usage(),
                     directives_applied=directives_applied,
                 )
-            result = _parallel_round(distilled or query, "round_")
+            # NONE on a document (a refresh) searches the request itself, never the word "NONE".
+            result = _parallel_round(query if distilled in ("", _NOTHING_TO_SEARCH) else distilled, "round_")
             parallel_round = True
             forced_steps_done = len(forced_sequence) - 1  # the increment below completes the sequence
         else:
@@ -1728,7 +1753,15 @@ async def _run_reflect_agent_inner(
                 None,
             )
             if follow_up is not None:
-                result = _parallel_round(str(follow_up.arguments["query"]), f"round{iteration + 1}_")
+                # The turn's other calls (expand, get_document, read_mental_models) run with the
+                # round: replacing the turn with the round alone dropped them.
+                round_result = _parallel_round(str(follow_up.arguments["query"]), f"round{iteration + 1}_")
+                extra_calls = [
+                    tc
+                    for tc in result.tool_calls
+                    if _normalize_tool_name(tc.name) not in forced_sequence and not _is_done_tool(tc.name)
+                ]
+                result = round_result.model_copy(update={"tool_calls": round_result.tool_calls + extra_calls})
                 parallel_round = True
                 searched_after_not_enough = True
 
@@ -1910,8 +1943,13 @@ async def _run_reflect_agent_inner(
                     # mental model suffices, or — having just read it — issue a
                     # targeted ``search_observations``/``recall`` itself. Stale,
                     # empty, or missing mental models keep the full forced path.
+                    # In a decision-orchestrated round the decision model has read the pages: when
+                    # it found they do not answer, the facts sit beside them, and telling the LLM to
+                    # answer from the pages alone sends it back to the misread decision the facts
+                    # were kept for (sde-bench boltons-budget).
                     if (
                         not forcing_released
+                        and (not parallel_round or pages_answered)
                         and (budget or "low").lower() != "high"
                         and output.get("mental_models")
                         and _all_mental_models_are_usable_and_fresh(output)
@@ -2094,6 +2132,8 @@ async def _prune_round(
         for key in ("observations", "memories"):
             if key in data:
                 data[key] = [item for item in data[key] if (i, key, str(item.get("id"))) in kept]
+        if "count" in data and "observations" in data:
+            data["count"] = len(data["observations"])
         if "chunks" in data:
             data["chunks"] = {cid: c for cid, c in data["chunks"].items() if (i, "chunks", str(cid)) in kept}
         if "source_facts" in data:

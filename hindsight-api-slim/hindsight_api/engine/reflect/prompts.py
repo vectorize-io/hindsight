@@ -286,9 +286,9 @@ def build_system_prompt_for_tools(
             "- `mentioned_at` — when the user retained the fact (always set).",
             "- `occurred_start` / `occurred_end` — when the underlying event happened (optional, set for dated events).",
             "",
-            "When facts about the SAME facet conflict — counts, statuses, ownership, location, presence, etc. — the fact with the LATEST `mentioned_at` is authoritative. Later statements SUPERSEDE earlier ones. Do NOT average, sum, or favor an explicitly-dated fact over a more recent one.",
+            "When facts about the SAME facet conflict — counts, statuses, ownership, location, presence, etc. — the fact with the LATEST `mentioned_at` is authoritative. Later statements SUPERSEDE earlier ones. Do NOT average, sum, or favor an explicitly-dated fact over a more recent one. The one exception is a DECISION, below.",
             "",
-            "A DECISION is different from a state. When the record holds a decision with its rationale (what was decided and why) and a later record changes the same thing WITHOUT stating a reason that overturns that decision (a refactor, a 'simplification', a cleanup, a performance change), the later record does NOT supersede the decision: report the decision as the standing one, and report the later change as a departure from it. Only a later record that itself decides, with its own rationale, replaces an earlier decision.",
+            "A DECISION is different from a state. When the record holds a decision with its rationale (what was decided and why) and a later record changes the same thing WITHOUT stating a reason that overturns that decision (a refactor, a 'simplification', a cleanup, a performance change), the later record does NOT supersede the decision: report the decision as the standing one, and report the later change as a departure from it. Only a later record that itself decides, with its own rationale, replaces an earlier decision. Example: 'Invoices are due net-30; finance chose it for cash flow' (March) and 'cleanup: simplify billing config, terms = net-45' (May) → the rule is net-30; the May cleanup is a change that departed from it, NOT the rule.",
             "",
             "Example: three count facts come back from recall:",
             "  - 'Team has 2 engineers' (mentioned_at=T1)",
@@ -967,12 +967,6 @@ def build_done_request_prompt(
     return "\n".join(parts) + output_language_directive(llm_output_language)
 
 
-#: System prompt for the intermediate (map) calls of split synthesis. They do
-#: NOT answer the question — they compress one chunk of retrieved data into
-#: dated, cited claims that the reduce call can reason over. Dates and ids are
-#: mandatory because conflicting facts can land in different chunks: only the
-#: reduce call sees every chunk's claims, and it needs each claim's
-#: ``mentioned_at`` to apply the latest-statement-wins supersession rule.
 # Decision-orchestrated reflect: a request too long to search with as written (a plugin's prompt wraps the
 # developer's goal in rendering rules) is first turned into one short search query.
 #
@@ -987,11 +981,18 @@ ROUND_SEARCH_QUERY_SYSTEM_PROMPT = (
     "about it: a decision and why it was made, a value or limit, a policy or rule, an event. Never add words like 'implementation', 'code' or 'logic' unless the "
     "request asks how the code works. Leave out instructions about formatting the answer. "
     "Reply with the query only, no quotes. "
+    "A '## Context' section, when present, says what the request refers to: use it to name the subject. "
     "If the request asks for nothing a memory bank could answer (an acknowledgement, a greeting, "
     "a bare yes/no or 'go ahead' with no subject), reply exactly NONE."
 )
 
 
+#: System prompt for the intermediate (map) calls of split synthesis. They do
+#: NOT answer the question — they compress one chunk of retrieved data into
+#: dated, cited claims that the reduce call can reason over. Dates and ids are
+#: mandatory because conflicting facts can land in different chunks: only the
+#: reduce call sees every chunk's claims, and it needs each claim's
+#: ``mentioned_at`` to apply the latest-statement-wins supersession rule.
 CLAIMS_SYSTEM_PROMPT = (
     "You extract evidence from retrieved memory data. You MUST ONLY use information "
     "from the provided data. NEVER make up names, people, events, or entities.\n\n"

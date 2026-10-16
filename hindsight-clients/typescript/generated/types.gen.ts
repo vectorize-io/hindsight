@@ -589,6 +589,18 @@ export type BankTemplateConfig = {
    */
   enable_reranking?: boolean | null;
   /**
+   * Reflect Use Decision Model
+   *
+   * When the server has a decision model, reflect lets it prune evidence and decide when to stop
+   */
+  reflect_use_decision_model?: boolean | null;
+  /**
+   * Mental Model Refresh Use Decision Model
+   *
+   * The same, for knowledge-page refreshes
+   */
+  mental_model_refresh_use_decision_model?: boolean | null;
+  /**
    * Disposition Skepticism
    *
    * Skepticism trait (1-5)

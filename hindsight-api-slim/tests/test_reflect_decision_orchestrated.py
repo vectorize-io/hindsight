@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from hindsight_api.engine.reflect.agent import run_reflect_agent
+from hindsight_api.engine.reflect.agent import _FRESH_PAGES_GUIDANCE, run_reflect_agent
 from hindsight_api.engine.response_models import LLMCallResult, LLMToolCall, LLMToolCallResult, TokenUsage
 from tests.reflect_script import closing_echo
 
@@ -31,8 +31,9 @@ class _ScriptedProvider:
         self.search_query = search_query
         self.distill_prompts: list[str] = []
 
-    async def call_with_tools(self, *, tool_choice, **_):
+    async def call_with_tools(self, *, tool_choice, messages, **_):
         self.tool_choices.append(tool_choice.function_name or tool_choice.mode.value)
+        self.last_messages = list(messages)
         return self._reply(tool_choice=tool_choice)
 
     async def call(self, *, messages, **_):
@@ -163,6 +164,25 @@ async def test_a_done_that_does_not_parse_is_handed_back_and_re_emitted():
 
     assert result.text == "A"
     assert provider.tool_choices == ["recall", "auto", "auto"], "the broken done was refused once, then re-emitted"
+
+
+@pytest.mark.asyncio
+async def test_a_follow_up_turns_other_calls_run_with_its_round():
+    """The search becomes a parallel round; an expand in the same turn still runs."""
+    follow_up = LLMToolCallResult(
+        tool_calls=[
+            LLMToolCall(id="r", name="recall", arguments={"query": "Alice's new address"}),
+            LLMToolCall(id="e", name="expand", arguments={"memory_ids": ["mem-1"], "depth": "chunk"}),
+        ],
+        finish_reason="tool_calls",
+    )
+    provider = _ScriptedProvider([follow_up, _done()])
+    functions = _functions()
+
+    await _reflect(provider, functions, AsyncMock(return_value=False))
+
+    assert functions["recall_fn"].await_args.args[0] == "Alice's new address", "the round ran"
+    functions["expand_fn"].assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -328,6 +348,8 @@ async def test_fresh_pages_that_do_not_answer_keep_the_facts():
 
     evidence = sufficient.await_args_list[1].args[1]
     assert "the page" in evidence and '"o"' in evidence and '"m"' in evidence
+    # The pages did not answer, so the LLM is not told to answer from them alone.
+    assert not any(_FRESH_PAGES_GUIDANCE in str(m.get("content")) for m in provider.last_messages)
 
 
 @pytest.mark.asyncio
@@ -380,3 +402,37 @@ async def test_a_document_is_never_answered_empty():
     )
 
     assert functions["recall_fn"].await_count == 1
+    assert functions["recall_fn"].await_args.args[0] == "yes", "the request is searched, never the word NONE"
+
+
+@pytest.mark.asyncio
+async def test_the_search_query_is_written_with_the_callers_context():
+    """ "Should I go ahead with it?" names nothing; the context it came with does."""
+    provider = _ScriptedProvider([_done()], search_query="billing migration plan")
+
+    await run_reflect_agent(
+        llm_config=provider,
+        bank_id="b",
+        query="should I go ahead with it?",
+        context="the billing migration plan",
+        bank_profile={"name": "T", "mission": "M"},
+        has_mental_models=True,
+        budget="mid",
+        max_iterations=6,
+        evidence_is_sufficient_fn=AsyncMock(return_value=True),
+        **_functions(),
+    )
+
+    assert "the billing migration plan" in provider.distill_prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_search_query_rewrite_searches_the_request_as_written():
+    provider = _ScriptedProvider([_done()])
+    provider.call = AsyncMock(side_effect=RuntimeError("provider down"))  # type: ignore[method-assign]
+    functions = _functions()
+
+    result = await _reflect(provider, functions, AsyncMock(return_value=True))
+
+    assert result.text == "A"
+    assert functions["recall_fn"].await_args.args[0] == "where does Alice live?"

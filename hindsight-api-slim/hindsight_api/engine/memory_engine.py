@@ -3016,6 +3016,7 @@ class MemoryEngine(MemoryEngineInterface):
         # Initialize cross-encoder reranker (cached for performance)
         self._cross_encoder_reranker = CrossEncoderReranker(cross_encoder=cross_encoder)
         self._reflect_decision_model_client: TypeSafeCrossEncoder | None = None
+        self._reflect_decision_model_unsupported_logged = False
 
         # Initialize task backend.
         # All backends use BrokerTaskBackend + WorkerPoller for async background execution.
@@ -15341,10 +15342,22 @@ class MemoryEngine(MemoryEngineInterface):
         HINDSIGHT_API_REFLECT_DECISION_MODEL_* overrides), once per engine so its connection
         pool is shared across reflects. It is a TypeSafeCrossEncoder because pruning needs
         that class's rank-and-cut; the sufficiency question is one more call on it.
+
+        That client speaks only TypeSafe's System One endpoint, so another provider (cloudflare,
+        openai) leaves reflect on agent turns instead of failing every reflect's first round.
         """
         if self._reflect_decision_model_client is None:
             setup = get_config().decision_model_config("reflect")
             if setup is None:
+                return None
+            if setup.provider != "typesafe":
+                if not self._reflect_decision_model_unsupported_logged:
+                    self._reflect_decision_model_unsupported_logged = True
+                    logger.warning(
+                        "Reflect's decision model supports only the typesafe provider, not %r: "
+                        "reflect keeps agent turns.",
+                        setup.provider,
+                    )
                 return None
             self._reflect_decision_model_client = TypeSafeCrossEncoder(
                 api_key=setup.api_key,
@@ -15544,10 +15557,10 @@ class MemoryEngine(MemoryEngineInterface):
         # Decision-orchestrated when a decision model is set up for reflect and the bank keeps
         # it on: for an interactive reflect and a knowledge-page refresh, each its own switch.
         is_refresh = _operation_label.endswith("refresh_mental_model")
-        use_decision_model = getattr(
-            resolved_reflect_config,
-            "mental_model_refresh_use_decision_model" if is_refresh else "reflect_use_decision_model",
-            True,
+        use_decision_model = (
+            resolved_reflect_config.mental_model_refresh_use_decision_model
+            if is_refresh
+            else resolved_reflect_config.reflect_use_decision_model
         )
         decision_model = self._reflect_decision_model() if use_decision_model else None
 

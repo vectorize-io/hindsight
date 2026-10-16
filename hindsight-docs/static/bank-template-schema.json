@@ -159,6 +159,32 @@
           "description": "Toggle cross-encoder reranking during recall",
           "title": "Enable Reranking"
         },
+        "reflect_use_decision_model": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When the server has a decision model, reflect lets it prune evidence and decide when to stop",
+          "title": "Reflect Use Decision Model"
+        },
+        "mental_model_refresh_use_decision_model": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The same, for knowledge-page refreshes",
+          "title": "Mental Model Refresh Use Decision Model"
+        },
         "disposition_skepticism": {
           "anyOf": [
             {
