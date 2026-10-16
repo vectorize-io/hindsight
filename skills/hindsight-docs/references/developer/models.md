@@ -192,7 +192,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `volcano` | `doubao-pro-32k` |
 | `openrouter` | `qwen/qwen3.5-9b` |
 | `requesty` | `openai/gpt-4o-mini` |
-| `openai-codex` | `gpt-5.4-mini` |
+| `openai-codex` | `gpt-5.6-luna` |
 | `claude-code` | `claude-sonnet-4-5-20250929` |
 | `cursor` | `auto` |
 | `github-copilot` | `gpt-5.6-terra` |
@@ -414,7 +414,7 @@ Use your ChatGPT Plus or Pro subscription for Hindsight without separate OpenAI 
 4. **Configure Hindsight:**
    ```bash
    export HINDSIGHT_API_LLM_PROVIDER=openai-codex
-   # export HINDSIGHT_API_LLM_MODEL=gpt-5.6-luna  # defaults to gpt-5.4-mini
+   # export HINDSIGHT_API_LLM_MODEL=gpt-5.6-luna  # the default
    # No API key needed - reads from ~/.codex/auth.json automatically
    ```
 

@@ -15,7 +15,7 @@ import json
 import logging
 import uuid
 import zipfile
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -66,8 +66,8 @@ OnConflict = Literal["skip", "replace", "new-id"]
 _VALID_CONFLICT_MODES: tuple[OnConflict, ...] = ("skip", "replace", "new-id")
 
 #: Texts per embedding call for the import phases that are sized by the *bank* rather
-#: than by a document: observations and mental models arrive as one list covering the
-#: whole archive. Slicing here, above the provider, bounds peak memory for every
+#: than by a document: mental models arrive as one list covering the whole archive, and
+#: observations in ``_OBSERVATION_BATCH_SIZE`` slices of theirs. Slicing here, above the provider, bounds peak memory for every
 #: provider — including in-process ones with nothing downstream to slice for them
 #: (issue #3891). Retain bounds itself the same way (#3763).
 _EMBED_BATCH_SIZE = 128
@@ -76,6 +76,17 @@ _EMBED_BATCH_SIZE = 128
 #: long run of tiny round trips (an embedding call, an entity-resolution pass and a
 #: commit per document); a batch shares all three, the way a multi-item retain does.
 _DOCUMENT_BATCH_SIZE = 50
+
+#: Facts per document batch. A batch is one insert, so its size is facts x embedding
+#: width: fifty fact-heavy documents with wide embeddings can outgrow PostgreSQL's 1 GB
+#: protocol message. A batch closes at whichever bound it reaches first; one document
+#: always rides whole, since its facts share one transaction and causal ordinals.
+_FACT_BATCH_SIZE = 2000
+
+#: Observations per transaction, for the same 1 GB limit: the whole set in one insert
+#: was ~40K x 3072 floats, which PostgreSQL rejected with ``invalid message length``
+#: (#5418). Also bounds how many embeddings are held in memory at once.
+_OBSERVATION_BATCH_SIZE = 500
 
 
 @dataclass
@@ -286,8 +297,7 @@ async def import_documents(
             result.remapped_document_ids[document.id] = target_id
         to_import.append((document, target_id))
 
-    for start in range(0, len(to_import), _DOCUMENT_BATCH_SIZE):
-        batch = to_import[start : start + _DOCUMENT_BATCH_SIZE]
+    for batch in _document_batches(to_import):
         imported_batch = await _import_document_batch(
             backend=backend,
             entity_resolver=entity_resolver,
@@ -328,6 +338,9 @@ async def import_documents(
         result.remapped_unit_ids.update(outcome.remapped_unit_ids)
 
     if restore_bank_scoped_rows and (parsed.mental_models or parsed.knowledge_pages):
+        # Facts and observations were replayed under fresh ids: point the models'
+        # based_on evidence at them, as the whole-bank restore does (#5298).
+        _remap_mental_model_evidence(parsed.mental_models, result.remapped_unit_ids)
         mm_embeddings = await _regenerate_mental_model_embeddings(embeddings_model, parsed.mental_models)
         async with acquire_with_retry(backend) as conn:
             # Document archives serialize bank-row JSON values directly. Keep
@@ -363,6 +376,23 @@ async def import_documents(
     return result
 
 
+def _document_batches(
+    to_import: list[tuple[TransferDocument, str]],
+) -> Iterator[list[tuple[TransferDocument, str]]]:
+    """Split documents into batches of at most ``_DOCUMENT_BATCH_SIZE`` documents and
+    ``_FACT_BATCH_SIZE`` facts; a document with more facts than that gets a batch alone."""
+    batch: list[tuple[TransferDocument, str]] = []
+    facts = 0
+    for item in to_import:
+        if batch and (len(batch) >= _DOCUMENT_BATCH_SIZE or facts + len(item[0].facts) > _FACT_BATCH_SIZE):
+            yield batch
+            batch, facts = [], 0
+        batch.append(item)
+        facts += len(item[0].facts)
+    if batch:
+        yield batch
+
+
 # Bank-level config/state tables restored verbatim from a whole-bank archive.
 # Order matters for foreign keys: banks (parent) is restored before any child.
 _BANK_CHILD_TABLES = ("mental_models", "directives", "webhooks")
@@ -394,6 +424,8 @@ class BankImportResult:
     #: not reproduce are dropped rather than restored against a stale id.
     maintenance_queue_rows_imported: int = 0
     invalidated_memories_imported: int = 0
+    #: Per-document outcomes, for the engine's post-retain hook (as on ImportResult).
+    imported_documents: list[ImportedDocument] = field(default_factory=list)
 
 
 @dataclass
@@ -1132,6 +1164,7 @@ async def import_bank(
         result.documents_imported = doc_result.documents_imported
         result.facts_imported = doc_result.facts_imported
         result.observations_imported = doc_result.observations_imported
+        result.imported_documents = doc_result.imported_documents
         unit_id_map = doc_result.remapped_unit_ids
         document_id_map = doc_result.remapped_document_ids
 
@@ -1709,41 +1742,45 @@ async def _import_observations(
             continue
         resolved.append((obs, [sid for sid in source_ids if sid is not None]))
 
-    if not resolved:
-        return outcome
-
-    # Observations embed the raw text (matching consolidation), not the
-    # date-augmented text used for facts.
-    embeddings = await _embed_in_batches(embeddings_model, [obs.text for obs, _ in resolved])
-    processed = [
-        ProcessedFact(
-            fact_text=obs.text,
-            fact_type="observation",
-            embedding=pack_embedding(embedding),
-            occurred_start=obs.occurred_start,
-            occurred_end=obs.occurred_end,
-            mentioned_at=_observation_mentioned_at(obs),
-            context="",
-            metadata={},
-            tags=list(obs.tags),
-            observation_scopes=obs.observation_scopes,
-            document_id=None,
-            chunk_id=None,
-        )
-        for (obs, _sources), embedding in zip(resolved, embeddings)
-    ]
-
     from ..memories import get_memories
 
-    return await get_memories().import_transfer_observations(
-        backend=backend,
-        ops=ops,
-        fq_table=fq_table,
-        bank_id=bank_id,
-        resolved=resolved,
-        processed=processed,
-        outcome=outcome,
-    )
+    store = get_memories()
+    # One transaction per batch: the source facts are already committed, so a batch only
+    # needs its own sources, and a whole-set insert outgrew PostgreSQL's 1 GB message (#5418).
+    # A failure midway leaves the earlier batches in place, as a failed document batch does;
+    # an import-bank retry discards the half-restored bank and starts over.
+    for start in range(0, len(resolved), _OBSERVATION_BATCH_SIZE):
+        batch = resolved[start : start + _OBSERVATION_BATCH_SIZE]
+        # Observations embed the raw text (matching consolidation), not the
+        # date-augmented text used for facts.
+        embeddings = await _embed_in_batches(embeddings_model, [obs.text for obs, _ in batch])
+        processed = [
+            ProcessedFact(
+                fact_text=obs.text,
+                fact_type="observation",
+                embedding=pack_embedding(embedding),
+                occurred_start=obs.occurred_start,
+                occurred_end=obs.occurred_end,
+                mentioned_at=_observation_mentioned_at(obs),
+                context="",
+                metadata={},
+                tags=list(obs.tags),
+                observation_scopes=obs.observation_scopes,
+                document_id=None,
+                chunk_id=None,
+            )
+            for (obs, _sources), embedding in zip(batch, embeddings)
+        ]
+        outcome = await store.import_transfer_observations(
+            backend=backend,
+            ops=ops,
+            fq_table=fq_table,
+            bank_id=bank_id,
+            resolved=batch,
+            processed=processed,
+            outcome=outcome,
+        )
+    return outcome
 
 
 def _remap_based_on_ids(payload: dict[str, Any] | None, unit_id_map: dict[str, str]) -> None:

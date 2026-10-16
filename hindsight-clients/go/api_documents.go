@@ -572,7 +572,7 @@ type ApiListDocumentsRequest struct {
 	authorization *string
 }
 
-// Case-insensitive substring filter on document ID (e.g. &#39;report&#39; matches &#39;report-2024&#39;)
+// Case-insensitive substring filter on document ID or document text (e.g. &#39;report&#39; matches &#39;report-2024&#39; or any document containing &#39;report&#39;). Unindexed scan of the bank&#39;s documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
 func (r ApiListDocumentsRequest) Q(q string) ApiListDocumentsRequest {
 	r.q = &q
 	return r
@@ -584,7 +584,7 @@ func (r ApiListDocumentsRequest) Tags(tags []string) ApiListDocumentsRequest {
 	return r
 }
 
-// How to match tags: &#39;any&#39;, &#39;all&#39;, &#39;any_strict&#39;, &#39;all_strict&#39;
+// How to match tags: &#39;any&#39;, &#39;all&#39;, &#39;any_strict&#39;, &#39;all_strict&#39;, &#39;exact&#39;
 func (r ApiListDocumentsRequest) TagsMatch(tagsMatch string) ApiListDocumentsRequest {
 	r.tagsMatch = &tagsMatch
 	return r
@@ -930,7 +930,11 @@ Update mutable fields on a document without re-processing its content.
 
 **Tags** (`tags`): The array REPLACES the document's tags, it is not merged into them — send the complete set you want the document to end up with, and any tag you leave out is dropped. An empty array (`[]`) therefore clears every tag; only omitting the field entirely is rejected (422).
 
-The new tags are propagated to all associated memory units. Observations derived from those units are invalidated and queued for re-consolidation under the new tags. Co-source memories from other documents that shared those observations are also reset. Tags are compared as a set, so re-sending the tags a document already has (in any order) changes nothing and queues no re-consolidation.
+The new tags are propagated to all associated memory units.
+
+**Observation scopes** (`observation_scopes`): Replaces how the document's memories are scoped during consolidation, with the same values retain accepts. Use it to move a bank whose documents were retained under per-session tags to `shared` without re-extracting anything. It is also what a later reprocess of the document retains with.
+
+A memory is re-consolidated only when the change moves the observation scopes it resolves to: its observations are deleted and it is queued again, along with co-source memories from other documents that shared those observations. A change that resolves to the same scopes (a tag change under `shared`, `combined` over one tag vs `[[that tag]]`, re-sending the current values) keeps every observation and queues nothing.
 
 At least one field must be provided.
 

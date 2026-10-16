@@ -1241,9 +1241,9 @@ class DocumentsApi:
     async def list_documents(
         self,
         bank_id: StrictStr,
-        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')")] = None,
+        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter documents by tags")] = None,
-        tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags: 'any', 'all', 'any_strict', 'all_strict'")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'")] = None,
         time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
         start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
         end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
@@ -1269,11 +1269,11 @@ class DocumentsApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param q: Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')
+        :param q: Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
         :type q: str
         :param tags: Filter documents by tags
         :type tags: List[str]
-        :param tags_match: How to match tags: 'any', 'all', 'any_strict', 'all_strict'
+        :param tags_match: How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'
         :type tags_match: str
         :param time_field: Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.
         :type time_field: str
@@ -1346,9 +1346,9 @@ class DocumentsApi:
     async def list_documents_with_http_info(
         self,
         bank_id: StrictStr,
-        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')")] = None,
+        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter documents by tags")] = None,
-        tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags: 'any', 'all', 'any_strict', 'all_strict'")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'")] = None,
         time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
         start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
         end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
@@ -1374,11 +1374,11 @@ class DocumentsApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param q: Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')
+        :param q: Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
         :type q: str
         :param tags: Filter documents by tags
         :type tags: List[str]
-        :param tags_match: How to match tags: 'any', 'all', 'any_strict', 'all_strict'
+        :param tags_match: How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'
         :type tags_match: str
         :param time_field: Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.
         :type time_field: str
@@ -1451,9 +1451,9 @@ class DocumentsApi:
     async def list_documents_without_preload_content(
         self,
         bank_id: StrictStr,
-        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')")] = None,
+        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter documents by tags")] = None,
-        tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags: 'any', 'all', 'any_strict', 'all_strict'")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'")] = None,
         time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
         start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
         end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
@@ -1479,11 +1479,11 @@ class DocumentsApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param q: Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')
+        :param q: Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
         :type q: str
         :param tags: Filter documents by tags
         :type tags: List[str]
-        :param tags_match: How to match tags: 'any', 'all', 'any_strict', 'all_strict'
+        :param tags_match: How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'
         :type tags_match: str
         :param time_field: Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.
         :type time_field: str
@@ -1970,7 +1970,7 @@ class DocumentsApi:
     ) -> UpdateDocumentResponse:
         """Update document
 
-        Update mutable fields on a document without re-processing its content.  **Tags** (`tags`): The array REPLACES the document's tags, it is not merged into them — send the complete set you want the document to end up with, and any tag you leave out is dropped. An empty array (`[]`) therefore clears every tag; only omitting the field entirely is rejected (422).  The new tags are propagated to all associated memory units. Observations derived from those units are invalidated and queued for re-consolidation under the new tags. Co-source memories from other documents that shared those observations are also reset. Tags are compared as a set, so re-sending the tags a document already has (in any order) changes nothing and queues no re-consolidation.  At least one field must be provided.
+        Update mutable fields on a document without re-processing its content.  **Tags** (`tags`): The array REPLACES the document's tags, it is not merged into them — send the complete set you want the document to end up with, and any tag you leave out is dropped. An empty array (`[]`) therefore clears every tag; only omitting the field entirely is rejected (422).  The new tags are propagated to all associated memory units.  **Observation scopes** (`observation_scopes`): Replaces how the document's memories are scoped during consolidation, with the same values retain accepts. Use it to move a bank whose documents were retained under per-session tags to `shared` without re-extracting anything. It is also what a later reprocess of the document retains with.  A memory is re-consolidated only when the change moves the observation scopes it resolves to: its observations are deleted and it is queued again, along with co-source memories from other documents that shared those observations. A change that resolves to the same scopes (a tag change under `shared`, `combined` over one tag vs `[[that tag]]`, re-sending the current values) keeps every observation and queues nothing.  At least one field must be provided.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2050,7 +2050,7 @@ class DocumentsApi:
     ) -> ApiResponse[UpdateDocumentResponse]:
         """Update document
 
-        Update mutable fields on a document without re-processing its content.  **Tags** (`tags`): The array REPLACES the document's tags, it is not merged into them — send the complete set you want the document to end up with, and any tag you leave out is dropped. An empty array (`[]`) therefore clears every tag; only omitting the field entirely is rejected (422).  The new tags are propagated to all associated memory units. Observations derived from those units are invalidated and queued for re-consolidation under the new tags. Co-source memories from other documents that shared those observations are also reset. Tags are compared as a set, so re-sending the tags a document already has (in any order) changes nothing and queues no re-consolidation.  At least one field must be provided.
+        Update mutable fields on a document without re-processing its content.  **Tags** (`tags`): The array REPLACES the document's tags, it is not merged into them — send the complete set you want the document to end up with, and any tag you leave out is dropped. An empty array (`[]`) therefore clears every tag; only omitting the field entirely is rejected (422).  The new tags are propagated to all associated memory units.  **Observation scopes** (`observation_scopes`): Replaces how the document's memories are scoped during consolidation, with the same values retain accepts. Use it to move a bank whose documents were retained under per-session tags to `shared` without re-extracting anything. It is also what a later reprocess of the document retains with.  A memory is re-consolidated only when the change moves the observation scopes it resolves to: its observations are deleted and it is queued again, along with co-source memories from other documents that shared those observations. A change that resolves to the same scopes (a tag change under `shared`, `combined` over one tag vs `[[that tag]]`, re-sending the current values) keeps every observation and queues nothing.  At least one field must be provided.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2130,7 +2130,7 @@ class DocumentsApi:
     ) -> RESTResponseType:
         """Update document
 
-        Update mutable fields on a document without re-processing its content.  **Tags** (`tags`): The array REPLACES the document's tags, it is not merged into them — send the complete set you want the document to end up with, and any tag you leave out is dropped. An empty array (`[]`) therefore clears every tag; only omitting the field entirely is rejected (422).  The new tags are propagated to all associated memory units. Observations derived from those units are invalidated and queued for re-consolidation under the new tags. Co-source memories from other documents that shared those observations are also reset. Tags are compared as a set, so re-sending the tags a document already has (in any order) changes nothing and queues no re-consolidation.  At least one field must be provided.
+        Update mutable fields on a document without re-processing its content.  **Tags** (`tags`): The array REPLACES the document's tags, it is not merged into them — send the complete set you want the document to end up with, and any tag you leave out is dropped. An empty array (`[]`) therefore clears every tag; only omitting the field entirely is rejected (422).  The new tags are propagated to all associated memory units.  **Observation scopes** (`observation_scopes`): Replaces how the document's memories are scoped during consolidation, with the same values retain accepts. Use it to move a bank whose documents were retained under per-session tags to `shared` without re-extracting anything. It is also what a later reprocess of the document retains with.  A memory is re-consolidated only when the change moves the observation scopes it resolves to: its observations are deleted and it is queued again, along with co-source memories from other documents that shared those observations. A change that resolves to the same scopes (a tag change under `shared`, `combined` over one tag vs `[[that tag]]`, re-sending the current values) keeps every observation and queues nothing.  At least one field must be provided.
 
         :param bank_id: (required)
         :type bank_id: str

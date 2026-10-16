@@ -32,7 +32,7 @@ from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usag
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences, visible_token_usage
-from hindsight_api.engine.remote_retry import is_transient_remote_error
+from hindsight_api.engine.remote_retry import is_transient_remote_error, jittered_backoff
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
@@ -334,7 +334,7 @@ class LiteLLMLLM(LLMInterface):
         strict_schema: bool = False,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> LLMCallResult:
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         call_kwargs = self._build_common_kwargs(messages, max_completion_tokens, temperature)
 
@@ -437,7 +437,7 @@ class LiteLLMLLM(LLMInterface):
                 total_tokens = input_tokens + output_tokens
 
                 # Record metrics
-                duration = time.time() - start_time
+                duration = time.perf_counter() - start_time
                 metrics = get_metrics_collector()
                 metrics.record_llm_call(
                     provider=self.provider,
@@ -536,9 +536,7 @@ class LiteLLMLLM(LLMInterface):
                 # failed on its first attempt -- and a 400 mentioning a "limit" was
                 # retried (#5009).
                 if attempt < max_retries and is_transient_remote_error(e):
-                    backoff = min(initial_backoff * (2**attempt), max_backoff)
-                    jitter = backoff * 0.2 * (2 * (time.time() % 1) - 1)
-                    await asyncio.sleep(backoff + jitter)
+                    await asyncio.sleep(jittered_backoff(attempt, initial_backoff, max_backoff))
                     continue
 
                 logger.error(f"LiteLLM API error after {attempt + 1} attempts: {e}")
@@ -561,7 +559,7 @@ class LiteLLMLLM(LLMInterface):
         tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> LLMToolCallResult:
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         call_kwargs = self._build_common_kwargs(messages, max_completion_tokens, temperature)
         call_kwargs["tools"] = tools
@@ -619,7 +617,7 @@ class LiteLLMLLM(LLMInterface):
                 thoughts_tokens = response_usage.thoughts_tokens
 
                 # Record metrics
-                duration = time.time() - start_time
+                duration = time.perf_counter() - start_time
                 metrics = get_metrics_collector()
                 metrics.record_llm_call(
                     provider=self.provider,

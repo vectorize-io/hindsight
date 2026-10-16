@@ -150,7 +150,7 @@ async def acquire_with_retry(backend_or_pool: Any, max_retries: int = DEFAULT_MA
     from .db.base import DatabaseBackend
 
     if isinstance(backend_or_pool, DatabaseBackend) or getattr(backend_or_pool, "_wraps_backend", False):
-        start = time.time()
+        start = time.perf_counter()
         async with AsyncExitStack() as stack:
             conn: Any = None
             for attempt in range(max_retries + 1):
@@ -177,7 +177,7 @@ async def acquire_with_retry(backend_or_pool: Any, max_retries: int = DEFAULT_MA
                         logger.error(f"Database acquire failed after {max_retries + 1} attempts: {e!r}")
                         raise
 
-            acquire_time = time.time() - start
+            acquire_time = time.perf_counter() - start
             if _is_slow_acquire(acquire_time):
                 logger.warning(f"[DB POOL] Slow acquire: {acquire_time:.3f}s")
 
@@ -185,13 +185,13 @@ async def acquire_with_retry(backend_or_pool: Any, max_retries: int = DEFAULT_MA
     else:
         # Legacy path: raw asyncpg.Pool
         pool = backend_or_pool
-        start = time.time()
+        start = time.perf_counter()
 
         async def acquire():
             return await pool.acquire()
 
         conn = await retry_with_backoff(acquire, max_retries=max_retries)
-        acquire_time = time.time() - start
+        acquire_time = time.perf_counter() - start
 
         if _is_slow_acquire(acquire_time):
             pool_size = pool.get_size()

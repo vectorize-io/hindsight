@@ -153,6 +153,16 @@ class TestAssertFiniteLocalOutput:
 class TestLoadersGuardTheirWeights:
     """The guard has to run at the call sites, not just exist."""
 
+    @pytest.fixture(autouse=True)
+    def _no_download(self):
+        # "test-model" is not a real repo; keep the pre-build download off the network.
+        with (
+            patch("hindsight_api.engine.embeddings.prefetch_local_model"),
+            patch("hindsight_api.engine.cross_encoder.prefetch_local_model"),
+            patch("hindsight_api.engine.local_device.prefetch_local_model"),
+        ):
+            yield
+
     async def test_reranker_aligns_and_smoke_tests(self):
         from hindsight_api.engine.cross_encoder import LocalSTCrossEncoder
 
@@ -253,4 +263,19 @@ class TestEveryLocalTorchLoaderIsGuarded:
             f"{unguarded} load a torch model without calling align_local_model_weights. "
             f"Zero-copy safetensors weights can land misaligned, which silently corrupts "
             f"the CPU matmul (see engine/local_device.py)."
+        )
+
+    def test_every_torch_model_loader_builds_under_the_lock(self):
+        """A build flips process-global transformers/torch state; overlapping builds
+        at startup leave weights on the meta device (issue #4420)."""
+        engine_dir = Path(local_device.__file__).parent
+        loaders = {
+            path.name: source
+            for path in sorted(engine_dir.rglob("*.py"))
+            if any(re.search(p, source := path.read_text()) for p in self._LOADER_PATTERNS)
+        }
+
+        unguarded = [name for name, source in loaders.items() if "LOCAL_MODEL_BUILD_LOCK" not in source]
+        assert not unguarded, (
+            f"{unguarded} build a torch model without holding LOCAL_MODEL_BUILD_LOCK (see engine/local_device.py)."
         )

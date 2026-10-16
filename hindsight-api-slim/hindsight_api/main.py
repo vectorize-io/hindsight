@@ -482,7 +482,10 @@ def main():
             llm_provider=config.llm_provider,
             llm_model=config.llm_model,
             embeddings_provider=config.embeddings_provider,
-            reranker_provider=config.reranker_provider,
+            # Recall ranks with the decision model instead when one is set up for it.
+            reranker_provider=(
+                "decision model" if config.decision_model_config("recall") else config.reranker_provider
+            ),
             mcp_enabled=config.mcp_enabled,
             version=__version__,
             vector_extension=config.vector_extension,

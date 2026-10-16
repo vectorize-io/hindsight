@@ -741,8 +741,14 @@ class _CreateAction(BaseModel):
 
 
 class _UpdateAction(BaseModel):
-    text: str
     observation_id: str  # UUID of the existing observation to update
+    # The observation's text as it stands, copied before ``text`` is written. Not used by the
+    # code: field order is generation order, and a small model that copies the old text first
+    # edits it, where one writing ``text`` cold tends to emit just the new fact and erase the
+    # rest of the observation (eval ``noisy-service-catalogue-mission``). Optional, so a
+    # response without it still validates.
+    current_text: str = ""
+    text: str
     source_fact_ids: list[str]  # memory UUIDs from the NEW FACTS list
     reason: str = ""  # LLM's one-sentence justification (diagnostic only)
 
@@ -776,7 +782,27 @@ class _DeleteAction(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     observation_id: str = Field(validation_alias=AliasChoices("observation_id", "id"))
+    # The observation that now carries this one's content, when the delete merges it into
+    # another: its evidence moves there. A delete without it retires a belief.
+    merged_into: str | None = None
     reason: str = ""  # LLM's one-sentence justification (diagnostic only)
+
+
+@dataclass
+class _PreparedDelete:
+    observation_id: str
+    #: The delete is a merge: its evidence must move, not vanish.
+    is_merge: bool
+    #: Merge target, already checked against the recall pool. None for a plain delete, or for
+    #: a merge whose target the model could not name (an observation it creates in the same
+    #: response has no id yet): that evidence is re-queued instead.
+    merged_into: str | None
+
+
+@dataclass
+class _MergedAway:
+    gone: StoredMemory
+    target_id: str | None
 
 
 class _ConsolidationBatchResponse(BaseModel):
@@ -1219,7 +1245,7 @@ class ConsolidationPerfLog:
 
     def __init__(self, bank_id: str):
         self.bank_id = bank_id
-        self.start_time = time.time()
+        self.start_time = time.perf_counter()
         self.lines: list[str] = []
         self.timings: dict[str, float] = {}
         self.timing_counts: dict[str, int] = {}
@@ -1277,7 +1303,7 @@ class ConsolidationPerfLog:
 
     def flush(self) -> None:
         """Flush all log lines to the logger."""
-        total_time = time.time() - self.start_time
+        total_time = time.perf_counter() - self.start_time
         header = f"\n{'=' * 60}\nCONSOLIDATION for bank {self.bank_id}"
         footer = f"{'=' * 60}\nCONSOLIDATION COMPLETE: {total_time:.3f}s total\n{'=' * 60}"
 
@@ -1567,7 +1593,7 @@ async def _run_consolidation_job(
 
     # Get bank profile
     async with acquire_with_retry(pool) as conn:
-        t0 = time.time()
+        t0 = time.perf_counter()
         bank_row = await conn.fetchrow(
             f"""
             SELECT bank_id, name
@@ -1581,7 +1607,7 @@ async def _run_consolidation_job(
             logger.warning(f"Bank {bank_id} not found for consolidation")
             return {"status": "bank_not_found", "bank_id": bank_id}
 
-        perf.record_timing("fetch_bank", time.time() - t0)
+        perf.record_timing("fetch_bank", time.perf_counter() - t0)
 
         # Count total unconsolidated memories for progress logging — through the store.
         total_count = await _count_unconsolidated_rows(conn, bank_id, ["experience", "world"], observation_scopes)
@@ -1668,7 +1694,7 @@ async def _run_consolidation_job(
         # Fetch next batch of unconsolidated memories — through the store, so a store that
         # keeps its rows outside Postgres is read too.
         async with acquire_with_retry(pool) as conn:
-            t0 = time.time()
+            t0 = time.perf_counter()
             memories = await _fetch_unconsolidated_rows(
                 conn,
                 bank_id,
@@ -1677,7 +1703,7 @@ async def _run_consolidation_job(
                 observation_scopes,
                 max(1, config.consolidation_llm_parallelism),
             )
-            perf.record_timing("fetch_memories", time.time() - t0)
+            perf.record_timing("fetch_memories", time.perf_counter() - t0)
 
         if not memories:
             break  # No more unconsolidated memories
@@ -1723,7 +1749,7 @@ async def _run_consolidation_job(
             job-level ``perf`` once at the end so the final summary still totals
             everything.
             """
-            llm_batch_start = time.time()
+            llm_batch_start = time.perf_counter()
             batch_perf = ConsolidationPerfLog(bank_id)
 
             local_tags: set[str] = set()
@@ -1741,6 +1767,8 @@ async def _run_consolidation_job(
             failed_ids: list[Any] = []
 
             pending: list[list[dict[str, Any]]] = [llm_batch_local]
+            # How many extra looks each fact has had (see below): at most two.
+            reasked: dict[str, int] = {}
             while pending:
                 sub_batch = pending.pop(0)
 
@@ -1858,8 +1886,36 @@ async def _run_consolidation_job(
                         f" {sub_batch[0]['id']}, marking consolidation_failed_at"
                     )
                 else:
-                    succeeded_ids.extend(m["id"] for m in sub_batch)
-                    all_results.extend(sub_results)
+                    # A fact the response never acted on is stamped consolidated all the same, and
+                    # would never be shown to the model again. In a batch that is as likely an
+                    # oversight as a judgement (a small model handles seven of eight facts and
+                    # forgets the eighth), so the facts it left are asked again together, in a
+                    # smaller batch; one that batch forgets too gets a last call of its own.
+                    # Skipped while alone is the model's answer (chatter) and is never re-asked.
+                    ignored = (
+                        [
+                            m
+                            for m, r in zip(sub_batch, sub_results)
+                            if r.get("reason") == "no_durable_knowledge" and reasked.get(str(m["id"]), 0) < 2
+                        ]
+                        if len(sub_batch) > 1
+                        else []
+                    )
+                    ignored_ids = {str(m["id"]) for m in ignored}
+                    for m, r in zip(sub_batch, sub_results):
+                        if str(m["id"]) not in ignored_ids:
+                            succeeded_ids.append(m["id"])
+                            all_results.append(r)
+                    if ignored:
+                        logger.info(
+                            f"[CONSOLIDATION] bank={bank_id} response left {len(ignored)}/{len(sub_batch)}"
+                            " facts unaddressed; re-asking them"
+                        )
+                        first = [m for m in ignored if str(m["id"]) not in reasked]
+                        again = [m for m in ignored if str(m["id"]) in reasked]
+                        for fid in ignored_ids:
+                            reasked[fid] = reasked.get(fid, 0) + 1
+                        pending[0:0] = ([first] if first else []) + [[m] for m in again]
 
             # The successful sub-batches stamped their own ``consolidated_at`` inside the
             # transaction that wrote their observations (#3876) — a stamp and the writes it
@@ -1953,7 +2009,7 @@ async def _run_consolidation_job(
             # cumulative count across all batches that have finished so far in
             # this job (monotonic, may be reported out of strict batch-number
             # order under parallelism).
-            llm_batch_time = time.time() - llm_batch_start
+            llm_batch_time = time.perf_counter() - llm_batch_start
             timing_parts = [
                 f"{key}={batch_perf.timings[key]:.3f}s"
                 for key in ("recall", "llm", "embedding", "db_write")
@@ -2384,7 +2440,7 @@ async def _process_memory_batch(
 
     # 1. Parallel recalls — one per fact
     # When obs_tags_override is set, use it as the observation scope for all facts.
-    t0 = time.time()
+    t0 = time.perf_counter()
     observation_scope_tags = obs_tags_override if obs_tags_override is not None else None
     recall_tasks = [
         _find_related_observations(
@@ -2403,12 +2459,7 @@ async def _process_memory_batch(
     # The batch's memories stay unconsolidated and are picked up on retry.
     per_fact_recalls = await _gather_or_cancel(recall_tasks)
     if perf:
-        perf.record_timing("recall", time.time() - t0)
-
-    # 2. Build per-fact observation sets (keyed by memory ID string) for secure action validation
-    per_fact_obs_ids: dict[str, set[str]] = {
-        str(memories[i]["id"]): {str(obs.id) for obs in r.results} for i, r in enumerate(per_fact_recalls)
-    }
+        perf.record_timing("recall", time.perf_counter() - t0)
 
     # Union all observations (deduped by id)
     seen_ids: set[str] = set()
@@ -2443,7 +2494,7 @@ async def _process_memory_batch(
             )
 
     # 3. Single LLM call
-    t0 = time.time()
+    t0 = time.perf_counter()
     llm_result = await _consolidate_batch_with_llm(
         llm_config=llm_config,
         memories=memories,
@@ -2454,7 +2505,7 @@ async def _process_memory_batch(
         max_observations_per_scope=max_obs,
     )
     if perf:
-        perf.record_timing("llm", time.time() - t0)
+        perf.record_timing("llm", time.perf_counter() - t0)
         perf.record_llm_call(llm_result.obs_count, llm_result.prompt_chars)
         perf.record_llm_batch_failures(llm_result.failed_attempts)
 
@@ -2492,19 +2543,38 @@ async def _process_memory_batch(
         else None
     )
 
+    _resolve_miscopied_ids(llm_result, {str(obs.id) for obs in union_observations})
+
     # --- Prepare: deletes -----------------------------------------------------
     # Deletes carry no slow work; validating them here keeps the whole decision set in
     # one place. They are still applied first inside the transaction, so an observation
     # slot freed by a delete is available to a create in the same response.
-    prepared_deletes: list[str] = []
+    prepared_deletes: list[_PreparedDelete] = []
+    pool_ids = {str(obs.id) for obs in union_observations}
+    # A response can both UPDATE and DELETE one observation (seen when a fact supersedes it:
+    # the model rewrites it to the new state and also deletes "the old one"). Deletes apply
+    # first, so the update then found no row and was skipped while its source facts were
+    # still stamped consolidated — the new state was lost for good. The update carries the
+    # newer knowledge, so it wins.
+    updated_ids = {u.observation_id for u in llm_result.updates}
     for delete in llm_result.deletes:
+        if delete.observation_id in updated_ids:
+            logger.warning(
+                f"Batch consolidation: dropped delete of observation {delete.observation_id} — "
+                "the same response updates it"
+            )
+            continue
         # Security: the observation must be present in the unioned recall
-        if not any(str(obs.id) == delete.observation_id for obs in union_observations):
+        if delete.observation_id not in pool_ids:
             logger.debug(
                 f"Batch consolidation: rejected delete — observation {delete.observation_id} not in unioned recall"
             )
             continue
-        prepared_deletes.append(delete.observation_id)
+        # A merge target must be one the model was shown, like any other target it names.
+        target = delete.merged_into if delete.merged_into in pool_ids - {delete.observation_id} else None
+        prepared_deletes.append(
+            _PreparedDelete(observation_id=delete.observation_id, is_merge=bool(delete.merged_into), merged_into=target)
+        )
 
     # --- Prepare: updates -----------------------------------------------------
     # Each action is prepared on its own: a liveness preflight, an embedding and, with semantic
@@ -2529,16 +2599,16 @@ async def _process_memory_batch(
         if not source_mems:
             _log_unresolved_action("update", update.source_fact_ids, update.text, perf)
             return None
-        # Security: the observation must have been recalled for at least one of the source facts
-        if not any(update.observation_id in per_fact_obs_ids.get(str(m["id"]), set()) for m in source_mems):
-            logger.debug(
-                f"Batch consolidation: rejected update — observation {update.observation_id} "
-                f"not in any source fact's recall"
-            )
-            return None
+        # Security: the observation must be one the model was shown, the pooled recall already
+        # confined to this bank and scope, exactly as for a delete. Previously it also had to be
+        # recalled for one of the cited facts, but the model reads the whole pool: attaching a
+        # fact to an observation a sibling fact surfaced is legitimate, and rejecting it dropped
+        # the fact's evidence silently (it is stamped consolidated all the same).
         model = next((m for m in union_observations if str(m.id) == update.observation_id), None)
         if model is None:
-            logger.debug(f"Update skipped: observation {update.observation_id} not found in recall results")
+            logger.warning(
+                f"Batch consolidation: rejected update — observation {update.observation_id} not in the recall pool"
+            )
             return None
         agg = _aggregate_source_fields(source_mems, tags=fact_tags)
         source_memory_ids = [m["id"] for m in source_mems]
@@ -2691,8 +2761,18 @@ async def _process_memory_batch(
                         )
                     )
 
-                    for observation_id in prepared_deletes:
-                        await _execute_delete_action(conn=conn, bank_id=bank_id, observation_id=observation_id)
+                    merged_away: list[_MergedAway] = []
+                    for prepared_delete in prepared_deletes:
+                        if prepared_delete.is_merge:
+                            # Read before deleting: its sources and dates move to the survivor.
+                            gone = await get_memories().get_memories(
+                                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[prepared_delete.observation_id]
+                            )
+                            if gone:
+                                merged_away.append(_MergedAway(gone=gone[0], target_id=prepared_delete.merged_into))
+                        await _execute_delete_action(
+                            conn=conn, bank_id=bank_id, observation_id=prepared_delete.observation_id
+                        )
                         deleted_count += 1
 
                     for prepared in prepared_updates:
@@ -2751,6 +2831,10 @@ async def _process_memory_batch(
                         if action == "created":
                             for m in prepared_create.source_mems:
                                 per_memory_created.add(str(m["id"]))
+
+                    # After the response's own updates, so the survivor is extended as rewritten.
+                    for merged in merged_away:
+                        await _fold_deleted_evidence(conn, memory_engine, bank_id, merged.gone, merged.target_id)
 
                     # The facts this response consumed are marked consolidated in the SAME transaction
                     # as the observations that now carry them. Stamping them separately is what let a
@@ -2936,7 +3020,7 @@ async def _apply_update_action(
     source_tags = set(source_fact_tags or [])
     merged_tags = list(existing_tags | source_tags)
 
-    t0 = time.time()
+    t0 = time.perf_counter()
     rewritten = await store.rewrite_observation(
         conn=conn,
         fq_table=fq_table,
@@ -2990,7 +3074,7 @@ async def _apply_update_action(
             )
 
     if perf:
-        perf.record_timing("db_write", time.time() - t0)
+        perf.record_timing("db_write", time.perf_counter() - t0)
 
     # Map the updated observation onto the consolidation trace as a produced memory.
     record_created_memory_ids([observation_id])
@@ -3035,6 +3119,29 @@ async def _apply_create_action(
     return created["action"]
 
 
+def _resolve_pool_id(raw: str, pool_ids: set[str]) -> str:
+    """``raw`` as a pool id, tolerating a miscopied tail.
+
+    Small models copy the head of a UUID and invent the rest (``d0a3effa-1795-4c48-…`` came
+    back as ``d0a3effa-1795-4ef0-…``). An exact match wins; otherwise the one pool id sharing
+    the first two groups is meant: 48 bits, so two candidates never collide by chance in a
+    pool of tens. Anything else is returned unchanged and rejected downstream.
+    """
+    if raw in pool_ids:
+        return raw
+    matches = [pid for pid in pool_ids if len(raw) >= 13 and pid.startswith(raw[:13])]
+    return matches[0] if len(matches) == 1 else raw
+
+
+def _resolve_miscopied_ids(llm_result: _BatchLLMResult, pool_ids: set[str]) -> None:
+    for update in llm_result.updates:
+        update.observation_id = _resolve_pool_id(update.observation_id, pool_ids)
+    for delete in llm_result.deletes:
+        delete.observation_id = _resolve_pool_id(delete.observation_id, pool_ids)
+        if delete.merged_into is not None:
+            delete.merged_into = _resolve_pool_id(delete.merged_into, pool_ids)
+
+
 async def _execute_delete_action(
     conn: "DatabaseConnection",
     bank_id: str,
@@ -3056,6 +3163,49 @@ async def _execute_delete_action(
     logger.debug(f"Deleted observation {observation_id}")
 
 
+async def _fold_deleted_evidence(
+    conn: "DatabaseConnection",
+    memory_engine: "MemoryEngine",
+    bank_id: str,
+    gone: StoredMemory,
+    target_id: str | None,
+) -> None:
+    """Move a merged-away observation's evidence onto the observation that absorbed it.
+
+    Small models merge observations by rewriting one and deleting the others. An UPDATE can
+    only cite this batch's facts, so the deleted ones' evidence (stamped consolidated long
+    ago) was cited by nothing and never looked at again (eval ``noisy-personal-contacts``).
+    Re-queueing every deleted observation's facts was tried first: it also brought back the
+    false beliefs a delete retires (eval ``correction-retires-false-belief``), so only a
+    delete the model marks as a merge (``merged_into``) moves its evidence. Without a usable
+    target (the model merged into an observation it creates in the same response, which has no
+    id yet) or with the survivor gone, the evidence is re-queued and the next pass attaches it.
+    """
+    live = await _filter_live_source_memories(conn, bank_id, [uuid.UUID(str(sid)) for sid in gone.source_memory_ids])
+    if not live:
+        return
+    store = get_memories()
+    if target_id is not None:
+        target = await store.get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[target_id])
+        if target and target[0].fact_type == "observation":
+            folded = await store.fold_sources_into_observation(
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                observation_id=target_id,
+                expected_text=target[0].text,
+                merged_text=target[0].text,
+                source_memory_ids=live,
+                bounds=_TemporalBounds.of(gone),
+                embeddings=memory_engine.embeddings,
+            )
+            if folded:
+                return
+    await store.mark_consolidated(
+        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(sid) for sid in live], when=None
+    )
+
+
 async def _embed_observation_text(
     memory_engine: "MemoryEngine",
     text: str,
@@ -3067,10 +3217,10 @@ async def _embed_observation_text(
     thing consolidation does per action, and it must finish before the batch's single write
     transaction opens.
     """
-    t0 = time.time()
+    t0 = time.perf_counter()
     embeddings = await embedding_utils.generate_embeddings_batch(memory_engine.embeddings, [text])
     if perf:
-        perf.record_timing("embedding", time.time() - t0)
+        perf.record_timing("embedding", time.perf_counter() - t0)
     return str(embeddings[0]) if embeddings else None
 
 
@@ -3309,7 +3459,9 @@ async def _consolidate_batch_with_llm(
         raise ValueError("config is required for _consolidate_batch_with_llm")
     if union_observations:
         obs_list = _build_observations_for_llm(union_observations, union_source_facts)
-        observations_text = json.dumps(obs_list, indent=2, ensure_ascii=False)
+        # One observation per line, no indentation: the pool is nearly all of a batch's
+        # uncached input, and `indent=2` spent a fifth of it on whitespace.
+        observations_text = "[\n" + ",\n".join(json.dumps(o, ensure_ascii=False) for o in obs_list) + "\n]"
     else:
         observations_text = "[]"
 
@@ -3415,8 +3567,14 @@ async def _consolidate_batch_with_llm(
                 call_kwargs["max_retries"] = inner_max_retries
             batch_call = await llm_config.call(**call_kwargs)
             response: _ConsolidationBatchResponse = batch_call.content
+            # A model recording a new fact sometimes names that fact as the UPDATE target. There is
+            # no observation to update, and dropping it loses the fact: it is a create.
+            fact_ids = {str(m["id"]) for m in memories}
+            misaimed = [u for u in response.updates if u.observation_id in fact_ids]
+            creates = response.creates + [
+                _CreateAction(text=u.text, source_fact_ids=u.source_fact_ids, reason=u.reason) for u in misaimed
+            ]
             # Defensive truncation: some LLM providers may not enforce JSON schema max_length
-            creates = response.creates
             if remaining_observation_slots is not None and remaining_observation_slots >= 0:
                 if len(creates) > remaining_observation_slots:
                     logger.info(
@@ -3424,7 +3582,9 @@ async def _consolidate_batch_with_llm(
                         f"(max_observations_per_scope={max_observations_per_scope})"
                     )
                     creates = creates[:remaining_observation_slots]
-            updates = _dedupe_updates(response.updates, batch_label=batch_label)
+            updates = _dedupe_updates(
+                [u for u in response.updates if u.observation_id not in fact_ids], batch_label=batch_label
+            )
             return _BatchLLMResult(
                 creates=creates,
                 updates=updates,
@@ -3523,7 +3683,7 @@ async def _apply_create_observation(
     # write a literal 1, so a multi-source observation was undercounted until updated (#4955).
     source_memory_ids = list(dict.fromkeys(live_source_memory_ids))
 
-    t0 = time.time()
+    t0 = time.perf_counter()
     created_id = await store.insert_observation(
         conn=conn,
         ops=memory_engine._backend.ops,
@@ -3542,7 +3702,7 @@ async def _apply_create_observation(
     )
 
     if perf:
-        perf.record_timing("db_write", time.time() - t0)
+        perf.record_timing("db_write", time.perf_counter() - t0)
 
     logger.debug(f"Created observation {observation_id} from {len(source_memory_ids)} memories (tags: {obs_tags})")
 

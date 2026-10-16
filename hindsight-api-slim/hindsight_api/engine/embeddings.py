@@ -58,8 +58,10 @@ from ..config import (
 from .aiohttp_session import LoopLocal, LoopLocalSession, UpstreamHTTPError, per_phase_timeout, raise_for_status
 from .bank_attribution import apply_bank_attribution
 from .local_device import (
+    LOCAL_MODEL_BUILD_LOCK,
     align_local_model_weights,
     assert_finite_local_output,
+    prefetch_local_model,
     release_local_inference_memory,
     resolve_model_device_type,
     select_local_device,
@@ -343,48 +345,59 @@ class LocalSTEmbeddings(Embeddings):
 
         # Determine device based on hardware availability. We always set
         # low_cpu_mem_usage=False to prevent lazy loading (meta tensors) which can
-        # cause issues when accelerate is installed but no GPU is available.
+        # cause issues when accelerate is installed but no GPU is available. Only
+        # transformers 4.x honours it: 5.x drops the kwarg and always builds on meta.
         # MPS is never used — see engine/local_device.py for why.
         device = select_local_device(self.force_cpu)
 
-        # Suppress verbose transformers warnings during model loading
-        # This suppresses the "UNEXPECTED" warnings from BertModel which are harmless
-        # but look alarming to users (e.g., "embeddings.position_ids | UNEXPECTED")
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=UserWarning)
-            warnings.filterwarnings("ignore", message=".*was not found in model state dict.*")
-            warnings.filterwarnings("ignore", message=".*UNEXPECTED.*")
+        # Download outside the lock; build and smoke-test under it, because a
+        # transformers build flips process-global state (see LOCAL_MODEL_BUILD_LOCK).
+        # sentence-transformers caches under SENTENCE_TRANSFORMERS_HOME when it is set.
+        prefetch_local_model(self.model_name, cache_dir=os.getenv("SENTENCE_TRANSFORMERS_HOME"))
+        with LOCAL_MODEL_BUILD_LOCK:
+            # Suppress verbose transformers warnings during model loading
+            # This suppresses the "UNEXPECTED" warnings from BertModel which are harmless
+            # but look alarming to users (e.g., "embeddings.position_ids | UNEXPECTED")
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=UserWarning)
+                warnings.filterwarnings("ignore", message=".*was not found in model state dict.*")
+                warnings.filterwarnings("ignore", message=".*UNEXPECTED.*")
 
-            # Also suppress transformers library logging temporarily
-            transformers_logger = logging.getLogger("transformers")
-            original_level = transformers_logger.level
-            transformers_logger.setLevel(logging.ERROR)
+                # Also suppress transformers library logging temporarily
+                transformers_logger = logging.getLogger("transformers")
+                original_level = transformers_logger.level
+                transformers_logger.setLevel(logging.ERROR)
 
-            try:
-                self._model = SentenceTransformer(
-                    self.model_name,
-                    device=device,
-                    model_kwargs={"low_cpu_mem_usage": False},
-                    trust_remote_code=self.trust_remote_code,
-                )
-            finally:
-                # Restore original logging level
-                transformers_logger.setLevel(original_level)
+                try:
+                    self._model = SentenceTransformer(
+                        self.model_name,
+                        device=device,
+                        model_kwargs={"low_cpu_mem_usage": False},
+                        trust_remote_code=self.trust_remote_code,
+                    )
+                finally:
+                    # Restore original logging level
+                    transformers_logger.setLevel(original_level)
 
-        # See engine/local_device.py: zero-copy safetensors weights can land unaligned,
-        # which silently corrupts the CPU matmul. Whether a model file is affected is a
-        # property of its header length, so check every model rather than a known list.
-        align_local_model_weights(self._model, label=f"Embeddings[{self.model_name}]")
+            # See engine/local_device.py: zero-copy safetensors weights can land unaligned,
+            # which silently corrupts the CPU matmul. Whether a model file is affected is a
+            # property of its header length, so check every model rather than a known list.
+            align_local_model_weights(self._model, label=f"Embeddings[{self.model_name}]")
 
-        self._dimension = self._model.get_sentence_embedding_dimension()
-        self._device_type = resolve_model_device_type(self._model)
+            # sentence-transformers 5.4 renamed the method and deprecated the old name
+            # with a FutureWarning; 5.0-5.3 (still allowed by local-ml) only have the old one.
+            get_dimension = getattr(self._model, "get_embedding_dimension", None)
+            if get_dimension is None:
+                get_dimension = self._model.get_sentence_embedding_dimension
+            self._dimension = get_dimension()
+            self._device_type = resolve_model_device_type(self._model)
 
-        # Smoke-test before serving: a NaN embedding is invisible downstream (it
-        # normalizes away and pgvector stores it), so fail startup instead.
-        assert_finite_local_output(
-            self._model.encode(["hindsight startup probe"]),
-            label=f"Embeddings[{self.model_name}]",
-        )
+            # Smoke-test before serving: a NaN embedding is invisible downstream (it
+            # normalizes away and pgvector stores it), so fail startup instead.
+            assert_finite_local_output(
+                self._model.encode(["hindsight startup probe"]),
+                label=f"Embeddings[{self.model_name}]",
+            )
 
         logger.info(f"Embeddings: local provider initialized (dim: {self._dimension}, device: {self._device_type})")
 

@@ -178,19 +178,44 @@ class TestPreferObservations:
         assert ids["src1"] in found
         assert ids["src2"] in found
 
+    @pytest.mark.memory_backend_incompatible
+    async def test_omitted_flag_follows_bank_config(self, seeded_obs_memory):
+        """None means "use the bank's recall_prefer_observations"; an explicit value still wins."""
+        engine, bank_id, ids = seeded_obs_memory
+        kwargs = dict(
+            bank_id=bank_id,
+            query=QUERY,
+            request_context=RC,
+            fact_type=["world", "experience", "observation"],
+            max_tokens=10000,
+        )
+        # Unconfigured: the server default is off, so the sources come back.
+        assert ids["src1"] in _result_ids(await engine.recall_async(**kwargs, prefer_observations=None))
+
+        await engine._config_resolver.update_bank_config(bank_id, {"recall_prefer_observations": True})
+        found = _result_ids(await engine.recall_async(**kwargs, prefer_observations=None))
+        assert ids["obs"] in found
+        assert ids["src1"] not in found and ids["src2"] not in found
+
+        found = _result_ids(await engine.recall_async(**kwargs, prefer_observations=False))
+        assert ids["src1"] in found and ids["src2"] in found
+
 
 def test_flag_is_opt_in_by_default():
-    """prefer_observations is opt-in: off at the API surface and the engine method.
+    """prefer_observations is opt-in: the API surface defers to the bank config
+    (itself off by default), and the engine method is off outright.
 
     The engine default in particular must stay False so internal callers — notably
     consolidation, which needs the raw facts it folds into observations — are never
-    silently deduped.
+    silently deduped, whatever a bank configures.
     """
     import inspect
 
     from hindsight_api.api.http import RecallRequest
+    from hindsight_api.config import DEFAULT_RECALL_PREFER_OBSERVATIONS
     from hindsight_api.engine.memory_engine import MemoryEngine
 
-    assert RecallRequest(query="anything").prefer_observations is False
+    assert RecallRequest(query="anything").prefer_observations is None
+    assert DEFAULT_RECALL_PREFER_OBSERVATIONS is False
     engine_default = inspect.signature(MemoryEngine.recall_async).parameters["prefer_observations"].default
     assert engine_default is False

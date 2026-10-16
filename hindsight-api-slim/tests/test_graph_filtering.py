@@ -393,3 +393,13 @@ async def test_graph_exact_global_scope_filter(memory, api_client, test_bank_id,
     assert response.status_code == 200
     texts = {row["text"] for row in response.json()["table_rows"]}
     assert texts == {"obs global"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["graph", "documents"])
+async def test_unknown_tags_match_is_rejected(api_client, test_bank_id, path):
+    """#5371: a mistyped mode is a 422, not a silent fall back to "any" (which admits untagged rows)."""
+    response = await api_client.get(
+        f"/v1/default/banks/{test_bank_id}/{path}", params={"tags": "typescript", "tags_match": "any-strict"}
+    )
+    assert response.status_code == 422

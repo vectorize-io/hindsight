@@ -87,3 +87,24 @@ async def test_every_fact_points_back_at_the_document_it_came_from(client, bank_
     for item in memories.items:
         assert item.document_id == DOCUMENT_ID
         assert item.chunk_id == f"{bank_with_document}_{DOCUMENT_ID}_0"
+
+
+async def test_the_listing_search_matches_the_text_and_says_where(client, bank_with_document):
+    """`q` searches the document text as well as the id, and each row names the
+    fields that matched — the control plane highlights those cells (#5214)."""
+    by_text = await client.documents.list_documents(bank_with_document, q="CELLO")
+    assert by_text.total == 1
+    assert [(d.id, d.matched_fields) for d in by_text.items] == [(DOCUMENT_ID, ["original_text"])]
+
+    by_id = await client.documents.list_documents(bank_with_document, q="profile-")
+    assert [(d.id, d.matched_fields) for d in by_id.items] == [(DOCUMENT_ID, ["id"])]
+
+    by_both = await client.documents.list_documents(bank_with_document, q="alice")
+    assert [(d.id, d.matched_fields) for d in by_both.items] == [(DOCUMENT_ID, ["id", "original_text"])]
+
+    nothing = await client.documents.list_documents(bank_with_document, q="violin")
+    assert nothing.total == 0
+    assert nothing.items == []
+
+    unsearched = await client.documents.list_documents(bank_with_document)
+    assert unsearched.items[0].matched_fields == []

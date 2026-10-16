@@ -206,6 +206,30 @@ ENV_API_PORT = "HINDSIGHT_API_PORT"
 ENV_CP_PORT = "HINDSIGHT_EMBED_CP_PORT"
 
 
+def parse_env_file(path: Path) -> dict[str, str]:
+    """Read a profile .env into ``{KEY: value}``, the way dotenv does.
+
+    Skips blanks and comments, accepts ``export KEY=value``, and drops one pair
+    of matching surrounding quotes, so a hand-written ``KEY="value"`` yields
+    ``value`` rather than forwarding the quotes into a credential (#5301).
+    """
+    env: dict[str, str] = {}
+    if not path.exists():
+        return env
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line.startswith("export "):
+            line = line[7:]
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        env[key.strip()] = value
+    return env
+
+
 @dataclass
 class _PortOverrides:
     """API/UI ports read from a profile's .env (None when not set)."""
@@ -546,23 +570,17 @@ class ProfileManager:
         """Parse a profile's .env for the API/UI port keys (no recursion into
         load_profile_config, which itself resolves paths)."""
         ov = _PortOverrides()
-        if not config_path.exists():
-            return ov
-        for line in config_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line.startswith("export "):
-                line = line[7:]
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key, value = key.strip(), value.strip()
-            try:
-                if key == ENV_API_PORT:
-                    ov.api = int(value)
-                elif key == ENV_CP_PORT:
-                    ov.ui = int(value)
-            except ValueError:
-                continue
+        env = parse_env_file(config_path)
+        try:
+            if ENV_API_PORT in env:
+                ov.api = int(env[ENV_API_PORT])
+        except ValueError:
+            pass
+        try:
+            if ENV_CP_PORT in env:
+                ov.ui = int(env[ENV_CP_PORT])
+        except ValueError:
+            pass
         return ov
 
     def _resolve_ports(self, name: str, config_path: Path, default_api: Optional[int]) -> _ResolvedPorts:
@@ -601,28 +619,7 @@ class ProfileManager:
             all — which is how HINDSIGHT_API_LLM_BASE_URL went missing (issue
             #4094). Callers now read the environment variable names directly.
         """
-        paths = self.resolve_profile_paths(name)
-        config = {}
-
-        if not paths.config.exists():
-            return config
-
-        # Parse .env file
-        with open(paths.config, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                # Skip comments and empty lines
-                if not line or line.startswith("#"):
-                    continue
-                # Handle 'export VAR=value' format
-                if line.startswith("export "):
-                    line = line[7:]
-                # Parse KEY=VALUE
-                if "=" in line:
-                    key, value = line.split("=", 1)
-                    config[key.strip()] = value.strip()
-
-        return config
+        return parse_env_file(self.resolve_profile_paths(name).config)
 
     def _allocate_port(self, name: str) -> int:
         """Allocate a port for a profile using hash-based strategy.

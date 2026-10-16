@@ -25,7 +25,6 @@ class _FakeRequestContext:
     internal: bool = False
     mcp_authenticated: bool = False
     user_initiated: bool = False
-    allowed_bank_ids: list[str] | None = None
 
 
 def _mock_engine():

@@ -39,7 +39,7 @@ class TestDoneToolSchema:
         params = _done_tool(answer_as_document=True)["function"]["parameters"]
         assert "document" in params["properties"]
         assert "answer" not in params["properties"], "the model must not have a markdown escape hatch"
-        assert params["required"] == ["document"]
+        assert params["required"] == ["document", "answer_found"]
 
     def test_document_mode_keeps_the_supporting_id_fields(self):
         params = _done_tool(answer_as_document=True)["function"]["parameters"]
@@ -48,7 +48,14 @@ class TestDoneToolSchema:
 
     def test_document_mode_composes_with_directives(self):
         params = _done_tool(directive_rules=["Be concise"], answer_as_document=True)["function"]["parameters"]
-        assert set(params["required"]) == {"document", "directive_compliance"}
+        assert set(params["required"]) == {"document", "answer_found", "directive_compliance"}
+
+    def test_every_variant_requires_answer_found(self):
+        """The absence gate in the agent loop reads it (#4567), so no variant may drop it."""
+        for kwargs in ({}, {"directive_rules": ["Be concise"]}, {"answer_as_document": True}):
+            params = _done_tool(**kwargs)["function"]["parameters"]
+            assert params["properties"]["answer_found"]["type"] == "boolean"
+            assert "answer_found" in params["required"]
 
     def test_schema_has_no_union_types(self):
         """A tool schema goes to the provider verbatim, and Gemini rejects ``oneOf``."""

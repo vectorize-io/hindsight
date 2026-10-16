@@ -11,11 +11,6 @@ import {
 } from "@/components/ui/select";
 import { TagFilterInput } from "./tag-filter-input";
 
-/** Whether `filter` narrows anything (mirrors the dataplane's KnowledgeTagFilter.active). */
-export function isKnowledgeTagFilterActive(filter: KnowledgeTagFilter): boolean {
-  return !!filter.tags?.length || filter.tags_match === "exact";
-}
-
 interface Props {
   bankId: string;
   value: KnowledgeTagFilter;

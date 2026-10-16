@@ -344,7 +344,7 @@ class CursorLLM(LLMInterface):
         output_tokens: int,
         tool_calls: list[LLMToolCall] | None = None,
     ) -> None:
-        duration = time.time() - start
+        duration = time.perf_counter() - start
         get_metrics_collector().record_llm_call(
             provider=self.provider,
             model=self.model,
@@ -398,7 +398,7 @@ class CursorLLM(LLMInterface):
         strict_schema: bool = False,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> LLMCallResult:
-        start = time.time()
+        start = time.perf_counter()
         prompt = _messages_to_prompt(messages)
         if response_format is not None and hasattr(response_format, "model_json_schema"):
             schema = provider_json_schema(response_format)
@@ -476,7 +476,7 @@ class CursorLLM(LLMInterface):
         and ``codex_llm.py`` use is unavailable. Describing the tools in the
         prompt and parsing the model's chosen call out of JSON is what is left.
         """
-        start = time.time()
+        start = time.perf_counter()
         prompt = _messages_to_prompt(messages)
 
         if tool_choice.mode is LLMToolChoiceMode.NONE or not tools:

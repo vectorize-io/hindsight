@@ -15,18 +15,35 @@ verbose extraction was, or how large the embedding model's vectors are. Under th
 nothing changes and extraction runs at full width; at the budget the producer waits, which
 is the pipeline throttling itself rather than the worker being OOM-killed.
 
-The one rule that keeps it from deadlocking: a reservation larger than the whole budget is
-admitted anyway when nothing else is held. Otherwise a single unusually rich chunk would
-wait forever for room that only it could free.
+Two rules keep it from deadlocking. A reservation larger than the whole budget is admitted
+anyway when nothing else is held, or a single unusually rich chunk would wait forever for
+room that only it could free. And a consumer that has drained the queue writes its open
+batch as soon as a producer is waiting for room (``RetainMemoryBudget.next_item_or_producer_waiting``), or a
+small open batch plus a large next chunk would leave each side waiting on the other (#5296).
 """
 
 import asyncio
+import enum
 import logging
 from dataclasses import dataclass
+from typing import TypeVar
 
 from .types import ChunkMetadata, ExtractedFact, ProcessedFact
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
+
+
+# A one-member enum rather than a bare `object()` so `item is PRODUCER_WAITING` narrows the
+# type for the checker, and the consumer can index the real queue items without a cast.
+class _ProducerWaiting(enum.Enum):
+    TOKEN = "producer_waiting"
+
+
+# Returned by `next_item_or_producer_waiting` instead of a queue item: the queue is empty and
+# a producer is blocked on the budget, so the consumer must write what it holds.
+PRODUCER_WAITING = _ProducerWaiting.TOKEN
 
 # What one fact costs beyond its own text: the dataclass, its dict, the entity refs and
 # datetimes hanging off it. Deliberately a flat number — this is a budget, not accounting,
@@ -101,6 +118,10 @@ class RetainMemoryBudget:
         self._held_bytes = 0
         self._room = asyncio.Event()
         self._room.set()
+        # Set while at least one `reserve` is blocked, so the consumer can tell "the producer
+        # is still extracting" from "the producer is waiting for me to free room".
+        self._waiters = 0
+        self._producer_waiting = asyncio.Event()
 
     @property
     def held_bytes(self) -> int:
@@ -120,9 +141,17 @@ class RetainMemoryBudget:
         """
         if not self.enabled:
             return
-        while self._held_bytes > 0 and self._held_bytes + nbytes > self.limit_bytes:
-            self._room.clear()
-            await self._room.wait()
+        if self._held_bytes > 0 and self._held_bytes + nbytes > self.limit_bytes:
+            self._waiters += 1
+            self._producer_waiting.set()
+            try:
+                while self._held_bytes > 0 and self._held_bytes + nbytes > self.limit_bytes:
+                    self._room.clear()
+                    await self._room.wait()
+            finally:
+                self._waiters -= 1
+                if self._waiters == 0:
+                    self._producer_waiting.clear()
         self._held_bytes += nbytes
         if self._held_bytes >= self.limit_bytes:
             self._room.clear()
@@ -146,3 +175,29 @@ class RetainMemoryBudget:
         if not self.enabled:
             return False
         return batch_bytes * 2 >= self.limit_bytes
+
+    async def next_item_or_producer_waiting(self, queue: "asyncio.Queue[_T]") -> "_T | _ProducerWaiting":
+        """The next queue item, or ``PRODUCER_WAITING`` if a producer blocks on the budget first.
+
+        For a consumer holding an open batch. Its reservation counts against the budget, so a
+        producer waiting for room can be waiting on that very batch — and the consumer waiting
+        for the producer's next item would then wait forever (#5296). Only an empty queue races
+        the signal: with items queued the consumer keeps its normal batching, so this changes
+        nothing until the alternative is a hang.
+
+        ``Queue.get`` is cancellation-safe — an item only leaves the queue once the getter
+        resumes — so abandoning the pending get when the signal wins loses nothing.
+        """
+        if not queue.empty() or not self.enabled:
+            return await queue.get()
+        get = asyncio.ensure_future(queue.get())
+        waiting = asyncio.ensure_future(self._producer_waiting.wait())
+        try:
+            await asyncio.wait({get, waiting}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            waiting.cancel()
+            if not get.done():
+                get.cancel()
+        if get.done() and not get.cancelled():
+            return get.result()
+        return PRODUCER_WAITING

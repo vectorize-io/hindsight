@@ -30,6 +30,11 @@ STEP_ANCHORS: dict[str, str] = {
     # mission was set. This line is on every reflect turn regardless.
     "reflect": "CRITICAL: You MUST ONLY use information from retrieved tool results.",
     "reflect_answer": "You are a thoughtful assistant that synthesizes answers from retrieved memories.",
+    # The closing turn: when the loop stops without calling `done`, the server asks
+    # for it once more inside the same conversation before falling back to the
+    # standalone `reflect_answer` prompt. It carries the `reflect` preamble too, so
+    # a rule for it has to be registered before the generic `reflect` rules.
+    "reflect_closing": "Stop retrieving. Call the `done` tool",
     # Structured output is a *second* call after the answer: an extraction pass
     # that reshapes the prose into the caller's schema. Anchored separately
     # because a story about the schema is about this call, not the answer.

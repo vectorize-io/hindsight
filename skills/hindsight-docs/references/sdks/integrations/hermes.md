@@ -306,7 +306,7 @@ The lookup stops at the repository root. Only `bank_id` is read.
 | `retain_every_n_turns` | `1` | Retain every N turns (1 = every turn) |
 | `retain_context` | `conversation between Hermes Agent and the User` | Context label for retained memories |
 | `retain_tags` | — | Default tags applied to retained memories; merged with per-call tool tags. JSON list or comma-separated text. |
-| `observation_scopes` | `combined` | How observations are grouped by tag during consolidation: `combined` (one pass over all tags), `per_tag` (one pass per tag), `all_combinations` (every tag subset, expensive), or a JSON list of tag lists for custom scopes (e.g. `[["user:alice"], ["project-x"]]`). |
+| `observation_scopes` | `shared` | How observations are grouped by tag during consolidation: `shared` (one scope for the whole bank, so observations merge across sessions; the `session:`/`parent:` tags stay on the facts for filtering), `combined` (one scope per exact tag set, which here means one per session), `per_tag` (one pass per tag), `all_combinations` (every tag subset, expensive), or a JSON list of tag lists for custom scopes (e.g. `[["user:alice"], ["project-x"]]`). |
 | `retain_source` | — | Opt-in `metadata.source` attached to retained memories (identifies the storing client, e.g. `hermes`). Empty by default — no attribution tag ships unless you set it. |
 | `retain_strategy` | — | Named retain strategy sent with every stored item (`HINDSIGHT_RETAIN_STRATEGY`). The bank must define it under `retain_strategies`; an unknown name is ignored by the server. Empty lets the bank decide. |
 | `retain_indicator` | `true` | Show a `👁️ Hindsight — saving to memory…` status line when a turn is saved. Turn off for customer-facing agents. |

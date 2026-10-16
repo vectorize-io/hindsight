@@ -247,7 +247,7 @@ select = [
     "F",      # Pyflakes
     "I",      # isort
     "B021",   # flake8-bugbear: f-string used as docstring (leaves __doc__ None)
-    "TID251", # banned imports: sync HTTP clients and httpx (see banned-api below)
+    "TID251", # banned APIs: sync HTTP clients, httpx and time.time (see banned-api below)
 ]
 ignore = [
     "E501",   # line too long (handled by formatter)
@@ -266,6 +266,10 @@ known-third-party = ["alembic"]
 "urllib.request".msg = "Sync HTTP is forbidden in production code; use aiohttp via hindsight_api.engine.aiohttp_session."
 "urllib3".msg = "Sync HTTP is forbidden in production code; use aiohttp via hindsight_api.engine.aiohttp_session."
 "http.client".msg = "Sync HTTP is forbidden in production code; use aiohttp via hindsight_api.engine.aiohttp_session."
+# Durations measured with the wall clock go negative when NTP / timed steps it back, and
+# OpenTelemetry drops negative histogram samples (#5445).
+"time.time_ns".msg = "Measure durations with time.perf_counter_ns(). time.time_ns() is only for real-time values (span timestamps): mark those with `# noqa: TID251`."
+"time.time".msg = "Measure durations with time.perf_counter() (or time.monotonic() for deadlines). time.time() is only for values tied to real time (expiry, ids, timestamps): mark those with `# noqa: TID251`."
 
 [tool.ruff.lint.per-file-ignores]
 # The container readiness probe runs as its own short-lived process and is

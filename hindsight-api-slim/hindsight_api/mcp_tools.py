@@ -1261,9 +1261,9 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             max_tokens: int = 4096,
             budget: str = "high",
             types: list[str] | None = None,
-            prefer_observations: bool = False,
+            prefer_observations: bool | None = None,
             tags: list[str] | None = None,
-            tags_match: str = "any",
+            tags_match: TagsMatch = "any",
             tag_groups: list[dict] | None = None,
             query_timestamp: str | None = None,
             min_scores: dict | None = None,
@@ -1280,10 +1280,11 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 types: Fact types to include (e.g., ['world', 'experience']). Default: all types.
                 prefer_observations: When recalling raw facts together with 'observation', drop any raw fact
                     that a returned observation was consolidated from, so the observation supersedes it (no
-                    duplicate content). Disabled by default; set true to enable. No effect unless
-                    'observation' and a raw type are both in types. Default: False.
+                    duplicate content). No effect unless 'observation' and a raw type are both in types.
+                    Default: the bank's recall_prefer_observations config (false unless configured).
                 tags: Optional tags to filter results by (e.g., ['project:alpha']). Mutually exclusive with tag_groups.
-                tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
+                tags_match: How to match tags - 'any' (any tag, untagged included), 'all' (all tags, untagged included),
+                    'any_strict' / 'all_strict' (same, untagged excluded) or 'exact' (exactly these tags). Default: 'any'
                 tag_groups: Compound tag filter using boolean groups (AND-ed together). Each group is a leaf
                     {"tags": [...], "match": "any_strict"} or compound {"and": [...]}, {"or": [...]}, {"not": {...}}.
                     Example: [{"not": {"tags": ["closeout"], "match": "any_strict"}}] excludes memories tagged closeout.
@@ -1365,9 +1366,9 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             max_tokens: int = 4096,
             budget: str = "high",
             types: list[str] | None = None,
-            prefer_observations: bool = False,
+            prefer_observations: bool | None = None,
             tags: list[str] | None = None,
-            tags_match: str = "any",
+            tags_match: TagsMatch = "any",
             tag_groups: list[dict] | None = None,
             query_timestamp: str | None = None,
             min_scores: dict | None = None,
@@ -1383,10 +1384,11 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 types: Fact types to include (e.g., ['world', 'experience']). Default: all types.
                 prefer_observations: When recalling raw facts together with 'observation', drop any raw fact
                     that a returned observation was consolidated from, so the observation supersedes it (no
-                    duplicate content). Disabled by default; set true to enable. No effect unless
-                    'observation' and a raw type are both in types. Default: False.
+                    duplicate content). No effect unless 'observation' and a raw type are both in types.
+                    Default: the bank's recall_prefer_observations config (false unless configured).
                 tags: Optional tags to filter results by (e.g., ['project:alpha']). Mutually exclusive with tag_groups.
-                tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
+                tags_match: How to match tags - 'any' (any tag, untagged included), 'all' (all tags, untagged included),
+                    'any_strict' / 'all_strict' (same, untagged excluded) or 'exact' (exactly these tags). Default: 'any'
                 tag_groups: Compound tag filter using boolean groups (AND-ed together). Each group is a leaf
                     {"tags": [...], "match": "any_strict"} or compound {"and": [...]}, {"or": [...]}, {"not": {...}}.
                     Example: [{"not": {"tags": ["closeout"], "match": "any_strict"}}] excludes memories tagged closeout.
@@ -1470,7 +1472,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
             max_tokens: int = 4096,
             response_schema: dict | None = None,
             tags: list[str] | None = None,
-            tags_match: str = "any",
+            tags_match: TagsMatch = "any",
             apply_all_directives: bool = False,
             include_based_on: bool = False,
             include_trace: bool = False,
@@ -1502,7 +1504,8 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 max_tokens: Maximum tokens for the response (default: 4096)
                 response_schema: Optional JSON schema for structured output. When provided, the response includes a 'structured_output' field.
                 tags: Optional tags to filter memories by (e.g., ['project:alpha'])
-                tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
+                tags_match: How to match tags - 'any' (any tag, untagged included), 'all' (all tags, untagged included),
+                    'any_strict' / 'all_strict' (same, untagged excluded) or 'exact' (exactly these tags). Default: 'any'
                 apply_all_directives: Apply every active directive regardless of tags. By default directives are scoped like memories (untagged always apply; tagged apply only when tags match). Set true to apply all directives, ignoring tag scope.
                 include_based_on: Include source facts used for synthesis. Defaults to false because broad reflections can exceed MCP client result limits.
                 include_trace: Include the reflection's internal trace fields (tool_trace/llm_trace and directives_applied). Defaults to false because the trace can be tens of KB and overflow MCP client context; enable only for debugging.
@@ -1565,7 +1568,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
             max_tokens: int = 4096,
             response_schema: dict | None = None,
             tags: list[str] | None = None,
-            tags_match: str = "any",
+            tags_match: TagsMatch = "any",
             apply_all_directives: bool = False,
             include_based_on: bool = False,
             include_trace: bool = False,
@@ -1596,7 +1599,8 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 max_tokens: Maximum tokens for the response (default: 4096)
                 response_schema: Optional JSON schema for structured output. When provided, the response includes a 'structured_output' field.
                 tags: Optional tags to filter memories by (e.g., ['project:alpha'])
-                tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
+                tags_match: How to match tags - 'any' (any tag, untagged included), 'all' (all tags, untagged included),
+                    'any_strict' / 'all_strict' (same, untagged excluded) or 'exact' (exactly these tags). Default: 'any'
                 apply_all_directives: Apply every active directive regardless of tags. By default directives are scoped like memories (untagged always apply; tagged apply only when tags match). Set true to apply all directives, ignoring tag scope.
                 include_based_on: Include source facts used for synthesis. Defaults to false because broad reflections can exceed MCP client result limits.
                 include_trace: Include the reflection's internal trace fields (tool_trace/llm_trace and directives_applied). Defaults to false because the trace can be tens of KB and overflow MCP client context; enable only for debugging.
@@ -4463,6 +4467,7 @@ def _register_update_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
                     - entity_labels: Controlled vocabulary for entity classification.
                     - entities_allow_free_form: Allow labels outside entity_labels.
                     - recall_include_chunks: Include raw chunks in recall results.
+                    - recall_prefer_observations: Default prefer_observations for recall requests that omit it.
                     - recall_max_tokens: Max tokens for recall results.
                     - mcp_enabled_tools: Tool allowlist for this bank.
                     Any configurable field name is accepted (use Python field names).
@@ -4511,6 +4516,7 @@ def _register_update_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
                     - entity_labels: Controlled vocabulary for entity classification.
                     - entities_allow_free_form: Allow labels outside entity_labels.
                     - recall_include_chunks: Include raw chunks in recall results.
+                    - recall_prefer_observations: Default prefer_observations for recall requests that omit it.
                     - recall_max_tokens: Max tokens for recall results.
                     - mcp_enabled_tools: Tool allowlist for this bank.
                     Any configurable field name is accepted (use Python field names).

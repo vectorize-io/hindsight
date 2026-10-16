@@ -856,6 +856,15 @@ async def test_list_operations_surfaces_file_document_id_and_filename(memory_no_
     assert file_ops[0]["document_id"] == "doc_op_fields"
     assert file_ops[0]["filename"] == "report.txt"
 
+    # The retain the conversion queues carries the same pair, so the control
+    # plane can show that retain's status (e.g. failed extraction) on the
+    # upload row once the conversion itself has completed (#5310).
+    result = await memory_no_llm_verify.list_operations(bank_id, task_type="retain", request_context=context)
+    retain_ops = [op for op in result["operations"] if op["task_type"] == "retain"]
+    assert len(retain_ops) == 1
+    assert retain_ops[0]["document_id"] == "doc_op_fields"
+    assert retain_ops[0]["filename"] == "report.txt"
+
 
 @pytest.mark.asyncio
 async def test_async_file_retain_serializes_datetime_timestamp(memory_no_llm_verify, sample_txt_content):

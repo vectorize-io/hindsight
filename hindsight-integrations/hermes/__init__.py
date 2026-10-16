@@ -53,6 +53,7 @@ from .settings import (
     _DEFAULT_API_URL,
     _DEFAULT_IDLE_TIMEOUT,
     _DEFAULT_LOCAL_URL,
+    _DEFAULT_OBSERVATION_SCOPES,
     _DEFAULT_RETAIN_SOURCE,
     _DEFAULT_RETAIN_STRATEGY,
     _DEFAULT_TIMEOUT,
@@ -705,8 +706,8 @@ class HindsightMemoryProvider(MemoryProvider):
             },
             {
                 "key": "observation_scopes",
-                "description": "How observations are scoped during consolidation: 'combined' (default — one pass over all tags), 'per_tag' (one isolated observation per tag), 'all_combinations' (every tag subset — expensive), 'shared' (one untagged scope, so observations merge across sessions), or a JSON list of tag-lists for explicit custom scopes. Empty uses Hindsight's 'combined' default.",
-                "default": "",
+                "description": "How observations are scoped during consolidation: 'shared' (default — one scope for the bank, so observations merge across sessions; the session:/parent: tags stay on the facts), 'combined' (one scope per exact tag set, i.e. per session), 'per_tag' (one isolated observation per tag), 'all_combinations' (every tag subset — expensive), or a JSON list of tag-lists for explicit custom scopes.",
+                "default": _DEFAULT_OBSERVATION_SCOPES,
             },
             {
                 "key": "retain_source",
@@ -1359,7 +1360,7 @@ class HindsightMemoryProvider(MemoryProvider):
         self._retain_tags = _normalize_string_list(_cfg_or_env("retain_tags", "HINDSIGHT_RETAIN_TAGS"))
         self._tags = self._retain_tags or None
         self._observation_scopes = _normalize_observation_scopes(
-            _cfg_or_env("observation_scopes", "HINDSIGHT_RETAIN_OBSERVATION_SCOPES")
+            _cfg_or_env("observation_scopes", "HINDSIGHT_RETAIN_OBSERVATION_SCOPES", _DEFAULT_OBSERVATION_SCOPES)
         )
         self._retain_source = str(
             _cfg_or_env("retain_source", "HINDSIGHT_RETAIN_SOURCE", _DEFAULT_RETAIN_SOURCE)

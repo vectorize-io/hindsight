@@ -6,9 +6,11 @@ import json
 import logging
 from datetime import datetime, timezone
 
+import httpx
 import pytest
 
-from hindsight_api.engine.memory_engine import Budget
+from hindsight_api.api import create_app
+from hindsight_api.engine.memory_engine import Budget, InvalidRetainRequestError, _is_non_retryable_task_error
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +186,39 @@ async def test_append_mode_requires_document_id(memory, request_context):
             ],
             request_context=request_context,
         )
+
+
+@pytest.mark.asyncio
+async def test_async_append_without_document_id_rejected_at_submit(memory, request_context):
+    """The queued path refuses the same item at submit time instead of failing in the worker (#5415)."""
+    bank_id = f"test_async_append_no_docid_{_ts()}"
+
+    with pytest.raises(InvalidRetainRequestError, match="update_mode='append' requires a document_id"):
+        await memory.submit_async_retain(
+            bank_id,
+            [{"content": "Some content", "update_mode": "append"}],
+            request_context=request_context,
+        )
+
+
+@pytest.mark.asyncio
+async def test_async_append_without_document_id_http_400(memory):
+    """POST /memories with async=true answers 400, the same as the sync path (#5415)."""
+    app = create_app(memory, initialize_memory=False)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        for async_ in (True, False):
+            response = await client.post(
+                f"/v1/default/banks/test_async_append_http_{_ts()}/memories",
+                json={"async": async_, "items": [{"content": "x", "update_mode": "append"}]},
+            )
+            assert response.status_code == 400, response.text
+            assert "requires a document_id" in response.json()["detail"]
+
+
+def test_invalid_retain_request_is_not_retried():
+    """A worker that still meets the error (e.g. a row queued before this check) fails it at once."""
+    assert _is_non_retryable_task_error(InvalidRetainRequestError("x")) is True
+    assert _is_non_retryable_task_error(ValueError("x")) is False
 
 
 @pytest.mark.asyncio

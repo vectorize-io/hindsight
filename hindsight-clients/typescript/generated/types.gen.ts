@@ -813,6 +813,12 @@ export type BankTemplateConfig = {
    */
   recall_include_chunks?: boolean | null;
   /**
+   * Recall Prefer Observations
+   *
+   * Default for recall prefer_observations when the request omits it
+   */
+  recall_prefer_observations?: boolean | null;
+  /**
    * Recall Max Tokens
    *
    * Max tokens of results returned by recall
@@ -2105,6 +2111,12 @@ export type DocumentListItem = {
    * Tags associated with this document
    */
   tags?: Array<string>;
+  /**
+   * Matched Fields
+   *
+   * Which fields matched the `q` search: 'id', 'original_text', or both. Empty when no `q` is given.
+   */
+  matched_fields?: Array<"id" | "original_text">;
 };
 
 /**
@@ -5505,9 +5517,9 @@ export type RecallRequest = {
   /**
    * Prefer Observations
    *
-   * When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact that an observation in the results was consolidated from, so the observation supersedes it and you don't get duplicate content. The freed slots are backfilled with the next results, keeping the result count at the requested budget. Disabled by default; set to true to enable. No effect unless 'observation' and at least one raw type are both requested.
+   * When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact that an observation in the results was consolidated from, so the observation supersedes it and you don't get duplicate content. The freed slots are backfilled with the next results, keeping the result count at the requested budget. When omitted, uses the bank/global recall_prefer_observations config (false unless configured). No effect unless 'observation' and at least one raw type are both requested.
    */
-  prefer_observations?: boolean;
+  prefer_observations?: boolean | null;
   budget?: Budget;
   /**
    * Max Tokens
@@ -6687,6 +6699,18 @@ export type UpdateDocumentRequest = {
    * The complete new set of tags for the document and its memory units — this REPLACES the existing tags rather than adding to them, so omitting a tag drops it and `[]` clears them all. Triggers observation invalidation and re-consolidation.
    */
   tags?: Array<string> | null;
+  /**
+   * UpdateDocumentObservationScopes
+   *
+   * New observation scoping for the document's memories, with the same values retain accepts (send 'combined' to return to the default). Use it to move memories retained under one scoping to another — e.g. per-session documents to 'shared' — without re-extracting them. Memories whose resolved scopes change lose their observations and are re-consolidated; the rest keep theirs. Also becomes the scoping a later reprocess of the document uses.
+   */
+  observation_scopes?:
+    | "per_tag"
+    | "combined"
+    | "all_combinations"
+    | "shared"
+    | Array<Array<string>>
+    | null;
 };
 
 /**
@@ -7218,7 +7242,7 @@ export type GetGraphData = {
     /**
      * Tags Match
      */
-    tags_match?: string;
+    tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
     /**
      * Document Id
      */
@@ -9047,7 +9071,7 @@ export type ListDocumentsData = {
     /**
      * Q
      *
-     * Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')
+     * Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
      */
     q?: string | null;
     /**
@@ -9059,9 +9083,9 @@ export type ListDocumentsData = {
     /**
      * Tags Match
      *
-     * How to match tags: 'any', 'all', 'any_strict', 'all_strict'
+     * How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'
      */
-    tags_match?: string;
+    tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
     /**
      * Time Field
      *

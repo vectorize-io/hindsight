@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { client } from "@/lib/api";
 import { resolveTemporalWindow } from "@/lib/temporal-window";
@@ -122,6 +122,13 @@ export function SearchDebugView() {
   // observations block — and "what is this fact about" is the first thing worth
   // seeing in a results list. Untick it to recall without the extra lookup.
   const [includeEntities, setIncludeEntities] = useState(true);
+  // null = not touched: the request omits it and the bank's resolved
+  // recall_prefer_observations decides, which is also what the switch shows.
+  // bankPreferObservations is null until (or if never) the bank config loads;
+  // then the switch's shown value is sent explicitly so it can't mislead.
+  const [preferObservations, setPreferObservations] = useState<boolean | null>(null);
+  const [bankPreferObservations, setBankPreferObservations] = useState<boolean | null>(null);
+  const shownPreferObservations = preferObservations ?? bankPreferObservations ?? false;
   const [windowStart, setWindowStart] = useState("");
   const [windowEnd, setWindowEnd] = useState("");
   const [tags, setTags] = useState("");
@@ -176,6 +183,22 @@ export function SearchDebugView() {
     setSelectedMemoryId(traceResult.id || traceResult.node_id || null);
   };
 
+  useEffect(() => {
+    setPreferObservations(null);
+    setBankPreferObservations(null);
+    if (!currentBank) return;
+    let cancelled = false;
+    client
+      .getBankConfig(currentBank)
+      .then((resp) => {
+        if (!cancelled) setBankPreferObservations(Boolean(resp.config.recall_prefer_observations));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [currentBank]);
+
   const temporalWindow = resolveTemporalWindow(windowStart, windowEnd);
   // How many collapsed options differ from their defaults, so a hidden setting
   // still shows on the Options toggle.
@@ -184,6 +207,7 @@ export function SearchDebugView() {
     Boolean(queryDate),
     includeChunks,
     !includeEntities,
+    shownPreferObservations !== (bankPreferObservations ?? false),
     Boolean(tags.trim()),
     Boolean(windowStart || windowEnd),
   ].filter(Boolean).length;
@@ -239,6 +263,9 @@ export function SearchDebugView() {
           entities: includeEntities ? { max_tokens: 500 } : null,
           chunks: includeChunks ? { max_tokens: 8192 } : null,
         },
+        ...((preferObservations !== null || bankPreferObservations === null) && {
+          prefer_observations: shownPreferObservations,
+        }),
         ...(queryDate && { query_timestamp: queryDate }),
         ...(temporalWindow.value && { temporal_window: temporalWindow.value }),
         ...(parsedTags.length > 0 && { tags: parsedTags, tags_match: tagsMatch }),
@@ -375,6 +402,19 @@ export function SearchDebugView() {
                       id="recall-entities"
                       checked={includeEntities}
                       onCheckedChange={setIncludeEntities}
+                    />
+                  </div>
+                </Row>
+                <Row
+                  label={t("preferObservations")}
+                  description={t("helpPreferObservations")}
+                  htmlFor="recall-prefer-observations"
+                >
+                  <div className="flex sm:justify-end">
+                    <Switch
+                      id="recall-prefer-observations"
+                      checked={shownPreferObservations}
+                      onCheckedChange={setPreferObservations}
                     />
                   </div>
                 </Row>

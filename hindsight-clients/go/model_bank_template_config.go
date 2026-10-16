@@ -67,6 +67,7 @@ type BankTemplateConfig struct {
 	ConsolidationMaxMemoriesPerRound NullableInt32 `json:"consolidation_max_memories_per_round,omitempty"`
 	ConsolidationLlmParallelism NullableInt32 `json:"consolidation_llm_parallelism,omitempty"`
 	RecallIncludeChunks NullableBool `json:"recall_include_chunks,omitempty"`
+	RecallPreferObservations NullableBool `json:"recall_prefer_observations,omitempty"`
 	RecallMaxTokens NullableInt32 `json:"recall_max_tokens,omitempty"`
 	RecallChunksMaxTokens NullableInt32 `json:"recall_chunks_max_tokens,omitempty"`
 	MemoryDefense map[string]interface{} `json:"memory_defense,omitempty"`
@@ -2033,6 +2034,48 @@ func (o *BankTemplateConfig) UnsetRecallIncludeChunks() {
 	o.RecallIncludeChunks.Unset()
 }
 
+// GetRecallPreferObservations returns the RecallPreferObservations field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetRecallPreferObservations() bool {
+	if o == nil || IsNil(o.RecallPreferObservations.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.RecallPreferObservations.Get()
+}
+
+// GetRecallPreferObservationsOk returns a tuple with the RecallPreferObservations field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetRecallPreferObservationsOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.RecallPreferObservations.Get(), o.RecallPreferObservations.IsSet()
+}
+
+// HasRecallPreferObservations returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasRecallPreferObservations() bool {
+	if o != nil && o.RecallPreferObservations.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetRecallPreferObservations gets a reference to the given NullableBool and assigns it to the RecallPreferObservations field.
+func (o *BankTemplateConfig) SetRecallPreferObservations(v bool) {
+	o.RecallPreferObservations.Set(&v)
+}
+// SetRecallPreferObservationsNil sets the value for RecallPreferObservations to be an explicit nil
+func (o *BankTemplateConfig) SetRecallPreferObservationsNil() {
+	o.RecallPreferObservations.Set(nil)
+}
+
+// UnsetRecallPreferObservations ensures that no value is present for RecallPreferObservations, not even an explicit nil
+func (o *BankTemplateConfig) UnsetRecallPreferObservations() {
+	o.RecallPreferObservations.Unset()
+}
+
 // GetRecallMaxTokens returns the RecallMaxTokens field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *BankTemplateConfig) GetRecallMaxTokens() int32 {
 	if o == nil || IsNil(o.RecallMaxTokens.Get()) {
@@ -2303,6 +2346,9 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.RecallIncludeChunks.IsSet() {
 		toSerialize["recall_include_chunks"] = o.RecallIncludeChunks.Get()
+	}
+	if o.RecallPreferObservations.IsSet() {
+		toSerialize["recall_prefer_observations"] = o.RecallPreferObservations.Get()
 	}
 	if o.RecallMaxTokens.IsSet() {
 		toSerialize["recall_max_tokens"] = o.RecallMaxTokens.Get()

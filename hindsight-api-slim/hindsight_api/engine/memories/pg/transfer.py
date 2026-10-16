@@ -600,7 +600,7 @@ async def import_observations(
                     list(all_source_ids),
                 )
 
-    outcome.imported = len(resolved)
+    outcome.imported += len(resolved)
     return outcome
 
 

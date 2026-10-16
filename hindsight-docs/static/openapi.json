@@ -202,6 +202,13 @@
             "in": "query",
             "required": false,
             "schema": {
+              "enum": [
+                "any",
+                "all",
+                "any_strict",
+                "all_strict",
+                "exact"
+              ],
               "type": "string",
               "default": "all_strict",
               "title": "Tags Match"
@@ -3658,10 +3665,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')",
+              "description": "Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads \u2014 use recall for that.",
               "title": "Q"
             },
-            "description": "Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')"
+            "description": "Case-insensitive substring filter on document ID or document text (e.g. 'report' matches 'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: meant for browsing and inspection, not for high-volume or latency-sensitive workloads \u2014 use recall for that."
           },
           {
             "name": "tags",
@@ -3689,12 +3696,19 @@
             "in": "query",
             "required": false,
             "schema": {
+              "enum": [
+                "any",
+                "all",
+                "any_strict",
+                "all_strict",
+                "exact"
+              ],
               "type": "string",
-              "description": "How to match tags: 'any', 'all', 'any_strict', 'all_strict'",
+              "description": "How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'",
               "default": "any_strict",
               "title": "Tags Match"
             },
-            "description": "How to match tags: 'any', 'all', 'any_strict', 'all_strict'"
+            "description": "How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'"
           },
           {
             "name": "time_field",
@@ -4055,7 +4069,7 @@
           "Documents"
         ],
         "summary": "Update document",
-        "description": "Update mutable fields on a document without re-processing its content.\n\n**Tags** (`tags`): The array REPLACES the document's tags, it is not merged into them \u2014 send the complete set you want the document to end up with, and any tag you leave out is dropped. An empty array (`[]`) therefore clears every tag; only omitting the field entirely is rejected (422).\n\nThe new tags are propagated to all associated memory units. Observations derived from those units are invalidated and queued for re-consolidation under the new tags. Co-source memories from other documents that shared those observations are also reset. Tags are compared as a set, so re-sending the tags a document already has (in any order) changes nothing and queues no re-consolidation.\n\nAt least one field must be provided.",
+        "description": "Update mutable fields on a document without re-processing its content.\n\n**Tags** (`tags`): The array REPLACES the document's tags, it is not merged into them \u2014 send the complete set you want the document to end up with, and any tag you leave out is dropped. An empty array (`[]`) therefore clears every tag; only omitting the field entirely is rejected (422).\n\nThe new tags are propagated to all associated memory units.\n\n**Observation scopes** (`observation_scopes`): Replaces how the document's memories are scoped during consolidation, with the same values retain accepts. Use it to move a bank whose documents were retained under per-session tags to `shared` without re-extracting anything. It is also what a later reprocess of the document retains with.\n\nA memory is re-consolidated only when the change moves the observation scopes it resolves to: its observations are deleted and it is queued again, along with co-source memories from other documents that shared those observations. A change that resolves to the same scopes (a tag change under `shared`, `combined` over one tag vs `[[that tag]]`, re-sending the current values) keeps every observation and queues nothing.\n\nAt least one field must be provided.",
         "operationId": "update_document",
         "parameters": [
           {
@@ -9674,6 +9688,18 @@
             "title": "Recall Include Chunks",
             "description": "Include raw chunks in recall results"
           },
+          "recall_prefer_observations": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Prefer Observations",
+            "description": "Default for recall prefer_observations when the request omits it"
+          },
           "recall_max_tokens": {
             "anyOf": [
               {
@@ -11549,6 +11575,19 @@
             "type": "array",
             "title": "Tags",
             "description": "Tags associated with this document",
+            "default": []
+          },
+          "matched_fields": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "id",
+                "original_text"
+              ]
+            },
+            "type": "array",
+            "title": "Matched Fields",
+            "description": "Which fields matched the `q` search: 'id', 'original_text', or both. Empty when no `q` is given.",
             "default": []
           }
         },
@@ -16981,10 +17020,16 @@
             "description": "List of fact types to recall: 'world', 'experience', 'observation'. Defaults to all fact types if not specified."
           },
           "prefer_observations": {
-            "type": "boolean",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Prefer Observations",
-            "description": "When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact that an observation in the results was consolidated from, so the observation supersedes it and you don't get duplicate content. The freed slots are backfilled with the next results, keeping the result count at the requested budget. Disabled by default; set to true to enable. No effect unless 'observation' and at least one raw type are both requested.",
-            "default": false
+            "description": "When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact that an observation in the results was consolidated from, so the observation supersedes it and you don't get duplicate content. The freed slots are backfilled with the next results, keeping the result count at the requested budget. When omitted, uses the bank/global recall_prefer_observations config (false unless configured). No effect unless 'observation' and at least one raw type are both requested."
           },
           "budget": {
             "$ref": "#/components/schemas/Budget",
@@ -19093,6 +19138,33 @@
             ],
             "title": "Tags",
             "description": "The complete new set of tags for the document and its memory units \u2014 this REPLACES the existing tags rather than adding to them, so omitting a tag drops it and `[]` clears them all. Triggers observation invalidation and re-consolidation."
+          },
+          "observation_scopes": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "per_tag",
+                  "combined",
+                  "all_combinations",
+                  "shared"
+                ]
+              },
+              {
+                "items": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "UpdateDocumentObservationScopes",
+            "description": "New observation scoping for the document's memories, with the same values retain accepts (send 'combined' to return to the default). Use it to move memories retained under one scoping to another \u2014 e.g. per-session documents to 'shared' \u2014 without re-extracting them. Memories whose resolved scopes change lose their observations and are re-consolidated; the rest keep theirs. Also becomes the scoping a later reprocess of the document uses."
           }
         },
         "type": "object",

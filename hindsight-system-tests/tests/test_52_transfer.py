@@ -178,3 +178,45 @@ async def test_importing_does_not_touch_the_source(client, llm, source_bank, des
 
     texts = sorted(m.text for m in await _memories(client, source_bank))
     assert texts == sorted([BERLIN, LEASE, OBSERVATION])
+
+
+async def test_an_imported_mental_model_still_points_at_its_evidence(client, llm, source_bank, destination, settled):
+    """The same rewrite, one layer up (#5298).
+
+    A mental model stores the ids its last refresh cited. Those were minted by the
+    source too, and the model row is copied verbatim — so an import that rewrites
+    the observations but not the model leaves a model whose evidence resolves to
+    nothing here.
+    """
+    cited = await _memories(client, source_bank)
+    llm.reset()
+    llm.on_step("reflect", tool="done").returns_tool_call(
+        "done",
+        answer="Alice lives in Berlin.",
+        memory_ids=[m.id for m in cited if m.fact_type != "observation"],
+        observation_ids=[m.id for m in cited if m.fact_type == "observation"],
+    )
+    reflect_loop(llm, answer="Alice lives in Berlin.", query="Alice Berlin")
+    created = await client.mental_models.create_mental_model(
+        source_bank,
+        {
+            "name": "Alice housing",
+            "source_query": "Where does Alice live?",
+            # Read the facts themselves, not the fixture's page that already answers this.
+            "trigger": {"exclude_mental_models": True},
+        },
+    )
+    await settled(source_bank)
+
+    archive = await client.aexport_documents(
+        bank_id=source_bank, include_observations=True, include_knowledge_base=True
+    )
+    await _import(client, llm, destination, archive)
+    await settled(destination)
+
+    model = await client.mental_models.get_mental_model(destination, created.mental_model_id, detail="full")
+    based_on = model.reflect_response["based_on"]
+    evidence = [e["id"] for kind in ("world", "experience", "observation") for e in based_on[kind]]
+    here = {m.id: m.text for m in await _memories(client, destination)}
+    assert set(evidence) <= here.keys(), "an imported mental model cites memory ids that do not exist in this bank"
+    assert sorted(here[i] for i in evidence) == sorted([BERLIN, LEASE, OBSERVATION])

@@ -547,6 +547,14 @@ async def test_every_other_surface_respects_both_scopes(memory, scoped_bank):
                 contents=[{"content": "x", "tags": ["user:dan"], "observation_scopes": scopes}],
                 request_context=dan,
             )
+        # ... and so is moving an existing document to them (#5309).
+        with pytest.raises(OperationValidationError) as e:
+            await memory.update_document("dan-notes", scoped_bank, observation_scopes=scopes, request_context=dan)
+        assert e.value.status_code == 403
+    # A scope inside the write scope is accepted.
+    assert await memory.update_document(
+        "dan-notes", scoped_bank, observation_scopes=[["user:dan"]], request_context=dan
+    )
 
     # The operation payload is the raw request: never shown to a scoped caller.
     op = await memory.submit_async_retain(

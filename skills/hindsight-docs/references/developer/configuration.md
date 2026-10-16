@@ -309,7 +309,7 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 | `HINDSIGHT_API_LLM_SUPPORTS_MAX_ITEMS` | Whether the LLM backend accepts JSON Schema `maxItems` / `minItems` in structured-output schemas. Set to `false` for backends such as Bedrock Converse that reject these keywords; consolidation still enforces observation caps after parsing. | `true` |
 | `HINDSIGHT_API_LLM_SUPPORTS_STRING_PATTERN` | Whether the LLM backend accepts JSON Schema `pattern` in structured-output schemas. When `true`, retain constrains `occurred_start` / `occurred_end` to an ISO timestamp, which stops a grammar-constrained model from reasoning inside the timestamp string — a failure that corrupts the date and can burn the entire completion budget on an unterminated response. Left `false` because support is narrow and rejection is a hard 400 at request time: Bedrock validates schemas against an allowlist that excludes this keyword, and OpenAI errors on unsupported keywords under `strict`. Backends that neither enforce nor reject it gain nothing. | `false` |
 | `HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_FORCED_TOOL` | Request structured output from the LiteLLM-backed providers (`litellm`, `litellmrouter`, `bedrock`) with a single forced tool call — the response schema becomes the tool's parameters — instead of `response_format`. Set to `true` for backends that reject `response_format` outright. This is region-dependent on Bedrock Claude: `ap-southeast-2` (`au.*` inference profiles) refuses the translated Converse `outputConfig` with `Extra inputs are not permitted`, while the same model in `us-east-1` (`us.*`) accepts it and needs nothing here. Verified against both. If the model answers without calling the tool, the reply is parsed as text as before. Other providers ignore it. | `false` |
-| `HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE` | Whether the OpenAI-compatible backend honours `response_format={"type": "json_object"}` on the soft (non-strict) structured-output path. Leave unset and the provider decides: LM Studio, Ollama and Volcano get the schema in the prompt only, llama.cpp follows `HINDSIGHT_API_LLAMACPP_NO_GRAMMAR`, and every other provider also sends `json_object`. Set `false` for `provider=openai` pointed at a local server that can't constrain output: some such servers rewrite the prompt instead, and a thinking model can loop on the rewrite until the LLM timeout. This doesn't make a model write JSON. It only drops the request the server mishandles, so the model still has to follow the schema in the prompt. Set `true` to force `json_object` on a backend that would otherwise skip it. | Provider decides |
+| `HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE` | Whether the OpenAI-compatible backend honours `response_format={"type": "json_object"}` on the soft (non-strict) structured-output path. Leave unset and the provider decides: LM Studio, Ollama, Volcano and z.ai get the schema in the prompt only, llama.cpp follows `HINDSIGHT_API_LLAMACPP_NO_GRAMMAR`, and every other provider also sends `json_object`. z.ai is skipped because its `json_object` mode deletes the literal token `json` from the generated text, so `latest.json` comes back as `latest.` — valid JSON, silently corrupted. Set `false` for `provider=openai` pointed at a local server that can't constrain output: some such servers rewrite the prompt instead, and a thinking model can loop on the rewrite until the LLM timeout. This doesn't make a model write JSON. It only drops the request the server mishandles, so the model still has to follow the schema in the prompt. Set `true` to force `json_object` on a backend that would otherwise skip it. | Provider decides |
 | `HINDSIGHT_API_LLM_CODEX_HOME` | Credentials directory for the `openai-codex` provider — the directory holding the `auth.json` it authenticates with. Overrides the process-wide `CODEX_HOME` for Hindsight's own LLM calls. Its reason to exist is that `CODEX_HOME` is process-wide: set this (and the per-member `HINDSIGHT_API_LLM_<n>_CODEX_HOME`) to run two independently authorized ChatGPT profiles in one process, so a [multi-LLM chain](#multi-llm-strategies-failover--round-robin) of two Codex members can fail over between accounts. | Unset (`CODEX_HOME`, else `~/.codex`) |
 | `HINDSIGHT_API_LLM_OLLAMA_NUM_CTX` | Optional native Ollama `num_ctx` override. Leave unset to use the model/server default; set a positive integer only when you need a larger context window. Setting it also routes free-form calls (including the startup connection probe) through the native `/api/chat` API, since the OpenAI-compatible endpoint cannot express a context size — see the note below. | Unset |
 | `HINDSIGHT_API_LLM_GEMINI_SAFETY_SETTINGS` | JSON-encoded list of `{category, threshold}` dicts for Gemini/VertexAI content safety filtering | `null` |
@@ -410,7 +410,7 @@ export HINDSIGHT_API_LLM_MODEL=your-model-name
 
 # OpenAI Codex (ChatGPT Plus/Pro subscription - uses OAuth, no API key needed)
 export HINDSIGHT_API_LLM_PROVIDER=openai-codex
-export HINDSIGHT_API_LLM_MODEL=gpt-5.4-mini
+export HINDSIGHT_API_LLM_MODEL=gpt-5.6-luna
 # No API key needed - uses OAuth tokens from ~/.codex/auth.json
 # For long-running services, set CODEX_HOME to a dedicated auth directory so
 # Hindsight doesn't share (and lose) its refresh token with another Codex process.
@@ -1479,24 +1479,45 @@ This is separate from the `typesafe` [reranker](#reranker), which keeps its own
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_DECISION_MODEL_PROVIDER` | `none` or `typesafe` ([TypeSafe](https://typesafe.ai) System One). | `none` |
-| `HINDSIGHT_API_DECISION_MODEL_API_KEY` | API key. Required when the provider is not `none`. | - |
-| `HINDSIGHT_API_DECISION_MODEL_MODEL` | Model name. | `jev-latest` |
-| `HINDSIGHT_API_DECISION_MODEL_BASE_URL` | API base URL. | `https://api.typesafe.ai` |
+| `HINDSIGHT_API_DECISION_MODEL_PROVIDER` | `none`, `typesafe`, `cloudflare` or `openai` (see below). | `none` |
+| `HINDSIGHT_API_DECISION_MODEL_API_KEY` | API key (Cloudflare: an API token with Workers AI access). Required when the provider is not `none`. | - |
+| `HINDSIGHT_API_DECISION_MODEL_MODEL` | Model name. | provider default |
+| `HINDSIGHT_API_DECISION_MODEL_BASE_URL` | API base URL. Required for `cloudflare`. | provider default |
 | `HINDSIGHT_API_DECISION_MODEL_TIMEOUT` | Request timeout in seconds. | `60` |
 | `HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT` | Most requests in flight at once, for each operation using the decision model. | `24` |
+| `HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS` | Most tokens one request may carry, counted on the whole request body. Larger asks are split across requests. Set it to the served model's context window less a margin. | `26000` |
+
+Every request is retried on its own when it is rate-limited (429) or fails transiently.
+
+| Provider | API | Default model | Default base URL |
+|----------|-----|---------------|------------------|
+| `typesafe` | [TypeSafe](https://typesafe.ai) System One (`/v1/systemone`) | `jev-latest` | `https://api.typesafe.ai` |
+| `cloudflare` | [Clef](https://blog.cloudflare.com/clef-decision-models) on Workers AI (System One body, `/@cf/cloudflare/<model>`) | `clef` (or `clef-flash`) | none: set `https://api.cloudflare.com/client/v4/accounts/<account_id>/ai/run`, or an AI Gateway `https://gateway.ai.cloudflare.com/v1/<account_id>/<gateway>/workers-ai` |
+| `openai` | [OpenAI Decisions API](https://developers.openai.com/api/docs/guides/decisions) (`/v1/decisions`, public beta) | `gpt-6-luna` | `https://api.openai.com` |
 
 **Per-operation overrides.** `HINDSIGHT_API_{RECALL,REFLECT,CONSOLIDATION}_DECISION_MODEL_{PROVIDER,API_KEY,MODEL,BASE_URL}`
-replace the global value for that operation only; anything not set falls back to the
-global value. Set an operation's provider to `none` to turn the decision model off for it,
-or set it to `typesafe` to give one operation a decision model without a global one.
+replace the global value for that operation only. Key, model and URL fall back to the global
+value only while the operation uses the global provider; an operation that switches to another
+provider takes that provider's defaults and needs its own key. Set an operation's provider to
+`none` to turn the decision model off for it, or give one operation a decision model without a
+global one.
 
 ```bash
 export HINDSIGHT_API_DECISION_MODEL_PROVIDER=typesafe
 export HINDSIGHT_API_DECISION_MODEL_API_KEY=your-typesafe-key
 export HINDSIGHT_API_REFLECT_DECISION_MODEL_MODEL=jev-preview        # reflect only
-export HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_PROVIDER=none      # consolidation opts out
+export HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_PROVIDER=openai    # consolidation on OpenAI
+export HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_API_KEY=your-openai-key
 ```
+
+**Recall.** With a decision model, recall uses it in place of the [reranker](#reranker).
+It asks of each candidate whether showing it would help answer the question, telling it
+the date the question is asked (the recall's question date, else today), and orders the
+pool by that. That order is final: recall skips the recency, temporal and proof-count
+boosts it applies to a cross-encoder, and publishes no reranker score, so
+`min_scores.reranker` is rejected. To keep the cross-encoder for recall
+while other operations use the decision model, set
+`HINDSIGHT_API_RECALL_DECISION_MODEL_PROVIDER=none`.
 
 ### Authentication
 
@@ -1690,6 +1711,12 @@ lowest-latency configuration there is.
 Disabling text search leaves the write path alone: `search_vector` and its index are
 still maintained, so a bank can be switched back without a reindex. The
 [text-search backend](#text-search-extension) it would have used is simply unread.
+
+##### Default `prefer_observations`
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_RECALL_PREFER_OBSERVATIONS` | Value of recall's [`prefer_observations`](./api/recall.md#prefer_observations) when a REST or MCP request leaves it out: drop raw facts that a returned observation was consolidated from, so results carry no duplicates. A value in the request still wins. Hierarchical — overridable per bank. Useful when callers you don't control (MCP connectors, generic agents) never pass the flag. | `false` |
 
 ##### Pairing with the retain side: plain-retrieval ("RAG") banks
 

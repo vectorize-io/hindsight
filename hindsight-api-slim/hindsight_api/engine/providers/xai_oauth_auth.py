@@ -229,7 +229,7 @@ class StoredCredential:
         """Seconds until expiry, or ``0.0`` when the store recorded no expiry."""
         if self.expires_at is None:
             return 0.0
-        return self.expires_at - (time.time() if now is None else now)
+        return self.expires_at - (time.time() if now is None else now)  # noqa: TID251
 
 
 def default_token_path() -> Path:
@@ -371,7 +371,7 @@ def quarantine_credential(token_path: Path, *, code: str, reason: str) -> None:
     current["last_auth_error"] = {
         "code": code,
         "reason": reason,
-        "at": time.time(),
+        "at": time.time(),  # noqa: TID251
     }
 
     parent = token_path.parent
@@ -622,7 +622,7 @@ async def device_code_login(
     finally:
         await http.close()
 
-    now = time.time()
+    now = time.time()  # noqa: TID251
     expires_in = _coerce_float(payload.get("expires_in"))
     credential = StoredCredential(
         access_token=str(payload["access_token"]),
@@ -743,7 +743,7 @@ class XaiOAuthManager:
                 logger.debug("xai-oauth refresh skipped: the store already holds a token newer than the rejected one")
                 return credential.access_token
 
-            gap = time.time() - credential.obtained_at
+            gap = time.time() - credential.obtained_at  # noqa: TID251
             if gap < self._min_refresh_gap_seconds:
                 raise XaiOAuthRefreshError(
                     f"xai-oauth refused to refresh again {gap:.1f}s after the stored credential was obtained "
@@ -853,7 +853,7 @@ class XaiOAuthManager:
         if not access_token:
             raise XaiOAuthRefreshError("xai-oauth refresh returned no access_token")
 
-        now = time.time()
+        now = time.time()  # noqa: TID251
         expires_in = _coerce_float(payload.get("expires_in"))
         refreshed = replace(
             credential,

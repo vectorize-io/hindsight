@@ -28,11 +28,12 @@ def test_recall_threads_prefer_observations(monkeypatch):
     assert captured["request"].prefer_observations is True
 
 
-def test_recall_prefer_observations_defaults_false(monkeypatch):
+def test_recall_prefer_observations_defaults_to_bank_config(monkeypatch):
+    """Omitted → None, so the server applies the bank's recall_prefer_observations."""
     client = Hindsight(base_url="http://example.invalid")
     captured: dict[str, object] = {}
     _capture_recall(monkeypatch, client, captured)
 
     client.recall("test-bank", "q")
 
-    assert captured["request"].prefer_observations is False
+    assert captured["request"].prefer_observations is None

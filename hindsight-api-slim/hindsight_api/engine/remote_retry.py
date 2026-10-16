@@ -10,6 +10,7 @@ by passing a policy rather than by re-deriving what "transient" means.
 
 import asyncio
 import logging
+import random
 import threading
 import time
 from collections.abc import Awaitable, Callable
@@ -148,6 +149,12 @@ def is_transient_remote_error(exc: BaseException) -> bool:
     return type(exc).__name__ in _TRANSIENT_EXCEPTION_NAMES
 
 
+def jittered_backoff(attempt: int, initial_backoff: float, max_backoff: float) -> float:
+    """Exponential backoff for ``attempt`` (0-based), capped at ``max_backoff``, with +/-20% jitter."""
+    backoff = min(initial_backoff * (2**attempt), max_backoff)
+    return backoff * random.uniform(0.8, 1.2)
+
+
 def _retry_delay_for(
     exc: BaseException,
     *,
@@ -183,9 +190,7 @@ def _retry_delay_for(
         )
         return None
 
-    backoff = min(policy.initial_backoff * (2**attempt), policy.max_backoff)
-    jitter = backoff * 0.2 * (2 * (time.time() % 1) - 1)
-    sleep_for = min(max(0.0, backoff + jitter), budget.remaining)
+    sleep_for = min(jittered_backoff(attempt, policy.initial_backoff, policy.max_backoff), budget.remaining)
     budget.spend(sleep_for)
     logger.warning(
         f"{provider} call failed (attempt {attempt + 1}/{attempts}, {status_label}), "

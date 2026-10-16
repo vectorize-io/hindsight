@@ -11,7 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-EvalKind = Literal["knowledge_page", "reflect", "retain", "source_priority"]
+EvalKind = Literal["knowledge_page", "reflect", "retain", "source_priority", "consolidation"]
 
 
 class EvalRecord(BaseModel):

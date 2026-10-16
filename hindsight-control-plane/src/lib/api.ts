@@ -5,7 +5,9 @@
 
 import { toast } from "sonner";
 import { bankApi, bankStatsApi, chunkApi, documentApi, memoryApi } from "./bank-url";
+import { SESSION_REQUIRED_HEADER } from "./auth/session";
 import { stripBasePath, withBasePath } from "./base-path";
+import { appendTagFilter, type TagFilter, type TagsMatch } from "./tag-filter-params";
 
 /**
  * Reduce an API error `details` value to a string safe to render in a toast.
@@ -212,31 +214,17 @@ export interface OperationProgress {
   detail?: Record<string, number> | null;
 }
 
+export type { TagsMatch };
+
 /** Tag filter for the knowledge-base tree and search (recall's tags / tags_match). */
-export interface KnowledgeTagFilter {
-  tags?: string[];
-  tags_match?: TagsMatch;
-}
+export type KnowledgeTagFilter = TagFilter;
 
 /** `&tags=..&tags_match=..`, or "" when the filter is empty. */
 function knowledgeTagQuery(filter?: KnowledgeTagFilter): string {
   const params = new URLSearchParams();
-  filter?.tags?.forEach((tag) => params.append("tags", tag));
-  if (filter?.tags_match && (filter.tags?.length || filter.tags_match === "exact"))
-    params.set("tags_match", filter.tags_match);
+  if (filter) appendTagFilter(params, filter);
   const qs = params.toString();
   return qs ? `&${qs}` : "";
-}
-
-export type TagsMatch = "any" | "all" | "any_strict" | "all_strict" | "exact";
-
-/** Append a tag filter; `tags_match` only travels with tags, like the dataplane expects. */
-function appendTagFilter(
-  queryParams: URLSearchParams,
-  filter: { tags?: string[]; tags_match?: TagsMatch }
-) {
-  for (const tag of filter.tags ?? []) queryParams.append("tags", tag);
-  if (filter.tags?.length && filter.tags_match) queryParams.append("tags_match", filter.tags_match);
 }
 
 // Time axes the two list endpoints can filter and order by. The chosen axis does
@@ -440,9 +428,14 @@ export class ControlPlaneClient {
 
       if (!response.ok) {
         const isClientError = response.status >= 400 && response.status < 500;
-        // Redirect to login on 401 (session expired or not authenticated)
+        // Redirect to login only when the UI session itself was refused. A 401 the
+        // dataplane returned is shown as an error: a new UI key can't fix it.
         const currentPath = stripBasePath(`${window.location.pathname}${window.location.search}`);
-        if (response.status === 401 && !currentPath.startsWith("/login")) {
+        if (
+          response.status === 401 &&
+          response.headers.get(SESSION_REQUIRED_HEADER) &&
+          !currentPath.startsWith("/login")
+        ) {
           window.location.href = withBasePath(`/login?returnTo=${encodeURIComponent(currentPath)}`);
           throw new Error("Unauthorized");
         }
@@ -672,6 +665,7 @@ export class ControlPlaneClient {
       document_id?: string;
       metadata?: Record<string, string>;
       entities?: Array<{ text: string; type?: string }>;
+      resolve_entities?: boolean;
       tags?: string[];
       observation_scopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
       strategy?: string;
@@ -1082,11 +1076,18 @@ export class ControlPlaneClient {
   /**
    * Update tags on a document and its associated memory units
    */
-  async updateDocument(documentId: string, bankId: string, tags: string[]) {
+  async updateDocument(
+    documentId: string,
+    bankId: string,
+    update: {
+      tags?: string[];
+      observation_scopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
+    }
+  ) {
     return this.fetchApi<{ success: boolean }>(documentApi(documentId, bankId), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tags }),
+      body: JSON.stringify(update),
     });
   }
 

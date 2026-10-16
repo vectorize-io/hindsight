@@ -35,6 +35,7 @@ _DOCUMENT_ROW = {
     "retain_params": {"context": "Team meeting notes"},
     "document_metadata": {"source": "slack"},
     "tags": ["user_a", "session_123"],
+    "matched_fields": [],
 }
 
 # The exact row `memories/pg/curation.list_memory_units` builds.

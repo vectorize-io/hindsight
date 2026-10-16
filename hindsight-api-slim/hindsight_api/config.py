@@ -204,9 +204,9 @@ ENV_LLM_STRUCTURED_OUTPUT_FORCED_TOOL = "HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_FOR
 # model name.
 ENV_LLM_VISION = "HINDSIGHT_API_LLM_VISION"
 # Whether the backend honours OpenAI's ``response_format={"type": "json_object"}``.
-# Tri-state like ENV_LLM_VISION: unset lets the provider decide (LM Studio, Ollama
-# and Volcano say no; llama.cpp follows HINDSIGHT_API_LLAMACPP_NO_GRAMMAR; the rest
-# say yes). When false, the soft path sends the schema in the prompt only. Needed
+# Tri-state like ENV_LLM_VISION: unset lets the provider decide (LM Studio, Ollama,
+# Volcano and z.ai say no; llama.cpp follows HINDSIGHT_API_LLAMACPP_NO_GRAMMAR; the
+# rest say yes). When false, the soft path sends the schema in the prompt only. Needed
 # for ``provider=openai`` pointed at a local server that can't constrain output and
 # instead rewrites the prompt in ways a thinking model can loop on (issue #4935).
 ENV_LLM_OPENAI_COMPATIBLE_JSON_MODE = "HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE"
@@ -672,6 +672,7 @@ ENV_DECISION_MODEL_MODEL = "HINDSIGHT_API_DECISION_MODEL_MODEL"
 ENV_DECISION_MODEL_BASE_URL = "HINDSIGHT_API_DECISION_MODEL_BASE_URL"
 ENV_DECISION_MODEL_TIMEOUT = "HINDSIGHT_API_DECISION_MODEL_TIMEOUT"
 ENV_DECISION_MODEL_MAX_CONCURRENT = "HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT"
+ENV_DECISION_MODEL_MAX_REQUEST_TOKENS = "HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS"
 
 ENV_VECTOR_EXTENSION = "HINDSIGHT_API_VECTOR_EXTENSION"
 ENV_ANN_ITERATIVE_SCAN = "HINDSIGHT_API_ANN_ITERATIVE_SCAN"
@@ -1030,6 +1031,7 @@ ENV_REFLECT_MISSION = "HINDSIGHT_API_REFLECT_MISSION"
 ENV_REFLECT_SOURCE_FACTS_MAX_TOKENS = "HINDSIGHT_API_REFLECT_SOURCE_FACTS_MAX_TOKENS"
 ENV_REFLECT_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_REFLECT_MAX_COMPLETION_TOKENS"
 ENV_RECALL_INCLUDE_CHUNKS = "HINDSIGHT_API_RECALL_INCLUDE_CHUNKS"
+ENV_RECALL_PREFER_OBSERVATIONS = "HINDSIGHT_API_RECALL_PREFER_OBSERVATIONS"
 ENV_RECALL_MAX_TOKENS = "HINDSIGHT_API_RECALL_MAX_TOKENS"
 ENV_RECALL_CHUNKS_MAX_TOKENS = "HINDSIGHT_API_RECALL_CHUNKS_MAX_TOKENS"
 
@@ -1131,7 +1133,7 @@ PROVIDER_DEFAULT_MODELS = {
     "llamacpp": "gemma-4-e2b-it",
     "lmstudio": "local-model",
     "vertexai": "google/gemini-3.1-flash-lite",
-    "openai-codex": "gpt-5.4-mini",
+    "openai-codex": "gpt-5.6-luna",
     "claude-code": "claude-sonnet-4-5-20250929",
     "cursor": "auto",
     "github-copilot": "gpt-5.6-terra",
@@ -1457,15 +1459,35 @@ DEFAULT_RERANKER_ALIBABA_MODEL = "qwen3-rerank"
 
 DEFAULT_RERANKER_GOOGLE_MODEL = "semantic-ranker-default-004"
 
-# "none": no decision model; operations that could use one keep their LLM-only path.
-DECISION_MODEL_PROVIDERS = ("none", "typesafe")
 DecisionModelOperation = Literal["recall", "reflect", "consolidation"]
 DECISION_MODEL_OPERATIONS: tuple[DecisionModelOperation, ...] = ("recall", "reflect", "consolidation")
+
+
+@dataclass(frozen=True)
+class _DecisionProviderDefaults:
+    model: str
+    #: None when the URL is per account and must be configured (Cloudflare).
+    base_url: str | None
+
+
+# "none": no decision model; operations that could use one keep their LLM-only path.
+# typesafe and cloudflare speak the System One API; openai has its own Decisions API.
+DECISION_MODEL_PROVIDER_DEFAULTS = {
+    "typesafe": _DecisionProviderDefaults(model="jev-latest", base_url="https://api.typesafe.ai"),
+    "cloudflare": _DecisionProviderDefaults(model="clef", base_url=None),
+    "openai": _DecisionProviderDefaults(model="gpt-6-luna", base_url="https://api.openai.com"),
+}
+DECISION_MODEL_PROVIDERS = ("none", *DECISION_MODEL_PROVIDER_DEFAULTS)
 DEFAULT_DECISION_MODEL_PROVIDER = "none"
-DEFAULT_DECISION_MODEL_MODEL = "jev-latest"
-DEFAULT_DECISION_MODEL_BASE_URL = "https://api.typesafe.ai"
 DEFAULT_DECISION_MODEL_TIMEOUT = 60.0
 DEFAULT_DECISION_MODEL_MAX_CONCURRENT = 24
+# Most tokens one request may carry, counted on the whole JSON body. It follows the context
+# window of the model the endpoint serves (32k for jev-latest), less a margin: the endpoint
+# counted 14% more than we do on the same body (42.3k vs 37.3k, 95.2k vs 83.5k), so 26k
+# here is about 29.6k there. A request has to hold the state and at least one question,
+# hence the floor.
+DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS = 26_000
+MIN_DECISION_MODEL_MAX_REQUEST_TOKENS = 1_000
 
 
 def _decision_model_env(operation: str, setting: str) -> str:
@@ -1969,6 +1991,7 @@ DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS = -1  # Token budget for source facts in
 # only if you want a hard cost ceiling on the synthesis call.
 DEFAULT_REFLECT_MAX_COMPLETION_TOKENS: int | None = None
 DEFAULT_RECALL_INCLUDE_CHUNKS = True  # Whether internal recall (e.g. mental model refresh) returns raw chunks
+DEFAULT_RECALL_PREFER_OBSERVATIONS = False  # Default for recall prefer_observations when the request omits it
 DEFAULT_RECALL_MAX_TOKENS = 2048  # Token budget for facts returned by internal recall
 DEFAULT_RECALL_CHUNKS_MAX_TOKENS = 1000  # Token budget for raw chunks returned by internal recall
 
@@ -3026,6 +3049,7 @@ class DecisionModelConfig:
     base_url: str
     timeout: float
     max_concurrent: int
+    max_request_tokens: int
 
 
 @dataclass
@@ -3548,6 +3572,9 @@ class HindsightConfig:
     enable_graph_retrieval: bool
     enable_reranking: bool
 
+    # Default for REST/MCP recall's prefer_observations when the request omits it
+    recall_prefer_observations: bool
+
     # Recall settings (used by internal recall, e.g. during mental model refresh)
     recall_include_chunks: bool
     recall_max_tokens: int
@@ -3762,10 +3789,11 @@ class HindsightConfig:
     # value). Read through decision_model_config(), never field by field.
     decision_model_provider: str = DEFAULT_DECISION_MODEL_PROVIDER
     decision_model_api_key: str | None = None
-    decision_model_model: str = DEFAULT_DECISION_MODEL_MODEL
-    decision_model_base_url: str = DEFAULT_DECISION_MODEL_BASE_URL
+    decision_model_model: str | None = None
+    decision_model_base_url: str | None = None
     decision_model_timeout: float = DEFAULT_DECISION_MODEL_TIMEOUT
     decision_model_max_concurrent: int = DEFAULT_DECISION_MODEL_MAX_CONCURRENT
+    decision_model_max_request_tokens: int = DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS
     recall_decision_model_provider: str | None = None
     recall_decision_model_api_key: str | None = None
     recall_decision_model_model: str | None = None
@@ -3912,6 +3940,7 @@ class HindsightConfig:
         "reflect_default_options",
         # Recall settings (used by internal recall, e.g. mental model refresh)
         "recall_include_chunks",
+        "recall_prefer_observations",
         "recall_max_tokens",
         "recall_chunks_max_tokens",
         # Recall budget mapping (Budget enum -> thinking_budget integer)
@@ -4877,11 +4906,14 @@ class HindsightConfig:
             # Decision model
             decision_model_provider=os.getenv(ENV_DECISION_MODEL_PROVIDER) or DEFAULT_DECISION_MODEL_PROVIDER,
             decision_model_api_key=os.getenv(ENV_DECISION_MODEL_API_KEY) or None,
-            decision_model_model=os.getenv(ENV_DECISION_MODEL_MODEL) or DEFAULT_DECISION_MODEL_MODEL,
-            decision_model_base_url=os.getenv(ENV_DECISION_MODEL_BASE_URL) or DEFAULT_DECISION_MODEL_BASE_URL,
+            decision_model_model=os.getenv(ENV_DECISION_MODEL_MODEL) or None,
+            decision_model_base_url=os.getenv(ENV_DECISION_MODEL_BASE_URL) or None,
             decision_model_timeout=float(os.getenv(ENV_DECISION_MODEL_TIMEOUT) or DEFAULT_DECISION_MODEL_TIMEOUT),
             decision_model_max_concurrent=int(
                 os.getenv(ENV_DECISION_MODEL_MAX_CONCURRENT) or DEFAULT_DECISION_MODEL_MAX_CONCURRENT
+            ),
+            decision_model_max_request_tokens=int(
+                os.getenv(ENV_DECISION_MODEL_MAX_REQUEST_TOKENS) or DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS
             ),
             **{
                 f"{operation}_decision_model_{setting.lower()}": os.getenv(_decision_model_env(operation, setting))
@@ -5313,6 +5345,10 @@ class HindsightConfig:
             in ("true", "1", "yes"),
             enable_reranking=os.getenv(ENV_ENABLE_RERANKING, str(DEFAULT_ENABLE_RERANKING)).lower()
             in ("true", "1", "yes"),
+            recall_prefer_observations=os.getenv(
+                ENV_RECALL_PREFER_OBSERVATIONS, str(DEFAULT_RECALL_PREFER_OBSERVATIONS)
+            ).lower()
+            in ("true", "1", "yes"),
             recall_include_chunks=os.getenv(ENV_RECALL_INCLUDE_CHUNKS, str(DEFAULT_RECALL_INCLUDE_CHUNKS)).lower()
             in ("true", "1", "yes"),
             recall_max_tokens=int(os.getenv(ENV_RECALL_MAX_TOKENS, str(DEFAULT_RECALL_MAX_TOKENS))),
@@ -5522,16 +5558,15 @@ class HindsightConfig:
     def decision_model_config(self, operation: DecisionModelOperation) -> DecisionModelConfig | None:
         """The decision model ``operation`` uses, or None when it has none.
 
-        Each setting is the operation's override when set, else the global one, the same
-        fallback as the per-operation LLM settings. An operation can set its provider to
-        "none" to opt out, or name one when no global decision model is set up.
+        The operation's provider is its override when set, else the global one. Key, model
+        and URL then come from the operation's override, else from the global setting, but
+        only when the operation uses the global provider: a key or model meant for another
+        provider is never borrowed. Anything still unset takes the provider's default. An
+        operation can set its provider to "none" to opt out, or name one when no global
+        decision model is set up.
         """
-
-        def setting(name: str) -> str | None:
-            override = getattr(self, f"{operation}_decision_model_{name}")
-            return override if override is not None else getattr(self, f"decision_model_{name}")
-
-        provider = (setting("provider") or DEFAULT_DECISION_MODEL_PROVIDER).lower()
+        own_provider = getattr(self, f"{operation}_decision_model_provider")
+        provider = (own_provider or self.decision_model_provider or DEFAULT_DECISION_MODEL_PROVIDER).lower()
         if provider not in DECISION_MODEL_PROVIDERS:
             raise ValueError(
                 f"Unknown decision model provider for {operation}: {provider!r}. "
@@ -5539,19 +5574,44 @@ class HindsightConfig:
             )
         if provider == "none":
             return None
-        api_key = setting("api_key")
-        if not api_key:
+        # Checked here, not on the first request: a ceiling no request fits, or a cap no
+        # request gets through, would otherwise surface as every decision failing.
+        if self.decision_model_timeout <= 0:
+            raise ValueError(f"{ENV_DECISION_MODEL_TIMEOUT} must be positive, not {self.decision_model_timeout}")
+        if self.decision_model_max_concurrent < 1:
             raise ValueError(
-                f"{ENV_DECISION_MODEL_API_KEY} (or {_decision_model_env(operation, 'API_KEY')}) is required "
-                f"when the {operation} decision model provider is {provider!r}"
+                f"{ENV_DECISION_MODEL_MAX_CONCURRENT} must be at least 1, not {self.decision_model_max_concurrent}"
             )
+        if self.decision_model_max_request_tokens < MIN_DECISION_MODEL_MAX_REQUEST_TOKENS:
+            raise ValueError(
+                f"{ENV_DECISION_MODEL_MAX_REQUEST_TOKENS} must be at least {MIN_DECISION_MODEL_MAX_REQUEST_TOKENS}, "
+                f"not {self.decision_model_max_request_tokens}"
+            )
+        inherits_global = provider == (self.decision_model_provider or "").lower()
+
+        def setting(name: str) -> str | None:
+            own = getattr(self, f"{operation}_decision_model_{name}")
+            if own is not None or not inherits_global:
+                return own
+            return getattr(self, f"decision_model_{name}")
+
+        def required(value: str | None, env_setting: str) -> str:
+            if not value:
+                raise ValueError(
+                    f"HINDSIGHT_API_DECISION_MODEL_{env_setting} (or {_decision_model_env(operation, env_setting)}) "
+                    f"is required when the {operation} decision model provider is {provider!r}"
+                )
+            return value
+
+        defaults = DECISION_MODEL_PROVIDER_DEFAULTS[provider]
         return DecisionModelConfig(
             provider=provider,
-            api_key=api_key,
-            model=setting("model") or DEFAULT_DECISION_MODEL_MODEL,
-            base_url=setting("base_url") or DEFAULT_DECISION_MODEL_BASE_URL,
+            api_key=required(setting("api_key"), "API_KEY"),
+            model=setting("model") or defaults.model,
+            base_url=required(setting("base_url") or defaults.base_url, "BASE_URL"),
             timeout=self.decision_model_timeout,
             max_concurrent=self.decision_model_max_concurrent,
+            max_request_tokens=self.decision_model_max_request_tokens,
         )
 
     def log_config(self) -> None:
@@ -5579,7 +5639,10 @@ class HindsightConfig:
             refresh_model = self.mental_model_refresh_llm_model or self.reflect_llm_model or self.llm_model
             logger.info(f"LLM (mental model refresh): provider={refresh_provider}, model={refresh_model}")
         logger.info(f"Embeddings: provider={self.embeddings_provider}")
-        logger.info(f"Reranker: provider={self.reranker_provider}")
+        if self.decision_model_config("recall") is not None:
+            logger.info("Reranker: replaced by the decision model in recall")
+        else:
+            logger.info(f"Reranker: provider={self.reranker_provider}")
         for operation in DECISION_MODEL_OPERATIONS:
             if decision_model := self.decision_model_config(operation):
                 logger.info(

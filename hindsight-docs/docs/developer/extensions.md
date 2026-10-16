@@ -344,6 +344,25 @@ edit, invalidate, or revert) has its own pair of hooks, in addition to the
   re-embeds the memory and re-consolidates the bank, so this is the figure to
   meter if curation should cost the same as ingesting that text.
 
+#### Transfer-archive import hooks
+
+Importing a transfer archive (a document import, or a whole-bank restore) brings
+pre-extracted facts into a bank without running fact extraction:
+
+- `validate_import(ctx: ImportContext)` runs at submission, before the archive
+  is stored or queued. `ctx.documents` lists the archive's documents
+  (`ImportArchiveDocument`: `document_id` and the original `content`), so a validator can size the import
+  for a quota or cost check. A rejection reaches the caller directly. The
+  default accepts.
+- Each imported document is then reported to `on_retain_complete` with
+  `result.source == RetainSource.IMPORT`, zero LLM token counts, and
+  `processed_content_tokens=0`. Use `source` to tell an import apart from a
+  re-retain whose chunks were all deduplicated, which also reports
+  `processed_content_tokens=0`; ordinary retains report `RetainSource.RETAIN`.
+
+Cloning a bank within the same instance is not an import: it is neither gated
+by `validate_import` nor reported to `on_retain_complete`.
+
 #### Confining a caller to a tag scope
 
 When several people share one bank and tags separate what each may see,

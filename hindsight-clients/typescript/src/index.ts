@@ -563,7 +563,7 @@ export class HindsightClient {
     query: string,
     options?: {
       types?: string[];
-      /** When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact a returned observation was consolidated from, so the observation supersedes it (no duplicate content). Disabled by default; no effect unless 'observation' and at least one raw type are both in types. */
+      /** When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact a returned observation was consolidated from, so the observation supersedes it (no duplicate content). No effect unless 'observation' and at least one raw type are both in types. Omitted: the bank's recall_prefer_observations config decides (false unless configured). */
       preferObservations?: boolean;
       maxTokens?: number;
       budget?: Budget;
@@ -987,6 +987,8 @@ export class HindsightClient {
       recallMaxTokens?: number;
       /** Include source chunks in recall results. */
       recallIncludeChunks?: boolean;
+      /** Default prefer_observations for recall requests that omit it. */
+      recallPreferObservations?: boolean;
       /** Token budget for those chunks. */
       recallChunksMaxTokens?: number;
       /** How the per-query result budget is derived: 'fixed' or 'adaptive'. */
@@ -1093,6 +1095,8 @@ export class HindsightClient {
     if (options.recallMaxTokens !== undefined) updates.recall_max_tokens = options.recallMaxTokens;
     if (options.recallIncludeChunks !== undefined)
       updates.recall_include_chunks = options.recallIncludeChunks;
+    if (options.recallPreferObservations !== undefined)
+      updates.recall_prefer_observations = options.recallPreferObservations;
     if (options.recallChunksMaxTokens !== undefined)
       updates.recall_chunks_max_tokens = options.recallChunksMaxTokens;
     if (options.recallBudgetFunction !== undefined)
@@ -1714,6 +1718,8 @@ export class HindsightClient {
   async listDocuments(
     bankId: string,
     options?: {
+      /** Case-insensitive substring match on document ID or text (unindexed; for browsing). */
+      q?: string;
       limit?: number;
       offset?: number;
       /** Time axis to filter and order by; `updated_at` is the default ordering. */
@@ -1729,6 +1735,7 @@ export class HindsightClient {
       client: this.client,
       path: { bank_id: bankId },
       query: {
+        q: options?.q,
         limit: options?.limit,
         offset: options?.offset,
         time_field: options?.timeField,

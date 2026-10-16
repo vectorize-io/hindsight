@@ -95,7 +95,7 @@ async def test_completion_counts_committed_document(
         strategy=None,
         outbox_callback=None if use_factory else callback,
         outbox_callback_factory=factory if use_factory else None,
-        start_time=time.time(),
+        start_time=time.perf_counter(),
     )
 
     if failure == "outbox":
@@ -212,7 +212,7 @@ async def test_append_commit_conflict_is_redone_in_process(
         strategy=None,
         outbox_callback=callback,
         outbox_callback_factory=None,
-        start_time=time.time(),
+        start_time=time.perf_counter(),
     )
 
     if conflicts == MemoryEngine._APPEND_CONFLICT_ATTEMPTS:

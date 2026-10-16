@@ -232,6 +232,18 @@ class ConsolidateContext:
 # =============================================================================
 
 
+class RetainSource(StrEnum):
+    """How the content reported to ``on_retain_complete`` entered the bank."""
+
+    #: Extracted from submitted content by the retain pipeline.
+    RETAIN = "retain"
+    #: Restored from a transfer archive (document import or whole-bank restore). The
+    #: facts arrive pre-extracted, so no extraction LLM runs and the token counts are
+    #: zero -- but the documents are new to the bank, unlike a deduplicated re-retain,
+    #: which also reports ``processed_content_tokens=0``.
+    IMPORT = "import"
+
+
 @dataclass
 class RetainResult:
     """Result context for post-retain hook.
@@ -289,6 +301,11 @@ class RetainResult:
     # the rest. Summing across a fold therefore yields exactly the tokens the
     # execution spent, the same total an unfolded run would have reported.
     folded_with: list[str] | None = None
+    # How the content entered the bank. ``IMPORT`` results carry zero token counts
+    # (nothing was extracted) and the imported document's text in ``contents``, so an
+    # extension that meters imports can tell them apart from a re-retain that the
+    # chunk dedup made free.
+    source: RetainSource = RetainSource.RETAIN
 
 
 @dataclass
@@ -478,6 +495,31 @@ class CreateBankContext:
 
     bank_id: str
     request_context: "RequestContext"
+
+
+@dataclass
+class ImportArchiveDocument:
+    """One document of a transfer archive, as the import gate sees it."""
+
+    document_id: str
+    #: The document's original text ("" when the archive carries none).
+    content: str
+
+
+@dataclass
+class ImportContext:
+    """Context for validating a transfer-archive import before it is accepted.
+
+    Covers both document imports into ``bank_id`` and whole-bank restores (where
+    ``bank_id`` is the bank being restored). Runs at submission, before the archive
+    is stored or queued, so a rejection reaches the caller directly.
+    """
+
+    bank_id: str
+    request_context: "RequestContext"
+    #: Every document in the archive. Documents a ``skip`` import later passes over
+    #: are still listed: which ones exist is only known when the import runs.
+    documents: list[ImportArchiveDocument]
 
 
 @dataclass
@@ -1172,6 +1214,24 @@ class OperationValidatorExtension(Extension, ABC):
 
         Returns:
             ValidationResult indicating whether the bank may be created.
+        """
+        return ValidationResult.accept()
+
+    async def validate_import(self, ctx: ImportContext) -> ValidationResult:
+        """
+        Validate a transfer-archive import (document import or bank restore) at submission.
+
+        Override to enforce quotas or credits on imports. Imported documents are then
+        reported to ``on_retain_complete`` with ``source=RetainSource.IMPORT``.
+
+        Args:
+            ctx: Context containing:
+                - bank_id: Bank the archive is imported into
+                - request_context: Request context with auth info
+                - documents: The archive's documents (document_id, content)
+
+        Returns:
+            ValidationResult indicating whether the import may proceed.
         """
         return ValidationResult.accept()
 

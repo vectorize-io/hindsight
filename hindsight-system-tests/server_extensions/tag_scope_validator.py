@@ -4,15 +4,24 @@ It confines each caller to reading its own ``user:<api key>`` tag plus the share
 ``kind:rule`` scope, and to writing only ``user:<api key>`` — except ``kate``, who sets the
 team's rules and may also write ``kind:rule``. A request without an API key is unrestricted
 (the bank's administrator). A ``bank:<id>`` key instead skips the tag rules and may write only
-to bank ``<id>`` — the per-key bank isolation a deployment builds on ``validate_bank_write``. It lives
+to bank ``<id>`` — the per-key bank isolation a deployment builds on ``validate_bank_write``. An
+import whose archive holds a document mentioning ``OVER-QUOTA`` is refused with a 402, the way a
+metering deployment refuses an import it cannot pay for. It lives
 outside the ``hindsight_system_tests`` package on purpose: the server imports it, and that
 package pulls in the test harness, which the server's environment does not have.
 """
 
 from hindsight_api.engine.search.tags import TagGroupLeaf
-from hindsight_api.extensions import BankWriteContext, OperationValidatorExtension, TagScopeContext, ValidationResult
+from hindsight_api.extensions import (
+    BankWriteContext,
+    ImportContext,
+    OperationValidatorExtension,
+    TagScopeContext,
+    ValidationResult,
+)
 
 BANK_KEY_PREFIX = "bank:"
+QUOTA_MARKER = "OVER-QUOTA"
 
 
 def _tag_user(api_key: str | None) -> str | None:
@@ -36,6 +45,11 @@ class UserTagScope(OperationValidatorExtension):
         key = ctx.request_context.api_key
         if key and key.startswith(BANK_KEY_PREFIX) and key != f"{BANK_KEY_PREFIX}{ctx.bank_id}":
             return ValidationResult.reject(f"key may not write to bank {ctx.bank_id}", status_code=403)
+        return ValidationResult.accept()
+
+    async def validate_import(self, ctx: ImportContext):
+        if any(QUOTA_MARKER in document.content for document in ctx.documents):
+            return ValidationResult.reject("import exceeds the quota", status_code=402)
         return ValidationResult.accept()
 
     async def resolve_tag_scope(self, ctx: TagScopeContext):

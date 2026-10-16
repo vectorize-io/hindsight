@@ -1599,10 +1599,16 @@ impl ApiClient {
         bank_id: &str,
         document_id: &str,
         tags: Option<Vec<String>>,
+        observation_scopes: Option<serde_json::Value>,
         _verbose: bool,
     ) -> Result<types::UpdateDocumentResponse> {
         self.runtime.block_on(async {
-            let request = types::UpdateDocumentRequest { tags };
+            // Through serde so the CLI does not depend on the generated union's variant names.
+            let request: types::UpdateDocumentRequest =
+                serde_json::from_value(serde_json::json!({
+                    "tags": tags,
+                    "observation_scopes": observation_scopes,
+                }))?;
             let response = self
                 .client
                 .update_document(bank_id, document_id, None, &request)

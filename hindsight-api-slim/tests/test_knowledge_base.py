@@ -2002,7 +2002,9 @@ class TestTagFilter:
         bad = await api_client.get(
             f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree", params={"tag_groups": "[{"}
         )
-        assert bad.status_code == 422
+        assert bad.status_code == 400
+        # Blank is no filter — the same as on the entity routes, which share the parser.
+        assert "Sub" in await self._tree(api_client, bank_id, tag_groups="")
 
     async def test_search_only_returns_matching_pages(self, api_client, kb_bank):
         bank_id, ids = kb_bank

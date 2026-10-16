@@ -40,7 +40,7 @@ class _Reranker:
     async def ensure_initialized(self) -> None:
         return None
 
-    async def rerank(self, _query: str, candidates: list[Any]) -> RerankResult:
+    async def rerank(self, _query: str, candidates: list[Any], now=None) -> RerankResult:
         # The reranker output is irrelevant here — the assertion happens on the
         # fusion input — so pass the candidates through untouched.
         return RerankResult(

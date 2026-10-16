@@ -649,7 +649,7 @@ class Hindsight:
         tags: list[str] | None = None,
         tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
         tag_groups: list[dict[str, Any]] | None = None,
-        prefer_observations: bool = False,
+        prefer_observations: bool | None = None,
         min_scores: dict[str, float] | None = None,
         temporal_window: dict[str, Any] | None = None,
     ) -> RecallResponse:
@@ -678,8 +678,9 @@ class Hindsight:
             tag_groups: Optional list of tag group filters for advanced boolean tag matching.
             prefer_observations: When recalling raw facts ("world"/"experience") together with
                 "observation", drop any raw fact a returned observation was consolidated from, so the
-                observation supersedes it (no duplicate content). Disabled by default; no effect unless
-                "observation" and at least one raw type are both in ``types``.
+                observation supersedes it (no duplicate content). No effect unless "observation" and at
+                least one raw type are both in ``types``. ``None`` (default) uses the bank's
+                ``recall_prefer_observations`` config.
             min_scores: Optional per-stage score floors, e.g. ``{"semantic": 0.2, "final": 0.5}``.
                 ``semantic`` and ``keyword`` are retrieval-level cutoffs; ``reranker`` and ``final``
                 are applied to the scored results after reranking. Any omitted stage imposes no floor.
@@ -1325,7 +1326,7 @@ class Hindsight:
         tags: list[str] | None = None,
         tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
         tag_groups: list[dict[str, Any]] | None = None,
-        prefer_observations: bool = False,
+        prefer_observations: bool | None = None,
         min_scores: dict[str, float] | None = None,
         temporal_window: dict[str, Any] | None = None,
     ) -> RecallResponse:
@@ -1359,8 +1360,9 @@ class Hindsight:
 
             prefer_observations: When recalling raw facts ("world"/"experience") together with
                 "observation", drop any raw fact a returned observation was consolidated from, so the
-                observation supersedes it (no duplicate content). Disabled by default; no effect unless
-                "observation" and at least one raw type are both in ``types``.
+                observation supersedes it (no duplicate content). No effect unless "observation" and at
+                least one raw type are both in ``types``. ``None`` (default) uses the bank's
+                ``recall_prefer_observations`` config.
             min_scores: Optional per-stage score floors, e.g. ``{"semantic": 0.2, "final": 0.5}``.
                 ``semantic`` and ``keyword`` are retrieval-level cutoffs; ``reranker`` and ``final``
                 are applied to the scored results after reranking. Any omitted stage imposes no floor.
@@ -2910,6 +2912,7 @@ class Hindsight:
         # Recall settings
         recall_max_tokens: int | None = None,
         recall_include_chunks: bool | None = None,
+        recall_prefer_observations: bool | None = None,
         recall_chunks_max_tokens: int | None = None,
         recall_budget_function: str | None = None,
         recall_budget_fixed_low: int | None = None,
@@ -2976,6 +2979,7 @@ class Hindsight:
                 consolidation_source_facts_max_tokens_per_observation=consolidation_source_facts_max_tokens_per_observation,
                 recall_max_tokens=recall_max_tokens,
                 recall_include_chunks=recall_include_chunks,
+                recall_prefer_observations=recall_prefer_observations,
                 recall_chunks_max_tokens=recall_chunks_max_tokens,
                 recall_budget_function=recall_budget_function,
                 recall_budget_fixed_low=recall_budget_fixed_low,
@@ -3041,6 +3045,7 @@ class Hindsight:
         # Recall settings
         recall_max_tokens: int | None = None,
         recall_include_chunks: bool | None = None,
+        recall_prefer_observations: bool | None = None,
         recall_chunks_max_tokens: int | None = None,
         recall_budget_function: str | None = None,
         recall_budget_fixed_low: int | None = None,
@@ -3124,6 +3129,7 @@ class Hindsight:
                 individual observation in the consolidation prompt.
             recall_max_tokens: Token budget for facts returned by recall.
             recall_include_chunks: Include source chunks in recall results.
+            recall_prefer_observations: Default ``prefer_observations`` for recall requests that omit it.
             recall_chunks_max_tokens: Token budget for those chunks.
             recall_budget_function: How the per-query result budget is derived: 'fixed' or 'adaptive'.
             recall_budget_fixed_low: Fixed budget for low-breadth queries.
@@ -3185,6 +3191,7 @@ class Hindsight:
                 "consolidation_source_facts_max_tokens_per_observation": consolidation_source_facts_max_tokens_per_observation,
                 "recall_max_tokens": recall_max_tokens,
                 "recall_include_chunks": recall_include_chunks,
+                "recall_prefer_observations": recall_prefer_observations,
                 "recall_chunks_max_tokens": recall_chunks_max_tokens,
                 "recall_budget_function": recall_budget_function,
                 "recall_budget_fixed_low": recall_budget_fixed_low,

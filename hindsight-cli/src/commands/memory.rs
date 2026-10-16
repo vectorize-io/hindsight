@@ -318,7 +318,7 @@ pub fn recall(
     tags: Vec<String>,
     tags_match: Option<String>,
     query_timestamp: Option<String>,
-    prefer_observations: bool,
+    prefer_observations: Option<bool>,
     window_start: Option<String>,
     window_end: Option<String>,
     verbose: bool,
@@ -356,6 +356,7 @@ pub fn recall(
         max_tokens,
         trace,
         query_timestamp,
+        // None: let the bank's recall_prefer_observations default decide.
         prefer_observations,
         include,
         tags: if tags.is_empty() { None } else { Some(tags) },

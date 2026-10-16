@@ -720,7 +720,7 @@ class XaiOAuthLLM(LLMInterface):
         buffers every response anyway, and a streaming path would lose
         ``prompt_tokens_details``, so cached-token accounting would read low.
         """
-        start_time = time.time()
+        start_time = time.perf_counter()
         body = self._build_body(list(messages), max_completion_tokens, temperature)
 
         if response_format is not None and hasattr(response_format, "model_json_schema"):
@@ -785,7 +785,7 @@ class XaiOAuthLLM(LLMInterface):
                 else:
                     result = content
 
-                duration = time.time() - start_time
+                duration = time.perf_counter() - start_time
                 self._record_success(scope=scope, duration=duration, counts=counts)
                 self._record_span(
                     scope=scope,
@@ -855,7 +855,7 @@ class XaiOAuthLLM(LLMInterface):
         One round of the agentic loop the caller drives: tool calls are returned
         as proposed, never executed here.
         """
-        start_time = time.time()
+        start_time = time.perf_counter()
         body = self._build_body(list(messages), max_completion_tokens, temperature)
 
         if tool_choice.mode is LLMToolChoiceMode.NAMED:
@@ -902,7 +902,7 @@ class XaiOAuthLLM(LLMInterface):
                         arguments = {"_raw": raw_call.function.arguments}
                     tool_calls.append(LLMToolCall(id=raw_call.id, name=raw_call.function.name, arguments=arguments))
 
-                duration = time.time() - start_time
+                duration = time.perf_counter() - start_time
                 finish_reason = choice.finish_reason if choice is not None else None
                 self._record_success(scope=scope, duration=duration, counts=counts)
                 self._record_span(

@@ -30,60 +30,7 @@ from ...search.tags import (
     tag_filter_active,
 )
 from ...time_filter import MEMORY_TIME_FIELDS, build_time_clause
-
-
-def _entity_rows_for_units_sql(*, ops, fq_table, unit_ids_placeholder: int) -> str:
-    """SQL SELECT producing ``(unit_id, entity_id, canonical_name)`` rows for
-    the given unit IDs.
-
-    Direct rows come from ``unit_entities``. Observations rarely carry
-    direct rows there; their entity association lives transitively through
-    their source memories (``source_memory_ids`` on PG, the
-    ``observation_sources`` junction on Oracle). When an observation has
-    no direct entity rows the SELECT inherits its source memories'
-    entities, so the result is the same set callers would get from
-    ``get_memory_unit``.
-
-    ``unit_ids_placeholder`` is the 1-based parameter index that holds the
-    ``uuid[]`` of unit IDs. The placeholder is referenced twice — both
-    sides of the UNION need it — so callers should not reuse the slot.
-    """
-    ue = fq_table("unit_entities")
-    ents = fq_table("entities")
-    mu = fq_table("memory_units")
-    p = unit_ids_placeholder
-
-    direct = (
-        f"SELECT ue.unit_id, e.id AS entity_id, e.canonical_name "
-        f"FROM {ue} ue "
-        f"JOIN {ents} e ON e.id = ue.entity_id "
-        f"WHERE ue.unit_id = ANY(${p}::uuid[])"
-    )
-
-    if ops.uses_observation_sources_table:
-        os_t = fq_table("observation_sources")
-        inherited = (
-            f"SELECT os.observation_id AS unit_id, e.id AS entity_id, e.canonical_name "
-            f"FROM {os_t} os "
-            f"JOIN {ue} src_ue ON src_ue.unit_id = os.source_id "
-            f"JOIN {ents} e ON e.id = src_ue.entity_id "
-            f"WHERE os.observation_id = ANY(${p}::uuid[]) "
-            f"AND NOT EXISTS (SELECT 1 FROM {ue} d WHERE d.unit_id = os.observation_id)"
-        )
-    else:
-        inherited = (
-            f"SELECT obs.id AS unit_id, e.id AS entity_id, e.canonical_name "
-            f"FROM {mu} obs "
-            f"CROSS JOIN LATERAL unnest(obs.source_memory_ids) AS src_id "
-            f"JOIN {ue} src_ue ON src_ue.unit_id = src_id "
-            f"JOIN {ents} e ON e.id = src_ue.entity_id "
-            f"WHERE obs.id = ANY(${p}::uuid[]) "
-            f"AND obs.fact_type = 'observation' "
-            f"AND obs.source_memory_ids IS NOT NULL "
-            f"AND NOT EXISTS (SELECT 1 FROM {ue} d WHERE d.unit_id = obs.id)"
-        )
-
-    return f"({direct}) UNION ({inherited})"
+from .graph import _entity_rows_for_units_sql, _ops_for
 
 
 async def list_memory_units(
@@ -582,36 +529,69 @@ def _entity_list_item(row: Any) -> dict[str, Any]:
     }
 
 
-def visible_entity_stats_sql(fq_table, tag_clause_sql: str) -> str:
-    """``SELECT entity_id, mention_count, first_seen, last_seen`` over the memories a tag filter lets through.
+def visible_entity_mentions_sql(fq_table, ops, tag_clause_sql: str) -> str:
+    """``SELECT unit_id, entity_id, seen_at`` — one row per entity a tag-matching memory mentions.
 
-    The stored ``entities.mention_count`` / ``first_seen`` / ``last_seen`` count every
-    memory in the bank, so a tag-filtered read that returned them would tell the
-    reader how much out-of-scope memories mention an entity (#5031). These are
-    recomputed from the visible memories instead. An entity with no visible memory
-    has no row, which is what hides it.
+    The one rowset every tag-filtered entity read aggregates (list, detail, graph), so they
+    agree on what "mentioned by a visible memory" means. Direct mentions come from
+    ``unit_entities``; an observation with no direct rows inherits its source memories'
+    entities (``source_memory_ids`` on PG, the ``observation_sources`` junction on
+    Oracle), the same rule :func:`_entity_rows_for_units_sql` applies when a memory is
+    rendered. Without it, an entity only observations mention would vanish under a filter.
 
-    Dates use the same per-memory date retain stamps on the entity —
-    ``occurred_start``, falling back to ``mentioned_at`` (``event_date`` as a last
-    resort, it is never null).
+    ``seen_at`` is the per-memory date retain stamps on the entity — ``occurred_start``,
+    falling back to ``mentioned_at`` (``event_date`` as a last resort, it is never null).
 
     ``$1`` must be the bank id. ``tag_clause_sql`` is a :func:`build_tag_filter_clause`
     clause built WITHOUT a table alias: the Oracle rewriter turns ``tags && :n`` into
     a ``JSON_TABLE`` probe by matching a bare column name, so ``mu.tags`` would come
     out as ``mu.EXISTS(...)``. That is why the filter runs on an unaliased subquery.
     """
-    return f"""
-        SELECT ue.entity_id,
-               COUNT(*) AS mention_count,
-               MIN(vu.seen_at) AS first_seen,
-               MAX(vu.seen_at) AS last_seen
-        FROM {fq_table("unit_entities")} ue
-        JOIN (
-            SELECT id, COALESCE(occurred_start, mentioned_at, event_date) AS seen_at
+    ue = fq_table("unit_entities")
+    sources = "" if ops.uses_observation_sources_table else ", source_memory_ids"
+    visible = f"""(
+            SELECT id, fact_type, COALESCE(occurred_start, mentioned_at, event_date) AS seen_at{sources}
             FROM {fq_table("memory_units")}
             WHERE bank_id = $1 {tag_clause_sql}
-        ) vu ON vu.id = ue.unit_id
-        GROUP BY ue.entity_id
+        )"""
+    if ops.uses_observation_sources_table:
+        inherited_from = (
+            f"JOIN {fq_table('observation_sources')} os ON os.observation_id = vu.id "
+            f"JOIN {ue} src_ue ON src_ue.unit_id = os.source_id"
+        )
+    else:
+        inherited_from = (
+            f"CROSS JOIN LATERAL unnest(vu.source_memory_ids) AS src_id JOIN {ue} src_ue ON src_ue.unit_id = src_id"
+        )
+    return f"""
+        SELECT ue.unit_id, ue.entity_id, vu.seen_at
+        FROM {ue} ue
+        JOIN {visible} vu ON vu.id = ue.unit_id
+        UNION
+        SELECT vu.id AS unit_id, src_ue.entity_id, vu.seen_at
+        FROM {visible} vu
+        {inherited_from}
+        WHERE vu.fact_type = 'observation'
+          AND NOT EXISTS (SELECT 1 FROM {ue} d WHERE d.unit_id = vu.id)
+    """
+
+
+def visible_entity_stats_sql(fq_table, ops, tag_clause_sql: str) -> str:
+    """``SELECT entity_id, mention_count, first_seen, last_seen`` over the memories a tag filter lets through.
+
+    The stored ``entities.mention_count`` / ``first_seen`` / ``last_seen`` count every
+    memory in the bank, so a tag-filtered read that returned them would tell the
+    reader how much out-of-scope memories mention an entity (#5031). These are
+    recomputed from :func:`visible_entity_mentions_sql` instead. An entity with no
+    visible mention has no row, which is what hides it.
+    """
+    return f"""
+        SELECT vm.entity_id,
+               COUNT(*) AS mention_count,
+               MIN(vm.seen_at) AS first_seen,
+               MAX(vm.seen_at) AS last_seen
+        FROM ({visible_entity_mentions_sql(fq_table, ops, tag_clause_sql)}) vm
+        GROUP BY vm.entity_id
     """
 
 
@@ -644,7 +624,7 @@ async def _list_entities_tag_filtered(
     # entities row directly: Oracle cannot GROUP BY the `metadata` JSON column.
     from_sql = f"""
         FROM {fq_table("entities")} e
-        JOIN ({visible_entity_stats_sql(fq_table, built.sql)}) s ON s.entity_id = e.id
+        JOIN ({visible_entity_stats_sql(fq_table, _ops_for(conn), built.sql)}) s ON s.entity_id = e.id
         WHERE e.bank_id = $1 {search_clause}
     """
 
@@ -670,4 +650,10 @@ async def _list_entities_tag_filtered(
     }
 
 
-__all__ = ["get_memory_unit", "list_entities", "list_memory_units", "visible_entity_stats_sql"]
+__all__ = [
+    "get_memory_unit",
+    "list_entities",
+    "list_memory_units",
+    "visible_entity_mentions_sql",
+    "visible_entity_stats_sql",
+]

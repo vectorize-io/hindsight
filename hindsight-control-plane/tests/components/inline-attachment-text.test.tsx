@@ -19,6 +19,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import {
   AttachmentStrip,
   InlineAttachmentText,
+  countMatches,
   hasInlineAttachment,
 } from "@/components/ui/inline-attachment-text";
 
@@ -142,5 +143,42 @@ describe("AttachmentStrip", () => {
     const { container } = render(<AttachmentStrip bankId="bank-a" attachments={[]} />);
 
     expect(container.firstChild).toBeNull();
+  });
+});
+
+describe("find-in-text highlight", () => {
+  it("marks every case-insensitive match and treats the query literally", () => {
+    const { container } = render(
+      <InlineAttachmentText bankId="bank-a" text="API auth, api (v2) and Api." highlight="api" />
+    );
+    const marks = Array.from(container.querySelectorAll("mark")).map((m) => m.textContent);
+    expect(marks).toEqual(["API", "api", "Api"]);
+
+    // Regex metacharacters are matched as text, not interpreted.
+    const { container: c2 } = render(
+      <InlineAttachmentText bankId="bank-a" text="api (v2) and v2" highlight="(v2)" />
+    );
+    expect(Array.from(c2.querySelectorAll("mark")).map((m) => m.textContent)).toEqual(["(v2)"]);
+  });
+
+  it("never highlights inside a placeholder, and the count agrees", () => {
+    const text = `cat ⟦hs-att:${IMAGE_ID}⟧ cat`;
+    const { container } = render(
+      <InlineAttachmentText bankId="bank-a" text={text} attachments={[IMAGE]} highlight="c4" />
+    );
+    expect(container.querySelectorAll("mark")).toHaveLength(0);
+    expect(countMatches(text, "c4")).toBe(0);
+    expect(countMatches(text, "CAT")).toBe(2);
+  });
+
+  it("treats SQL wildcards literally, like the server search", () => {
+    // The list search escapes LIKE's % and _; the highlighter must agree.
+    expect(countMatches("50% off, snake_case, snakeXcase", "%")).toBe(1);
+    expect(countMatches("50% off, snake_case, snakeXcase", "e_c")).toBe(1);
+  });
+
+  it("counts nothing for an empty query", () => {
+    expect(countMatches("anything", "  ")).toBeNull();
+    expect(countMatches("anything", undefined)).toBeNull();
   });
 });

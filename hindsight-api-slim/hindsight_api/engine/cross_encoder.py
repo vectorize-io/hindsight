@@ -9,6 +9,7 @@ Configuration via environment variables - see hindsight_api.config for all env v
 import asyncio
 import contextvars
 import logging
+import os
 import time
 import warnings
 from abc import ABC, abstractmethod
@@ -47,8 +48,10 @@ from ..config import (
 from .aiohttp_session import LoopLocal, LoopLocalSession, UpstreamHTTPError, per_phase_timeout, raise_for_status
 from .bank_attribution import reranker_bank_attribution_headers
 from .local_device import (
+    LOCAL_MODEL_BUILD_LOCK,
     align_local_model_weights,
     assert_finite_local_output,
+    prefetch_local_model,
     release_local_inference_memory,
     resolve_model_device_type,
     select_local_device,
@@ -73,7 +76,8 @@ _served_provider: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 # weak it is, so a fixed floor just keeps a fixed share of the pool and the value
 # is not comparable between recalls (#4901). Recall rejects min_scores.reranker
 # for these and publishes no reranker score.
-RANK_SCORE_PROVIDERS = frozenset({"typesafe"})
+# "decision_model" is recall's decision-model reranker (engine/search/decision_reranker.py).
+RANK_SCORE_PROVIDERS = frozenset({"typesafe", "decision_model"})
 
 
 class RerankTimeoutError(Exception):
@@ -283,7 +287,8 @@ class LocalSTCrossEncoder(CrossEncoderModel):
 
         # Determine device based on hardware availability. We always set
         # low_cpu_mem_usage=False to prevent lazy loading (meta tensors) which can
-        # cause issues when accelerate is installed but no GPU is available.
+        # cause issues when accelerate is installed but no GPU is available. Only
+        # transformers 4.x honours it: 5.x drops the kwarg and always builds on meta.
         # Note: We do NOT use device_map because CrossEncoder internally calls .to(device)
         # after loading, which conflicts with accelerate's device_map handling.
         # MPS is never used — see engine/local_device.py for why.
@@ -307,51 +312,56 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         except Exception:
             pass
 
-        # Suppress verbose transformers warnings during model loading
-        # This suppresses the "UNEXPECTED" warnings from CrossEncoder which are harmless
-        # but look alarming to users (e.g., "embeddings.position_ids | UNEXPECTED")
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=UserWarning)
-            warnings.filterwarnings("ignore", message=".*was not found in model state dict.*")
-            warnings.filterwarnings("ignore", message=".*UNEXPECTED.*")
+        # Download outside the lock; build and smoke-test under it, because a
+        # transformers build flips process-global state (see LOCAL_MODEL_BUILD_LOCK).
+        # sentence-transformers caches under SENTENCE_TRANSFORMERS_HOME when it is set.
+        prefetch_local_model(self.model_name, cache_dir=os.getenv("SENTENCE_TRANSFORMERS_HOME"))
+        with LOCAL_MODEL_BUILD_LOCK:
+            # Suppress verbose transformers warnings during model loading
+            # This suppresses the "UNEXPECTED" warnings from CrossEncoder which are harmless
+            # but look alarming to users (e.g., "embeddings.position_ids | UNEXPECTED")
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=UserWarning)
+                warnings.filterwarnings("ignore", message=".*was not found in model state dict.*")
+                warnings.filterwarnings("ignore", message=".*UNEXPECTED.*")
 
-            # Also suppress transformers library logging temporarily
-            transformers_logger = logging.getLogger("transformers")
-            original_level = transformers_logger.level
-            transformers_logger.setLevel(logging.ERROR)
+                # Also suppress transformers library logging temporarily
+                transformers_logger = logging.getLogger("transformers")
+                original_level = transformers_logger.level
+                transformers_logger.setLevel(logging.ERROR)
 
-            try:
-                self._model = CrossEncoder(
-                    self.model_name,
-                    device=device,
-                    model_kwargs={"low_cpu_mem_usage": False},
-                    trust_remote_code=self.trust_remote_code,
-                )
-            finally:
-                # Restore original logging level
-                transformers_logger.setLevel(original_level)
+                try:
+                    self._model = CrossEncoder(
+                        self.model_name,
+                        device=device,
+                        model_kwargs={"low_cpu_mem_usage": False},
+                        trust_remote_code=self.trust_remote_code,
+                    )
+                finally:
+                    # Restore original logging level
+                    transformers_logger.setLevel(original_level)
 
-        # Safetensors weights are mapped zero-copy and can land on a byte offset that
-        # is not a multiple of the dtype size, which makes torch's vectorized CPU matmul
-        # return corrupt scores. See engine/local_device.py. The default reranker
-        # (ms-marco-MiniLM-L-6-v2) is one of the affected files.
-        align_local_model_weights(self._model.model, label=f"Reranker[{self.model_name}]")
+            # Safetensors weights are mapped zero-copy and can land on a byte offset that
+            # is not a multiple of the dtype size, which makes torch's vectorized CPU matmul
+            # return corrupt scores. See engine/local_device.py. The default reranker
+            # (ms-marco-MiniLM-L-6-v2) is one of the affected files.
+            align_local_model_weights(self._model.model, label=f"Reranker[{self.model_name}]")
 
-        self._device_type = resolve_model_device_type(self._model)
+            self._device_type = resolve_model_device_type(self._model)
 
-        # FP16 inference: convert model weights to half precision.
-        # Empirically validated: 27-36% faster on MPS, quality-identical (20/20 overlap).
-        if self.fp16 and self._device_type != "cpu":
-            self._model.model.half()
-            logger.info("Reranker: FP16 inference enabled")
+            # FP16 inference: convert model weights to half precision.
+            # Empirically validated: 27-36% faster on MPS, quality-identical (20/20 overlap).
+            if self.fp16 and self._device_type != "cpu":
+                self._model.model.half()
+                logger.info("Reranker: FP16 inference enabled")
 
-        # Smoke-test the fully configured model (after any FP16 conversion). NaN logits
-        # are sanitized to 0.0 downstream, so startup is the last point at which a model
-        # that computes garbage is still observable.
-        assert_finite_local_output(
-            self._model.predict([("hindsight startup probe", "hindsight startup probe")]),
-            label=f"Reranker[{self.model_name}]",
-        )
+            # Smoke-test the fully configured model (after any FP16 conversion). NaN logits
+            # are sanitized to 0.0 downstream, so startup is the last point at which a model
+            # that computes garbage is still observable.
+            assert_finite_local_output(
+                self._model.predict([("hindsight startup probe", "hindsight startup probe")]),
+                label=f"Reranker[{self.model_name}]",
+            )
 
         # Initialize shared executor (limited workers naturally limits concurrency)
         if LocalSTCrossEncoder._executor is None:

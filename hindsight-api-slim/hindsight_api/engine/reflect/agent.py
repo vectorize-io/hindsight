@@ -549,10 +549,15 @@ async def run_reflect_agent(
     search_observations_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
     recall_fn: Callable[[str, int, int], Awaitable[dict[str, Any]]],
     expand_fn: Callable[[list[str], str], Awaitable[dict[str, Any]]],
+    reflect_id: str | None = None,
     **kwargs: Any,
 ) -> ReflectAgentResult:
     """Public entrypoint: runs the agent loop and tears down any per-step context
     caches it created.
+
+    ``reflect_id`` is the caller's log id for this reflect. The engine passes the one
+    it already logged ``Starting`` under, so every line of one request carries one id;
+    before, the agent minted its own a few ms later and a request logged under two.
 
     The step-by-step caches (Gemini ``CachedContent``) are ephemeral — scoped to
     exactly one reflect and never reused after it — so teardown is scheduled on
@@ -561,7 +566,7 @@ async def run_reflect_agent(
     cache TTL is the backstop if the teardown never runs; the delete is
     best-effort and never allowed to fail a reflect.
     """
-    reflect_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"
+    reflect_id = reflect_id or f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"  # noqa: TID251
     provider_impl = getattr(llm_config, "_provider_impl", None)
     # Reflect step-by-step caching needs the provider to support it AND the
     # dedicated reflect flag (on by default; distinct from the global prompt-cache
@@ -679,7 +684,7 @@ async def _run_reflect_agent_inner(
     Returns:
         ReflectAgentResult with final answer and metadata
     """
-    start_time = time.time()
+    start_time = time.perf_counter()
     decision_orchestrated = evidence_is_sufficient_fn is not None
 
     # Transport-level output cap for the synthesis calls. Decoupled from
@@ -854,7 +859,7 @@ async def _run_reflect_agent_inner(
         )
 
     def _log_completion(answer: str, iterations: int, forced: bool = False):
-        elapsed_ms = int((time.time() - start_time) * 1000)
+        elapsed_ms = int((time.perf_counter() - start_time) * 1000)
         tools_summary = (
             ", ".join(
                 f"{t['tool']}({t['input_summary']})={t['duration_ms']}ms/{t.get('output_chars', 0)}c"
@@ -902,7 +907,7 @@ async def _run_reflect_agent_inner(
         writing an answer; callers that extract rather than write override it.
         """
         nonlocal total_input_tokens, total_output_tokens, total_cached_tokens, total_thoughts_tokens
-        llm_start = time.time()
+        llm_start = time.perf_counter()
         queue_wait = LLMQueueWait()
         queue_token = set_queue_wait_sink(queue_wait)
         try:
@@ -919,7 +924,7 @@ async def _run_reflect_agent_inner(
             reset_queue_wait_sink(queue_token)
         response = call_result.content
         usage = call_result.usage
-        llm_duration = int((time.time() - llm_start) * 1000)
+        llm_duration = int((time.perf_counter() - llm_start) * 1000)
         total_input_tokens += usage.input_tokens
         total_output_tokens += usage.output_tokens
         total_cached_tokens += getattr(usage, "cached_tokens", 0) or 0
@@ -991,7 +996,7 @@ async def _run_reflect_agent_inner(
         nonlocal total_input_tokens, total_output_tokens, total_cached_tokens, total_thoughts_tokens
         if not messages or messages[-1].get("role") != "tool":
             return None
-        llm_start = time.time()
+        llm_start = time.perf_counter()
         queue_wait = LLMQueueWait()
         queue_token = set_queue_wait_sink(queue_wait)
         try:
@@ -1010,7 +1015,9 @@ async def _run_reflect_agent_inner(
         except OperationCancelledError:
             raise
         except Exception as e:
-            logger.warning(f"[REFLECT {reflect_id}] closing done call failed, using the standalone prompt: {e}")
+            # repr, not str: a provider timeout is a bare TimeoutError whose str() is
+            # empty, so the reason used to log as nothing at all.
+            logger.warning(f"[REFLECT {reflect_id}] closing done call failed, using the standalone prompt: {e!r}")
             return None
         finally:
             reset_queue_wait_sink(queue_token)
@@ -1025,7 +1032,7 @@ async def _run_reflect_agent_inner(
                 # prefix the provider already holds — and a reader (or a test) has to
                 # be able to tell which path produced the answer.
                 "scope": "closing_done",
-                "duration_ms": int((time.time() - llm_start) * 1000),
+                "duration_ms": int((time.perf_counter() - llm_start) * 1000),
                 "queued_ms": int(queue_wait.seconds * 1000),
                 "input_tokens": result.input_tokens,
                 "output_tokens": result.output_tokens,
@@ -1213,7 +1220,7 @@ async def _run_reflect_agent_inner(
         turns still answer, so its outage must not fail reflect.
         """
         assert evidence_is_sufficient_fn is not None
-        decision_start = time.time()
+        decision_start = time.perf_counter()
         try:
             # Judged against the request itself, not the distilled search query: that query is
             # a retrieval aid and can ask for more than the request does ("implementation logic
@@ -1232,19 +1239,19 @@ async def _run_reflect_agent_inner(
             )
             return False
         finally:
-            llm_trace.append({"scope": trace_scope, "duration_ms": int((time.time() - decision_start) * 1000)})
+            llm_trace.append({"scope": trace_scope, "duration_ms": int((time.perf_counter() - decision_start) * 1000)})
 
     async def _timed_prune(tool_results: list[Any]) -> list[Any]:
         """A parallel round's retrieval, pruned by the decision model when there is one."""
         if prune_evidence_fn is None:
             return tool_results
-        prune_start = time.time()
+        prune_start = time.perf_counter()
         # Ranked against the request itself, not the distilled query: the request says what to
         # prefer ("decisions, never the current implementation"), and pruning on the short query
         # kept the later commit that undid a decision as readily as the decision (sde-bench
         # dedupe-history), so the answer reported the decision as superseded.
         pruned = await _prune_round(query, tool_results, prune_evidence_fn, reflect_id)
-        llm_trace.append({"scope": "decision_prune", "duration_ms": int((time.time() - prune_start) * 1000)})
+        llm_trace.append({"scope": "decision_prune", "duration_ms": int((time.perf_counter() - prune_start) * 1000)})
         return pruned
 
     # Whether the pages alone answered the first parallel round, and whether the batch that
@@ -1282,7 +1289,8 @@ async def _run_reflect_agent_inner(
     # When a forced ``search_mental_models`` returns fresh, usable models on a
     # low/mid-budget call, we stop forcing the lower retrieval layers for the
     # rest of the run and let the agent answer (or retrieve deeper itself)
-    # under ``auto`` tool choice.
+    # under ``auto`` tool choice. A negative answer still needs recall: see the
+    # ``answer_found`` gate below.
     forcing_released = False
     # How many forced steps actually produced a tool call. The next forced step
     # is indexed by this. It used to be indexed by the iteration, so a turn that
@@ -1305,6 +1313,12 @@ async def _run_reflect_agent_inner(
     # step. The model then saw a shortened conversation, so the answer must come
     # from the full ``context_history`` via the standalone synthesis prompt.
     compacted = False
+    # ``done`` reporting nothing found (``answer_found: false``) before any recall
+    # ran is refused once and recall is forced: a negative answer must not come
+    # from the page or observation layer alone (#4567). Prompt-level rules for
+    # this were measured and ignored; the bool on ``done`` is checkable in code.
+    recall_ran = False
+    absence_recall_forced = False
     for iteration in range(max_iterations):
         # Cooperative cancellation checkpoint: abort the agent loop between
         # iterations if the caller (e.g. an HTTP client) has gone away, rather
@@ -1351,6 +1365,8 @@ async def _run_reflect_agent_inner(
             # mission asking for the source of every rule, it was most first rounds, and reflect
             # with the decision model ran slower than agent turns (test_09, 15.3s against 14.3s).
             iter_tool_choice = LLMToolChoice.named(forced_sequence[-1])
+        elif absence_recall_forced and not recall_ran:
+            iter_tool_choice = LLMToolChoice.named("recall")
         else:
             iter_tool_choice = LLM_TOOL_CHOICE_AUTO
         follow_up_required = False
@@ -1394,7 +1410,7 @@ async def _run_reflect_agent_inner(
             return await _forced_final_synthesis(iteration + 1)
 
         # Call LLM with tools
-        llm_start = time.time()
+        llm_start = time.perf_counter()
 
         # Will the NEXT turn be an ``auto`` turn (the only kind that references a
         # cache)? The cache we schedule this turn covers this turn's input and is
@@ -1466,7 +1482,7 @@ async def _run_reflect_agent_inner(
                     ct_kwargs["cached_prefix"] = rolling_cache_name
                     ct_kwargs["cached_prefix_message_count"] = rolling_cache_boundary
                 result = await llm_config.call_with_tools(**ct_kwargs)
-                llm_duration = int((time.time() - llm_start) * 1000)
+                llm_duration = int((time.perf_counter() - llm_start) * 1000)
                 queued_ms = int(queue_wait.seconds * 1000)
                 consecutive_errors = 0
                 total_input_tokens += result.input_tokens
@@ -1489,7 +1505,7 @@ async def _run_reflect_agent_inner(
                 # client disconnect stays a 499 (issue #2122).
                 raise
             except Exception as e:
-                err_duration = int((time.time() - llm_start) * 1000)
+                err_duration = int((time.perf_counter() - llm_start) * 1000)
                 queued_ms = int(queue_wait.seconds * 1000)
                 consecutive_errors += 1
                 logger.warning(
@@ -1603,6 +1619,33 @@ async def _run_reflect_agent_inner(
                         "content": json.dumps(
                             {
                                 "error": "You must search for information first. Use search_mental_models(), search_observations(), or recall() before providing your final answer."
+                            },
+                            ensure_ascii=False,
+                        ),
+                    }
+                )
+                continue
+
+            if (
+                include_recall
+                and not recall_ran
+                and not absence_recall_forced
+                and iteration < max_iterations - 1
+                and not _answer_found(done_call.arguments)
+            ):
+                absence_recall_forced = True
+                logger.info(f"[REFLECT {reflect_id}] done reported nothing found before recall ran; forcing recall.")
+                (done_wire_id,) = _unique_tool_call_ids([done_call], emitted_wire_ids)
+                messages.append({"role": "assistant", "tool_calls": [_tool_call_to_dict(done_call, done_wire_id)]})
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": done_wire_id,
+                        "content": json.dumps(
+                            {
+                                "error": "You reported that nothing is known, but recall has not run yet. Call "
+                                "recall with the question's key terms (names, ids, issue keys verbatim) before "
+                                "answering."
                             },
                             ensure_ascii=False,
                         ),
@@ -1892,10 +1935,12 @@ async def _run_reflect_agent_inner(
                     for obs in output["observations"]:
                         if "id" in obs:
                             available_observation_ids.add(obs["id"])
-                if normalized_tool_name == "recall" and isinstance(output, dict) and "memories" in output:
-                    for memory in output["memories"]:
-                        if "id" in memory:
-                            available_memory_ids.add(memory["id"])
+                if normalized_tool_name == "recall":
+                    recall_ran = True
+                    if isinstance(output, dict):
+                        for memory in output.get("memories", []):
+                            if "id" in memory:
+                                available_memory_ids.add(memory["id"])
 
                 # Record the serialized result; emitted in original order below. The
                 # model reads the presented form (see presentation.py); the trace
@@ -2200,7 +2245,7 @@ async def _rewrite_to_length_budget(
     if not llm_config or max_tokens is None or count_prompt_tokens(answer) <= max_tokens:
         return LengthRewrite(applied=False, markdown=answer, structure=document)
 
-    rewrite_start = time.time()
+    rewrite_start = time.perf_counter()
     # In document mode the trim is asked for as a document too. Asking for
     # prose here would put the model back in the business of writing the
     # markdown that gets stored — on the one path where the answer is long
@@ -2245,7 +2290,7 @@ async def _rewrite_to_length_budget(
             applied=True,
             markdown=markdown,
             structure=structure,
-            duration_ms=int((time.time() - rewrite_start) * 1000),
+            duration_ms=int((time.perf_counter() - rewrite_start) * 1000),
             input_tokens=totals.input_tokens,
             output_tokens=totals.output_tokens,
             cached_tokens=totals.cached_tokens,
@@ -2324,6 +2369,19 @@ def _decode_json_argument(raw: str, finish_reason: str | None, field: str) -> An
         ) from exc
 
 
+def _answer_found(args: dict[str, Any]) -> bool:
+    """``done``'s ``answer_found``, read leniently: only an explicit false counts as not found.
+
+    A missing field (a model that ignores it, or an undecoded ``_raw`` payload)
+    reads as found, so the gate never blocks a run it cannot read. Some models
+    send booleans as strings, hence the ``"false"`` case.
+    """
+    value = args.get("answer_found", True)
+    if isinstance(value, str):
+        return value.strip().lower() != "false"
+    return value is not False
+
+
 def _done_arguments(done_call: "LLMToolCall", finish_reason: str | None) -> dict[str, Any]:
     """``done``'s arguments, decoding a payload the provider could not parse.
 
@@ -2379,6 +2437,27 @@ async def _process_done_tool(
     raw_document = args.get("document")
     if isinstance(raw_document, str):
         raw_document = _decode_json_argument(raw_document, finish_reason, "document")
+    # A double-encoded document is still JSON text after one decode (#5202). Only
+    # text that opens like JSON is decoded again: plain prose would otherwise fail
+    # as "not valid JSON, check the closing brackets", which is not what is wrong.
+    if isinstance(raw_document, str) and raw_document.lstrip()[:1] in ("{", "["):
+        raw_document = _decode_json_argument(raw_document, finish_reason, "document")
+    if isinstance(raw_document, list):
+        # A bare section array is the document with its wrapper dropped -- the
+        # same flattening document_from_sections forgives one level down.
+        raw_document = {"sections": raw_document}
+    if raw_document is not None and (
+        not isinstance(raw_document, dict) or not ({"sections", "blocks"} & raw_document.keys())
+    ):
+        # A document was sent but is not one. Falling through to ``answer`` would
+        # raise ReflectNoAnswerError with nothing saying what arrived, and fail a
+        # whole refresh over a shape the model fixes when told (#5202). Re-ask.
+        raise DocumentSectionsInvalidError(
+            [
+                f"document: expected an object with a sections array, got {type(raw_document).__name__} "
+                f"({json.dumps(raw_document, default=str)[:120]})"
+            ]
+        )
     if isinstance(raw_document, dict):
         document = document_from_sections(raw_document)
         answer = render_document(document).strip()
@@ -2388,18 +2467,16 @@ async def _process_done_tool(
         # The model called ``done`` with nothing usable in it -- no ``answer``
         # field and no decodable ``document`` object. Typically its output was
         # cut off mid-tool-call by the completion cap (finish_reason "length"),
-        # but the same signature also comes from a well-formed completion whose
-        # ``document`` argument decoded to something other than an object (an
-        # undecodable string is re-asked before reaching here), so truncation is one
-        # possible cause, not the only one. Fail instead of standing in
+        # or a document with an empty sections array (a document of the wrong
+        # shape is re-asked before reaching here). Fail instead of standing in
         # a placeholder: it is non-empty, so every downstream emptiness guard reads
         # it as a real answer and stores it over working content (#2959).
         raise ReflectNoAnswerError(
             f"Reflect's done tool returned no answer (iteration {iterations}, "
             f"{total_tools_called} tool call(s) made): the done call carried no usable "
-            "answer and no decodable document object. If the model's output was cut off "
-            "mid-tool-call, the answer field may have arrived empty; a document argument "
-            "that is not a JSON object produces the same signature."
+            f"answer and no document content (finish_reason={finish_reason}, argument keys: "
+            f"{sorted(args)}). If the model's output was cut off mid-tool-call, the answer "
+            "field may have arrived empty; a document with no sections produces the same signature."
         )
 
     final_usage = usage
@@ -2480,7 +2557,7 @@ async def _execute_tool_with_timing(
     """Execute a tool call and return result with timing."""
     from hindsight_api.tracing import get_tracer
 
-    start_time = time.time()
+    start_time = time.perf_counter()
 
     # Create span for tool execution
     tracer = get_tracer()
@@ -2489,7 +2566,7 @@ async def _execute_tool_with_timing(
     span_name = f"hindsight.reflect_tool_exec.{normalized_name}"
 
     # Calculate timestamps
-    start_time_ns = time.time_ns()
+    start_time_ns = time.time_ns()  # noqa: TID251
 
     with tracer.start_as_current_span(
         span_name,
@@ -2525,11 +2602,11 @@ async def _execute_tool_with_timing(
 
                 span.set_status(Status(StatusCode.OK))
 
-            duration_ms = int((time.time() - start_time) * 1000)
+            duration_ms = int((time.perf_counter() - start_time) * 1000)
             span.set_attribute("hindsight.tool.duration_ms", duration_ms)
 
             # End span with correct timestamp
-            end_time_ns = time.time_ns()
+            end_time_ns = time.time_ns()  # noqa: TID251
             span.end(end_time=end_time_ns)
 
             return result, duration_ms
@@ -2538,9 +2615,9 @@ async def _execute_tool_with_timing(
 
             span.set_status(Status(StatusCode.ERROR, str(e)))
             span.record_exception(e)
-            duration_ms = int((time.time() - start_time) * 1000)
+            duration_ms = int((time.perf_counter() - start_time) * 1000)
             span.set_attribute("hindsight.tool.duration_ms", duration_ms)
-            end_time_ns = time.time_ns()
+            end_time_ns = time.time_ns()  # noqa: TID251
             span.end(end_time=end_time_ns)
             raise
 

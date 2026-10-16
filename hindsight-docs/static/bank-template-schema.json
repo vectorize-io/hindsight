@@ -651,6 +651,19 @@
           "description": "Include raw chunks in recall results",
           "title": "Recall Include Chunks"
         },
+        "recall_prefer_observations": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Default for recall prefer_observations when the request omits it",
+          "title": "Recall Prefer Observations"
+        },
         "recall_max_tokens": {
           "anyOf": [
             {

@@ -77,8 +77,46 @@ import gc
 import logging
 import os
 import sys
+import threading
 
 logger = logging.getLogger(__name__)
+
+#: Held while building and smoke-testing any local torch model. Building a
+#: transformers model flips process-global state for the whole load:
+#: ``PreTrainedModel.tie_weights`` is swapped for a no-op (huggingface/transformers
+#: PR #44940 would make that per-thread; still open as of 5.19) and torch's default
+#: dtype is changed. When the startup loads overlap in threads, a model with tied
+#: weights (Qwen3-Reranker) is left with ``lm_head.weight`` on the meta device
+#: ("Cannot copy out of meta tensor"), or the other model's smoke test mixes
+#: float/bfloat16 — about half of cold starts with two Qwen3 models (issue #4420).
+#: Downloads do not touch that state, so ``prefetch_local_model`` runs them outside.
+LOCAL_MODEL_BUILD_LOCK = threading.Lock()
+
+# Weight formats the loaders do not read when the repo also ships safetensors (``*.bin``
+# is the legacy duplicate many repos keep). Anything skipped that a loader does need —
+# a bin-only checkpoint — is fetched by the loader itself, inside the lock: slower,
+# still correct.
+_PREFETCH_IGNORE = ["onnx/*", "openvino/*", "*.onnx", "*.bin", "*.h5", "*.msgpack", "*.ot", "*.gguf", "*.tflite"]
+
+
+def prefetch_local_model(model_name: str, cache_dir: str | None = None) -> None:
+    """Download a HuggingFace model into the cache so that only the build, not the
+    download, runs under ``LOCAL_MODEL_BUILD_LOCK``.
+
+    ``cache_dir`` must be the folder the loader reads from (``None`` is the HF hub
+    cache), or the loader downloads the model a second time.
+    """
+    if os.path.isdir(model_name):
+        return
+    # Sync on purpose: huggingface_hub has no async download, and this runs where the
+    # loader would download anyway — inside a blocking initialize() on a startup thread.
+    try:
+        from huggingface_hub import snapshot_download
+
+        snapshot_download(model_name, cache_dir=cache_dir, ignore_patterns=_PREFETCH_IGNORE)
+    except Exception as e:
+        # Offline, gated, unknown id, …: the loader raises the real error itself.
+        logger.debug("Prefetch of %s skipped: %s", model_name, e)
 
 
 #: Removed opt-in flags. Still read only to tell anyone who set them that they no

@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from ..cross_encoder import RerankTimeoutError, _served_provider
+from .decision_reranker import PROVIDER_NAME as DECISION_MODEL_RERANKER
+from .decision_reranker import DecisionModelReranker, rerank_shared_context
 from .types import MergedCandidate, ScoredResult
 
 logger = logging.getLogger(__name__)
@@ -321,9 +323,16 @@ class CrossEncoderReranker:
                           environment variables (defaults to local provider)
         """
         if cross_encoder is None:
+            from hindsight_api.config import get_config
             from hindsight_api.engine.cross_encoder import create_cross_encoder_from_env
 
-            cross_encoder = create_cross_encoder_from_env()
+            # A decision model set up for recall replaces the configured reranker outright.
+            decision_model = get_config().decision_model_config("recall")
+            cross_encoder = (
+                DecisionModelReranker.from_config(decision_model)
+                if decision_model is not None
+                else create_cross_encoder_from_env()
+            )
         self.cross_encoder = cross_encoder
         self._initialized = False
 
@@ -361,13 +370,15 @@ class CrossEncoderReranker:
             ) from e
         self._initialized = True
 
-    async def rerank(self, query: str, candidates: list[MergedCandidate]) -> RerankResult:
+    async def rerank(self, query: str, candidates: list[MergedCandidate], now: datetime | None = None) -> RerankResult:
         """
         Rerank candidates using cross-encoder scores.
 
         Args:
             query: Search query
             candidates: Merged candidates from RRF
+            now: When the question is asked (the recall's question date), told to a decision
+                model so it can weigh how recent each candidate is. Defaults to now.
 
         Returns:
             Scored results sorted by cross-encoder score, and the provider that
@@ -379,6 +390,19 @@ class CrossEncoderReranker:
                 provider_name=getattr(self.cross_encoder, "provider_name", None),
             )
 
+        # A decision model is handed what the candidates all share once, in the question's
+        # state, instead of pasted onto every candidate — see rerank_shared_context: the
+        # date the question is asked, and their context when there is exactly one. With
+        # several, each candidate keeps its own prefix, because then the difference
+        # between them is information.
+        shared_context = None
+        pooled_context = None
+        if getattr(self.cross_encoder, "provider_name", None) == DECISION_MODEL_RERANKER:
+            contexts = {c.retrieval.context for c in candidates if c.retrieval.context}
+            pooled_context = next(iter(contexts)) if len(contexts) == 1 else None
+            today = f"Current date: {(now or datetime.now(timezone.utc)).date().isoformat()}"
+            shared_context = f"{today}\n\n{pooled_context}" if pooled_context else today
+
         # Prepare query-document pairs with date information
         pairs = []
         for candidate in candidates:
@@ -386,7 +410,7 @@ class CrossEncoderReranker:
 
             # Use text + context for better ranking
             doc_text = retrieval.text
-            if retrieval.context:
+            if retrieval.context and not pooled_context:
                 doc_text = f"{retrieval.context}: {doc_text}"
 
             # Add formatted date information for temporal awareness
@@ -412,6 +436,7 @@ class CrossEncoderReranker:
         # scored ones rather than the recall never returning.
         unscored: set[int] = set()
         token = _served_provider.set(None)
+        shared_context_token = rerank_shared_context.set(shared_context)
         try:
             try:
                 # The model takes 2-tuples; `pairs` is built as two-element lists.
@@ -422,6 +447,7 @@ class CrossEncoderReranker:
                 scores = [0.0 if score is None else score for score in exc.scores]
             served_provider = _served_provider.get()
         finally:
+            rerank_shared_context.reset(shared_context_token)
             _served_provider.reset(token)
         if served_provider is None:
             # Single-member encoders do not record one. Their provider_name is

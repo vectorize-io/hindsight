@@ -28,7 +28,6 @@ class RequestContext:
     internal: bool = False  # True for background/internal operations (skips extension auth)
     mcp_authenticated: bool = False  # True when MCP transport auth already validated (skips tenant re-auth)
     user_initiated: bool = False  # True for async operations that originated from a user request
-    allowed_bank_ids: list[str] | None = None  # None = unrestricted (all banks)
     # Number of times this task has been retried. Populated by the worker
     # from async_operations.retry_count before dispatching to a task handler;
     # 0 for sync/HTTP requests and for the first worker attempt. Useful for

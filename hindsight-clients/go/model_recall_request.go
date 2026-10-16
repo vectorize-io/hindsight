@@ -23,8 +23,7 @@ var _ MappedNullable = &RecallRequest{}
 type RecallRequest struct {
 	Query string `json:"query"`
 	Types []string `json:"types,omitempty"`
-	// When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact that an observation in the results was consolidated from, so the observation supersedes it and you don't get duplicate content. The freed slots are backfilled with the next results, keeping the result count at the requested budget. Disabled by default; set to true to enable. No effect unless 'observation' and at least one raw type are both requested.
-	PreferObservations *bool `json:"prefer_observations,omitempty"`
+	PreferObservations NullableBool `json:"prefer_observations,omitempty"`
 	Budget *Budget `json:"budget,omitempty"`
 	MaxTokens *int32 `json:"max_tokens,omitempty"`
 	Trace *bool `json:"trace,omitempty"`
@@ -48,8 +47,6 @@ type _RecallRequest RecallRequest
 func NewRecallRequest(query string) *RecallRequest {
 	this := RecallRequest{}
 	this.Query = query
-	var preferObservations bool = false
-	this.PreferObservations = &preferObservations
 	var maxTokens int32 = 4096
 	this.MaxTokens = &maxTokens
 	var trace bool = false
@@ -64,8 +61,6 @@ func NewRecallRequest(query string) *RecallRequest {
 // but it doesn't guarantee that properties required by API are set
 func NewRecallRequestWithDefaults() *RecallRequest {
 	this := RecallRequest{}
-	var preferObservations bool = false
-	this.PreferObservations = &preferObservations
 	var maxTokens int32 = 4096
 	this.MaxTokens = &maxTokens
 	var trace bool = false
@@ -132,36 +127,46 @@ func (o *RecallRequest) SetTypes(v []string) {
 	o.Types = v
 }
 
-// GetPreferObservations returns the PreferObservations field value if set, zero value otherwise.
+// GetPreferObservations returns the PreferObservations field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *RecallRequest) GetPreferObservations() bool {
-	if o == nil || IsNil(o.PreferObservations) {
+	if o == nil || IsNil(o.PreferObservations.Get()) {
 		var ret bool
 		return ret
 	}
-	return *o.PreferObservations
+	return *o.PreferObservations.Get()
 }
 
 // GetPreferObservationsOk returns a tuple with the PreferObservations field value if set, nil otherwise
 // and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
 func (o *RecallRequest) GetPreferObservationsOk() (*bool, bool) {
-	if o == nil || IsNil(o.PreferObservations) {
+	if o == nil {
 		return nil, false
 	}
-	return o.PreferObservations, true
+	return o.PreferObservations.Get(), o.PreferObservations.IsSet()
 }
 
 // HasPreferObservations returns a boolean if a field has been set.
 func (o *RecallRequest) HasPreferObservations() bool {
-	if o != nil && !IsNil(o.PreferObservations) {
+	if o != nil && o.PreferObservations.IsSet() {
 		return true
 	}
 
 	return false
 }
 
-// SetPreferObservations gets a reference to the given bool and assigns it to the PreferObservations field.
+// SetPreferObservations gets a reference to the given NullableBool and assigns it to the PreferObservations field.
 func (o *RecallRequest) SetPreferObservations(v bool) {
-	o.PreferObservations = &v
+	o.PreferObservations.Set(&v)
+}
+// SetPreferObservationsNil sets the value for PreferObservations to be an explicit nil
+func (o *RecallRequest) SetPreferObservationsNil() {
+	o.PreferObservations.Set(nil)
+}
+
+// UnsetPreferObservations ensures that no value is present for PreferObservations, not even an explicit nil
+func (o *RecallRequest) UnsetPreferObservations() {
+	o.PreferObservations.Unset()
 }
 
 // GetBudget returns the Budget field value if set, zero value otherwise.
@@ -530,8 +535,8 @@ func (o RecallRequest) ToMap() (map[string]interface{}, error) {
 	if o.Types != nil {
 		toSerialize["types"] = o.Types
 	}
-	if !IsNil(o.PreferObservations) {
-		toSerialize["prefer_observations"] = o.PreferObservations
+	if o.PreferObservations.IsSet() {
+		toSerialize["prefer_observations"] = o.PreferObservations.Get()
 	}
 	if !IsNil(o.Budget) {
 		toSerialize["budget"] = o.Budget
