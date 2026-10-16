@@ -102,3 +102,26 @@ async def test_prompt_cache_key_is_stable_across_calls_with_the_same_prompt() ->
     keys = [c.kwargs["json"]["prompt_cache_key"] for c in mock_stream.call_args_list]
     assert keys[0] == keys[1]
     assert keys[2] != keys[0]
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_keeps_one_prompt_cache_key_as_the_conversation_grows() -> None:
+    """Reflect's tool loop appends turns every iteration; the key must not change with them."""
+    llm = build_llm(None)
+    response = MagicMock(status_code=200)
+    response.raise_for_status.return_value = None
+    system = {"role": "system", "content": "reflect"}
+
+    with (
+        stub_codex_stream(llm, response) as mock_stream,
+        patch.object(llm, "_parse_sse_tool_stream", new_callable=AsyncMock, return_value=(None, [])),
+    ):
+        await llm.call_with_tools(messages=[system, {"role": "user", "content": "q"}], tools=[], max_retries=0)
+        await llm.call_with_tools(
+            messages=[system, {"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}],
+            tools=[],
+            max_retries=0,
+        )
+
+    keys = [c.kwargs["json"]["prompt_cache_key"] for c in mock_stream.call_args_list]
+    assert keys[0] == keys[1]
