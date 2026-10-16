@@ -33,7 +33,13 @@ jobs:
     - name: Detect integration type
       id: type
       run: |
-        if [ -f "hindsight-integrations/${{ steps.info.outputs.integration }}/pyproject.toml" ]; then
+        # hermes has a pyproject.toml only for its tests: Hermes installs the plugin from the
+        # NousResearch/hermes-agent plugin catalog, which pins this repo at a commit. Nothing
+        # pip-installs it, and its setup.py is the `hermes memory setup` wizard, not a build
+        # script, so `uv build` crashed on every release since v1.1.0 and it never reached PyPI.
+        if [ "${{ steps.info.outputs.integration }}" = "hermes" ]; then
+          echo "type=plugin" >> $GITHUB_OUTPUT
+        elif [ -f "hindsight-integrations/${{ steps.info.outputs.integration }}/pyproject.toml" ]; then
           echo "type=python" >> $GITHUB_OUTPUT
         elif [ -f "hindsight-integrations/${{ steps.info.outputs.integration }}/package.json" ]; then
           echo "type=typescript" >> $GITHUB_OUTPUT
@@ -69,13 +75,13 @@ jobs:
 
     # ── TypeScript integrations (ai-sdk, chat, openclaw) ────────────────────
 
-    # ── Plugin integrations (claude-code, grok-bot) — no package to publish ─
+    # ── Plugin integrations (claude-code, grok-bot, hermes) — no package to publish ─
 
     - name: Plugin release
       if: steps.type.outputs.type == 'plugin'
       run: |
         echo "Plugin integration ${{ steps.info.outputs.integration }} v${{ steps.info.outputs.version }} — no package to publish."
-        echo "Users install it from the marketplace manifest at the tagged commit."
+        echo "Users install it from a pinned commit: its marketplace manifest, or for hermes the Hermes plugin catalog."
 
     # ── TypeScript integrations (ai-sdk, chat, openclaw) ────────────────────
 

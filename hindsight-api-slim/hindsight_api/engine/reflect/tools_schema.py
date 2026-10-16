@@ -188,13 +188,26 @@ _DONE_ANSWER_DEFAULT_LANGUAGE = (
 #: merely shared the question's topic read as enough, and the reflect loop had
 #: already released the forced lower layers (see agent.py's short-circuit, and
 #: #4567). The retrieval-levels section of the system prompt carries the same
-#: rule once; this is the copy at the decision point.
+#: rule once; this is the copy at the decision point. Measured on the reporter's
+#: banks, this wording alone did not make the model recall before a negative, so
+#: the absence half is also enforced in code through ``answer_found`` below.
 _DONE_SUFFICIENCY_GATE = (
     " You have NOT gathered enough while the levels you searched do not STATE the answer: a result that only "
     "shares the question's topic is not an answer, so search the next level (search_observations, then recall) "
     "instead of answering around it. Never call done to report that nothing is known unless recall has already "
     "run on the question's key terms."
 )
+
+#: The model's own verdict on whether it found the answer. Prose can't be
+#: checked, a bool can: when it is false and recall has not run yet, the agent
+#: loop refuses the ``done`` and forces a recall first (#4567).
+_DONE_ANSWER_FOUND_PROPERTY = {
+    "type": "boolean",
+    "description": (
+        "true if what you retrieved states the answer to the question. false if you are reporting that "
+        "nothing (or not enough) is known about it."
+    ),
+}
 
 TOOL_DONE_ANSWER = {
     "type": "function",
@@ -230,8 +243,9 @@ TOOL_DONE_ANSWER = {
                     "items": {"type": "string"},
                     "description": "Array of observation IDs that support your answer",
                 },
+                "answer_found": _DONE_ANSWER_FOUND_PROPERTY,
             },
-            "required": ["answer"],
+            "required": ["answer", "answer_found"],
         },
     },
 }
@@ -375,12 +389,13 @@ def _build_done_tool_with_directives(directive_rules: list[str]) -> dict:
                         "items": {"type": "string"},
                         "description": "Array of observation IDs that support your answer",
                     },
+                    "answer_found": _DONE_ANSWER_FOUND_PROPERTY,
                     "directive_compliance": {
                         "type": "string",
                         "description": f"REQUIRED: Confirm your answer complies with ALL directives. List each directive and how your answer follows it:\n{rules_list}\n\nFormat: 'Directive 1: [how answer complies]. Directive 2: [how answer complies]...'",
                     },
                 },
-                "required": ["answer", "directive_compliance"],
+                "required": ["answer", "answer_found", "directive_compliance"],
             },
         },
     }

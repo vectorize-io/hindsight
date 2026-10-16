@@ -404,7 +404,8 @@ class WorkerPoller:
         self._current_tasks: set[asyncio.Task] = set()
         self._in_flight_count = 0
         self._in_flight_lock = asyncio.Lock()
-        self._last_progress_log = 0.0
+        # A perf_counter reading; -inf so the first call logs whatever that clock's origin is.
+        self._last_progress_log = float("-inf")
         self._tasks_completed_since_log = 0
         # Monotonic stamp of the last completed claim cycle. Reported by the
         # liveness probe so operators can alert on a poller that stopped making
@@ -1253,7 +1254,7 @@ class WorkerPoller:
         # failure visibility use the hindsight_async_operations{status="failed"} gauge,
         # which reads each operation's final DB status.
         op_label = _metric_operation_label(task.task_dict.get("operation_type") or task_type)
-        op_start = time.time()
+        op_start = time.perf_counter()
         metrics = get_metrics_collector()
         # None = not a terminal outcome (deferred/retried) → no metric.
         terminal_success: bool | None = None
@@ -1361,7 +1362,11 @@ class WorkerPoller:
         if terminal_success is not None:
             try:
                 metrics.record_operation_result(
-                    op_label, bank_id, success=terminal_success, duration=time.time() - op_start, source="worker"
+                    op_label,
+                    bank_id,
+                    success=terminal_success,
+                    duration=time.perf_counter() - op_start,
+                    source="worker",
                 )
             except Exception:
                 logger.warning(f"Failed to record worker operation metric for {task.operation_id}", exc_info=True)
@@ -1978,7 +1983,7 @@ class WorkerPoller:
           * [STUCK_STACK]   - async stack trace for tasks past stuck thresholds
           * [DB_WAITS]      - any non-idle hindsight session waiting on a lock
         """
-        now = time.time()
+        now = time.perf_counter()
         if now - self._last_progress_log < PROGRESS_LOG_INTERVAL:
             return
 

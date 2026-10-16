@@ -1135,7 +1135,7 @@ PROVIDER_DEFAULT_MODELS = {
     "llamacpp": "gemma-4-e2b-it",
     "lmstudio": "local-model",
     "vertexai": "google/gemini-3.1-flash-lite",
-    "openai-codex": "gpt-5.4-mini",
+    "openai-codex": "gpt-5.6-luna",
     "chatgpt": "gpt-6-luna",
     "claude-code": "claude-sonnet-4-5-20250929",
     "cursor": "auto",

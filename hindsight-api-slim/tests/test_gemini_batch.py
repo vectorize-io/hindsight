@@ -159,15 +159,24 @@ def test_normalize_output_line_includes_translated_usage():
         "key": "chunk_0",
         "response": {
             "candidates": [{"content": {"parts": [{"text": "{}"}]}}],
-            "usageMetadata": {"promptTokenCount": 120, "candidatesTokenCount": 30, "totalTokenCount": 150},
+            "usageMetadata": {
+                "promptTokenCount": 120,
+                "candidatesTokenCount": 30,
+                "thoughtsTokenCount": 20,
+                "cachedContentTokenCount": 80,
+                "totalTokenCount": 170,
+            },
         },
     }
     out = GeminiLLM._normalize_output_line(line)
-    # OpenAI-shaped usage block the batch consumer accumulates (was missing -> usage=0).
+    # OpenAI-shaped usage block the batch consumer accumulates (was missing -> usage=0),
+    # cached and thinking counts included (#5487).
     assert out["response"]["body"]["usage"] == {
         "prompt_tokens": 120,
         "completion_tokens": 30,
-        "total_tokens": 150,
+        "total_tokens": 170,
+        "prompt_tokens_details": {"cached_tokens": 80},
+        "completion_tokens_details": {"reasoning_tokens": 20},
     }
 
 

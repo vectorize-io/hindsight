@@ -326,9 +326,9 @@ issue/PR history — and what grades it. "eval" = a `test_09` scenario (real mod
 - Significant events are history, never deleted (rule 7; #814) — eval `horse-farm`
 - No arithmetic or deduction on counts (rule 8) — eval `no-arithmetic`, `horse-farm`
 - Different people, entities and numbers stay apart, lookalike names included (rule 9; #5497, #1725) — eval `distinct-entities-stay-apart`, `noisy-service-catalogue`
-- Recency is `mentioned_at`, not arrival order; older news never overwrites (#2550) — eval `recency-is-when-stated`
-- Chatter is skipped under the default mission — eval `default-drops-chatter`
-- An update keeps everything the observation said — eval `noisy-service-catalogue` (neighbours, coverage)
+- Recency is `mentioned_at`, not arrival order; older news never overwrites (rule 10; #2550) — eval `recency-is-when-stated`
+- Chatter is skipped under the default mission (rule 11) — eval `default-drops-chatter`
+- An update keeps everything the observation said (rule 12) — eval `noisy-service-catalogue` (neighbours, coverage)
 - Every durable fact lands in an observation (#5054) — eval coverage check on every wave
 - A correction retires a false belief (#3509) — eval `correction-retires-false-belief`
 - Retired settings and tools stop reading as current (#3248, #3475) — eval `retired-conventions`
@@ -347,6 +347,9 @@ issue/PR history — and what grades it. "eval" = a `test_09` scenario (real mod
 - Semantic near-twin merge on create and update, number- and negation-aware (#1977, #2000) — unit `test_consolidation_dedup.py`
 - Exact-text duplicate creates are dropped (#1907) — unit `test_consolidation_dedup.py`
 - Deletes must name an `observation_id`; a malformed one no longer voids the response (#4152, #4183) — unit `test_consolidation_delete_schema.py`, `test_consolidation_delete_prompt_llm.py`
+- A merge delete (`merged_into`) moves its evidence to the survivor, or re-queues it; a plain delete retires it — system `test_22_consolidation_safety_nets`
+- Facts a response ignores are re-asked (together, then alone) — system `test_22_consolidation_safety_nets`
+- Miscopied observation ids are repaired; an update aimed at a fact id becomes a create — unit `test_consolidation_id_repair.py`; system `test_22_consolidation_safety_nets`
 - Observation scopes (`combined`, `per_tag`, `all_combinations`, `shared`, explicit) and strategies (#2202, #4619) — system `test_24`, `test_29`
 - Per-scope observation caps (#729, #2163) — system `test_29`; unit `test_observation_scope_limit_resolution.py`
 - Observation history snapshots — unit `test_observation_history.py`
@@ -358,6 +361,18 @@ issue/PR history — and what grades it. "eval" = a `test_09` scenario (real mod
 **Out of scope here, deliberately** — speaker attribution is decided at retain (#4572, #1680)
 and belongs with the retain suites; operational behaviour (timeouts #3301/#4715, quota
 handling #4160, wall-clock ceilings) is not a quality property.
+
+### `test_10` — a changed value changes everywhere
+
+A pump page is built from a
+manual (wave one), then refreshed with a notice that changes the filter interval
+and the owner (wave two). The trap is a block the refresh left untouched that
+still states the old value as current, or still says no change was recorded —
+in practice the opening summary. The regression behind it (#5228): the delta
+rewrote the paragraph the fact was about and left the rest, so the page
+contradicted itself under a clean refresh. One English and one Chinese case (the
+reporter's); `HINDSIGHT_EVAL_CONSISTENCY_REPEATS` (default 1) repeats each on
+fresh pages, which is how to read a rate.
 
 ## The corpus
 

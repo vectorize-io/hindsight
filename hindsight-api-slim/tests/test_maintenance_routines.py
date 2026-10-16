@@ -9,6 +9,7 @@ table in a single round-trip. These tests drive them directly against pg0.
 import asyncio
 import importlib.util
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,7 +18,9 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 from hindsight_api.alembic import _owned
+from hindsight_api.engine.memories.pg.transfer import restore_fact_lifecycle
 from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.transfer.importer import FactLifecycle
 
 
 def _load_repair_migration():
@@ -316,6 +319,99 @@ def test_current_routine_bodies_keep_the_concurrent_ddl_guard():
     assert "lock_timeout" in body
     assert "lock_not_available" in body
     assert "deadlock_detected" in body
+
+
+def test_banks_needing_consolidation_probes_per_bank():
+    """Regression for #5425: the routine must probe each bank, not aggregate facts.
+
+    The old ``JOIN memory_units ... GROUP BY m.bank_id`` body visits every
+    unconsolidated fact, so on a large backlog the planner seq-scans the whole
+    table on every reconcile pass.
+    """
+    body = _current_routines_migration_path().read_text()
+    assert "GROUP BY m.bank_id" not in body
+    assert "FROM %1$I.banks b" in body
+    assert "ORDER BY m.created_at DESC" in body
+
+
+async def _insert_facts(conn, bank_id: str, count: int, *, age_days: int, failed: bool) -> None:
+    """``count`` unconsolidated world facts created ``age_days`` ago, optionally failed."""
+    await conn.execute(
+        """
+        INSERT INTO memory_units (id, bank_id, text, fact_type, created_at, consolidation_failed_at)
+        SELECT gen_random_uuid(), $1, 'a fact', 'world', now() - make_interval(days => $2) + i * interval '1 ms',
+               CASE WHEN $3 THEN now() END
+        FROM generate_series(1, $4) i
+        """,
+        bank_id,
+        age_days,
+        failed,
+        count,
+    )
+
+
+@pytest.mark.asyncio
+async def test_banks_needing_consolidation_returns_each_bank_once(memory: MemoryEngine, request_context):
+    """The per-bank probe returns the same set the old aggregate did: one row per
+    bank with an eligible fact, whatever else the bank holds — including a bank
+    whose newest facts all failed, which only the count fallback can find."""
+    many = await _make_bank(memory, request_context, "many")
+    mixed = await _make_bank(memory, request_context, "mixed")
+    buried = await _make_bank(memory, request_context, "buried")
+    only_failed = await _make_bank(memory, request_context, "onlyfailed")
+    empty = await _make_bank(memory, request_context, "empty")
+    observation_only = await _make_bank(memory, request_context, "obs")
+
+    async with memory._pool.acquire() as conn:
+        for _ in range(3):
+            await _insert_fact(conn, many)
+        # Failed and consolidated facts next to one eligible fact.
+        await _insert_fact(conn, mixed, failed=True)
+        await _insert_fact(conn, mixed, consolidated=True)
+        await _insert_fact(conn, mixed, fact_type="world")
+        # One eligible fact behind 150 newer failed ones: past the newest-100 probe, so only
+        # the count fallback finds it.
+        await _insert_facts(conn, buried, 1, age_days=2, failed=False)
+        await _insert_facts(conn, buried, 150, age_days=1, failed=True)
+        await _insert_facts(conn, only_failed, 150, age_days=1, failed=True)
+        await _insert_fact(conn, observation_only, fact_type="observation")
+
+        rows = await conn.fetch("SELECT schema_name, bank_id FROM public.banks_needing_consolidation()")
+
+    returned = [r["bank_id"] for r in rows]
+    assert returned.count(many) == 1
+    assert returned.count(mixed) == 1
+    assert returned.count(buried) == 1
+    assert only_failed not in returned
+    assert empty not in returned
+    assert observation_only not in returned
+
+
+@pytest.mark.asyncio
+async def test_import_never_writes_a_fact_both_consolidated_and_failed(memory: MemoryEngine, request_context):
+    """``banks_needing_consolidation()`` counts failed facts against unconsolidated
+    ones, which holds only while no fact carries both markers. An archive can carry
+    both; the importer keeps ``consolidated_at`` and drops the failure."""
+    bank_id = await _make_bank(memory, request_context, "lifecycle")
+    unit_id = uuid.uuid4()
+    when = datetime(2020, 1, 2, tzinfo=timezone.utc)
+    async with memory._pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO memory_units (id, bank_id, text, fact_type) VALUES ($1, $2, 'a fact', 'world')",
+            unit_id,
+            bank_id,
+        )
+        await restore_fact_lifecycle(
+            conn=conn,
+            fq_table=lambda table: f"public.{table}",
+            bank_id=bank_id,
+            rows=[
+                FactLifecycle(unit_id=str(unit_id), created_at=None, consolidated_at=when, consolidation_failed_at=when)
+            ],
+        )
+    (unit,) = (await memory.list_memory_units(bank_id, request_context=request_context))["items"]
+    assert unit["consolidated_at"] == when.isoformat()
+    assert unit["consolidation_failed_at"] is None
 
 
 class _FakeAlembicContext:

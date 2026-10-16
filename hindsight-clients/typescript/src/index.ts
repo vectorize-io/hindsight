@@ -1710,6 +1710,8 @@ export class HindsightClient {
   async listDocuments(
     bankId: string,
     options?: {
+      /** Case-insensitive substring match on document ID or text (unindexed; for browsing). */
+      q?: string;
       limit?: number;
       offset?: number;
       /** Time axis to filter and order by; `updated_at` is the default ordering. */
@@ -1725,6 +1727,7 @@ export class HindsightClient {
       client: this.client,
       path: { bank_id: bankId },
       query: {
+        q: options?.q,
         limit: options?.limit,
         offset: options?.offset,
         time_field: options?.timeField,

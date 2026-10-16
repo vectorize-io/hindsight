@@ -93,7 +93,9 @@ async def test_real_model_emits_a_delete_that_names_its_target():
         criteria=(
             "The actions do not leave the claim 'Bob is on the beta waitlist' standing as a "
             "current fact: the waitlist observation is either deleted or rewritten to say the "
-            "waitlist no longer exists. Any DELETE names an observation id."
+            "waitlist no longer exists. A rewrite that mentions the old waitlist as history "
+            "(e.g. 'the waitlist he was on was deleted') meets this — the prompt asks state "
+            "changes to be UPDATEs that keep what they replaced. Any DELETE names an observation id."
         ),
         context=(
             "A consolidation model was given one existing observation, 'Bob is on the beta "

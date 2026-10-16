@@ -144,27 +144,20 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
 
         A ``choice`` whose options are the candidates is the ranking: every option
         gets a probability, and they sum to 1, so the stub scores each option's text
-        lexically and normalises — unless one option mentions the rulebook's
-        ``current_value``, which then wins confidently, as a conflict verdict. A
-        ``noul`` asks about one memory, and is answered with the rulebook's verdict
-        for it, else its lexical relevance to the state. A ``score`` is the cut: its
-        answer is a level, and the rulebook decides which one.
+        lexically and normalises. A ``noul`` asks about one memory, and is answered
+        with the rulebook's verdict for it, else its lexical relevance to the state. A
+        ``score`` is the cut: its answer is a level, and the rulebook decides which
+        one.
         """
         body = await request.json()
         validate_systemone(body)
 
         answers = {}
         for question_id, question in body["questions"].items():
-            current = stubs.rerank.current_value
-            options = question.get("criteria") if question["type"] == "choice" else {}
-            states_current = current is not None and any(current in str(text) for text in options.values())
             if question["type"] == "noul":
                 memory = question["instructions"]["memory"]
+                stubs.rerank.states.append(body["state"])
                 answers[question_id] = {"type": "noul", "noul": stubs.rerank.verdict(body["state"], memory)}
-            elif question["type"] == "choice" and states_current:
-                # A conflict verdict: the option stating the current value wins, confidently.
-                winner = next(key for key, text in question["criteria"].items() if current in str(text))
-                answers[question_id] = {"type": "choice", "choice": winner, "probabilities": {}, "confidence": 0.9}
             elif question["type"] == "choice":
                 criteria = question["criteria"]
                 scores = {

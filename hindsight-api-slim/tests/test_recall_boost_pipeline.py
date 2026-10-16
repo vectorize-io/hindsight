@@ -156,7 +156,7 @@ async def test_concurrent_recalls_use_their_own_rerank_provider(
     chain = MultiCrossEncoder([_Primary(), RRFPassthroughCrossEncoder()])
 
     class _InterleavedReranker(CrossEncoderReranker):
-        async def rerank(self, query: str, candidates: list[MergedCandidate]) -> RerankResult:
+        async def rerank(self, query: str, candidates: list[MergedCandidate], now=None) -> RerankResult:
             result = await super().rerank(query, candidates)
             # Let the other request move the shared cursor before recall consumes
             # this result. Both requests use the real rerank/normalization path.

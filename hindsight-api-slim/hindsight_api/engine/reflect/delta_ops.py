@@ -327,6 +327,15 @@ def parse_delta_operation_list(raw: Any) -> DeltaOperationList:
         return raw
     if isinstance(raw, dict):
         return DeltaOperationList(operations=_validate_operations_list(raw.get("operations", [])))
+    # A bare array reaches here parsed for the same reason the dict above does: the
+    # delta call sets a ``response_format`` under ``skip_validation``, so the provider
+    # returns the JSON it parsed. It is the same delta as the text-form array (#3820).
+    if isinstance(raw, list):
+        return DeltaOperationList(operations=_validate_operations_list(raw))
+    if raw is not None and not isinstance(raw, str):
+        # A TypeError, not the AttributeError ``.strip()`` would raise, so the
+        # caller's ask-again path still applies.
+        raise TypeError(f"delta reply must be text, an object or an array, got {type(raw).__name__}")
 
     text = (raw or "").strip()
     if not text:

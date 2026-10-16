@@ -139,18 +139,61 @@ function InlineAttachment({
   );
 }
 
+/** Case-insensitive matcher for a literal search string, or null when there is nothing to find. */
+function searchMatcher(query: string | undefined): RegExp | null {
+  const q = query?.trim();
+  return q ? new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi") : null;
+}
+
+/** How many highlights `InlineAttachmentText` draws for `query`, or null when there is no query.
+ * Placeholders are stripped first: they render as attachments, so a match inside one is never shown. */
+export function countMatches(text: string, query: string | undefined): number | null {
+  const matcher = searchMatcher(query);
+  if (!matcher) return null;
+  return text.split(new RegExp(PLACEHOLDER_RE.source, "g")).reduce(
+    // split() with the capture group interleaves ids at odd indexes; only prose counts.
+    (n, part, i) => (i % 2 === 0 ? n + (part.match(matcher)?.length ?? 0) : n),
+    0
+  );
+}
+
+/** Wrap every match of `matcher` in a <mark>. With a capture group, split() puts matches at odd indexes. */
+function highlightSegment(
+  segment: string,
+  matcher: RegExp | null,
+  keyPrefix: string
+): React.ReactNode {
+  if (!matcher) return segment;
+  return segment.split(matcher).map((part, i) =>
+    i % 2 === 1 ? (
+      <mark
+        key={`${keyPrefix}-${i}`}
+        className="rounded-sm bg-amber-300/70 text-inherit dark:bg-amber-400/40"
+      >
+        {part}
+      </mark>
+    ) : (
+      part
+    )
+  );
+}
+
 export function InlineAttachmentText({
   text,
   bankId,
   attachments,
   className,
+  highlight,
 }: {
   text: string;
   bankId: string;
   /** Metadata for the ids in `text`, as returned on `attachments[]`. */
   attachments?: RetainedAttachment[];
   className?: string;
+  /** Literal text to highlight (case-insensitive) in the prose; placeholders are never matched. */
+  highlight?: string;
 }) {
+  const highlighter = searchMatcher(highlight);
   const byId = new Map((attachments ?? []).map((a) => [a.id, a]));
   const nodes: React.ReactNode[] = [];
   const matcher = new RegExp(PLACEHOLDER_RE.source, "g");
@@ -158,7 +201,8 @@ export function InlineAttachmentText({
   let match: RegExpExecArray | null;
 
   while ((match = matcher.exec(text)) !== null) {
-    if (match.index > cursor) nodes.push(text.slice(cursor, match.index));
+    if (match.index > cursor)
+      nodes.push(highlightSegment(text.slice(cursor, match.index), highlighter, `t${cursor}`));
     const id = match[1];
     nodes.push(
       <InlineAttachment
@@ -169,7 +213,7 @@ export function InlineAttachmentText({
     );
     cursor = match.index + match[0].length;
   }
-  nodes.push(text.slice(cursor));
+  nodes.push(highlightSegment(text.slice(cursor), highlighter, `t${cursor}`));
 
   return <div className={className}>{nodes}</div>;
 }

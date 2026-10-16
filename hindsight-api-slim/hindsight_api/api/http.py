@@ -261,24 +261,31 @@ _TAG_GROUPS_QUERY_DESCRIPTION = (
 )
 
 
-def _parse_tag_groups_query(raw: str | None, tags: list[str] | None) -> list[TagGroup] | None:
-    """Parse a ``tag_groups`` query parameter.
+def _decode_tag_groups_query(raw: str | None) -> list[TagGroup] | None:
+    """Decode a ``tag_groups`` query parameter — the one parser every GET route uses.
 
     A GET cannot carry a body, so the tree that recall takes as JSON arrives as a
-    JSON-encoded string. Invalid JSON or an invalid tree is a 400, and so is sending it
-    alongside ``tags`` — the same rule recall enforces on its body.
+    JSON-encoded string. Absent or blank is no filter; invalid JSON or an invalid tree
+    is a 400.
     """
-    if raw is None:
+    if raw is None or not raw.strip():
         return None
-    if tags:
-        raise HTTPException(
-            status_code=400,
-            detail="'tags' and 'tag_groups' are mutually exclusive. Use 'tag_groups' for compound filtering.",
-        )
     try:
         return _TAG_GROUPS_ADAPTER.validate_json(raw)
     except ValidationError as e:
         raise HTTPException(status_code=400, detail=f"Invalid tag_groups: {e.errors(include_url=False)}")
+
+
+def _parse_tag_groups_query(raw: str | None, tags: list[str] | None) -> list[TagGroup] | None:
+    """:func:`_decode_tag_groups_query`, refusing ``tags`` alongside it (400) — the same
+    rule recall enforces on its body."""
+    groups = _decode_tag_groups_query(raw)
+    if groups is not None and tags:
+        raise HTTPException(
+            status_code=400,
+            detail="'tags' and 'tag_groups' are mutually exclusive. Use 'tag_groups' for compound filtering.",
+        )
+    return groups
 
 
 from hindsight_api.engine.structured_output import validate_response_schema
@@ -299,6 +306,10 @@ logger = logging.getLogger(__name__)
 def _internal_error(exc: Exception, where: str) -> HTTPException:
     """Log an unhandled handler exception with its traceback, and map it to a 500.
 
+    Two exceptions keep their own status instead: a validator rejection (the
+    validator's code — routes that forgot to catch it used to answer 500, #5448)
+    and a store that shed the request (503).
+
     Every route's catch-all used to do this inline — 72 byte-identical copies of
     the same four lines, plus seven near-copies that logged the traceback without
     the message. The duplication is why the policy had already drifted: what gets
@@ -313,6 +324,8 @@ def _internal_error(exc: Exception, where: str) -> HTTPException:
     ``raise _internal_error(e, ...)`` and keep the ``raise`` visible at the
     handler instead of hidden behind a call.
     """
+    if isinstance(exc, OperationValidationError):
+        return HTTPException(status_code=exc.status_code, detail=exc.reason)
     unavailable = _store_unavailable(exc)
     if unavailable is not None:
         logger.warning(f"Store unavailable in {where}, answering 503: {exc}")
@@ -2644,6 +2657,10 @@ class DocumentListItem(OpenRowModel):
     retain_params: dict[str, Any] | None = Field(default=None, description="Parameters used during retain")
     document_metadata: dict[str, Any] | None = Field(default=None, description="Document metadata")
     tags: list[str] = FieldWithDefault(list, description="Tags associated with this document")
+    matched_fields: list[Literal["id", "original_text"]] = FieldWithDefault(
+        list,
+        description="Which fields matched the `q` search: 'id', 'original_text', or both. Empty when no `q` is given.",
+    )
 
 
 class ListDocumentsResponse(BaseModel):
@@ -2773,6 +2790,15 @@ class UpdateDocumentRequest(BaseModel):
         description="The complete new set of tags for the document and its memory units — this "
         "REPLACES the existing tags rather than adding to them, so omitting a tag drops it and "
         "`[]` clears them all. Triggers observation invalidation and re-consolidation.",
+    )
+    observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = Field(
+        default=None,
+        title="UpdateDocumentObservationScopes",
+        description="New observation scoping for the document's memories, with the same values retain "
+        "accepts (send 'combined' to return to the default). Use it to move memories retained under one "
+        "scoping to another — e.g. per-session documents to 'shared' — without re-extracting them. "
+        "Memories whose resolved scopes change lose their observations and are re-consolidated; the rest "
+        "keep theirs. Also becomes the scoping a later reprocess of the document uses.",
     )
 
 
@@ -3715,15 +3741,10 @@ def _knowledge_tag_filter(
         "Top-level groups are AND-ed, and AND-ed with `tags`.",
     ),
 ) -> KnowledgeTagFilter:
-    """Query-string tag filter shared by the knowledge-base tree and search."""
-    try:
-        groups = _TAG_GROUPS_ADAPTER.validate_json(tag_groups) if tag_groups else None
-    except ValidationError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid tag_groups: {e}")
+    """Query-string tag filter shared by the knowledge-base tree and search. Unlike the
+    entity routes, ``tags`` and ``tag_groups`` may be combined here (AND-ed)."""
+    groups = _decode_tag_groups_query(tag_groups)
     return KnowledgeTagFilter(tags=tags or None, tags_match=tags_match, tag_groups=groups)
-
-
-_TAG_GROUPS_ADAPTER: TypeAdapter[list[TagGroup]] = TypeAdapter(list[TagGroup])
 
 
 def _build_knowledge_tree(nodes: list[dict[str, Any]]) -> list[KnowledgeNode]:
@@ -5486,7 +5507,7 @@ def _register_routes(app: FastAPI):
         operator opts in.
         """
         # Dependency-resolution start, read by api_recall to split `http_to_handler`.
-        request.scope.setdefault("hs_deps_t0", time.time())
+        request.scope.setdefault("hs_deps_t0", time.perf_counter())
         api_key = None
         if authorization:
             if authorization.lower().startswith("bearer "):
@@ -5604,9 +5625,9 @@ def _register_routes(app: FastAPI):
                 return
             from hindsight_api.extensions import PrecheckContext
 
-            _t0_dep_auth = time.time()
+            _t0_dep_auth = time.perf_counter()
             await app.state.memory._authenticate_tenant(request_context)
-            get_metrics_collector().record_recall_phase("dep_auth", time.time() - _t0_dep_auth)
+            get_metrics_collector().record_recall_phase("dep_auth", time.perf_counter() - _t0_dep_auth)
             cl_header = request.headers.get("content-length")
             content_length: int | None = None
             if cl_header is not None:
@@ -5622,16 +5643,16 @@ def _register_routes(app: FastAPI):
                 request_context=request_context,
                 content_length=content_length,
             )
-            _t0_dep_precheck = time.time()
+            _t0_dep_precheck = time.perf_counter()
             result = await validator.precheck(ctx)
-            get_metrics_collector().record_recall_phase("dep_precheck", time.time() - _t0_dep_precheck)
+            get_metrics_collector().record_recall_phase("dep_precheck", time.perf_counter() - _t0_dep_precheck)
             if not result.allowed:
                 raise HTTPException(
                     status_code=result.status_code,
                     detail=result.reason or "Operation not allowed",
                 )
 
-            request.scope["hs_deps_done"] = time.time()
+            request.scope["hs_deps_done"] = time.perf_counter()
 
         return _precheck_dep
 
@@ -5799,7 +5820,7 @@ def _register_routes(app: FastAPI):
         limit: int = Query(default=1000, ge=0),
         q: str | None = None,
         tags: list[str] | None = Query(None),
-        tags_match: str = "all_strict",
+        tags_match: TagsMatch = "all_strict",
         document_id: str | None = None,
         chunk_id: str | None = None,
         request_context: RequestContext = Depends(get_request_context),
@@ -6200,26 +6221,26 @@ def _register_routes(app: FastAPI):
         """Run a recall and return results with trace."""
         import time
 
-        handler_start = time.time()
+        handler_start = time.perf_counter()
         metrics = get_metrics_collector()
         # Everything before this line — routing, body parsing, dependency resolution (auth among
         # them) — is outside every timer the endpoint sets, so `pre=` cannot see it and a cost
         # there reads as unattributed request time.
         _asgi_t0 = http_request.scope.get("hs_asgi_t0")
-        if _asgi_t0:
-            metrics.record_recall_phase("http_to_handler", max(0.0, handler_start - _asgi_t0))
+        if _asgi_t0 is not None:
+            metrics.record_recall_phase("http_to_handler", handler_start - _asgi_t0)
             # Split it: middleware+routing, dependency resolution, then body read + validation.
             # `http_to_handler` was a third of a recall with only its auth call timed, so the rest
             # of it — Starlette routing, the two dependencies, and reading the request body off the
             # socket — was a single opaque block.
             _deps_t0 = http_request.scope.get("hs_deps_t0")
             _deps_done = http_request.scope.get("hs_deps_done")
-            if _deps_t0:
-                metrics.record_recall_phase("mw_and_routing", max(0.0, _deps_t0 - _asgi_t0))
-            if _deps_t0 and _deps_done:
-                metrics.record_recall_phase("deps_total", max(0.0, _deps_done - _deps_t0))
-            if _deps_done:
-                metrics.record_recall_phase("body_parse", max(0.0, handler_start - _deps_done))
+            if _deps_t0 is not None:
+                metrics.record_recall_phase("mw_and_routing", _deps_t0 - _asgi_t0)
+            if _deps_t0 is not None and _deps_done is not None:
+                metrics.record_recall_phase("deps_total", _deps_done - _deps_t0)
+            if _deps_done is not None:
+                metrics.record_recall_phase("body_parse", handler_start - _deps_done)
 
         try:
             # Default to all fact types if not specified
@@ -6251,12 +6272,12 @@ def _register_routes(app: FastAPI):
                 request.include.source_facts.max_tokens_per_observation if include_source_facts else -1
             )
 
-            pre_recall = time.time() - handler_start
+            pre_recall = time.perf_counter() - handler_start
             # Run recall with tracing (record metrics)
             with metrics.record_operation(
                 "recall", bank_id=bank_id, source="api", budget=request.budget.value, max_tokens=request.max_tokens
             ):
-                recall_start = time.time()
+                recall_start = time.perf_counter()
                 # Cancel the recall if the client disconnects: the engine checks
                 # request_context at each stage boundary and aborts abandoned
                 # work rather than running it to completion (issue #2122).
@@ -6289,7 +6310,7 @@ def _register_routes(app: FastAPI):
                     operation="recall",
                     bank_id=bank_id,
                 )
-                engine_done = time.time()
+                engine_done = time.perf_counter()
                 metrics.record_recall_phase("engine_call", engine_done - recall_start, diagnostic=True)
 
             # Convert core MemoryFact objects to API RecallResult objects (excluding internal metrics)
@@ -6377,12 +6398,12 @@ def _register_routes(app: FastAPI):
                 source_facts_truncated=core_result.source_facts_truncated,
             )
 
-            handler_duration = time.time() - handler_start
+            handler_duration = time.perf_counter() - handler_start
             # END OF THE ENGINE CALL, not end of handler. Measured at the end, this window also
             # covered response building, and `post_recall` — computed as the remainder — was then
             # ~0 by construction. That made a slow response-assembly path unreadable: the line
             # said pre=0 post=0 and put every millisecond into `recall`, whatever spent it.
-            metrics.record_recall_phase("post_engine", max(0.0, time.time() - engine_done))
+            metrics.record_recall_phase("post_engine", max(0.0, time.perf_counter() - engine_done))
             recall_duration = engine_done - recall_start
             post_recall = handler_duration - pre_recall - recall_duration
             if handler_duration > 1.0:
@@ -6400,7 +6421,7 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except (asyncio.TimeoutError, TimeoutError):
-            handler_duration = time.time() - handler_start
+            handler_duration = time.perf_counter() - handler_start
             logger.error(
                 f"[RECALL TIMEOUT] bank={bank_id} handler_duration={handler_duration:.3f}s - database query timed out"
             )
@@ -6413,7 +6434,7 @@ def _register_routes(app: FastAPI):
                 raise unavailable
             import traceback
 
-            handler_duration = time.time() - handler_start
+            handler_duration = time.perf_counter() - handler_start
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(
                 f"[RECALL ERROR] bank={bank_id} handler_duration={handler_duration:.3f}s error={str(e)}\n{error_detail}"
@@ -7827,11 +7848,17 @@ def _register_routes(app: FastAPI):
     async def api_list_documents(
         bank_id: str,
         q: str | None = Query(
-            None, description="Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')"
+            None,
+            description=(
+                "Case-insensitive substring filter on document ID or document text (e.g. 'report' matches "
+                "'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: "
+                "meant for browsing and inspection, not for high-volume or latency-sensitive workloads — "
+                "use recall for that."
+            ),
         ),
         tags: list[str] | None = Query(None, description="Filter documents by tags"),
-        tags_match: str = Query(
-            "any_strict", description="How to match tags: 'any', 'all', 'any_strict', 'all_strict'"
+        tags_match: TagsMatch = Query(
+            "any_strict", description="How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'"
         ),
         time_field: DocumentTimeField | None = Query(
             default=None,
@@ -7851,9 +7878,9 @@ def _register_routes(app: FastAPI):
 
         Args:
             bank_id: Memory Bank ID (from path)
-            q: Case-insensitive substring filter on document ID
+            q: Case-insensitive substring filter on document ID or text (unindexed, for browsing)
             tags: Filter documents by tags
-            tags_match: How to match tags (any, all, any_strict, all_strict)
+            tags_match: How to match tags (any, all, any_strict, all_strict, exact)
             time_field: Time axis to filter and order by (created_at, updated_at)
             start_date: Inclusive lower bound on time_field (ISO-8601)
             end_date: Exclusive upper bound on time_field (ISO-8601)
@@ -8134,11 +8161,16 @@ def _register_routes(app: FastAPI):
         "send the complete set you want the document to end up with, and any tag you leave out is "
         "dropped. An empty array (`[]`) therefore clears every tag; only omitting the field "
         "entirely is rejected (422).\n\n"
-        "The new tags are propagated to all associated memory units. Observations derived from "
-        "those units are invalidated and queued for re-consolidation under the new tags. "
-        "Co-source memories from other documents that shared those observations are also reset. "
-        "Tags are compared as a set, so re-sending the tags a document already has (in any order) "
-        "changes nothing and queues no re-consolidation.\n\n"
+        "The new tags are propagated to all associated memory units.\n\n"
+        "**Observation scopes** (`observation_scopes`): Replaces how the document's memories are "
+        "scoped during consolidation, with the same values retain accepts. Use it to move a bank "
+        "whose documents were retained under per-session tags to `shared` without re-extracting "
+        "anything. It is also what a later reprocess of the document retains with.\n\n"
+        "A memory is re-consolidated only when the change moves the observation scopes it resolves "
+        "to: its observations are deleted and it is queued again, along with co-source memories from "
+        "other documents that shared those observations. A change that resolves to the same scopes "
+        "(a tag change under `shared`, `combined` over one tag vs `[[that tag]]`, re-sending the "
+        "current values) keeps every observation and queues nothing.\n\n"
         "At least one field must be provided.",
         operation_id="update_document",
         tags=["Documents"],
@@ -8156,15 +8188,18 @@ def _register_routes(app: FastAPI):
         Args:
             bank_id: Memory Bank ID (from path)
             document_id: Document ID (from path)
-            body: Fields to update (tags, metadata, context)
+            body: Fields to update (tags, observation_scopes)
         """
-        if body.tags is None:
-            raise HTTPException(status_code=422, detail="At least one field (tags) must be provided")
+        if body.tags is None and body.observation_scopes is None:
+            raise HTTPException(
+                status_code=422, detail="At least one field (tags, observation_scopes) must be provided"
+            )
         try:
             result = await app.state.memory.update_document(
                 document_id,
                 bank_id,
                 tags=body.tags,
+                observation_scopes=body.observation_scopes,
                 request_context=request_context,
             )
             if not result:
@@ -10259,7 +10294,7 @@ def _register_routes(app: FastAPI):
 
                 # Synchronous processing: one batch per strategy group, aggregate results
                 total_items_count = 0
-                total_usage = TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0)
+                total_usage = TokenUsage()
 
                 # A coroutine rather than an inline loop so the whole thing can be run
                 # as one cancellable task below; the totals stay in the enclosing scope
@@ -10283,11 +10318,7 @@ def _register_routes(app: FastAPI):
                         )
                         total_items_count += len(contents)
                         if usage:
-                            total_usage = TokenUsage(
-                                input_tokens=total_usage.input_tokens + usage.input_tokens,
-                                output_tokens=total_usage.output_tokens + usage.output_tokens,
-                                total_tokens=total_usage.total_tokens + usage.total_tokens,
-                            )
+                            total_usage = total_usage + usage
 
                 with metrics.record_operation("retain", bank_id=bank_id, source="api"):
                     # A sync retain has no operation row and no ack, so nothing else can

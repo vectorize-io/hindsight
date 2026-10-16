@@ -1179,6 +1179,8 @@ async def _load_facts_from_store(
         bucket.append(
             TransferFact(
                 text=memory.text,
+                # Carried so an import can point mental-model evidence at the fact's new id.
+                source_id=str(memory.unit_id),
                 fact_type=memory.fact_type,
                 context=memory.context,
                 event_date=memory.event_date,

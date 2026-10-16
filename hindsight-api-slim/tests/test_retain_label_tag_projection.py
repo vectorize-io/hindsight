@@ -195,6 +195,42 @@ async def test_unchanged_content_re_retain_keeps_label_tags(memory, request_cont
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(600)
+async def test_identical_re_retain_does_not_touch_any_unit(memory, request_context):
+    """#5614: re-sending the same body, tags and metadata writes nothing.
+
+    ``updated_at`` is the "this fact was edited" signal consolidation discards an in-flight
+    batch on, so an unchanged re-send must leave it where it was — on units carrying a label
+    projection too. A real relabel still moves it.
+    """
+    bank_id = f"test_5614_same_{datetime.now(timezone.utc).timestamp()}"
+    doc = "doc-same"
+
+    async def _written_at():
+        res = await memory.list_memory_units(bank_id, document_id=doc, limit=200, request_context=request_context)
+        return {u["id"]: u["updated_at"] for u in res["items"]}
+
+    try:
+        await memory._ensure_bank_exists(bank_id, request_context)
+        await memory._config_resolver.update_bank_config(bank_id, {"entity_labels": _labels("durable")})
+
+        content = "Alice works at Google."
+        await _retain(memory, bank_id, doc, content, ["t1"], {"src": "v1"}, request_context)
+        before = await _written_at()
+        assert before
+
+        await _retain(memory, bank_id, doc, content, ["t1"], {"src": "v1"}, request_context)
+        assert await _written_at() == before
+
+        await _retain(memory, bank_id, doc, content, ["t1"], {"src": "v2"}, request_context)
+        after = await _written_at()
+        assert set(after) == set(before)
+        assert all(after[uid] > before[uid] for uid in before), (before, after)
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(600)
 async def test_document_tags_patch_keeps_label_tags(memory, request_context):
     """The tags PATCH re-processes nothing, so it may not touch the label projection."""
     bank_id = f"test_4068_patch_{datetime.now(timezone.utc).timestamp()}"

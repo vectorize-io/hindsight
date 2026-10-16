@@ -1263,11 +1263,17 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             types: list[str] | None = None,
             prefer_observations: bool | None = None,
             tags: list[str] | None = None,
-            tags_match: str = "any",
+            tags_match: TagsMatch = "any",
             tag_groups: list[dict] | None = None,
             query_timestamp: str | None = None,
             min_scores: dict | None = None,
             temporal_window: dict | None = None,
+            include_chunks: bool = False,
+            max_chunk_tokens: int = 8192,
+            include_entities: bool = False,
+            max_entity_tokens: int = 500,
+            include_source_facts: bool = False,
+            max_source_facts_tokens: int = 4096,
             bank_id: str | None = None,
         ) -> str | dict:
             """
@@ -1283,7 +1289,8 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     duplicate content). No effect unless 'observation' and a raw type are both in types.
                     Default: the bank's recall_prefer_observations config (false unless configured).
                 tags: Optional tags to filter results by (e.g., ['project:alpha']). Mutually exclusive with tag_groups.
-                tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
+                tags_match: How to match tags - 'any' (any tag, untagged included), 'all' (all tags, untagged included),
+                    'any_strict' / 'all_strict' (same, untagged excluded) or 'exact' (exactly these tags). Default: 'any'
                 tag_groups: Compound tag filter using boolean groups (AND-ed together). Each group is a leaf
                     {"tags": [...], "match": "any_strict"} or compound {"and": [...]}, {"or": [...]}, {"not": {...}}.
                     Example: [{"not": {"tags": ["closeout"], "match": "any_strict"}}] excludes memories tagged closeout.
@@ -1305,6 +1312,17 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     extracting dates from the query text — pass it when you already know the range you mean.
                     It ranks memories dated inside the window higher; it does NOT drop memories dated outside
                     it, so do not use it to restrict results to a period.
+                include_chunks: Also return the source text chunks the matched facts were extracted from.
+                    Use it when you need exact strings (paths, IDs, commands) that extraction may have
+                    paraphrased. Default: False.
+                max_chunk_tokens: Max tokens of source chunks returned when include_chunks is set (default: 8192).
+                include_entities: Also return observations about the entities mentioned in the results.
+                    Default: False.
+                max_entity_tokens: Max tokens of entity observations when include_entities is set (default: 500).
+                include_source_facts: For observation results, also return the facts they were built from.
+                    Default: False.
+                max_source_facts_tokens: Max tokens of source facts when include_source_facts is set
+                    (default: 4096).
                 bank_id: Optional bank to search in (defaults to session bank). Use for cross-bank operations.
             """
             try:
@@ -1328,6 +1346,12 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     "prefer_observations": prefer_observations,
                     "budget": budget_enum,
                     "max_tokens": max_tokens,
+                    "include_chunks": include_chunks,
+                    "max_chunk_tokens": max_chunk_tokens,
+                    "include_entities": include_entities,
+                    "max_entity_tokens": max_entity_tokens,
+                    "include_source_facts": include_source_facts,
+                    "max_source_facts_tokens": max_source_facts_tokens,
                     "request_context": _get_request_context(config),
                 }
                 if tags is not None:
@@ -1367,11 +1391,17 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             types: list[str] | None = None,
             prefer_observations: bool | None = None,
             tags: list[str] | None = None,
-            tags_match: str = "any",
+            tags_match: TagsMatch = "any",
             tag_groups: list[dict] | None = None,
             query_timestamp: str | None = None,
             min_scores: dict | None = None,
             temporal_window: dict | None = None,
+            include_chunks: bool = False,
+            max_chunk_tokens: int = 8192,
+            include_entities: bool = False,
+            max_entity_tokens: int = 500,
+            include_source_facts: bool = False,
+            max_source_facts_tokens: int = 4096,
         ) -> dict:
             """
             Args:
@@ -1386,7 +1416,8 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     duplicate content). No effect unless 'observation' and a raw type are both in types.
                     Default: the bank's recall_prefer_observations config (false unless configured).
                 tags: Optional tags to filter results by (e.g., ['project:alpha']). Mutually exclusive with tag_groups.
-                tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
+                tags_match: How to match tags - 'any' (any tag, untagged included), 'all' (all tags, untagged included),
+                    'any_strict' / 'all_strict' (same, untagged excluded) or 'exact' (exactly these tags). Default: 'any'
                 tag_groups: Compound tag filter using boolean groups (AND-ed together). Each group is a leaf
                     {"tags": [...], "match": "any_strict"} or compound {"and": [...]}, {"or": [...]}, {"not": {...}}.
                     Example: [{"not": {"tags": ["closeout"], "match": "any_strict"}}] excludes memories tagged closeout.
@@ -1408,6 +1439,17 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     extracting dates from the query text — pass it when you already know the range you mean.
                     It ranks memories dated inside the window higher; it does NOT drop memories dated outside
                     it, so do not use it to restrict results to a period.
+                include_chunks: Also return the source text chunks the matched facts were extracted from.
+                    Use it when you need exact strings (paths, IDs, commands) that extraction may have
+                    paraphrased. Default: False.
+                max_chunk_tokens: Max tokens of source chunks returned when include_chunks is set (default: 8192).
+                include_entities: Also return observations about the entities mentioned in the results.
+                    Default: False.
+                max_entity_tokens: Max tokens of entity observations when include_entities is set (default: 500).
+                include_source_facts: For observation results, also return the facts they were built from.
+                    Default: False.
+                max_source_facts_tokens: Max tokens of source facts when include_source_facts is set
+                    (default: 4096).
             """
             try:
                 target_bank = await _resolve_bank(config, None)
@@ -1430,6 +1472,12 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     "prefer_observations": prefer_observations,
                     "budget": budget_enum,
                     "max_tokens": max_tokens,
+                    "include_chunks": include_chunks,
+                    "max_chunk_tokens": max_chunk_tokens,
+                    "include_entities": include_entities,
+                    "max_entity_tokens": max_entity_tokens,
+                    "include_source_facts": include_source_facts,
+                    "max_source_facts_tokens": max_source_facts_tokens,
                     "request_context": _get_request_context(config),
                 }
                 if tags is not None:
@@ -1470,7 +1518,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
             max_tokens: int = 4096,
             response_schema: dict | None = None,
             tags: list[str] | None = None,
-            tags_match: str = "any",
+            tags_match: TagsMatch = "any",
             apply_all_directives: bool = False,
             include_based_on: bool = False,
             include_trace: bool = False,
@@ -1502,7 +1550,8 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 max_tokens: Maximum tokens for the response (default: 4096)
                 response_schema: Optional JSON schema for structured output. When provided, the response includes a 'structured_output' field.
                 tags: Optional tags to filter memories by (e.g., ['project:alpha'])
-                tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
+                tags_match: How to match tags - 'any' (any tag, untagged included), 'all' (all tags, untagged included),
+                    'any_strict' / 'all_strict' (same, untagged excluded) or 'exact' (exactly these tags). Default: 'any'
                 apply_all_directives: Apply every active directive regardless of tags. By default directives are scoped like memories (untagged always apply; tagged apply only when tags match). Set true to apply all directives, ignoring tag scope.
                 include_based_on: Include source facts used for synthesis. Defaults to false because broad reflections can exceed MCP client result limits.
                 include_trace: Include the reflection's internal trace fields (tool_trace/llm_trace and directives_applied). Defaults to false because the trace can be tens of KB and overflow MCP client context; enable only for debugging.
@@ -1565,7 +1614,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
             max_tokens: int = 4096,
             response_schema: dict | None = None,
             tags: list[str] | None = None,
-            tags_match: str = "any",
+            tags_match: TagsMatch = "any",
             apply_all_directives: bool = False,
             include_based_on: bool = False,
             include_trace: bool = False,
@@ -1596,7 +1645,8 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 max_tokens: Maximum tokens for the response (default: 4096)
                 response_schema: Optional JSON schema for structured output. When provided, the response includes a 'structured_output' field.
                 tags: Optional tags to filter memories by (e.g., ['project:alpha'])
-                tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
+                tags_match: How to match tags - 'any' (any tag, untagged included), 'all' (all tags, untagged included),
+                    'any_strict' / 'all_strict' (same, untagged excluded) or 'exact' (exactly these tags). Default: 'any'
                 apply_all_directives: Apply every active directive regardless of tags. By default directives are scoped like memories (untagged always apply; tagged apply only when tags match). Set true to apply all directives, ignoring tag scope.
                 include_based_on: Include source facts used for synthesis. Defaults to false because broad reflections can exceed MCP client result limits.
                 include_trace: Include the reflection's internal trace fields (tool_trace/llm_trace and directives_applied). Defaults to false because the trace can be tens of KB and overflow MCP client context; enable only for debugging.

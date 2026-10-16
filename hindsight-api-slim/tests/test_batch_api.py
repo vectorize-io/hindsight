@@ -288,6 +288,51 @@ async def test_batch_api_accepts_top_level_fact_list(mock_llm_config, test_conte
 
 
 @pytest.mark.asyncio
+async def test_batch_api_usage_keeps_cached_and_reasoning_tokens(mock_llm_config, test_contents, hindsight_config):
+    """Batch usage is read like a live call's: cached prompt and reasoning tokens survive (#5487)."""
+    mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
+    mock_llm_config._provider_impl.submit_batch = AsyncMock(
+        return_value={"batch_id": "batch_usage", "status": "validating", "request_counts": {"total": 1}}
+    )
+    mock_llm_config._provider_impl.get_batch_status = AsyncMock(
+        return_value={"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
+    )
+    mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
+        return_value=[
+            {
+                "custom_id": "chunk_0",
+                "response": {
+                    "body": {
+                        "choices": [{"message": {"content": json.dumps({"facts": []})}}],
+                        "usage": {
+                            "prompt_tokens": 100,
+                            "completion_tokens": 50,
+                            "total_tokens": 150,
+                            "prompt_tokens_details": {"cached_tokens": 80},
+                            "completion_tokens_details": {"reasoning_tokens": 20},
+                        },
+                    }
+                },
+            }
+        ]
+    )
+
+    extraction = await extract_facts_from_contents_batch_api(
+        contents=[test_contents[0]],
+        llm_config=mock_llm_config,
+        config=hindsight_config,
+        pool=None,
+        operation_id=None,
+        schema=None,
+    )
+
+    assert extraction.usage.input_tokens == 100
+    assert extraction.usage.cached_tokens == 80
+    assert extraction.usage.thoughts_tokens == 20
+    assert extraction.usage.output_tokens == 30  # reasoning folded into completion is split out
+
+
+@pytest.mark.asyncio
 async def test_batch_api_rejects_top_level_non_fact_list(mock_llm_config, test_contents, hindsight_config):
     """Batch extraction records malformed top-level lists instead of crashing."""
     batch_id = "batch_malformed_list"

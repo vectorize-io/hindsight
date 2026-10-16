@@ -26,6 +26,7 @@ import {
   MoreVertical,
   Eraser,
   Pencil,
+  Download,
   RefreshCw,
   Trash2,
   AlertTriangle,
@@ -33,6 +34,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "sonner";
 import { CompactMarkdown } from "./compact-markdown";
+import { downloadMarkdown, mentalModelDownload, printPage } from "@/lib/page-download";
 import { StalenessBadge } from "./staleness-badge";
 import { CronSchedulePreview } from "./cron-schedule-preview";
 import { NextRefresh } from "./next-refresh";
@@ -1066,6 +1068,20 @@ export function MentalModelDetailModal({
                     <DropdownMenuItem onClick={handleRefresh} disabled={refreshing}>
                       <RefreshCw className="h-4 w-4 mr-2" />
                       {t("actionRefreshManually")}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => printPage(mentalModelDownload(mentalModel))}
+                      disabled={!mentalModel.content}
+                    >
+                      <Download className="h-4 w-4 mr-2" />
+                      {t("actionDownloadPdf")}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => downloadMarkdown(mentalModelDownload(mentalModel))}
+                      disabled={!mentalModel.content}
+                    >
+                      <Download className="h-4 w-4 mr-2" />
+                      {t("actionDownloadMarkdown")}
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={handleDryRun} disabled={dryRunning}>
                       <FlaskConical

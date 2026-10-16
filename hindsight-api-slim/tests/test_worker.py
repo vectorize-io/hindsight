@@ -225,6 +225,18 @@ class TestWorkerOperationMetrics:
         assert call.kwargs["source"] == "worker"
 
     @pytest.mark.asyncio
+    async def test_worker_duration_stays_non_negative_when_the_wall_clock_steps_back(self, monkeypatch):
+        import itertools
+        import time
+
+        readings = itertools.count(1_790_897_894.0, -1.0)
+        monkeypatch.setattr(time, "time", lambda: next(readings))
+
+        collector = await self._run(AsyncMock())
+
+        assert collector.record_operation_result.call_args.kwargs["duration"] >= 0
+
+    @pytest.mark.asyncio
     async def test_failure_records_failure(self):
         async def boom(_):
             raise RuntimeError("kaboom")
@@ -3790,7 +3802,7 @@ async def test_pending_breakdown_explains_unclaimable_rows(pool, backend, clean_
             worker_id,
         )
 
-    # Trigger one stats emit. _last_progress_log starts at 0, so the first call
+    # Trigger one stats emit. _last_progress_log starts at -inf, so the first call
     # always logs.
     with caplog.at_level(logging.INFO, logger="hindsight_api.worker.poller"):
         await poller._log_progress_if_due()

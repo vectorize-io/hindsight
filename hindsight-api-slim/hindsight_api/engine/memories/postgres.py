@@ -51,6 +51,7 @@ from .base import (
     RecallArms,
     RelabelResult,
     RelinkPassResult,
+    RetagResult,
     ScanPage,
     SemanticBm25Result,
     StoredMemory,
@@ -936,11 +937,24 @@ class PostgresMemories(MemoriesExtension):
         )
 
     async def update_document_tags(
-        self, *, conn, fq_table, bank_id: str, document_id: str, tags: list[str] | None, found: bool
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        document_id: str,
+        tags: list[str] | None,
+        found: bool,
+        observation_scopes: list | str | None = None,
     ) -> bool:
         """``found`` is not needed: the UPDATE's RETURNING says whether the row exists."""
         return await documents.update_document_tags(
-            conn=conn, fq_table=fq_store_table, bank_id=bank_id, document_id=document_id, tags=tags
+            conn=conn,
+            fq_table=fq_store_table,
+            bank_id=bank_id,
+            document_id=document_id,
+            tags=tags,
+            observation_scopes=observation_scopes,
         )
 
     async def retag_document_memories(
@@ -951,10 +965,10 @@ class PostgresMemories(MemoriesExtension):
         fq_table,
         bank_id: str,
         document_id: str,
-        tags: list[str],
+        tags: list[str] | None,
         retagged: Callable[[list[str] | None], list[str]],
         rescoped: Callable[[Any], str | None],
-    ) -> int:
+    ) -> RetagResult:
         return await documents.retag_document_memories(
             conn=conn,
             ops=ops,

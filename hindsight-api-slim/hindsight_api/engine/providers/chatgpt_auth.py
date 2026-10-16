@@ -330,7 +330,7 @@ def needs_refresh(credential: ChatGPTCredential, now: float | None = None) -> bo
     if exp is None:
         # Unknown expiry: use the token and let a 401 trigger the refresh.
         return False
-    now = time.time() if now is None else now
+    now = time.time() if now is None else now  # noqa: TID251 - compared with the token's wall-clock expiry
     earliest = credential.earliest_refresh_at
     if earliest is not None and now < earliest and now < exp:
         return False

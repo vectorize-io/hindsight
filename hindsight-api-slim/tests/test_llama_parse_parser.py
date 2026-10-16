@@ -5,6 +5,7 @@ Unit tests run always (stub HTTP upstream). Integration tests require
 HINDSIGHT_API_FILE_PARSER_LLAMA_PARSE_API_KEY in the environment.
 """
 
+import json
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -67,18 +68,24 @@ class _Upstream:
     gets: list[_Reply] = field(default_factory=list)
     get_count: int = 0
     upload_parts: list[tuple[str | None, str | None, bytes]] = field(default_factory=list)
+    upload_configuration: dict | None = None
+    get_requests: list[str] = field(default_factory=list)
 
     async def handler(self, request: web.Request) -> web.StreamResponse:
         assert request.headers["Authorization"].startswith("Bearer ")
         if request.method == "POST":
-            assert request.path.endswith("/upload")
+            assert request.path == "/upload"
             reader = await request.multipart()
             part = await reader.next()
             assert part is not None and part.name == "file"
             self.upload_parts.append((part.filename, part.headers.get("Content-Type"), bytes(await part.read())))
+            config_part = await reader.next()
+            assert config_part is not None and config_part.name == "configuration"
+            self.upload_configuration = json.loads(await config_part.text())
             reply = self.upload
         else:
             self.get_count += 1
+            self.get_requests.append(str(request.rel_url))
             reply = self.gets.pop(0) if len(self.gets) > 1 else self.gets[0]
         if reply.json is not None:
             return web.json_response(reply.json, status=reply.status)
@@ -97,30 +104,42 @@ async def _serve(monkeypatch: pytest.MonkeyPatch, upstream: _Upstream) -> AsyncI
 # ---------------------------------------------------------------------------
 
 
+def _status(status: str, error_message: str | None = None) -> _Reply:
+    return _Reply(json={"job": {"id": "job", "status": status, "error_message": error_message}})
+
+
+def test_targets_the_v2_api():
+    """Regression for #5447: v1 (/api/parsing) returns 410 for v2-only accounts."""
+    assert llama_parse._LLAMA_PARSE_BASE_URL == "https://api.cloud.llamaindex.ai/api/v2/parse"
+
+
 @pytest.mark.asyncio
 async def test_convert_success(monkeypatch):
-    """Happy path: upload → poll SUCCESS → fetch markdown."""
+    """Happy path: upload → poll COMPLETED → fetch markdown_full (v2 API shape)."""
     parser = LlamaParseParser(api_key="llx-test", poll_interval=0.0, timeout=10.0)
     upstream = _Upstream(
-        upload=_Reply(json={"id": "job-123"}),
-        gets=[_Reply(json={"status": "SUCCESS"}), _Reply(json={"markdown": "# Hello"})],
+        upload=_Reply(json={"id": "job-123", "status": "PENDING"}),
+        gets=[_status("COMPLETED"), _Reply(json={"job": {"status": "COMPLETED"}, "markdown_full": "# Hello"})],
     )
 
     async with _serve(monkeypatch, upstream):
         result = await parser.convert(b"fake-pdf", "test.pdf")
     assert result == "# Hello"
-    # The file goes up as a multipart part carrying its name and guessed type.
+    # The file goes up as a multipart part carrying its name and guessed type,
+    # next to the tier/version v2 requires.
     assert upstream.upload_parts == [("test.pdf", "application/pdf", b"fake-pdf")]
+    assert upstream.upload_configuration == {"tier": "cost_effective", "version": "latest"}
+    assert upstream.get_requests == ["/job-123", "/job-123?expand=markdown_full"]
 
 
 @pytest.mark.asyncio
 async def test_convert_polls_until_success(monkeypatch):
-    """Parser should poll multiple times before SUCCESS."""
+    """Parser should poll multiple times before COMPLETED."""
     parser = LlamaParseParser(api_key="llx-test", poll_interval=0.0, timeout=10.0)
-    pending = _Reply(json={"status": "PENDING"})
+    pending = _status("PENDING")
     upstream = _Upstream(
         upload=_Reply(json={"id": "job-456"}),
-        gets=[pending, pending, _Reply(json={"status": "SUCCESS"}), _Reply(json={"markdown": "parsed content"})],
+        gets=[pending, _status("RUNNING"), _status("COMPLETED"), _Reply(json={"markdown_full": "parsed content"})],
     )
 
     async with _serve(monkeypatch, upstream):
@@ -131,23 +150,21 @@ async def test_convert_polls_until_success(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_convert_job_error(monkeypatch):
-    """Parser should raise RuntimeError when job status is ERROR."""
-    parser = LlamaParseParser(api_key="llx-test", poll_interval=0.0, timeout=10.0)
-    upstream = _Upstream(
-        upload=_Reply(json={"id": "job-err"}),
-        gets=[_Reply(json={"status": "ERROR", "error_code": "PARSE_FAILED"})],
-    )
+    """Parser should raise RuntimeError when job status is FAILED or CANCELLED."""
+    for reply, expected in ((_status("FAILED", "PARSE_FAILED"), "PARSE_FAILED"), (_status("CANCELLED"), "cancelled")):
+        parser = LlamaParseParser(api_key="llx-test", poll_interval=0.0, timeout=10.0)
+        upstream = _Upstream(upload=_Reply(json={"id": "job-err"}), gets=[reply])
 
-    async with _serve(monkeypatch, upstream):
-        with pytest.raises(RuntimeError, match="PARSE_FAILED"):
-            await parser.convert(b"bad", "bad.pdf")
+        async with _serve(monkeypatch, upstream):
+            with pytest.raises(RuntimeError, match=expected):
+                await parser.convert(b"bad", "bad.pdf")
 
 
 @pytest.mark.asyncio
 async def test_convert_timeout(monkeypatch):
     """Parser should raise RuntimeError on timeout."""
     parser = LlamaParseParser(api_key="llx-test", poll_interval=0.0, timeout=0.0)
-    upstream = _Upstream(upload=_Reply(json={"id": "job-slow"}), gets=[_Reply(json={"status": "PENDING"})])
+    upstream = _Upstream(upload=_Reply(json={"id": "job-slow"}), gets=[_status("PENDING")])
 
     async with _serve(monkeypatch, upstream):
         with pytest.raises(RuntimeError, match="timed out"):

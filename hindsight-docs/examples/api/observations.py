@@ -8,6 +8,8 @@ import os
 
 from hindsight_client import Hindsight
 from hindsight_client_api.models.consolidation_request import ConsolidationRequest
+from hindsight_client_api.models.update_document_observation_scopes import UpdateDocumentObservationScopes
+from hindsight_client_api.models.update_document_request import UpdateDocumentRequest
 
 HINDSIGHT_URL = os.getenv("HINDSIGHT_API_URL", "http://localhost:8888")
 BANK_ID = "observations-demo-bank"
@@ -21,6 +23,9 @@ async def main():
     await client.acreate_bank(bank_id=BANK_ID)
     await client.aretain(bank_id=BANK_ID, content="Alice prefers dark mode.", tags=["user:alice"])
     await client.aretain(bank_id=BANK_ID, content="The engineering team ships on Fridays.", tags=["team:engineering"])
+    await client.aretain(
+        bank_id=BANK_ID, content="Alice asked for shorter answers.", document_id="session-123", tags=["session:123"]
+    )
 
     # =========================================================================
     # Doc Examples
@@ -41,6 +46,17 @@ async def main():
         ),
     )
     # [/docs:targeted-consolidation]
+
+    # [docs:change-document-scopes]
+    # Move a document retained under its session tag to the shared scope
+    await client.documents.update_document(
+        bank_id=BANK_ID,
+        document_id="session-123",
+        update_document_request=UpdateDocumentRequest(
+            observation_scopes=UpdateDocumentObservationScopes(actual_instance="shared")
+        ),
+    )
+    # [/docs:change-document-scopes]
 
     # [docs:clear-observations]
     # Clear all observations for a bank

@@ -424,7 +424,7 @@ class MemoryEngineInterface(ABC):
 
         Args:
             bank_id: The memory bank ID.
-            search_query: Case-insensitive substring filter on document ID.
+            search_query: Case-insensitive substring filter on document ID or text (unindexed, for browsing).
             tags: Filter by tags.
             tags_match: How to match tags (any, all, any_strict, all_strict).
             time_field: Time axis to filter and order by — ``created_at`` or

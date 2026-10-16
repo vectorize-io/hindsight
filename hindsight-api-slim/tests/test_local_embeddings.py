@@ -39,3 +39,32 @@ def test_sentence_transformer_exposes_input_type_entry_points():
 
     assert hasattr(sentence_transformers.SentenceTransformer, "encode_query")
     assert hasattr(sentence_transformers.SentenceTransformer, "encode_document")
+
+
+@pytest.mark.parametrize(
+    "methods",
+    [
+        # 5.4+: both exist, the old one emits a FutureWarning, so it must not be called.
+        ["get_embedding_dimension", "get_sentence_embedding_dimension"],
+        # 5.0-5.3 (still allowed by local-ml): only the old name exists.
+        ["get_sentence_embedding_dimension"],
+    ],
+)
+async def test_local_embeddings_read_the_dimension_on_every_supported_version(methods: list[str]):
+    model = MagicMock(spec=[*methods, "encode"])
+    if "get_embedding_dimension" in methods:
+        model.get_embedding_dimension.return_value = 8
+        model.get_sentence_embedding_dimension.side_effect = AssertionError("deprecated method called")
+    else:
+        model.get_sentence_embedding_dimension.return_value = 8
+    model.encode.side_effect = lambda texts, **_: np.zeros((len(texts), 8), dtype=np.float32)
+    embeddings = LocalSTEmbeddings(model_name="test-model", force_cpu=True)
+
+    with (
+        patch("sentence_transformers.SentenceTransformer", return_value=model),
+        patch("hindsight_api.engine.embeddings.align_local_model_weights"),
+        patch("hindsight_api.engine.embeddings.resolve_model_device_type", return_value="cpu"),
+    ):
+        await embeddings.initialize()
+
+    assert embeddings.dimension == 8

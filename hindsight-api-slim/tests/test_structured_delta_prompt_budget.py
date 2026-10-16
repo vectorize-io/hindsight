@@ -90,6 +90,24 @@ def test_delta_prompt_ends_with_the_date_order_rule():
     assert "later-DATED statement" in STRUCTURED_DELTA_SYSTEM_PROMPT
 
 
+def test_delta_prompt_asks_for_a_reread_of_the_opening_summary():
+    """The task tells the model to re-read the whole page, opening summary first.
+
+    #5228: a refresh fixed the block a new fact was about and left the opening summary
+    saying the old owner, with no change recorded. Its rate is graded end to end by
+    system-evals ``test_10``; this pins the instruction and its place before the
+    date-order rule.
+    """
+    prompt = build_structured_delta_prompt(
+        current_document_json='{"sections": []}',
+        supporting_facts=[{"id": "1", "text": "new fact", "type": "world"}],
+        source_query="topic?",
+    )
+    tail = prompt[prompt.index("## Task") :]
+    assert "opening summary (section id 'preamble')" in tail
+    assert tail.index("re-read CURRENT DOCUMENT") < tail.index("Facts arrive out of date order")
+
+
 def test_refresh_context_asks_full_refresh_for_dates_and_delta_for_events():
     """Full and delta refreshes get opposite advice about "current".
 

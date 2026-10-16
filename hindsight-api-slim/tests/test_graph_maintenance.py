@@ -865,6 +865,42 @@ class TestStaleCooccurrencePrune:
         result = await run_graph_maintenance_job(memory, bank_id, request_context)
         assert result["stale_cooccurrences_pruned"] == 1
 
+    @pytest.mark.asyncio
+    async def test_keeps_live_pair_when_only_the_second_endpoint_is_a_candidate(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """``live`` is built from the candidate's side of each pair and
+        normalised with LEAST/GREATEST. When the candidate sorts second, the
+        pair it forms must still be emitted in (entity_id_1, entity_id_2) order,
+        or the anti-join misses it and a grounded edge is deleted. The third
+        entity gives the candidate a second pair in the same unit, so the
+        grounded pair is not the only row ``live`` emits."""
+        bank_id = f"test-gm-keep2-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            ent_a = await _insert_entity(conn, bank_id, "alice")
+            ent_b = await _insert_entity(conn, bank_id, "bob")
+            ent_c = await _insert_entity(conn, bank_id, "carol")
+            first, second = sorted([ent_a, ent_b])
+            await _insert_cooccurrence(conn, ent_a, ent_b, count=4)
+            unit = await _insert_unit(conn, bank_id, "alice-bob-carol")
+            for ent in (ent_a, ent_b, ent_c):
+                await _link_unit_entity(conn, unit, ent)
+            await _seed_entity_candidates(conn, bank_id, [second])
+
+        result = await run_graph_maintenance_job(memory, bank_id, request_context)
+        assert result["stale_cooccurrences_pruned"] == 0
+
+        async with pool.acquire() as conn:
+            still_there = await conn.fetchval(
+                "SELECT cooccurrence_count FROM entity_cooccurrences WHERE entity_id_1 = $1 AND entity_id_2 = $2",
+                first,
+                second,
+            )
+            assert still_there == 4
+
 
 # ---------------------------------------------------------------------------
 # Delta enqueue: what a delete captures before the cascade

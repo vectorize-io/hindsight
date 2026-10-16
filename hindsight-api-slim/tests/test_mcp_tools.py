@@ -1354,6 +1354,35 @@ class TestRecallNewParams:
         assert "tag_groups" in call_kwargs
         assert len(call_kwargs["tag_groups"]) == 1
 
+    async def test_recall_include_options_off_by_default(self, mock_memory):
+        mcp = _make_mcp_server(mock_memory, {"recall"})
+        await _tools(mcp)["recall"].fn(query="test")
+        call_kwargs = mock_memory.recall_async.call_args.kwargs
+        assert call_kwargs["include_chunks"] is False
+        assert call_kwargs["include_entities"] is False
+        assert call_kwargs["include_source_facts"] is False
+
+    @pytest.mark.parametrize("include_bank_id", [True, False])
+    async def test_recall_include_options_passed_through(self, mock_memory, include_bank_id):
+        """Issue #5470: MCP recall must be able to return source chunks, entities and source facts."""
+        mcp = _make_mcp_server(mock_memory, {"recall"}, include_bank_id=include_bank_id)
+        await _tools(mcp)["recall"].fn(
+            query="test",
+            include_chunks=True,
+            max_chunk_tokens=6000,
+            include_entities=True,
+            max_entity_tokens=300,
+            include_source_facts=True,
+            max_source_facts_tokens=1000,
+        )
+        call_kwargs = mock_memory.recall_async.call_args.kwargs
+        assert call_kwargs["include_chunks"] is True
+        assert call_kwargs["max_chunk_tokens"] == 6000
+        assert call_kwargs["include_entities"] is True
+        assert call_kwargs["max_entity_tokens"] == 300
+        assert call_kwargs["include_source_facts"] is True
+        assert call_kwargs["max_source_facts_tokens"] == 1000
+
 
 @pytest.mark.asyncio
 class TestReflectNewParams:
@@ -1785,6 +1814,34 @@ class TestListToolBounds:
         mcp = _make_mcp_server(mock_memory, {"list_operations"}, include_bank_id=True)
         await mcp.call_tool("list_operations", {"limit": 100})
         assert mock_memory.list_operations.call_args.kwargs["limit"] == 100
+
+
+@pytest.mark.asyncio
+class TestRecallReflectTagsMatch:
+    """#5371: an unknown tags_match is rejected instead of silently running as "any"."""
+
+    @pytest.fixture
+    def mock_memory(self, mock_memory):
+        mock_memory._config_resolver.get_bank_config = AsyncMock(return_value={})
+        mock_memory._operation_validator = None
+        mock_memory.audit_logger.action_allowed = MagicMock(return_value=False)
+        return mock_memory
+
+    @pytest.mark.parametrize("include_bank_id", [True, False])
+    @pytest.mark.parametrize("tool", ["recall", "reflect"])
+    async def test_unknown_mode_is_rejected(self, mock_memory, tool, include_bank_id):
+        from pydantic import ValidationError
+
+        mcp = _make_mcp_server(mock_memory, {tool}, include_bank_id=include_bank_id)
+        with pytest.raises(ValidationError):
+            await mcp.call_tool(tool, {"query": "q", "tags": ["typescript"], "tags_match": "any-strict"})
+        getattr(mock_memory, f"{tool}_async").assert_not_called()
+
+    @pytest.mark.parametrize("tool", ["recall", "reflect"])
+    async def test_schema_lists_all_modes(self, mock_memory, tool):
+        mcp = _make_mcp_server(mock_memory, {tool}, include_bank_id=True)
+        schema = _tools(mcp)[tool].parameters["properties"]["tags_match"]
+        assert set(schema["enum"]) == {"any", "all", "any_strict", "all_strict", "exact"}
 
 
 # =========================================================================

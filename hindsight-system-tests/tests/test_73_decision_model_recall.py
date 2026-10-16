@@ -1,14 +1,13 @@
 """Recall on a server with a decision model set up.
 
 With a decision model, recall stops scoring candidates with the reranker. It asks the
-model of each candidate whether showing it would help answer the question, orders the
-pool by that, and — on a question that asks for a value — asks which of the candidates
-that disagree states the current one, dropping the rest.
+model of each candidate whether showing it would help answer the question, telling it the
+date the question is asked, and orders the pool by that.
 
-Each step is unit-tested on its own. What only a story shows is that the verdicts
-survive the pipeline: that the model's order is what the client receives, with no boost
-reordering it afterwards, and that a dropped candidate is actually gone from the
-response rather than ranked last.
+Each step is unit-tested on its own. What only a story shows is that the verdicts survive
+the pipeline: that the model's order is what the client receives, with no boost
+reordering it afterwards, and that the recall's own question date is what the model is
+told, not the server's clock.
 """
 
 from __future__ import annotations
@@ -29,8 +28,6 @@ BERLIN = "Alice moved to Berlin in 2021"
 CELLO = "Alice plays the cello professionally"
 STALE = "The launch deadline for the mobile app is April 1"
 CURRENT = "The launch deadline for the mobile app is April 5"
-# What the model says of each memory on the deadline question.
-DEADLINE_VERDICTS = {CURRENT: 0.9, STALE: 0.8, CELLO: 0.5, BERLIN: 0.3}
 
 
 @pytest.fixture
@@ -72,28 +69,15 @@ async def test_the_models_order_reaches_the_client(decision_model_client, bank, 
     assert _texts(response) == [CELLO, STALE, CURRENT, BERLIN]
 
 
-async def test_a_superseded_value_is_dropped(decision_model_client, bank, stubs):
-    """The model says April 5 is the current deadline, so April 1 is gone — not ranked
-    last, where a caller reading everything would still see it."""
-    stubs.rerank.verdicts = DEADLINE_VERDICTS
-    stubs.rerank.current_value = "April 5"
-
-    response = await decision_model_client.arecall(
-        bank_id=bank, query="When is the launch deadline for the mobile app?"
+async def test_the_model_is_told_the_question_date(decision_model_client, bank, stubs):
+    """A question asked "as of" a date is judged as of that date, so the model can weigh
+    how recent each memory is from where the question stands."""
+    await decision_model_client.arecall(
+        bank_id=bank, query="When is the launch deadline?", query_timestamp="2024-05-01T12:00:00"
     )
 
-    assert _texts(response) == [CURRENT, CELLO, BERLIN]
-
-
-async def test_a_hedged_verdict_keeps_both_values(decision_model_client, bank, stubs):
-    """Without a confident verdict nothing is dropped: returning both is where recall
-    was before, and dropping the wrong one would delete the answer."""
-    stubs.rerank.verdicts = DEADLINE_VERDICTS
-    response = await decision_model_client.arecall(
-        bank_id=bank, query="When is the launch deadline for the mobile app?"
-    )
-
-    assert _texts(response) == [CURRENT, STALE, CELLO, BERLIN]
+    assert stubs.rerank.states
+    assert set(stubs.rerank.states) == {"Current date: 2024-05-01\n\nQuestion: When is the launch deadline?"}
 
 
 async def test_a_rank_position_is_not_published_or_floored(decision_model_client, bank):

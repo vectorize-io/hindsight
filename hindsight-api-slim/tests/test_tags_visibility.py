@@ -2192,3 +2192,11 @@ async def test_fuzzy_all_requires_one_spelling_of_every_token(api_client):
     assert response.status_code == 200
     texts = [r["text"] for r in response.json()["results"]]
     assert not any("billing" in t for t in texts), "A memory carrying only one of the two tokens must not match"
+
+
+def test_parse_tags_match_rejects_unknown_mode():
+    """#5371: the shared parser fails loud instead of widening an unknown mode to "any"."""
+    from hindsight_api.engine.search.tags import _parse_tags_match
+
+    with pytest.raises(ValueError, match="any-strict"):
+        _parse_tags_match("any-strict")  # type: ignore[arg-type]

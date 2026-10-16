@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
-import { tagFilterParams } from "../tag-filter-params";
+import { appendTagFilter, readTagFilter } from "@/lib/tag-filter-params";
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,12 +15,11 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       );
     }
-    const response = await fetch(
-      dataplaneBankUrl(bankId, `/knowledge-base/tree?${tagFilterParams(request)}`),
-      {
-        headers: getDataplaneHeaders(),
-      }
-    );
+    const query = new URLSearchParams();
+    appendTagFilter(query, readTagFilter(request.nextUrl.searchParams));
+    const response = await fetch(dataplaneBankUrl(bankId, `/knowledge-base/tree?${query}`), {
+      headers: getDataplaneHeaders(),
+    });
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: response.statusText }));
       return NextResponse.json(error, { status: response.status });

@@ -87,7 +87,7 @@ def load_config_file():
     IMPORTANT: Only loads from the active profile, never from default if a specific profile is set.
     Uses dynamic path resolution to support testing with temporary HOME directories.
     """
-    from .profile_manager import ProfileManager, resolve_active_profile
+    from .profile_manager import ProfileManager, parse_env_file, resolve_active_profile
 
     # Resolve which profile to use (respects --profile flag, env vars, active_profile file)
     active_profile = resolve_active_profile()
@@ -99,17 +99,9 @@ def load_config_file():
     config_path = paths.config
 
     # Load ONLY this profile's config, never fall back to default
-    if config_path.exists():
-        with open(config_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    # Handle 'export VAR=value' format
-                    if line.startswith("export "):
-                        line = line[7:]
-                    key, value = line.split("=", 1)
-                    if key not in os.environ:  # Don't override env vars
-                        os.environ[key] = value
+    for key, value in parse_env_file(config_path).items():
+        if key not in os.environ:  # Don't override env vars
+            os.environ[key] = value
 
 
 ENV_LLM_PROVIDER = "HINDSIGHT_API_LLM_PROVIDER"
@@ -1083,7 +1075,7 @@ def do_profile_command(args: list[str]) -> int:
     Returns:
         Exit code (0 = success, 1 = error).
     """
-    from .profile_manager import ProfileManager, resolve_active_profile, validate_profile_exists
+    from .profile_manager import ProfileManager, parse_env_file, resolve_active_profile, validate_profile_exists
 
     parser = argparse.ArgumentParser(prog="hindsight-embed profile")
     subparsers = parser.add_subparsers(dest="profile_command", required=True)
@@ -1223,13 +1215,8 @@ def do_profile_command(args: list[str]) -> int:
             else:
                 config_path = CONFIG_FILE
 
-            if config_path.exists():
-                for line in config_path.read_text(encoding="utf-8").splitlines():
-                    line = line.strip()
-                    if line and not line.startswith("#") and "=" in line:
-                        k, v = line.split("=", 1)
-                        if k != "PORT":  # Don't copy PORT, we'll set it explicitly
-                            config[k] = v
+            config = parse_env_file(config_path)
+            config.pop("PORT", None)  # Don't copy PORT, we'll set it explicitly
 
         # Merge new config into existing
         config.update(new_config)
@@ -1274,13 +1261,7 @@ def do_profile_command(args: list[str]) -> int:
             config_path = CONFIG_FILE
 
         # Parse existing config
-        config = {}
-        if config_path.exists():
-            for line in config_path.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    config[k] = v
+        config = parse_env_file(config_path)
 
         # Update the key
         config[key] = value
@@ -1319,13 +1300,7 @@ def do_profile_command(args: list[str]) -> int:
             config_path = CONFIG_FILE
 
         # Parse existing config
-        config = {}
-        if config_path.exists():
-            for line in config_path.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    config[k] = v
+        config = parse_env_file(config_path)
 
         # Remove the key
         if key not in config:

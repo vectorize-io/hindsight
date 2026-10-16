@@ -831,21 +831,22 @@ class PostgreSQLOps(DataAccessOps):
         # made each per-row check cheaper; it kept the per-row structure, so the
         # product blew up again at scale.
         #
-        # `live` groups unit_entities by unit (self-join on unit_id) to emit every
-        # co-occurring (e1<e2) pair in one materialised pass: its cost is driven
-        # by unit degree (entities per unit — small), never by entity degree, so a
-        # hub contributes only its per-unit membership rather than a rescan per
-        # edge. The victims anti-join then hashes against it. MATERIALIZED keeps
-        # the planner from inlining `live` back into a per-row correlated plan.
+        # `live` is built in one materialised pass from unit_entities (self-join
+        # on unit_id), so cost is driven by unit membership, never by a rescan
+        # per edge. The victims anti-join then hashes against it. MATERIALIZED
+        # keeps the planner from inlining `live` back into a per-row correlated
+        # plan.
         #
-        # `live` is seeded from the *candidates'* units rather than the whole
-        # bank's (#3222 composed with #3367): graph maintenance is queue-driven,
-        # so this only has to decide about pairs in `incident`, and every such
-        # pair has a candidate as at least one endpoint. Any unit still
-        # witnessing such a pair therefore references a candidate, and so is in
-        # the seeded set — the scoped build cannot miss a live pair. That keeps
-        # the whole statement proportional to the batch instead of re-deriving
-        # every pair in the bank on every run.
+        # `live` holds only the pairs a *candidate* forms inside its own units
+        # (#3222 composed with #3367), normalised to (LEAST, GREATEST) to match
+        # entity_cooccurrences' entity_id_1 < entity_id_2 order. That is all the
+        # anti-join needs: every pair in `incident` has a candidate endpoint,
+        # and such a pair is live exactly when one of that candidate's units
+        # also holds the other endpoint. Emitting every pair of every candidate
+        # unit instead (the previous shape) gives the same victims, but around
+        # a hub it also expands all the non-candidate pairs of the hub's units,
+        # several times more rows for nothing. Duplicate pairs (both endpoints
+        # candidates, or several shared units) are harmless to the anti-join.
         result = await conn.execute(
             f"""
             WITH incident AS MATERIALIZED (
@@ -858,12 +859,12 @@ class PostgreSQLOps(DataAccessOps):
                 WHERE c.entity_id_2 = ANY($1::uuid[])
             ),
             live AS MATERIALIZED (
-                SELECT u1.entity_id AS e1, u2.entity_id AS e2
-                FROM {ue_table} seed
-                JOIN {ue_table} u1 ON u1.unit_id = seed.unit_id
-                JOIN {ue_table} u2 ON u2.unit_id = u1.unit_id
-                                  AND u2.entity_id > u1.entity_id
-                WHERE seed.entity_id = ANY($1::uuid[])
+                SELECT LEAST(s.entity_id, u.entity_id) AS e1,
+                       GREATEST(s.entity_id, u.entity_id) AS e2
+                FROM {ue_table} s
+                JOIN {ue_table} u ON u.unit_id = s.unit_id
+                                 AND u.entity_id <> s.entity_id
+                WHERE s.entity_id = ANY($1::uuid[])
             ),
             victims AS (
                 SELECT c.entity_id_1, c.entity_id_2

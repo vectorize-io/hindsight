@@ -31,6 +31,7 @@ from typing import Any, Callable
 import aiohttp
 
 from hindsight_api.engine.aiohttp_session import LoopLocalSession, UpstreamHTTPError, raise_for_status
+from hindsight_api.engine.cache_affinity import cache_affinity_id
 from hindsight_api.engine.llm_interface import (
     LLM_TOOL_CHOICE_AUTO,
     LLMInterface,
@@ -123,6 +124,17 @@ def _repair_invalid_json_escapes(text: str) -> str:
         result.append(ch)
         i += 1
     return "".join(result)
+
+
+def _prompt_cache_key(messages: Any) -> str:
+    """Key that lets the backend reuse its prompt cache across one operation's calls.
+
+    Stable per retain/reflect run (or per system prompt outside one), so every chunk
+    of a retain reuses the cached extraction prompt instead of paying for it again
+    out of the account's Codex quota. A fresh key per request, as before, made every
+    call a cache miss.
+    """
+    return cache_affinity_id(messages) or uuid.uuid4().hex
 
 
 # Fallback per-request deadline when the caller resolved no timeout (direct
@@ -289,9 +301,6 @@ class CodexLLM(LLMInterface):
         if self.model.startswith("openai/"):
             self.model = self.model[len("openai/") :]
 
-        # Reasoning summary controls presentation separately from the backend's
-        # reasoning effort, which is sent unchanged in each request payload.
-        self.reasoning_summary = self._map_reasoning_effort(reasoning_effort)
         self._extra_body = dict(extra_body or {})
 
         # Per-request deadline. ``self.timeout`` is resolved by the caller from
@@ -454,37 +463,16 @@ class CodexLLM(LLMInterface):
             except CodexRefreshExpiredError:
                 raise
 
-    def _reasoning_payload(self, summary: str) -> dict[str, str]:
+    def _reasoning_payload(self) -> dict[str, str]:
         """Build the ``reasoning`` request object.
 
         ``effort`` is present only when the operator configured one: an unset
         HINDSIGHT_API_*_REASONING_EFFORT means the model runs at its own default
-        effort, and Hindsight does not pick one on the operator's behalf.
+        effort, and Hindsight does not pick one on the operator's behalf. No
+        ``summary`` is requested: nothing reads it, and generating one spends
+        the account's Codex quota.
         """
-        payload = {"summary": summary}
-        if self.reasoning_effort is not None:
-            payload["effort"] = self.reasoning_effort
-        return payload
-
-    def _map_reasoning_effort(self, effort: str | None) -> str:
-        """
-        Map standard reasoning effort to Codex reasoning summary format.
-
-        Args:
-            effort: Standard effort level ("low", "medium", "high", "xhigh"), or None
-                when unconfigured — the summary then stays "auto", the same neutral
-                presentation an unrecognised level gets.
-
-        Returns:
-            Codex reasoning summary: "concise", "detailed", or "auto".
-        """
-        mapping = {
-            "low": "concise",
-            "medium": "auto",
-            "high": "detailed",
-            "xhigh": "detailed",
-        }
-        return mapping.get(effort.lower(), "auto") if effort else "auto"
+        return {"effort": self.reasoning_effort} if self.reasoning_effort is not None else {}
 
     def supports_vision(self) -> bool:
         """Codex runs OpenAI's own models, all of which are multimodal."""
@@ -536,7 +524,7 @@ class CodexLLM(LLMInterface):
                 back to schema-in-prompt + JSON parse, now hardened with a lenient
                 invalid-escape repair before giving up.
         """
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         # Proactively refresh the OAuth access_token if it's near expiry.
         # Cheap when fresh: a JWT exp decode + comparison.
@@ -577,9 +565,6 @@ class CodexLLM(LLMInterface):
                 schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2, ensure_ascii=False)}"
                 system_instruction += schema_msg
 
-        # gpt-5.2-codex only supports "detailed" reasoning summary
-        reasoning_summary = "detailed" if "5.2" in self.model else self.reasoning_summary
-
         # Build Codex request payload
         payload = {
             "model": self.model,
@@ -595,11 +580,10 @@ class CodexLLM(LLMInterface):
             "tools": [],
             "tool_choice": "auto",
             "parallel_tool_calls": True,
-            "reasoning": self._reasoning_payload(reasoning_summary),
+            "reasoning": self._reasoning_payload(),
             "store": False,  # Codex uses stateless mode
             "stream": True,  # SSE streaming
-            "include": ["reasoning.encrypted_content"],
-            "prompt_cache_key": str(uuid.uuid4()),
+            "prompt_cache_key": _prompt_cache_key(messages),
         }
         payload.update(self._extra_body)
 
@@ -705,7 +689,7 @@ class CodexLLM(LLMInterface):
                     result = content
 
                 # Record metrics
-                duration = time.time() - start_time
+                duration = time.perf_counter() - start_time
                 metrics = get_metrics_collector()
                 metrics.record_llm_call(
                     provider=self.provider,
@@ -998,7 +982,7 @@ class CodexLLM(LLMInterface):
         Returns:
             LLMToolCallResult with content and/or tool_calls.
         """
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         # Proactively refresh the OAuth access_token if it's near expiry.
         # Same rationale as in ``call()`` — keeps the request from leaving
@@ -1047,9 +1031,6 @@ class CodexLLM(LLMInterface):
                 }
             )
 
-        # gpt-5.2-codex only supports "detailed" reasoning summary
-        reasoning_summary = "detailed" if "5.2" in self.model else self.reasoning_summary
-
         payload = {
             "model": self.model,
             "instructions": system_instruction,
@@ -1061,11 +1042,10 @@ class CodexLLM(LLMInterface):
                 else tool_choice.mode.value
             ),
             "parallel_tool_calls": True,
-            "reasoning": self._reasoning_payload(reasoning_summary),
+            "reasoning": self._reasoning_payload(),
             "store": False,
             "stream": True,
-            "include": ["reasoning.encrypted_content"],
-            "prompt_cache_key": str(uuid.uuid4()),
+            "prompt_cache_key": _prompt_cache_key(messages),
         }
         payload.update(self._extra_body)
 
@@ -1134,7 +1114,7 @@ class CodexLLM(LLMInterface):
                     )
                     raise auth_error
 
-            duration = time.time() - start_time
+            duration = time.perf_counter() - start_time
             metrics = get_metrics_collector()
             metrics.record_llm_call(
                 provider=self.provider,

@@ -249,7 +249,7 @@ class NousAuthManager:
         exp = self._decode_jwt_exp_unixtime(self.access_token)
         if exp is None:
             return False
-        return exp <= int(time.time()) + skew_seconds
+        return exp <= int(time.time()) + skew_seconds  # noqa: TID251
 
     # ------------------------------------------------------------------
     # Persistence
@@ -404,7 +404,8 @@ class NousAuthManager:
             expires_in = body.get("expires_in")
             if isinstance(expires_in, (int, float)):
                 persisted["expires_at"] = datetime.fromtimestamp(
-                    time.time() + float(expires_in), tz=timezone.utc
+                    time.time() + float(expires_in),  # noqa: TID251
+                    tz=timezone.utc,
                 ).isoformat()
             try:
                 self._persist_state_atomic(persisted)

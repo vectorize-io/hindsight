@@ -491,11 +491,10 @@ _SCENARIOS: dict[str, Scenario] = {
 }
 
 #: The failures that shipped and had to be fixed. Everything else runs with ``--full``.
-#: ``retired-conventions`` still fails on the current consolidator (a removed setting is
-#: never recorded); it joins this list with the fix.
 MINIMUM_ACCEPTANCE = (
     "restatements-merge",
     "employer-supersedes",
+    "retired-conventions",
     "horse-farm",
     "language-chinese",
 )

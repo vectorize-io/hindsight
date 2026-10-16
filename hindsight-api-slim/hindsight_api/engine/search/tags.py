@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
-from typing import Annotated, Literal
+from typing import Annotated, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -85,9 +85,8 @@ def _parse_tags_match(match: TagsMatch) -> TagMatchSemantics:
         # Set equality is handled by the callers via `@> AND <@`; the operator
         # here is unused. Untagged rows never equal a non-empty scope.
         return TagMatchSemantics("@>", include_untagged=False)
-    else:
-        # Default to "any" behavior
-        return TagMatchSemantics("&&", include_untagged=True)
+    # Fail loud: falling back to "any" would silently widen a strict scope to untagged rows.
+    raise ValueError(f"Unknown tags_match {match!r}; expected one of {get_args(TagsMatch)}")
 
 
 def tag_clause_is_index_only(tags: list[str] | None, match: TagsMatch) -> bool:

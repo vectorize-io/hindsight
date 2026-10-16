@@ -2,6 +2,8 @@
 Test search tracing functionality.
 """
 
+import itertools
+import time
 from datetime import datetime, timezone
 
 import pytest
@@ -54,6 +56,18 @@ def test_trace_timestamp_falls_back_to_now_without_an_anchor():
     trace = tracer.finalize([])
 
     assert before <= trace.query.timestamp <= datetime.now(timezone.utc)
+
+
+def test_trace_duration_survives_a_wall_clock_step_back(monkeypatch):
+    """The recall total is elapsed time, so a wall-clock correction mid-recall cannot make it negative."""
+    readings = itertools.count(1_790_897_894.0, -1.0)
+    monkeypatch.setattr(time, "time", lambda: next(readings))
+    tracer = SearchTracer(query="test", budget=10, max_tokens=100)
+    tracer.start()
+
+    trace = tracer.finalize([])
+
+    assert trace.summary.total_duration_seconds >= 0
 
 
 @pytest.mark.asyncio
