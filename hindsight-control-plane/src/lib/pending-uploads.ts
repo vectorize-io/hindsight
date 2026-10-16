@@ -7,7 +7,7 @@
 // conversion takes its status from that follow-up retain — otherwise an upload
 // whose extraction is still running, or failed, silently drops off the list.
 
-export const PENDING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const PENDING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 // An operation flips to "completed" a couple of seconds before the document
 // becomes visible in listDocuments. Keep showing the pending row for that long
 // so it stays on screen until the real document row takes over (dedup by
