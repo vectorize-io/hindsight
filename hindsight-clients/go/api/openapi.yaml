@@ -142,6 +142,12 @@ paths:
         required: false
         schema:
           default: all_strict
+          enum:
+          - any
+          - all
+          - any_strict
+          - all_strict
+          - exact
           title: Tags Match
           type: string
         style: form
@@ -2548,14 +2554,22 @@ paths:
           nullable: true
           type: array
         style: form
-      - description: "How to match tags: 'any', 'all', 'any_strict', 'all_strict'"
+      - description: "How to match tags: 'any', 'all', 'any_strict', 'all_strict',\
+          \ 'exact'"
         explode: true
         in: query
         name: tags_match
         required: false
         schema:
           default: any_strict
-          description: "How to match tags: 'any', 'all', 'any_strict', 'all_strict'"
+          description: "How to match tags: 'any', 'all', 'any_strict', 'all_strict',\
+            \ 'exact'"
+          enum:
+          - any
+          - all
+          - any_strict
+          - all_strict
+          - exact
           title: Tags Match
           type: string
         style: form

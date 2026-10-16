@@ -1787,6 +1787,34 @@ class TestListToolBounds:
         assert mock_memory.list_operations.call_args.kwargs["limit"] == 100
 
 
+@pytest.mark.asyncio
+class TestRecallReflectTagsMatch:
+    """#5371: an unknown tags_match is rejected instead of silently running as "any"."""
+
+    @pytest.fixture
+    def mock_memory(self, mock_memory):
+        mock_memory._config_resolver.get_bank_config = AsyncMock(return_value={})
+        mock_memory._operation_validator = None
+        mock_memory.audit_logger.action_allowed = MagicMock(return_value=False)
+        return mock_memory
+
+    @pytest.mark.parametrize("include_bank_id", [True, False])
+    @pytest.mark.parametrize("tool", ["recall", "reflect"])
+    async def test_unknown_mode_is_rejected(self, mock_memory, tool, include_bank_id):
+        from pydantic import ValidationError
+
+        mcp = _make_mcp_server(mock_memory, {tool}, include_bank_id=include_bank_id)
+        with pytest.raises(ValidationError):
+            await mcp.call_tool(tool, {"query": "q", "tags": ["typescript"], "tags_match": "any-strict"})
+        getattr(mock_memory, f"{tool}_async").assert_not_called()
+
+    @pytest.mark.parametrize("tool", ["recall", "reflect"])
+    async def test_schema_lists_all_modes(self, mock_memory, tool):
+        mcp = _make_mcp_server(mock_memory, {tool}, include_bank_id=True)
+        schema = _tools(mcp)[tool].parameters["properties"]["tags_match"]
+        assert set(schema["enum"]) == {"any", "all", "any_strict", "all_strict", "exact"}
+
+
 # =========================================================================
 # Tags & Bank Tool Tests
 # =========================================================================

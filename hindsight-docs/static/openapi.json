@@ -202,6 +202,13 @@
             "in": "query",
             "required": false,
             "schema": {
+              "enum": [
+                "any",
+                "all",
+                "any_strict",
+                "all_strict",
+                "exact"
+              ],
               "type": "string",
               "default": "all_strict",
               "title": "Tags Match"
@@ -3689,12 +3696,19 @@
             "in": "query",
             "required": false,
             "schema": {
+              "enum": [
+                "any",
+                "all",
+                "any_strict",
+                "all_strict",
+                "exact"
+              ],
               "type": "string",
-              "description": "How to match tags: 'any', 'all', 'any_strict', 'all_strict'",
+              "description": "How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'",
               "default": "any_strict",
               "title": "Tags Match"
             },
-            "description": "How to match tags: 'any', 'all', 'any_strict', 'all_strict'"
+            "description": "How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'"
           },
           {
             "name": "time_field",

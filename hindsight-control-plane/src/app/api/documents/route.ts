@@ -9,6 +9,7 @@ const TAGS_MATCH_MODES = new Set(["any", "all", "any_strict", "all_strict", "exa
 // Time axes accepted by list_documents. Validated here rather than passed through so a
 // typo is a dropped parameter, not a 422 from the dataplane.
 type TimeField = "created_at" | "updated_at";
+type TagsMatch = "any" | "all" | "any_strict" | "all_strict" | "exact";
 const TIME_FIELDS = new Set<string>(["created_at", "updated_at"]);
 
 export async function GET(request: NextRequest) {
@@ -38,7 +39,9 @@ export async function GET(request: NextRequest) {
   // dataplane default for an unfiltered listing.
   const tagsMatchParam = searchParams.get("tags_match");
   const tagsMatch =
-    tags && tagsMatchParam && TAGS_MATCH_MODES.has(tagsMatchParam) ? tagsMatchParam : undefined;
+    tags && tagsMatchParam && TAGS_MATCH_MODES.has(tagsMatchParam)
+      ? (tagsMatchParam as TagsMatch)
+      : undefined;
 
   const timeFieldParam = searchParams.get("time_field");
   // Set.has() does not narrow, so the cast is what carries the check into the type.

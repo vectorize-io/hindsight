@@ -1243,7 +1243,7 @@ class DocumentsApi:
         bank_id: StrictStr,
         q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter documents by tags")] = None,
-        tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags: 'any', 'all', 'any_strict', 'all_strict'")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'")] = None,
         time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
         start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
         end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
@@ -1273,7 +1273,7 @@ class DocumentsApi:
         :type q: str
         :param tags: Filter documents by tags
         :type tags: List[str]
-        :param tags_match: How to match tags: 'any', 'all', 'any_strict', 'all_strict'
+        :param tags_match: How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'
         :type tags_match: str
         :param time_field: Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.
         :type time_field: str
@@ -1348,7 +1348,7 @@ class DocumentsApi:
         bank_id: StrictStr,
         q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter documents by tags")] = None,
-        tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags: 'any', 'all', 'any_strict', 'all_strict'")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'")] = None,
         time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
         start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
         end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
@@ -1378,7 +1378,7 @@ class DocumentsApi:
         :type q: str
         :param tags: Filter documents by tags
         :type tags: List[str]
-        :param tags_match: How to match tags: 'any', 'all', 'any_strict', 'all_strict'
+        :param tags_match: How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'
         :type tags_match: str
         :param time_field: Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.
         :type time_field: str
@@ -1453,7 +1453,7 @@ class DocumentsApi:
         bank_id: StrictStr,
         q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter documents by tags")] = None,
-        tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags: 'any', 'all', 'any_strict', 'all_strict'")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'")] = None,
         time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
         start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
         end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
@@ -1483,7 +1483,7 @@ class DocumentsApi:
         :type q: str
         :param tags: Filter documents by tags
         :type tags: List[str]
-        :param tags_match: How to match tags: 'any', 'all', 'any_strict', 'all_strict'
+        :param tags_match: How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'
         :type tags_match: str
         :param time_field: Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.
         :type time_field: str

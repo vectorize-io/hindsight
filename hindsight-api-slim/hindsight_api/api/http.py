@@ -5799,7 +5799,7 @@ def _register_routes(app: FastAPI):
         limit: int = Query(default=1000, ge=0),
         q: str | None = None,
         tags: list[str] | None = Query(None),
-        tags_match: str = "all_strict",
+        tags_match: TagsMatch = "all_strict",
         document_id: str | None = None,
         chunk_id: str | None = None,
         request_context: RequestContext = Depends(get_request_context),
@@ -7830,8 +7830,8 @@ def _register_routes(app: FastAPI):
             None, description="Case-insensitive substring filter on document ID (e.g. 'report' matches 'report-2024')"
         ),
         tags: list[str] | None = Query(None, description="Filter documents by tags"),
-        tags_match: str = Query(
-            "any_strict", description="How to match tags: 'any', 'all', 'any_strict', 'all_strict'"
+        tags_match: TagsMatch = Query(
+            "any_strict", description="How to match tags: 'any', 'all', 'any_strict', 'all_strict', 'exact'"
         ),
         time_field: DocumentTimeField | None = Query(
             default=None,

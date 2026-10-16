@@ -584,7 +584,7 @@ func (r ApiListDocumentsRequest) Tags(tags []string) ApiListDocumentsRequest {
 	return r
 }
 
-// How to match tags: &#39;any&#39;, &#39;all&#39;, &#39;any_strict&#39;, &#39;all_strict&#39;
+// How to match tags: &#39;any&#39;, &#39;all&#39;, &#39;any_strict&#39;, &#39;all_strict&#39;, &#39;exact&#39;
 func (r ApiListDocumentsRequest) TagsMatch(tagsMatch string) ApiListDocumentsRequest {
 	r.tagsMatch = &tagsMatch
 	return r
