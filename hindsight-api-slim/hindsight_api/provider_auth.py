@@ -11,6 +11,8 @@ and so ``hindsight-api --help``, must not pay.
 
 from __future__ import annotations
 
+import os
+
 _PROVIDERS_WITHOUT_API_KEY = frozenset(
     {
         "ollama",
@@ -34,4 +36,9 @@ _PROVIDERS_WITHOUT_API_KEY = frozenset(
 
 def requires_api_key(provider: str) -> bool:
     """Return True if the given provider requires an API key to operate."""
-    return provider.lower() not in _PROVIDERS_WITHOUT_API_KEY
+    provider = provider.lower()
+    # Workload Identity Federation: the Anthropic SDK trades a platform identity token
+    # for short-lived access tokens itself, so no static key is needed (issue #5502).
+    if provider == "anthropic" and os.getenv("ANTHROPIC_FEDERATION_RULE_ID"):
+        return False
+    return provider not in _PROVIDERS_WITHOUT_API_KEY

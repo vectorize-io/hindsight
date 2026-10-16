@@ -26,6 +26,7 @@ from hindsight_api.engine.llm_interface import (
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_llm_error
+from hindsight_api.engine.provider_auth import requires_api_key
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.remote_retry import jittered_backoff
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
@@ -221,7 +222,7 @@ class AnthropicLLM(LLMInterface):
         super().__init__(provider, api_key, base_url, model, reasoning_effort, timeout=timeout, **kwargs)
         self._warn_reasoning_effort_unsupported()
 
-        if not self.api_key:
+        if not self.api_key and requires_api_key(provider):
             raise ValueError("API key is required for Anthropic provider")
 
         # User-configured extra body params (merged into every Messages API call)
@@ -234,7 +235,11 @@ class AnthropicLLM(LLMInterface):
             # SDK retries disabled — wrapper-level retry loop in ``call`` handles
             # backoff (mirrors ``OpenAICompatibleLLM`` so the two providers behave
             # consistently).
-            client_kwargs: dict[str, Any] = {"api_key": self.api_key, "max_retries": 0}
+            client_kwargs: dict[str, Any] = {"max_retries": 0}
+            # No key: the SDK resolves credentials itself (Workload Identity Federation).
+            # An explicit api_key would outrank that, so only pass one when set.
+            if self.api_key:
+                client_kwargs["api_key"] = self.api_key
             if self.base_url:
                 client_kwargs["base_url"] = self.base_url
             # Per-phase so the connect leg is capped independently (issue #3881). Built

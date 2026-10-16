@@ -273,7 +273,7 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-responses`, `openai-codex`, `claude-code`, `cursor`, `github-copilot`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `meta`, `nous`, `xai-oauth`, `fireworks`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `requesty`, `none` | `openai` |
-| `HINDSIGHT_API_LLM_API_KEY` | API key for providers that require one; unused by `github-copilot` | - |
+| `HINDSIGHT_API_LLM_API_KEY` | API key for providers that require one; unused by `github-copilot`. Optional for `anthropic` when [Workload Identity Federation](https://platform.claude.com/docs/en/manage-claude/workload-identity-federation) is configured (see the Anthropic example below) | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-mini` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |
 | `HINDSIGHT_API_LLM_MAX_CONCURRENT` | Max concurrent LLM requests | `32` |
@@ -366,6 +366,13 @@ export HINDSIGHT_API_LLM_MODEL=gemini-2.0-flash
 export HINDSIGHT_API_LLM_PROVIDER=anthropic
 export HINDSIGHT_API_LLM_API_KEY=sk-ant-xxxxxxxxxxxx
 export HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-20250514
+# Or, with no static key: Workload Identity Federation. Leave HINDSIGHT_API_LLM_API_KEY
+# unset and the Anthropic SDK trades the platform identity token for short-lived
+# access tokens, refreshing them on its own.
+# export ANTHROPIC_FEDERATION_RULE_ID=fdrl_xxxxxxxxxxxx
+# export ANTHROPIC_ORGANIZATION_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+# export ANTHROPIC_SERVICE_ACCOUNT_ID=svac_xxxxxxxxxxxx
+# export ANTHROPIC_IDENTITY_TOKEN_FILE=/var/run/secrets/anthropic/token  # e.g. a projected k8s service-account token
 
 # Vertex AI (Google Cloud - uses native genai SDK)
 export HINDSIGHT_API_LLM_PROVIDER=vertexai
