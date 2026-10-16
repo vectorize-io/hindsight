@@ -714,7 +714,8 @@
       "cancel": "Annuler",
       "retry": "Réessayer",
       "delete": "Supprimer",
-      "download": "Télécharger"
+      "download": "Télécharger",
+      "retryAll": "Tout relancer ({count})"
     },
     "pagination": "Affichage de {start}-{end} sur {total}",
     "paginationPrevious": "Précédent",
@@ -742,7 +743,8 @@
       "hoursAgo": "il y a {hours}h"
     },
     "progressEstimateNote": "Le total est estimé au démarrage de la consolidation et peut augmenter si de nouveaux souvenirs arrivent pendant son exécution — c'est normal.",
-    "viewDocument": "Voir le document"
+    "viewDocument": "Voir le document",
+    "retryAllDone": "{done} sur {total} relancées"
   },
   "dataView": {
     "loadingMemories": "Chargement des souvenirs...",

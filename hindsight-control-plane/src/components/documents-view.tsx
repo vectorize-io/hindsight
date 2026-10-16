@@ -765,6 +765,7 @@ export function DocumentsView() {
   const [loadingDocument, setLoadingDocument] = useState(false);
   const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
   const [deletingUploadOperationId, setDeletingUploadOperationId] = useState<string | null>(null);
+  const [retryingUploadOperationId, setRetryingUploadOperationId] = useState<string | null>(null);
 
   // Tag editing state
   const [editingTags, setEditingTags] = useState(false);
@@ -1092,6 +1093,22 @@ export function DocumentsView() {
       // Error toast is shown automatically by the API client interceptor
     } finally {
       setDeletingUploadOperationId(null);
+    }
+  };
+
+  const retryFailedUpload = async (operationId: string) => {
+    if (!currentBank) return;
+
+    setRetryingUploadOperationId(operationId);
+    try {
+      // The stored file is kept on failure, so re-queuing the operation
+      // re-runs the upload from the saved input.
+      await client.retryOperation(currentBank, operationId);
+      await loadPendingUploads();
+    } catch {
+      // Error toast is shown automatically by the API client interceptor
+    } finally {
+      setRetryingUploadOperationId(null);
     }
   };
 
@@ -1686,6 +1703,22 @@ export function DocumentsView() {
                               <X className="w-3 h-3" />
                               {t("pendingUploadFailedStatus")}
                             </span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"
+                              onClick={() => retryFailedUpload(upload.operationId)}
+                              disabled={retryingUploadOperationId === upload.operationId}
+                            >
+                              {retryingUploadOperationId === upload.operationId ? (
+                                <Spinner size="xs" />
+                              ) : (
+                                <RotateCcw className="w-3 h-3 mr-1" />
+                              )}
+                              {retryingUploadOperationId === upload.operationId
+                                ? ""
+                                : tOperations("action.retry")}
+                            </Button>
                             <Button
                               variant="ghost"
                               size="sm"

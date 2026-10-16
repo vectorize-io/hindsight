@@ -714,7 +714,8 @@
       "cancel": "取消",
       "retry": "重試",
       "delete": "刪除",
-      "download": "下載"
+      "download": "下載",
+      "retryAll": "全部重試 ({count})"
     },
     "pagination": "顯示第 {start}-{end} 項，共 {total} 項",
     "paginationPrevious": "上一頁",
@@ -742,7 +743,8 @@
       "hoursAgo": "{hours}小時前"
     },
     "progressEstimateNote": "總數係整合開始時嘅估算值，執行期間如果有新記憶加入可能會增加，屬正常現象。",
-    "viewDocument": "查看文件"
+    "viewDocument": "查看文件",
+    "retryAllDone": "已重試 {done}/{total}"
   },
   "dataView": {
     "loadingMemories": "載入中記憶...",

@@ -714,7 +714,8 @@
       "cancel": "Cancelar",
       "retry": "Tentar novamente",
       "delete": "Excluir",
-      "download": "Baixar"
+      "download": "Baixar",
+      "retryAll": "Tentar todas novamente ({count})"
     },
     "pagination": "Mostrando {start}-{end} de {total}",
     "paginationPrevious": "Anterior",
@@ -742,7 +743,8 @@
       "hoursAgo": "há {hours}h"
     },
     "progressEstimateNote": "O total é estimado quando a consolidação inicia e pode crescer se novas memórias chegarem durante a execução — isso é esperado.",
-    "viewDocument": "Ver documento"
+    "viewDocument": "Ver documento",
+    "retryAllDone": "{done} de {total} reenviadas"
   },
   "dataView": {
     "loadingMemories": "Carregando memórias...",

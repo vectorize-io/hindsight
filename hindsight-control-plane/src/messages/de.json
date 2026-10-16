@@ -714,7 +714,8 @@
       "cancel": "Abbrechen",
       "retry": "Wiederholen",
       "delete": "Löschen",
-      "download": "Herunterladen"
+      "download": "Herunterladen",
+      "retryAll": "Alle wiederholen ({count})"
     },
     "pagination": "Zeige {start}-{end} von {total}",
     "paginationPrevious": "Zurück",
@@ -742,7 +743,8 @@
       "hoursAgo": "vor {hours}h"
     },
     "progressEstimateNote": "Die Gesamtzahl ist eine Schätzung vom Start der Konsolidierung und kann steigen, wenn währenddessen neue Erinnerungen hinzukommen — das ist normal.",
-    "viewDocument": "Dokument anzeigen"
+    "viewDocument": "Dokument anzeigen",
+    "retryAllDone": "{done} von {total} erneut gestartet"
   },
   "dataView": {
     "loadingMemories": "Erinnerungen werden geladen...",
