@@ -436,3 +436,29 @@ async def test_a_failed_search_query_rewrite_searches_the_request_as_written():
 
     assert result.text == "A"
     assert functions["recall_fn"].await_args.args[0] == "where does Alice live?"
+
+
+@pytest.mark.asyncio
+async def test_round_recall_never_goes_below_the_banks_own_recall_size():
+    from dataclasses import replace
+
+    from hindsight_api.engine.reflect.agent import _ROUND_RECALL_MAX_TOKENS, _SHIPPED_DEFAULT_TOOL_LIMITS
+
+    bank_size = _ROUND_RECALL_MAX_TOKENS + 4000
+    functions = _functions()
+
+    await run_reflect_agent(
+        llm_config=_ScriptedProvider([_done()]),
+        bank_id="b",
+        query="where does Alice live?",
+        bank_profile={"name": "T", "mission": "M"},
+        has_mental_models=True,
+        budget="mid",
+        max_iterations=6,
+        evidence_is_sufficient_fn=AsyncMock(return_value=True),
+        prune_evidence_fn=AsyncMock(side_effect=lambda q, texts: [True] * len(texts)),
+        tool_token_limits=replace(_SHIPPED_DEFAULT_TOOL_LIMITS, recall_max_tokens=bank_size),
+        **functions,
+    )
+
+    assert bank_size in functions["recall_fn"].await_args.args

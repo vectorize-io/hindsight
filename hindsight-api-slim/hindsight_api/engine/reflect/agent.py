@@ -1753,7 +1753,7 @@ async def _run_reflect_agent_inner(
                 None,
             )
             if follow_up is not None:
-                # The turn's other calls (expand, get_document, read_mental_models) run with the
+                # The turn's other calls (expand, read_mental_models) run with the
                 # round: replacing the turn with the round alone dropped them.
                 round_result = _parallel_round(str(follow_up.arguments["query"]), f"round{iteration + 1}_")
                 extra_calls = [
@@ -2132,8 +2132,6 @@ async def _prune_round(
         for key in ("observations", "memories"):
             if key in data:
                 data[key] = [item for item in data[key] if (i, key, str(item.get("id"))) in kept]
-        if "count" in data and "observations" in data:
-            data["count"] = len(data["observations"])
         if "chunks" in data:
             data["chunks"] = {cid: c for cid, c in data["chunks"].items() if (i, "chunks", str(cid)) in kept}
         if "source_facts" in data:
