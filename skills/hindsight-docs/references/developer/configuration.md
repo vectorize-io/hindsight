@@ -410,7 +410,7 @@ export HINDSIGHT_API_LLM_MODEL=your-model-name
 
 # OpenAI Codex (ChatGPT Plus/Pro subscription - uses OAuth, no API key needed)
 export HINDSIGHT_API_LLM_PROVIDER=openai-codex
-export HINDSIGHT_API_LLM_MODEL=gpt-5.4-mini
+export HINDSIGHT_API_LLM_MODEL=gpt-5.6-luna
 # No API key needed - uses OAuth tokens from ~/.codex/auth.json
 # For long-running services, set CODEX_HOME to a dedicated auth directory so
 # Hindsight doesn't share (and lose) its refresh token with another Codex process.
