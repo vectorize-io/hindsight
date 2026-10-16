@@ -2,7 +2,11 @@
 
 import builtins
 import json
+import os
 import pathlib
+import re
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -481,6 +485,27 @@ class TestResolveActiveProfile:
 
         # Default should be used
         assert resolve_active_profile() == ""
+
+    def test_cli_flag_applies_under_python_m(self, profile_manager):
+        """`python -m hindsight_embed.cli --profile X` must resolve X (#5543).
+
+        That form loads cli.py twice (as __main__ and as hindsight_embed.cli), so
+        this has to run in a real subprocess to catch the bug.
+        """
+        profile_manager.create_profile("demo", 9177, {"KEY": "value"})
+
+        result = subprocess.run(
+            [sys.executable, "-m", "hindsight_embed.cli", "--profile", "demo", "profile", "show"],
+            capture_output=True,
+            text=True,
+            env=os.environ.copy(),
+            timeout=60,
+        )
+
+        assert result.returncode == 0, result.stderr
+        out = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+        assert "Active profile: demo" in out
+        assert "Port: 9177" in out
 
 
 class TestValidateProfileExists:

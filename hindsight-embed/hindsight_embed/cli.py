@@ -31,31 +31,14 @@ from pathlib import Path
 
 from . import get_embed_manager
 
+# The --profile override is stored in profile_manager, not here: we must keep
+# supporting `python -m hindsight_embed.cli`, and the note there explains why a
+# global in this module breaks that form.
+from .profile_manager import get_cli_profile_override, set_cli_profile_override
+
 CONFIG_DIR = Path.home() / ".hindsight"
 CONFIG_FILE = CONFIG_DIR / "embed"
 CONFIG_FILE_ALT = CONFIG_DIR / "config.env"  # Alternative config file location
-
-# None means no flag; an empty string explicitly selects the default profile.
-_cli_profile_override: str | None = None
-
-
-def get_cli_profile_override() -> str | None:
-    """Get the profile override from CLI flag (--profile).
-
-    Returns:
-        Profile name if set via CLI flag (empty string for default), None otherwise.
-    """
-    return _cli_profile_override
-
-
-def set_cli_profile_override(profile: str | None) -> None:
-    """Set the profile override from CLI flag (--profile).
-
-    Args:
-        profile: Profile name to set (empty string for default), or None to clear.
-    """
-    global _cli_profile_override
-    _cli_profile_override = profile
 
 
 def setup_logging(verbose: bool = False):

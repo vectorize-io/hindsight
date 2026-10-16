@@ -736,6 +736,27 @@ class ProfileManager:
         temp_file.replace(metadata_file)
 
 
+# The --profile flag value, set by cli.main(). It lives here, not in cli.py, on
+# purpose: we support running the CLI as `python -m hindsight_embed.cli` (launchd,
+# systemd, cron and container entrypoints pin a venv's python that way). In that
+# form cli.py is loaded twice — once as __main__, once as hindsight_embed.cli — so
+# a global in cli.py would be set on one copy and read from the other (#5543).
+# This module is only ever loaded once, so both sides see the same value.
+# None means no flag; an empty string explicitly selects the default profile.
+_cli_profile_override: str | None = None
+
+
+def get_cli_profile_override() -> str | None:
+    """Get the profile override from the CLI flag (--profile): empty string for default, None if unset."""
+    return _cli_profile_override
+
+
+def set_cli_profile_override(profile: str | None) -> None:
+    """Set the profile override from the CLI flag (--profile): empty string for default, None clears it."""
+    global _cli_profile_override
+    _cli_profile_override = profile
+
+
 def resolve_active_profile() -> str:
     """Resolve which profile to use based on priority.
 
@@ -753,9 +774,7 @@ def resolve_active_profile() -> str:
         return "" if env_profile == "default" else env_profile
 
     # 2. CLI flag (set by caller before invoking commands)
-    from . import cli
-
-    cli_profile = cli.get_cli_profile_override()
+    cli_profile = get_cli_profile_override()
     if cli_profile is not None:
         return cli_profile
 
