@@ -32,6 +32,10 @@ from ..config import (
     DEFAULT_EMBEDDINGS_LITELLM_MODEL,
     DEFAULT_EMBEDDINGS_LITELLM_SDK_MODEL,
     DEFAULT_EMBEDDINGS_LOCAL_MODEL,
+    DEFAULT_EMBEDDINGS_NVIDIA_BASE_URL,
+    DEFAULT_EMBEDDINGS_NVIDIA_BATCH_SIZE,
+    DEFAULT_EMBEDDINGS_NVIDIA_DIMENSIONS,
+    DEFAULT_EMBEDDINGS_NVIDIA_MODEL,
     DEFAULT_EMBEDDINGS_ONNX_BATCH_SIZE,
     DEFAULT_EMBEDDINGS_ONNX_CPU_MEM_ARENA,
     DEFAULT_EMBEDDINGS_ONNX_CUDA_DEVICE_ID,
@@ -47,6 +51,7 @@ from ..config import (
     ENV_EMBEDDINGS_COHERE_API_KEY,
     ENV_EMBEDDINGS_GEMINI_API_KEY,
     ENV_EMBEDDINGS_LITELLM_DIMENSIONS,
+    ENV_EMBEDDINGS_NVIDIA_API_KEY,
     ENV_EMBEDDINGS_OPENAI_API_KEY,
     ENV_EMBEDDINGS_PROVIDER,
     ENV_EMBEDDINGS_TEI_URL,
@@ -108,6 +113,30 @@ class _ZeroEntropyEmbedResult(BaseModel):
 
 class _ZeroEntropyEmbedResponse(BaseModel):
     results: list[_ZeroEntropyEmbedResult]
+
+
+NvidiaInputType = Literal["passage", "query"]
+
+
+class _NvidiaEmbedRequest(BaseModel):
+    """Typed request body for NVIDIA NIM's /embeddings endpoint."""
+
+    model: str
+    input: list[str]
+    input_type: NvidiaInputType
+    dimensions: int
+    encoding_format: Literal["float"] = "float"
+    # Cut over-long input at the end instead of rejecting the whole batch with a 400.
+    truncate: Literal["END"] = "END"
+
+
+class _NvidiaEmbedResult(BaseModel):
+    index: int
+    embedding: list[float]
+
+
+class _NvidiaEmbedResponse(BaseModel):
+    data: list[_NvidiaEmbedResult]
 
 
 class Embeddings(ABC):
@@ -1491,6 +1520,109 @@ class ZeroEntropyEmbeddings(Embeddings):
         return list(struct.unpack(f"<{len(raw) // 4}f", raw))
 
 
+class NvidiaEmbeddings(Embeddings):
+    """
+    NVIDIA NIM embeddings (build.nvidia.com or a self-hosted NIM).
+
+    The endpoint is OpenAI-shaped (/v1/embeddings), but NVIDIA's retrieval models are
+    asymmetric and need input_type ("query" / "passage") — some reject a request
+    without it — which the OpenAI client cannot send. Like ZeroEntropy, this provider
+    carries the distinction natively through encode_query()/encode_documents().
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = DEFAULT_EMBEDDINGS_NVIDIA_MODEL,
+        base_url: str = DEFAULT_EMBEDDINGS_NVIDIA_BASE_URL,
+        dimensions: int = DEFAULT_EMBEDDINGS_NVIDIA_DIMENSIONS,
+        batch_size: int = DEFAULT_EMBEDDINGS_NVIDIA_BATCH_SIZE,
+        timeout: float = 60.0,
+        retry_policy: RetryPolicy | None = None,
+    ):
+        self.api_key = api_key
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self.embed_url = f"{self.base_url}/embeddings"
+        self.dimensions = dimensions
+        self.batch_size = batch_size
+        self.timeout = timeout
+        self.retry_policy = retry_policy or RetryPolicy()
+        self._session: LoopLocalSession | None = None
+
+    @property
+    def provider_name(self) -> str:
+        return "nvidia"
+
+    @property
+    def dimension(self) -> int:
+        if self._session is None:
+            raise RuntimeError("Embeddings not initialized. Call initialize() first.")
+        return self.dimensions
+
+    async def initialize(self) -> None:
+        if self._session is not None:
+            return
+        logger.info(
+            f"Embeddings: initializing NVIDIA provider with model {self.model} at {self.base_url} "
+            f"(dim: {self.dimensions}, batch_size={self.batch_size})"
+        )
+        self._session = LoopLocalSession(
+            timeout=per_phase_timeout(self.timeout),
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+        )
+        # The dimension is sent with every request, so the configured value is the
+        # stored one; no startup probe that would burn quota on a throwaway input.
+
+    async def encode(self, texts: list[str]) -> list[list[float]]:
+        """Generate document-side embeddings for backwards-compatible callers."""
+        return await self.encode_documents(texts)
+
+    async def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        return await self._encode_with_input_type(texts, "passage")
+
+    async def encode_query(self, texts: list[str]) -> list[list[float]]:
+        return await self._encode_with_input_type(texts, "query")
+
+    async def _encode_with_input_type(self, texts: list[str], input_type: NvidiaInputType) -> list[list[float]]:
+        if self._session is None:
+            raise RuntimeError("Embeddings not initialized. Call initialize() first.")
+        if not texts:
+            return []
+        # One retry budget for the whole call, shared by its concurrent batches.
+        budget = self.retry_policy.new_budget()
+        return await self._encode_batched(texts, lambda batch: self._embed_batch(batch, input_type, budget))
+
+    async def _embed_batch(
+        self, batch: list[str], input_type: NvidiaInputType, budget: "RetryBudget"
+    ) -> list[list[float]]:
+        assert self._session is not None
+        session = self._session.get()
+        request = _NvidiaEmbedRequest(model=self.model, input=batch, input_type=input_type, dimensions=self.dimensions)
+
+        async def post_batch() -> Any:
+            async with session.post(self.embed_url, json=request.model_dump()) as response:
+                # Inside the retried closure so a 429/5xx is retried; the RuntimeError
+                # wrap below stays outside, since it erases the status code retry reads.
+                await raise_for_status(response)
+                return await response.json(content_type=None)
+
+        try:
+            body = await acall_with_retry(
+                post_batch, policy=self.retry_policy, budget=budget, provider=self.provider_name
+            )
+        except _HTTP_ERRORS as e:
+            raise RuntimeError(f"NVIDIA embedding request failed: {e}") from e
+
+        parsed = _NvidiaEmbedResponse.model_validate(body)
+        if len(parsed.data) != len(batch):
+            raise RuntimeError(
+                f"NVIDIA returned {len(parsed.data)} embeddings for {len(batch)} input texts; "
+                "expected exact 1:1 alignment"
+            )
+        return [item.embedding for item in sorted(parsed.data, key=lambda item: item.index)]
+
+
 class LiteLLMEmbeddings(Embeddings):
     """
     LiteLLM embeddings implementation using LiteLLM proxy's /embeddings endpoint.
@@ -2216,8 +2348,8 @@ def create_embeddings_from_env() -> Embeddings:
     provider = config.embeddings_provider.lower()
 
     # Asymmetric prefixes are handed only to the providers that are plain
-    # text-in/vector-out. `local` and `zeroentropy` carry the distinction natively
-    # (SentenceTransformers prompts / input_type) and `onnx` has its own pair with
+    # text-in/vector-out. `local`, `zeroentropy` and `nvidia` carry the distinction
+    # natively (SentenceTransformers prompts / input_type) and `onnx` has its own pair with
     # non-empty E5 defaults, so none of them take these.
     query_prefix = config.embeddings_query_prefix
     passage_prefix = config.embeddings_passage_prefix
@@ -2357,6 +2489,21 @@ def create_embeddings_from_env() -> Embeddings:
             ),
             config,
         )
+    elif provider == "nvidia":
+        api_key = config.embeddings_nvidia_api_key
+        if not api_key:
+            raise ValueError(f"{ENV_EMBEDDINGS_NVIDIA_API_KEY} is required when {ENV_EMBEDDINGS_PROVIDER} is 'nvidia'")
+        return _with_request_concurrency(
+            NvidiaEmbeddings(
+                api_key=api_key,
+                model=config.embeddings_nvidia_model,
+                base_url=config.embeddings_nvidia_base_url,
+                dimensions=config.embeddings_nvidia_dimensions,
+                batch_size=config.embeddings_nvidia_batch_size,
+                retry_policy=_retry_policy_from_config(config),
+            ),
+            config,
+        )
     elif provider == "cohere":
         api_key = config.embeddings_cohere_api_key
         if not api_key:
@@ -2428,5 +2575,5 @@ def create_embeddings_from_env() -> Embeddings:
         raise ValueError(
             f"Unknown embeddings provider: {provider}. "
             f"Supported: 'local', 'onnx', 'tei', 'openai', 'openai-codex', 'openrouter', 'requesty', 'cohere', 'google', "
-            f"'zeroentropy', 'litellm', 'litellm-sdk'"
+            f"'zeroentropy', 'nvidia', 'litellm', 'litellm-sdk'"
         )

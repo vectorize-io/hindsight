@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, cast
 
 import aiohttp
+from pydantic import BaseModel
 
 from .._cross_loop import CrossLoopSemaphore
 from ..config import (
@@ -32,6 +33,10 @@ from ..config import (
     DEFAULT_RERANKER_LOCAL_BATCH_SIZE,
     DEFAULT_RERANKER_LOCAL_MODEL,
     DEFAULT_RERANKER_LOCAL_TIMEOUT,
+    DEFAULT_RERANKER_NVIDIA_BASE_URL,
+    DEFAULT_RERANKER_NVIDIA_BATCH_SIZE,
+    DEFAULT_RERANKER_NVIDIA_MAX_CONCURRENT,
+    DEFAULT_RERANKER_NVIDIA_MODEL,
     DEFAULT_RERANKER_SILICONFLOW_BASE_URL,
     DEFAULT_RERANKER_SILICONFLOW_MODEL,
     DEFAULT_RERANKER_TEI_BATCH_SIZE,
@@ -977,6 +982,111 @@ class SiliconFlowCrossEncoder(CrossEncoderModel):
 
     async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         return await self._client.predict(pairs)
+
+
+class _NvidiaText(BaseModel):
+    text: str
+
+
+class _NvidiaRerankRequest(BaseModel):
+    model: str
+    query: _NvidiaText
+    passages: list[_NvidiaText]
+
+
+class _NvidiaRanking(BaseModel):
+    index: int
+    logit: float
+
+
+class _NvidiaRerankResponse(BaseModel):
+    rankings: list[_NvidiaRanking]
+
+
+class NvidiaCrossEncoder(CrossEncoderModel):
+    """
+    NVIDIA NIM cross-encoder using the native reranking API.
+
+    Not Cohere-compatible, so it cannot reuse _CohereCompatibleRerankClient:
+    the path carries the model (/retrieval/<model>/reranking), the query is
+    {"text": ...}, each passage is {"text": ...}, and the response is
+    rankings[].logit — a raw logit, not a 0..1 relevance_score. Raw logits are
+    fine: each is a per-pair score, so they compare across batches and calls, and
+    recall's sigmoid normalization maps them into 0..1.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = DEFAULT_RERANKER_NVIDIA_MODEL,
+        base_url: str = DEFAULT_RERANKER_NVIDIA_BASE_URL,
+        timeout: float = 60.0,
+        batch_size: int = DEFAULT_RERANKER_NVIDIA_BATCH_SIZE,
+        max_concurrent: int = DEFAULT_RERANKER_NVIDIA_MAX_CONCURRENT,
+    ):
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self.rerank_url = f"{self.base_url}/retrieval/{model.strip('/')}/reranking"
+        self.timeout = timeout
+        self.batch_size = batch_size
+        self.max_concurrent = max_concurrent
+        # CrossLoopSemaphore, not asyncio.Semaphore: the encoder is built once and
+        # reached from every loop in the process — same reasoning as TypeSafeCrossEncoder.
+        self._semaphore = CrossLoopSemaphore(max_concurrent)
+        self._session = LoopLocalSession(
+            timeout=per_phase_timeout(timeout),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        )
+
+    @property
+    def provider_name(self) -> str:
+        return "nvidia"
+
+    async def initialize(self) -> None:
+        # Nothing to connect: the session is created lazily per event loop on first use.
+        logger.info(
+            f"Reranker: initializing NVIDIA provider at {self.rerank_url} "
+            f"(batch_size={self.batch_size}, max_concurrent={self.max_concurrent})"
+        )
+
+    async def _rerank_batch(self, query: str, texts: list[str]) -> list[float]:
+        request = _NvidiaRerankRequest(
+            model=self.model, query=_NvidiaText(text=query), passages=[_NvidiaText(text=t) for t in texts]
+        )
+        async with self._semaphore:
+            async with self._session.get().post(
+                self.rerank_url,
+                headers=reranker_bank_attribution_headers(),
+                json=request.model_dump(),
+            ) as response:
+                await raise_for_status(response)
+                result = _NvidiaRerankResponse.model_validate(await response.json(content_type=None))
+        scores = [0.0] * len(texts)
+        for ranking in result.rankings:
+            scores[ranking.index] = ranking.logit
+        return scores
+
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        # One request per distinct query (like the Cohere-compatible client), split
+        # into batch_size slices because the API caps passages per request; slices
+        # run concurrently, bounded by max_concurrent across all calls.
+        query_groups: dict[str, list[int]] = {}
+        for idx, (query, _) in enumerate(pairs):
+            query_groups.setdefault(query, []).append(idx)
+
+        slices = [
+            (query, indices[i : i + self.batch_size])
+            for query, indices in query_groups.items()
+            for i in range(0, len(indices), self.batch_size)
+        ]
+        results = await asyncio.gather(
+            *(self._rerank_batch(query, [pairs[idx][1] for idx in indices]) for query, indices in slices)
+        )
+        all_scores = [0.0] * len(pairs)
+        for (_, indices), scores in zip(slices, results):
+            for idx, score in zip(indices, scores):
+                all_scores[idx] = score
+        return all_scores
 
 
 # Single source of truth for prompt templates and overheads
@@ -2404,6 +2514,20 @@ def _create_cross_encoder_backend(member: RerankerMemberConfig) -> CrossEncoderM
             base_url=member.siliconflow_base_url,
             timeout=member.siliconflow_timeout,
         )
+    elif provider == "nvidia":
+        api_key = member.nvidia_api_key
+        if not api_key:
+            raise ValueError(
+                f"{member.env_name('NVIDIA_API_KEY')} is required when {member.env_name('PROVIDER')} is 'nvidia'"
+            )
+        return NvidiaCrossEncoder(
+            api_key=api_key,
+            model=member.nvidia_model,
+            base_url=member.nvidia_base_url,
+            timeout=member.nvidia_timeout,
+            batch_size=member.nvidia_batch_size,
+            max_concurrent=member.nvidia_max_concurrent,
+        )
     elif provider == "google":
         project_id = member.google_project_id
         if not project_id:
@@ -2449,7 +2573,7 @@ def _create_cross_encoder_backend(member: RerankerMemberConfig) -> CrossEncoderM
         return JinaMLXCrossEncoder()
     else:
         raise ValueError(
-            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'siliconflow', 'typesafe', 'alibaba', 'google', 'flashrank', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
+            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'siliconflow', 'nvidia', 'typesafe', 'alibaba', 'google', 'flashrank', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
         )
 
 

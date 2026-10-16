@@ -581,6 +581,13 @@ ENV_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT = "HINDSIGHT_API_EMBEDDINGS_ZEROENTRO
 ENV_EMBEDDINGS_ZEROENTROPY_LATENCY = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_LATENCY"
 ENV_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE"
 
+# NVIDIA NIM embeddings (OpenAI-shaped /embeddings plus a required input_type)
+ENV_EMBEDDINGS_NVIDIA_API_KEY = "HINDSIGHT_API_EMBEDDINGS_NVIDIA_API_KEY"
+ENV_EMBEDDINGS_NVIDIA_MODEL = "HINDSIGHT_API_EMBEDDINGS_NVIDIA_MODEL"
+ENV_EMBEDDINGS_NVIDIA_BASE_URL = "HINDSIGHT_API_EMBEDDINGS_NVIDIA_BASE_URL"
+ENV_EMBEDDINGS_NVIDIA_DIMENSIONS = "HINDSIGHT_API_EMBEDDINGS_NVIDIA_DIMENSIONS"
+ENV_EMBEDDINGS_NVIDIA_BATCH_SIZE = "HINDSIGHT_API_EMBEDDINGS_NVIDIA_BATCH_SIZE"
+
 # Deprecated: Legacy shared Cohere API key (for backward compatibility)
 ENV_COHERE_API_KEY = "HINDSIGHT_API_COHERE_API_KEY"
 
@@ -663,6 +670,14 @@ ENV_RERANKER_ZEROENTROPY_BASE_URL = "HINDSIGHT_API_RERANKER_ZEROENTROPY_BASE_URL
 ENV_RERANKER_SILICONFLOW_API_KEY = "HINDSIGHT_API_RERANKER_SILICONFLOW_API_KEY"
 ENV_RERANKER_SILICONFLOW_MODEL = "HINDSIGHT_API_RERANKER_SILICONFLOW_MODEL"
 ENV_RERANKER_SILICONFLOW_BASE_URL = "HINDSIGHT_API_RERANKER_SILICONFLOW_BASE_URL"
+
+# NVIDIA NIM configuration (reranker only; native /retrieval/<model>/reranking endpoint)
+ENV_RERANKER_NVIDIA_API_KEY = "HINDSIGHT_API_RERANKER_NVIDIA_API_KEY"
+ENV_RERANKER_NVIDIA_MODEL = "HINDSIGHT_API_RERANKER_NVIDIA_MODEL"
+ENV_RERANKER_NVIDIA_BASE_URL = "HINDSIGHT_API_RERANKER_NVIDIA_BASE_URL"
+ENV_RERANKER_NVIDIA_TIMEOUT = "HINDSIGHT_API_RERANKER_NVIDIA_TIMEOUT"
+ENV_RERANKER_NVIDIA_BATCH_SIZE = "HINDSIGHT_API_RERANKER_NVIDIA_BATCH_SIZE"
+ENV_RERANKER_NVIDIA_MAX_CONCURRENT = "HINDSIGHT_API_RERANKER_NVIDIA_MAX_CONCURRENT"
 
 # TypeSafe configuration (reranker only; typed-question API, not a /rerank endpoint)
 ENV_RERANKER_TYPESAFE_API_KEY = "HINDSIGHT_API_RERANKER_TYPESAFE_API_KEY"
@@ -1339,6 +1354,7 @@ DEFAULT_RERANKER_COHERE_TIMEOUT = 60.0
 DEFAULT_RERANKER_OPENROUTER_TIMEOUT = 60.0
 DEFAULT_RERANKER_ZEROENTROPY_TIMEOUT = 60.0
 DEFAULT_RERANKER_SILICONFLOW_TIMEOUT = 60.0
+DEFAULT_RERANKER_NVIDIA_TIMEOUT = 60.0
 DEFAULT_RERANKER_TYPESAFE_TIMEOUT = 60.0
 DEFAULT_RERANKER_ALIBABA_TIMEOUT = 60.0
 DEFAULT_RERANKER_LITELLM_TIMEOUT = 60.0
@@ -1466,6 +1482,20 @@ DEFAULT_RERANKER_ZEROENTROPY_MODEL = "zerank-2"
 
 DEFAULT_RERANKER_SILICONFLOW_MODEL = "BAAI/bge-reranker-v2-m3"
 DEFAULT_RERANKER_SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
+
+# The model id is part of the reranking path, so it keeps its "nvidia/" namespace.
+DEFAULT_RERANKER_NVIDIA_MODEL = "nvidia/llama-nemotron-rerank-vl-1b-v2"
+DEFAULT_RERANKER_NVIDIA_BASE_URL = "https://ai.api.nvidia.com/v1"
+# The hosted ranking API rejects more than 512 passages per request.
+DEFAULT_RERANKER_NVIDIA_BATCH_SIZE = 512
+DEFAULT_RERANKER_NVIDIA_MAX_CONCURRENT = 8
+
+DEFAULT_EMBEDDINGS_NVIDIA_MODEL = "nvidia/llama-nemotron-embed-vl-1b-v2"
+DEFAULT_EMBEDDINGS_NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
+# The model's native size is 2048; 1024 (a Matryoshka step it accepts) keeps the
+# provider inside pgvector HNSW's 2000-dimension index limit out of the box.
+DEFAULT_EMBEDDINGS_NVIDIA_DIMENSIONS = 1024
+DEFAULT_EMBEDDINGS_NVIDIA_BATCH_SIZE = 100
 
 DEFAULT_RERANKER_TYPESAFE_MODEL = "jev-latest"
 DEFAULT_RERANKER_TYPESAFE_BASE_URL = "https://api.typesafe.ai"
@@ -2826,6 +2856,13 @@ class RerankerMemberConfig:
     siliconflow_model: str
     siliconflow_base_url: str
     siliconflow_timeout: float
+    # nvidia
+    nvidia_api_key: str | None
+    nvidia_model: str
+    nvidia_base_url: str
+    nvidia_timeout: float
+    nvidia_batch_size: int
+    nvidia_max_concurrent: int
     # typesafe
     typesafe_api_key: str | None
     typesafe_model: str
@@ -2981,6 +3018,14 @@ def _parse_reranker_members() -> list[RerankerMemberConfig]:
                 siliconflow_model=_member_str(base, "SILICONFLOW_MODEL", DEFAULT_RERANKER_SILICONFLOW_MODEL),
                 siliconflow_base_url=_member_str(base, "SILICONFLOW_BASE_URL", DEFAULT_RERANKER_SILICONFLOW_BASE_URL),
                 siliconflow_timeout=_member_float(base, "SILICONFLOW_TIMEOUT", DEFAULT_RERANKER_SILICONFLOW_TIMEOUT),
+                nvidia_api_key=_member_opt_str(base, "NVIDIA_API_KEY"),
+                nvidia_model=_member_str(base, "NVIDIA_MODEL", DEFAULT_RERANKER_NVIDIA_MODEL),
+                nvidia_base_url=_member_str(base, "NVIDIA_BASE_URL", DEFAULT_RERANKER_NVIDIA_BASE_URL),
+                nvidia_timeout=_member_float(base, "NVIDIA_TIMEOUT", DEFAULT_RERANKER_NVIDIA_TIMEOUT),
+                nvidia_batch_size=_member_int(base, "NVIDIA_BATCH_SIZE", DEFAULT_RERANKER_NVIDIA_BATCH_SIZE),
+                nvidia_max_concurrent=_member_int(
+                    base, "NVIDIA_MAX_CONCURRENT", DEFAULT_RERANKER_NVIDIA_MAX_CONCURRENT
+                ),
                 typesafe_api_key=_member_opt_str(base, "TYPESAFE_API_KEY"),
                 typesafe_model=_member_str(base, "TYPESAFE_MODEL", DEFAULT_RERANKER_TYPESAFE_MODEL),
                 typesafe_base_url=_member_str(base, "TYPESAFE_BASE_URL", DEFAULT_RERANKER_TYPESAFE_BASE_URL),
@@ -3406,6 +3451,12 @@ class HindsightConfig:
     reranker_siliconflow_model: str
     reranker_siliconflow_base_url: str
     reranker_siliconflow_timeout: float
+    reranker_nvidia_api_key: str | None
+    reranker_nvidia_model: str
+    reranker_nvidia_base_url: str
+    reranker_nvidia_timeout: float
+    reranker_nvidia_batch_size: int
+    reranker_nvidia_max_concurrent: int
     reranker_typesafe_api_key: str | None
     reranker_typesafe_model: str
     reranker_typesafe_base_url: str
@@ -3741,6 +3792,11 @@ class HindsightConfig:
     embeddings_zeroentropy_encoding_format: str = DEFAULT_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT
     embeddings_zeroentropy_batch_size: int = DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE
     embeddings_zeroentropy_latency: str | None = DEFAULT_EMBEDDINGS_ZEROENTROPY_LATENCY
+    embeddings_nvidia_api_key: str | None = None
+    embeddings_nvidia_model: str = DEFAULT_EMBEDDINGS_NVIDIA_MODEL
+    embeddings_nvidia_base_url: str = DEFAULT_EMBEDDINGS_NVIDIA_BASE_URL
+    embeddings_nvidia_dimensions: int = DEFAULT_EMBEDDINGS_NVIDIA_DIMENSIONS
+    embeddings_nvidia_batch_size: int = DEFAULT_EMBEDDINGS_NVIDIA_BATCH_SIZE
     file_parser_markitdown_ocr_enabled: bool = DEFAULT_FILE_PARSER_MARKITDOWN_OCR_ENABLED
     file_parser_markitdown_ocr_api_key: str | None = None
     file_parser_markitdown_ocr_base_url: str | None = None
@@ -3863,8 +3919,10 @@ class HindsightConfig:
         "reranker_cohere_base_url",
         "reranker_openrouter_base_url",
         "embeddings_zeroentropy_base_url",
+        "embeddings_nvidia_base_url",
         "reranker_zeroentropy_base_url",
         "reranker_siliconflow_base_url",
+        "reranker_nvidia_base_url",
         "reranker_typesafe_base_url",
         # Service Account Keys
         "llm_vertexai_service_account_key",
@@ -3874,6 +3932,7 @@ class HindsightConfig:
         "embeddings_gemini_api_key",
         "embeddings_openai_api_key",
         "embeddings_zeroentropy_api_key",
+        "embeddings_nvidia_api_key",
         # File storage credentials
         "file_storage_s3_access_key_id",
         "file_storage_s3_secret_access_key",
@@ -4059,6 +4118,12 @@ class HindsightConfig:
             siliconflow_model=self.reranker_siliconflow_model,
             siliconflow_base_url=self.reranker_siliconflow_base_url,
             siliconflow_timeout=self.reranker_siliconflow_timeout,
+            nvidia_api_key=self.reranker_nvidia_api_key,
+            nvidia_model=self.reranker_nvidia_model,
+            nvidia_base_url=self.reranker_nvidia_base_url,
+            nvidia_timeout=self.reranker_nvidia_timeout,
+            nvidia_batch_size=self.reranker_nvidia_batch_size,
+            nvidia_max_concurrent=self.reranker_nvidia_max_concurrent,
             typesafe_api_key=self.reranker_typesafe_api_key,
             typesafe_model=self.reranker_typesafe_model,
             typesafe_base_url=self.reranker_typesafe_base_url,
@@ -4715,6 +4780,20 @@ class HindsightConfig:
                 os.getenv(ENV_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE),
                 DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE,
             ),
+            # NVIDIA NIM embeddings
+            embeddings_nvidia_api_key=os.getenv(ENV_EMBEDDINGS_NVIDIA_API_KEY),
+            embeddings_nvidia_model=os.getenv(ENV_EMBEDDINGS_NVIDIA_MODEL, DEFAULT_EMBEDDINGS_NVIDIA_MODEL),
+            embeddings_nvidia_base_url=os.getenv(ENV_EMBEDDINGS_NVIDIA_BASE_URL, DEFAULT_EMBEDDINGS_NVIDIA_BASE_URL),
+            embeddings_nvidia_dimensions=_parse_positive_int(
+                ENV_EMBEDDINGS_NVIDIA_DIMENSIONS,
+                os.getenv(ENV_EMBEDDINGS_NVIDIA_DIMENSIONS),
+                DEFAULT_EMBEDDINGS_NVIDIA_DIMENSIONS,
+            ),
+            embeddings_nvidia_batch_size=_parse_positive_int(
+                ENV_EMBEDDINGS_NVIDIA_BATCH_SIZE,
+                os.getenv(ENV_EMBEDDINGS_NVIDIA_BATCH_SIZE),
+                DEFAULT_EMBEDDINGS_NVIDIA_BATCH_SIZE,
+            ),
             # LiteLLM embeddings (with backward-compatible fallback to shared config)
             embeddings_litellm_api_base=os.getenv(ENV_EMBEDDINGS_LITELLM_API_BASE)
             or os.getenv(ENV_LITELLM_API_BASE, DEFAULT_LITELLM_API_BASE),
@@ -4893,6 +4972,21 @@ class HindsightConfig:
             ),
             reranker_siliconflow_timeout=float(
                 os.getenv(ENV_RERANKER_SILICONFLOW_TIMEOUT, str(DEFAULT_RERANKER_SILICONFLOW_TIMEOUT))
+            ),
+            # NVIDIA NIM reranker (native /retrieval/<model>/reranking endpoint)
+            reranker_nvidia_api_key=os.getenv(ENV_RERANKER_NVIDIA_API_KEY),
+            reranker_nvidia_model=os.getenv(ENV_RERANKER_NVIDIA_MODEL, DEFAULT_RERANKER_NVIDIA_MODEL),
+            reranker_nvidia_base_url=os.getenv(ENV_RERANKER_NVIDIA_BASE_URL, DEFAULT_RERANKER_NVIDIA_BASE_URL),
+            reranker_nvidia_timeout=float(os.getenv(ENV_RERANKER_NVIDIA_TIMEOUT, str(DEFAULT_RERANKER_NVIDIA_TIMEOUT))),
+            reranker_nvidia_batch_size=_parse_positive_int(
+                ENV_RERANKER_NVIDIA_BATCH_SIZE,
+                os.getenv(ENV_RERANKER_NVIDIA_BATCH_SIZE),
+                DEFAULT_RERANKER_NVIDIA_BATCH_SIZE,
+            ),
+            reranker_nvidia_max_concurrent=_parse_positive_int(
+                ENV_RERANKER_NVIDIA_MAX_CONCURRENT,
+                os.getenv(ENV_RERANKER_NVIDIA_MAX_CONCURRENT),
+                DEFAULT_RERANKER_NVIDIA_MAX_CONCURRENT,
             ),
             # TypeSafe reranker
             reranker_typesafe_api_key=os.getenv(ENV_RERANKER_TYPESAFE_API_KEY),
