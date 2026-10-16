@@ -2655,6 +2655,8 @@ async def test_export_of_a_store_owned_bank_contains_its_memories():
 
     texts = [f["text"] for f in doc["facts"]]
     assert texts == ["the cause", "the effect"], texts
+    # Each fact names its id in this bank, so an import can repoint mental-model evidence at it.
+    assert [f["source_id"] for f in doc["facts"]] == ["unit-cause", "unit-effect"]
     # The entity name has to come back through the store's registry, not a SQL join.
     assert doc["facts"][0]["entities"] == ["Ada Lovelace"], doc["facts"][0]
     # And the causal edge has to survive as an ordinal into this document's fact list.

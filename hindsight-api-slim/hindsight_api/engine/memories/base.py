@@ -848,6 +848,11 @@ class FullRecallRequest:
     #: ``"rrf"``, ``"interleave"`` or ``"cross_encoder"`` — the engine's ``reranking`` mode. The
     #: first two are passthrough (the fusion order stands); only the third calls a reranker.
     reranking: str = "rrf"
+    #: The engine's reranker for ``"cross_encoder"``, by provider name (``"local"``, ``"tei"``,
+    #: ``"typesafe"``, ``"decision_model"``, ...). A store that reranks with a cross-encoder of its
+    #: own answers for a pointwise cross-encoder only, and declines a provider in
+    #: ``RANK_SCORE_PROVIDERS``: those judge the pool as a whole, and their order is final.
+    reranker_provider: str = ""
     reranker_max_candidates: int = 0
     per_source_cap: int = 0
     #: Arm name -> priority level, from ``HINDSIGHT_API_RECALL_STRATEGY_BOOSTS``.

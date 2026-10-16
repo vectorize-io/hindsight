@@ -9504,6 +9504,7 @@ class MemoryEngine(MemoryEngineInterface):
                     enable_text_search=enable_text_search,
                     enable_graph=enable_graph_retrieval,
                     reranking=reranking,
+                    reranker_provider=self._cross_encoder_reranker.cross_encoder.primary_provider_name,
                     reranker_max_candidates=(
                         reranker_max_candidates
                         if reranker_max_candidates is not None
