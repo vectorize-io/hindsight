@@ -20,7 +20,7 @@ const MAX_ENTRIES = 9;
 const results = new Map<string, Entry>();
 const inflight = new Map<string, Promise<unknown>>();
 
-export function graphKey(p: GraphParams): string {
+function graphKey(p: GraphParams): string {
   return JSON.stringify([
     p.bank_id,
     p.type ?? "",
