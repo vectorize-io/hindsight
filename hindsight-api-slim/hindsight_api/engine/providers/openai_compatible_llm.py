@@ -1254,6 +1254,9 @@ class OpenAICompatibleLLM(LLMInterface):
         # Provider-specific parameters
         extra_body: dict[str, Any] = {**self._config_extra_body}
         self._apply_provider_extra_body_defaults(extra_body)
+        # OpenAI takes service_tier as a native top-level param; other servers on this
+        # class (lmstudio, ollama, ...) don't know it, and Groq sends its own tier via
+        # extra_body below. This path used to drop the tier entirely (#5439).
         if self.provider == "openai" and self.openai_service_tier:
             call_params["service_tier"] = self.openai_service_tier
         if self.provider == "groq":
