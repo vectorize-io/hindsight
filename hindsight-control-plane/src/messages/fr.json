@@ -805,6 +805,8 @@
     "granularityMonth": "Mois",
     "granularityWeek": "Semaine",
     "granularityDay": "Jour",
+    "sortNewestFirst": "Plus récents d'abord",
+    "sortOldestFirst": "Plus anciens d'abord",
     "recencyLabel": "récence · {basis}",
     "recencyBasisMentioned": "mentionné",
     "recencyBasisOccurredStart": "survenu (début)",

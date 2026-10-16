@@ -1354,6 +1354,35 @@ class TestRecallNewParams:
         assert "tag_groups" in call_kwargs
         assert len(call_kwargs["tag_groups"]) == 1
 
+    async def test_recall_include_options_off_by_default(self, mock_memory):
+        mcp = _make_mcp_server(mock_memory, {"recall"})
+        await _tools(mcp)["recall"].fn(query="test")
+        call_kwargs = mock_memory.recall_async.call_args.kwargs
+        assert call_kwargs["include_chunks"] is False
+        assert call_kwargs["include_entities"] is False
+        assert call_kwargs["include_source_facts"] is False
+
+    @pytest.mark.parametrize("include_bank_id", [True, False])
+    async def test_recall_include_options_passed_through(self, mock_memory, include_bank_id):
+        """Issue #5470: MCP recall must be able to return source chunks, entities and source facts."""
+        mcp = _make_mcp_server(mock_memory, {"recall"}, include_bank_id=include_bank_id)
+        await _tools(mcp)["recall"].fn(
+            query="test",
+            include_chunks=True,
+            max_chunk_tokens=6000,
+            include_entities=True,
+            max_entity_tokens=300,
+            include_source_facts=True,
+            max_source_facts_tokens=1000,
+        )
+        call_kwargs = mock_memory.recall_async.call_args.kwargs
+        assert call_kwargs["include_chunks"] is True
+        assert call_kwargs["max_chunk_tokens"] == 6000
+        assert call_kwargs["include_entities"] is True
+        assert call_kwargs["max_entity_tokens"] == 300
+        assert call_kwargs["include_source_facts"] is True
+        assert call_kwargs["max_source_facts_tokens"] == 1000
+
 
 @pytest.mark.asyncio
 class TestReflectNewParams:

@@ -423,10 +423,16 @@ async def restore_document_created_at(
 async def restore_fact_lifecycle(
     *, conn: Any, fq_table: Callable[[str], str], bank_id: str, rows: list[FactLifecycle]
 ) -> None:
-    """Apply each imported fact's source consolidation timestamps to its new row, in one batch."""
+    """Apply each imported fact's source consolidation timestamps to its new row, in one batch.
+
+    A fact is either consolidated or failed, never both: ``consolidated_at`` wins and drops
+    ``consolidation_failed_at``. ``banks_needing_consolidation()`` counts failed facts against
+    unconsolidated ones and relies on that.
+    """
     await conn.executemany(
         f"UPDATE {fq_table('memory_units')} "
-        f"SET created_at = COALESCE($2, created_at), consolidated_at = $3, consolidation_failed_at = $4 "
+        f"SET created_at = COALESCE($2, created_at), consolidated_at = $3::timestamptz, "
+        f"consolidation_failed_at = CASE WHEN $3::timestamptz IS NULL THEN $4::timestamptz END "
         f"WHERE id = $1 AND bank_id = $5",
         [
             (uuid.UUID(row.unit_id), row.created_at, row.consolidated_at, row.consolidation_failed_at, bank_id)

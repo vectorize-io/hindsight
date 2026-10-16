@@ -207,6 +207,12 @@ Search memories to provide personalized responses.
 | `query_timestamp` | string | No | ISO 8601 timestamp — recall as if asking at this point in time; anchors relative temporal expressions and recency scoring |
 | `min_scores` | object | No | Optional per-stage score floors, e.g. `{"reranker": 0.5}`. Keys: `semantic`/`keyword` (retrieval-level cutoffs), `reranker`/`final` (post-ranking). All inclusive and AND-ed; omit for no filtering. Reranker scores aren't calibrated across queries — calibrate before use |
 | `temporal_window` | object | No | An explicit `{"start": ISO, "end": ISO}` period to search over, used instead of reading dates out of the query text. Ranks memories dated inside the window higher; it does not drop the ones outside it, so it can't restrict results to a period |
+| `include_chunks` | boolean | No | Also return the source text chunks the facts came from. Use it when you need exact strings (paths, IDs, commands) that extraction may have reworded. Default: `false` |
+| `max_chunk_tokens` | integer | No | Max tokens of source chunks when `include_chunks` is set (default: 8192) |
+| `include_entities` | boolean | No | Also return observations about the entities in the results. Default: `false` |
+| `max_entity_tokens` | integer | No | Max tokens of entity observations when `include_entities` is set (default: 500) |
+| `include_source_facts` | boolean | No | For observation results, also return the facts they were built from. Default: `false` |
+| `max_source_facts_tokens` | integer | No | Max tokens of source facts when `include_source_facts` is set (default: 4096) |
 
 **Example:**
 ```json
