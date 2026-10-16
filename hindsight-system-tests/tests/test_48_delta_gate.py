@@ -99,6 +99,12 @@ async def test_only_the_memory_that_changes_the_page_reaches_the_edit(delta_gate
     grounding = " ".join(f["text"] for f in result.based_on["world"])
     assert MOVED in grounding and UNRELATED not in grounding
     assert result.would_persist is True
+    assert result.effective_mode == "delta"
+    assert result.outcome == "content_written"
+    assert result.warnings == []
+    assert ANSWER in result.preview_content and "Moves" in result.preview_content
+    assert "Alice moved to Munich." in result.preview_content
+    assert [op["op"] for op in result.delta_operations.applied] == ["add_section"]
 
 
 async def test_nothing_that_changes_the_page_means_no_llm_call(delta_gate_client, llm, stubs, page):
@@ -110,3 +116,7 @@ async def test_nothing_that_changes_the_page_means_no_llm_call(delta_gate_client
     assert not llm.calls, "nothing kept, so nothing to pay an LLM for"
     assert result.outcome == "content_preserved_no_new_facts"
     assert result.facts.retrieved == {"world": 2}
+    assert result.facts.used == {}
+    assert result.would_persist is False
+    assert result.preview_content == result.current_content
+    assert result.warnings == []

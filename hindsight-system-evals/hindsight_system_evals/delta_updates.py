@@ -65,7 +65,12 @@ class DeltaUpdate:
 
 def _q(question_id: str, category: str, question: str, criteria: str, trap: str) -> HardQuestion:
     return HardQuestion(
-        id=question_id, category=category, question=question, ideal_query=question, answer_criteria=criteria, must_not_claim=trap
+        id=question_id,
+        category=category,
+        question=question,
+        ideal_query=question,
+        answer_criteria=criteria,
+        must_not_claim=trap,
     )
 
 

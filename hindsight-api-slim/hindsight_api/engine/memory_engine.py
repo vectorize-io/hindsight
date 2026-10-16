@@ -17617,6 +17617,8 @@ class MemoryEngine(MemoryEngineInterface):
         try:
             # A TaskGroup, not gather: one failed question cancels the rest instead of
             # letting up to 199 retry on their own for a result that is thrown away.
+            # ponytail: these calls are not added to the refresh's usage or llm_calls, like
+            # every other decision-model call; count them there if their cost needs watching.
             async with asyncio.TaskGroup() as group:
                 questions = [
                     group.create_task(decision_model.could_change_page(source_query, current_content, m.text))
@@ -17624,7 +17626,8 @@ class MemoryEngine(MemoryEngineInterface):
                 ]
             verdicts = [q.result() for q in questions]
         except Exception as exc:
-            logger.warning(f"[MENTAL_MODELS] Delta gate failed ({exc}); searching instead")
+            cause = exc.exceptions[0] if isinstance(exc, ExceptionGroup) else exc
+            logger.warning(f"[MENTAL_MODELS] Delta gate failed ({cause!r}); searching instead")
             return None
         listed: dict[str, int] = {}
         kept: dict[str, list[MemoryFact]] = {}
