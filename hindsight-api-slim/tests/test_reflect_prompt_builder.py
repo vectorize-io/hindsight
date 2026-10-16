@@ -689,3 +689,18 @@ def test_final_prompt_output_language_override_replaces_the_language_rule():
     assert "## LANGUAGE" not in prompt
     assert "SAME language as the user's question" not in prompt
     assert "Respond exclusively in Spanish" not in prompt, "the directive belongs on the user prompt"
+
+
+def test_agent_user_prompt_restates_the_mission_after_the_question():
+    """The mission also rides on the user message, where it is read after the question (see the docstring)."""
+    prompt = prompts.build_agent_user_prompt("Who owns billing?", mission="  Chat decisions outrank commits.  ")
+
+    assert prompt == (
+        "Who owns billing?\n\n## Bank mission (it governs what you search and how you answer)\n"
+        "Chat decisions outrank commits."
+    )
+
+
+@pytest.mark.parametrize("mission", [None, "", "   "])
+def test_agent_user_prompt_without_a_mission_is_the_question(mission):
+    assert prompts.build_agent_user_prompt("Who owns billing?", mission=mission) == "Who owns billing?"

@@ -21,8 +21,10 @@ grades them as rates: one bank and three repeats measured a single task's luck (
 lost one task twice to a consolidated observation the agent happened to search around, and
 agent mode lost different ones). With the decision model, reflect must get as many decisions right
 as agent mode, less one, answer "no decision" no more often, and make fewer LLM calls (the cost) in
-less time. The banks and each
-task's bug report and recorded policy are in ``fixtures/coding-agent-banks/``.
+less time. Every bank carries a reflect mission ranking its sources (``MISSION``), the way a
+team would tell reflect which records hold its decisions, so both modes are also held to
+following it. The banks and each task's bug report and recorded policy are in
+``fixtures/coding-agent-banks/``.
 """
 
 from __future__ import annotations
@@ -66,9 +68,33 @@ GOAL_TEMPLATE = (
     "Save your changes to disk before finishing.\n"
 )
 
+#: The bank's reflect mission: how a team using the plugin ranks its sources, set on every bank
+#: for both modes. Each memory carries its source as a tag (``source:chat`` for a conversation,
+#: ``source:git`` for the commit log) and the plugin's pages describe the code. The suite checks
+#: that reflect with the decision model follows it as the agent does: its pruning and its "is this
+#: enough" verdict read the request, not the mission, so a mission-ranked source could be cut or
+#: never searched for.
+MISSION = (
+    "You are a reflection agent that answers questions by reasoning over retrieved memories.\n\n"
+    "## Source Authority\n"
+    "Each memory's `tags` record where it came from. When they disagree about a rule:\n"
+    "1. A decision someone stated with its reason, in a conversation (`source:chat`) or in a commit "
+    "message (`source:git`), is the project's rule.\n"
+    "2. A later conversation or commit that explicitly reverses or revises that decision, with its own "
+    "reason, replaces it.\n"
+    "3. A later commit that changes the behaviour without deciding anything (a cleanup, a simplification, "
+    "a perf tweak, a refactor) does NOT replace it: say plainly that the decision is still the rule, and "
+    "report that commit as a change that departed from it.\n"
+    "4. Knowledge pages and observations are summaries: they can merge, misread or drop a decision's exact "
+    "values and exceptions. Before reporting a rule, recall the conversation or commit message that "
+    "states it, and report the rule from there."
+)
+
 # A single plain claim, phrased like the other suites' traps: a criterion that also says what
-# does NOT count gets read backwards by the judge.
-NO_DECISION = "The answer asserts that the bank holds no decision or record bearing on the reported problem."
+# does NOT count gets read backwards by the judge. It needs both halves: "the bank holds no decision
+# or record" alone was met by answers that reported the decision and then said the bank held nothing
+# further about it.
+NO_DECISION = "The answer states no decision or rule bearing on the reported problem, and says the bank holds none."
 
 
 def plugin_reflect_query(goal: str) -> str:
@@ -116,7 +142,9 @@ async def _import_bank(client: Hindsight, host_bank: str, task_id: str, settled:
     await settled(target)
     # Reflect only reads: a consolidation pass or page refresh firing mid-run would bill
     # calls to whichever mode happened to be measured at the time.
-    await client.aupdate_bank_config(target, enable_auto_consolidation=False, enable_observations=False)
+    await client.aupdate_bank_config(
+        target, enable_auto_consolidation=False, enable_observations=False, reflect_mission=MISSION
+    )
     # An import rewrites every memory after the pages last read them, so the pages arrive
     # stale. A plugin keeps its pages fresh, and fresh pages are the case that failed: the decision model
     # hid the facts behind them. Refreshed once here, so the bank is the one the agent meets.
@@ -135,7 +163,9 @@ async def _import_bank(client: Hindsight, host_bank: str, task_id: str, settled:
 async def _reflect(client: Hindsight, bank: str, task_id: str, mode: str) -> ReflectRun:
     task = MANIFEST["tasks"][task_id]
     # The generated API takes any config field; the wrapper names only the common ones.
-    await client.banks.update_bank_config(bank, BankConfigUpdate(updates={"reflect_use_decision_model": mode == "decision"}))
+    await client.banks.update_bank_config(
+        bank, BankConfigUpdate(updates={"reflect_use_decision_model": mode == "decision"})
+    )
     goal = GOAL_TEMPLATE.format(repo=task["repo"], bug_report=task["bug_report"])
     start = time.monotonic()
     response = await client.areflect(
@@ -149,8 +179,9 @@ async def _reflect(client: Hindsight, bank: str, task_id: str, mode: str) -> Ref
     correct = await evaluate(
         answer,
         "The answer reports the project's recorded decision on this matter, consistent with: "
-        f"{task['policy']}. It may word it differently, but it must state that decision and must not "
-        "contradict it.",
+        f"{task['policy']}, as the rule that stands. It may word it differently, and it may also report a "
+        "later change that departed from that decision, as long as it does not present that change as the "
+        "project's rule.",
         context=context,
     )
     no_decision = await evaluate(answer, NO_DECISION, context=context)
@@ -192,7 +223,9 @@ async def test_coding_agent_reflect_with_decision_model_matches_agent_and_costs_
     # The bug this suite exists for: the decision model answering "no decision" where agent mode found one.
     # Agent mode can say it too on the hardest bank (dedupe-history, where a later commit undid
     # the decision), so it is held to agent's count, not to zero.
-    no_decision = {mode: [r.task for r in runs if r.mode == mode and r.said_no_decision] for mode in ("agent", "decision")}
+    no_decision = {
+        mode: [r.task for r in runs if r.mode == mode and r.said_no_decision] for mode in ("agent", "decision")
+    }
     assert len(no_decision["decision"]) <= len(no_decision["agent"]), f"answered 'no decision': {no_decision}"
     assert sum(r.correct for r in decision) >= sum(r.correct for r in agent) - 1, (
         f"with the decision model, reflect reported the decision in {sum(r.correct for r in decision)}/{len(decision)} runs, agent in "
@@ -207,4 +240,6 @@ async def test_coding_agent_reflect_with_decision_model_matches_agent_and_costs_
         )
     assert statistics.median(r.llm_calls for r in decision) < statistics.median(r.llm_calls for r in agent)
     decision_s, agent_s = statistics.median(r.seconds for r in decision), statistics.median(r.seconds for r in agent)
-    assert decision_s < agent_s, f"with the decision model reflect took {decision_s:.1f}s (median), agent {agent_s:.1f}s"
+    assert decision_s < agent_s, (
+        f"with the decision model reflect took {decision_s:.1f}s (median), agent {agent_s:.1f}s"
+    )

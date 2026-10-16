@@ -126,6 +126,71 @@ async def test_insufficient_evidence_runs_another_parallel_round_with_the_llms_q
 
 
 @pytest.mark.asyncio
+async def test_after_not_enough_the_next_turn_searches_and_its_done_answers():
+    """The turn after a "not enough" verdict must search; the done after that round answers.
+
+    Not re-written by the closing step: that lost the recorded decision on the coding-agent eval.
+    """
+    follow_up = LLMToolCallResult(
+        tool_calls=[LLMToolCall(id="r", name="recall", arguments={"query": "Alice's new address"})],
+        finish_reason="tool_calls",
+    )
+    provider = _ScriptedProvider([follow_up, _done()])
+    functions = _functions()
+
+    result = await _reflect(provider, functions, AsyncMock(return_value=False))
+
+    assert result.text == "A"
+    assert functions["recall_fn"].await_args.args[0] == "Alice's new address", "the follow-up round ran"
+    assert provider.tool_choices == ["recall", "auto"], "one forced search, then the free turn's done answers"
+
+
+@pytest.mark.asyncio
+async def test_a_done_that_does_not_parse_is_handed_back_and_re_emitted():
+    """With no closing step to rewrite it, a malformed ``done`` goes back to the model with the error."""
+    follow_up = LLMToolCallResult(
+        tool_calls=[LLMToolCall(id="r", name="recall", arguments={"query": "Alice's new address"})],
+        finish_reason="tool_calls",
+    )
+    # A cut-off payload: not repaired, since repair would invent the missing end.
+    broken = LLMToolCallResult(
+        tool_calls=[LLMToolCall(id="d0", name="done", arguments={"_raw": '{"answer": "A", "memory_ids": ["mem'})],
+        finish_reason="length",
+    )
+    provider = _ScriptedProvider([follow_up, broken, _done()])
+
+    result = await _reflect(provider, _functions(), AsyncMock(return_value=False))
+
+    assert result.text == "A"
+    assert provider.tool_choices == ["recall", "auto", "auto"], "the broken done was refused once, then re-emitted"
+
+
+@pytest.mark.asyncio
+async def test_a_documents_done_is_written_by_the_closing_step():
+    """A page update merges only the facts the answer cites; the closing step asks for all of them."""
+    follow_up = LLMToolCallResult(
+        tool_calls=[LLMToolCall(id="r", name="recall", arguments={"query": "Alice's new address"})],
+        finish_reason="tool_calls",
+    )
+    provider = _ScriptedProvider([follow_up, _done()])
+
+    await run_reflect_agent(
+        llm_config=provider,
+        bank_id="b",
+        query="where does Alice live?",
+        bank_profile={"name": "T", "mission": "M"},
+        has_mental_models=True,
+        budget="mid",
+        max_iterations=6,
+        evidence_is_sufficient_fn=AsyncMock(return_value=False),
+        answer_as_document=True,
+        **_functions(),
+    )
+
+    assert provider.tool_choices[-1] == "done", "the closing step wrote the document"
+
+
+@pytest.mark.asyncio
 async def test_a_failing_decision_model_falls_back_to_the_agent():
     provider = _ScriptedProvider([_done()])
 

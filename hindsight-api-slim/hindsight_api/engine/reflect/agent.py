@@ -732,7 +732,7 @@ async def _run_reflect_agent_inner(
     )
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": build_agent_user_prompt(query, llm_output_language)},
+        {"role": "user", "content": build_agent_user_prompt(query, llm_output_language, bank_profile.get("mission"))},
     ]
     # What the model reads of each tool result, and the alias table that maps the
     # short ids it writes back to real ones — see presentation.py.
@@ -1252,6 +1252,10 @@ async def _run_reflect_agent_inner(
     pages_answered = False
     round_landed = False
     decision_model_failed = False
+    # After the first "not enough" verdict the next turn must search (see the tool choice below);
+    # set by the verdict, spent by that turn.
+    searched_after_not_enough = False
+    follow_up_required = False
 
     def _parallel_round(search_query: str, id_prefix: str) -> LLMToolCallResult:
         """A decision-orchestrated retrieval round: every forced layer at once, with one query.
@@ -1293,6 +1297,10 @@ async def _run_reflect_agent_inner(
     # tool_use blocks with one id back into the request. ``_unique_tool_call_ids``
     # reads and extends this set.
     emitted_wire_ids: set[str] = set()
+    # How many times a decision-orchestrated reflect's ``done`` was refused because its payload or
+    # its structured answer did not parse (agent turns answer through the closing step, which counts
+    # its own).
+    document_rejections = 0
     # Set once earlier tool results were blanked in ``messages`` to fit a forced
     # step. The model then saw a shortened conversation, so the answer must come
     # from the full ``context_history`` via the standalone synthesis prompt.
@@ -1317,6 +1325,7 @@ async def _run_reflect_agent_inner(
             if await _decision_says_sufficient(evidence, "decision_sufficiency"):
                 logger.info(f"[REFLECT {reflect_id}] Decision-orchestrated: the first retrieval answers the question.")
                 return await _finish(iteration)
+            follow_up_required = not searched_after_not_enough and not decision_model_failed
 
         # Determine tool_choice for this iteration.
         # Force the full hierarchical retrieval path (only for enabled tools) before allowing auto.
@@ -1333,8 +1342,18 @@ async def _run_reflect_agent_inner(
         forced_step_pending = not forcing_released and forced_steps_done < len(forced_sequence)
         if forced_step_pending:
             iter_tool_choice = LLMToolChoice.named(forced_sequence[forced_steps_done])
+        elif follow_up_required and forced_sequence:
+            # The decision model judged the first round not enough: this turn writes the follow-up
+            # search, which runs as another parallel round. Left on ``auto``, the LLM often answered
+            # straight from the first round, and reported a later commit that undid a decision as
+            # the decision itself (sde-bench dedupe-history, 1/4). Sending that ``done`` back with
+            # "search first" fixed the answer but billed the refused turn as well: with a reflect
+            # mission asking for the source of every rule, it was most first rounds, and reflect
+            # with the decision model ran slower than agent turns (test_09, 15.3s against 14.3s).
+            iter_tool_choice = LLMToolChoice.named(forced_sequence[-1])
         else:
             iter_tool_choice = LLM_TOOL_CHOICE_AUTO
+        follow_up_required = False
 
         is_last = iteration == max_iterations - 1
 
@@ -1591,12 +1610,59 @@ async def _run_reflect_agent_inner(
                 )
                 continue
 
-            # The model is ready to answer. The answer itself is always written by the closing
+            # The model is ready to answer. In agent turns the answer is written by the closing
             # step, never taken from this turn's ``done``: the closing request restates the question
             # and asks for every fact and exact value, and the done a free turn emits sees neither.
             # Taking it as-is lost a rule's return value on sde-bench seqledger-history ("returns
             # False" was in the evidence three times), and the agent needed a correction for it.
-            return await (_forced_final_synthesis if compacted else _finish)(iteration + 1)
+            # A decision-orchestrated reflect keeps the free turn's done: there the done comes right
+            # after a pruned round, and re-writing it in the closing step lost the recorded decision
+            # on the coding-agent eval (test_09 with Jev: 10/12 before, 7/12 with the closing step).
+            # A document (a page refresh) still goes through the closing step: the page update
+            # merges only the facts the answer cites, and the free turn's done cited fewer of them
+            # (a Q2 count lost two of four new customers on test_01 hq-count-billing).
+            if not decision_orchestrated or decision_model_failed or answer_as_document:
+                return await (_forced_final_synthesis if compacted else _finish)(iteration + 1)
+
+            from hindsight_api.tracing import get_tracer
+
+            with get_tracer().start_as_current_span("hindsight.reflect_tool_call") as span:
+                span.set_attribute("hindsight.scope", "reflect_tool_call")
+                span.set_attribute("hindsight.operation", "reflect_tool_call")
+                try:
+                    return await _process_done_tool(
+                        done_call.model_copy(
+                            update={"arguments": presenter.resolve(_done_arguments(done_call, result.finish_reason))}
+                        ),
+                        available_memory_ids,
+                        available_mental_model_ids,
+                        available_observation_ids,
+                        iteration + 1,
+                        total_tools_called,
+                        tool_trace,
+                        _get_llm_trace(),
+                        _get_usage(),
+                        _log_completion,
+                        reflect_id,
+                        directives_applied=directives_applied,
+                        llm_config=llm_config,
+                        response_schema=response_schema,
+                        max_tokens=max_tokens,
+                        presenter=presenter,
+                        finish_reason=result.finish_reason,
+                    )
+                except DocumentSectionsInvalidError as exc:
+                    # The document did not match the declared shape: hand the per-field errors
+                    # back and let the model re-emit ``done`` rather than invent a reading of it
+                    # (#4910). Out of retries, the run fails loudly.
+                    document_rejections += 1
+                    logger.warning(
+                        f"[REFLECT {reflect_id}] done document rejected (attempt {document_rejections}): {exc}"
+                    )
+                    if document_rejections > _MAX_DOCUMENT_REJECTIONS or iteration >= max_iterations - 1:
+                        raise
+                    messages.extend(_document_rejection_messages(done_call, exc))
+                    continue
 
         # After a "not enough" verdict: the LLM wrote its next search, and that query
         # runs as another parallel round (every layer at once, pruned, judged again) rather than as
@@ -1620,6 +1686,7 @@ async def _run_reflect_agent_inner(
             if follow_up is not None:
                 result = _parallel_round(str(follow_up.arguments["query"]), f"round{iteration + 1}_")
                 parallel_round = True
+                searched_after_not_enough = True
 
         # Execute other tools in parallel (exclude done tool in all its format variants)
         other_tools = [tc for tc in result.tool_calls if not _is_done_tool(tc.name)]

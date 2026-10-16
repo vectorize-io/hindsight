@@ -155,7 +155,10 @@ developer conversations, and the pages the plugin wrote about the code. Decision
 chats, in commits (with a later commit that broke them), and amended after the fact. It sends
 the plugin's own first-prompt request (`buildReflectQuery`: the developer's goal wrapped in ~2k
 characters of rendering rules) with the decision model on and off (`reflect_use_decision_model`) on each bank, interleaved,
-`HINDSIGHT_EVAL_CODING_REFLECT_REPEATS` times each (default 2). Graded as rates over every run:
+`HINDSIGHT_EVAL_CODING_REFLECT_REPEATS` times each (default 2). Every bank gets a reflect mission
+that ranks its sources by their `source:` tags (a stated decision outranks a later cleanup commit
+and the pages about the code), so the decision model is also held to following a mission it
+never reads itself. Graded as rates over every run:
 with it, reflect must report the task's recorded decision as often as agent turns, less one; answer
 "the bank holds no decision" no more often; and make fewer LLM calls (the cost) in less time (median).
 
