@@ -1,4 +1,4 @@
-"""Tests for the ``chatgpt-plan`` provider (Sign in with ChatGPT for open-source apps).
+"""Tests for the ``chatgpt`` provider (Sign in with ChatGPT for open-source apps).
 
 No live network: OpenAI's auth and Responses endpoints are replaced by a local
 aiohttp stub (``tests/aiohttp_stub.py``) by pointing the module URL constants at
@@ -29,9 +29,9 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from hindsight_api.config import PROVIDER_DEFAULT_MODELS, clear_config_cache
 from hindsight_api.engine.llm_interface import ProviderRateLimitResetError
 from hindsight_api.engine.llm_wrapper import create_llm_provider, requires_api_key
-from hindsight_api.engine.providers import chatgpt_plan_auth as auth
-from hindsight_api.engine.providers import chatgpt_plan_llm as plan
-from hindsight_api.engine.providers.chatgpt_plan_llm import ChatGPTPlanLLM, ChatGPTPlanRequestError
+from hindsight_api.engine.providers import chatgpt_auth as auth
+from hindsight_api.engine.providers import chatgpt_llm as plan
+from hindsight_api.engine.providers.chatgpt_llm import ChatGPTLLM, ChatGPTRequestError
 from hindsight_api.engine.providers.openai_responses_llm import RetryableResponsesError
 from tests.aiohttp_stub import stub_server
 
@@ -74,7 +74,7 @@ def _credential(**overrides: Any) -> dict[str, Any]:
 def _write(home: Path, cred: dict[str, Any]) -> Path:
     home.mkdir(parents=True, exist_ok=True)
     path = home / auth.CREDENTIAL_FILE
-    auth.write_credential(path, auth.ChatGPTPlanCredential.model_validate(cred))
+    auth.write_credential(path, auth.ChatGPTCredential.model_validate(cred))
     return path
 
 
@@ -179,18 +179,18 @@ def test_parse_callback_rules():
     assert auth.parse_callback(ok, expected_state="s", pending_client_id=auth.DYNAMIC_CLIENT_ID) == (
         auth.CallbackResult(code="c", client_id=ISSUED_CLIENT_ID)
     )
-    with pytest.raises(auth.ChatGPTPlanAuthError, match="state"):
+    with pytest.raises(auth.ChatGPTAuthError, match="state"):
         auth.parse_callback({**ok, "state": "x"}, expected_state="s", pending_client_id=auth.DYNAMIC_CLIENT_ID)
-    with pytest.raises(auth.ChatGPTPlanAuthError, match="access_denied"):
+    with pytest.raises(auth.ChatGPTAuthError, match="access_denied"):
         auth.parse_callback(
             {"error": "access_denied", "state": "s"}, expected_state="s", pending_client_id=auth.DYNAMIC_CLIENT_ID
         )
-    with pytest.raises(auth.ChatGPTPlanAuthError, match="incomplete"):
+    with pytest.raises(auth.ChatGPTAuthError, match="incomplete"):
         auth.parse_callback({"code": "c", "state": "s"}, expected_state="s", pending_client_id=auth.DYNAMIC_CLIENT_ID)
     # Reauthorization: a missing client_id keeps the pending one; a different one is rejected.
     reauth = auth.parse_callback({"code": "c", "state": "s"}, expected_state="s", pending_client_id=ISSUED_CLIENT_ID)
     assert reauth.client_id == ISSUED_CLIENT_ID
-    with pytest.raises(auth.ChatGPTPlanAuthError, match="different client_id"):
+    with pytest.raises(auth.ChatGPTAuthError, match="different client_id"):
         auth.parse_callback({**ok, "client_id": "oaiapp_other"}, expected_state="s", pending_client_id=ISSUED_CLIENT_ID)
 
 
@@ -226,12 +226,12 @@ def test_hindsight_admin_exposes_the_sign_in_commands(tmp_path):
     from hindsight_api.admin import cli
 
     runner = CliRunner()
-    missing = runner.invoke(cli.app, ["chatgpt-plan", "--home", str(tmp_path), "status"])
+    missing = runner.invoke(cli.app, ["chatgpt", "--home", str(tmp_path), "status"])
     assert missing.exit_code == 1
-    assert "hindsight-admin chatgpt-plan login" in missing.output
+    assert "hindsight-admin chatgpt login" in missing.output
 
     _write(tmp_path, _credential())
-    found = runner.invoke(cli.app, ["chatgpt-plan", "--home", str(tmp_path), "status"])
+    found = runner.invoke(cli.app, ["chatgpt", "--home", str(tmp_path), "status"])
     assert found.exit_code == 0
     assert "user@example.com" in found.output
 
@@ -258,14 +258,14 @@ def test_validate_id_token_accepts_valid_token(rsa_jwks):
 )
 def test_validate_id_token_rejects_bad_claims(rsa_jwks, claims, match):
     key, jwks = rsa_jwks
-    with pytest.raises(auth.ChatGPTPlanAuthError, match=match):
+    with pytest.raises(auth.ChatGPTAuthError, match=match):
         auth.validate_id_token(_id_token(key, **claims), jwks=jwks, client_id=ISSUED_CLIENT_ID, nonce="n-1")
 
 
 def test_validate_id_token_rejects_foreign_signature(rsa_jwks):
     _, jwks = rsa_jwks
     other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    with pytest.raises(auth.ChatGPTPlanAuthError, match="Signature|signature"):
+    with pytest.raises(auth.ChatGPTAuthError, match="Signature|signature"):
         auth.validate_id_token(_id_token(other), jwks=jwks, client_id=ISSUED_CLIENT_ID, nonce="n-1")
 
 
@@ -373,7 +373,7 @@ async def test_login_registers_exchanges_and_saves(tmp_path, point_auth_at, rsa_
     assert stored["ext_agent_host_id"] == host_id
     assert stored["refresh_token"] == "rt-new"
     assert credential.has_plan_scope
-    auth.ChatGPTPlanAuth.from_home(tmp_path)  # usable for inference
+    auth.ChatGPTAuth.from_home(tmp_path)  # usable for inference
 
 
 async def test_login_keeps_issued_client_id_when_exchange_fails(tmp_path, point_auth_at, rsa_jwks):
@@ -399,7 +399,7 @@ async def test_login_keeps_issued_client_id_when_exchange_fails(tmp_path, point_
             task["t"] = asyncio.get_running_loop().create_task(hit())
             return True
 
-        with pytest.raises(auth.ChatGPTPlanAuthError, match="Code exchange failed"):
+        with pytest.raises(auth.ChatGPTAuthError, match="Code exchange failed"):
             await auth.login(tmp_path, port=port, open_browser=browser, out=lambda _line: None)
         await task["t"]
     stored = auth.read_credential(tmp_path / auth.CREDENTIAL_FILE)
@@ -425,8 +425,8 @@ async def test_login_without_plan_scope_keeps_sign_in_but_disables_inference(tmp
     )
     assert credential.client_id == ISSUED_CLIENT_ID
     assert not credential.has_plan_scope
-    with pytest.raises(auth.ChatGPTPlanLoginRequiredError, match="not enabled"):
-        auth.ChatGPTPlanAuth.from_home(tmp_path)
+    with pytest.raises(auth.ChatGPTLoginRequiredError, match="not enabled"):
+        auth.ChatGPTAuth.from_home(tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -458,7 +458,7 @@ async def test_proactive_refresh_rotates_and_persists(tmp_path, point_auth_at):
     seen: dict[str, Any] = {}
     async with stub_server(_refresh_handler(seen)) as base:
         point_auth_at(base)
-        manager = auth.ChatGPTPlanAuth.from_home(tmp_path)
+        manager = auth.ChatGPTAuth.from_home(tmp_path)
         token = await manager.get_access_token()
         await manager.close()
 
@@ -483,7 +483,7 @@ async def test_refresh_adopts_token_rotated_by_another_process(tmp_path, point_a
     seen: dict[str, Any] = {}
     async with stub_server(_refresh_handler(seen)) as base:
         point_auth_at(base)
-        manager = auth.ChatGPTPlanAuth.from_home(tmp_path)
+        manager = auth.ChatGPTAuth.from_home(tmp_path)
         rotated = _fake_access_token(time.time() + 3600, marker="sibling")
         _write(tmp_path, _credential(access_token=rotated, refresh_token="rt-sibling"))
         assert await manager.get_access_token() == rotated
@@ -496,7 +496,7 @@ async def test_concurrent_refreshes_are_serialized(tmp_path, point_auth_at):
     seen: dict[str, Any] = {}
     async with stub_server(_refresh_handler(seen, delay=0.1)) as base:
         point_auth_at(base)
-        managers = [auth.ChatGPTPlanAuth.from_home(tmp_path) for _ in range(3)]
+        managers = [auth.ChatGPTAuth.from_home(tmp_path) for _ in range(3)]
         tokens = await asyncio.gather(*(m.get_access_token() for m in managers))
         for m in managers:
             await m.close()
@@ -509,7 +509,7 @@ async def test_reactive_refresh_replaces_rejected_but_unexpired_token(tmp_path, 
     seen: dict[str, Any] = {}
     async with stub_server(_refresh_handler(seen)) as base:
         point_auth_at(base)
-        manager = auth.ChatGPTPlanAuth.from_home(tmp_path)
+        manager = auth.ChatGPTAuth.from_home(tmp_path)
         rejected = await manager.get_access_token()
         await manager.refresh(rejected_token=rejected)
         assert await manager.get_access_token() != rejected
@@ -527,7 +527,7 @@ async def test_rotation_survives_unwritable_store(tmp_path, point_auth_at, monke
 
     async with stub_server(_refresh_handler(seen)) as base:
         point_auth_at(base)
-        manager = auth.ChatGPTPlanAuth.from_home(tmp_path)
+        manager = auth.ChatGPTAuth.from_home(tmp_path)
         monkeypatch.setattr(auth, "write_credential", fail)
         token = await manager.get_access_token()
         assert "new" in base64.urlsafe_b64decode(token.split(".")[1] + "==").decode()
@@ -543,9 +543,9 @@ async def test_terminal_refresh_error_requires_login_and_clears_tokens(tmp_path,
     path = _write(tmp_path, _credential(access_token=_fake_access_token(time.time() - 10)))
     async with stub_server(_refresh_handler({}, status=400, body={"error": code})) as base:
         point_auth_at(base)
-        manager = auth.ChatGPTPlanAuth.from_home(tmp_path)
+        manager = auth.ChatGPTAuth.from_home(tmp_path)
         match = "delete .* and run" if code == "invalid_client" else code
-        with pytest.raises(auth.ChatGPTPlanLoginRequiredError, match=match):
+        with pytest.raises(auth.ChatGPTLoginRequiredError, match=match):
             await manager.get_access_token()
         await manager.close()
     stored = json.loads(path.read_text())
@@ -565,7 +565,7 @@ async def test_terminal_error_does_not_clear_a_grant_written_meanwhile(tmp_path,
 
     async with stub_server(handler) as base:
         point_auth_at(base)
-        manager = auth.ChatGPTPlanAuth.from_home(tmp_path)
+        manager = auth.ChatGPTAuth.from_home(tmp_path)
         assert await manager.get_access_token()
         await manager.close()
     assert json.loads(path.read_text())["refresh_token"] == "rt-other-writer"
@@ -575,10 +575,10 @@ async def test_transient_refresh_error_keeps_tokens(tmp_path, point_auth_at):
     path = _write(tmp_path, _credential(access_token=_fake_access_token(time.time() - 10)))
     async with stub_server(_refresh_handler({}, status=503, body={"error": "temporarily_unavailable"})) as base:
         point_auth_at(base)
-        manager = auth.ChatGPTPlanAuth.from_home(tmp_path)
-        with pytest.raises(auth.ChatGPTPlanAuthError) as excinfo:
+        manager = auth.ChatGPTAuth.from_home(tmp_path)
+        with pytest.raises(auth.ChatGPTAuthError) as excinfo:
             await manager.get_access_token()
-        assert not isinstance(excinfo.value, auth.ChatGPTPlanLoginRequiredError)
+        assert not isinstance(excinfo.value, auth.ChatGPTLoginRequiredError)
         await manager.close()
     assert json.loads(path.read_text())["refresh_token"] == "rt-1"
 
@@ -607,7 +607,7 @@ async def test_logout_revokes_and_keeps_registration(tmp_path, point_auth_at):
 
 
 def test_discovery_endpoints_are_pinned_to_issuer():
-    with pytest.raises(auth.ChatGPTPlanAuthError, match="outside"):
+    with pytest.raises(auth.ChatGPTAuthError, match="outside"):
         auth._same_origin_as_issuer("https://evil.example/revoke", "revocation_endpoint")
 
 
@@ -709,13 +709,13 @@ class _Upstream:
 
 @pytest.fixture
 async def make_llm(tmp_path, monkeypatch, point_auth_at):
-    """Build a ChatGPTPlanLLM whose credentials, auth and API all point at one stub."""
-    created: list[ChatGPTPlanLLM] = []
+    """Build a ChatGPTLLM whose credentials, auth and API all point at one stub."""
+    created: list[ChatGPTLLM] = []
     servers: list[Any] = []
 
-    async def build(upstream: _Upstream, cred: dict[str, Any] | None = None) -> ChatGPTPlanLLM:
+    async def build(upstream: _Upstream, cred: dict[str, Any] | None = None) -> ChatGPTLLM:
         _write(tmp_path, cred or _credential())
-        monkeypatch.setenv("HINDSIGHT_API_LLM_CHATGPT_PLAN_HOME", str(tmp_path))
+        monkeypatch.setenv("HINDSIGHT_API_LLM_CHATGPT_HOME", str(tmp_path))
         clear_config_cache()
         cm = stub_server(upstream.handler)
         base = await cm.__aenter__()
@@ -723,7 +723,7 @@ async def make_llm(tmp_path, monkeypatch, point_auth_at):
         point_auth_at(base)
         monkeypatch.setattr(plan, "_API_BASE_URL", f"{base}/v1")
         llm = create_llm_provider(
-            provider="chatgpt-plan",
+            provider="chatgpt",
             api_key="",
             base_url="https://proxy.example/v1",
             model="gpt-6-luna",
@@ -833,7 +833,7 @@ async def test_unsupported_capability_is_not_retried(make_llm):
     }
     upstream = _Upstream([(400, body)])
     llm = await make_llm(upstream)
-    with pytest.raises(ChatGPTPlanRequestError, match="param='tools'"):
+    with pytest.raises(ChatGPTRequestError, match="param='tools'"):
         await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=3, initial_backoff=0.01)
     assert len(upstream.requests) == 1
 
@@ -867,7 +867,7 @@ async def test_401_refreshes_once_and_retries(make_llm):
 async def test_non_transient_stream_failure_is_not_retried(make_llm):
     upstream = _Upstream([(200, _failed("context_length_exceeded"))])
     llm = await make_llm(upstream)
-    with pytest.raises(ChatGPTPlanRequestError, match="context_length_exceeded"):
+    with pytest.raises(ChatGPTRequestError, match="context_length_exceeded"):
         await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=3, initial_backoff=0.01)
     assert len(upstream.requests) == 1
 
@@ -911,18 +911,16 @@ async def test_admission_403_is_not_retried(make_llm):
 
 
 def test_provider_registration():
-    assert not requires_api_key("chatgpt-plan")
-    assert PROVIDER_DEFAULT_MODELS["chatgpt-plan"] == "gpt-6-luna"
+    assert not requires_api_key("chatgpt")
+    assert PROVIDER_DEFAULT_MODELS["chatgpt"] == "gpt-6-luna"
 
 
 def test_missing_credentials_fail_with_login_command(tmp_path, monkeypatch):
-    monkeypatch.setenv("HINDSIGHT_API_LLM_CHATGPT_PLAN_HOME", str(tmp_path / "empty"))
+    monkeypatch.setenv("HINDSIGHT_API_LLM_CHATGPT_HOME", str(tmp_path / "empty"))
     clear_config_cache()
     try:
-        with pytest.raises(RuntimeError, match="hindsight-admin chatgpt-plan login"):
-            create_llm_provider(
-                provider="chatgpt-plan", api_key="", base_url="", model="gpt-6-luna", reasoning_effort=None
-            )
+        with pytest.raises(RuntimeError, match="hindsight-admin chatgpt login"):
+            create_llm_provider(provider="chatgpt", api_key="", base_url="", model="gpt-6-luna", reasoning_effort=None)
     finally:
         clear_config_cache()
 
@@ -944,7 +942,7 @@ async def test_refresh_with_malformed_optional_fields_still_persists_rotation(tm
     }
     async with stub_server(_refresh_handler({}, body=body)) as base:
         point_auth_at(base)
-        manager = auth.ChatGPTPlanAuth.from_home(tmp_path)
+        manager = auth.ChatGPTAuth.from_home(tmp_path)
         token = await manager.get_access_token()
         await manager.close()
     stored = auth.read_credential(path)
@@ -1012,7 +1010,7 @@ async def test_callback_page_is_self_contained_html(query, heading):
 
 
 def test_parse_callback_rejects_non_ascii_state_without_type_error():
-    with pytest.raises(auth.ChatGPTPlanAuthError, match="state"):
+    with pytest.raises(auth.ChatGPTAuthError, match="state"):
         auth.parse_callback({"code": "c", "state": "\u00e9"}, expected_state="s", pending_client_id=ISSUED_CLIENT_ID)
 
 
@@ -1028,10 +1026,10 @@ async def test_token_post_does_not_follow_redirects(tmp_path, point_auth_at):
 
     async with stub_server(handler) as base:
         point_auth_at(base)
-        manager = auth.ChatGPTPlanAuth.from_home(tmp_path)
-        with pytest.raises(auth.ChatGPTPlanAuthError, match="HTTP 307") as excinfo:
+        manager = auth.ChatGPTAuth.from_home(tmp_path)
+        with pytest.raises(auth.ChatGPTAuthError, match="HTTP 307") as excinfo:
             await manager.get_access_token()
-        assert not isinstance(excinfo.value, auth.ChatGPTPlanLoginRequiredError)
+        assert not isinstance(excinfo.value, auth.ChatGPTLoginRequiredError)
         await manager.close()
     assert hits == ["/api/accounts/oauth/token"]
 
@@ -1041,7 +1039,7 @@ async def test_import_refuses_a_different_registration_unless_forced(tmp_path):
     _write(home, _credential(subject="someone-else", client_id="oaiapp_other"))
     source = tmp_path / "laptop.json"
     source.write_text(json.dumps(_credential()))
-    with pytest.raises(auth.ChatGPTPlanAuthError, match="different registration"):
+    with pytest.raises(auth.ChatGPTAuthError, match="different registration"):
         await auth.import_credential(home, source, out=lambda _line: None)
     assert auth.read_credential(home / auth.CREDENTIAL_FILE).subject == "someone-else"
     await auth.import_credential(home, source, out=lambda _line: None, force=True)
@@ -1078,7 +1076,7 @@ async def test_401_with_plan_code_does_not_refresh(make_llm):
     body = {"error": {"code": "subscription_sharing_invalid_user", "message": "bad user", "type": "x"}}
     upstream = _Upstream([(401, body)])
     llm = await make_llm(upstream)
-    with pytest.raises(ChatGPTPlanRequestError, match="subscription_sharing_invalid_user"):
+    with pytest.raises(ChatGPTRequestError, match="subscription_sharing_invalid_user"):
         await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=3, initial_backoff=0.01)
     assert upstream.refresh_forms == []
     assert len(upstream.requests) == 1

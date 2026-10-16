@@ -39,7 +39,7 @@ Used for fact extraction, entity resolution, mental model consolidation, and ans
 - OpenRouter
 - Requesty
 - OpenAI Codex
-- ChatGPT Plan
+- ChatGPT
 - Claude Code
 - Cursor
 - GitHub Copilot
@@ -125,7 +125,7 @@ Beyond basic generation, some providers support optional features that lower cos
 | OpenRouter (`openrouter`) | — | — |
 | Requesty (`requesty`) | — | — |
 | OpenAI Codex (`openai-codex`) | — | — |
-| ChatGPT Plan (`chatgpt-plan`) | — | — |
+| ChatGPT (`chatgpt`) | — | — |
 | Claude Code (`claude-code`) | — | — |
 | Cursor (`cursor`) | — | — |
 | GitHub Copilot (`github-copilot`) | — | — |
@@ -195,7 +195,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `openrouter` | `qwen/qwen3.5-9b` |
 | `requesty` | `openai/gpt-4o-mini` |
 | `openai-codex` | `gpt-5.4-mini` |
-| `chatgpt-plan` | `gpt-6-luna` |
+| `chatgpt` | `gpt-6-luna` |
 | `claude-code` | `claude-sonnet-4-5-20250929` |
 | `cursor` | `auto` |
 | `github-copilot` | `gpt-5.6-terra` |
@@ -390,13 +390,13 @@ For automation, the Copilot SDK also accepts `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`,
 
 ### ChatGPT Plan Setup (Sign in with ChatGPT)
 
-The `chatgpt-plan` provider runs Hindsight's LLM calls on your ChatGPT plan through
+The `chatgpt` provider runs Hindsight's LLM calls on your ChatGPT plan through
 OpenAI's documented [Sign in with ChatGPT flow for open-source apps](https://developers.openai.com/siwc/token-sharing-open-source).
 Hindsight registers itself as its own OAuth client on first sign-in, and every call goes to the public
 `https://api.openai.com/v1/responses` endpoint with your OAuth access token. It does not use an API key.
 
 How it differs from `openai-codex`: that provider reuses the Codex CLI's sign-in and calls ChatGPT's private
-`chatgpt.com/backend-api/codex` endpoint. `chatgpt-plan` uses the supported route and keeps its own
+`chatgpt.com/backend-api/codex` endpoint. `chatgpt` uses the supported route and keeps its own
 credentials, so it never shares or rotates the Codex CLI's tokens.
 
 **Prerequisites:**
@@ -407,24 +407,24 @@ credentials, so it never shares or rotates the Codex CLI's tokens.
 
 1. **Sign in:**
    ```bash
-   hindsight-admin chatgpt-plan login
+   hindsight-admin chatgpt login
    ```
    This opens your browser and waits for the callback on `http://127.0.0.1:1455/auth/callback`
    (`--port` changes the port; `--no-browser` prints the URL instead). Approve the request, including
    use of your ChatGPT plan. The command validates the ID token and the granted scopes, then writes
-   `~/.hindsight/chatgpt-plan/credentials.json` (mode `0600`) next to this host's `host_id`.
+   `~/.hindsight/chatgpt/credentials.json` (mode `0600`) next to this host's `host_id`.
    If you declined plan usage, run `login --enable-plan-usage` to be asked again.
 
 2. **Configure Hindsight:**
    ```bash
-   export HINDSIGHT_API_LLM_PROVIDER=chatgpt-plan
+   export HINDSIGHT_API_LLM_PROVIDER=chatgpt
    # export HINDSIGHT_API_LLM_MODEL=gpt-6-luna       # the default
    # export HINDSIGHT_API_LLM_REASONING_EFFORT=medium  # sent as reasoning.effort
    ```
 
 3. **Check the stored session** (prints account, client id, scopes and expiry, never token values):
    ```bash
-   hindsight-admin chatgpt-plan status
+   hindsight-admin chatgpt status
    ```
 
 **Self-hosted server or VM (no browser):** the `127.0.0.1` callback reaches the machine running the
@@ -432,15 +432,15 @@ browser, so sign in on your laptop and move the credential file to the server.
 
 1. On the laptop: run `login` as above.
 2. Copy the file over SSH and import it on the server as the user that runs Hindsight (add
-   `--home <dir>` before `import` if the server sets `HINDSIGHT_API_LLM_CHATGPT_PLAN_HOME`).
+   `--home <dir>` before `import` if the server sets `HINDSIGHT_API_LLM_CHATGPT_HOME`).
    `import` keeps the server's own `host_id` (creating one on first use) instead of the laptop's:
    ```bash
-   scp ~/.hindsight/chatgpt-plan/credentials.json server:/tmp/chatgpt-plan.json
-   ssh server 'hindsight-admin chatgpt-plan import /tmp/chatgpt-plan.json && rm /tmp/chatgpt-plan.json'
+   scp ~/.hindsight/chatgpt/credentials.json server:/tmp/chatgpt.json
+   ssh server 'hindsight-admin chatgpt import /tmp/chatgpt.json && rm /tmp/chatgpt.json'
    ```
 3. On the laptop, stop using that copy without revoking it:
    ```bash
-   hindsight-admin chatgpt-plan logout --local-only
+   hindsight-admin chatgpt logout --local-only
    ```
    Refresh tokens rotate, so after the copy only the server may use and refresh this session. A plain
    `logout` would revoke it and end the server's session too. `--local-only` clears the laptop's
@@ -463,7 +463,7 @@ The server then owns refreshes. Sign in again on the laptop later if you also wa
   messages.
 - `logout` revokes the session and clears local tokens but keeps the client registration and host id
   for the next `login`. `logout --local-only` clears the tokens without revoking.
-- `HINDSIGHT_API_LLM_CHATGPT_PLAN_HOME` relocates the credential directory. Use one directory per
+- `HINDSIGHT_API_LLM_CHATGPT_HOME` relocates the credential directory. Use one directory per
   ChatGPT account. The directory must be writable, because each refresh writes the rotated token
   back; in a container, mount a writable volume there. If a write fails, the process keeps the new
   tokens in memory, but other processes and restarts will not see them.

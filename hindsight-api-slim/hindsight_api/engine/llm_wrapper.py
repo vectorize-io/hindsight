@@ -774,12 +774,12 @@ def create_llm_provider(
             timeout=timeout,
         )
 
-    elif provider_lower == "chatgpt-plan":
+    elif provider_lower == "chatgpt":
         # The public Responses API billed to a ChatGPT plan through OpenAI's
-        # Sign in with ChatGPT flow (credentials from `hindsight-admin chatgpt-plan login`).
-        from hindsight_api.engine.providers.chatgpt_plan_llm import ChatGPTPlanLLM
+        # Sign in with ChatGPT flow (credentials from `hindsight-admin chatgpt login`).
+        from hindsight_api.engine.providers.chatgpt_llm import ChatGPTLLM
 
-        return ChatGPTPlanLLM(
+        return ChatGPTLLM(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
@@ -999,7 +999,7 @@ class LLMProvider:
             "llamacpp",
             "vertexai",
             "openai-codex",
-            "chatgpt-plan",
+            "chatgpt",
             "claude-code",
             "cursor",
             "github-copilot",

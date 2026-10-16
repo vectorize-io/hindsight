@@ -355,7 +355,7 @@ class OpenAIResponsesLLM(LLMInterface):
     async def _create_response(self, params: dict[str, Any]) -> Any:
         """Send one Responses request and return the final response object.
 
-        The hook subclasses override to change transport (``chatgpt-plan`` streams
+        The hook subclasses override to change transport (``chatgpt`` streams
         and swaps the bearer token per call); everything around it stays shared.
         """
         return await self._client.responses.create(**params)

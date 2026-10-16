@@ -1652,14 +1652,14 @@ def worker_status(
 
 
 @app.command(
-    name="chatgpt-plan",
+    name="chatgpt",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True, "help_option_names": []},
 )
-def chatgpt_plan(ctx: typer.Context):
-    """Sign in with ChatGPT for the chatgpt-plan LLM provider (login | status | logout | import)."""
-    from ..engine.providers.chatgpt_plan_auth import main as chatgpt_plan_main
+def chatgpt(ctx: typer.Context):
+    """Sign in with ChatGPT for the chatgpt LLM provider (login | status | logout | import)."""
+    from ..engine.providers.chatgpt_auth import main as chatgpt_main
 
-    raise typer.Exit(chatgpt_plan_main(ctx.args, prog="hindsight-admin chatgpt-plan"))
+    raise typer.Exit(chatgpt_main(ctx.args, prog="hindsight-admin chatgpt"))
 
 
 def main():

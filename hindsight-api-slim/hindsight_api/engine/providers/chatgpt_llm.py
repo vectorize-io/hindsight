@@ -1,7 +1,7 @@
-"""``chatgpt-plan`` provider: the public Responses API billed to the user's ChatGPT plan.
+"""``chatgpt`` provider: the public Responses API billed to the user's ChatGPT plan.
 
 Uses the OAuth access token from OpenAI's "Sign in with ChatGPT" flow for
-open-source apps (see ``chatgpt_plan_auth.py``) as the bearer credential for
+open-source apps (see ``chatgpt_auth.py``) as the bearer credential for
 ``POST https://api.openai.com/v1/responses``. Request translation, structured
 output, tool calls and usage accounting are inherited from
 ``OpenAIResponsesLLM``; this class only changes the transport:
@@ -26,11 +26,11 @@ from typing import Any
 from openai import APIConnectionError, APIError, APIStatusError, AuthenticationError
 
 from hindsight_api.engine.llm_interface import ProviderRateLimitResetError
-from hindsight_api.engine.providers.chatgpt_plan_auth import (
+from hindsight_api.engine.providers.chatgpt_auth import (
     RESOURCE,
-    ChatGPTPlanAuth,
-    ChatGPTPlanAuthError,
-    ChatGPTPlanLoginRequiredError,
+    ChatGPTAuth,
+    ChatGPTAuthError,
+    ChatGPTLoginRequiredError,
     default_home,
 )
 from hindsight_api.engine.providers.openai_compatible_llm import _rate_limit_retry_at
@@ -98,7 +98,7 @@ USAGE_LIMIT_DEFER_SECONDS = 30 * 60
 USAGE_URL = "https://chatgpt.com/settings/usage"
 
 
-class ChatGPTPlanRequestError(RuntimeError):
+class ChatGPTRequestError(RuntimeError):
     """The ChatGPT plan route refused the request in a way retrying will not fix."""
 
 
@@ -117,11 +117,11 @@ def _plan_error(
             ),
         )
     if code == UNSUPPORTED_CAPABILITY_CODE:
-        return ChatGPTPlanRequestError(
+        return ChatGPTRequestError(
             f"ChatGPT plan route does not support part of this request ({label}, param={param!r}): {message}"
         )
     if code in _NON_RETRYABLE_CODES:
-        return ChatGPTPlanRequestError(f"ChatGPT plan usage refused ({label}, code={code}): {message}")
+        return ChatGPTRequestError(f"ChatGPT plan usage refused ({label}, code={code}): {message}")
     return None
 
 
@@ -132,7 +132,7 @@ def _stream_failure(code: str | None, message: str, param: str | None, *, label:
         return mapped
     if code is None or code in _TRANSIENT_STREAM_CODES:
         return RetryableResponsesError(f"ChatGPT plan response failed ({label}, code={code}): {message}")
-    return ChatGPTPlanRequestError(f"ChatGPT plan response failed ({label}, code={code}): {message}")
+    return ChatGPTRequestError(f"ChatGPT plan response failed ({label}, code={code}): {message}")
 
 
 def _plan_request_body(params: dict[str, Any]) -> dict[str, Any]:
@@ -152,7 +152,7 @@ def _plan_request_body(params: dict[str, Any]) -> dict[str, Any]:
     return body
 
 
-class ChatGPTPlanLLM(OpenAIResponsesLLM):
+class ChatGPTLLM(OpenAIResponsesLLM):
     """OpenAI Responses API on a ChatGPT plan via Sign in with ChatGPT credentials."""
 
     def __init__(
@@ -169,15 +169,15 @@ class ChatGPTPlanLLM(OpenAIResponsesLLM):
         # Loaded first: the parent requires an api_key, and a missing login should
         # fail at startup with the command that fixes it.
         try:
-            self._auth = ChatGPTPlanAuth.shared(default_home())
-        except ChatGPTPlanAuthError as e:
-            raise RuntimeError(f"chatgpt-plan provider unavailable: {e}") from e
+            self._auth = ChatGPTAuth.shared(default_home())
+        except ChatGPTAuthError as e:
+            raise RuntimeError(f"chatgpt provider unavailable: {e}") from e
         if model.startswith("openai/"):
             model = model[len("openai/") :]
         super().__init__(
             provider=provider,
             # Placeholder; each request carries the current OAuth access token instead.
-            api_key="chatgpt-plan-oauth",
+            api_key="chatgpt-oauth",
             base_url=_API_BASE_URL,
             model=model,
             reasoning_effort=reasoning_effort,
@@ -207,9 +207,9 @@ class ChatGPTPlanLLM(OpenAIResponsesLLM):
                 logger.info("ChatGPT plan request returned 401; refreshing the access token once")
                 await self._auth.refresh(rejected_token=token)
                 return await self._stream(body, await self._auth.get_access_token())
-        except ChatGPTPlanLoginRequiredError:
+        except ChatGPTLoginRequiredError:
             raise
-        except ChatGPTPlanAuthError as e:
+        except ChatGPTAuthError as e:
             raise RetryableResponsesError(str(e)) from e
         except APIStatusError as e:
             mapped = _plan_error(
@@ -235,7 +235,7 @@ class ChatGPTPlanLLM(OpenAIResponsesLLM):
         label = f"{self.provider}/{self.model}"
         try:
             return await self._consume(body, token, label)
-        except (APIError, RetryableResponsesError, ChatGPTPlanRequestError, ProviderRateLimitResetError):
+        except (APIError, RetryableResponsesError, ChatGPTRequestError, ProviderRateLimitResetError):
             raise
         except Exception as e:
             # A connection dropped mid-stream surfaces as a raw transport error: the SDK
@@ -264,7 +264,7 @@ class ChatGPTPlanLLM(OpenAIResponsesLLM):
                     reason = getattr(response.incomplete_details, "reason", None)
                     if reason == "max_output_tokens":
                         return response  # the parent maps this to OutputTooLongError
-                    raise ChatGPTPlanRequestError(f"ChatGPT plan response incomplete ({label}): {reason}")
+                    raise ChatGPTRequestError(f"ChatGPT plan response incomplete ({label}): {reason}")
                 elif kind in ("response.failed", "error"):
                     error = event.response.error if kind == "response.failed" else event
                     raise _stream_failure(

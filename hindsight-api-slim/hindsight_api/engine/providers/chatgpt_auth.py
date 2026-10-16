@@ -1,5 +1,5 @@
 """
-ChatGPT plan credentials for the ``chatgpt-plan`` provider.
+ChatGPT plan credentials for the ``chatgpt`` provider.
 
 Implements OpenAI's "Sign in with ChatGPT" flow for open-source apps: a public
 client registered dynamically on first sign-in (``client_id=dynamic_agent_client``
@@ -11,8 +11,8 @@ Responses API, billed to the user's ChatGPT plan. This is the documented path;
 
 Store
 -----
-One directory per ChatGPT account registration (``~/.hindsight/chatgpt-plan`` by
-default, ``HINDSIGHT_API_LLM_CHATGPT_PLAN_HOME`` to relocate) holding:
+One directory per ChatGPT account registration (``~/.hindsight/chatgpt`` by
+default, ``HINDSIGHT_API_LLM_CHATGPT_HOME`` to relocate) holding:
 
 * ``credentials.json`` — the credential record in the format OpenAI documents
   (email, subject, issued ``client_id``, tokens, scopes, ``expires_in``,
@@ -24,7 +24,7 @@ Refresh tokens rotate, so every refresh happens under :func:`oauth_store_lock`
 and re-reads the file first: a sibling process may already have rotated it.
 
 Interactive commands (``login``, ``status``, ``logout``, ``import``) run as
-``hindsight-admin chatgpt-plan <command>``. The
+``hindsight-admin chatgpt <command>``. The
 server never starts a login.
 
 Token values are never logged or printed.
@@ -85,7 +85,7 @@ DEFAULT_CALLBACK_PORT = 1455
 CALLBACK_PATH = "/auth/callback"
 CREDENTIAL_FILE = "credentials.json"
 HOST_ID_FILE = "host_id"
-LOGIN_COMMAND = "hindsight-admin chatgpt-plan login"
+LOGIN_COMMAND = "hindsight-admin chatgpt login"
 
 #: Refresh errors after which only a new login helps (``invalid_client`` included:
 #: the registration itself is unusable).
@@ -108,14 +108,14 @@ _HTTP_TIMEOUT_SECONDS = 30.0
 _LOGIN_TIMEOUT_SECONDS = 600.0
 _ID_TOKEN_LEEWAY_SECONDS = 60
 _ID_TOKEN_ALGORITHMS = frozenset({"RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384"})
-_LOCK_LABEL = "chatgpt-plan credential store"
+_LOCK_LABEL = "chatgpt credential store"
 
 
-class ChatGPTPlanAuthError(RuntimeError):
+class ChatGPTAuthError(RuntimeError):
     """A credential operation failed; may be transient (network, 5xx)."""
 
 
-class ChatGPTPlanLoginRequiredError(ChatGPTPlanAuthError):
+class ChatGPTLoginRequiredError(ChatGPTAuthError):
     """Only a new interactive login can restore service."""
 
 
@@ -144,7 +144,7 @@ _OptFloat = Annotated[float | None, BeforeValidator(_lenient_float)]
 _OptStr = Annotated[str | None, BeforeValidator(_lenient_str)]
 
 
-class ChatGPTPlanCredential(BaseModel):
+class ChatGPTCredential(BaseModel):
     """The stored credential record (OpenAI's documented local format, plus bookkeeping)."""
 
     model_config = ConfigDict(extra="ignore")
@@ -230,11 +230,11 @@ def _print_now(line: str) -> None:
 
 
 def default_home() -> Path:
-    """Credential directory: ``HINDSIGHT_API_LLM_CHATGPT_PLAN_HOME`` or ``~/.hindsight/chatgpt-plan``."""
-    configured = get_config().llm_chatgpt_plan_home
+    """Credential directory: ``HINDSIGHT_API_LLM_CHATGPT_HOME`` or ``~/.hindsight/chatgpt``."""
+    configured = get_config().llm_chatgpt_home
     if configured:
         return Path(configured).expanduser()
-    return Path.home() / ".hindsight" / "chatgpt-plan"
+    return Path.home() / ".hindsight" / "chatgpt"
 
 
 # ---------------------------------------------------------------------------
@@ -272,23 +272,23 @@ def load_or_create_host_id(home: Path) -> str:
     return host_id
 
 
-def read_credential(path: Path) -> ChatGPTPlanCredential:
-    """Load the credential record; raise :class:`ChatGPTPlanLoginRequiredError` if absent or malformed."""
+def read_credential(path: Path) -> ChatGPTCredential:
+    """Load the credential record; raise :class:`ChatGPTLoginRequiredError` if absent or malformed."""
     try:
         with open(path) as handle:
-            return ChatGPTPlanCredential.model_validate(json.load(handle))
+            return ChatGPTCredential.model_validate(json.load(handle))
     except FileNotFoundError:
-        raise ChatGPTPlanLoginRequiredError(
+        raise ChatGPTLoginRequiredError(
             f"No ChatGPT plan credentials at {path}. Run `{LOGIN_COMMAND}` on a machine with a browser "
-            "(see the chatgpt-plan setup docs for headless servers)."
+            "(see the chatgpt setup docs for headless servers)."
         ) from None
     except (OSError, json.JSONDecodeError, ValidationError) as exc:
-        raise ChatGPTPlanLoginRequiredError(
+        raise ChatGPTLoginRequiredError(
             f"ChatGPT plan credentials at {path} are unreadable ({type(exc).__name__}). Run `{LOGIN_COMMAND}`."
         ) from exc
 
 
-def write_credential(path: Path, credential: ChatGPTPlanCredential) -> None:
+def write_credential(path: Path, credential: ChatGPTCredential) -> None:
     _write_private(path, credential.model_dump_json(indent=2, exclude_none=True) + "\n")
 
 
@@ -307,7 +307,7 @@ def _jwt_exp(token: str) -> float | None:
         return None
 
 
-def expires_at(credential: ChatGPTPlanCredential) -> float | None:
+def expires_at(credential: ChatGPTCredential) -> float | None:
     """Access-token expiry as unix seconds: the JWT ``exp``, else ``saved_at + expires_in``."""
     if credential.access_token:
         exp = _jwt_exp(credential.access_token)
@@ -322,7 +322,7 @@ def expires_at(credential: ChatGPTPlanCredential) -> float | None:
     return None
 
 
-def needs_refresh(credential: ChatGPTPlanCredential, now: float | None = None) -> bool:
+def needs_refresh(credential: ChatGPTCredential, now: float | None = None) -> bool:
     """True when there is no access token or it expires within the skew window."""
     if not credential.access_token:
         return True
@@ -352,7 +352,7 @@ async def _post_form(session: aiohttp.ClientSession, url: str, form: dict[str, s
             status = response.status
             text = await response.text(errors="replace")
     except (aiohttp.ClientError, TimeoutError) as exc:
-        raise ChatGPTPlanAuthError(f"Request to {url} failed: {type(exc).__name__}") from exc
+        raise ChatGPTAuthError(f"Request to {url} failed: {type(exc).__name__}") from exc
     try:
         return _HttpReply(status, json.loads(text) if text else None)
     except json.JSONDecodeError:
@@ -365,9 +365,9 @@ async def _get_json(session: aiohttp.ClientSession, url: str, what: str) -> dict
             status = response.status
             payload = await response.json(content_type=None)
     except (aiohttp.ClientError, TimeoutError, json.JSONDecodeError) as exc:
-        raise ChatGPTPlanAuthError(f"{what} failed: {type(exc).__name__}") from exc
+        raise ChatGPTAuthError(f"{what} failed: {type(exc).__name__}") from exc
     if status != 200 or not isinstance(payload, dict):
-        raise ChatGPTPlanAuthError(f"{what} returned HTTP {status}")
+        raise ChatGPTAuthError(f"{what} returned HTTP {status}")
     return payload
 
 
@@ -388,7 +388,7 @@ def _parse_token_response(reply: _HttpReply, what: str) -> _TokenResponse:
     if reply.status == 200:
         with contextlib.suppress(ValidationError):
             return _TokenResponse.model_validate(reply.body)
-    raise ChatGPTPlanAuthError(f"{what} failed: HTTP {reply.status} ({reply.error_code or 'no error code'})")
+    raise ChatGPTAuthError(f"{what} failed: HTTP {reply.status} ({reply.error_code or 'no error code'})")
 
 
 def _same_origin_as_issuer(url: str, field: str) -> str:
@@ -396,7 +396,7 @@ def _same_origin_as_issuer(url: str, field: str) -> str:
     issuer = urlparse(ISSUER)
     parsed = urlparse(url)
     if (parsed.scheme, parsed.netloc) != (issuer.scheme, issuer.netloc):
-        raise ChatGPTPlanAuthError(f"OpenAI discovery returned {field} outside {ISSUER}: {url!r}")
+        raise ChatGPTAuthError(f"OpenAI discovery returned {field} outside {ISSUER}: {url!r}")
     return url
 
 
@@ -475,22 +475,22 @@ def _state_matches(received: str, expected: str) -> bool:
 def parse_callback(query: dict[str, str], *, expected_state: str, pending_client_id: str) -> CallbackResult:
     """Validate the loopback callback's query parameters."""
     if not _state_matches(query.get("state", ""), expected_state):
-        raise ChatGPTPlanAuthError("Sign-in callback state did not match; aborting.")
+        raise ChatGPTAuthError("Sign-in callback state did not match; aborting.")
     error = query.get("error")
     if error:
         if error == "access_denied":
-            raise ChatGPTPlanAuthError("Sign-in was declined in the browser (access_denied).")
-        raise ChatGPTPlanAuthError(f"Sign-in failed: {error}")
+            raise ChatGPTAuthError("Sign-in was declined in the browser (access_denied).")
+        raise ChatGPTAuthError(f"Sign-in failed: {error}")
     code = query.get("code")
     if not code:
-        raise ChatGPTPlanAuthError("Sign-in callback carried no authorization code.")
+        raise ChatGPTAuthError("Sign-in callback carried no authorization code.")
     returned_client_id = query.get("client_id")
     if pending_client_id == DYNAMIC_CLIENT_ID:
         if not returned_client_id or returned_client_id == DYNAMIC_CLIENT_ID:
-            raise ChatGPTPlanAuthError("Registration incomplete: the callback carried no issued client_id.")
+            raise ChatGPTAuthError("Registration incomplete: the callback carried no issued client_id.")
         return CallbackResult(code=code, client_id=returned_client_id)
     if returned_client_id and returned_client_id != pending_client_id:
-        raise ChatGPTPlanAuthError("Sign-in callback returned a different client_id than this registration; rejected.")
+        raise ChatGPTAuthError("Sign-in callback returned a different client_id than this registration; rejected.")
     return CallbackResult(code=code, client_id=pending_client_id)
 
 
@@ -518,14 +518,14 @@ def validate_id_token(id_token: str, *, jwks: dict[str, Any], client_id: str, no
         header = jwt.get_unverified_header(id_token)
         keys = jwt.PyJWKSet.from_dict(jwks).keys
     except jwt.PyJWTError as exc:
-        raise ChatGPTPlanAuthError(f"ID token or JWKS unreadable: {exc}") from exc
+        raise ChatGPTAuthError(f"ID token or JWKS unreadable: {exc}") from exc
     alg = header.get("alg")
     if alg not in _ID_TOKEN_ALGORITHMS:
-        raise ChatGPTPlanAuthError(f"ID token uses an unexpected algorithm: {alg!r}")
+        raise ChatGPTAuthError(f"ID token uses an unexpected algorithm: {alg!r}")
     kid = header.get("kid")
     candidates = [k for k in keys if k.key_id == kid] if kid else keys
     if len(candidates) != 1:
-        raise ChatGPTPlanAuthError("No unique JWKS key matches the ID token.")
+        raise ChatGPTAuthError("No unique JWKS key matches the ID token.")
     try:
         claims = jwt.decode(
             id_token,
@@ -537,17 +537,17 @@ def validate_id_token(id_token: str, *, jwks: dict[str, Any], client_id: str, no
             options={"require": ["exp", "iss", "aud", "sub"]},
         )
     except jwt.PyJWTError as exc:
-        raise ChatGPTPlanAuthError(f"ID token validation failed: {exc}") from exc
+        raise ChatGPTAuthError(f"ID token validation failed: {exc}") from exc
     if not secrets.compare_digest(str(claims.get("nonce", "")), nonce):
-        raise ChatGPTPlanAuthError("ID token nonce did not match this sign-in attempt.")
+        raise ChatGPTAuthError("ID token nonce did not match this sign-in attempt.")
     email = claims.get("email")
     return IdTokenClaims(sub=str(claims["sub"]), email=email if isinstance(email, str) else None)
 
 
 def build_credential(
     tokens: _TokenResponse, *, claims: IdTokenClaims, client_id: str, host_id: str
-) -> ChatGPTPlanCredential:
-    return ChatGPTPlanCredential(
+) -> ChatGPTCredential:
+    return ChatGPTCredential(
         email=claims.email,
         issuer=ISSUER,
         subject=claims.sub,
@@ -660,7 +660,7 @@ async def _start_callback_listener(
         await web.TCPSite(runner, "127.0.0.1", port).start()
     except OSError as exc:
         await runner.cleanup()
-        raise ChatGPTPlanAuthError(f"Cannot listen on 127.0.0.1:{port} ({exc.strerror}); try --port.") from exc
+        raise ChatGPTAuthError(f"Cannot listen on 127.0.0.1:{port} ({exc.strerror}); try --port.") from exc
 
     async def wait() -> dict[str, str]:
         try:
@@ -678,7 +678,7 @@ async def login(
     open_browser: Callable[[str], Any] | None = webbrowser.open,
     out: Callable[[str], None] = _print_now,
     enable_plan_usage: bool = False,
-) -> ChatGPTPlanCredential:
+) -> ChatGPTCredential:
     """Run the interactive sign-in and write the credential file.
 
     ``open_browser=None`` prints the URL instead (``--no-browser``). A printed URL
@@ -689,8 +689,8 @@ async def login(
     """
     path = home / CREDENTIAL_FILE
     host_id = load_or_create_host_id(home)
-    existing = ChatGPTPlanCredential()
-    with contextlib.suppress(ChatGPTPlanLoginRequiredError):
+    existing = ChatGPTCredential()
+    with contextlib.suppress(ChatGPTLoginRequiredError):
         existing = read_credential(path)
 
     client_id = existing.client_id or DYNAMIC_CLIENT_ID
@@ -720,14 +720,14 @@ async def login(
     try:
         query = await wait()
     except TimeoutError:
-        raise ChatGPTPlanAuthError("Timed out waiting for the browser sign-in.") from None
+        raise ChatGPTAuthError("Timed out waiting for the browser sign-in.") from None
 
     callback = parse_callback(query, expected_state=state, pending_client_id=client_id)
     if client_id == DYNAMIC_CLIENT_ID:
         # Keep the newly issued client id even if a later step fails, so a retry
         # reauthorizes this registration instead of registering a second client.
         async with oauth_store_lock(path, timeout_seconds=_LOCK_TIMEOUT_SECONDS, label=_LOCK_LABEL):
-            write_credential(path, ChatGPTPlanCredential(client_id=callback.client_id, ext_agent_host_id=host_id))
+            write_credential(path, ChatGPTCredential(client_id=callback.client_id, ext_agent_host_id=host_id))
 
     async with aiohttp.ClientSession(timeout=per_phase_timeout(_HTTP_TIMEOUT_SECONDS)) as session:
         tokens = await exchange_code(
@@ -738,20 +738,20 @@ async def login(
             redirect_uri=redirect_uri,
         )
         if not tokens.id_token:
-            raise ChatGPTPlanAuthError("Token response carried no ID token.")
+            raise ChatGPTAuthError("Token response carried no ID token.")
         endpoints = await discover(session)
         if not endpoints.jwks_uri:
-            raise ChatGPTPlanAuthError("OpenAI discovery document has no jwks_uri.")
+            raise ChatGPTAuthError("OpenAI discovery document has no jwks_uri.")
         jwks = await _get_json(session, endpoints.jwks_uri, "Fetching OpenAI JWKS")
 
     claims = validate_id_token(tokens.id_token, jwks=jwks, client_id=callback.client_id, nonce=nonce)
     if existing.subject and existing.subject != claims.sub:
-        raise ChatGPTPlanAuthError(
+        raise ChatGPTAuthError(
             f"Signed in as a different ChatGPT account than the one stored in {path}. "
-            "Use a separate HINDSIGHT_API_LLM_CHATGPT_PLAN_HOME per account."
+            "Use a separate HINDSIGHT_API_LLM_CHATGPT_HOME per account."
         )
     if not tokens.refresh_token:
-        raise ChatGPTPlanAuthError("Token response carried no refresh token (offline_access not granted).")
+        raise ChatGPTAuthError("Token response carried no refresh token (offline_access not granted).")
 
     credential = build_credential(tokens, claims=claims, client_id=callback.client_id, host_id=host_id)
     async with oauth_store_lock(path, timeout_seconds=_LOCK_TIMEOUT_SECONDS, label=_LOCK_LABEL):
@@ -764,7 +764,7 @@ async def login(
 # ---------------------------------------------------------------------------
 
 
-class ChatGPTPlanAuth:
+class ChatGPTAuth:
     """Supplies a fresh access token and serializes rotating refreshes across processes.
 
     One instance per credential file per process (see :meth:`shared`): Hindsight
@@ -773,11 +773,11 @@ class ChatGPTPlanAuth:
     others refreshing with the spent token.
     """
 
-    _shared: dict[Path, ChatGPTPlanAuth] = {}
+    _shared: dict[Path, ChatGPTAuth] = {}
     # Guards ``_shared`` only (await-free); instances are reachable from several loops.
     _shared_lock = threading.Lock()
 
-    def __init__(self, path: Path, credential: ChatGPTPlanCredential) -> None:
+    def __init__(self, path: Path, credential: ChatGPTCredential) -> None:
         self.path = path
         self._credential = credential
         # Refresh token the file still holds after a rotation we could not write;
@@ -786,22 +786,22 @@ class ChatGPTPlanAuth:
         self._http = LoopLocalSession(timeout=per_phase_timeout(_HTTP_TIMEOUT_SECONDS))
 
     @classmethod
-    def from_home(cls, home: Path) -> ChatGPTPlanAuth:
+    def from_home(cls, home: Path) -> ChatGPTAuth:
         path = home / CREDENTIAL_FILE
         credential = read_credential(path)
         if not credential.is_active:
-            raise ChatGPTPlanLoginRequiredError(
+            raise ChatGPTLoginRequiredError(
                 f"ChatGPT plan credentials at {path} have no active session. Run `{LOGIN_COMMAND}`."
             )
         if not credential.has_plan_scope:
-            raise ChatGPTPlanLoginRequiredError(
+            raise ChatGPTLoginRequiredError(
                 f"ChatGPT plan usage is not enabled for this sign-in ({PLAN_SCOPE} was not granted). "
                 f"Run `{LOGIN_COMMAND}` and allow Hindsight to use your ChatGPT plan."
             )
         return cls(path, credential)
 
     @classmethod
-    def shared(cls, home: Path) -> ChatGPTPlanAuth:
+    def shared(cls, home: Path) -> ChatGPTAuth:
         """The process-wide manager for ``home``; the file is validated on every call."""
         fresh = cls.from_home(home)
         key = fresh.path.expanduser().resolve(strict=False)
@@ -813,10 +813,10 @@ class ChatGPTPlanAuth:
             await self.refresh()
         token = self._credential.access_token
         if not token:
-            raise ChatGPTPlanLoginRequiredError(f"No ChatGPT plan access token available. Run `{LOGIN_COMMAND}`.")
+            raise ChatGPTLoginRequiredError(f"No ChatGPT plan access token available. Run `{LOGIN_COMMAND}`.")
         return token
 
-    def _persist(self, credential: ChatGPTPlanCredential, *, replaces: ChatGPTPlanCredential) -> None:
+    def _persist(self, credential: ChatGPTCredential, *, replaces: ChatGPTCredential) -> None:
         """Adopt ``credential`` in memory first, then write it.
 
         Memory comes first because after a successful rotation the old refresh token
@@ -853,7 +853,7 @@ class ChatGPTPlanAuth:
             if current.access_token and current.access_token != rejected_token and not needs_refresh(current):
                 return
             if not current.is_active:
-                raise ChatGPTPlanLoginRequiredError(
+                raise ChatGPTLoginRequiredError(
                     f"ChatGPT plan credentials at {self.path} have no refresh token. Run `{LOGIN_COMMAND}`."
                 )
 
@@ -871,7 +871,7 @@ class ChatGPTPlanAuth:
             if reply.status != 200 and reply.error_code in TERMINAL_REFRESH_ERROR_CODES:
                 # Where the lock cannot hold (no fcntl, a store shared across hosts),
                 # another writer may have stored a newer grant meanwhile: keep that one.
-                with contextlib.suppress(ChatGPTPlanLoginRequiredError):
+                with contextlib.suppress(ChatGPTLoginRequiredError):
                     latest = read_credential(self.path)
                     if latest.is_active and latest.refresh_token != current.refresh_token:
                         self._credential = latest
@@ -883,11 +883,11 @@ class ChatGPTPlanAuth:
                 }
                 self._persist(current.model_copy(update=cleared), replaces=current)
                 if reply.error_code == "invalid_client":
-                    raise ChatGPTPlanLoginRequiredError(
+                    raise ChatGPTLoginRequiredError(
                         f"OpenAI rejected this app registration (invalid_client, client {current.client_id}). "
                         f"To register again, delete {self.path} and run `{LOGIN_COMMAND}`."
                     )
-                raise ChatGPTPlanLoginRequiredError(
+                raise ChatGPTLoginRequiredError(
                     f"ChatGPT plan refresh token is no longer usable ({reply.error_code}). Run `{LOGIN_COMMAND}`."
                 )
             tokens = _parse_token_response(reply, "ChatGPT plan token refresh")
@@ -909,7 +909,7 @@ class ChatGPTPlanAuth:
             self._persist(refreshed, replaces=current)
             logger.info("ChatGPT plan access token refreshed")
             if not refreshed.has_plan_scope:
-                raise ChatGPTPlanLoginRequiredError(
+                raise ChatGPTLoginRequiredError(
                     f"ChatGPT plan usage is no longer granted ({PLAN_SCOPE} missing). Run `{LOGIN_COMMAND}`."
                 )
 
@@ -922,11 +922,11 @@ class ChatGPTPlanAuth:
 # ---------------------------------------------------------------------------
 
 
-async def _revoke(session: aiohttp.ClientSession, credential: ChatGPTPlanCredential) -> bool:
+async def _revoke(session: aiohttp.ClientSession, credential: ChatGPTCredential) -> bool:
     """Revoke the refresh token; retry network failures and 5xx a few times. True on HTTP 200."""
     try:
         endpoint = (await discover(session)).revocation_endpoint
-    except ChatGPTPlanAuthError:
+    except ChatGPTAuthError:
         return False
     if not endpoint:
         return False
@@ -943,7 +943,7 @@ async def _revoke(session: aiohttp.ClientSession, credential: ChatGPTPlanCredent
                     "client_id": credential.client_id or "",
                 },
             )
-        except ChatGPTPlanAuthError:
+        except ChatGPTAuthError:
             reply = _HttpReply(0, None)
         if reply.status == 200:
             return True
@@ -1001,18 +1001,18 @@ async def import_credential(
     """
     imported = read_credential(source)
     if not imported.is_active:
-        raise ChatGPTPlanAuthError(f"{source} is not an active chatgpt-plan credential file.")
+        raise ChatGPTAuthError(f"{source} is not an active chatgpt credential file.")
     host_id = load_or_create_host_id(home)
     path = home / CREDENTIAL_FILE
     async with oauth_store_lock(path, timeout_seconds=_LOCK_TIMEOUT_SECONDS, label=_LOCK_LABEL):
-        existing: ChatGPTPlanCredential | None = None
-        with contextlib.suppress(ChatGPTPlanLoginRequiredError):
+        existing: ChatGPTCredential | None = None
+        with contextlib.suppress(ChatGPTLoginRequiredError):
             existing = read_credential(path)
         if existing is not None and not force:
             for field in ("subject", "client_id"):
                 old, new = getattr(existing, field), getattr(imported, field)
                 if old and old != new:
-                    raise ChatGPTPlanAuthError(
+                    raise ChatGPTAuthError(
                         f"{path} belongs to a different registration ({field} differs). "
                         "Use a separate --home per account, or pass --force to replace it."
                     )
@@ -1047,15 +1047,13 @@ def status_lines(home: Path) -> list[str]:
     return lines
 
 
-def main(argv: list[str] | None = None, prog: str = "chatgpt_plan_auth") -> int:
-    parser = argparse.ArgumentParser(
-        prog=prog, description="Manage the chatgpt-plan (Sign in with ChatGPT) credentials."
-    )
+def main(argv: list[str] | None = None, prog: str = "chatgpt_auth") -> int:
+    parser = argparse.ArgumentParser(prog=prog, description="Manage the chatgpt (Sign in with ChatGPT) credentials.")
     parser.add_argument(
         "--home",
         type=Path,
         default=None,
-        help="Credential directory (default: HINDSIGHT_API_LLM_CHATGPT_PLAN_HOME or ~/.hindsight/chatgpt-plan)",
+        help="Credential directory (default: HINDSIGHT_API_LLM_CHATGPT_HOME or ~/.hindsight/chatgpt)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
     login_parser = sub.add_parser("login", help="Sign in with ChatGPT in a browser on this machine.")
@@ -1090,7 +1088,7 @@ def main(argv: list[str] | None = None, prog: str = "chatgpt_plan_auth") -> int:
             print(f"Signed in as {credential.email or credential.subject}; saved {home / CREDENTIAL_FILE}.")
             if not credential.has_plan_scope:
                 print(
-                    f"ChatGPT plan usage was not granted ({PLAN_SCOPE} missing); the chatgpt-plan provider "
+                    f"ChatGPT plan usage was not granted ({PLAN_SCOPE} missing); the chatgpt provider "
                     "will refuse to run. Run login --enable-plan-usage and allow plan usage.",
                     file=sys.stderr,
                 )
@@ -1104,7 +1102,7 @@ def main(argv: list[str] | None = None, prog: str = "chatgpt_plan_auth") -> int:
                 print("Source is already the local credential file.", file=sys.stderr)
                 return 1
             asyncio.run(import_credential(home, args.source.expanduser(), force=args.force))
-    except ChatGPTPlanAuthError as exc:
+    except ChatGPTAuthError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     return 0

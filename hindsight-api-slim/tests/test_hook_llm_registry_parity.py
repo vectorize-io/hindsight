@@ -36,7 +36,7 @@ HOOK_EXEMPT_PROVIDERS = frozenset(
         "litellmrouter",
         "nous",
         "xai-oauth",
-        "chatgpt-plan",
+        "chatgpt",
         "mock",
         "none",
     }
