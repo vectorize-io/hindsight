@@ -9,6 +9,7 @@ table in a single round-trip. These tests drive them directly against pg0.
 import asyncio
 import importlib.util
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,7 +18,9 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 from hindsight_api.alembic import _owned
+from hindsight_api.engine.memories.pg.transfer import restore_fact_lifecycle
 from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.transfer.importer import FactLifecycle
 
 
 def _load_repair_migration():
@@ -366,7 +369,8 @@ async def test_banks_needing_consolidation_returns_each_bank_once(memory: Memory
         await _insert_fact(conn, mixed, failed=True)
         await _insert_fact(conn, mixed, consolidated=True)
         await _insert_fact(conn, mixed, fact_type="world")
-        # One eligible fact older than more failed facts than the newest-facts probe reads.
+        # One eligible fact behind 150 newer failed ones: past the newest-100 probe, so only
+        # the count fallback finds it.
         await _insert_facts(conn, buried, 1, age_days=2, failed=False)
         await _insert_facts(conn, buried, 150, age_days=1, failed=True)
         await _insert_facts(conn, only_failed, 150, age_days=1, failed=True)
@@ -388,11 +392,6 @@ async def test_import_never_writes_a_fact_both_consolidated_and_failed(memory: M
     """``banks_needing_consolidation()`` counts failed facts against unconsolidated
     ones, which holds only while no fact carries both markers. An archive can carry
     both; the importer keeps ``consolidated_at`` and drops the failure."""
-    from datetime import datetime, timezone
-
-    from hindsight_api.engine.memories.pg.transfer import restore_fact_lifecycle
-    from hindsight_api.engine.transfer.importer import FactLifecycle
-
     bank_id = await _make_bank(memory, request_context, "lifecycle")
     unit_id = uuid.uuid4()
     when = datetime(2020, 1, 2, tzinfo=timezone.utc)
