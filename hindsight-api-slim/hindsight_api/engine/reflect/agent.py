@@ -1180,7 +1180,8 @@ async def _run_reflect_agent_inner(
     # When a forced ``search_mental_models`` returns fresh, usable models on a
     # low/mid-budget call, we stop forcing the lower retrieval layers for the
     # rest of the run and let the agent answer (or retrieve deeper itself)
-    # under ``auto`` tool choice.
+    # under ``auto`` tool choice. A negative answer still needs recall: see the
+    # ``answer_found`` gate below.
     forcing_released = False
     # How many forced steps actually produced a tool call. The next forced step
     # is indexed by this. It used to be indexed by the iteration, so a turn that
@@ -1204,6 +1205,12 @@ async def _run_reflect_agent_inner(
     # step. The model then saw a shortened conversation, so the answer must come
     # from the full ``context_history`` via the standalone synthesis prompt.
     compacted = False
+    # ``done`` reporting nothing found (``answer_found: false``) before any recall
+    # ran is refused once and recall is forced: a negative answer must not come
+    # from the page or observation layer alone (#4567). Prompt-level rules for
+    # this were measured and ignored; the bool on ``done`` is checkable in code.
+    recall_ran = False
+    absence_recall_forced = False
     for iteration in range(max_iterations):
         # Cooperative cancellation checkpoint: abort the agent loop between
         # iterations if the caller (e.g. an HTTP client) has gone away, rather
@@ -1227,6 +1234,8 @@ async def _run_reflect_agent_inner(
         forced_step_pending = not forcing_released and forced_steps_done < len(forced_sequence)
         if forced_step_pending:
             iter_tool_choice = LLMToolChoice.named(forced_sequence[forced_steps_done])
+        elif absence_recall_forced and not recall_ran:
+            iter_tool_choice = LLMToolChoice.named("recall")
         else:
             iter_tool_choice = LLM_TOOL_CHOICE_AUTO
 
@@ -1454,6 +1463,33 @@ async def _run_reflect_agent_inner(
                 )
                 continue
 
+            if (
+                include_recall
+                and not recall_ran
+                and not absence_recall_forced
+                and iteration < max_iterations - 1
+                and not _answer_found(done_call.arguments)
+            ):
+                absence_recall_forced = True
+                logger.info(f"[REFLECT {reflect_id}] done reported nothing found before recall ran; forcing recall.")
+                (done_wire_id,) = _unique_tool_call_ids([done_call], emitted_wire_ids)
+                messages.append({"role": "assistant", "tool_calls": [_tool_call_to_dict(done_call, done_wire_id)]})
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": done_wire_id,
+                        "content": json.dumps(
+                            {
+                                "error": "You reported that nothing is known, but recall has not run yet. Call "
+                                "recall with the question's key terms (names, ids, issue keys verbatim) before "
+                                "answering."
+                            },
+                            ensure_ascii=False,
+                        ),
+                    }
+                )
+                continue
+
             # Process done tool - wrap with tool call span
             from hindsight_api.tracing import get_tracer
 
@@ -1668,10 +1704,12 @@ async def _run_reflect_agent_inner(
                     for obs in output["observations"]:
                         if "id" in obs:
                             available_observation_ids.add(obs["id"])
-                if normalized_tool_name == "recall" and isinstance(output, dict) and "memories" in output:
-                    for memory in output["memories"]:
-                        if "id" in memory:
-                            available_memory_ids.add(memory["id"])
+                if normalized_tool_name == "recall":
+                    recall_ran = True
+                    if isinstance(output, dict):
+                        for memory in output.get("memories", []):
+                            if "id" in memory:
+                                available_memory_ids.add(memory["id"])
 
                 # Record the serialized result; emitted in original order below. The
                 # model reads the presented form (see presentation.py); the trace
@@ -2006,6 +2044,19 @@ def _decode_json_argument(raw: str, finish_reason: str | None, field: str) -> An
         raise DocumentSectionsInvalidError(
             [f"{field}: not valid JSON ({exc.msg} at char {exc.pos} of {len(raw)}); check the closing brackets"]
         ) from exc
+
+
+def _answer_found(args: dict[str, Any]) -> bool:
+    """``done``'s ``answer_found``, read leniently: only an explicit false counts as not found.
+
+    A missing field (a model that ignores it, or an undecoded ``_raw`` payload)
+    reads as found, so the gate never blocks a run it cannot read. Some models
+    send booleans as strings, hence the ``"false"`` case.
+    """
+    value = args.get("answer_found", True)
+    if isinstance(value, str):
+        return value.strip().lower() != "false"
+    return value is not False
 
 
 def _done_arguments(done_call: "LLMToolCall", finish_reason: str | None) -> dict[str, Any]:

@@ -22,6 +22,7 @@ from hindsight_api.engine.reflect.agent import (
     ReflectToolCallError,
     ReflectToolExecutionError,
     _all_mental_models_are_usable_and_fresh,
+    _answer_found,
     _cache_cleanup_tasks,
     _count_messages_tokens,
     _generate_structured_output,
@@ -110,6 +111,25 @@ class TestToolNameNormalization:
         assert _is_done_tool("functions.recall") is False
         assert _is_done_tool("call=functions.recall") is False
         assert _is_done_tool("recall<|channel|>done") is False
+
+
+class TestAnswerFound:
+    """``done``'s ``answer_found`` gates the forced recall (#4567); only an explicit false may trigger it."""
+
+    @pytest.mark.parametrize(
+        ("args", "expected"),
+        [
+            ({"answer_found": True}, True),
+            ({"answer_found": False}, False),
+            ({"answer_found": "false"}, False),
+            ({"answer_found": " False "}, False),
+            ({"answer_found": "true"}, True),
+            ({}, True),
+            ({"_raw": '{"answer": "x", "answer_found": false}'}, True),
+        ],
+    )
+    def test_reads_only_an_explicit_false_as_not_found(self, args, expected):
+        assert _answer_found(args) is expected
 
 
 class TestMentalModelFreshnessHelper:
@@ -851,6 +871,96 @@ class TestReflectAgentMocked:
         mock_functions["recall_fn"].assert_called_once()
         assert mock_functions["recall_fn"].await_args.args[0] == "launch completion proof"
         mock_functions["search_observations_fn"].assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_nothing_found_before_recall_forces_recall(self, mock_llm, mock_functions):
+        """A short-circuited ``done`` that reports nothing found is refused until recall runs (#4567).
+
+        The fresh pages miss the question; the model says so with
+        ``answer_found: false``. That negative must not ship off the page layer
+        alone: the loop forces one recall, then accepts the next ``done``.
+        """
+        mock_functions["search_mental_models_fn"].return_value = {
+            "query": "test query",
+            "mental_models": [
+                {"id": "mm-1", "name": "Overview", "content": "General project overview.", "is_stale": False}
+            ],
+        }
+        mock_llm.call_with_tools.side_effect = [
+            self._mm_call(),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="2", name="done", arguments={"answer": "Nothing known.", "answer_found": False})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="3", name="recall", arguments={"reason": "verify", "query": "ABC-123"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(
+                        id="4",
+                        name="done",
+                        arguments={"answer": "ABC-123 is open.", "answer_found": True, "memory_ids": ["mem-1"]},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="where are we on ABC-123",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            has_mental_models=True,
+            budget="low",
+            max_iterations=5,
+            **mock_functions,
+        )
+
+        assert result.text == "ABC-123 is open."
+        mock_functions["recall_fn"].assert_called_once()
+        calls = mock_llm.call_with_tools.await_args_list
+        assert calls[2].kwargs["tool_choice"] == LLMToolChoice.named("recall")
+        # The messages list is shared across calls, so find the refusal by its tool_call_id.
+        refusal = next(m for m in calls[2].kwargs["messages"] if m.get("tool_call_id") == "2")
+        assert "recall has not run" in json.loads(refusal["content"])["error"]
+
+    @pytest.mark.asyncio
+    async def test_nothing_found_after_recall_is_accepted(self, mock_llm, mock_functions):
+        """Once recall has run, a negative answer stands: the gate fires only before recall."""
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="1", name="recall", arguments={"reason": "facts", "query": "ABC-123"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(
+                        id="2",
+                        name="done",
+                        arguments={"answer": "Nothing on ABC-123.", "answer_found": False, "memory_ids": ["mem-1"]},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="where are we on ABC-123",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            budget="low",
+            max_iterations=5,
+            **mock_functions,
+        )
+
+        assert result.text == "Nothing on ABC-123."
+        assert mock_llm.call_with_tools.await_count == 2
 
     @pytest.mark.asyncio
     async def test_stale_mental_model_keeps_forced_retrieval(self, mock_llm, mock_functions):
@@ -2826,6 +2936,80 @@ class TestMentalModelShortCircuitRealLLM:
                 "The first search returned only a fresh page about the AURORA release process, which records no "
                 "status for any individual issue. The raw-fact layer holds that AURORA-412 was closed as fixed "
                 "on 12 March."
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_real_agent_recovers_from_an_early_negative(self, llm_config, mock_functions, monkeypatch):
+        """An early "nothing found" is refused and the real model, forced to recall, answers from it (#4567).
+
+        The reporter's model answered "the bank holds nothing" straight off the
+        page layer; flash-lite in CI does not, so that one turn is staged here:
+        the second LLM turn is replaced by ``done(answer_found=false)``. Every
+        other turn is the real model -- what this checks is that it writes a
+        useful recall query under the forced choice and then answers from the
+        raw fact instead of repeating the negative.
+        """
+        functions = self._stub_functions(
+            mock_functions,
+            mental_models=[
+                {
+                    "id": "mm-process",
+                    "name": "Release Process",
+                    "content": "AURORA issues use keys like AURORA-412. Changes ship behind flags, released Thursdays.",
+                    "relevance": 0.9,
+                    "is_stale": False,
+                }
+            ],
+            recall_memories=[
+                {
+                    "id": "mem-412",
+                    "content": "AURORA-412 was closed as fixed on 12 March; the flag was removed in the same release.",
+                }
+            ],
+        )
+        real_call = llm_config.call_with_tools
+        turns = {"n": 0}
+
+        async def staged_call(*args, **kwargs):
+            turns["n"] += 1
+            if turns["n"] == 2:
+                return LLMToolCallResult(
+                    tool_calls=[
+                        LLMToolCall(
+                            id="staged-done",
+                            name="done",
+                            arguments={"answer": "The bank holds nothing on AURORA-412.", "answer_found": False},
+                        )
+                    ],
+                    finish_reason="tool_calls",
+                )
+            return await real_call(*args, **kwargs)
+
+        monkeypatch.setattr(llm_config, "call_with_tools", staged_call)
+        result = await run_reflect_agent(
+            llm_config=llm_config,
+            bank_id="test-bank",
+            query="Where do we stand on AURORA-412?",
+            bank_profile={"name": "Test", "mission": "Answer from what the bank holds"},
+            has_mental_models=True,
+            include_observations=True,
+            include_recall=True,
+            budget="low",
+            max_iterations=6,
+            **functions,
+        )
+
+        functions["recall_fn"].assert_awaited()
+        await assert_meets_criteria(
+            response=result.text,
+            criteria=(
+                "The answer reports that AURORA-412 was closed/fixed (on 12 March, and/or that its feature flag "
+                "was removed). It does NOT claim the bank holds nothing about AURORA-412."
+            ),
+            context=(
+                "The page layer held only the release process. The raw-fact layer holds that AURORA-412 was "
+                "closed as fixed on 12 March."
             ),
         )
 
