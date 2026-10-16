@@ -517,6 +517,33 @@ class PostgresMemories(MemoriesExtension):
             tag_groups=tag_groups,
         )
 
+    async def memories_updated_between(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        until: datetime,
+        since: datetime,
+        limit: int,
+        fact_types: list[str] | None = None,
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
+        tag_groups: list | None = None,
+    ) -> list[StoredMemory] | None:
+        return await reads.memories_updated_between(
+            conn=conn,
+            fq_table=fq_store_table,
+            bank_id=bank_id,
+            until=until,
+            since=since,
+            limit=limit,
+            fact_types=fact_types,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
+        )
+
     async def latest_memory_write_at(self, *, conn, fq_table, bank_id: str) -> datetime | None:
         return await reads.latest_memory_write_at(conn=conn, fq_table=fq_store_table, bank_id=bank_id)
 

@@ -1062,6 +1062,7 @@ ENV_CONSOLIDATION_WALL_TIMEOUT = "HINDSIGHT_API_CONSOLIDATION_WALL_TIMEOUT"
 ENV_REFLECT_MAX_ITERATIONS = "HINDSIGHT_API_REFLECT_MAX_ITERATIONS"
 ENV_REFLECT_USE_DECISION_MODEL = "HINDSIGHT_API_REFLECT_USE_DECISION_MODEL"
 ENV_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL"
+ENV_MENTAL_MODEL_REFRESH_DELTA_GATE = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_DELTA_GATE"
 ENV_REFLECT_PROMPT_CACHE_ENABLED = "HINDSIGHT_API_REFLECT_PROMPT_CACHE_ENABLED"
 ENV_REFLECT_MAX_CONTEXT_TOKENS = "HINDSIGHT_API_REFLECT_MAX_CONTEXT_TOKENS"
 ENV_REFLECT_WALL_TIMEOUT = "HINDSIGHT_API_REFLECT_WALL_TIMEOUT"
@@ -2027,6 +2028,7 @@ DEFAULT_REFLECT_MAX_ITERATIONS = 10  # Max tool call iterations before forcing r
 # On by default, so setting up a decision model is what turns it on; a bank can opt out.
 DEFAULT_REFLECT_USE_DECISION_MODEL = True
 DEFAULT_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL = True
+DEFAULT_MENTAL_MODEL_REFRESH_DELTA_GATE = False
 # Step-by-step context caching for the reflect tool loop (Gemini). On by default;
 # requires the global prompt cache (HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED) to also
 # be on. Set false to force reflect to run uncached even when prompt caching is on.
@@ -3730,6 +3732,9 @@ class HindsightConfig:
     reflect_max_iterations: int
     reflect_use_decision_model: bool
     mental_model_refresh_use_decision_model: bool
+    # Delta refresh reads the new memories and lets the decision model pick the ones that
+    # could change the page, instead of running reflect. Experimental, server-wide.
+    mental_model_refresh_delta_gate: bool
     reflect_max_context_tokens: int
     reflect_wall_timeout: int
     reflect_prompt_cache_enabled: bool
@@ -5453,6 +5458,10 @@ class HindsightConfig:
             == "true",
             mental_model_refresh_use_decision_model=os.getenv(
                 ENV_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL, str(DEFAULT_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL)
+            ).lower()
+            == "true",
+            mental_model_refresh_delta_gate=os.getenv(
+                ENV_MENTAL_MODEL_REFRESH_DELTA_GATE, str(DEFAULT_MENTAL_MODEL_REFRESH_DELTA_GATE)
             ).lower()
             == "true",
             reflect_prompt_cache_enabled=os.getenv(
