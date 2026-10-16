@@ -31,6 +31,8 @@ class _FakeOptions:
     env: dict[str, str] = field(default_factory=dict)
     mcp_servers: dict[str, Any] = field(default_factory=dict)
     model: str | None = None
+    cwd: str | None = None
+    setting_sources: list[str] | None = None
 
 
 class _FakeAssistantMessage:
@@ -53,6 +55,15 @@ def _instantiate_provider(api_key: str = ""):
         model="claude-haiku-4-5",
         reasoning_effort="low",
     )
+
+
+def _assert_isolation(options: _FakeOptions) -> None:
+    _assert_isolation_env(options.env)
+    # Issue #5542: the CLI loads ./.claude/settings.json from its cwd as project
+    # settings. Inheriting a $HOME cwd would load ~/.claude/settings.json (the
+    # host's hooks) despite CLAUDE_CONFIG_DIR, so pin cwd and load no settings.
+    assert options.cwd == options.env["CLAUDE_CONFIG_DIR"], "subprocess must run in the isolated dir"
+    assert options.setting_sources == [], "subprocess must load no user/project/local settings"
 
 
 def _assert_isolation_env(env: dict[str, str]) -> None:
@@ -91,7 +102,7 @@ async def test_call_passes_isolation_env_to_sdk_options(monkeypatch):
 
     assert result == "ok"
     assert "options" in captured, "fake query was not called"
-    _assert_isolation_env(captured["options"].env)
+    _assert_isolation(captured["options"])
 
 
 @pytest.mark.asyncio
@@ -153,7 +164,7 @@ async def test_call_with_tools_passes_isolation_env_to_sdk_options(monkeypatch):
 
     assert result.content == "ok"
     assert "options" in captured, "fake client was not constructed"
-    _assert_isolation_env(captured["options"].env)
+    _assert_isolation(captured["options"])
 
 
 def test_isolation_dir_is_reused_across_calls():

@@ -377,6 +377,14 @@ class ClaudeCodeLLM(LLMInterface):
             # so passing it through here is the only channel.
             model=self.model or None,
             env=self._env,
+            # CLAUDE_CONFIG_DIR only moves *user* settings. The CLI still loads
+            # ./.claude/settings.json from its cwd as project settings, and the
+            # subprocess inherits the daemon's cwd: started from $HOME, that file
+            # IS ~/.claude/settings.json with the host's hooks, and the #1751
+            # loop comes back (issue #5542). Run in the empty isolated dir and
+            # load no settings files at all.
+            cwd=self._env["CLAUDE_CONFIG_DIR"],
+            setting_sources=[],
         )
 
         # Call Claude Agent SDK
@@ -706,6 +714,9 @@ class ClaudeCodeLLM(LLMInterface):
             # Pin the configured model (issue #2881) — see the call() options block.
             model=self.model or None,
             env=self._env,
+            # No host settings/hooks via the daemon's cwd (#5542) — see call().
+            cwd=self._env["CLAUDE_CONFIG_DIR"],
+            setting_sources=[],
         )
 
         # Call Claude Agent SDK with retry logic
