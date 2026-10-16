@@ -81,6 +81,8 @@ helm install hindsight ./helm/hindsight -n hindsight --create-namespace -f value
 | `postgresql.external.database` | Database name | `hindsight` |
 | `postgresql.external.username` | Database username | `hindsight` |
 | `ingress.enabled` | Enable ingress | `false` |
+| `gatewayApi.enabled` | Create a Gateway API `HTTPRoute` (needs `gatewayApi.parentRefs`) | `false` |
+| `revisionHistoryLimit` | Old revisions kept per Deployment/StatefulSet; each component (`api`, `controlPlane`, `worker`, `tei.embedding`, `tei.reranker`, `postgresql`) can override it with its own `revisionHistoryLimit` | unset (Kubernetes default `10`) |
 | `autoscaling.enabled` | Enable HPA | `false` |
 | `metrics.serviceMonitor.enabled` | Create ServiceMonitors for api/worker (needs Prometheus operator) | `false` |
 | `metrics.serviceMonitor.labels` | Labels for Prometheus operator selection, e.g. `release: kube-prometheus-stack` | `{}` |
@@ -168,6 +170,28 @@ ingress:
       hosts:
         - hindsight.example.com
 ```
+
+### Gateway API
+
+On clusters that use Gateway API instead of an Ingress controller, attach an
+`HTTPRoute` to an existing Gateway. It splits paths the same way as the
+Ingress: `/v1` to the API, everything else to the control plane. TLS is
+terminated by the Gateway listener, so certificates are configured on the
+Gateway, not in this chart.
+
+```yaml
+gatewayApi:
+  enabled: true
+  parentRefs:
+    - name: internal-gateway
+      namespace: gwapi
+      sectionName: https   # optional: attach to one listener
+  hostnames:
+    - hindsight.example.com
+```
+
+The Gateway must allow routes from the release namespace
+(`allowedRoutes.namespaces`).
 
 ### Prometheus metrics
 

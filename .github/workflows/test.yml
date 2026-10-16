@@ -1774,6 +1774,22 @@ jobs:
         grep -q "name: rel-hindsight-str" <<<"$out"
         grep -q 'port: "8888"' <<<"$out"
 
+    - name: Render revisionHistoryLimit and Gateway API
+      run: |
+        # Unset by default: Kubernetes keeps its own default.
+        if helm template rel helm/hindsight | grep -q revisionHistoryLimit; then exit 1; fi
+        # The component value (0 included) wins over the global one.
+        out=$(helm template rel helm/hindsight --set revisionHistoryLimit=5 --set api.revisionHistoryLimit=0 -s templates/api-deployment.yaml -s templates/controlplane-deployment.yaml)
+        grep -q 'revisionHistoryLimit: 0' <<<"$out"
+        grep -q 'revisionHistoryLimit: 5' <<<"$out"
+        out=$(helm template rel helm/hindsight -s templates/httproute.yaml --set gatewayApi.enabled=true --set-json 'gatewayApi.parentRefs=[{"name":"gw","namespace":"gwapi"}]')
+        echo "$out"
+        grep -q 'kind: HTTPRoute' <<<"$out"
+        grep -q 'name: rel-hindsight-api' <<<"$out"
+        grep -q 'name: rel-hindsight-control-plane' <<<"$out"
+        # Enabled without a Gateway to attach to is a render error.
+        if helm template rel helm/hindsight --set gatewayApi.enabled=true >/dev/null 2>&1; then exit 1; fi
+
   test-standalone-start-script:
     needs: [detect-changes]
     if: >-

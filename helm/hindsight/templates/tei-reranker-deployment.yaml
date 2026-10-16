@@ -6,6 +6,9 @@ metadata:
   labels:
     {{- include "hindsight.tei.reranker.labels" . | nindent 4 }}
 spec:
+  {{- with include "hindsight.revisionHistoryLimit" (dict "local" .Values.tei.reranker.revisionHistoryLimit "root" .) }}
+  {{ . }}
+  {{- end }}
   replicas: {{ .Values.tei.reranker.replicaCount }}
   selector:
     matchLabels:

@@ -6,6 +6,9 @@ metadata:
   labels:
     {{- include "hindsight.controlPlane.labels" . | nindent 4 }}
 spec:
+  {{- with include "hindsight.revisionHistoryLimit" (dict "local" .Values.controlPlane.revisionHistoryLimit "root" .) }}
+  {{ . }}
+  {{- end }}
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.controlPlane.replicaCount }}
   {{- end }}
