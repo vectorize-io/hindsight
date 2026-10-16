@@ -162,6 +162,18 @@ def run_migrations_online() -> None:
             _configure_oracle_session(connection, target_schema)
         else:
             _configure_pg_session(connectable, connection, target_schema)
+            if target_schema:
+                from hindsight_api.alembic._new_schema_indexes import (
+                    build_new_schema_indexes_plainly,
+                    is_new_schema,
+                )
+
+                # Before alembic creates `alembic_version`, which is what "new" is judged by.
+                if is_new_schema(connection, target_schema):
+                    build_new_schema_indexes_plainly(connectable, target_schema)
+                # The check autobegan a transaction; end it so alembic opens its own (its
+                # autocommit blocks require one it owns).
+                connection.commit()
 
         context_opts = {
             "connection": connection,
