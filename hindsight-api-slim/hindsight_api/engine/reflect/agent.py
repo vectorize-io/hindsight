@@ -1276,7 +1276,8 @@ async def _run_reflect_agent_inner(
         def _arguments(tool: str) -> dict[str, Any]:
             arguments: dict[str, Any] = {"query": search_query, "reason": "parallel round"}
             # Raised only when the bank's own recall size is smaller: a size passed as an argument is
-            # capped like one the model asked for, while the bank's default applies uncapped.
+            # capped like one the model asked for, while the bank's default applies uncapped. Like any
+            # argument it still yields to a nearly full context window.
             if (
                 tool == "recall"
                 and prune_evidence_fn is not None
