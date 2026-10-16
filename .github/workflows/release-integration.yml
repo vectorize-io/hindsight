@@ -81,7 +81,7 @@ jobs:
       if: steps.type.outputs.type == 'plugin'
       run: |
         echo "Plugin integration ${{ steps.info.outputs.integration }} v${{ steps.info.outputs.version }} — no package to publish."
-        echo "Users install it from the marketplace manifest at the tagged commit."
+        echo "Users install it from a pinned commit: its marketplace manifest, or for hermes the Hermes plugin catalog."
 
     # ── TypeScript integrations (ai-sdk, chat, openclaw) ────────────────────
 
