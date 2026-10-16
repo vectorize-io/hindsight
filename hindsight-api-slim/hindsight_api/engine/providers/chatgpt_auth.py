@@ -729,6 +729,8 @@ async def login(
         async with oauth_store_lock(path, timeout_seconds=_LOCK_TIMEOUT_SECONDS, label=_LOCK_LABEL):
             write_credential(path, ChatGPTCredential(client_id=callback.client_id, ext_agent_host_id=host_id))
 
+    # One-shot CLI work under asyncio.run: a scoped session, not a LoopLocalSession,
+    # since nothing reuses it and the loop ends with the command.
     async with aiohttp.ClientSession(timeout=per_phase_timeout(_HTTP_TIMEOUT_SECONDS)) as session:
         tokens = await exchange_code(
             session,
@@ -965,6 +967,7 @@ async def logout(home: Path, out: Callable[[str], None] = print, *, revoke: bool
     credential = read_credential(path)
     confirmed = False
     if revoke and credential.is_active:
+        # One-shot CLI call (see login): a scoped session is enough.
         async with aiohttp.ClientSession(timeout=per_phase_timeout(_HTTP_TIMEOUT_SECONDS)) as session:
             confirmed = await _revoke(session, credential)
     async with oauth_store_lock(path, timeout_seconds=_LOCK_TIMEOUT_SECONDS, label=_LOCK_LABEL):
