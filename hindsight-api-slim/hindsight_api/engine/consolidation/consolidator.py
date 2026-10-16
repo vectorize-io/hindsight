@@ -2763,12 +2763,17 @@ async def _process_memory_batch(
 
                     merged_away: list[_MergedAway] = []
                     for prepared_delete in prepared_deletes:
-                        gone = await _execute_delete_action(
+                        if prepared_delete.is_merge:
+                            # Read before deleting: its sources and dates move to the survivor.
+                            gone = await get_memories().get_memories(
+                                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[prepared_delete.observation_id]
+                            )
+                            if gone:
+                                merged_away.append(_MergedAway(gone=gone[0], target_id=prepared_delete.merged_into))
+                        await _execute_delete_action(
                             conn=conn, bank_id=bank_id, observation_id=prepared_delete.observation_id
                         )
                         deleted_count += 1
-                        if gone is not None and prepared_delete.is_merge:
-                            merged_away.append(_MergedAway(gone=gone, target_id=prepared_delete.merged_into))
 
                     for prepared in prepared_updates:
                         updated_emb_str = await _apply_update_action(
@@ -3141,11 +3146,11 @@ async def _execute_delete_action(
     conn: "DatabaseConnection",
     bank_id: str,
     observation_id: str,
-) -> StoredMemory | None:
-    """Delete an observation and return the row as it was (None if it was already gone)."""
-    store = get_memories()
-    gone = await store.get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[observation_id])
-    await store.delete_observation(conn=conn, fq_table=fq_table, bank_id=bank_id, observation_id=observation_id)
+) -> None:
+    """Delete a superseded or contradicted observation."""
+    await get_memories().delete_observation(
+        conn=conn, fq_table=fq_table, bank_id=bank_id, observation_id=observation_id
+    )
     # History lives in Postgres regardless of where the observation itself does, and no
     # longer cascades from memory_units (that FK was dropped so it could be recorded for
     # observations kept outside SQL). Drop it explicitly so a deleted observation's
@@ -3156,7 +3161,6 @@ async def _execute_delete_action(
         uuid.UUID(observation_id),
     )
     logger.debug(f"Deleted observation {observation_id}")
-    return gone[0] if gone else None
 
 
 async def _fold_deleted_evidence(
