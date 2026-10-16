@@ -6,6 +6,9 @@ metadata:
   labels:
     {{- include "hindsight.worker.labels" . | nindent 4 }}
 spec:
+  {{- with include "hindsight.revisionHistoryLimit" (dict "local" .Values.worker.revisionHistoryLimit "root" .) }}
+  {{ . }}
+  {{- end }}
   serviceName: {{ include "hindsight.fullname" . }}-worker
   replicas: {{ .Values.worker.replicaCount }}
   selector:

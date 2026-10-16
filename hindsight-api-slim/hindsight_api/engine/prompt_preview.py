@@ -524,7 +524,8 @@ def _render_reflect(
         budget=None,
         llm_output_language=config.llm_output_language,
     )
-    user_prompt = build_agent_user_prompt(PLACEHOLDER_REFLECT_QUERY, config.llm_output_language)
+    mission = (profile.get("mission") or "").strip()
+    user_prompt = build_agent_user_prompt(PLACEHOLDER_REFLECT_QUERY, config.llm_output_language, mission)
 
     # The identity head is the bank's own name and disposition traits, so it reads as
     # hardcoded prompt text unless it is called out. Both lines come from the prompt
@@ -541,13 +542,18 @@ def _render_reflect(
             build_directives_section(directives).strip() if directives else "",
             active=bool(directives),
         ),
-        _setting("reflect_mission", (profile.get("mission") or "").strip(), value=config.reflect_mission),
+        _setting("reflect_mission", mission, value=config.reflect_mission),
         *_language_blocks(config, _TOOLS_LANGUAGE_RULE),
+    ]
+    # The mission is restated after the question too (see build_agent_user_prompt).
+    user_pieces = [
+        _setting("reflect_mission", mission, value=config.reflect_mission),
+        *_language_blocks(config, ""),
     ]
     return PromptPreview(
         messages=[
             PromptMessage(role="system", blocks=_partition(system_prompt, system_pieces)),
-            PromptMessage(role="user", blocks=_partition(user_prompt, _language_blocks(config, ""))),
+            PromptMessage(role="user", blocks=_partition(user_prompt, user_pieces)),
         ],
     )
 

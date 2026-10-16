@@ -52,8 +52,9 @@ export function convertHindsightGraphData(hindsightData: {
   }>;
   table_rows?: Array<{ id: string; text: string; entities?: string; context?: string }>;
 }): GraphData {
+  const rowsById = new Map((hindsightData.table_rows || []).map((r) => [r.id, r]));
   const nodes: GraphNode[] = (hindsightData.nodes || []).map((n) => {
-    const tableRow = hindsightData.table_rows?.find((r) => r.id === n.data.id);
+    const tableRow = rowsById.get(n.data.id);
     // Use memory text as label, truncated to ~40 chars
     let label = n.data.label;
     if (!label && tableRow?.text) {

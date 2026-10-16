@@ -53,6 +53,8 @@ def _expand_then_cite(llm: LLMStub, memory_id: str) -> None:
         return ToolCall("expand", {"memory_ids": [memory_id], "depth": "document"})
 
     llm.on_step("reflect", tool="expand").answers_with_tool_call(build)
+    # The answer is written by the closing step, which offers only `done`: it cites the flight too.
+    llm.on_step("reflect", tool="done").returns_tool_call("done", answer=ANSWER, memory_ids=[memory_id])
     reflect_loop(llm, answer=ANSWER, query="Alice")
 
 

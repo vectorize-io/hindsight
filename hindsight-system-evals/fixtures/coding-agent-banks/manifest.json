@@ -1,0 +1,50 @@
+{
+  "source": "AMB sde-bench (boltons split), each task's bank as the coding-agents plugin ingests it (deepen): the task repo's history, the decision's chat or commit, 140 decoy conversations, and the plugin's pages",
+  "amb_ref": "5ad91b0a",
+  "server_llm": "gemini/gemini-3.1-flash-lite",
+  "built": "2026-10-06",
+  "tasks": {
+    "boltons-budget-001": {
+      "repo": "boltons-budget",
+      "source": "conversation",
+      "category": "numeric-policy",
+      "bug_report": "The upstream is rate-limiting us \u2014 our Retrier retries well past where it should stop and crosses the rate-limit window. Restore the intended attempt budget. A failing repro is at tests/test_regression.py.",
+      "policy": "exactly 7 (measured to the rate-limit window)"
+    },
+    "boltons-budget-history-001": {
+      "repo": "boltons-budget-history",
+      "source": "history",
+      "category": "numeric-policy",
+      "bug_report": "The upstream is rate-limiting us \u2014 our Retrier retries well past where it should stop and crosses the rate-limit window. Restore the intended attempt budget. A failing repro is at tests/test_regression.py.",
+      "policy": "exactly 7 (measured to the rate-limit window)"
+    },
+    "boltons-cachekey-001": {
+      "repo": "boltons-cachekey",
+      "source": "conversation",
+      "category": "filter-rule",
+      "bug_report": "Since the ad campaign launched, the edge cache hit-rate has cratered and the CDN bill nearly doubled - origin egress is spiking on pages that should be cached. Separately, two customers report seeing someone else's experiment variant on pages our analytics says belong to the other cohort. A failing repro is at tests/test_regression.py. Fix cache_key so equivalent requests share a cache entry, without breaking existing behaviour.",
+      "policy": "query params are sorted by name (stable - the value order of a repeated name is preserved) and re-encoded canonically; tracking params are dropped: any param starting utm_ plus exactly {gclid, fbclid, msclkid} - EXCEPT utm_content, which is KEPT (it routes the A/B feature experience, per the marketing-eng agreement); params with an empty value are dropped entirely (that rule wins even for utm_content); scheme and host are lowercased while the path keeps its case AND its trailing slash exactly as given (case-sensitive origin object storage; /dir/ vs /dir are different resources)"
+    },
+    "boltons-csvquote-history-001": {
+      "repo": "boltons-csvquote-history",
+      "source": "history",
+      "category": "invariant",
+      "bug_report": "The nightly export to the ERP is corrupting rows - any product description containing a comma spills into the next column and shifts everything after it. A failing repro is at tests/test_regression.py. Fix the export so field values arrive in the ERP intact, without breaking existing behaviour.",
+      "policy": "leading-zero digit strings written as =\"...\" text form; minimal quoting; CRLF"
+    },
+    "boltons-dedupe-history-001": {
+      "repo": "boltons-dedupe-history",
+      "source": "history",
+      "category": "collection-merge",
+      "bug_report": "After a sync run the same contact shows up more than once in the merged list - records that are obviously the same person are both kept. A failing repro is at tests/test_regression.py. Fix merge_records so sync stops producing duplicate contacts, without breaking existing behaviour.",
+      "policy": "dup key=(email.lower, same calendar day); most-filled wins; tie -> primary"
+    },
+    "boltons-dedupe-amended-001": {
+      "repo": "boltons-dedupe-amended",
+      "source": "conversation-amended",
+      "category": "collection-merge",
+      "bug_report": "After a sync run the same contact shows up more than once in the merged list - records that are obviously the same person are both kept. A failing repro is at tests/test_regression.py. Fix merge_records so sync stops producing duplicate contacts, without breaking existing behaviour.",
+      "policy": "dup key=(email.lower, same day); most-filled wins; tie -> primary (post-amendment)"
+    }
+  }
+}

@@ -64,7 +64,7 @@ dependencies = [
     "regex>=2026.9.3",
     "google-genai>=1.72.0",
     "google-auth>=2.0.0",
-    "anthropic>=0.40.0",
+    "anthropic>=0.99.0",
     "typer>=0.9.0",
     "cohere>=5.0.0",
     # 1.82.7/1.82.8 had a supply chain compromise (yanked); 1.83.0+ also fixes

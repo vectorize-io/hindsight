@@ -350,6 +350,10 @@ def validate_new_bank_id(bank_id: str) -> None:
         )
     if any(unicodedata.category(ch) == "Cc" for ch in bank_id):
         raise OperationValidationError("Bank id must not contain control characters", status_code=400)
+    # Reserved so a store-owned backend can keep its own bookkeeping objects (`_index`, `_meta`, ...)
+    # next to a bank's objects without escaping bank names. Existing banks are not re-checked.
+    if bank_id.startswith("_"):
+        raise OperationValidationError("Bank id must not start with '_': that prefix is reserved", status_code=400)
 
 
 async def create_bank_row_on_conn(conn: "DatabaseConnection", bank_id: str, *, ops: "DataAccessOps") -> bool:

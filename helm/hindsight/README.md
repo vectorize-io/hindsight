@@ -81,6 +81,8 @@ helm install hindsight ./helm/hindsight -n hindsight --create-namespace -f value
 | `postgresql.external.database` | Database name | `hindsight` |
 | `postgresql.external.username` | Database username | `hindsight` |
 | `ingress.enabled` | Enable ingress | `false` |
+| `gatewayApi.enabled` | Create a Gateway API `HTTPRoute` (needs `gatewayApi.parentRefs`) | `false` |
+| `revisionHistoryLimit` | Old revisions kept per Deployment/StatefulSet; each component (`api`, `controlPlane`, `worker`, `tei.embedding`, `tei.reranker`, `postgresql`) can override it with its own `revisionHistoryLimit` | unset (Kubernetes default `10`) |
 | `autoscaling.enabled` | Enable HPA | `false` |
 | `metrics.serviceMonitor.enabled` | Create ServiceMonitors for api/worker (needs Prometheus operator) | `false` |
 | `metrics.serviceMonitor.labels` | Labels for Prometheus operator selection, e.g. `release: kube-prometheus-stack` | `{}` |
@@ -169,6 +171,28 @@ ingress:
         - hindsight.example.com
 ```
 
+### Gateway API
+
+On clusters that use Gateway API instead of an Ingress controller, attach an
+`HTTPRoute` to an existing Gateway. It splits paths the same way as the
+Ingress: `/v1` to the API, everything else to the control plane. TLS is
+terminated by the Gateway listener, so certificates are configured on the
+Gateway, not in this chart.
+
+```yaml
+gatewayApi:
+  enabled: true
+  parentRefs:
+    - name: internal-gateway
+      namespace: gwapi
+      sectionName: https   # optional: attach to one listener
+  hostnames:
+    - hindsight.example.com
+```
+
+The Gateway must allow routes from the release namespace
+(`allowedRoutes.namespaces`).
+
 ### Prometheus metrics
 
 The api (port 8888) and worker (port 8889) containers expose Prometheus
@@ -187,6 +211,71 @@ metrics:
 The worker monitor requires `worker.enabled: true`. Without the operator,
 scrape `svc/<release>-api:8888/metrics` and `svc/<release>-worker:8889/metrics`
 directly with annotation-based discovery or static targets.
+
+### Extra objects
+
+`extraObjects` deploys arbitrary manifests with the release, so they are
+installed, upgraded and uninstalled together with Hindsight. Each entry is a
+YAML map or a multi-line string and is rendered through `tpl`, so it can use
+Helm templating. Typical uses are routing through an Istio service mesh in
+place of the Ingress, and providing credentials as a SealedSecret consumed via
+`existingSecret`:
+
+```yaml
+existingSecret: hindsight-credentials
+
+extraObjects:
+  - apiVersion: bitnami.com/v1alpha1
+    kind: SealedSecret
+    metadata:
+      name: hindsight-credentials
+    spec:
+      encryptedData:
+        HINDSIGHT_API_LLM_API_KEY: AgB...
+  - apiVersion: networking.istio.io/v1
+    kind: VirtualService
+    metadata:
+      name: '{{ include "hindsight.fullname" . }}'
+    spec:
+      hosts:
+        - hindsight.example.com
+      gateways:
+        - istio-system/public-gateway
+      http:
+        - match:
+            - uri:
+                prefix: /v1
+          route:
+            - destination:
+                host: '{{ include "hindsight.fullname" . }}-api'
+        - route:
+            - destination:
+                host: '{{ include "hindsight.fullname" . }}-control-plane'
+```
+
+In the map form a template expression must sit inside a quoted string. Use
+the string form when a template must produce a non-string value or whole
+blocks:
+
+```yaml
+extraObjects:
+  - |
+    apiVersion: networking.istio.io/v1
+    kind: DestinationRule
+    metadata:
+      name: {{ include "hindsight.fullname" . }}-api
+      labels:
+        {{- include "hindsight.labels" . | nindent 4 }}
+    spec:
+      host: {{ include "hindsight.fullname" . }}-api
+      trafficPolicy:
+        portLevelSettings:
+          - port:
+              number: {{ .Values.api.service.port }}
+            connectionPool:
+              http:
+                idleTimeout: 300s
+```
 
 ## Upgrading
 

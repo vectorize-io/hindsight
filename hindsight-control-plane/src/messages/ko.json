@@ -714,7 +714,8 @@
       "cancel": "취소",
       "retry": "다시 시도",
       "delete": "삭제",
-      "download": "다운로드"
+      "download": "다운로드",
+      "retryAll": "모두 재시도 ({count})"
     },
     "pagination": "총 {total}개 중 {start}-{end}개 표시",
     "paginationPrevious": "이전",
@@ -742,7 +743,8 @@
       "hoursAgo": "{hours}시간 전"
     },
     "progressEstimateNote": "총계는 통합 시작 시점의 추정치이며, 실행 중 새 메모리가 추가되면 늘어날 수 있습니다 — 정상입니다.",
-    "viewDocument": "문서 보기"
+    "viewDocument": "문서 보기",
+    "retryAllDone": "{total}개 중 {done}개 재시도함"
   },
   "dataView": {
     "loadingMemories": "메모리 불러오는 중...",
@@ -1111,6 +1113,12 @@
     "triggerCronPresetHourly": "매시간",
     "triggerCronPresetDaily": "매일 03:00",
     "triggerCronPresetWeekly": "매주 월요일 03:00",
+    "triggerCronPresetSunday": "매주 일요일 03:00",
+    "triggerCronPresetMonthly": "매월 1일 03:00",
+    "triggerFullRefreshLabel": "예약된 전체 새로 고침",
+    "triggerFullRefreshDescription": "작은 수정이 쌓여 생긴 어긋남을 없애기 위해 일정에 따라 문서 전체도 다시 씁니다. 일반 새로 고침은 계속 증분 방식입니다.",
+    "triggerFullRefreshCronLabel": "전체 새로 고침 일정 (cron, UTC)",
+    "triggerFullRefreshChip": "전체 새로 고침: {schedule}",
     "triggerFactTypesAll": "모든 사실 유형",
     "triggerExcludeAllDescription": "새로 고칠 때 다른 멘탈 모델이나 지식 페이지를 읽지 않습니다.",
     "triggerSeconds": "초",
@@ -1715,6 +1723,14 @@
     "actionsAriaLabel": "작업",
     "actionEdit": "편집",
     "actionRefreshManually": "수동으로 새로 고침",
+    "actionFullRefresh": "지금 전체 새로 고침",
+    "fullRefreshDialogTitle": "전체 새로 고침을 실행할까요?",
+    "fullRefreshDialogDescription": "문서 전체를 한 번 처음부터 다시 씁니다. 증분 새로 고침보다 토큰을 더 많이 씁니다. 이후에도 모델은 증분 방식으로 유지되며, 실패하면 현재 내용이 그대로 남습니다.",
+    "fullRefreshDialogConfirm": "전체 새로 고침 실행",
+    "cancel": "취소",
+    "labelLastFullRefresh": "마지막 전체 새로 고침",
+    "labelFullRefreshCron": "예약된 전체 새로 고침 (cron)",
+    "valueNever": "없음",
     "actionDownloadPdf": "PDF 다운로드",
     "actionDownloadMarkdown": "Markdown 다운로드",
     "actionDelete": "삭제",

@@ -12,6 +12,7 @@ jest.mock("../generated/sdk.gen");
 
 const mockedList = sdk.listMentalModels as jest.MockedFunction<typeof sdk.listMentalModels>;
 const mockedGet = sdk.getMentalModel as jest.MockedFunction<typeof sdk.getMentalModel>;
+const mockedRefresh = sdk.refreshMentalModel as jest.MockedFunction<typeof sdk.refreshMentalModel>;
 
 describe("mental-model query mapping", () => {
   let client: HindsightClient;
@@ -80,5 +81,19 @@ describe("mental-model query mapping", () => {
       })
     );
     expect(mockedGet.mock.calls[0][0]).not.toHaveProperty("query");
+  });
+
+  test("forwards a full refresh mode and sends no body without one", async () => {
+    mockedRefresh.mockReset();
+    mockedRefresh.mockResolvedValue({ data: { operation_id: "op-1", status: "queued" } } as any);
+
+    await client.refreshMentalModel("bank-1", "model-1", { mode: "full" });
+    await client.refreshMentalModel("bank-1", "model-1");
+
+    expect(mockedRefresh.mock.calls[0][0]).toMatchObject({
+      path: { bank_id: "bank-1", mental_model_id: "model-1" },
+      body: { mode: "full" },
+    });
+    expect(mockedRefresh.mock.calls[1][0]).not.toHaveProperty("body");
   });
 });

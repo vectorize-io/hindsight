@@ -1016,12 +1016,17 @@ impl ApiClient {
         &self,
         bank_id: &str,
         mental_model_id: &str,
+        full: bool,
         _verbose: bool,
     ) -> Result<types::AsyncOperationSubmitResponse> {
+        // `full` forces a one-off full refresh; the model's stored mode is untouched.
+        let body = types::RefreshMentalModelRequest {
+            mode: full.then(|| "full".to_string()),
+        };
         self.runtime.block_on(async {
             let response = self
                 .client
-                .refresh_mental_model(bank_id, mental_model_id, None)
+                .refresh_mental_model(bank_id, mental_model_id, None, &body)
                 .humanized()
                 .await?;
             Ok(response.into_inner())

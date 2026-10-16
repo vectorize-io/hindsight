@@ -273,7 +273,7 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-responses`, `openai-codex`, `chatgpt`, `claude-code`, `cursor`, `github-copilot`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `meta`, `nous`, `xai-oauth`, `fireworks`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `requesty`, `none` | `openai` |
-| `HINDSIGHT_API_LLM_API_KEY` | API key for providers that require one; unused by `github-copilot` | - |
+| `HINDSIGHT_API_LLM_API_KEY` | API key for providers that require one; unused by `github-copilot`. Optional for `anthropic` when [Workload Identity Federation](https://platform.claude.com/docs/en/manage-claude/workload-identity-federation) is configured (see the Anthropic example below) | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-mini` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |
 | `HINDSIGHT_API_LLM_MAX_CONCURRENT` | Max concurrent LLM requests | `32` |
@@ -288,7 +288,8 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 | `HINDSIGHT_API_LLM_TEMPERATURE_VERIFICATION` | Temperature for the startup connection check. Number in `[0.0, 2.0]` or `none` to omit. Overrides `HINDSIGHT_API_LLM_TEMPERATURE`. | `0.0` |
 | `HINDSIGHT_API_LLM_TEMPERATURE_RETAIN` | Temperature for fact extraction during retain. Number in `[0.0, 2.0]` or `none` to omit. Overrides `HINDSIGHT_API_LLM_TEMPERATURE`. | `0.1` |
 | `HINDSIGHT_API_LLM_TEMPERATURE_REFLECT` | Temperature for the reflect "thinking" step. Number in `[0.0, 2.0]` or `none` to omit. Overrides `HINDSIGHT_API_LLM_TEMPERATURE`. | `0.9` |
-| `HINDSIGHT_API_LLM_TEMPERATURE_CONSOLIDATION` | Temperature for consolidation (mental-model delta and dedup). Number in `[0.0, 2.0]` or `none` to omit. Overrides `HINDSIGHT_API_LLM_TEMPERATURE`. | `0.0` |
+| `HINDSIGHT_API_LLM_TEMPERATURE_CONSOLIDATION` | Temperature for consolidation (dedup), and for the mental-model refresh's delta and retraction calls unless `HINDSIGHT_API_LLM_TEMPERATURE_MENTAL_MODEL_REFRESH` is set. Number in `[0.0, 2.0]` or `none` to omit. Overrides `HINDSIGHT_API_LLM_TEMPERATURE`. | `0.0` |
+| `HINDSIGHT_API_LLM_TEMPERATURE_MENTAL_MODEL_REFRESH` | Temperature for the mental-model refresh's structured edit calls (delta and retraction). Number in `[0.0, 2.0]` or `none` to omit. Set it when the refresh runs its own model (`HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_*`) whose recommended temperature differs from consolidation's. | Falls back to `HINDSIGHT_API_LLM_TEMPERATURE_CONSOLIDATION` |
 | `HINDSIGHT_API_LLM_VISION` | Whether the configured LLM can read images, overriding what the provider reports about itself. Leave unset and each provider answers for itself: Anthropic and Gemini report yes, OpenAI reports yes, `none` reports no, and every gateway-style backend (LiteLLM, Ollama, LM Studio, OpenRouter, an OpenAI-compatible proxy) reports *unknown*, because its catalogue mixes vision-capable and text-only models. A retain carrying [inline attachments](#inline-attachments-in-retain) is refused with `422` on both "no" and "unknown" — dropping an attachment silently would leave a document that looks retained with the information the caller cared about gone. Set `true` when you are running a vision model behind such a gateway; set `false` to refuse images against an endpoint that rejects them despite its model name. | Provider decides |
 | `HINDSIGHT_API_VLM_PROVIDER` | Provider for the **vision slot** — the model used only for retain chunks that carry an [inline attachment](#inline-attachments-in-retain). Every text-only chunk keeps using the retain LLM, so a bank whose documents mostly *are* text does not pay a vision model's price for all of it. Unset, attachments go to the retain LLM. | Retain LLM |
 | `HINDSIGHT_API_VLM_API_KEY` | API key for the vision slot. | Retain LLM's |
@@ -366,6 +367,13 @@ export HINDSIGHT_API_LLM_MODEL=gemini-2.0-flash
 export HINDSIGHT_API_LLM_PROVIDER=anthropic
 export HINDSIGHT_API_LLM_API_KEY=sk-ant-xxxxxxxxxxxx
 export HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-20250514
+# Or, with no static key: Workload Identity Federation. Leave HINDSIGHT_API_LLM_API_KEY
+# unset and the Anthropic SDK trades the platform identity token for short-lived
+# access tokens, refreshing them on its own.
+# export ANTHROPIC_FEDERATION_RULE_ID=fdrl_xxxxxxxxxxxx
+# export ANTHROPIC_ORGANIZATION_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+# export ANTHROPIC_SERVICE_ACCOUNT_ID=svac_xxxxxxxxxxxx
+# export ANTHROPIC_IDENTITY_TOKEN_FILE=/var/run/secrets/anthropic/token  # e.g. a projected k8s service-account token
 
 # Vertex AI (Google Cloud - uses native genai SDK)
 export HINDSIGHT_API_LLM_PROVIDER=vertexai
@@ -777,6 +785,9 @@ a fast no-think model that cannot blow the wall timeout, cannot exceed the compl
 budget on a reasoning chain, and does not halve interactive decode speed by running
 alongside it. Every field falls back to its `REFLECT_LLM_*` counterpart, which in turn falls
 back to the global `LLM_*` — set none of them and behaviour is exactly as before.
+One refresh setting sits outside the group: the structured edit calls (delta and
+retraction) take their temperature from `HINDSIGHT_API_LLM_TEMPERATURE_MENTAL_MODEL_REFRESH`,
+which falls back to `HINDSIGHT_API_LLM_TEMPERATURE_CONSOLIDATION`.
 
 > **💡 When to Use Per-Operation Config**
 >
@@ -2415,6 +2426,8 @@ export HINDSIGHT_API_OBSERVATIONS_MISSION="Observations are recurring patterns i
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_REFLECT_MAX_ITERATIONS` | Max tool call iterations before forcing a response | `10` |
+| `HINDSIGHT_API_REFLECT_USE_DECISION_MODEL` | When a decision model is set up for reflect (see [Decision model](#decision-model)), reflect is decision-orchestrated: one LLM call rewrites the request into a search query (or finds there is nothing to search, and reflect returns an empty answer at once), the layers run in parallel with that query, and the decision model prunes the evidence and judges whether it already answers the request. If it does, the answer is the next LLM call. If not, the LLM writes the next query and another parallel round runs, judged the same way. Fewer LLM calls than agent turns, so it costs less. If the decision model fails, reflect falls back to agent turns. Only the `typesafe` provider is supported here for now: with another provider reflect keeps agent turns and logs a warning. Set `false` to keep agent turns (one LLM turn per retrieval layer, each writing its own query). Hierarchical (per bank). | `true` |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL` | The same, for the reflect that refreshes a knowledge page. Hierarchical (per bank). | `true` |
 | `HINDSIGHT_API_REFLECT_MAX_CONTEXT_TOKENS` | Max accumulated context tokens in the reflect loop before forcing final synthesis. Prevents `context_length_exceeded` errors on large banks. Lower this if your LLM has a context window smaller than 128K. | `100000` |
 | `HINDSIGHT_API_REFLECT_WALL_TIMEOUT` | Wall-clock timeout in seconds for the entire reflect operation. If exceeded, the request returns HTTP 504. Also bounds a whole mental-model refresh in the worker: one that runs past it is cancelled and marked failed instead of holding its worker slot. | `300` |
 | `HINDSIGHT_API_REFLECT_MISSION` | Global reflect mission (identity and reasoning framing). Overridden per bank via config API. | - |

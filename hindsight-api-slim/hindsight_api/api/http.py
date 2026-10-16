@@ -6,6 +6,7 @@ the FastAPI application with all API endpoints.
 """
 
 import asyncio
+import gc
 import json
 import logging
 import os
@@ -62,7 +63,16 @@ if TYPE_CHECKING:
     from opentelemetry.trace import Span
 
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from hindsight_api import MemoryEngine
 from hindsight_api.config import RETAIN_EXTRACTION_MODES
@@ -1865,7 +1875,7 @@ class CreateBankAliasRequest(BaseModel):
     alias: str = Field(
         description=(
             "The extra bank id. Same rules as a bank id (non-empty, at most 192 bytes of UTF-8, no "
-            "control characters), and it must not already name a bank or another alias."
+            "control characters, no leading underscore), and it must not already name a bank or another alias."
         )
     )
     primary: bool = Field(
@@ -2692,6 +2702,13 @@ class ListDocumentsResponse(BaseModel):
     total: int
     limit: int
     offset: int
+    total_is_estimate: bool = Field(
+        default=False,
+        description=(
+            "True when a `q` search stopped at its match cap, so `total` is a lower bound rather than an "
+            "exact count. Always false without `q`."
+        ),
+    )
 
 
 class TagItem(BaseModel):
@@ -3277,6 +3294,19 @@ class MentalModelTrigger(BaseModel):
             "wasted LLM call. null = no schedule."
         ),
     )
+    full_refresh_cron: str | None = Field(
+        default=None,
+        description=(
+            "Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * 0' for Sundays at 03:00 UTC) "
+            "for a scheduled full refresh: on this schedule the model is refreshed in 'full' mode "
+            "whatever its `mode` says, regenerating the content from scratch to clear the drift many "
+            "delta edits accumulate. Independent of `refresh_cron` and `refresh_after_consolidation` — "
+            "a delta model can refresh after consolidation and still get a weekly full refresh — and it "
+            "does not change `mode`. A tick is skipped when no refresh has run since the last full one "
+            "(there is nothing to correct). Like `refresh_cron`, it honours "
+            "`min_refresh_interval_seconds` and pauses while the last refresh failed. null = no schedule."
+        ),
+    )
     min_refresh_interval_seconds: int | None = Field(
         default=None,
         ge=0,
@@ -3284,8 +3314,8 @@ class MentalModelTrigger(BaseModel):
             "Minimum seconds between two automatic refreshes of this mental model. A triggered "
             "refresh that arrives sooner is not dropped: it is queued and parked until the window "
             "expires, and every further trigger in the meantime folds into that one queued refresh, "
-            "so a burst of retains costs one refresh instead of one per retain. Applies to both "
-            "refresh_after_consolidation and refresh_cron. Explicit refreshes (API, MCP, control "
+            "so a burst of retains costs one refresh instead of one per retain. Applies to every "
+            "automatic trigger: refresh_after_consolidation, refresh_cron and full_refresh_cron. Explicit refreshes (API, MCP, control "
             "plane) ignore it and run immediately. 0 disables the floor for this model; null falls "
             "back to the bank/global mental_model_min_refresh_interval_seconds setting (itself 0 by "
             "default, i.e. no floor)."
@@ -3414,9 +3444,9 @@ class MentalModelTrigger(BaseModel):
             validate_response_schema(v)
         return v
 
-    @field_validator("refresh_cron")
+    @field_validator("refresh_cron", "full_refresh_cron")
     @classmethod
-    def validate_refresh_cron(cls, v: str | None) -> str | None:
+    def validate_refresh_cron(cls, v: str | None, info: ValidationInfo) -> str | None:
         if v is None:
             return v
         v = v.strip()
@@ -3425,7 +3455,7 @@ class MentalModelTrigger(BaseModel):
         from croniter import croniter
 
         if not croniter.is_valid(v):
-            raise ValueError(f"refresh_cron is not a valid cron expression: {v!r}")
+            raise ValueError(f"{info.field_name} is not a valid cron expression: {v!r}")
         return v
 
     @model_validator(mode="after")
@@ -3438,6 +3468,18 @@ class MentalModelTrigger(BaseModel):
                 "a mental model refreshes either after consolidation or on a cron schedule, not both."
             )
         return self
+
+
+class RefreshMentalModelRequest(BaseModel):
+    """Optional body of POST /mental-models/{id}/refresh."""
+
+    mode: Literal["full"] | None = Field(
+        default=None,
+        description=(
+            "'full' regenerates the content from scratch for this refresh only, whatever "
+            "`trigger.mode` says; the stored trigger is not changed. null runs the model's own mode."
+        ),
+    )
 
 
 class MentalModelResponse(BaseModel):
@@ -3479,9 +3521,19 @@ class MentalModelResponse(BaseModel):
         description=(
             "When this model's most recent refresh failed, in ISO format, or null when the last one "
             "succeeded. While this is set the automatic triggers (`refresh_after_consolidation`, "
-            "`refresh_cron`) skip the model — a refresh that cannot succeed is not retried on every "
+            "`refresh_cron`, `full_refresh_cron`) skip the model — a refresh that cannot succeed is not retried on every "
             "tick. An explicit refresh still runs, and a successful one clears this. The failure "
             "itself, with its reason, is in the model's history."
+        ),
+    )
+    last_full_refreshed_at: str | None = Field(
+        default=None,
+        description=(
+            "When a refresh last ran in full mode for this model, in ISO format — requested "
+            "(`mode: 'full'`, a `full_refresh_cron` tick, a full-mode model) or fallen back to by "
+            "a delta refresh. `trigger.full_refresh_cron` comes due against this, not "
+            "`last_refreshed_at`, which every delta refresh moves. Null when no full refresh has "
+            "completed since this was first tracked."
         ),
     )
     created_at: str | None = None
@@ -3549,7 +3601,8 @@ class KnowledgeNode(BaseModel):
     trigger: MentalModelTrigger | None = Field(
         default=None,
         description="Pages only: the page's refresh settings — when it rebuilds itself "
-        "(`refresh_after_consolidation` or `refresh_cron`), in which mode, and over which facts. "
+        "(`refresh_after_consolidation` or `refresh_cron`, plus any `full_refresh_cron`), in which mode, "
+        "and over which facts. "
         "This is the EFFECTIVE policy: a setting the page never stored is reported at its default, "
         "so compare the fields you care about rather than the whole object against a patch you "
         "sent. Absent on folders, which have no backing mental model, and on a page with no "
@@ -3895,6 +3948,13 @@ class BankTemplateConfig(BaseModel):
         default=None, description="Toggle the entity/link graph arm during recall"
     )
     enable_reranking: bool | None = Field(default=None, description="Toggle cross-encoder reranking during recall")
+    reflect_use_decision_model: bool | None = Field(
+        default=None,
+        description="When the server has a decision model, reflect lets it prune evidence and decide when to stop",
+    )
+    mental_model_refresh_use_decision_model: bool | None = Field(
+        default=None, description="The same, for knowledge-page refreshes"
+    )
     disposition_skepticism: int | None = Field(default=None, ge=1, le=5, description="Skepticism trait (1-5)")
     disposition_literalism: int | None = Field(default=None, ge=1, le=5, description="Literalism trait (1-5)")
     disposition_empathy: int | None = Field(default=None, ge=1, le=5, description="Empathy trait (1-5)")
@@ -5195,6 +5255,12 @@ def create_app(
         if initialize_memory:
             await memory.initialize()
             logging.info("Memory system initialized")
+            # Startup leaves ~800k long-lived objects (models, config, pools). Left
+            # tracked, every full GC pass walks them all, which turns a request that
+            # allocates heavily (a 1000-memory graph read) into 2-3x its real cost.
+            # Freezing moves them out of the collector's view; they live forever anyway.
+            gc.collect()
+            gc.freeze()
 
             # Set up DB pool metrics after memory initialization
             metrics_collector = get_metrics_collector()
@@ -5815,6 +5881,7 @@ def _register_routes(app: FastAPI):
         responses=_BANK_NOT_FOUND_RESPONSES,
     )
     async def api_graph(
+        http_request: Request,
         bank_id: str,
         type: str | None = None,
         limit: int = Query(default=1000, ge=0),
@@ -5827,17 +5894,29 @@ def _register_routes(app: FastAPI):
     ):
         """Get graph data from database, filtered by bank_id and optionally by type."""
         try:
-            data = await app.state.memory.get_graph_data(
-                bank_id,
-                type,
-                limit=limit,
-                q=q,
-                tags=tags,
-                tags_match=tags_match,
-                document_id=document_id,
-                chunk_id=chunk_id,
-                request_context=request_context,
+            # The control plane cancels this read whenever the user switches tab; on a
+            # big bank it is seconds of work and a multi-MB answer, and left running it
+            # competes with the read the user switched to.
+            data = await run_task_cancellable_on_disconnect(
+                http_request,
+                app.state.memory.get_graph_data(
+                    bank_id,
+                    type,
+                    limit=limit,
+                    q=q,
+                    tags=tags,
+                    tags_match=tags_match,
+                    document_id=document_id,
+                    chunk_id=chunk_id,
+                    request_context=request_context,
+                ),
+                operation="graph",
+                bank_id=bank_id,
             )
+            # Built, but the client left while it was: skip serializing it.
+            token = get_scope_cancellation_token(http_request.scope)
+            if token is not None and token.cancelled:
+                raise HTTPException(status_code=_CLIENT_CLOSED_REQUEST_STATUS_CODE, detail=token.reason)
             return data
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
@@ -7134,7 +7213,13 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh",
         response_model=AsyncOperationSubmitResponse,
         summary="Refresh mental model",
-        description="Submit an async task to re-run the source query through reflect and update the content.",
+        description=(
+            "Submit an async task to re-run the source query through reflect and update the content. "
+            'With no body the refresh runs in the model\'s own `trigger.mode`. Send `{"mode": "full"}` '
+            "for a full refresh: the content is regenerated from scratch this once (to clear the drift "
+            "delta edits accumulate) while the stored trigger keeps its mode. Unlike clearing the model "
+            "first, a full refresh that fails leaves the previous content in place."
+        ),
         operation_id="refresh_mental_model",
         tags=["Mental Models"],
     )
@@ -7142,6 +7227,7 @@ def _register_routes(app: FastAPI):
     async def api_refresh_mental_model(
         bank_id: str,
         mental_model_id: str,
+        request: RefreshMentalModelRequest | None = None,
         request_context: RequestContext = Depends(get_request_context),
         _precheck: None = Depends(precheck_for(PrecheckOperation.MENTAL_MODEL_REFRESH)),
     ):
@@ -7150,6 +7236,7 @@ def _register_routes(app: FastAPI):
             result = await app.state.memory.submit_async_refresh_mental_model(
                 bank_id=bank_id,
                 mental_model_id=mental_model_id,
+                mode=request.mode if request else None,
                 request_context=request_context,
             )
             return AsyncOperationSubmitResponse(operation_id=result["operation_id"], status="queued")
@@ -7851,9 +7938,10 @@ def _register_routes(app: FastAPI):
             None,
             description=(
                 "Case-insensitive substring filter on document ID or document text (e.g. 'report' matches "
-                "'report-2024' or any document containing 'report'). Unindexed scan of the bank's documents: "
-                "meant for browsing and inspection, not for high-volume or latency-sensitive workloads — "
-                "use recall for that."
+                "'report-2024' or any document containing 'report'). Meant for browsing and inspection, not "
+                "for high-volume or latency-sensitive workloads — use recall for that. Matches are capped: "
+                "past the cap, `total` is a lower bound and `total_is_estimate` is true. A store-owned backend "
+                "may match approximately; each item's `matched_fields` says what matched."
             ),
         ),
         tags: list[str] | None = Query(None, description="Filter documents by tags"),

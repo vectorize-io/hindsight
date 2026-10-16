@@ -25,6 +25,8 @@ type ListDocumentsResponse struct {
 	Total int32 `json:"total"`
 	Limit int32 `json:"limit"`
 	Offset int32 `json:"offset"`
+	// True when a `q` search stopped at its match cap, so `total` is a lower bound rather than an exact count. Always false without `q`.
+	TotalIsEstimate *bool `json:"total_is_estimate,omitempty"`
 }
 
 type _ListDocumentsResponse ListDocumentsResponse
@@ -39,6 +41,8 @@ func NewListDocumentsResponse(items []DocumentListItem, total int32, limit int32
 	this.Total = total
 	this.Limit = limit
 	this.Offset = offset
+	var totalIsEstimate bool = false
+	this.TotalIsEstimate = &totalIsEstimate
 	return &this
 }
 
@@ -47,6 +51,8 @@ func NewListDocumentsResponse(items []DocumentListItem, total int32, limit int32
 // but it doesn't guarantee that properties required by API are set
 func NewListDocumentsResponseWithDefaults() *ListDocumentsResponse {
 	this := ListDocumentsResponse{}
+	var totalIsEstimate bool = false
+	this.TotalIsEstimate = &totalIsEstimate
 	return &this
 }
 
@@ -146,6 +152,38 @@ func (o *ListDocumentsResponse) SetOffset(v int32) {
 	o.Offset = v
 }
 
+// GetTotalIsEstimate returns the TotalIsEstimate field value if set, zero value otherwise.
+func (o *ListDocumentsResponse) GetTotalIsEstimate() bool {
+	if o == nil || IsNil(o.TotalIsEstimate) {
+		var ret bool
+		return ret
+	}
+	return *o.TotalIsEstimate
+}
+
+// GetTotalIsEstimateOk returns a tuple with the TotalIsEstimate field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *ListDocumentsResponse) GetTotalIsEstimateOk() (*bool, bool) {
+	if o == nil || IsNil(o.TotalIsEstimate) {
+		return nil, false
+	}
+	return o.TotalIsEstimate, true
+}
+
+// HasTotalIsEstimate returns a boolean if a field has been set.
+func (o *ListDocumentsResponse) HasTotalIsEstimate() bool {
+	if o != nil && !IsNil(o.TotalIsEstimate) {
+		return true
+	}
+
+	return false
+}
+
+// SetTotalIsEstimate gets a reference to the given bool and assigns it to the TotalIsEstimate field.
+func (o *ListDocumentsResponse) SetTotalIsEstimate(v bool) {
+	o.TotalIsEstimate = &v
+}
+
 func (o ListDocumentsResponse) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -160,6 +198,9 @@ func (o ListDocumentsResponse) ToMap() (map[string]interface{}, error) {
 	toSerialize["total"] = o.Total
 	toSerialize["limit"] = o.Limit
 	toSerialize["offset"] = o.Offset
+	if !IsNil(o.TotalIsEstimate) {
+		toSerialize["total_is_estimate"] = o.TotalIsEstimate
+	}
 	return toSerialize, nil
 }
 

@@ -642,6 +642,7 @@ export type {
   RefreshMentalModelError,
   RefreshMentalModelErrors,
   RefreshMentalModelOperationDetails,
+  RefreshMentalModelRequest,
   RefreshMentalModelResponse,
   RefreshMentalModelResponses,
   RegenerateEntityObservationsData,

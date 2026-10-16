@@ -26,7 +26,6 @@ from ..llm_wrapper import (
     sanitize_value,
 )
 from ..operation_metadata import RetainExtractionErrors
-from ..providers.openai_compatible_llm import visible_token_usage
 from ..response_models import TokenUsage
 from ..structured_output import provider_json_schema, strict_json_schema
 from . import attachment_content
@@ -3350,6 +3349,10 @@ async def extract_facts_from_contents_batch_api(
         if usage_data:
             # Same OpenAI usage block a live call returns, so it is read the same
             # way: cached prompt tokens and reasoning tokens included.
+            # Imported here: that module loads the openai SDK, which a process
+            # must not pay for at startup unless it actually reads batch results.
+            from ..providers.openai_compatible_llm import visible_token_usage
+
             usage_obj = json.loads(json.dumps(usage_data), object_hook=lambda d: SimpleNamespace(**d))
             total_usage = total_usage + visible_token_usage(SimpleNamespace(usage=usage_obj))
 

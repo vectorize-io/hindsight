@@ -714,7 +714,8 @@
       "cancel": "キャンセル",
       "retry": "再試行",
       "delete": "削除",
-      "download": "ダウンロード"
+      "download": "ダウンロード",
+      "retryAll": "すべて再試行 ({count})"
     },
     "pagination": "{total} 件中 {start}-{end} 件を表示",
     "paginationPrevious": "前へ",
@@ -742,7 +743,8 @@
       "hoursAgo": "{hours}時間前"
     },
     "progressEstimateNote": "合計は統合の開始時点での推定値で、実行中に新しいメモリーが追加されると増えることがあります（正常な動作です）。",
-    "viewDocument": "ドキュメントを表示"
+    "viewDocument": "ドキュメントを表示",
+    "retryAllDone": "{total} 件中 {done} 件を再試行しました"
   },
   "dataView": {
     "loadingMemories": "メモリを読み込み中...",
@@ -1111,6 +1113,12 @@
     "triggerCronPresetHourly": "毎時",
     "triggerCronPresetDaily": "毎日 03:00",
     "triggerCronPresetWeekly": "毎週月曜 03:00",
+    "triggerCronPresetSunday": "毎週日曜 03:00",
+    "triggerCronPresetMonthly": "毎月1日 03:00",
+    "triggerFullRefreshLabel": "定期フルリフレッシュ",
+    "triggerFullRefreshDescription": "小さな編集の積み重ねで生じるずれを解消するため、スケジュールに従ってドキュメント全体も書き直します。通常のリフレッシュは差分のままです。",
+    "triggerFullRefreshCronLabel": "フルリフレッシュのスケジュール (cron, UTC)",
+    "triggerFullRefreshChip": "フルリフレッシュ: {schedule}",
     "triggerFactTypesAll": "すべてのファクトタイプ",
     "triggerExcludeAllDescription": "更新時に他のメンタルモデルやナレッジページを読み込みません。",
     "triggerSeconds": "秒",
@@ -1715,6 +1723,14 @@
     "actionsAriaLabel": "アクション",
     "actionEdit": "編集",
     "actionRefreshManually": "手動で更新",
+    "actionFullRefresh": "今すぐフルリフレッシュ",
+    "fullRefreshDialogTitle": "フルリフレッシュを実行しますか？",
+    "fullRefreshDialogDescription": "ドキュメント全体を一度だけ最初から書き直します。差分リフレッシュより多くのトークンを使います。その後も差分モードのままで、失敗した場合は現在の内容が残ります。",
+    "fullRefreshDialogConfirm": "フルリフレッシュを実行",
+    "cancel": "キャンセル",
+    "labelLastFullRefresh": "最終フルリフレッシュ",
+    "labelFullRefreshCron": "定期フルリフレッシュ (cron)",
+    "valueNever": "なし",
     "actionDownloadPdf": "PDF をダウンロード",
     "actionDownloadMarkdown": "Markdown をダウンロード",
     "actionDelete": "削除",

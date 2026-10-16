@@ -1,0 +1,39 @@
+{{- if .Values.gatewayApi.enabled }}
+{{- if not .Values.gatewayApi.parentRefs }}
+{{- fail "gatewayApi.parentRefs must name at least one Gateway" }}
+{{- end }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "hindsight.fullname" . }}
+  labels:
+    {{- include "hindsight.labels" . | nindent 4 }}
+  {{- with .Values.gatewayApi.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs:
+    {{- toYaml .Values.gatewayApi.parentRefs | nindent 4 }}
+  {{- with .Values.gatewayApi.hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.gatewayApi.paths }}
+    - matches:
+        - path:
+            type: PathPrefix
+            value: {{ .path }}
+      backendRefs:
+        {{- if eq .service "api" }}
+        - name: {{ include "hindsight.fullname" $ }}-api
+          port: {{ $.Values.api.service.port }}
+        {{- else if eq .service "controlPlane" }}
+        - name: {{ include "hindsight.fullname" $ }}-control-plane
+          port: {{ $.Values.controlPlane.service.port }}
+        {{- else }}
+        {{- fail (printf "gatewayApi.paths: unknown service %q (use api or controlPlane)" .service) }}
+        {{- end }}
+    {{- end }}
+{{- end }}

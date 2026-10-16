@@ -26,6 +26,7 @@ from hindsight_api.engine.consolidation.consolidator import (
 from hindsight_api.engine.db_utils import acquire_with_retry
 from hindsight_api.engine.memories.base import MemoriesExtension
 from hindsight_api.engine.memories.postgres import PostgresMemories
+from hindsight_api.engine.retain import bank_utils
 from hindsight_api.engine.schema import fq_store_table
 from hindsight_api.engine.storage import bank_storage_prefix
 from hindsight_api.engine.transfer import import_documents
@@ -1093,6 +1094,27 @@ async def test_import_bank_refuses_existing_bank(memory, request_context):
             await memory.import_bank_async(archive, request_context)
     finally:
         await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_target", ["b" * 300, "imp\nbad", "_reserved"], ids=["too-long", "newline", "underscore"])
+async def test_bank_import_refuses_an_invalid_new_bank_id(memory, request_context, bad_target):
+    """A restore applies the same id rules as a direct create, on both the HTTP submit and the
+    direct restore the admin CLI uses, and creates no bank (#5540)."""
+    source = _unique_bank("import_bad_id_src")
+    try:
+        await _retain(memory, source, "Alice works at Google.", request_context, "doc-1")
+        archive = await _export_bank_archive(memory, source)
+        with pytest.raises(OperationValidationError) as submitted:
+            await memory.submit_bank_import_async(source, archive, request_context, target_bank_id=bad_target)
+        assert submitted.value.status_code == 400
+        with pytest.raises(OperationValidationError) as restored:
+            await memory.import_bank_async(archive, request_context, target_bank_id=bad_target)
+        assert restored.value.status_code == 400
+        backend = await memory._get_backend()
+        assert await bank_utils.bank_exists(backend, bad_target) is False
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
 
 
 @pytest.mark.asyncio

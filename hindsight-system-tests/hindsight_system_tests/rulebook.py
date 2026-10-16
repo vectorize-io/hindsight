@@ -494,6 +494,18 @@ class ReceivedWebhook:
     body: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class TokenExchange:
+    """One Workload Identity Federation exchange at ``/v1/oauth/token``: the identity
+    the server presented, and the short-lived access token the stub issued for it."""
+
+    assertion: str
+    federation_rule_id: str
+    organization_id: str
+    service_account_id: str | None
+    access_token: str
+
+
 @dataclass
 class Stubs:
     """The three backends a test configures, handed to it as one object."""
@@ -512,6 +524,11 @@ class Stubs:
     fired" can only be read off the server's own delivery log, which proves it
     tried rather than that anything arrived.
     """
+
+    token_exchanges: list[TokenExchange] = field(default_factory=list)
+    """Every federation token exchange, in arrival order. Not cleared by ``reset``: a
+    server exchanges once at startup and then reuses the token until it nears expiry,
+    so the exchange that issued a story's token usually predates the story."""
 
     def reset(self) -> None:
         """Between tests. The embedding stub is pure; the rerank stub is pure apart

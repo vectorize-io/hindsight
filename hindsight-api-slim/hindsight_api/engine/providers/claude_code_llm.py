@@ -47,6 +47,9 @@ logger = logging.getLogger(__name__)
 # not fire inside our LLM-call subprocesses. Without this, retain/reflect/
 # consolidation LLM calls would trigger a Stop-hook retain of the subprocess
 # transcript back into the same bank — a recursive feedback loop (issue #1751).
+# This only covers *user* settings: the call sites also pin cwd to this dir and
+# pass setting_sources=[], or project settings from the daemon's cwd reopen the
+# same loop (issue #5542).
 # CLAUDE_SECURESTORAGE_CONFIG_DIR="" forces the CLI's keychain service name
 # back to the canonical un-suffixed entry that `claude auth login` wrote;
 # otherwise it would be namespaced by sha256(CLAUDE_CONFIG_DIR) and OAuth
@@ -372,11 +375,19 @@ class ClaudeCodeLLM(LLMInterface):
             # Pin the configured model (issue #2881). Without this the spawned CLI
             # runs its own default model — an Opus-class model on Pro/Max OAuth —
             # regardless of HINDSIGHT_API_*_LLM_MODEL, while metrics/logs still print
-            # self.model, so the mismatch is invisible. The isolated CLAUDE_CONFIG_DIR
-            # (fresh temp dir) means a host settings.json can't reach the CLI either,
-            # so passing it through here is the only channel.
+            # self.model, so the mismatch is invisible. The CLI loads no settings
+            # files (setting_sources=[] below), so a host settings.json can't set the
+            # model either: passing it through here is the only channel.
             model=self.model or None,
             env=self._env,
+            # CLAUDE_CONFIG_DIR only moves *user* settings. The CLI still loads
+            # ./.claude/settings.json from its cwd as project settings, and the
+            # subprocess inherits the daemon's cwd: started from $HOME, that file
+            # IS ~/.claude/settings.json with the host's hooks, and the #1751
+            # loop comes back (issue #5542). Run in the empty isolated dir and
+            # load no settings files at all.
+            cwd=self._env["CLAUDE_CONFIG_DIR"],
+            setting_sources=[],
         )
 
         # Call Claude Agent SDK
@@ -706,6 +717,9 @@ class ClaudeCodeLLM(LLMInterface):
             # Pin the configured model (issue #2881) — see the call() options block.
             model=self.model or None,
             env=self._env,
+            # No host settings/hooks via the daemon's cwd (#5542) — see call().
+            cwd=self._env["CLAUDE_CONFIG_DIR"],
+            setting_sources=[],
         )
 
         # Call Claude Agent SDK with retry logic

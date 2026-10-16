@@ -31,6 +31,7 @@ from hindsight_api.engine.remote_retry import jittered_backoff
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema
 from hindsight_api.metrics import get_metrics_collector
+from hindsight_api.provider_auth import requires_api_key
 from hindsight_api.worker.stage import set_stage
 
 from ..response_models import LLMCallResult
@@ -221,7 +222,7 @@ class AnthropicLLM(LLMInterface):
         super().__init__(provider, api_key, base_url, model, reasoning_effort, timeout=timeout, **kwargs)
         self._warn_reasoning_effort_unsupported()
 
-        if not self.api_key:
+        if not self.api_key and requires_api_key(provider):
             raise ValueError("API key is required for Anthropic provider")
 
         # User-configured extra body params (merged into every Messages API call)
@@ -234,7 +235,11 @@ class AnthropicLLM(LLMInterface):
             # SDK retries disabled — wrapper-level retry loop in ``call`` handles
             # backoff (mirrors ``OpenAICompatibleLLM`` so the two providers behave
             # consistently).
-            client_kwargs: dict[str, Any] = {"api_key": self.api_key, "max_retries": 0}
+            client_kwargs: dict[str, Any] = {"max_retries": 0}
+            # No key: the SDK resolves credentials itself (Workload Identity Federation).
+            # An explicit api_key would outrank that, so only pass one when set.
+            if self.api_key:
+                client_kwargs["api_key"] = self.api_key
             if self.base_url:
                 client_kwargs["base_url"] = self.base_url
             # Per-phase so the connect leg is capped independently (issue #3881). Built
@@ -257,7 +262,7 @@ class AnthropicLLM(LLMInterface):
             RuntimeError: If the connection test fails.
         """
         try:
-            test_messages = [{"role": "user", "content": "test"}]
+            test_messages = [{"role": "user", "content": "Say 'ok'"}]
             await self.call(
                 messages=test_messages,
                 max_completion_tokens=10,

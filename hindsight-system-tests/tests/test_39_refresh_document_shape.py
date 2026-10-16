@@ -91,7 +91,9 @@ async def test_a_document_with_object_blocks_is_re_asked_and_the_retry_is_stored
     it, rather than the refresh being thrown away or the repr being stored.
     """
     llm.reset()
-    _done_with_blocks(llm, OBJECT_BLOCKS, GOOD_BLOCKS)
+    # The free turn's done is not the answer (the closing step writes it), so the wrong shape is
+    # sent twice: once there, once in the closing done that gets parsed and re-asked.
+    _done_with_blocks(llm, OBJECT_BLOCKS, OBJECT_BLOCKS, GOOD_BLOCKS)
 
     created = await client.mental_models.create_mental_model(
         bank_with_facts, {"name": "Housing", "source_query": SOURCE_QUERY}

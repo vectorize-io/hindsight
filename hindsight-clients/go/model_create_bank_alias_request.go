@@ -21,7 +21,7 @@ var _ MappedNullable = &CreateBankAliasRequest{}
 
 // CreateBankAliasRequest Request model for adding an alias to a bank.
 type CreateBankAliasRequest struct {
-	// The extra bank id. Same rules as a bank id (non-empty, at most 192 bytes of UTF-8, no control characters), and it must not already name a bank or another alias.
+	// The extra bank id. Same rules as a bank id (non-empty, at most 192 bytes of UTF-8, no control characters, no leading underscore), and it must not already name a bank or another alias.
 	Alias string `json:"alias"`
 	// Also show the bank under this alias, replacing whichever alias is shown today.
 	Primary *bool `json:"primary,omitempty"`

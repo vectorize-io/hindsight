@@ -977,6 +977,10 @@ export class HindsightClient {
       knowledgePageDefaultTrigger?: Record<string, unknown>;
       /** Default reflect options for this bank, applied whenever a reflect request (or a mental model's trigger) leaves the option unset: reflect_search_observations_max_tokens, reflect_search_observations_include_entities. */
       reflectDefaultOptions?: Record<string, unknown>;
+      /** When the server has a decision model, reflect lets it prune the evidence and decide when to stop (fewer LLM calls). False keeps agent turns. */
+      reflectUseDecisionModel?: boolean;
+      /** The same, for knowledge-page refreshes. */
+      mentalModelRefreshUseDecisionModel?: boolean;
       /** Token budget for source facts during reflect. -1 disables. */
       reflectSourceFactsMaxTokens?: number;
       /** Token budget for facts returned by recall. */
@@ -1082,6 +1086,10 @@ export class HindsightClient {
       updates.knowledge_page_default_trigger = options.knowledgePageDefaultTrigger;
     if (options.reflectDefaultOptions !== undefined)
       updates.reflect_default_options = options.reflectDefaultOptions;
+    if (options.reflectUseDecisionModel !== undefined)
+      updates.reflect_use_decision_model = options.reflectUseDecisionModel;
+    if (options.mentalModelRefreshUseDecisionModel !== undefined)
+      updates.mental_model_refresh_use_decision_model = options.mentalModelRefreshUseDecisionModel;
     if (options.reflectSourceFactsMaxTokens !== undefined)
       updates.reflect_source_facts_max_tokens = options.reflectSourceFactsMaxTokens;
     if (options.recallMaxTokens !== undefined) updates.recall_max_tokens = options.recallMaxTokens;
@@ -1366,15 +1374,19 @@ export class HindsightClient {
 
   /**
    * Refresh a mental model to update with current knowledge.
+   *
+   * `mode: "full"` regenerates the content from scratch this once, whatever the
+   * model's trigger mode is; the trigger is not changed.
    */
   async refreshMentalModel(
     bankId: string,
     mentalModelId: string,
-    options?: { signal?: AbortSignal }
+    options?: { mode?: "full"; signal?: AbortSignal }
   ): Promise<AsyncOperationSubmitResponse> {
     const response = await sdk.refreshMentalModel({
       client: this.client,
       path: { bank_id: bankId, mental_model_id: mentalModelId },
+      ...(options?.mode ? { body: { mode: options.mode } } : {}),
       signal: options?.signal,
     });
 

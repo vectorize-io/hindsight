@@ -68,6 +68,8 @@ async def test_parallel_and_hallucinated_tool_batch_serializes_validly():
             ),
             _response(_tool_use_block("t4", "recall", query="q")),
             _response(_tool_use_block("t5", "done", answer="A", memory_ids=["mem-1"])),
+            # The closing step that writes the answer: its request must be protocol-valid too.
+            _response(_tool_use_block("t6", "done", answer="A", memory_ids=["mem-1"])),
         ]
     )
     sent_histories: list[list[dict]] = []

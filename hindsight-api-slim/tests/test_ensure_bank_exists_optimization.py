@@ -166,13 +166,13 @@ async def test_validator_rejection_creates_no_row(
     "bad_id",
     # "é" is 2 bytes: 194 > 192. No NUL case: PG cannot encode 0x00 in text, so such an id fails
     # at the existence probe on every endpoint, before creation is ever reached.
-    ["", "é" * 97, "tab\tin-id", "line\nbreak"],
-    ids=["empty", "too-many-bytes", "tab", "newline"],
+    ["", "é" * 97, "tab\tin-id", "line\nbreak", "_reserved"],
+    ids=["empty", "too-many-bytes", "tab", "newline", "underscore-prefix"],
 )
 async def test_invalid_new_bank_id_is_rejected_before_insert(
     memory: MemoryEngine, request_context: RequestContext, bad_id: str
 ) -> None:
-    """A new bank id over the byte limit or with control characters is refused with a 400 (#4391)."""
+    """A new bank id that is empty, over the byte limit, has control characters or starts with `_` is a 400."""
     backend = await memory._get_backend()
     with pytest.raises(OperationValidationError) as exc_info:
         await memory._ensure_bank_exists(bad_id, request_context)

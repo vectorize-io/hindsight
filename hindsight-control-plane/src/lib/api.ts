@@ -258,6 +258,7 @@ export interface MentalModel {
     mode?: "full" | "delta";
     refresh_after_consolidation: boolean;
     refresh_cron?: string | null;
+    full_refresh_cron?: string | null;
     min_refresh_interval_seconds?: number | null;
     fact_types?: Array<"world" | "experience" | "observation">;
     exclude_mental_models?: boolean;
@@ -281,6 +282,8 @@ export interface MentalModel {
   is_stale?: boolean | null;
   /** When the last refresh failed. Set = automatic refreshes are paused for this model. */
   last_refresh_failed_at?: string | null;
+  /** When a refresh last ran in full mode. `trigger.full_refresh_cron` comes due against this. */
+  last_full_refreshed_at?: string | null;
 }
 
 /** How a refresh resolved full-vs-delta, and why it did not stay in delta. */
@@ -502,8 +505,10 @@ export class ControlPlaneClient {
 
       return response.json();
     } catch (error) {
-      // If it's not a response error (network error, etc.), show toast
-      if (!(error as any).status && !suppressErrorToast) {
+      // If it's not a response error (network error, etc.), show toast. A request
+      // the caller cancelled is not an error worth telling anyone about.
+      const aborted = (error as any)?.name === "AbortError";
+      if (!(error as any).status && !suppressErrorToast && !aborted) {
         toast.error("Network Error", {
           description: error instanceof Error ? error.message : "Failed to connect to server",
           duration: 5000,
@@ -714,16 +719,19 @@ export class ControlPlaneClient {
   /**
    * Get graph data
    */
-  async getGraph(params: {
-    bank_id: string;
-    type?: string;
-    limit?: number;
-    q?: string;
-    tags?: string[];
-    tags_match?: string;
-    document_id?: string;
-    chunk_id?: string;
-  }) {
+  async getGraph(
+    params: {
+      bank_id: string;
+      type?: string;
+      limit?: number;
+      q?: string;
+      tags?: string[];
+      tags_match?: string;
+      document_id?: string;
+      chunk_id?: string;
+    },
+    signal?: AbortSignal
+  ) {
     const queryParams = new URLSearchParams();
     queryParams.append("bank_id", params.bank_id);
     if (params.type) queryParams.append("type", params.type);
@@ -738,7 +746,7 @@ export class ControlPlaneClient {
     if (params.tags_match) queryParams.append("tags_match", params.tags_match);
     if (params.document_id) queryParams.append("document_id", params.document_id);
     if (params.chunk_id) queryParams.append("chunk_id", params.chunk_id);
-    return this.fetchApi(`/api/graph?${queryParams}`);
+    return this.fetchApi(`/api/graph?${queryParams}`, { signal });
   }
 
   /**
@@ -988,6 +996,7 @@ export class ControlPlaneClient {
         mode?: "full" | "delta";
         refresh_after_consolidation?: boolean;
         refresh_cron?: string | null;
+        full_refresh_cron?: string | null;
         min_refresh_interval_seconds?: number | null;
         fact_types?: Array<"world" | "experience" | "observation">;
         exclude_mental_models?: boolean;
@@ -1775,6 +1784,7 @@ export class ControlPlaneClient {
           mode?: "full" | "delta";
           refresh_after_consolidation: boolean;
           refresh_cron?: string | null;
+          full_refresh_cron?: string | null;
           min_refresh_interval_seconds?: number | null;
           fact_types?: Array<"world" | "experience" | "observation">;
           exclude_mental_models?: boolean;
@@ -1845,6 +1855,7 @@ export class ControlPlaneClient {
         mode?: "full" | "delta";
         refresh_after_consolidation: boolean;
         refresh_cron?: string | null;
+        full_refresh_cron?: string | null;
         min_refresh_interval_seconds?: number | null;
         fact_types?: Array<"world" | "experience" | "observation"> | null;
         exclude_mental_models?: boolean;
@@ -1894,6 +1905,7 @@ export class ControlPlaneClient {
         mode?: "full" | "delta";
         refresh_after_consolidation: boolean;
         refresh_cron?: string | null;
+        full_refresh_cron?: string | null;
         min_refresh_interval_seconds?: number | null;
         fact_types?: Array<"world" | "experience" | "observation"> | null;
         exclude_mental_models?: boolean;
@@ -1922,6 +1934,7 @@ export class ControlPlaneClient {
       trigger: {
         refresh_after_consolidation: boolean;
         refresh_cron?: string | null;
+        full_refresh_cron?: string | null;
         min_refresh_interval_seconds?: number | null;
         fact_types?: Array<"world" | "experience" | "observation">;
         exclude_mental_models?: boolean;
@@ -1962,11 +1975,13 @@ export class ControlPlaneClient {
   /**
    * Refresh a mental model (re-run source query) - async operation
    */
-  async refreshMentalModel(bankId: string, mentalModelId: string) {
+  async refreshMentalModel(bankId: string, mentalModelId: string, options?: { mode?: "full" }) {
     return this.fetchApi<{
       operation_id: string;
     }>(bankApi(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}/refresh`), {
       method: "POST",
+      // "full" rewrites the document from scratch this once; the model keeps its mode.
+      ...(options?.mode ? { body: JSON.stringify({ mode: options.mode }) } : {}),
     });
   }
 

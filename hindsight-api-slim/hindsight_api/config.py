@@ -4,6 +4,7 @@ Centralized configuration for Hindsight API.
 All environment variables and their defaults are defined here.
 """
 
+import importlib.util
 import json
 import logging
 import os
@@ -225,6 +226,10 @@ ENV_LLM_TEMPERATURE_VERIFICATION = "HINDSIGHT_API_LLM_TEMPERATURE_VERIFICATION"
 ENV_LLM_TEMPERATURE_RETAIN = "HINDSIGHT_API_LLM_TEMPERATURE_RETAIN"
 ENV_LLM_TEMPERATURE_REFLECT = "HINDSIGHT_API_LLM_TEMPERATURE_REFLECT"
 ENV_LLM_TEMPERATURE_CONSOLIDATION = "HINDSIGHT_API_LLM_TEMPERATURE_CONSOLIDATION"
+# The mental-model refresh's structured edit calls (delta and retraction ops).
+# Unset, it takes the resolved consolidation temperature, which those calls used
+# before it existed; see _resolve_inherited_temperature.
+ENV_LLM_TEMPERATURE_MENTAL_MODEL_REFRESH = "HINDSIGHT_API_LLM_TEMPERATURE_MENTAL_MODEL_REFRESH"
 
 # Multi-LLM strategy. Extra LLMs are configured by index alongside the unindexed
 # primary (e.g. HINDSIGHT_API_LLM_1_PROVIDER, HINDSIGHT_API_LLM_2_PROVIDER, ...),
@@ -249,7 +254,7 @@ ENV_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG"
 DEFAULT_LLM_TEMPERATURE_VERIFICATION = 0.0  # connection check
 DEFAULT_LLM_TEMPERATURE_RETAIN = 0.1  # fact extraction
 DEFAULT_LLM_TEMPERATURE_REFLECT = 0.9  # reflect "thinking"
-DEFAULT_LLM_TEMPERATURE_CONSOLIDATION = 0.0  # mental-model delta / dedup
+DEFAULT_LLM_TEMPERATURE_CONSOLIDATION = 0.0  # dedup; mental-model delta/retraction unless overridden
 
 # Defaults for service tiers
 DEFAULT_LLM_GROQ_SERVICE_TIER = "auto"  # "on_demand", "flex", or "auto"
@@ -319,6 +324,19 @@ def _resolve_operation_temperature(operation_env: str, default: float) -> float 
         raw = os.getenv(ENV_LLM_TEMPERATURE)
     if raw is None:
         return default
+    return _parse_temperature(raw)
+
+
+def _resolve_inherited_temperature(operation_env: str, inherited: float | None) -> float | None:
+    """Resolve a temperature that inherits another operation's when unset: per-op env -> ``inherited``.
+
+    ``inherited`` is that operation's already-resolved value, so the global env and
+    the omit sentinels reach this one through it, and leaving ``operation_env`` unset
+    changes nothing.
+    """
+    raw = os.getenv(operation_env)
+    if raw is None:
+        return inherited
     return _parse_temperature(raw)
 
 
@@ -1026,6 +1044,8 @@ ENV_CONSOLIDATION_WALL_TIMEOUT = "HINDSIGHT_API_CONSOLIDATION_WALL_TIMEOUT"
 
 # Reflect agent settings
 ENV_REFLECT_MAX_ITERATIONS = "HINDSIGHT_API_REFLECT_MAX_ITERATIONS"
+ENV_REFLECT_USE_DECISION_MODEL = "HINDSIGHT_API_REFLECT_USE_DECISION_MODEL"
+ENV_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL"
 ENV_REFLECT_PROMPT_CACHE_ENABLED = "HINDSIGHT_API_REFLECT_PROMPT_CACHE_ENABLED"
 ENV_REFLECT_MAX_CONTEXT_TOKENS = "HINDSIGHT_API_REFLECT_MAX_CONTEXT_TOKENS"
 ENV_REFLECT_WALL_TIMEOUT = "HINDSIGHT_API_REFLECT_WALL_TIMEOUT"
@@ -1967,6 +1987,12 @@ DEFAULT_CONSOLIDATION_WALL_TIMEOUT = 7200  # seconds (2 hours)
 
 # Reflect agent settings
 DEFAULT_REFLECT_MAX_ITERATIONS = 10  # Max tool call iterations before forcing response
+# Whether reflect (and, separately, a knowledge-page refresh) is decision-orchestrated when a
+# reflect decision model is set up: the retrieval layers run in parallel rounds and the decision
+# model prunes the evidence and judges when it is enough, in place of the LLM's per-layer turns.
+# On by default, so setting up a decision model is what turns it on; a bank can opt out.
+DEFAULT_REFLECT_USE_DECISION_MODEL = True
+DEFAULT_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL = True
 # Step-by-step context caching for the reflect tool loop (Gemini). On by default;
 # requires the global prompt cache (HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED) to also
 # be on. Set false to force reflect to run uncached even when prompt caching is on.
@@ -2693,7 +2719,7 @@ def _parse_llm_members(prefix: str) -> list[LLMMemberConfig]:
     ``_TIMEOUT`` and ``_MAX_RETRIES`` are optional per-member overrides of the
     operation's request policy; unset means inherit it.
     """
-    from .engine.provider_auth import requires_api_key
+    from .provider_auth import requires_api_key
 
     members: list[LLMMemberConfig] = []
     index = 1
@@ -3165,6 +3191,7 @@ class HindsightConfig:
     llm_temperature_retain: float | None
     llm_temperature_reflect: float | None
     llm_temperature_consolidation: float | None
+    llm_temperature_mental_model_refresh: float | None
 
     # LiteLLM Router chain (provider-specific; consumed by the "litellmrouter" provider).
     # List of deployment dicts evaluated in order with fallback on transient errors.
@@ -3645,6 +3672,8 @@ class HindsightConfig:
 
     # Reflect agent settings
     reflect_max_iterations: int
+    reflect_use_decision_model: bool
+    mental_model_refresh_use_decision_model: bool
     reflect_max_context_tokens: int
     reflect_wall_timeout: int
     reflect_prompt_cache_enabled: bool
@@ -3938,6 +3967,8 @@ class HindsightConfig:
         "knowledge_page_default_trigger",
         # Reflect settings
         "reflect_mission",
+        "reflect_use_decision_model",
+        "mental_model_refresh_use_decision_model",
         "reflect_source_facts_max_tokens",
         "reflect_default_options",
         # Recall settings (used by internal recall, e.g. mental model refresh)
@@ -4252,11 +4283,9 @@ class HindsightConfig:
         # Don't hard-fail here — the actual ImportError fires at model init time
         # with a clear message. This early warning catches it before startup proceeds.
         if self.embeddings_provider == "local" or self.reranker_provider == "local":
-            try:
-                import importlib
-
-                importlib.import_module("sentence_transformers")
-            except ImportError:
+            # find_spec, not import: importing sentence_transformers pulls in torch and costs
+            # ~15 s, which every process (even `--help`) would pay just to run this check.
+            if importlib.util.find_spec("sentence_transformers") is None:
                 missing = []
                 if self.embeddings_provider == "local":
                     missing.append("embeddings")
@@ -4273,12 +4302,7 @@ class HindsightConfig:
                 )
 
         if self.embeddings_provider == "onnx":
-            try:
-                import importlib
-
-                importlib.import_module("onnxruntime")
-                importlib.import_module("transformers")
-            except ImportError:
+            if importlib.util.find_spec("onnxruntime") is None or importlib.util.find_spec("transformers") is None:
                 logger.warning(
                     "ONNX embeddings provider configured, but 'onnxruntime' and/or "
                     "'transformers' is not installed. The API will fail at model init time. Either:\n"
@@ -4313,6 +4337,11 @@ class HindsightConfig:
 
         # Parse per-type worker slot reservations (floors) once.
         worker_slot_reservations = _parse_worker_slot_reservations()
+
+        # Resolved once: the mental-model refresh temperature inherits it when unset.
+        llm_temperature_consolidation = _resolve_operation_temperature(
+            ENV_LLM_TEMPERATURE_CONSOLIDATION, DEFAULT_LLM_TEMPERATURE_CONSOLIDATION
+        )
 
         config = cls(
             # Database
@@ -4411,8 +4440,9 @@ class HindsightConfig:
             llm_temperature_reflect=_resolve_operation_temperature(
                 ENV_LLM_TEMPERATURE_REFLECT, DEFAULT_LLM_TEMPERATURE_REFLECT
             ),
-            llm_temperature_consolidation=_resolve_operation_temperature(
-                ENV_LLM_TEMPERATURE_CONSOLIDATION, DEFAULT_LLM_TEMPERATURE_CONSOLIDATION
+            llm_temperature_consolidation=llm_temperature_consolidation,
+            llm_temperature_mental_model_refresh=_resolve_inherited_temperature(
+                ENV_LLM_TEMPERATURE_MENTAL_MODEL_REFRESH, llm_temperature_consolidation
             ),
             llm_litellmrouter_config=_parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG),
             # Codex (ChatGPT OAuth) credentials directory
@@ -5313,6 +5343,14 @@ class HindsightConfig:
             ),
             # Reflect agent settings
             reflect_max_iterations=int(os.getenv(ENV_REFLECT_MAX_ITERATIONS, str(DEFAULT_REFLECT_MAX_ITERATIONS))),
+            reflect_use_decision_model=os.getenv(
+                ENV_REFLECT_USE_DECISION_MODEL, str(DEFAULT_REFLECT_USE_DECISION_MODEL)
+            ).lower()
+            == "true",
+            mental_model_refresh_use_decision_model=os.getenv(
+                ENV_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL, str(DEFAULT_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL)
+            ).lower()
+            == "true",
             reflect_prompt_cache_enabled=os.getenv(
                 ENV_REFLECT_PROMPT_CACHE_ENABLED, str(DEFAULT_REFLECT_PROMPT_CACHE_ENABLED)
             ).lower()

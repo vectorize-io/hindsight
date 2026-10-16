@@ -73,6 +73,7 @@ from hindsight_client_api.models.list_memory_units_response import ListMemoryUni
 from hindsight_client_api.models.recall_response import RecallResponse
 from hindsight_client_api.models.reflect_include_options import ReflectIncludeOptions
 from hindsight_client_api.models.reflect_response import ReflectResponse
+from hindsight_client_api.models.refresh_mental_model_request import RefreshMentalModelRequest
 from hindsight_client_api.models.retain_response import RetainResponse
 from hindsight_client_api.models.tool_calls_include_options import ToolCallsIncludeOptions
 from hindsight_client_api.models.version_response import VersionResponse
@@ -129,9 +130,7 @@ def _trigger_input(trigger: dict[str, Any]) -> Any:
 
     model = mental_model_trigger_input.MentalModelTriggerInput
     unnamed_defaults = {
-        name: None
-        for name, field in model.model_fields.items()
-        if name not in trigger and field.default is not None
+        name: None for name, field in model.model_fields.items() if name not in trigger and field.default is not None
     }
     return model(**unnamed_defaults, **trigger)
 
@@ -476,7 +475,9 @@ class Hindsight:
         update_mode: str | None = None,
         retain_async: bool = False,
         operation_id: str | None = None,
-        observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = None,
+        observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"]
+        | list[list[str]]
+        | None = None,
         strategy: str | None = None,
     ) -> RetainResponse:
         """
@@ -1252,7 +1253,9 @@ class Hindsight:
         update_mode: str | None = None,
         retain_async: bool = False,
         operation_id: str | None = None,
-        observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = None,
+        observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"]
+        | list[list[str]]
+        | None = None,
         strategy: str | None = None,
     ) -> RetainResponse:
         """
@@ -1414,8 +1417,7 @@ class Hindsight:
                 # Fail loud instead of silently dropping a misspelled floor, which
                 # would make the caller believe filtering is active when it is not.
                 raise ValueError(
-                    f"Unknown min_scores keys: {sorted(unknown)}. "
-                    f"Allowed keys: {sorted(allowed_min_scores)}."
+                    f"Unknown min_scores keys: {sorted(unknown)}. Allowed keys: {sorted(allowed_min_scores)}."
                 )
             min_scores_obj = MinScores.from_dict(min_scores)
 
@@ -1720,27 +1722,33 @@ class Hindsight:
             bank_id, mental_model_id, detail=detail, _request_timeout=self._timeout
         )
 
-    def refresh_mental_model(self, bank_id: str, mental_model_id: str):
+    def refresh_mental_model(self, bank_id: str, mental_model_id: str, mode: Literal["full"] | None = None):
         """
         Refresh a mental model (sync wrapper — prefer :meth:`arefresh_mental_model` in async code).
 
         See :meth:`arefresh_mental_model` for the full argument and return documentation.
         """
-        return _run_async(self.arefresh_mental_model(bank_id=bank_id, mental_model_id=mental_model_id))
+        return _run_async(self.arefresh_mental_model(bank_id=bank_id, mental_model_id=mental_model_id, mode=mode))
 
-    async def arefresh_mental_model(self, bank_id: str, mental_model_id: str):
+    async def arefresh_mental_model(self, bank_id: str, mental_model_id: str, mode: Literal["full"] | None = None):
         """
         Refresh a mental model (async — preferred over :meth:`refresh_mental_model`).
 
         Args:
             bank_id: The memory bank ID
             mental_model_id: The mental model ID
+            mode: "full" regenerates the content from scratch this once, whatever the
+                model's trigger mode is; the trigger is not changed. None runs the
+                model's own mode.
 
         Returns:
             RefreshMentalModelResponse with operation_id
         """
         return await self._mental_models_api.refresh_mental_model(
-            bank_id, mental_model_id, _request_timeout=self._timeout
+            bank_id,
+            mental_model_id,
+            refresh_mental_model_request=RefreshMentalModelRequest(mode=mode) if mode else None,
+            _request_timeout=self._timeout,
         )
 
     def dry_run_refresh_mental_model(self, bank_id: str, mental_model_id: str):
@@ -2900,6 +2908,8 @@ class Hindsight:
         mental_model_min_refresh_interval_seconds: int | None = None,
         knowledge_page_default_trigger: dict[str, Any] | None = None,
         reflect_default_options: dict[str, Any] | None = None,
+        reflect_use_decision_model: bool | None = None,
+        mental_model_refresh_use_decision_model: bool | None = None,
         enable_text_search: bool | None = None,
         enable_temporal_retrieval: bool | None = None,
         enable_graph_retrieval: bool | None = None,
@@ -2966,6 +2976,8 @@ class Hindsight:
                 mental_model_min_refresh_interval_seconds=mental_model_min_refresh_interval_seconds,
                 knowledge_page_default_trigger=knowledge_page_default_trigger,
                 reflect_default_options=reflect_default_options,
+                reflect_use_decision_model=reflect_use_decision_model,
+                mental_model_refresh_use_decision_model=mental_model_refresh_use_decision_model,
                 enable_text_search=enable_text_search,
                 enable_temporal_retrieval=enable_temporal_retrieval,
                 enable_graph_retrieval=enable_graph_retrieval,
@@ -3029,6 +3041,8 @@ class Hindsight:
         mental_model_min_refresh_interval_seconds: int | None = None,
         knowledge_page_default_trigger: dict[str, Any] | None = None,
         reflect_default_options: dict[str, Any] | None = None,
+        reflect_use_decision_model: bool | None = None,
+        mental_model_refresh_use_decision_model: bool | None = None,
         enable_text_search: bool | None = None,
         enable_temporal_retrieval: bool | None = None,
         enable_graph_retrieval: bool | None = None,
@@ -3104,6 +3118,9 @@ class Hindsight:
                 reflect request (or a mental model's trigger) leaves the option unset:
                 reflect_search_observations_max_tokens and
                 reflect_search_observations_include_entities.
+            reflect_use_decision_model: When the server has a decision model, reflect lets it
+                prune the evidence and decide when to stop (fewer LLM calls). False keeps agent turns.
+            mental_model_refresh_use_decision_model: The same, for knowledge-page refreshes.
             knowledge_page_default_trigger: Trigger fields merged over the built-in default for new
                 knowledge pages, e.g. {"refresh_cron": "0 * * * *"}.
             enable_observations: Toggle automatic observation consolidation after retain().
@@ -3171,6 +3188,8 @@ class Hindsight:
                 "mental_model_min_refresh_interval_seconds": mental_model_min_refresh_interval_seconds,
                 "knowledge_page_default_trigger": knowledge_page_default_trigger,
                 "reflect_default_options": reflect_default_options,
+                "reflect_use_decision_model": reflect_use_decision_model,
+                "mental_model_refresh_use_decision_model": mental_model_refresh_use_decision_model,
                 "enable_text_search": enable_text_search,
                 "enable_temporal_retrieval": enable_temporal_retrieval,
                 "enable_graph_retrieval": enable_graph_retrieval,

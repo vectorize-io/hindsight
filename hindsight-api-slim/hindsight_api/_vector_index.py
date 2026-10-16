@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
-from sqlalchemy import text
-from sqlalchemy.engine import Connection
-
-from ._pg_extensions import create_extension
+# sqlalchemy is imported where it is used, not here: config.py imports this module, and
+# loading sqlalchemy at config time costs ~0.5 s on every process, `--help` included.
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Connection
 
 logger = logging.getLogger(__name__)
 
@@ -344,6 +345,8 @@ def bootstrap_extension(conn: Connection, ext: str) -> None:
     ``create_extension`` skips anything already installed, so this issues no
     DDL on a database that is already set up.
     """
+    from ._pg_extensions import create_extension
+
     normalized = validate_extension(ext)
     for name, cascade in _EXTENSION_INSTALL_PLAN[normalized]:
         create_extension(conn, name, cascade=cascade)
@@ -351,6 +354,8 @@ def bootstrap_extension(conn: Connection, ext: str) -> None:
 
 def detect_vector_extension(conn: Connection, vector_extension: str = "pgvector") -> str:
     """Validate the configured vector extension exists and return the index backend."""
+    from sqlalchemy import text
+
     configured_ext = validate_extension(vector_extension)
 
     if configured_ext == "pgvectorscale":

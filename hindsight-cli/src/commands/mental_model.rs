@@ -40,6 +40,7 @@ pub struct TriggerUpdate {
     pub mode: Option<String>,
     pub refresh_after_consolidation: Option<bool>,
     pub refresh_cron: Option<String>,
+    pub full_refresh_cron: Option<String>,
     pub min_refresh_interval_seconds: Option<u64>,
     pub tags_match: Option<String>,
     pub keep_trace: Option<bool>,
@@ -53,6 +54,7 @@ impl TriggerUpdate {
         self.mode.is_none()
             && self.refresh_after_consolidation.is_none()
             && self.refresh_cron.is_none()
+            && self.full_refresh_cron.is_none()
             && self.min_refresh_interval_seconds.is_none()
             && self.tags_match.is_none()
             && self.keep_trace.is_none()
@@ -69,6 +71,7 @@ fn default_trigger_input() -> types::MentalModelTriggerInput {
         mode: types::Mode::Full,
         refresh_after_consolidation: false,
         refresh_cron: None,
+        full_refresh_cron: None,
         min_refresh_interval_seconds: None,
         exclude_mental_models: false,
         exclude_mental_model_ids: None,
@@ -97,6 +100,7 @@ fn stored_trigger_as_input(
         mode: stored.mode,
         refresh_after_consolidation: stored.refresh_after_consolidation,
         refresh_cron: stored.refresh_cron.clone(),
+        full_refresh_cron: stored.full_refresh_cron.clone(),
         min_refresh_interval_seconds: stored.min_refresh_interval_seconds,
         exclude_mental_models: stored.exclude_mental_models,
         exclude_mental_model_ids: stored.exclude_mental_model_ids.clone(),
@@ -107,7 +111,8 @@ fn stored_trigger_as_input(
         recall_max_tokens: stored.recall_max_tokens,
         recall_chunks_max_tokens: stored.recall_chunks_max_tokens,
         reflect_search_observations_max_tokens: stored.reflect_search_observations_max_tokens,
-        reflect_search_observations_include_entities: stored.reflect_search_observations_include_entities,
+        reflect_search_observations_include_entities: stored
+            .reflect_search_observations_include_entities,
         budget: stored.budget,
         response_schema: stored.response_schema.clone(),
         keep_trace: stored.keep_trace,
@@ -125,8 +130,8 @@ fn stored_trigger_as_input(
 /// also turned off its trace capture. Starting from the stored trigger keeps
 /// every field the user did not name.
 ///
-/// An empty string clears `--trigger-refresh-cron` / `--trigger-tags-match`
-/// back to "unset", which is how a cron schedule is removed.
+/// An empty string clears `--trigger-refresh-cron` / `--trigger-full-refresh-cron` /
+/// `--trigger-tags-match` back to "unset", which is how a cron schedule is removed.
 fn apply_trigger_update(
     base: types::MentalModelTriggerInput,
     update: &TriggerUpdate,
@@ -141,6 +146,13 @@ fn apply_trigger_update(
     }
     if let Some(cron) = update.refresh_cron.as_deref() {
         trigger.refresh_cron = if cron.trim().is_empty() {
+            None
+        } else {
+            Some(cron.to_string())
+        };
+    }
+    if let Some(cron) = update.full_refresh_cron.as_deref() {
+        trigger.full_refresh_cron = if cron.trim().is_empty() {
             None
         } else {
             Some(cron.to_string())
@@ -483,6 +495,7 @@ pub fn refresh(
     client: &ApiClient,
     bank_id: &str,
     mental_model_id: &str,
+    full: bool,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
@@ -492,7 +505,7 @@ pub fn refresh(
         None
     };
 
-    let response = client.refresh_mental_model(bank_id, mental_model_id, verbose);
+    let response = client.refresh_mental_model(bank_id, mental_model_id, full, verbose);
 
     if let Some(mut sp) = spinner {
         sp.finish();
@@ -765,6 +778,7 @@ mod tests {
             mode: types::Mode::Delta,
             refresh_after_consolidation: true,
             refresh_cron: None,
+            full_refresh_cron: Some("0 3 * * 0".to_string()),
             min_refresh_interval_seconds: Some(900),
             exclude_mental_models: true,
             exclude_mental_model_ids: Some(vec!["mm-other".to_string()]),
@@ -826,6 +840,7 @@ mod tests {
         assert!(trigger.refresh_after_consolidation);
         assert!(trigger.exclude_mental_models);
         assert!(trigger.keep_trace);
+        assert_eq!(trigger.full_refresh_cron.as_deref(), Some("0 3 * * 0"));
         assert_eq!(trigger.min_refresh_interval_seconds, Some(900));
         assert_eq!(trigger.tags_match, Some(types::TagsMatch::AnyStrict));
         assert_eq!(trigger.recall_max_tokens, Some(4096));
@@ -837,6 +852,7 @@ mod tests {
             mode: Some("DELTA".to_string()),
             refresh_after_consolidation: Some(false),
             refresh_cron: Some("0 3 * * *".to_string()),
+            full_refresh_cron: Some("0 4 * * 0".to_string()),
             min_refresh_interval_seconds: Some(0),
             tags_match: Some("exact".to_string()),
             keep_trace: Some(false),
@@ -844,6 +860,7 @@ mod tests {
         };
         let trigger =
             apply_trigger_update(default_trigger_input(), &update).expect("update applies");
+        assert_eq!(trigger.full_refresh_cron.as_deref(), Some("0 4 * * 0"));
 
         assert_eq!(trigger.mode, types::Mode::Delta);
         assert!(!trigger.refresh_after_consolidation);

@@ -109,6 +109,9 @@ def test_should_monitor_recall_reflect_and_retain():
     assert _should_monitor(_scope("/v1/default/banks/b/memories/recall/extra")) is False
     # The upload path stays out: its body is streamed, not a small JSON doc.
     assert _should_monitor(_scope("/v1/default/banks/b/files/retain")) is False
+    # The graph read behind the control plane's Memories tabs, abandoned on every
+    # tab switch.
+    assert _should_monitor(_scope("/v1/default/banks/b/graph", method="GET")) is True
 
 
 # --- run_cancellable_on_disconnect ----------------------------------------------
@@ -423,7 +426,9 @@ async def test_run_task_cancellable_propagates_work_errors():
 # --- The whole route, end to end (#4526) ----------------------------------------
 
 
-async def _assert_route_answers_499_and_stops(memory, monkeypatch, *, engine_method: str, path: str, body: bytes):
+async def _assert_route_answers_499_and_stops(
+    memory, monkeypatch, *, engine_method: str, path: str, body: bytes, method: str = "POST"
+):
     """Drive the real app at the ASGI layer (the only level where a disconnect can be
     delivered), with the engine call stubbed out as one long await, and hang up."""
     from hindsight_api.api import create_app
@@ -459,7 +464,7 @@ async def _assert_route_answers_499_and_stops(memory, monkeypatch, *, engine_met
     scope = {
         "type": "http",
         "http_version": "1.1",
-        "method": "POST",
+        "method": method,
         "path": path,
         "raw_path": path.encode(),
         "query_string": b"",
@@ -502,4 +507,20 @@ async def test_reflect_route_answers_499_and_stops_the_work(memory, monkeypatch)
         engine_method="reflect_async",
         path="/v1/default/banks/disconnect-probe/reflect",
         body=b'{"query": "Where does Alice work?"}',
+    )
+
+
+async def test_graph_route_answers_499_and_stops_the_work(memory, monkeypatch):
+    """A graph read whose client hangs up must stop, not build a multi-MB answer for nobody.
+
+    The control plane cancels it on every Memories tab switch; left running, it competes
+    with the read for the tab the user switched to.
+    """
+    await _assert_route_answers_499_and_stops(
+        memory,
+        monkeypatch,
+        engine_method="get_graph_data",
+        path="/v1/default/banks/disconnect-probe/graph",
+        body=b"",
+        method="GET",
     )

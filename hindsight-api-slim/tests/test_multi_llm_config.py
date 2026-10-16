@@ -397,7 +397,9 @@ def test_member_to_llm_passes_vertexai_service_account_key(clean_llm_env, monkey
             captured.update(kwargs)
 
     monkeypatch.setattr(llm_wrapper, "VERTEXAI_AVAILABLE", True)
-    monkeypatch.setattr(llm_wrapper, "service_account", _FakeServiceAccount)
+    from google.oauth2 import service_account
+
+    monkeypatch.setattr(service_account, "Credentials", _FakeServiceAccount.Credentials)
     monkeypatch.setattr(gemini_llm.genai, "Client", _FakeClient)
     clear_config_cache()
 

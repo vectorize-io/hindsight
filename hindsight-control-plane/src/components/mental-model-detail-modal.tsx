@@ -28,9 +28,20 @@ import {
   Pencil,
   Download,
   RefreshCw,
+  RotateCcw,
   Trash2,
   AlertTriangle,
 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "sonner";
 import { CompactMarkdown } from "./compact-markdown";
@@ -816,6 +827,7 @@ export function MentalModelDetailModal({
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"content" | "configuration" | "history">(initialTab);
   const [refreshing, setRefreshing] = useState(false);
+  const [confirmFullRefresh, setConfirmFullRefresh] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [viewMemoryId, setViewMemoryId] = useState<string | null>(null);
   const [viewDirectiveId, setViewDirectiveId] = useState<string | null>(null);
@@ -913,13 +925,13 @@ export function MentalModelDetailModal({
     }
   };
 
-  const handleRefresh = async () => {
+  const handleRefresh = async (mode?: "full") => {
     if (!currentBank || !mentalModel) return;
     setRefreshing(true);
     const originalRefreshedAt = mentalModel.last_refreshed_at;
 
     try {
-      await client.refreshMentalModel(currentBank, mentalModel.id);
+      await client.refreshMentalModel(currentBank, mentalModel.id, mode ? { mode } : undefined);
 
       const pollInterval = 1000;
       const maxAttempts = 120;
@@ -1065,10 +1077,21 @@ export function MentalModelDetailModal({
                         {t("actionEdit")}
                       </DropdownMenuItem>
                     )}
-                    <DropdownMenuItem onClick={handleRefresh} disabled={refreshing}>
+                    <DropdownMenuItem onClick={() => handleRefresh()} disabled={refreshing}>
                       <RefreshCw className="h-4 w-4 mr-2" />
                       {t("actionRefreshManually")}
                     </DropdownMenuItem>
+                    {/* Only a delta model has anything to gain: a full-mode one already
+                        rewrites from scratch on every refresh. */}
+                    {mentalModel.trigger?.mode === "delta" && (
+                      <DropdownMenuItem
+                        onClick={() => setConfirmFullRefresh(true)}
+                        disabled={refreshing}
+                      >
+                        <RotateCcw className="h-4 w-4 mr-2" />
+                        {t("actionFullRefresh")}
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuItem
                       onClick={() => printPage(mentalModelDownload(mentalModel))}
                       disabled={!mentalModel.content}
@@ -1109,6 +1132,22 @@ export function MentalModelDetailModal({
                     )}
                   </DropdownMenuContent>
                 </DropdownMenu>
+                <AlertDialog open={confirmFullRefresh} onOpenChange={setConfirmFullRefresh}>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>{t("fullRefreshDialogTitle")}</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        {t("fullRefreshDialogDescription")}
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
+                      <AlertDialogAction onClick={() => handleRefresh("full")}>
+                        {t("fullRefreshDialogConfirm")}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </div>
 
               <div className="flex-1 overflow-y-auto mt-4">
@@ -1357,6 +1396,20 @@ function ConfigurationTab({ mentalModel }: { mentalModel: MentalModel }) {
           label={t("labelNextRefresh")}
           value={<NextRefresh trigger={mentalModel.trigger} />}
         />
+        {(mentalModel.last_full_refreshed_at || mentalModel.trigger?.full_refresh_cron) && (
+          <Metadata
+            label={t("labelLastFullRefresh")}
+            value={
+              mentalModel.last_full_refreshed_at ? (
+                <span title={formatDateTime(mentalModel.last_full_refreshed_at)}>
+                  {formatRelativeTime(mentalModel.last_full_refreshed_at)}
+                </span>
+              ) : (
+                <span className="text-muted-foreground italic text-sm">{t("valueNever")}</span>
+              )
+            }
+          />
+        )}
         <Metadata label={t("labelMaxTokens")} value={mentalModel.max_tokens.toLocaleString()} />
       </InfoCard>
 
@@ -1401,6 +1454,24 @@ function ConfigurationTab({ mentalModel }: { mentalModel: MentalModel }) {
           }
         />
         {trigger.refresh_cron && <CronSchedulePreview cron={trigger.refresh_cron} />}
+        {trigger.mode === "delta" && (
+          <Metadata
+            label={t("labelFullRefreshCron")}
+            value={
+              trigger.full_refresh_cron ? (
+                <Pill
+                  label={trigger.full_refresh_cron}
+                  color="bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                />
+              ) : (
+                <Pill label={t("pillDisabled")} />
+              )
+            }
+          />
+        )}
+        {trigger.mode === "delta" && trigger.full_refresh_cron && (
+          <CronSchedulePreview cron={trigger.full_refresh_cron} />
+        )}
         <Metadata
           label={t("labelMinRefreshInterval")}
           value={

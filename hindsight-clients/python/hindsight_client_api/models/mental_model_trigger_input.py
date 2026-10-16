@@ -33,6 +33,7 @@ class MentalModelTriggerInput(BaseModel):
     mode: Optional[StrictStr] = Field(default='full', description="Refresh mode. 'full' (default) regenerates the mental model content from scratch on each refresh. 'delta' performs surgical edits against the existing content: unchanged sections are preserved byte-for-byte, stale content is removed, new content is added. If the mental model has no existing content, or if the source_query has changed since the last refresh, delta mode falls back to a full regeneration automatically.")
     refresh_after_consolidation: Optional[StrictBool] = Field(default=False, description="If true, refresh this mental model after observations consolidation (real-time mode)")
     refresh_cron: Optional[StrictStr] = None
+    full_refresh_cron: Optional[StrictStr] = None
     min_refresh_interval_seconds: Optional[Annotated[int, Field(strict=True, ge=0)]] = None
     fact_types: Optional[List[StrictStr]] = None
     exclude_mental_models: Optional[StrictBool] = Field(default=False, description="If true, exclude all mental models from the reflect loop (skip search_mental_models tool).")
@@ -46,7 +47,7 @@ class MentalModelTriggerInput(BaseModel):
     reflect_search_observations_include_entities: Optional[StrictBool] = None
     response_schema: Optional[Dict[str, Any]] = None
     keep_trace: Optional[StrictBool] = Field(default=False, description="If true, every refresh of this mental model records how it reached its result under reflect_response.trace: the mode it ran in and why, the resolved scope and time window, how many facts retrieval returned versus how many the agent used, the tool and LLM calls, and any delta operations. Only the latest refresh's trace is kept. This is the only way to diagnose a cron- or consolidation-driven refresh after the fact, since no human sees those run. Tool outputs are reduced to result counts to keep the stored trace bounded; use LLM request tracing for raw prompts and responses.")
-    __properties: ClassVar[List[str]] = ["budget", "mode", "refresh_after_consolidation", "refresh_cron", "min_refresh_interval_seconds", "fact_types", "exclude_mental_models", "exclude_mental_model_ids", "tags_match", "tag_groups", "include_chunks", "recall_max_tokens", "recall_chunks_max_tokens", "reflect_search_observations_max_tokens", "reflect_search_observations_include_entities", "response_schema", "keep_trace"]
+    __properties: ClassVar[List[str]] = ["budget", "mode", "refresh_after_consolidation", "refresh_cron", "full_refresh_cron", "min_refresh_interval_seconds", "fact_types", "exclude_mental_models", "exclude_mental_model_ids", "tags_match", "tag_groups", "include_chunks", "recall_max_tokens", "recall_chunks_max_tokens", "reflect_search_observations_max_tokens", "reflect_search_observations_include_entities", "response_schema", "keep_trace"]
 
     @field_validator('mode')
     def mode_validate_enum(cls, value):
@@ -135,6 +136,11 @@ class MentalModelTriggerInput(BaseModel):
         if self.refresh_cron is None and "refresh_cron" in self.model_fields_set:
             _dict['refresh_cron'] = None
 
+        # set to None if full_refresh_cron (nullable) is None
+        # and model_fields_set contains the field
+        if self.full_refresh_cron is None and "full_refresh_cron" in self.model_fields_set:
+            _dict['full_refresh_cron'] = None
+
         # set to None if min_refresh_interval_seconds (nullable) is None
         # and model_fields_set contains the field
         if self.min_refresh_interval_seconds is None and "min_refresh_interval_seconds" in self.model_fields_set:
@@ -206,6 +212,7 @@ class MentalModelTriggerInput(BaseModel):
             "mode": obj.get("mode") if obj.get("mode") is not None else 'full',
             "refresh_after_consolidation": obj.get("refresh_after_consolidation") if obj.get("refresh_after_consolidation") is not None else False,
             "refresh_cron": obj.get("refresh_cron"),
+            "full_refresh_cron": obj.get("full_refresh_cron"),
             "min_refresh_interval_seconds": obj.get("min_refresh_interval_seconds"),
             "fact_types": obj.get("fact_types"),
             "exclude_mental_models": obj.get("exclude_mental_models") if obj.get("exclude_mental_models") is not None else False,

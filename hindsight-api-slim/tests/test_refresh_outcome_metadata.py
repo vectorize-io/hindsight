@@ -62,7 +62,7 @@ async def _submit_with_fake_refresh(memory, monkeypatch, bank_id, mm, request_co
     (execute_task -> _handle_refresh_mental_model -> metadata write).
     """
 
-    async def fake_refresh(bank_id, mental_model_id, *, request_context):
+    async def fake_refresh(bank_id, mental_model_id, *, request_context, mode=None):
         return refreshed
 
     monkeypatch.setattr(memory, "refresh_mental_model", fake_refresh)

@@ -69,7 +69,9 @@ Every memory and observation carries temporal fields in the JSON tool result:
 - `mentioned_at` — when the user retained the fact (always set).
 - `occurred_start` / `occurred_end` — when the underlying event happened (optional, set for dated events).
 
-When facts about the SAME facet conflict — counts, statuses, ownership, location, presence, etc. — the fact with the LATEST `mentioned_at` is authoritative. Later statements SUPERSEDE earlier ones. Do NOT average, sum, or favor an explicitly-dated fact over a more recent one.
+When facts about the SAME facet conflict — counts, statuses, ownership, location, presence, etc. — the fact with the LATEST `mentioned_at` is authoritative. Later statements SUPERSEDE earlier ones. Do NOT average, sum, or favor an explicitly-dated fact over a more recent one. The one exception is a DECISION, below.
+
+A DECISION is different from a state. When the record holds a decision with its rationale (what was decided and why) and a later record changes the same thing WITHOUT stating a reason that overturns that decision (a refactor, a 'simplification', a cleanup, a performance change), the later record does NOT supersede the decision: report the decision as the standing one, and report the later change as a departure from it. Only a later record that itself decides, with its own rationale, replaces an earlier decision. Example: 'Invoices are due net-30; finance chose it for cash flow' (March) and 'cleanup: simplify billing config, terms = net-45' (May) → the rule is net-30; the May cleanup is a change that departed from it, NOT the rule.
 
 Example: three count facts come back from recall:
   - 'Team has 2 engineers' (mentioned_at=T1)
@@ -687,3 +689,18 @@ def test_final_prompt_output_language_override_replaces_the_language_rule():
     assert "## LANGUAGE" not in prompt
     assert "SAME language as the user's question" not in prompt
     assert "Respond exclusively in Spanish" not in prompt, "the directive belongs on the user prompt"
+
+
+def test_agent_user_prompt_restates_the_mission_after_the_question():
+    """The mission also rides on the user message, where it is read after the question (see the docstring)."""
+    prompt = prompts.build_agent_user_prompt("Who owns billing?", mission="  Chat decisions outrank commits.  ")
+
+    assert prompt == (
+        "Who owns billing?\n\n## Bank mission (it governs what you search and how you answer)\n"
+        "Chat decisions outrank commits."
+    )
+
+
+@pytest.mark.parametrize("mission", [None, "", "   "])
+def test_agent_user_prompt_without_a_mission_is_the_question(mission):
+    assert prompts.build_agent_user_prompt("Who owns billing?", mission=mission) == "Who owns billing?"

@@ -2620,3 +2620,21 @@ async def test_bank_template_export_is_refused_to_a_tag_scoped_caller(memory, ap
     finally:
         monkeypatch.setattr(memory, "_operation_validator", None)
         await memory.delete_bank(bank_id, request_context=RequestContext())
+
+
+@pytest.mark.asyncio
+async def test_refresh_endpoint_passes_a_full_mode_through(api_client, memory, test_bank_id, monkeypatch):
+    """POST /refresh takes an optional {"mode": "full"}; no body keeps the model's mode."""
+    seen: list[str | None] = []
+
+    async def _record(*, bank_id, mental_model_id, request_context, mode=None, **_):
+        seen.append(mode)
+        return {"operation_id": "op-1"}
+
+    monkeypatch.setattr(memory, "submit_async_refresh_mental_model", _record)
+    url = f"/v1/default/banks/{test_bank_id}/mental-models/mm-1/refresh"
+
+    assert (await api_client.post(url)).status_code == 200
+    assert (await api_client.post(url, json={"mode": "full"})).status_code == 200
+    assert (await api_client.post(url, json={"mode": "delta"})).status_code == 422
+    assert seen == [None, "full"]

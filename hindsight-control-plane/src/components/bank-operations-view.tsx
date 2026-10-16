@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslations } from "next-intl";
+import { toast } from "sonner";
 import { useBank } from "@/lib/bank-context";
 import { client, type OperationProgress } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -149,6 +150,7 @@ export function BankOperationsView() {
   const [offset, setOffset] = useState(0);
   const [cancellingOpId, setCancellingOpId] = useState<string | null>(null);
   const [retryingOpId, setRetryingOpId] = useState<string | null>(null);
+  const [retryingAll, setRetryingAll] = useState(false);
   const [deletingOpId, setDeletingOpId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [selectedOperation, setSelectedOperation] = useState<OperationDetails | null>(null);
@@ -439,6 +441,33 @@ export function BankOperationsView() {
     }
   };
 
+  // Retries only the failed operations on the current page, oldest first.
+  // Sequential rather than Promise.all so a page of retries doesn't hit the API
+  // at once; a failed call is skipped (the client already toasts it) and the
+  // rest go on. Workers claim by created_at, which a retry keeps, so the oldest
+  // also runs first.
+  const handleRetryAll = async () => {
+    if (!currentBank) return;
+    const failed = operations
+      .filter((op) => op.status === "failed")
+      .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
+    setRetryingAll(true);
+    let done = 0;
+    for (const op of failed) {
+      try {
+        await client.retryOperation(currentBank, op.id);
+        done++;
+      } catch {
+        // Error toast is shown automatically by the API client interceptor
+      }
+    }
+    setRetryingAll(false);
+    const notify = done === failed.length ? toast.success : toast.error;
+    notify(t("retryAllDone", { done, total: failed.length }));
+    await loadOperations();
+  };
+  const failedOnPage = operations.filter((op) => op.status === "failed").length;
+
   const handleDeleteOperation = async (operationId: string) => {
     if (!currentBank) return;
 
@@ -569,6 +598,12 @@ export function BankOperationsView() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {statusFilter === "failed" && failedOnPage > 0 && (
+            <Button variant="outline" size="sm" onClick={handleRetryAll} disabled={retryingAll}>
+              {retryingAll ? <Spinner size="xs" /> : <RotateCcw className="w-3 h-3 mr-1" />}
+              {t("action.retryAll", { count: failedOnPage })}
+            </Button>
+          )}
           <Select
             value={taskTypeFilter ?? "all"}
             onValueChange={(val) => handleTaskTypeFilterChange(val === "all" ? null : val)}

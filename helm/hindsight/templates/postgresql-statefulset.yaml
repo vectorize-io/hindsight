@@ -7,6 +7,9 @@ metadata:
     {{- include "hindsight.labels" . | nindent 4 }}
     app.kubernetes.io/component: postgresql
 spec:
+  {{- with include "hindsight.revisionHistoryLimit" (dict "local" .Values.postgresql.revisionHistoryLimit "root" .) }}
+  {{ . }}
+  {{- end }}
   serviceName: {{ include "hindsight.fullname" . }}-postgresql
   replicas: 1
   selector:

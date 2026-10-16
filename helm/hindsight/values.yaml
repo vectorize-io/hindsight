@@ -17,6 +17,7 @@
 api:
   enabled: true
   replicaCount: 1
+  # revisionHistoryLimit: 3  # overrides the global revisionHistoryLimit
   image:
     repository: ghcr.io/vectorize-io/hindsight-api
     pullPolicy: IfNotPresent
@@ -253,6 +254,7 @@ worker:
 controlPlane:
   enabled: true
   replicaCount: 1
+  # revisionHistoryLimit: 3  # overrides the global revisionHistoryLimit
   image:
     repository: ghcr.io/vectorize-io/hindsight-control-plane
     pullPolicy: IfNotPresent
@@ -387,6 +389,28 @@ ingress:
   #    hosts:
   #      - hindsight.example.com
 
+# Gateway API: an HTTPRoute attached to an existing Gateway, as an alternative
+# to the Ingress above (both can be on while migrating). TLS is terminated by the
+# Gateway's listener, so certificates are configured there, not here.
+gatewayApi:
+  enabled: false
+  annotations: {}
+  # Gateways (or listeners via sectionName) the route attaches to.
+  parentRefs: []
+  #  - name: internal-gateway
+  #    namespace: gwapi
+  #    sectionName: https
+  hostnames:
+    - hindsight.example.com
+  # Same split as the Ingress: /v1 to the data API, everything else (including
+  # the control plane's own /api/* handlers) to the control plane. The longest
+  # matching prefix wins.
+  paths:
+    - path: /
+      service: controlPlane
+    - path: /v1
+      service: api
+
 # Service Account
 serviceAccount:
   create: true
@@ -497,6 +521,12 @@ tei:
       timeoutSeconds: 3
       failureThreshold: 3
 
+# Revisions (old ReplicaSets / ControllerRevisions) kept per workload for
+# rollback. Unset keeps the Kubernetes default (10). Each component can
+# override it with its own revisionHistoryLimit (api, controlPlane, worker,
+# tei.embedding, tei.reranker, postgresql).
+revisionHistoryLimit: null
+
 # Autoscaling
 autoscaling:
   enabled: false
@@ -521,3 +551,21 @@ metrics:
     path: /metrics
     interval: 30s
     scrapeTimeout: 10s
+
+# Extra Kubernetes manifests deployed with the release, e.g. an Istio
+# Gateway/VirtualService in place of the Ingress, or a SealedSecret consumed
+# via existingSecret. Each entry is a YAML map or a multi-line string, rendered
+# through tpl so it can use Helm templating such as
+# '{{ include "hindsight.fullname" . }}'.
+extraObjects: []
+#  - apiVersion: networking.istio.io/v1
+#    kind: VirtualService
+#    metadata:
+#      name: '{{ include "hindsight.fullname" . }}'
+#    spec:
+#      hosts: [hindsight.example.com]
+#      gateways: [istio-system/public-gateway]
+#      http:
+#        - match: [{ uri: { prefix: /v1 } }]
+#          route: [{ destination: { host: '{{ include "hindsight.fullname" . }}-api' } }]
+#        - route: [{ destination: { host: '{{ include "hindsight.fullname" . }}-control-plane' } }]

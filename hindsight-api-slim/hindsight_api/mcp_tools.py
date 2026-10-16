@@ -14,7 +14,7 @@ from typing import Annotated, Any, Callable, Literal, get_args
 
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationInfo, field_validator, model_validator
 
 from hindsight_api import MemoryEngine
 from hindsight_api.api import page_markdown
@@ -124,6 +124,15 @@ class MentalModelTriggerInput(BaseModel):
             "refresh_after_consolidation. null = no schedule."
         ),
     )
+    full_refresh_cron: str | None = Field(
+        default=None,
+        description=(
+            "UTC five-field cron schedule for a scheduled FULL refresh, e.g. '0 3 * * 0' for Sundays at 03:00 "
+            "UTC: the content is regenerated from scratch on this schedule whatever 'mode' says, to clear the "
+            "drift delta edits accumulate. Independent of refresh_cron and refresh_after_consolidation, and "
+            "it does not change 'mode'. Skipped when no refresh ran since the last full one. null = no schedule."
+        ),
+    )
     min_refresh_interval_seconds: int | None = Field(
         default=None,
         ge=0,
@@ -216,9 +225,9 @@ class MentalModelTriggerInput(BaseModel):
         ),
     )
 
-    @field_validator("refresh_cron")
+    @field_validator("refresh_cron", "full_refresh_cron")
     @classmethod
-    def validate_refresh_cron(cls, value: str | None) -> str | None:
+    def validate_refresh_cron(cls, value: str | None, info: ValidationInfo) -> str | None:
         if value is None:
             return None
         from croniter import croniter
@@ -229,7 +238,7 @@ class MentalModelTriggerInput(BaseModel):
         if not value:
             return None
         if not croniter.is_valid(value):
-            raise ValueError(f"refresh_cron is not a valid cron expression: {value!r}")
+            raise ValueError(f"{info.field_name} is not a valid cron expression: {value!r}")
         return value
 
     @field_validator("tag_groups")
@@ -3910,6 +3919,8 @@ def _register_list_documents(mcp: FastMCP, memory: MemoryEngine, config: MCPTool
                 q: Optional search query to filter documents
                 limit: Maximum number of results (default: 100)
                 offset: Pagination offset (default: 0). Page until the returned items add up to 'total'.
+                    A 'q' search is capped: when 'total_is_estimate' is true there are more
+                    matches than 'total' — narrow 'q' to reach them.
                 bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
             """
             return await _run_tool(
@@ -3938,6 +3949,8 @@ def _register_list_documents(mcp: FastMCP, memory: MemoryEngine, config: MCPTool
                 q: Optional search query to filter documents
                 limit: Maximum number of results (default: 100)
                 offset: Pagination offset (default: 0). Page until the returned items add up to 'total'.
+                    A 'q' search is capped: when 'total_is_estimate' is true there are more
+                    matches than 'total' — narrow 'q' to reach them.
             """
             return await _run_tool(
                 config,

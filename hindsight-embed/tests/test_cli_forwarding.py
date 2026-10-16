@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from hindsight_embed import cli, daemon_client
+from hindsight_embed import cli, daemon_client, profile_manager
 from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
 from hindsight_embed.profile_manager import ProfileManager
 
@@ -21,7 +21,7 @@ def profiles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ProfileManager:
     for key in list(os.environ):
         if key.startswith("HINDSIGHT_"):
             monkeypatch.delenv(key)
-    monkeypatch.setattr(cli, "_cli_profile_override", None)
+    monkeypatch.setattr(profile_manager, "_cli_profile_override", None)
 
     manager = ProfileManager()
     for name, port in (("", 18888), ("work", 19100), ("other", 19200)):

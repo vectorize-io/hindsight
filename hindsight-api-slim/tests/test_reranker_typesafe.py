@@ -247,6 +247,56 @@ class TestCut:
         assert all(score > 0.0 for score in scores)
 
 
+class _SufficiencySession(_FakeSession):
+    """Answers the sufficiency Score with a fixed expected score and per-level probabilities."""
+
+    def __init__(self, score: float, probabilities: dict[str, float] | None):
+        super().__init__({})
+        self.score = score
+        self.probabilities = probabilities
+
+    @asynccontextmanager
+    async def _post(self, url, headers=None, json=None):
+        self.posted.append(json)
+        answer = {"type": "score", "score": self.score, "confidence": 0.5}
+        if self.probabilities is not None:
+            answer["probabilities"] = self.probabilities
+        yield _FakeResponse({"answers": {"sufficient": answer}})
+
+
+class TestSufficiency:
+    @staticmethod
+    async def _verdict(score: float, probabilities: dict[str, float] | None) -> bool:
+        encoder = TypeSafeCrossEncoder(api_key="k")
+        encoder._session = _SufficiencySession(score, probabilities)
+        return await encoder.evidence_is_sufficient("q", "evidence")
+
+    @pytest.mark.asyncio
+    async def test_the_likeliest_level_decides_not_the_rounded_score(self):
+        """Measured on sde-bench: expected 1.43 rounds to "partly", but "fully" was likeliest."""
+        assert await self._verdict(1.43, {"0": 0.10, "1": 0.36, "2": 0.54}) is True
+
+    @pytest.mark.asyncio
+    async def test_partly_is_not_enough(self):
+        assert await self._verdict(1.13, {"0": 0.02, "1": 0.84, "2": 0.14}) is False
+
+    @pytest.mark.asyncio
+    async def test_without_probabilities_the_score_is_rounded(self):
+        assert await self._verdict(1.6, None) is True
+        assert await self._verdict(1.4, None) is False
+
+
+class TestMinKeep:
+    @pytest.mark.asyncio
+    async def test_the_cut_never_keeps_fewer_than_the_floor(self):
+        """Level 0 keeps one; a floor of three keeps the top three by rank."""
+        encoder, _ = _encoder({"c0": 0.1, "c1": 0.4, "c2": 0.3, "c3": 0.2}, cut_level=0.0, prune_candidates=True)
+        encoder.MIN_KEEP = 3
+        scores = await encoder._predict([("q", "a"), ("q", "b"), ("q", "c"), ("q", "d")])
+
+        assert [score > 0 for score in scores] == [False, True, True, True]
+
+
 class TestFactory:
     def test_provider_is_built_from_config(self):
         config = _make_config(

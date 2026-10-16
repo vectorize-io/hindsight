@@ -32,6 +32,7 @@ type MentalModelResponse struct {
 	LastRefreshedAt NullableString `json:"last_refreshed_at,omitempty"`
 	LastMemorySeenAt NullableString `json:"last_memory_seen_at,omitempty"`
 	LastRefreshFailedAt NullableString `json:"last_refresh_failed_at,omitempty"`
+	LastFullRefreshedAt NullableString `json:"last_full_refreshed_at,omitempty"`
 	CreatedAt NullableString `json:"created_at,omitempty"`
 	ReflectResponse map[string]interface{} `json:"reflect_response,omitempty"`
 	IsStale NullableBool `json:"is_stale,omitempty"`
@@ -457,6 +458,48 @@ func (o *MentalModelResponse) UnsetLastRefreshFailedAt() {
 	o.LastRefreshFailedAt.Unset()
 }
 
+// GetLastFullRefreshedAt returns the LastFullRefreshedAt field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *MentalModelResponse) GetLastFullRefreshedAt() string {
+	if o == nil || IsNil(o.LastFullRefreshedAt.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.LastFullRefreshedAt.Get()
+}
+
+// GetLastFullRefreshedAtOk returns a tuple with the LastFullRefreshedAt field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *MentalModelResponse) GetLastFullRefreshedAtOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.LastFullRefreshedAt.Get(), o.LastFullRefreshedAt.IsSet()
+}
+
+// HasLastFullRefreshedAt returns a boolean if a field has been set.
+func (o *MentalModelResponse) HasLastFullRefreshedAt() bool {
+	if o != nil && o.LastFullRefreshedAt.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetLastFullRefreshedAt gets a reference to the given NullableString and assigns it to the LastFullRefreshedAt field.
+func (o *MentalModelResponse) SetLastFullRefreshedAt(v string) {
+	o.LastFullRefreshedAt.Set(&v)
+}
+// SetLastFullRefreshedAtNil sets the value for LastFullRefreshedAt to be an explicit nil
+func (o *MentalModelResponse) SetLastFullRefreshedAtNil() {
+	o.LastFullRefreshedAt.Set(nil)
+}
+
+// UnsetLastFullRefreshedAt ensures that no value is present for LastFullRefreshedAt, not even an explicit nil
+func (o *MentalModelResponse) UnsetLastFullRefreshedAt() {
+	o.LastFullRefreshedAt.Unset()
+}
+
 // GetCreatedAt returns the CreatedAt field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *MentalModelResponse) GetCreatedAt() string {
 	if o == nil || IsNil(o.CreatedAt.Get()) {
@@ -610,6 +653,9 @@ func (o MentalModelResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if o.LastRefreshFailedAt.IsSet() {
 		toSerialize["last_refresh_failed_at"] = o.LastRefreshFailedAt.Get()
+	}
+	if o.LastFullRefreshedAt.IsSet() {
+		toSerialize["last_full_refreshed_at"] = o.LastFullRefreshedAt.Get()
 	}
 	if o.CreatedAt.IsSet() {
 		toSerialize["created_at"] = o.CreatedAt.Get()

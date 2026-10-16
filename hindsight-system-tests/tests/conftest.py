@@ -58,7 +58,7 @@ def hindsight_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> I
 
 @pytest.fixture(scope="session")
 def typesafe_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
-    """A second server whose reranker is TypeSafe, pointed at the stub.
+    """A second server whose reranker and decision model are TypeSafe, pointed at the stub.
 
     The reranker provider is server-level — it is not in `_CONFIGURABLE_FIELDS`, so
     no bank can switch to it — which is why this costs a whole process rather than a
@@ -74,6 +74,12 @@ def typesafe_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> It
             "HINDSIGHT_API_RERANKER_TYPESAFE_API_KEY": "stub-key",
             "HINDSIGHT_API_RERANKER_TYPESAFE_BASE_URL": stub_server.url,
             "HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES": "true",
+            # The decision model reflect uses: the same stub endpoint, set up for reflect only. Set up
+            # globally it also turned on decision reranking for recall, and the reranker stories
+            # stopped seeing the reranker's order.
+            "HINDSIGHT_API_REFLECT_DECISION_MODEL_PROVIDER": "typesafe",
+            "HINDSIGHT_API_REFLECT_DECISION_MODEL_API_KEY": "stub-key",
+            "HINDSIGHT_API_REFLECT_DECISION_MODEL_BASE_URL": stub_server.url,
             # HTTP only. Both servers share one database, so a worker here claims the OTHER
             # server's queued work — every story's consolidation and refreshes — and runs it with
             # this server's reranker, pruning by whatever cut level a TypeSafe story last set. The
@@ -102,6 +108,43 @@ def decision_model_server(stub_server, tmp_path_factory: pytest.TempPathFactory)
             "HINDSIGHT_API_DECISION_MODEL_PROVIDER": "typesafe",
             "HINDSIGHT_API_DECISION_MODEL_API_KEY": "stub-key",
             "HINDSIGHT_API_DECISION_MODEL_BASE_URL": stub_server.url,
+            "HINDSIGHT_API_WORKER_ENABLED": "false",
+        },
+    )
+    yield server
+    server.stop()
+
+
+#: What the federated server presents at the token exchange — a projected
+#: service-account token, in a real deployment.
+WIF_IDENTITY_TOKEN = "systest-projected-sa-jwt"
+WIF_FEDERATION_RULE_ID = "fdrl_systest"
+
+
+@pytest.fixture(scope="session")
+def wif_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
+    """A server on the Anthropic provider with no API key, authenticating through
+    Workload Identity Federation against the stub (issue #5502).
+
+    The LLM provider is server-level, hence a process. HTTP only, for the same reason
+    as ``typesafe_server``: a worker here would run the other servers' queued work
+    with this server's provider.
+    """
+    run_dir = tmp_path_factory.mktemp("wif-server")
+    token_file = run_dir / "identity-token"
+    token_file.write_text(WIF_IDENTITY_TOKEN)
+    server = start_hindsight_server(
+        stub_url=stub_server.url,
+        log_path=run_dir / "server.log",
+        extra_env={
+            "HINDSIGHT_API_LLM_PROVIDER": "anthropic",
+            # Empty overrides the stub key `stub_environment` sets: no static key at all.
+            "HINDSIGHT_API_LLM_API_KEY": "",
+            "HINDSIGHT_API_LLM_BASE_URL": stub_server.url,
+            "ANTHROPIC_FEDERATION_RULE_ID": WIF_FEDERATION_RULE_ID,
+            "ANTHROPIC_ORGANIZATION_ID": "org_systest",
+            "ANTHROPIC_SERVICE_ACCOUNT_ID": "svac_systest",
+            "ANTHROPIC_IDENTITY_TOKEN_FILE": str(token_file),
             "HINDSIGHT_API_WORKER_ENABLED": "false",
         },
     )
@@ -233,6 +276,13 @@ async def keyed_client(keyed_server) -> AsyncIterator[Hindsight]:
 @pytest.fixture
 async def retrying_client(retrying_server) -> AsyncIterator[Hindsight]:
     client = Hindsight(base_url=retrying_server.url)
+    yield client
+    await client.aclose()
+
+
+@pytest.fixture
+async def wif_client(wif_server) -> AsyncIterator[Hindsight]:
+    client = Hindsight(base_url=wif_server.url)
     yield client
     await client.aclose()
 

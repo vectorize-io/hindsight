@@ -60,6 +60,26 @@ describe("triggerFromForm", () => {
     expect(triggerFromForm(triggerFormFromTrigger({}))?.budget).toBeUndefined();
   });
 
+  it("keeps a full refresh schedule beside after-consolidation refreshes", () => {
+    const original = {
+      mode: "delta" as const,
+      refresh_after_consolidation: true,
+      full_refresh_cron: "0 3 * * 0",
+    };
+
+    expect(triggerFromForm(triggerFormFromTrigger(original))).toMatchObject({
+      ...original,
+      refresh_cron: null,
+    });
+  });
+
+  it("clears the full refresh schedule when it is switched off or the mode is full", () => {
+    const form = triggerFormFromTrigger({ mode: "delta", full_refresh_cron: "0 3 * * 0" });
+
+    expect(triggerFromForm({ ...form, fullRefreshEnabled: false })?.full_refresh_cron).toBeNull();
+    expect(triggerFromForm({ ...form, mode: "full" })?.full_refresh_cron).toBeNull();
+  });
+
   it("returns null when the tag groups are not valid JSON", () => {
     expect(triggerFromForm({ ...triggerFormFromTrigger(), tagGroups: "[{" })).toBeNull();
   });

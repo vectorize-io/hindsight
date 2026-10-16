@@ -42,8 +42,11 @@ export async function GET(request: NextRequest) {
     const chunkId = searchParams.get("chunk_id");
     if (chunkId) params.append("chunk_id", chunkId);
 
+    // Forward the browser's abort: when the user leaves a tab, its graph read
+    // stops here and at the dataplane instead of finishing for nobody.
     const response = await fetch(`${DATAPLANE_URL}/v1/default/banks/${bankId}/graph?${params}`, {
       headers: getDataplaneHeaders(),
+      signal: request.signal,
     });
 
     if (!response.ok) {
@@ -51,9 +54,26 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(error, { status: response.status });
     }
 
-    const data = await response.json();
-    return NextResponse.json(data, { status: 200 });
+    // Stream the body through without parsing it: on a big bank it is several
+    // MB, and parsing it only to serialize it again costs the user half a second.
+    // Gzip it on the way when the browser accepts that: graph JSON shrinks
+    // ~13x, which is the difference between usable and not over a VPN (#5548).
+    // `fetch` already decoded the dataplane's own gzip, so this is the only one.
+    const gzip = /\bgzip\b/.test(request.headers.get("accept-encoding") ?? "");
+    const body =
+      gzip && response.body
+        ? response.body.pipeThrough(new CompressionStream("gzip"))
+        : response.body;
+    return new NextResponse(body, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        ...(gzip ? { "Content-Encoding": "gzip", Vary: "Accept-Encoding" } : {}),
+      },
+    });
   } catch (error) {
+    // The browser hung up (tab switched); nobody is waiting for an answer.
+    if (request.signal.aborted) return new NextResponse(null, { status: 499 });
     console.error("Error fetching graph data:", error);
     return NextResponse.json(
       localizeApiErrorPayload(request, {

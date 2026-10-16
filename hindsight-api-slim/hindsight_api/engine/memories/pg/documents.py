@@ -604,6 +604,11 @@ async def retag_document_memories(
     return RetagResult(invalidated_observations=invalidated_obs, requeued_units=len(unit_ids))
 
 
+#: Matches a `q` search counts and serves. Without a cap the count is a full scan of the bank's text
+#: on every page; with one it stops at the cap's worth of rows, and only a rare term pays the scan.
+DOCUMENT_SEARCH_CAP = 1000
+
+
 async def list_documents(
     *,
     backend,
@@ -619,7 +624,11 @@ async def list_documents(
     limit: int,
     offset: int,
 ) -> dict[str, Any]:
-    """A page of the bank's `documents` rows with their memory counts — ``{items, total, limit, offset}``."""
+    """A page of the bank's `documents` rows with their memory counts —
+    ``{items, total, limit, offset, total_is_estimate}``.
+
+    A `q` search is capped at `DOCUMENT_SEARCH_CAP` matches: past it, ``total`` is the cap,
+    ``total_is_estimate`` is true, and no page reaches beyond it."""
     async with acquire_with_retry(backend) as conn:
         # Build query conditions
         query_conditions = []
@@ -677,19 +686,32 @@ async def list_documents(
             # tags_clause starts with "AND", append after WHERE conditions
             where_clause = where_clause + " " + tags_clause if where_clause else "WHERE " + tags_clause[4:].lstrip()
 
-        # Get total count
-        count_query = f"""
-            SELECT COUNT(*) as total
-            FROM {fq_table("documents")}
-            {where_clause}
-        """
-        count_result = await conn.fetchrow(count_query, *query_params)
-        total = count_result["total"]
+        total_is_estimate = False
+        page_limit = limit
+        if search_query:
+            # One row past the cap is enough to know there are more; the LIMIT is what lets the
+            # scan stop early instead of reading every document's text in the bank.
+            count_query = f"""
+                SELECT COUNT(*) as total
+                FROM (SELECT 1 FROM {fq_table("documents")} {where_clause} LIMIT {DOCUMENT_SEARCH_CAP + 1}) matched
+            """
+            total = (await conn.fetchrow(count_query, *query_params))["total"]
+            total_is_estimate = total > DOCUMENT_SEARCH_CAP
+            total = min(total, DOCUMENT_SEARCH_CAP)
+            # The pages stop where the count does, so paging never serves a row `total` disowns.
+            page_limit = max(0, min(limit, DOCUMENT_SEARCH_CAP - offset))
+        else:
+            count_query = f"""
+                SELECT COUNT(*) as total
+                FROM {fq_table("documents")}
+                {where_clause}
+            """
+            total = (await conn.fetchrow(count_query, *query_params))["total"]
 
         # Get documents with limit and offset (without original_text for performance)
         param_count += 1
         limit_param = f"${param_count}"
-        query_params.append(limit)
+        query_params.append(page_limit)
 
         param_count += 1
         offset_param = f"${param_count}"
@@ -756,7 +778,13 @@ async def list_documents(
                 }
             )
 
-        return {"items": items, "total": total, "limit": limit, "offset": offset}
+        return {
+            "items": items,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "total_is_estimate": total_is_estimate,
+        }
 
 
 # ------------------------------------------------------------------ chunks

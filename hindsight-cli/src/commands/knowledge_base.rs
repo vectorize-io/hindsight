@@ -177,6 +177,7 @@ pub fn create_page(
                 .unwrap_or(types::Mode::Delta),
             refresh_after_consolidation: true,
             refresh_cron: None,
+            full_refresh_cron: None,
             min_refresh_interval_seconds: None,
             exclude_mental_models: true,
             exclude_mental_model_ids: None,

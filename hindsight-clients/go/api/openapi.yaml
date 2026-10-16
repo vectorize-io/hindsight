@@ -1629,8 +1629,12 @@ paths:
       - Mental Models
   /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh:
     post:
-      description: Submit an async task to re-run the source query through reflect
-        and update the content.
+      description: "Submit an async task to re-run the source query through reflect\
+        \ and update the content. With no body the refresh runs in the model's own\
+        \ `trigger.mode`. Send `{\"mode\": \"full\"}` for a full refresh: the content\
+        \ is regenerated from scratch this once (to clear the drift delta edits accumulate)\
+        \ while the stored trigger keeps its mode. Unlike clearing the model first,\
+        \ a full refresh that fails leaves the previous content in place."
       operationId: refresh_mental_model
       parameters:
       - explode: false
@@ -1657,6 +1661,11 @@ paths:
           nullable: true
           type: string
         style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshMentalModelRequest'
       responses:
         "200":
           content:
@@ -2535,8 +2544,10 @@ paths:
         style: simple
       - description: "Case-insensitive substring filter on document ID or document\
           \ text (e.g. 'report' matches 'report-2024' or any document containing 'report').\
-          \ Unindexed scan of the bank's documents: meant for browsing and inspection,\
-          \ not for high-volume or latency-sensitive workloads — use recall for that."
+          \ Meant for browsing and inspection, not for high-volume or latency-sensitive\
+          \ workloads — use recall for that. Matches are capped: past the cap, `total`\
+          \ is a lower bound and `total_is_estimate` is true. A store-owned backend\
+          \ may match approximately; each item's `matched_fields` says what matched."
         explode: true
         in: query
         name: q
@@ -6364,6 +6375,12 @@ components:
         enable_reranking:
           nullable: true
           type: boolean
+        reflect_use_decision_model:
+          nullable: true
+          type: boolean
+        mental_model_refresh_use_decision_model:
+          nullable: true
+          type: boolean
         disposition_skepticism:
           maximum: 5.0
           minimum: 1.0
@@ -7224,8 +7241,8 @@ components:
       properties:
         alias:
           description: "The extra bank id. Same rules as a bank id (non-empty, at\
-            \ most 192 bytes of UTF-8, no control characters), and it must not already\
-            \ name a bank or another alias."
+            \ most 192 bytes of UTF-8, no control characters, no leading underscore),\
+            \ and it must not already name a bank or another alias."
           title: Alias
           type: string
         primary:
@@ -7471,6 +7488,7 @@ components:
           exclude_mental_models: false
           mode: full
           refresh_after_consolidation: false
+          full_refresh_cron: full_refresh_cron
           fact_types:
           - world
           - world
@@ -8770,6 +8788,7 @@ components:
           exclude_mental_models: false
           mode: full
           refresh_after_consolidation: false
+          full_refresh_cron: full_refresh_cron
           fact_types:
           - world
           - world
@@ -9040,6 +9059,7 @@ components:
             exclude_mental_models: false
             mode: full
             refresh_after_consolidation: false
+            full_refresh_cron: full_refresh_cron
             fact_types:
             - world
             - world
@@ -9089,6 +9109,7 @@ components:
             exclude_mental_models: false
             mode: full
             refresh_after_consolidation: false
+            full_refresh_cron: full_refresh_cron
             fact_types:
             - world
             - world
@@ -9642,6 +9663,12 @@ components:
         offset:
           title: Offset
           type: integer
+        total_is_estimate:
+          default: false
+          description: "True when a `q` search stopped at its match cap, so `total`\
+            \ is a lower bound rather than an exact count. Always false without `q`."
+          title: Total Is Estimate
+          type: boolean
       required:
       - items
       - limit
@@ -10452,6 +10479,7 @@ components:
             exclude_mental_models: false
             mode: full
             refresh_after_consolidation: false
+            full_refresh_cron: full_refresh_cron
             fact_types:
             - world
             - world
@@ -10474,6 +10502,7 @@ components:
           tags:
           - tags
           - tags
+          last_full_refreshed_at: last_full_refreshed_at
           source_query: source_query
           bank_id: bank_id
           reflect_response:
@@ -10501,6 +10530,7 @@ components:
             exclude_mental_models: false
             mode: full
             refresh_after_consolidation: false
+            full_refresh_cron: full_refresh_cron
             fact_types:
             - world
             - world
@@ -10523,6 +10553,7 @@ components:
           tags:
           - tags
           - tags
+          last_full_refreshed_at: last_full_refreshed_at
           source_query: source_query
           bank_id: bank_id
           reflect_response:
@@ -10716,6 +10747,7 @@ components:
           exclude_mental_models: false
           mode: full
           refresh_after_consolidation: false
+          full_refresh_cron: full_refresh_cron
           fact_types:
           - world
           - world
@@ -10738,6 +10770,7 @@ components:
         tags:
         - tags
         - tags
+        last_full_refreshed_at: last_full_refreshed_at
         source_query: source_query
         bank_id: bank_id
         reflect_response:
@@ -10777,6 +10810,9 @@ components:
           nullable: true
           type: string
         last_refresh_failed_at:
+          nullable: true
+          type: string
+        last_full_refreshed_at:
           nullable: true
           type: string
         created_at:
@@ -10899,6 +10935,7 @@ components:
         exclude_mental_models: false
         mode: full
         refresh_after_consolidation: false
+        full_refresh_cron: full_refresh_cron
         fact_types:
         - world
         - world
@@ -10937,6 +10974,9 @@ components:
           title: Refresh After Consolidation
           type: boolean
         refresh_cron:
+          nullable: true
+          type: string
+        full_refresh_cron:
           nullable: true
           type: string
         min_refresh_interval_seconds:
@@ -11038,6 +11078,7 @@ components:
         exclude_mental_models: false
         mode: full
         refresh_after_consolidation: false
+        full_refresh_cron: full_refresh_cron
         fact_types:
         - world
         - world
@@ -11076,6 +11117,9 @@ components:
           title: Refresh After Consolidation
           type: boolean
         refresh_cron:
+          nullable: true
+          type: string
+        full_refresh_cron:
           nullable: true
           type: string
         min_refresh_interval_seconds:
@@ -12382,6 +12426,17 @@ components:
       required:
       - outcome
       title: RefreshMentalModelOperationDetails
+    RefreshMentalModelRequest:
+      description: "Optional body of POST /mental-models/{id}/refresh."
+      example:
+        mode: full
+      properties:
+        mode:
+          enum:
+          - full
+          nullable: true
+          type: string
+      title: RefreshMentalModelRequest
     ReprocessDocumentResponse:
       description: Response model for reprocess document endpoint.
       example:
@@ -13067,6 +13122,7 @@ components:
           exclude_mental_models: false
           mode: full
           refresh_after_consolidation: false
+          full_refresh_cron: full_refresh_cron
           fact_types:
           - world
           - world

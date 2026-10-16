@@ -133,12 +133,15 @@ async def test_consolidation_mission_slot_shows_the_default_when_unset(api_clien
 
 
 @pytest.mark.asyncio
-async def test_reflect_mission_lands_in_the_system_prompt(api_client, bank_id, memory):
-    """Reflect is the one operation whose mission IS the system prompt's role line."""
+async def test_reflect_mission_lands_in_the_system_prompt_and_after_the_question(api_client, bank_id, memory):
+    """Reflect is the one operation whose mission IS the system prompt's role line; it is
+    restated on the user message too, after the question, and the preview shows both."""
     mission = "You are a pricing analyst for the sales team."
     await _configure(memory, bank_id, reflect_mission=mission)
+    body = await _preview(api_client, bank_id, "reflect")
 
-    assert mission in _text(_message(await _preview(api_client, bank_id, "reflect"), "system"))
+    assert mission in _text(_message(body, "system"))
+    assert _block(_message(body, "user"), "reflect_mission")["text"] == mission
 
 
 @pytest.mark.asyncio

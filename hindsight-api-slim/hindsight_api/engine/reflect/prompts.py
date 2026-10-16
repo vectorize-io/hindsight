@@ -133,8 +133,8 @@ _TOOLS_LANGUAGE_RULE = (
 )
 
 
-def build_agent_user_prompt(query: str, llm_output_language: str | None = None) -> str:
-    """The reasoning loop's opening user message: the question, closed by the directive.
+def build_agent_user_prompt(query: str, llm_output_language: str | None = None, mission: str | None = None) -> str:
+    """The reasoning loop's opening user message: the question, the mission, closed by the directive.
 
     The ``done()`` answer is written by the tool-calling model, whose system prompt is
     :func:`build_system_prompt_for_tools`. For the same reason :func:`build_final_prompt`
@@ -144,8 +144,19 @@ def build_agent_user_prompt(query: str, llm_output_language: str | None = None) 
     this is "last" for the question the model is answering, not for the whole
     conversation — the system prompt dropping its contradicting rule is what makes the
     directive uncontested (#3776).
+
+    The bank's mission is restated here for the same reason. As the role line at the top of the
+    system prompt it lost to the retrieval ladder below it: with a mission telling reflect to read a
+    decision's own commit or conversation before reporting it, agent turns still answered from a
+    fresh page that had misread the decision (test_09 boltons-budget-history, 0/2), and the answer
+    reported a "simplification" commit as replacing a decision the mission said it does not.
     """
-    return query + output_language_directive(llm_output_language)
+    mission_section = (
+        f"\n\n## Bank mission (it governs what you search and how you answer)\n{mission.strip()}"
+        if mission and mission.strip()
+        else ""
+    )
+    return query + mission_section + output_language_directive(llm_output_language)
 
 
 def bank_name_line(bank_profile: dict[str, Any]) -> str:
@@ -275,7 +286,9 @@ def build_system_prompt_for_tools(
             "- `mentioned_at` — when the user retained the fact (always set).",
             "- `occurred_start` / `occurred_end` — when the underlying event happened (optional, set for dated events).",
             "",
-            "When facts about the SAME facet conflict — counts, statuses, ownership, location, presence, etc. — the fact with the LATEST `mentioned_at` is authoritative. Later statements SUPERSEDE earlier ones. Do NOT average, sum, or favor an explicitly-dated fact over a more recent one.",
+            "When facts about the SAME facet conflict — counts, statuses, ownership, location, presence, etc. — the fact with the LATEST `mentioned_at` is authoritative. Later statements SUPERSEDE earlier ones. Do NOT average, sum, or favor an explicitly-dated fact over a more recent one. The one exception is a DECISION, below.",
+            "",
+            "A DECISION is different from a state. When the record holds a decision with its rationale (what was decided and why) and a later record changes the same thing WITHOUT stating a reason that overturns that decision (a refactor, a 'simplification', a cleanup, a performance change), the later record does NOT supersede the decision: report the decision as the standing one, and report the later change as a departure from it. Only a later record that itself decides, with its own rationale, replaces an earlier decision. Example: 'Invoices are due net-30; finance chose it for cash flow' (March) and 'cleanup: simplify billing config, terms = net-45' (May) → the rule is net-30; the May cleanup is a change that departed from it, NOT the rule.",
             "",
             "Example: three count facts come back from recall:",
             "  - 'Team has 2 engineers' (mentioned_at=T1)",
@@ -954,6 +967,26 @@ def build_done_request_prompt(
     return "\n".join(parts) + output_language_directive(llm_output_language)
 
 
+# Decision-orchestrated reflect: a request too long to search with as written (a plugin's prompt wraps the
+# developer's goal in rendering rules) is first turned into one short search query.
+#
+# The query keeps what KIND of information is asked for, not only the subject: distilled to
+# "merge_records implementation logic", a request for decisions and their rationale pulled in
+# the later commit that broke the decision, which the answer then reported as superseding it
+# (sde-bench dedupe-history). Agent mode's own queries never asked for "implementation".
+ROUND_SEARCH_QUERY_SYSTEM_PROMPT = (
+    "You write search queries for a memory bank. Given a request, reply with ONE short search "
+    "query (at most 12 words) naming the subject (component, function, feature), the problem or "
+    "symptom the request reports in its own words, and the kind of information the request wants "
+    "about it: a decision and why it was made, a value or limit, a policy or rule, an event. Never add words like 'implementation', 'code' or 'logic' unless the "
+    "request asks how the code works. Leave out instructions about formatting the answer. "
+    "Reply with the query only, no quotes. "
+    "A '## Context' section, when present, says what the request refers to: use it to name the subject. "
+    "If the request asks for nothing a memory bank could answer (an acknowledgement, a greeting, "
+    "a bare yes/no or 'go ahead' with no subject), reply exactly NONE."
+)
+
+
 #: System prompt for the intermediate (map) calls of split synthesis. They do
 #: NOT answer the question — they compress one chunk of retrieved data into
 #: dated, cited claims that the reduce call can reason over. Dates and ids are
@@ -1190,6 +1223,12 @@ RULES
   the dates the texts give, never about arrival: facts reach you out of date
   order, and a fact dated before the state the document records is backfilled
   history — it belongs in the history, not in place of the current state.
+  Compare the dates before touching a current state:
+  ❌ document "Dana has led the billing rota since June 2025" + fact "Lee took
+     over the billing rota in January 2025" → "Lee currently leads the billing
+     rota" (January 2025 is EARLIER than June 2025)
+  ✅ the same pair → Dana stays the current lead; Lee's January 2025 handover
+     is added to the history, in date order
   Failing both tests, keep the
   existing text: use ``append_block`` / ``insert_block``, or re-emit the block
   with the new detail merged into a cohesive statement that still carries the old

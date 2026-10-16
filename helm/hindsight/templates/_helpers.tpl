@@ -169,3 +169,15 @@ Get the name of the secret to use
 {{- printf "%s-secret" (include "hindsight.fullname" .) }}
 {{- end }}
 {{- end }}
+
+{{/*
+revisionHistoryLimit for a workload: the component value wins over the global
+one; both unset renders nothing, keeping the Kubernetes default (10). 0 is a
+valid value, so test for null rather than truthiness.
+Usage: include "hindsight.revisionHistoryLimit" (dict "local" .Values.api.revisionHistoryLimit "root" .)
+*/}}
+{{- define "hindsight.revisionHistoryLimit" -}}
+{{- $limit := .root.Values.revisionHistoryLimit -}}
+{{- if not (kindIs "invalid" .local) }}{{ $limit = .local }}{{ end -}}
+{{- if not (kindIs "invalid" $limit) }}revisionHistoryLimit: {{ $limit }}{{ end -}}
+{{- end }}

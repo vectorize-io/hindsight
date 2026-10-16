@@ -1000,10 +1000,16 @@ type ApiRefreshMentalModelRequest struct {
 	bankId string
 	mentalModelId string
 	authorization *string
+	refreshMentalModelRequest *RefreshMentalModelRequest
 }
 
 func (r ApiRefreshMentalModelRequest) Authorization(authorization string) ApiRefreshMentalModelRequest {
 	r.authorization = &authorization
+	return r
+}
+
+func (r ApiRefreshMentalModelRequest) RefreshMentalModelRequest(refreshMentalModelRequest RefreshMentalModelRequest) ApiRefreshMentalModelRequest {
+	r.refreshMentalModelRequest = &refreshMentalModelRequest
 	return r
 }
 
@@ -1014,7 +1020,7 @@ func (r ApiRefreshMentalModelRequest) Execute() (*AsyncOperationSubmitResponse, 
 /*
 RefreshMentalModel Refresh mental model
 
-Submit an async task to re-run the source query through reflect and update the content.
+Submit an async task to re-run the source query through reflect and update the content. With no body the refresh runs in the model's own `trigger.mode`. Send `{"mode": "full"}` for a full refresh: the content is regenerated from scratch this once (to clear the drift delta edits accumulate) while the stored trigger keeps its mode. Unlike clearing the model first, a full refresh that fails leaves the previous content in place.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
@@ -1054,7 +1060,7 @@ func (a *MentalModelsAPIService) RefreshMentalModelExecute(r ApiRefreshMentalMod
 	localVarFormParams := url.Values{}
 
 	// to determine the Content-Type header
-	localVarHTTPContentTypes := []string{}
+	localVarHTTPContentTypes := []string{"application/json"}
 
 	// set Content-Type header
 	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
@@ -1073,6 +1079,8 @@ func (a *MentalModelsAPIService) RefreshMentalModelExecute(r ApiRefreshMentalMod
 	if r.authorization != nil {
 		parameterAddToHeaderOrQuery(localVarHeaderParams, "authorization", r.authorization, "simple", "")
 	}
+	// body params
+	localVarPostBody = r.refreshMentalModelRequest
 	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
 	if err != nil {
 		return localVarReturnValue, nil, err

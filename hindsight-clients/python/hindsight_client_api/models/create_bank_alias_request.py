@@ -26,7 +26,7 @@ class CreateBankAliasRequest(BaseModel):
     """
     Request model for adding an alias to a bank.
     """ # noqa: E501
-    alias: StrictStr = Field(description="The extra bank id. Same rules as a bank id (non-empty, at most 192 bytes of UTF-8, no control characters), and it must not already name a bank or another alias.")
+    alias: StrictStr = Field(description="The extra bank id. Same rules as a bank id (non-empty, at most 192 bytes of UTF-8, no control characters, no leading underscore), and it must not already name a bank or another alias.")
     primary: Optional[StrictBool] = Field(default=False, description="Also show the bank under this alias, replacing whichever alias is shown today.")
     __properties: ClassVar[List[str]] = ["alias", "primary"]
 

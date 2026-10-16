@@ -744,6 +744,8 @@ export function DocumentsView() {
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [total, setTotal] = useState(0);
+  // A capped search: `total` is a lower bound, shown as "N+".
+  const [totalIsEstimate, setTotalIsEstimate] = useState(false);
 
   // Document transfer (export/import) state
   const [exporting, setExporting] = useState(false);
@@ -765,6 +767,7 @@ export function DocumentsView() {
   const [loadingDocument, setLoadingDocument] = useState(false);
   const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
   const [deletingUploadOperationId, setDeletingUploadOperationId] = useState<string | null>(null);
+  const [retryingUploadOperationId, setRetryingUploadOperationId] = useState<string | null>(null);
 
   // Tag editing state
   const [editingTags, setEditingTags] = useState(false);
@@ -829,6 +832,7 @@ export function DocumentsView() {
         });
         setDocuments(data.items || []);
         setTotal(data.total || 0);
+        setTotalIsEstimate(Boolean(data.total_is_estimate));
       } catch (error) {
         // Error toast is shown automatically by the API client interceptor
       } finally {
@@ -957,7 +961,7 @@ export function DocumentsView() {
     () => pendingRows.some((upload) => upload.status === "processing"),
     [pendingRows]
   );
-  const displayTotal = total + pendingRows.length;
+  const displayTotal = `${(total + pendingRows.length).toLocaleString()}${totalIsEstimate ? "+" : ""}`;
 
   // The detail response nests the document's metadata under `retain_params`,
   // where the list response returns it flat as `document_metadata` — same map,
@@ -1092,6 +1096,22 @@ export function DocumentsView() {
       // Error toast is shown automatically by the API client interceptor
     } finally {
       setDeletingUploadOperationId(null);
+    }
+  };
+
+  const retryFailedUpload = async (operationId: string) => {
+    if (!currentBank) return;
+
+    setRetryingUploadOperationId(operationId);
+    try {
+      // The stored file is kept on failure, so re-queuing the operation
+      // re-runs the upload from the saved input.
+      await client.retryOperation(currentBank, operationId);
+      await loadPendingUploads();
+    } catch {
+      // Error toast is shown automatically by the API client interceptor
+    } finally {
+      setRetryingUploadOperationId(null);
     }
   };
 
@@ -1689,6 +1709,22 @@ export function DocumentsView() {
                             <Button
                               variant="ghost"
                               size="sm"
+                              className="h-7 text-xs text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"
+                              onClick={() => retryFailedUpload(upload.operationId)}
+                              disabled={retryingUploadOperationId === upload.operationId}
+                            >
+                              {retryingUploadOperationId === upload.operationId ? (
+                                <Spinner size="xs" />
+                              ) : (
+                                <RotateCcw className="w-3 h-3 mr-1" />
+                              )}
+                              {retryingUploadOperationId === upload.operationId
+                                ? ""
+                                : tOperations("action.retry")}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               className="h-7 text-xs text-muted-foreground hover:text-red-600 dark:hover:text-red-400"
                               onClick={() => deleteFailedUpload(upload.operationId)}
                               disabled={deletingUploadOperationId === upload.operationId}
@@ -1819,7 +1855,9 @@ export function DocumentsView() {
             {totalPages > 1 && (
               <div className="flex items-center justify-between mt-3 pt-3 border-t">
                 <div className="text-xs text-muted-foreground">
-                  {offset + 1}-{Math.min(offset + ITEMS_PER_PAGE, total)} of {total}
+                  {offset + 1}-{Math.min(offset + ITEMS_PER_PAGE, total)} of{" "}
+                  {total.toLocaleString()}
+                  {totalIsEstimate ? "+" : ""}
                 </div>
                 <div className="flex items-center gap-1">
                   <Button
