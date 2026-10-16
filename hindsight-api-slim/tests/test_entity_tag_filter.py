@@ -51,7 +51,7 @@ async def _entity(conn, bank_id: str, name: str) -> uuid.UUID:
     return entity_id
 
 
-async def _unit(conn, bank_id: str, tags: list[str], mentioned_at: datetime, entities: list[uuid.UUID]) -> None:
+async def _unit(conn, bank_id: str, tags: list[str], mentioned_at: datetime, entities: list[uuid.UUID]) -> uuid.UUID:
     unit_id = uuid.uuid4()
     await conn.execute(
         """
@@ -65,6 +65,7 @@ async def _unit(conn, bank_id: str, tags: list[str], mentioned_at: datetime, ent
     )
     for entity_id in entities:
         await conn.execute("INSERT INTO unit_entities (unit_id, entity_id) VALUES ($1, $2)", unit_id, entity_id)
+    return unit_id
 
 
 @pytest.fixture
@@ -181,6 +182,48 @@ async def test_graph_is_rebuilt_from_the_matching_memories(
 
 
 @pytest.mark.asyncio
+async def test_observations_lend_their_sources_entities_under_a_filter(
+    memory: MemoryEngine, request_context: RequestContext
+):
+    """An observation has no `unit_entities` rows of its own; it mentions what its sources
+    mention. When only the observation matches the filter, its entities must still show up
+    in the list, the detail and the graph — the same inheritance a rendered memory gets."""
+    bank_id = f"test-entity-tags-obs-{uuid.uuid4().hex[:8]}"
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        carol = await _entity(conn, bank_id, "Carol")
+        dave = await _entity(conn, bank_id, "Dave")
+        first = await _unit(conn, bank_id, ["team:a"], JAN, [carol])
+        second = await _unit(conn, bank_id, ["team:b"], FEB, [carol, dave])
+        await conn.execute(
+            """
+            INSERT INTO memory_units (id, bank_id, text, fact_type, event_date, mentioned_at, tags,
+                                      source_memory_ids, created_at, updated_at)
+            VALUES ($1, $2, 'obs', 'observation', $3, $3, $4, $5, NOW(), NOW())
+            """,
+            uuid.uuid4(),
+            bank_id,
+            MAR,
+            ["team:a", "team:b"],
+            [first, second],
+        )
+
+    # Only the observation carries both tags, so it is the only visible memory.
+    both = {"tags": ["team:a", "team:b"], "tags_match": "all_strict", "request_context": request_context}
+    listing = await memory.list_entities(bank_id, **both)
+    assert _counts(listing) == {"Carol": 1, "Dave": 1}
+    assert listing["items"][0]["last_seen"] == MAR.isoformat()
+
+    detail = await memory.get_entity(bank_id, str(carol), **both)
+    assert detail is not None and detail["mention_count"] == 1
+
+    graph = await memory.get_entity_graph(bank_id, **both)
+    assert {n["data"]["label"] for n in graph["nodes"]} == {"Carol", "Dave"}
+    assert len(graph["edges"]) == 1
+
+
+@pytest.mark.asyncio
 async def test_tag_groups_filter_the_same_three_reads(
     memory: MemoryEngine, request_context: RequestContext, scoped_bank
 ):
@@ -231,6 +274,27 @@ async def test_http_takes_tag_groups_as_json(api_client, scoped_bank):
     for bad in ("not json", json.dumps([{"match": "any"}])):
         invalid = await api_client.get(f"/v1/default/banks/{bank_id}/entities", params={"tag_groups": bad})
         assert invalid.status_code == 400, bad
+
+    # Blank is no filter, as on the knowledge-base routes: the unfiltered list.
+    blank = await api_client.get(f"/v1/default/banks/{bank_id}/entities", params={"tag_groups": ""})
+    assert blank.status_code == 200
+    assert blank.json()["total"] == 5
+
+
+@pytest.mark.asyncio
+async def test_store_seams_without_tag_kwargs_still_serve_unfiltered_reads():
+    """The defaults forward the tag kwargs only when a filter is set, so an out-of-tree store
+    whose seam predates them keeps working unfiltered — and fails loudly when asked to filter."""
+    from hindsight_api.engine.memories.base import MemoriesExtension
+
+    class LegacyStore:
+        async def get_entity_graph(self, *, bank_id: str, limit: int, min_count: int) -> dict:
+            return {"nodes": [], "edges": []}
+
+    page = {"conn": None, "fq_table": None, "bank_id": "b", "limit": 10, "min_count": 1}
+    assert await MemoriesExtension.entity_graph(LegacyStore(), **page) == {"nodes": [], "edges": []}  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        await MemoriesExtension.entity_graph(LegacyStore(), **page, tags=DAN)  # type: ignore[arg-type]
 
 
 def test_tags_and_tag_groups_combine_into_one_clause_with_ordered_binds():

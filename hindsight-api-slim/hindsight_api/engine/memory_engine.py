@@ -731,12 +731,13 @@ from .search.tags import (
     filter_results_by_tags,
     strict_tag_group,
     strict_tags_match,
+    tag_filter_active,
     tags_satisfy_groups,
     tags_writable,
 )
 from .search.types import ScoredResult
 from .source_facts import select_source_facts_within_budget
-from .source_scope import tag_filter_is_active, visible_document_ids
+from .source_scope import visible_document_ids
 from .task_backend import TaskBackend
 from .time_filter import DOCUMENT_TIME_FIELDS, validate_time_window
 
@@ -10301,7 +10302,7 @@ class MemoryEngine(MemoryEngineInterface):
                     chunks_lookup = await _chunk_store.recall_chunks(
                         backend=backend, fq_table=fq_table, bank_id=bank_id, chunk_ids=chunk_ids_ordered
                     )
-                    if chunks_lookup and tag_filter_is_active(tags, tags_match, tag_groups):
+                    if chunks_lookup and tag_filter_active(tags, tags_match, tag_groups):
                         # Source text follows its DOCUMENT's tags, not the fact's (#5030): a fact
                         # shared through a tag like ``kind:rule`` must not carry the rest of a
                         # document the reader's filter excludes. A chunk with no document fails

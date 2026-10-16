@@ -15,8 +15,8 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, cast
 
 from ..prompt_utils import truncate_context_for_prompt
-from ..search.tags import TagGroup, TagsMatch, tags_satisfy_groups
-from ..source_scope import ids_passing, tag_filter_is_active, visible_document_ids
+from ..search.tags import TagGroup, TagsMatch, tag_filter_active, tags_satisfy_groups
+from ..source_scope import ids_passing, visible_document_ids
 from .tokenization import count_prompt_tokens
 
 if TYPE_CHECKING:
@@ -599,7 +599,7 @@ async def tool_expand(
     memories = await _store.expand_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=valid_uuids)
     # A memory outside the reader's filter is dropped here, so below it reads as "not found"
     # rather than revealing that it exists.
-    scoped = tag_filter_is_active(tags, tags_match, tag_groups)
+    scoped = tag_filter_active(tags, tags_match, tag_groups)
     if scoped:
         _visible_ids = ids_passing(
             {str(m["id"]): m["tags"] for m in memories}, tags=tags, tags_match=tags_match, tag_groups=tag_groups

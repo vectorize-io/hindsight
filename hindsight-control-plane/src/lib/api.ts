@@ -6,6 +6,7 @@
 import { toast } from "sonner";
 import { bankApi, bankStatsApi, chunkApi, documentApi, memoryApi } from "./bank-url";
 import { stripBasePath, withBasePath } from "./base-path";
+import { appendTagFilter, type TagFilter, type TagsMatch } from "./tag-filter-params";
 
 /**
  * Reduce an API error `details` value to a string safe to render in a toast.
@@ -212,31 +213,17 @@ export interface OperationProgress {
   detail?: Record<string, number> | null;
 }
 
+export type { TagsMatch };
+
 /** Tag filter for the knowledge-base tree and search (recall's tags / tags_match). */
-export interface KnowledgeTagFilter {
-  tags?: string[];
-  tags_match?: TagsMatch;
-}
+export type KnowledgeTagFilter = TagFilter;
 
 /** `&tags=..&tags_match=..`, or "" when the filter is empty. */
 function knowledgeTagQuery(filter?: KnowledgeTagFilter): string {
   const params = new URLSearchParams();
-  filter?.tags?.forEach((tag) => params.append("tags", tag));
-  if (filter?.tags_match && (filter.tags?.length || filter.tags_match === "exact"))
-    params.set("tags_match", filter.tags_match);
+  if (filter) appendTagFilter(params, filter);
   const qs = params.toString();
   return qs ? `&${qs}` : "";
-}
-
-export type TagsMatch = "any" | "all" | "any_strict" | "all_strict" | "exact";
-
-/** Append a tag filter; `tags_match` only travels with tags, like the dataplane expects. */
-function appendTagFilter(
-  queryParams: URLSearchParams,
-  filter: { tags?: string[]; tags_match?: TagsMatch }
-) {
-  for (const tag of filter.tags ?? []) queryParams.append("tags", tag);
-  if (filter.tags?.length && filter.tags_match) queryParams.append("tags_match", filter.tags_match);
 }
 
 // Time axes the two list endpoints can filter and order by. The chosen axis does

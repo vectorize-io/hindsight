@@ -20,7 +20,7 @@ import json
 import pytest
 from hindsight_client_api.exceptions import NotFoundException
 
-from hindsight_system_tests.payloads import consolidation, extracted, fact
+from hindsight_system_tests.payloads import Consolidation, Observation, consolidation, extracted, fact, fact_ids_in
 
 pytestmark = pytest.mark.asyncio
 
@@ -108,3 +108,53 @@ async def test_a_compound_tag_group_scopes_the_reads_the_same_way(client, scoped
 
     graph = await client.entities.get_entity_graph(scoped_bank, tag_groups=not_kate)
     assert {n.data.label for n in graph.nodes} == {"Alice", "Bob"}
+
+
+async def test_an_observation_brings_its_sources_entities_into_the_scope(client, llm, bank_id, settled):
+    """Consolidation meets the entity filter (#5417).
+
+    An observation names no entities of its own; it mentions what its source memories
+    mention. With `per_tag` scopes, a lesson tagged with both parties yields an
+    observation tagged `student:alice` alone — so an `exact` filter on that tag lets
+    the observation through and not the memory under it. Alice must still be listed,
+    counted and drawn from the observation, not vanish because the memory that names
+    her is out of scope.
+    """
+    llm.on_step("extract_facts").returns(
+        extracted(fact("Alice practised scales with Bob", who="Alice", entities=["Alice", "Bob"]))
+    )
+    llm.on_step("consolidate").answers_with(
+        lambda request: Consolidation(
+            creates=[
+                Observation(
+                    text="Alice practises regularly",
+                    source_fact_ids=fact_ids_in(request.all_text),
+                    reason="system test",
+                )
+            ]
+        )
+    )
+    await client.aretain_batch(
+        bank_id=bank_id,
+        items=[
+            {
+                "content": "Alice practised scales with Bob.",
+                "tags": ["student:alice", "teacher:bob"],
+                "observation_scopes": "per_tag",
+            }
+        ],
+    )
+    await settled(bank_id)
+    scope = {"tags": ["student:alice"], "tags_match": "exact"}
+
+    listing = await client.entities.list_entities(bank_id, **scope)
+    assert _counts(listing) == {"Alice": 1, "Bob": 1}
+    assert listing.total == 2
+
+    alice_id = next(e.id for e in listing.items if e.canonical_name == "Alice")
+    alice = await client.entities.get_entity(bank_id, alice_id, **scope)
+    assert alice.mention_count == 1
+
+    graph = await client.entities.get_entity_graph(bank_id, **scope)
+    assert {n.data.label: n.data.mention_count for n in graph.nodes} == {"Alice": 1, "Bob": 1}
+    assert len(graph.edges) == 1

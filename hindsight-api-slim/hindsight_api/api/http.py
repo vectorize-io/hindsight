@@ -261,24 +261,31 @@ _TAG_GROUPS_QUERY_DESCRIPTION = (
 )
 
 
-def _parse_tag_groups_query(raw: str | None, tags: list[str] | None) -> list[TagGroup] | None:
-    """Parse a ``tag_groups`` query parameter.
+def _decode_tag_groups_query(raw: str | None) -> list[TagGroup] | None:
+    """Decode a ``tag_groups`` query parameter — the one parser every GET route uses.
 
     A GET cannot carry a body, so the tree that recall takes as JSON arrives as a
-    JSON-encoded string. Invalid JSON or an invalid tree is a 400, and so is sending it
-    alongside ``tags`` — the same rule recall enforces on its body.
+    JSON-encoded string. Absent or blank is no filter; invalid JSON or an invalid tree
+    is a 400.
     """
-    if raw is None:
+    if raw is None or not raw.strip():
         return None
-    if tags:
-        raise HTTPException(
-            status_code=400,
-            detail="'tags' and 'tag_groups' are mutually exclusive. Use 'tag_groups' for compound filtering.",
-        )
     try:
         return _TAG_GROUPS_ADAPTER.validate_json(raw)
     except ValidationError as e:
         raise HTTPException(status_code=400, detail=f"Invalid tag_groups: {e.errors(include_url=False)}")
+
+
+def _parse_tag_groups_query(raw: str | None, tags: list[str] | None) -> list[TagGroup] | None:
+    """:func:`_decode_tag_groups_query`, refusing ``tags`` alongside it (400) — the same
+    rule recall enforces on its body."""
+    groups = _decode_tag_groups_query(raw)
+    if groups is not None and tags:
+        raise HTTPException(
+            status_code=400,
+            detail="'tags' and 'tag_groups' are mutually exclusive. Use 'tag_groups' for compound filtering.",
+        )
+    return groups
 
 
 from hindsight_api.engine.structured_output import validate_response_schema
@@ -3719,15 +3726,10 @@ def _knowledge_tag_filter(
         "Top-level groups are AND-ed, and AND-ed with `tags`.",
     ),
 ) -> KnowledgeTagFilter:
-    """Query-string tag filter shared by the knowledge-base tree and search."""
-    try:
-        groups = _TAG_GROUPS_ADAPTER.validate_json(tag_groups) if tag_groups else None
-    except ValidationError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid tag_groups: {e}")
+    """Query-string tag filter shared by the knowledge-base tree and search. Unlike the
+    entity routes, ``tags`` and ``tag_groups`` may be combined here (AND-ed)."""
+    groups = _decode_tag_groups_query(tag_groups)
     return KnowledgeTagFilter(tags=tags or None, tags_match=tags_match, tag_groups=groups)
-
-
-_TAG_GROUPS_ADAPTER: TypeAdapter[list[TagGroup]] = TypeAdapter(list[TagGroup])
 
 
 def _build_knowledge_tree(nodes: list[dict[str, Any]]) -> list[KnowledgeNode]:

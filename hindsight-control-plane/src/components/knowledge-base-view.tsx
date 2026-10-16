@@ -56,10 +56,10 @@ import { useRefreshAttempts, type RefreshAttempt } from "@/lib/use-refresh-attem
 import { FreshnessLine } from "./freshness-line";
 import { MentalModelDetailModal } from "./mental-model-detail-modal";
 import { KnowledgeSearchDialog } from "./knowledge-search-dialog";
-import { isKnowledgeTagFilterActive } from "./knowledge-tag-filter";
 import { TagChip } from "@/components/ui/facet-chip";
 import { KnowledgeSearchResult, type KnowledgeSearchHit } from "./knowledge-search-result";
 import { buildPathIndex } from "@/lib/knowledge-path";
+import { isTagFilterActive } from "@/lib/tag-filter-params";
 import { UpdateMentalModelDialog } from "./mental-models-view";
 
 type PageDetail = Awaited<ReturnType<typeof client.getKnowledgePage>>;
@@ -70,6 +70,9 @@ const ROOT_ID = "";
 // How often the tree view silently re-polls so page stats (last refresh / sync
 // status) stay live while pages refresh in the background.
 const AUTO_REFRESH_MS = 12000;
+
+// The sidebar filter before the user touches it, and what the clear button restores.
+const DEFAULT_TAG_FILTER: KnowledgeTagFilter = { tags_match: "any_strict" };
 
 /** Shared empty map, so a TreeRow without in-flight data does not remount on every render. */
 const EMPTY_ATTEMPTS: Map<string, RefreshAttempt> = new Map();
@@ -115,8 +118,8 @@ export function KnowledgeBaseView() {
   // Tag filter applied to both the tree and the search (recall's tags / tags_match).
   // `#tag` typed in the search box becomes a chip; strict by default, so a tag
   // filter shows only pages carrying the tag (the advanced dialog can widen it).
-  const [tagFilter, setTagFilter] = useState<KnowledgeTagFilter>({ tags_match: "any_strict" });
-  const tagFilterActive = isKnowledgeTagFilterActive(tagFilter);
+  const [tagFilter, setTagFilter] = useState<KnowledgeTagFilter>(DEFAULT_TAG_FILTER);
+  const tagFilterActive = isTagFilterActive(tagFilter);
   const removeTag = (tag: string) =>
     setTagFilter((f) => ({ ...f, tags: (f.tags ?? []).filter((x) => x !== tag) }));
   // Enter/space/comma closes a `#tag` token into a chip; backspace on an empty box pops one.
@@ -536,7 +539,8 @@ export function KnowledgeBaseView() {
                 <button
                   onClick={() => {
                     setQuery("");
-                    setTagFilter({ ...tagFilter, tags: [] });
+                    // The whole filter: a kept `exact` would still filter (the untagged scope).
+                    setTagFilter(DEFAULT_TAG_FILTER);
                   }}
                   className="absolute right-1.5 top-1.5 rounded p-0.5 text-muted-foreground hover:text-foreground hover:bg-muted"
                   aria-label={t("clearSearch")}
