@@ -259,3 +259,37 @@ async def test_list_documents_reports_matched_fields(memory, request_context):
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_list_documents_search_query_is_literal(memory, request_context):
+    """LIKE wildcards in q match themselves: "%" is not "everything", "_" is not "any char"."""
+    bank_id = f"test_list_docs_q_literal_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        for document_id, content in [
+            ("discount", "xyzabc123 !@# 50% off $$$"),
+            ("snake", "xyzabc123 !@# snake_case $$$"),
+            ("bang", "xyzabc123 !@# wow!! $$$"),
+            ("plain", "xyzabc123 !@# nothing special $$$"),
+        ]:
+            await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=[{"content": content}],
+                document_id=document_id,
+                request_context=request_context,
+            )
+
+        async def ids(q: str) -> set[str]:
+            result = await memory.list_documents(bank_id=bank_id, search_query=q, request_context=request_context)
+            return {d["id"] for d in result["items"]}
+
+        assert await ids("%") == {"discount"}
+        assert await ids("e_c") == {"snake"}
+        assert await ids("50%") == {"discount"}
+        assert await ids("!!") == {"bang"}
+        # "snake case" with "_" as a wildcard would match "snake_case"; literal it does not.
+        assert await ids("e c") == set()
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)

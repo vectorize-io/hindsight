@@ -171,6 +171,12 @@ describe("find-in-text highlight", () => {
     expect(countMatches(text, "CAT")).toBe(2);
   });
 
+  it("treats SQL wildcards literally, like the server search", () => {
+    // The list search escapes LIKE's % and _; the highlighter must agree.
+    expect(countMatches("50% off, snake_case, snakeXcase", "%")).toBe(1);
+    expect(countMatches("50% off, snake_case, snakeXcase", "e_c")).toBe(1);
+  });
+
   it("counts nothing for an empty query", () => {
     expect(countMatches("anything", "  ")).toBeNull();
     expect(countMatches("anything", undefined)).toBeNull();

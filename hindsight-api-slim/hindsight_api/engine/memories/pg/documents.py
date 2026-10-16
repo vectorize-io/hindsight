@@ -593,12 +593,17 @@ async def list_documents(
         if search_query:
             # Search in document ID and content. No index on original_text: this is a
             # sequential scan per bank, meant for browsing, not hot-path workloads.
+            # q is a literal substring: escape LIKE's wildcards so "%" or "_" match themselves
+            # (unescaped, q="%" matched every document). "!" rather than backslash as the escape
+            # character: it needs no quoting in either dialect, and Oracle has no default escape.
             param_count += 1
-            query_conditions.append(f"(id ILIKE ${param_count} OR original_text ILIKE ${param_count})")
-            query_params.append(f"%{search_query}%")
+            like = f"ILIKE ${param_count} ESCAPE '!'"
+            query_conditions.append(f"(id {like} OR original_text {like})")
+            literal = search_query.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+            query_params.append(f"%{literal}%")
             match_columns = (
-                f"CASE WHEN id ILIKE ${param_count} THEN 1 ELSE 0 END AS id_matched, "
-                f"CASE WHEN original_text ILIKE ${param_count} THEN 1 ELSE 0 END AS text_matched"
+                f"CASE WHEN id {like} THEN 1 ELSE 0 END AS id_matched, "
+                f"CASE WHEN original_text {like} THEN 1 ELSE 0 END AS text_matched"
             )
 
         built = build_tags_where_clause(tags, param_offset=param_count + 1, match=tags_match)
