@@ -88,35 +88,18 @@ import { Spinner } from "@/components/ui/spinner";
 import { HarnessLogo } from "@/components/ui/harness-logo";
 import { InlineAttachmentText } from "@/components/ui/inline-attachment-text";
 import { documentHarness, resolveHarnessLogo } from "@/lib/harness-logo";
+import { pendingUploadsFromOperations, type PendingUpload } from "@/lib/pending-uploads";
 
 const ITEMS_PER_PAGE = 50;
 
-// Show in-flight/failed uploads that don't have a real document row yet. The
-// source of truth is the server's file_convert_retain operations, not any
-// client-side store — so the status survives reloads, tabs and devices.
-const PENDING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const PENDING_POLL_INTERVAL_MS = 4000;
 // Idle cadence for auto-refreshing the whole table (new/updated docs, counts,
 // "Updating" badges) so it stays live without a manual reload. Gentler than the
 // active poll above — a quiet table shouldn't hammer the API.
 const DOCUMENTS_AUTO_REFRESH_MS = 8000;
-// A file_convert_retain operation flips to "completed" a couple of seconds
-// before the document becomes visible in listDocuments. Keep showing the
-// pending row for recently-completed operations so it stays on screen until
-// the real document row takes over (dedup by document_id) — no flicker.
-const PENDING_BRIDGE_MS = 30000;
 const DOCUMENTS_REFRESH_EVENT = "hindsight:documents-refresh";
 // Debounce between a filter edit (search text, tags) and the list request.
 const FILTER_DEBOUNCE_MS = 250;
-
-type PendingUpload = {
-  operationId: string;
-  id: string;
-  filename: string | null;
-  status: "processing" | "failed";
-  error?: string | null;
-  createdAt: string;
-};
 
 function formatRelativeTime(dateStr: string): string {
   const now = Date.now();
@@ -854,47 +837,26 @@ export function DocumentsView() {
     [currentBank, searchQuery, selectedTags, tagsMatch, dateRange, timeField, customFrom, customTo]
   );
 
-  // Pull in-flight/failed file uploads straight from the server's
-  // file_convert_retain operations. Completed operations drop off here and
-  // reappear as real document rows once listDocuments returns them.
+  // Pull in-flight/failed file uploads straight from the server's operations.
+  // Completed ones drop off here and reappear as real document rows once
+  // listDocuments returns them.
   const loadPendingUploads = useCallback(async () => {
     if (!currentBank) {
       setPendingUploads([]);
       return;
     }
     try {
-      const data = await client.listOperations(currentBank, {
-        type: "file_convert_retain",
-        limit: 100,
-      });
-      const now = Date.now();
-      const cutoff = now - PENDING_MAX_AGE_MS;
-      const uploads: PendingUpload[] = (data.operations || [])
-        .filter((op) => {
-          const created = Date.parse(op.created_at);
-          if (!Number.isFinite(created) || created < cutoff) return false;
-          if (op.status === "pending" || op.status === "processing" || op.status === "failed") {
-            return true;
-          }
-          // Bridge the window between completion and the document appearing in
-          // the list. After PENDING_BRIDGE_MS we stop bridging so older
-          // completed uploads (whose row simply sits on another page) don't
-          // resurface as phantom "Processing" rows.
-          if (op.status === "completed") {
-            const settled = Date.parse(op.updated_at || op.created_at);
-            return Number.isFinite(settled) && now - settled < PENDING_BRIDGE_MS;
-          }
-          return false;
-        })
-        .map((op) => ({
-          operationId: op.id,
-          id: op.document_id || op.id,
-          filename: op.filename ?? null,
-          status: op.status === "failed" ? "failed" : "processing",
-          error: op.error_message,
-          createdAt: op.created_at,
-        }));
-      setPendingUploads(uploads);
+      const [conversions, retains] = await Promise.all([
+        client.listOperations(currentBank, { type: "file_convert_retain", limit: 100 }),
+        client.listOperations(currentBank, { type: "retain", limit: 100 }),
+      ]);
+      setPendingUploads(
+        pendingUploadsFromOperations(
+          conversions.operations || [],
+          retains.operations || [],
+          Date.now()
+        )
+      );
     } catch {
       // Keep whatever we had; the Operations tab remains the detailed source of truth.
     }

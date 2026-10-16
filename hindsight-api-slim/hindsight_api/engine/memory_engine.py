@@ -4260,7 +4260,9 @@ class MemoryEngine(MemoryEngineInterface):
                     retain_operation_id,
                     bank_id,
                     "retain",
-                    json.dumps({}),
+                    # Same document_id/filename as the conversion, so the operations
+                    # list ties this retain back to the upload it finishes (#5310).
+                    json.dumps({"document_id": document_id, "original_filename": task_dict["original_filename"]}),
                     "pending",
                     payload_json,
                     # A converted file always retains into exactly one document,
