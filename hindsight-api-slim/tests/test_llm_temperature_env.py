@@ -14,6 +14,8 @@ _OP_FIELDS = {
     "HINDSIGHT_API_LLM_TEMPERATURE_RETAIN": ("llm_temperature_retain", 0.1),
     "HINDSIGHT_API_LLM_TEMPERATURE_REFLECT": ("llm_temperature_reflect", 0.9),
     "HINDSIGHT_API_LLM_TEMPERATURE_CONSOLIDATION": ("llm_temperature_consolidation", 0.0),
+    # Inherits the consolidation value when unset, so its default is consolidation's.
+    "HINDSIGHT_API_LLM_TEMPERATURE_MENTAL_MODEL_REFRESH": ("llm_temperature_mental_model_refresh", 0.0),
 }
 
 
@@ -54,6 +56,49 @@ def test_per_operation_override_beats_global(monkeypatch):
     assert config.llm_temperature_retain == 0.5
     # Other operations still follow the global "none" (omit).
     assert config.llm_temperature_reflect is None
+
+
+def test_mental_model_refresh_unset_inherits_the_consolidation_override(monkeypatch):
+    """Unset, the refresh's delta and retraction calls keep the temperature they
+    used before the knob existed: the consolidation one, whatever set it."""
+    _clear_temperature_env(monkeypatch)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_TEMPERATURE_CONSOLIDATION", "0.3")
+    config = HindsightConfig.from_env()
+    assert config.llm_temperature_mental_model_refresh == 0.3
+
+
+def test_mental_model_refresh_unset_inherits_a_consolidation_omit(monkeypatch):
+    _clear_temperature_env(monkeypatch)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_TEMPERATURE", "0.2")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_TEMPERATURE_CONSOLIDATION", "none")
+    config = HindsightConfig.from_env()
+    assert config.llm_temperature_mental_model_refresh is None
+
+
+def test_mental_model_refresh_override_beats_consolidation_and_global(monkeypatch):
+    _clear_temperature_env(monkeypatch)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_TEMPERATURE", "0.2")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_TEMPERATURE_CONSOLIDATION", "0.0")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_TEMPERATURE_MENTAL_MODEL_REFRESH", "1.0")
+    config = HindsightConfig.from_env()
+    assert config.llm_temperature_mental_model_refresh == 1.0
+    # Consolidation itself is untouched by the refresh knob.
+    assert config.llm_temperature_consolidation == 0.0
+
+
+def test_mental_model_refresh_override_can_omit_on_its_own(monkeypatch):
+    _clear_temperature_env(monkeypatch)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_TEMPERATURE_MENTAL_MODEL_REFRESH", "none")
+    config = HindsightConfig.from_env()
+    assert config.llm_temperature_mental_model_refresh is None
+    assert config.llm_temperature_consolidation == 0.0
+
+
+def test_mental_model_refresh_override_is_validated(monkeypatch):
+    _clear_temperature_env(monkeypatch)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_TEMPERATURE_MENTAL_MODEL_REFRESH", "2.5")
+    with pytest.raises(ValueError):
+        HindsightConfig.from_env()
 
 
 @pytest.mark.parametrize("sentinel", ["none", "NONE", "default", "off", "unset", "", "  "])

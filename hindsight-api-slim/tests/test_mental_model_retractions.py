@@ -555,6 +555,54 @@ async def test_delta_refresh_removes_content_resting_on_a_retracted_fact(
 
 
 @pytest.mark.asyncio
+async def test_unsay_call_uses_the_mental_model_refresh_temperature(
+    memory: MemoryEngine, request_context: RequestContext, monkeypatch, patch_reflect
+):
+    """The retraction pass sends ``llm_temperature_mental_model_refresh``, like the
+    delta pass, rather than the consolidation temperature."""
+    from hindsight_api.config import get_config
+
+    monkeypatch.setattr(get_config()._config, "llm_temperature_consolidation", 0.0)
+    monkeypatch.setattr(get_config()._config, "llm_temperature_mental_model_refresh", 0.65)
+
+    bank_id = f"test-retract-temperature-{uuid.uuid4().hex[:8]}"
+    await _ensure_bank(memory, bank_id, request_context)
+    gone_id = str(uuid.uuid4())
+
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        live = await _insert_memory(memory, conn, bank_id, "Tests run on every push.")
+        mm_id = await _create_page(
+            memory,
+            conn,
+            bank_id,
+            request_context,
+            based_on={
+                "world": [
+                    _fact(gone_id, "Autocommit was disabled for hunk-level review.", "world"),
+                    _fact(str(live), "Tests run on every push.", "world"),
+                ]
+            },
+        )
+
+    patch_reflect(memory, text="No new information.")
+    calls = _patch_op_calls(
+        monkeypatch,
+        memory,
+        retraction_ops=[_remove_first_block_of("conventions")],
+        delta_ops=[],
+    )
+
+    await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm_id, request_context=request_context)
+
+    retraction_call = next(call for call in calls if call["kind"] == "retraction")
+    assert retraction_call["scope"] == "mental_model_retraction_ops"
+    assert retraction_call["temperature"] == 0.65
+
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_unsay_runs_even_when_no_new_facts_arrived(
     memory: MemoryEngine, request_context: RequestContext, monkeypatch, patch_reflect
 ):

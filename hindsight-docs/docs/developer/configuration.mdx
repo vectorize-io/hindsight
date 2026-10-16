@@ -291,7 +291,8 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 | `HINDSIGHT_API_LLM_TEMPERATURE_VERIFICATION` | Temperature for the startup connection check. Number in `[0.0, 2.0]` or `none` to omit. Overrides `HINDSIGHT_API_LLM_TEMPERATURE`. | `0.0` |
 | `HINDSIGHT_API_LLM_TEMPERATURE_RETAIN` | Temperature for fact extraction during retain. Number in `[0.0, 2.0]` or `none` to omit. Overrides `HINDSIGHT_API_LLM_TEMPERATURE`. | `0.1` |
 | `HINDSIGHT_API_LLM_TEMPERATURE_REFLECT` | Temperature for the reflect "thinking" step. Number in `[0.0, 2.0]` or `none` to omit. Overrides `HINDSIGHT_API_LLM_TEMPERATURE`. | `0.9` |
-| `HINDSIGHT_API_LLM_TEMPERATURE_CONSOLIDATION` | Temperature for consolidation (mental-model delta and dedup). Number in `[0.0, 2.0]` or `none` to omit. Overrides `HINDSIGHT_API_LLM_TEMPERATURE`. | `0.0` |
+| `HINDSIGHT_API_LLM_TEMPERATURE_CONSOLIDATION` | Temperature for consolidation (dedup), and for the mental-model refresh's delta and retraction calls unless `HINDSIGHT_API_LLM_TEMPERATURE_MENTAL_MODEL_REFRESH` is set. Number in `[0.0, 2.0]` or `none` to omit. Overrides `HINDSIGHT_API_LLM_TEMPERATURE`. | `0.0` |
+| `HINDSIGHT_API_LLM_TEMPERATURE_MENTAL_MODEL_REFRESH` | Temperature for the mental-model refresh's structured edit calls (delta and retraction). Number in `[0.0, 2.0]` or `none` to omit. Set it when the refresh runs its own model (`HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_*`) whose recommended temperature differs from consolidation's. | Falls back to `HINDSIGHT_API_LLM_TEMPERATURE_CONSOLIDATION` |
 | `HINDSIGHT_API_LLM_VISION` | Whether the configured LLM can read images, overriding what the provider reports about itself. Leave unset and each provider answers for itself: Anthropic and Gemini report yes, OpenAI reports yes, `none` reports no, and every gateway-style backend (LiteLLM, Ollama, LM Studio, OpenRouter, an OpenAI-compatible proxy) reports *unknown*, because its catalogue mixes vision-capable and text-only models. A retain carrying [inline attachments](#inline-attachments-in-retain) is refused with `422` on both "no" and "unknown" — dropping an attachment silently would leave a document that looks retained with the information the caller cared about gone. Set `true` when you are running a vision model behind such a gateway; set `false` to refuse images against an endpoint that rejects them despite its model name. | Provider decides |
 | `HINDSIGHT_API_VLM_PROVIDER` | Provider for the **vision slot** — the model used only for retain chunks that carry an [inline attachment](#inline-attachments-in-retain). Every text-only chunk keeps using the retain LLM, so a bank whose documents mostly *are* text does not pay a vision model's price for all of it. Unset, attachments go to the retain LLM. | Retain LLM |
 | `HINDSIGHT_API_VLM_API_KEY` | API key for the vision slot. | Retain LLM's |
@@ -782,6 +783,9 @@ a fast no-think model that cannot blow the wall timeout, cannot exceed the compl
 budget on a reasoning chain, and does not halve interactive decode speed by running
 alongside it. Every field falls back to its `REFLECT_LLM_*` counterpart, which in turn falls
 back to the global `LLM_*` — set none of them and behaviour is exactly as before.
+One refresh setting sits outside the group: the structured edit calls (delta and
+retraction) take their temperature from `HINDSIGHT_API_LLM_TEMPERATURE_MENTAL_MODEL_REFRESH`,
+which falls back to `HINDSIGHT_API_LLM_TEMPERATURE_CONSOLIDATION`.
 
 :::tip When to Use Per-Operation Config
 - **Retain**: Use models with strong structured output (e.g., GPT-4o, Claude) for accurate fact extraction

@@ -17971,7 +17971,7 @@ class MemoryEngine(MemoryEngineInterface):
                             user_prompt=unsay_prompt,
                             scope="mental_model_retraction_ops",
                             max_completion_tokens=get_config().reflect_max_completion_tokens,
-                            temperature=get_config().llm_temperature_consolidation,
+                            temperature=get_config().llm_temperature_mental_model_refresh,
                         )
                         unsay_outcome = apply_operations(current_doc, unsay_ops.operations)
                         retraction_operations = MentalModelDeltaOperations(
@@ -18106,7 +18106,7 @@ class MemoryEngine(MemoryEngineInterface):
                         strict_schema=get_config().llm_strict_schema_reflect,
                         skip_validation=True,  # Get raw JSON; the parser validates op-by-op
                         max_completion_tokens=get_config().reflect_max_completion_tokens,
-                        temperature=get_config().llm_temperature_consolidation,
+                        temperature=get_config().llm_temperature_mental_model_refresh,
                     )
                     apply_outcome = apply_operations(current_doc, op_list.operations)
                     delta_operations = MentalModelDeltaOperations(

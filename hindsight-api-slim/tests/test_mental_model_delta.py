@@ -1145,6 +1145,60 @@ class TestDeltaRefreshPlumbing:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_delta_call_uses_the_mental_model_refresh_temperature(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        monkeypatch,
+    ):
+        """The delta call sends ``llm_temperature_mental_model_refresh``, not the
+        consolidation temperature, so a refresh moved onto its own model (#4463) can
+        also run at that model's sampling temperature.
+        """
+        from hindsight_api.config import get_config
+        from hindsight_api.engine.reflect.delta_ops import DeltaOperationList
+
+        monkeypatch.setattr(get_config()._config, "llm_temperature_consolidation", 0.0)
+        monkeypatch.setattr(get_config()._config, "llm_temperature_mental_model_refresh", 0.65)
+
+        bank_id = f"test-delta-temperature-{uuid.uuid4().hex[:8]}"
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Team Info",
+            source_query="Tell me about the team",
+            content="# Team\n\nAlice is the lead.\n\n## Members\n\n- Alice — lead\n",
+            trigger={"mode": "delta"},
+            request_context=request_context,
+        )
+
+        captured: dict[str, Any] = {}
+
+        async def capturing_call(*, messages, **kwargs):
+            captured["scope"] = kwargs.get("scope")
+            captured["temperature"] = kwargs.get("temperature")
+            return LLMCallResult(content=DeltaOperationList(), usage=TokenUsage())
+
+        monkeypatch.setattr(memory._mental_model_refresh_llm_config, "call", capturing_call)
+
+        # Seed the tracking column, then refresh with a new fact so the delta call fires.
+        patch_reflect(memory, text="ignored — full mode candidate")
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
+        patch_reflect(
+            memory,
+            text="Alice is the lead. Bob joined.",
+            facts=[{"id": "obs-bob", "text": "Bob joined the team", "type": "observation", "context": None}],
+        )
+        captured.clear()
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
+
+        assert captured["scope"] == "mental_model_delta_ops"
+        assert captured["temperature"] == 0.65
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
     async def test_delta_prompt_sends_only_new_facts_not_accumulated_history(
         self,
         memory: MemoryEngine,
