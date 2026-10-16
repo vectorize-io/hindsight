@@ -34,8 +34,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   ChevronDown,
   ChevronRight,
+  Download,
   FilePlus,
   FileText,
   Folder,
@@ -60,6 +67,7 @@ import { TagChip } from "@/components/ui/facet-chip";
 import { KnowledgeSearchResult, type KnowledgeSearchHit } from "./knowledge-search-result";
 import { buildPathIndex } from "@/lib/knowledge-path";
 import { isTagFilterActive } from "@/lib/tag-filter-params";
+import { downloadMarkdown, printPage } from "@/lib/page-download";
 import { UpdateMentalModelDialog } from "./mental-models-view";
 
 type PageDetail = Awaited<ReturnType<typeof client.getKnowledgePage>>;
@@ -670,10 +678,43 @@ export function KnowledgeBaseView() {
             <div className="p-8 max-w-3xl mx-auto">
               <div className="flex items-start justify-between gap-3">
                 <h1 className="text-2xl font-bold text-foreground">{selected.name}</h1>
-                <Button variant="outline" size="sm" onClick={openEdit} className="shrink-0">
-                  <Pencil className="w-3.5 h-3.5 mr-1.5" />
-                  {t("editButton")}
-                </Button>
+                <div className="flex gap-2 shrink-0">
+                  {selected.body && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="outline" size="sm">
+                          <Download className="w-3.5 h-3.5 mr-1.5" />
+                          {t("downloadButton")}
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onClick={() =>
+                            printPage({
+                              name: selected.name,
+                              body: selected.body ?? "",
+                              updatedAt: selected.timestamp,
+                              tags: selected.tags,
+                            })
+                          }
+                        >
+                          {t("downloadPdf")}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() =>
+                            downloadMarkdown({ name: selected.name, body: selected.body ?? "" })
+                          }
+                        >
+                          {t("downloadMarkdown")}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
+                  <Button variant="outline" size="sm" onClick={openEdit}>
+                    <Pencil className="w-3.5 h-3.5 mr-1.5" />
+                    {t("editButton")}
+                  </Button>
+                </div>
               </div>
 
               <div className="mt-1.5 flex items-center gap-3 flex-wrap">

@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { client, type TagGroup, type TagsMatch } from "@/lib/api";
 import { formatAbsoluteDateTime, formatRelativeTime } from "@/lib/relative-time";
 import { CompactMarkdown } from "./compact-markdown";
+import { downloadMarkdown, mentalModelDownload, printPage } from "@/lib/page-download";
 import { useBank } from "@/lib/bank-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +35,7 @@ import {
   Plus,
   Sparkles,
   Trash2,
+  Download,
   Eraser,
   RefreshCw,
   ChevronLeft,
@@ -674,6 +676,17 @@ function RowActionsMenu({
         <DropdownMenuItem onClick={() => onRefresh(m)} disabled={refreshing}>
           <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
           {t("actionRefresh")}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => printPage(mentalModelDownload(m))} disabled={!m.content}>
+          <Download className="h-4 w-4 mr-2" />
+          {t("actionDownloadPdf")}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => downloadMarkdown(mentalModelDownload(m))}
+          disabled={!m.content}
+        >
+          <Download className="h-4 w-4 mr-2" />
+          {t("actionDownloadMarkdown")}
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => onClear(m)}>
           <Eraser className="h-4 w-4 mr-2" />
