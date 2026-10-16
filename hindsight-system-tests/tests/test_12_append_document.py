@@ -16,6 +16,7 @@ import asyncio
 import json
 
 import pytest
+from hindsight_client_api.exceptions import ApiException
 
 from hindsight_system_tests.payloads import consolidation, extracted, fact
 
@@ -282,3 +283,18 @@ async def test_conversation_turns_appended_together_to_a_new_document_stay_one_a
 
     document = await client.documents.get_document(bank_id, DOCUMENT_ID)
     assert json.loads(document.original_text) == turns[0] + turns[1]
+
+
+@pytest.mark.parametrize("retain_async", [False, True])
+async def test_an_append_without_a_document_is_refused_up_front(client, bank_id, retain_async):
+    """An append names no document to append to, so it can never succeed. Both
+    paths refuse it with 400. The queued path used to accept it, queue it, and let
+    the worker fail it after minutes of retries (#5415)."""
+    await client.acreate_bank(bank_id=bank_id, name="Alice")
+    with pytest.raises(ApiException) as exc:
+        await client.aretain(bank_id=bank_id, content=FIRST, update_mode="append", retain_async=retain_async)
+    assert exc.value.status == 400
+    assert "requires a document_id" in exc.value.body
+
+    operations = await client.operations.list_operations(bank_id)
+    assert operations.total == 0
