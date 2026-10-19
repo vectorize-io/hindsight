@@ -20,9 +20,10 @@ shared table can never be built under a blocking lock by accident.
 """
 
 import re
+from typing import Any
 
 from sqlalchemy import Connection, event, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Engine, ExecutionContext
 
 _CONCURRENT_INDEX_DDL = re.compile(
     r"^(\s*(?:CREATE\s+(?:UNIQUE\s+)?INDEX|DROP\s+INDEX))\s+CONCURRENTLY\b", re.IGNORECASE
@@ -48,5 +49,13 @@ def build_new_schema_indexes_plainly(engine: Engine, schema: str) -> None:
     """Rewrite the run's index DDL on ``schema`` to its plain form (see the module docstring)."""
 
     @event.listens_for(engine, "before_cursor_execute", retval=True)
-    def _plain(conn, cursor, statement, parameters, context, executemany):
+    def _plain(
+        conn: Connection,
+        cursor: Any,
+        statement: str,
+        parameters: Any,
+        context: ExecutionContext | None,
+        executemany: bool,
+    ) -> tuple[str, Any]:
+        # SQLAlchemy's retval=True contract for this event: (statement, parameters).
         return plain_index_ddl(statement, schema), parameters
