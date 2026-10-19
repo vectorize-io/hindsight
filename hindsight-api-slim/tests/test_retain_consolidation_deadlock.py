@@ -206,10 +206,17 @@ async def _consolidate(
             "_embed_observation_texts",
             new=AsyncMock(side_effect=lambda _engine, texts, _perf=None: {t: race.embedding for t in texts}),
         ),
+        # The recalls' query vectors are embedded up front in one call (#5769); the recall
+        # itself is stubbed above, so any vector of the right shape will do (#5797).
+        patch.object(
+            C.embedding_utils,
+            "generate_embeddings_batch",
+            new=AsyncMock(side_effect=lambda _embeddings, texts, **_kw: [race.embedding for _ in texts]),
+        ),
     ):
         await C._process_memory_batch(
             pool=race.consolidation_pool,
-            memory_engine=types.SimpleNamespace(_backend=race.consolidation_pool),
+            memory_engine=types.SimpleNamespace(_backend=race.consolidation_pool, embeddings=object()),
             llm_config=object(),
             bank_id=race.bank,
             memories=race.memories,
