@@ -2553,11 +2553,11 @@ def _assemble_graph_data(
     """Turn the store's graph page into the nodes, edges and table rows the UI renders.
 
     Pure CPU work on rows already read -- the caller runs it off the event loop. Its cost is
-    linear in the units and their entity rows; edges stop at ``GRAPH_MAX_EDGES``, taken in
-    order of how much they say: stored links first (the store orders them by weight), then the
-    ones observations inherit from their source memories, then observations sharing a source,
-    then units sharing an entity (rarest entity first, since a name in every memory links
-    everything to everything and says nothing).
+    linear in the units and their entity rows. Edges come in two budgets of ``GRAPH_MAX_EDGES``:
+    the stored links (the store orders them by weight) and the ones observations inherit from
+    their source memories; then the derived ones, observations sharing a source before units
+    sharing an entity (rarest entity first, since a name in every memory links everything to
+    everything and says nothing).
     """
     from .memories.base import GRAPH_MAX_EDGES
 
@@ -2653,32 +2653,41 @@ def _assemble_graph_data(
 
     edges: list[dict[str, Any]] = []
     seen_edges: set[tuple[str, str, str, str]] = set()
-    for row in itertools.chain(direct_links(), copied_links(), inferred_links()):
-        if len(edges) >= GRAPH_MAX_EDGES:
-            break
-        from_id = str(row["from_unit_id"])
-        to_id = str(row["to_unit_id"])
-        link_type = row["link_type"]
-        entity_name = row.get("entity_name") or ""
-        edge_key = (from_id, to_id, link_type, entity_name)
-        if edge_key in seen_edges:
-            continue
-        seen_edges.add(edge_key)
-        color, line_style = _GRAPH_LINK_STYLE.get(link_type, ("#999999", "solid"))
-        edges.append(
-            {
-                "data": {
-                    "id": f"{from_id}-{to_id}-{link_type}",
-                    "source": from_id,
-                    "target": to_id,
-                    "linkType": link_type,
-                    "weight": row["weight"],
-                    "entityName": entity_name,
-                    "color": color,
-                    "lineStyle": line_style,
+
+    def add_edges(rows: Iterator[dict[str, Any]]) -> None:
+        added = 0
+        for row in rows:
+            if added >= GRAPH_MAX_EDGES:
+                return
+            from_id = str(row["from_unit_id"])
+            to_id = str(row["to_unit_id"])
+            link_type = row["link_type"]
+            entity_name = row.get("entity_name") or ""
+            edge_key = (from_id, to_id, link_type, entity_name)
+            if edge_key in seen_edges:
+                continue
+            seen_edges.add(edge_key)
+            added += 1
+            color, line_style = _GRAPH_LINK_STYLE.get(link_type, ("#999999", "solid"))
+            edges.append(
+                {
+                    "data": {
+                        "id": f"{from_id}-{to_id}-{link_type}",
+                        "source": from_id,
+                        "target": to_id,
+                        "linkType": link_type,
+                        "weight": row["weight"],
+                        "entityName": entity_name,
+                        "color": color,
+                        "lineStyle": line_style,
+                    }
                 }
-            }
-        )
+            )
+
+    # Stored links and derived edges each get their own budget: a well-linked bank fills the
+    # first with stored links, and sharing one would leave it with no entity edges at all.
+    add_edges(itertools.chain(direct_links(), copied_links()))
+    add_edges(inferred_links())
 
     # Build nodes
     nodes = []
@@ -13048,7 +13057,7 @@ class MemoryEngine(MemoryEngineInterface):
             # Links cover both endpoints in the visible set (or its source memories); entity edges
             # are derived from `unit_entities` rather than materialized as memory_links rows
             # (dropped in migration e9b2c7d1f3a4), so no link_type filter is needed. The store caps
-            # the links it reads, and the assembly caps the edges it derives, at GRAPH_MAX_EDGES.
+            # the links it reads, and the assembly caps what it derives, at GRAPH_MAX_EDGES each.
             links = page["links"]
             unit_entities = page["entity_rows"]
 

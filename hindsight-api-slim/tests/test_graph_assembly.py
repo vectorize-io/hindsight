@@ -41,7 +41,8 @@ def test_derived_edges_stop_at_the_cap_and_stored_links_come_first() -> None:
 
     data = _assemble_graph_data(observations, [stored], entity_rows, total_count=3000, limit=3000)
 
-    assert len(data["edges"]) == GRAPH_MAX_EDGES
+    # The stored link, then a full budget of derived edges
+    assert len(data["edges"]) == 1 + GRAPH_MAX_EDGES
     assert data["edges"][0]["data"]["linkType"] == "temporal"
     assert len(data["nodes"]) == len(data["table_rows"]) == 3000
     # The route encodes this dict as is, so it must already be the response model's shape
@@ -58,3 +59,20 @@ def test_small_graph_keeps_every_edge() -> None:
     edge_types = sorted(e["data"]["linkType"] for e in data["edges"])
     assert edge_types == ["entity", "semantic"]
     assert all(n["data"]["entities"] == "Alice" for n in data["nodes"])
+
+
+def test_stored_links_filling_their_budget_leave_room_for_entity_edges() -> None:
+    facts = [_unit("world") for _ in range(200)]
+    stored = [
+        {"from_unit_id": a["id"], "to_unit_id": b["id"], "link_type": "semantic", "weight": 0.9, "entity_name": None}
+        for a in facts
+        for b in facts
+        if a is not b
+    ][:GRAPH_MAX_EDGES]
+    entity_rows = [{"unit_id": f["id"], "entity_id": uuid.uuid4(), "canonical_name": "Acme"} for f in facts]
+
+    data = _assemble_graph_data(facts, stored, entity_rows, total_count=200, limit=200)
+
+    link_types = [e["data"]["linkType"] for e in data["edges"]]
+    assert link_types.count("semantic") == GRAPH_MAX_EDGES
+    assert link_types.count("entity") > 0
