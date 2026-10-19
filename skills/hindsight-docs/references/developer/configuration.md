@@ -464,6 +464,10 @@ export HINDSIGHT_API_LLM_MODEL=qwen/qwen3.5-9b
 # provider.require_parameters=true, so OpenRouter only routes them to upstreams
 # that support response_format. Any "provider" keys you set in
 # HINDSIGHT_API_LLM_EXTRA_BODY (e.g. "only") are kept and take precedence.
+# That also means every parameter sent must be supported, temperature included.
+# Models that reject temperature (e.g. anthropic/claude-haiku-5.5) then fail with
+# "No endpoints found that can handle the requested parameters". Fix: omit it.
+# export HINDSIGHT_API_LLM_TEMPERATURE=none
 
 # Requesty (OpenAI-compatible gateway)
 export HINDSIGHT_API_LLM_PROVIDER=requesty
