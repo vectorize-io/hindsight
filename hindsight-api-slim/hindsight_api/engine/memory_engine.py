@@ -7025,6 +7025,9 @@ class MemoryEngine(MemoryEngineInterface):
                 if item_doc_id is not None:
                     groups_by_doc_id[item_doc_id] = group
 
+            from .memories import get_memories as _get_memories_for_groups
+
+            store_owned = _get_memories_for_groups().store_owned_for(bank_id)
             result = [[] for _ in contents]
             total_usage = TokenUsage()
             total_processed_content_tokens = 0
@@ -7051,24 +7054,55 @@ class MemoryEngine(MemoryEngineInterface):
                 else:
                     group_outbox_callback = outbox_callback if is_last_group else None
 
-                group_outcome = await self._retain_batch_async_internal(
-                    bank_id=bank_id,
-                    contents=group.contents,
-                    request_context=request_context,
-                    document_id=group.document_id,
-                    is_first_batch=True,
-                    fact_type_override=fact_type_override,
-                    document_tags=document_tags,
-                    operation_id=operation_id,
-                    strategy=strategy,
-                    outbox_callback=group_outbox_callback,
-                )
+                if store_owned:
+                    # A store-owned bank needs the retain SESSION, which only the execution path
+                    # opens: without one the pipeline writes the document record before extraction,
+                    # so a re-retain that then failed kept its old memories but replaced the
+                    # document's text with the failed version. The session commits the document
+                    # and its memories together, or neither. Safe to route here because a session
+                    # never token-splits, which is what keeps Postgres groups off this path.
+                    execution = await self._run_retain_execution(
+                        bank_id=bank_id,
+                        contents=group.contents,
+                        request_context=request_context,
+                        document_id=group.document_id,
+                        fact_type_override=fact_type_override,
+                        document_tags=document_tags,
+                        operation_id=operation_id,
+                        strategy=strategy,
+                        outbox_callback=group_outbox_callback,
+                        outbox_callback_factory=None,
+                        start_time=start_time,
+                    )
+                    group_ids, group_usage, group_processed = (
+                        execution.unit_ids,
+                        execution.usage,
+                        execution.processed_content_tokens,
+                    )
+                else:
+                    group_outcome = await self._retain_batch_async_internal(
+                        bank_id=bank_id,
+                        contents=group.contents,
+                        request_context=request_context,
+                        document_id=group.document_id,
+                        is_first_batch=True,
+                        fact_type_override=fact_type_override,
+                        document_tags=document_tags,
+                        operation_id=operation_id,
+                        strategy=strategy,
+                        outbox_callback=group_outbox_callback,
+                    )
+                    group_ids, group_usage, group_processed = (
+                        group_outcome.memory_ids,
+                        group_outcome.usage,
+                        group_outcome.processed_content_tokens,
+                    )
                 for local_idx, origin_idx in enumerate(group.origins):
-                    if local_idx < len(group_outcome.memory_ids):
-                        result[origin_idx] = group_outcome.memory_ids[local_idx]
-                total_usage = total_usage + group_outcome.usage
+                    if local_idx < len(group_ids):
+                        result[origin_idx] = group_ids[local_idx]
+                total_usage = total_usage + group_usage
                 total_processed_content_tokens = merge_processed_content_tokens(
-                    total_processed_content_tokens, group_outcome.processed_content_tokens
+                    total_processed_content_tokens, group_processed
                 )
 
         # A cancelled run (bank deleted mid-flight) skips the completion side
@@ -7313,9 +7347,11 @@ class MemoryEngine(MemoryEngineInterface):
         within one pass, and the only document that spans sub-batches here is an
         oversized SINGLE item, whose slices all replay the same body — so the
         per-document chunk_index offset stays valid. Shared-document batches are
-        handled by ``retain_batch_async`` itself (one pass per document), never
-        here, because splitting one document across differently-bodied sub-batches
-        trips the streaming pipeline's content-hash ownership check.
+        handled by ``retain_batch_async`` itself (one pass per document), because
+        splitting one document across differently-bodied sub-batches trips the
+        streaming pipeline's content-hash ownership check. The exception is a
+        store-owned bank, whose groups come here one at a time for the session:
+        a session never splits, so the check cannot trip.
         """
         if outbox_callback is None and outbox_callback_factory is not None:
             outbox_callback = outbox_callback_factory(contents)
@@ -9784,13 +9820,34 @@ class MemoryEngine(MemoryEngineInterface):
 
             try:
                 get_metrics_collector().record_recall_phase("swr_prelude", time.perf_counter() - backend_acquire_start)
-                if query_embedding is None:
+                from .search.retrieval import resolve_temporal_constraint
+
+                async def _embed_query():
+                    if query_embedding is not None:
+                        return query_embedding
                     query_embeddings = await embedding_utils.generate_embeddings_batch(
                         self.embeddings,
                         [query],
                         input_type="query",
                     )
-                    query_embedding = query_embeddings[0]
+                    return query_embeddings[0]
+
+                # The temporal window is resolved HERE, before the store is asked, because a store
+                # that answers the whole recall is handed only the window: resolving it inside the
+                # pipeline below left such a store ignoring the bank's enable_temporal_retrieval
+                # and never seeing the dates in the query. Beside the embedding rather than after
+                # it: the date extraction is CPU off the loop and the embedding is a network call,
+                # so together they cost about what the slower one does alone.
+                query_embedding, temporal_constraint = await asyncio.gather(
+                    _embed_query(),
+                    resolve_temporal_constraint(
+                        query,
+                        temporal_window=temporal_window,
+                        enable_temporal_retrieval=enable_temporal_retrieval,
+                        question_date=question_date,
+                        query_analyzer=self.query_analyzer,
+                    ),
+                )
                 step_duration = time.perf_counter() - step_start
                 log_buffer.append(f"  [1] Generate query embedding: {step_duration:.3f}s")
             finally:
@@ -9835,15 +9892,9 @@ class MemoryEngine(MemoryEngineInterface):
                     query_embedding=str(query_embedding),
                     query_text=query,
                     limit=thinking_budget,
-                    # The field is declared `tuple[datetime, datetime] | None`, and a store that
-                    # claims the recall reads it as one. `temporal_window` is a `TemporalWindow`
-                    # here, so it is unpacked at the boundary rather than handed over as the model
-                    # -- the same conversion the pipeline below does for `recall_unified`.
-                    # `FullRecallRequest` does not validate at construction, so passing the model
-                    # through surfaces only inside the store, as a TypeError on the first index.
-                    temporal_window=(
-                        (temporal_window.start, temporal_window.end) if temporal_window is not None else None
-                    ),
+                    # Already a `(start, end)` tuple, the type the field declares: the resolved
+                    # window, so the bank's toggle and the query's dates are both in it.
+                    temporal_window=temporal_constraint,
                     tags=tags,
                     tags_match=tags_match,
                     tag_groups=tag_groups,
@@ -9971,7 +10022,14 @@ class MemoryEngine(MemoryEngineInterface):
                         created_before=created_before,
                         min_semantic=min_scores.semantic if min_scores else None,
                         min_keyword=min_scores.keyword if min_scores else None,
-                        temporal_window=temporal_window,
+                        # The window resolved above, so a store that declined does not cost a
+                        # second date extraction.
+                        temporal_window=(
+                            TemporalWindow.model_construct(start=temporal_constraint[0], end=temporal_constraint[1])
+                            if temporal_constraint is not None
+                            else None
+                        ),
+                        temporal_resolved=True,
                         enable_text_search=enable_text_search,
                         enable_temporal_retrieval=enable_temporal_retrieval,
                         enable_graph_retrieval=enable_graph_retrieval,
@@ -17289,10 +17347,6 @@ class MemoryEngine(MemoryEngineInterface):
         embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [f"{name} {content}"])
         return list(embedding[0]) if embedding and embedding[0] else None
 
-    async def _generate_mental_model_embedding(self, name: str, content: str) -> str | None:
-        vec = await self._mental_model_embedding_vector(name, content)
-        return str(vec) if vec else None
-
     # -- the knowledge-page index -------------------------------------------
     #
     # A store that indexes pages holds a DERIVED copy: the row in `mental_models` is written first
@@ -19656,7 +19710,10 @@ class MemoryEngine(MemoryEngineInterface):
             await self._write_tag_scope(bank_id, request_context),
             f"mental model '{mental_model_id}'",
         )
-        embedding_str = await self._generate_mental_model_embedding(current_row["name"] or "", "")
+        # One embedding, reused for the column and the store's page index below: both describe
+        # the same name-only page, and embedding it twice cost a second call per clear.
+        embedding_vec = await self._mental_model_embedding_vector(current_row["name"] or "", "")
+        embedding_str = str(embedding_vec) if embedding_vec else None
 
         # Content is cleared to '', so re-tokenize search_vector from the name
         # alone — vchord only (see update_mental_model). Non-vchord backends leave
@@ -19691,9 +19748,7 @@ class MemoryEngine(MemoryEngineInterface):
             # findable by title, rather than leaving the index describing content that no longer
             # exists.
             if row is not None:
-                vec = None
-                if self._knowledge_index_store(bank_id) is not None:
-                    vec = await self._mental_model_embedding_vector(row["name"] or "", "")
+                vec = embedding_vec if self._knowledge_index_store(bank_id) is not None else None
                 await self._index_knowledge_page(conn, bank_id, mental_model_id, embedding=vec)
 
         return self._row_to_mental_model(row) if row else None

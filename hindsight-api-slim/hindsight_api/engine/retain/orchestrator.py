@@ -1317,6 +1317,27 @@ async def _delta_store_owned_write(
             f"new_entities={resp.get('new_entities', 0)}"
         )
 
+    # The facts on UNCHANGED chunks were not re-written above, so they still carry the previous
+    # retain's tags, metadata and observation scoping. The SQL delta syncs them with this same call
+    # inside its transaction; without it a store-owned bank ended a partial re-retain with a
+    # document whose units disagreed on their labels by whether their chunk happened to change.
+    # After the retain, not before: the units it is about to replace would only be patched to be
+    # thrown away. Skipped when no chunk survived, since then every unit was just written with the
+    # current labels and the relabel's scan of the document would find nothing to patch.
+    if set(existing_by_index) - set(changed_indices) - set(removed_indices):
+        async with acquire_with_retry(pool) as conn:
+            async with conn.transaction():
+                await fact_storage.update_memory_units_metadata_and_tags(
+                    conn,
+                    bank_id,
+                    effective_doc_id,
+                    merged_tags,
+                    retain_params.get("metadata", {}),
+                    observation_scopes=retain_params.get("observation_scopes"),
+                    label_tag_keys=label_tag_keys(getattr(config, "entity_labels", None)),
+                    ops=pool.ops,
+                )
+
     log_buffer.append(f"DELTA RETAIN COMPLETE (store-owned): {len(processed_facts)} new units")
     logger.info("\n" + "\n".join(log_buffer) + "\n")
     try:

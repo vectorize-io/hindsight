@@ -93,3 +93,54 @@ async def test_no_window_stays_none(api_client, memory, request_context, restore
 
     assert response.status_code == 200, response.text
     assert store.seen is None
+
+
+@pytest.mark.asyncio
+async def test_a_date_in_the_query_reaches_the_store_as_a_window(
+    api_client, memory, request_context, restore_default_store
+):
+    """A claiming store is handed only the window, so the engine has to extract it first.
+
+    The Postgres pipeline extracts dates from the query text itself; a store that answers the
+    whole recall never sees that step, and used to get no window at all for "what happened in
+    June 2023" — the temporal arm silently missing on exactly the queries it exists for.
+    """
+    store = await _claiming_store(memory, request_context)
+
+    response = await api_client.post(
+        f"/v1/default/banks/{store.bank_id}/memories/recall",
+        json={"query": "what happened in June 2023", "types": ["world"], "limit": 10},
+    )
+
+    assert response.status_code == 200, response.text
+    assert isinstance(store.seen, tuple), f"store got {store.seen!r}, not an extracted window"
+    start, end = store.seen
+    assert (start.year, start.month) == (2023, 6), store.seen
+    assert (end.year, end.month) == (2023, 6), store.seen
+
+
+@pytest.mark.asyncio
+async def test_the_bank_toggle_withholds_the_window(api_client, memory, request_context, restore_default_store):
+    """``enable_temporal_retrieval`` off is the single switch for the arm, on both paths.
+
+    So even an explicit window must not reach the store: the pipeline ignores it for such a bank,
+    and a store that answers the recall has no other way to learn the arm is off.
+    """
+    store = await _claiming_store(memory, request_context)
+    updated = await api_client.patch(
+        f"/v1/default/banks/{store.bank_id}/config", json={"updates": {"enable_temporal_retrieval": False}}
+    )
+    assert updated.status_code == 200, updated.text
+
+    response = await api_client.post(
+        f"/v1/default/banks/{store.bank_id}/memories/recall",
+        json={
+            "query": "what happened in June 2023",
+            "types": ["world"],
+            "limit": 10,
+            "temporal_window": {"start": "2023-04-01T00:00:00Z", "end": "2023-06-30T23:59:59Z"},
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert store.seen is None
