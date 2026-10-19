@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pytest
 
+from hindsight_system_tests.memory_reads import assert_detail_matches_listing
 from hindsight_system_tests.payloads import extracted, fact, observes
 
 pytestmark = pytest.mark.asyncio
@@ -85,29 +86,6 @@ async def test_raw_recall_is_unaffected_by_the_observation(client, consolidated_
     assert sorted(r.text for r in response.results) == sorted([BERLIN, STAYED])
 
 
-# Fields the listing and the single-memory read both return under the same name.
-# The detail view names the fact type `type` and lists entities instead of joining
-# them; both are compared separately below.
-SHARED_FIELDS = [
-    "id",
-    "text",
-    "context",
-    "date",
-    "document_id",
-    "chunk_id",
-    "mentioned_at",
-    "occurred_start",
-    "occurred_end",
-    "tags",
-    "metadata",
-    "state",
-    "invalidation_reason",
-    "invalidated_at",
-    "edited_at",
-    "consolidated_at",
-    "consolidation_failed_at",
-]
-
 
 async def test_reading_a_fact_alone_agrees_with_the_listing(client, consolidated_bank):
     """Opening one memory must show what the listing showed for it, including
@@ -121,9 +99,4 @@ async def test_reading_a_fact_alone_agrees_with_the_listing(client, consolidated
     for row in facts:
         assert row.consolidated_at is not None
         assert row.consolidation_failed_at is None
-        listed = row.model_dump(by_alias=True)
-        detail = await client.memory.get_memory(consolidated_bank, row.id)
-
-        assert {f: detail[f] for f in SHARED_FIELDS} == {f: listed[f] for f in SHARED_FIELDS}
-        assert detail["type"] == row.fact_type
-        assert ", ".join(detail["entities"]) == row.entities
+        await assert_detail_matches_listing(client, consolidated_bank, row)

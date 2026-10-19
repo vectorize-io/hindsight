@@ -18,6 +18,7 @@ import asyncio
 
 import pytest
 
+from hindsight_system_tests.memory_reads import assert_detail_matches_listing
 from hindsight_system_tests.payloads import extracted, fact, observes
 
 pytestmark = pytest.mark.asyncio
@@ -96,12 +97,7 @@ async def test_reading_a_failed_fact_alone_shows_the_failure(client, failed_roun
     for row in memories.items:
         assert row.consolidation_failed_at is not None
         assert row.consolidated_at is None
-        listed = row.model_dump(by_alias=True)
-        detail = await client.memory.get_memory(failed_round, row.id)
-
-        for field in ("id", "text", "state", "tags", "document_id", "consolidated_at", "consolidation_failed_at"):
-            assert detail[field] == listed[field], field
-        assert detail["type"] == row.fact_type
+        await assert_detail_matches_listing(client, failed_round, row)
 
 
 async def test_recovery_is_explicit_and_clears_the_backlog(client, llm, failed_round):
