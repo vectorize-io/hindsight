@@ -2911,6 +2911,7 @@ class Hindsight:
         reflect_default_options: dict[str, Any] | None = None,
         reflect_use_decision_model: bool | None = None,
         mental_model_refresh_use_decision_model: bool | None = None,
+        mental_model_delta_use_decision_model: bool | None = None,
         enable_text_search: bool | None = None,
         enable_temporal_retrieval: bool | None = None,
         enable_graph_retrieval: bool | None = None,
@@ -2980,6 +2981,7 @@ class Hindsight:
                 reflect_default_options=reflect_default_options,
                 reflect_use_decision_model=reflect_use_decision_model,
                 mental_model_refresh_use_decision_model=mental_model_refresh_use_decision_model,
+                mental_model_delta_use_decision_model=mental_model_delta_use_decision_model,
                 enable_text_search=enable_text_search,
                 enable_temporal_retrieval=enable_temporal_retrieval,
                 enable_graph_retrieval=enable_graph_retrieval,
@@ -3046,6 +3048,7 @@ class Hindsight:
         reflect_default_options: dict[str, Any] | None = None,
         reflect_use_decision_model: bool | None = None,
         mental_model_refresh_use_decision_model: bool | None = None,
+        mental_model_delta_use_decision_model: bool | None = None,
         enable_text_search: bool | None = None,
         enable_temporal_retrieval: bool | None = None,
         enable_graph_retrieval: bool | None = None,
@@ -3126,6 +3129,9 @@ class Hindsight:
             reflect_use_decision_model: When the server has a decision model, reflect lets it
                 prune the evidence and decide when to stop (fewer LLM calls). False keeps agent turns.
             mental_model_refresh_use_decision_model: The same, for knowledge-page refreshes.
+            mental_model_delta_use_decision_model: When the server has a decision model, a delta
+                knowledge-page refresh asks it which new memories could change the page instead
+                of running reflect. False keeps reflect.
             knowledge_page_default_trigger: Trigger fields merged over the built-in default for new
                 knowledge pages, e.g. {"refresh_cron": "0 * * * *"}.
             enable_observations: Toggle automatic observation consolidation after retain().
@@ -3196,6 +3202,7 @@ class Hindsight:
                 "reflect_default_options": reflect_default_options,
                 "reflect_use_decision_model": reflect_use_decision_model,
                 "mental_model_refresh_use_decision_model": mental_model_refresh_use_decision_model,
+                "mental_model_delta_use_decision_model": mental_model_delta_use_decision_model,
                 "enable_text_search": enable_text_search,
                 "enable_temporal_retrieval": enable_temporal_retrieval,
                 "enable_graph_retrieval": enable_graph_retrieval,

@@ -145,9 +145,7 @@ async def test_falls_back_to_reflect(memory, request_context, gated, monkeypatch
         memory._reflect_decision_model_client.could_change_page.side_effect = RuntimeError("down")
     page = await _page_with_new_memories(memory, request_context)
     if why == "bank_opted_out":
-        await memory._config_resolver.update_bank_config(
-            page.bank_id, {"mental_model_refresh_use_decision_model": False}
-        )
+        await memory._config_resolver.update_bank_config(page.bank_id, {"mental_model_delta_use_decision_model": False})
 
     refreshed = await memory.refresh_mental_model(
         bank_id=page.bank_id, mental_model_id=page.mm_id, request_context=request_context
@@ -155,6 +153,19 @@ async def test_falls_back_to_reflect(memory, request_context, gated, monkeypatch
 
     assert len(gated.reflect) == 1
     assert "delta_gate" not in refreshed["reflect_response"]
+
+
+async def test_the_refresh_switch_does_not_turn_the_gate_off(memory, request_context, gated):
+    """Each decision-model path has its own opt-out: turning off the refresh's reflect one leaves the gate on."""
+    page = await _page_with_new_memories(memory, request_context)
+    await memory._config_resolver.update_bank_config(page.bank_id, {"mental_model_refresh_use_decision_model": False})
+
+    refreshed = await memory.refresh_mental_model(
+        bank_id=page.bank_id, mental_model_id=page.mm_id, request_context=request_context
+    )
+
+    assert gated.reflect == []
+    assert refreshed["reflect_response"]["delta_gate"] == {"memories": 2, "kept": 1}
 
 
 async def test_directives_reach_the_gated_edit(memory, request_context, gated):

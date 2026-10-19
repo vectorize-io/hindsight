@@ -601,6 +601,12 @@ export type BankTemplateConfig = {
    */
   mental_model_refresh_use_decision_model?: boolean | null;
   /**
+   * Mental Model Delta Use Decision Model
+   *
+   * When the server has a decision model, a delta knowledge-page refresh asks it which new memories could change the page instead of running reflect
+   */
+  mental_model_delta_use_decision_model?: boolean | null;
+  /**
    * Disposition Skepticism
    *
    * Skepticism trait (1-5)

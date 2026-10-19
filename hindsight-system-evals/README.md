@@ -193,7 +193,7 @@ The wave-1 page must state the old value first; the trap is the page still asser
 Every wave also carries the hard corpus, so most of what arrives is unrelated.
 
 Behind it: with a decision model set up, a delta refresh asks it which new memories to read
-(`HINDSIGHT_API_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL`, on by default) and keeps only the memories it judges could
+(`HINDSIGHT_API_MENTAL_MODEL_DELTA_USE_DECISION_MODEL`, on by default) and keeps only the memories it judges could
 change the page, one memory at a time. A memory it drops is never read again, and on one
 cost run a decision model dropped all 20 on-topic memories without a sign anywhere but the
 page. Run it with the gate on and off; the gate is only worth its savings if this stays

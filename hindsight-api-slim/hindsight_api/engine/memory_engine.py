@@ -17589,7 +17589,7 @@ class MemoryEngine(MemoryEngineInterface):
         own memories do, and the memories in this page's scope are already here.
         """
         resolved = await self._config_resolver.resolve_full_config(bank_id, request_context)
-        if not resolved.mental_model_refresh_use_decision_model:
+        if not resolved.mental_model_delta_use_decision_model:
             return None
         decision_model = self._reflect_decision_model()
         if decision_model is None:

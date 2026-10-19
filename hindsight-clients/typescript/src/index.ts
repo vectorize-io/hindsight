@@ -983,6 +983,8 @@ export class HindsightClient {
       reflectUseDecisionModel?: boolean;
       /** The same, for knowledge-page refreshes. */
       mentalModelRefreshUseDecisionModel?: boolean;
+      /** When the server has a decision model, a delta knowledge-page refresh asks it which new memories could change the page instead of running reflect. */
+      mentalModelDeltaUseDecisionModel?: boolean;
       /** Token budget for source facts during reflect. -1 disables. */
       reflectSourceFactsMaxTokens?: number;
       /** Token budget for facts returned by recall. */
@@ -1094,6 +1096,8 @@ export class HindsightClient {
       updates.reflect_use_decision_model = options.reflectUseDecisionModel;
     if (options.mentalModelRefreshUseDecisionModel !== undefined)
       updates.mental_model_refresh_use_decision_model = options.mentalModelRefreshUseDecisionModel;
+    if (options.mentalModelDeltaUseDecisionModel !== undefined)
+      updates.mental_model_delta_use_decision_model = options.mentalModelDeltaUseDecisionModel;
     if (options.reflectSourceFactsMaxTokens !== undefined)
       updates.reflect_source_facts_max_tokens = options.reflectSourceFactsMaxTokens;
     if (options.recallMaxTokens !== undefined) updates.recall_max_tokens = options.recallMaxTokens;

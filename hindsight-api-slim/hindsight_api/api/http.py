@@ -3955,6 +3955,11 @@ class BankTemplateConfig(BaseModel):
     mental_model_refresh_use_decision_model: bool | None = Field(
         default=None, description="The same, for knowledge-page refreshes"
     )
+    mental_model_delta_use_decision_model: bool | None = Field(
+        default=None,
+        description="When the server has a decision model, a delta knowledge-page refresh asks it which new "
+        "memories could change the page instead of running reflect",
+    )
     disposition_skepticism: int | None = Field(default=None, ge=1, le=5, description="Skepticism trait (1-5)")
     disposition_literalism: int | None = Field(default=None, ge=1, le=5, description="Literalism trait (1-5)")
     disposition_empathy: int | None = Field(default=None, ge=1, le=5, description="Empathy trait (1-5)")

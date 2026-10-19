@@ -6381,6 +6381,9 @@ components:
         mental_model_refresh_use_decision_model:
           nullable: true
           type: boolean
+        mental_model_delta_use_decision_model:
+          nullable: true
+          type: boolean
         disposition_skepticism:
           maximum: 5.0
           minimum: 1.0

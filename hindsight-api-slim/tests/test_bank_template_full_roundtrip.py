@@ -73,6 +73,7 @@ _SAMPLE_VALUES: dict[str, Any] = {
     "enable_reranking": False,
     "reflect_use_decision_model": False,
     "mental_model_refresh_use_decision_model": False,
+    "mental_model_delta_use_decision_model": False,
     "disposition_skepticism": 4,
     "disposition_literalism": 2,
     "disposition_empathy": 5,
