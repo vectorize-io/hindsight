@@ -50,6 +50,9 @@ Before writing anything, find what is already there:
 
 ## 4. Build a POC fix and prove it
 
+Work on a new branch off `origin/main` (`triage/<issue-number-or-short-slug>`), so the POC never
+mixes with other work and can become the full fix later.
+
 **No workarounds.** The POC — and the plan built on it — must be the long-term fix: the one you'd
 want in the codebase in a year. Not a retry around a race, a special case for the reporter's input,
 a bigger timeout, a swallowed error, a flag to turn the problem off, or a guard at one call site
@@ -72,9 +75,9 @@ runs each. Use the repo's perf tools when they fit (`./scripts/benchmarks/`,
 change). No numbers, no plan.
 
 **UI change:** start the API and the control plane so the user can see it. Use free ports (check
-with `lsof -nP -iTCP:<port> -sTCP:LISTEN` — other worktrees often hold 8888/9999) and a new, unique
-pg0 instance (`HINDSIGHT_API_DATABASE_URL=pg0://triage-<N>`). Write down each PID and the pg0
-instance. Seed the data needed to show the change, open it in the browser if browser tools are
+with `lsof -nP -iTCP:<port> -sTCP:LISTEN` — other worktrees often hold 8888/9999) and a new,
+unique pg0 instance (`HINDSIGHT_API_DATABASE_URL=pg0://triage-<issue-number-or-short-slug>`).
+Write down each PID and the pg0 instance. Seed the data needed to show the change, open it in the browser if browser tools are
 available, and give the user the link.
 
 **Services you start:** stop only your own — kill your PIDs (never `pkill -f hindsight`/`pytest`),
