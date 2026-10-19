@@ -6,12 +6,12 @@ import pytest
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
 
 
-def _make_minimax(extra_body=None) -> OpenAICompatibleLLM:
+def _make_minimax(extra_body=None, model: str = "MiniMax-M3") -> OpenAICompatibleLLM:
     return OpenAICompatibleLLM(
         provider="minimax",
         api_key="test-key",
         base_url="",
-        model="MiniMax-M3",
+        model=model,
         extra_body=extra_body,
     )
 
@@ -55,6 +55,18 @@ async def test_minimax_call_disables_thinking_by_default():
         await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
 
     assert llm._client.chat.completions.create.call_args.kwargs["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
+@pytest.mark.asyncio
+async def test_minimax_m31_call_uses_adaptive_thinking_by_default():
+    # M3.1 rejects thinking.type="disabled" with HTTP 400 (#5718).
+    llm = _make_minimax(model="MiniMax-M3.1-Flash-Preview")
+    llm._client.chat.completions.create = AsyncMock(return_value=_text_response())
+
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
+
+    assert llm._client.chat.completions.create.call_args.kwargs["extra_body"] == {"thinking": {"type": "adaptive"}}
 
 
 @pytest.mark.asyncio

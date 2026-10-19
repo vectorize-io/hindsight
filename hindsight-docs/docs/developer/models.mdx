@@ -223,6 +223,8 @@ export HINDSIGHT_API_LLM_MODEL=your-local-model
 export HINDSIGHT_API_LLM_PROVIDER=minimax
 export HINDSIGHT_API_LLM_API_KEY=your-minimax-api-key
 export HINDSIGHT_API_LLM_MODEL=MiniMax-M3  # or MiniMax-M2.7 for the previous generation
+# MiniMax-M3.1-* always thinks (Hindsight sends thinking=adaptive) and defaults to max effort;
+# lower it with: export HINDSIGHT_API_LLM_REASONING_EFFORT=low
 
 # DeepSeek (https://api.deepseek.com)
 export HINDSIGHT_API_LLM_PROVIDER=deepseek

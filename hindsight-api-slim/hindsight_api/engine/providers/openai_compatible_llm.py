@@ -1233,7 +1233,9 @@ class OpenAICompatibleLLM(LLMInterface):
     def _apply_provider_extra_body_defaults(self, extra_body: dict[str, Any]) -> None:
         """Apply provider-specific extra_body defaults while preserving user overrides."""
         if self.provider == "minimax":
-            extra_body.setdefault("thinking", {"type": "disabled"})
+            # M3.1 always thinks: ``thinking.type="disabled"`` is an HTTP 400 there (#5718).
+            thinking = "adaptive" if "m3.1" in self.model.lower() else "disabled"
+            extra_body.setdefault("thinking", {"type": thinking})
 
     async def call(
         self,
