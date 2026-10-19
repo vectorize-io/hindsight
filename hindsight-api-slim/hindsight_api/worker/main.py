@@ -10,6 +10,7 @@ Stop with Ctrl+C (graceful shutdown).
 import argparse
 import asyncio
 import atexit
+import contextlib
 import logging
 import os
 import signal
@@ -17,10 +18,14 @@ import socket
 import sys
 import warnings
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from ..config import get_config, load_dotenv_for_entrypoint
 from ..engine.task_backend import WorkerTaskBackend
 from .poller import WorkerPoller
+
+if TYPE_CHECKING:
+    import uvicorn
 
 # Filter deprecation warnings from third-party libraries
 warnings.filterwarnings("ignore", message="websockets.legacy is deprecated")
@@ -50,6 +55,23 @@ def _install_shutdown_signal_handlers(
     except NotImplementedError:
         return False
     return True
+
+
+def _http_server(app: Callable[..., Any], host: str, port: int) -> "uvicorn.Server":
+    """Build the worker's uvicorn server with uvicorn's own signal capture turned off.
+
+    The worker owns SIGINT/SIGTERM through the asyncio loop and stops the server itself
+    (``should_exit``). Left on, uvicorn's ``capture_signals`` re-raises the captured
+    signal after the server stops, so one SIGTERM reaches the worker's handler twice and
+    the second call takes the force-exit path, skipping the drain and task release (#5611).
+    Where asyncio has no signal handlers (Windows), Ctrl+C still ends the worker through the
+    default KeyboardInterrupt, as it did when uvicorn re-raised the signal.
+    """
+    import uvicorn
+
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="info", access_log=False))
+    server.capture_signals = contextlib.nullcontext  # type: ignore[method-assign]
+    return server
 
 
 def create_worker_app(poller: WorkerPoller, memory):
@@ -262,7 +284,6 @@ def main():
 
     async def run():
         nonlocal memory, poller
-        import uvicorn
 
         from ..extensions import OperationValidatorExtension, TenantExtension, load_extension
 
@@ -364,15 +385,7 @@ def main():
                 flush=True,
             )
 
-        # Create uvicorn config and server
-        uvicorn_config = uvicorn.Config(
-            app,
-            host=args.http_host,
-            port=args.http_port,
-            log_level="info",  # Reduce uvicorn noise
-            access_log=False,
-        )
-        server = uvicorn.Server(uvicorn_config)
+        server = _http_server(app, args.http_host, args.http_port)
 
         # Start the event-loop stall watchdog: if a task blocks the loop, this
         # logs the culprit stack so a failing /health can be attributed to a

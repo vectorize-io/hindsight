@@ -1,12 +1,14 @@
 """Tests for hindsight_api.worker.main entry-point helpers."""
 
 import asyncio
+import os
 import signal
+import sys
 from unittest.mock import MagicMock
 
 import pytest
 
-from hindsight_api.worker.main import _install_shutdown_signal_handlers
+from hindsight_api.worker.main import _http_server, _install_shutdown_signal_handlers
 
 
 def test_install_shutdown_signal_handlers_unix_path():
@@ -100,3 +102,34 @@ def test_main_warns_on_retired_flags_and_keeps_env_config(
     assert "--log-level debug is ignored: set HINDSIGHT_API_LOG_LEVEL instead." in out.err
     assert "Max retries: 7" in out.out
     assert config.worker_max_retries == 7
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGTERM") or sys.platform == "win32", reason="Unix signals only")
+async def test_one_sigterm_reaches_worker_handler_once():
+    """One SIGTERM must call the worker's handler once. Uvicorn's own signal capture
+    re-raised it after the server stopped, so the handler saw a "second signal" and
+    force-exited before releasing its claimed tasks (#5611)."""
+    loop = asyncio.get_running_loop()
+    calls = []
+    loop.add_signal_handler(signal.SIGTERM, lambda: calls.append(1))
+    try:
+
+        async def app(scope, receive, send):
+            pass
+
+        server = _http_server(app, "127.0.0.1", 0)
+        serve_task = asyncio.create_task(server.serve())
+
+        async def _started() -> None:
+            while not server.started:
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(_started(), timeout=5)
+        os.kill(os.getpid(), signal.SIGTERM)
+        await asyncio.sleep(0.2)
+        server.should_exit = True  # the worker stops the server itself on shutdown
+        await asyncio.wait_for(serve_task, timeout=5)
+        await asyncio.sleep(0.2)
+    finally:
+        loop.remove_signal_handler(signal.SIGTERM)
+    assert calls == [1]
