@@ -167,6 +167,9 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
     async def embeddings(request: Request) -> JSONResponse:
         body = await request.json()
         validate_embeddings(body)
+        if stubs.embeddings.fail_with_status is not None:
+            status = stubs.embeddings.fail_with_status
+            return _provider_error(f"stub provider error {status}", code="stub_error", status=status)
 
         raw_input = body["input"]
         inputs = [raw_input] if isinstance(raw_input, str) else raw_input

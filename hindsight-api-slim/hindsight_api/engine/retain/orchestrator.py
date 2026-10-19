@@ -2832,11 +2832,13 @@ async def _streaming_retain_batch(
                     f"[streaming] Producer: skipped {skipped_total}/{total_chunks} already-committed chunks"
                 )
 
-            # Wait for all extractions; collect exceptions
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for r in results:
-                if isinstance(r, BaseException):
-                    producer_error.append(r)
+            # Stop at the first failed chunk. The consumer commits nothing once
+            # `producer_error` is set (#5589), so the remaining extractions would be
+            # spend on results that are thrown away; the `finally` below cancels them.
+            try:
+                await asyncio.gather(*tasks)
+            except Exception as exc:
+                producer_error.append(exc)
 
             # Signal the consumer that production is done
             await chunk_queue.put(None)
@@ -2900,7 +2902,7 @@ async def _streaming_retain_batch(
             item = await memory_budget.next_item_or_producer_waiting(chunk_queue) if batch else await chunk_queue.get()
             if item is None:
                 # Process any remaining items
-                if batch and not pipeline_aborted[0]:
+                if batch and not pipeline_aborted[0] and not producer_error:
                     await _process_db_batch(
                         batch,
                         consumer_batch_idx,
@@ -2924,11 +2926,15 @@ async def _streaming_retain_batch(
             # count alone let a batch of fact-dense chunks grow far past any memory a
             # worker was sized for.
             if producer_waiting or len(batch) >= chunk_batch_size or memory_budget.should_flush(batch_bytes):
-                if pipeline_aborted[0]:
-                    # Another request took over the document — discard this batch
+                if pipeline_aborted[0] or producer_error:
+                    # Another request took over the document, or a chunk failed to
+                    # extract — discard this batch. Committing after a failed chunk
+                    # replaces the document (its first write deletes the previous
+                    # memories) with a version the retain is about to report as
+                    # failed (#5589).
                     log_buffer.append(
                         f"[streaming] Consumer: discarding batch of {len(batch)} chunks "
-                        f"(pipeline aborted due to concurrent takeover)"
+                        f"({'a chunk failed to extract' if producer_error else 'pipeline aborted due to concurrent takeover'})"
                     )
                     _release_batch(batch)
                     batch = []
