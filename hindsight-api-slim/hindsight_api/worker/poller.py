@@ -401,6 +401,11 @@ class WorkerPoller:
 
         self._optional_routines = OptionalRoutines(self._backend)
         self._shutdown = asyncio.Event()
+        # Set when a task finishes: the idle poll wakes at once to fill the freed slot
+        # instead of sleeping out the rest of poll_interval_ms (#5650). A new submit
+        # deliberately does NOT wake it: the wait is what lets repeated refresh and
+        # consolidation submits fold into one still-pending operation (see #4335).
+        self._slot_freed = asyncio.Event()
         self._current_tasks: set[asyncio.Task] = set()
         self._in_flight_count = 0
         self._in_flight_lock = asyncio.Lock()
@@ -1170,6 +1175,7 @@ class WorkerPoller:
                     self._in_flight_by_type[operation_type] = count - 1
                     if self._in_flight_by_type[operation_type] == 0:
                         del self._in_flight_by_type[operation_type]
+                self._slot_freed.set()
 
     async def _run_executor(self, task: ClaimedTask, task_type: str, holder: StageHolder | None = None) -> None:
         """Run the task executor under its type's wall-clock ceiling, if it has one."""
@@ -1851,6 +1857,8 @@ class WorkerPoller:
 
         while not self._shutdown.is_set():
             try:
+                # Cleared before the claim: a slot freed during it re-arms the wait below.
+                self._slot_freed.clear()
                 # Claim a batch of tasks (respecting slot limits)
                 tasks = await self.claim_batch()
                 self._last_poll_at = time.monotonic()
@@ -1884,15 +1892,16 @@ class WorkerPoller:
                     # Continue immediately to claim more tasks (if slots available)
                     continue
 
-                # No tasks claimed (either no pending tasks or slots full)
-                # Wait before polling again
+                # No tasks claimed (either no pending tasks or slots full).
+                # Wait for the poll interval, shutdown, or a task finishing.
+                waiters = [asyncio.ensure_future(self._shutdown.wait()), asyncio.ensure_future(self._slot_freed.wait())]
                 try:
-                    await asyncio.wait_for(
-                        self._shutdown.wait(),
-                        timeout=self._poll_interval_ms / 1000,
+                    await asyncio.wait(
+                        waiters, timeout=self._poll_interval_ms / 1000, return_when=asyncio.FIRST_COMPLETED
                     )
-                except asyncio.TimeoutError:
-                    pass  # Normal timeout, continue polling
+                finally:
+                    for w in waiters:
+                        w.cancel()
 
                 # Log progress stats periodically
                 await self._log_progress_if_due()
