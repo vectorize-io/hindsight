@@ -797,9 +797,9 @@ GRAPH_SEED_LIMIT = 20
 
 #: Most edges of each kind one graph-view answer carries: the links a store reads (with the ones
 #: observations inherit from them), and the edges the engine derives (shared source, shared
-#: entity) -- so at most twice this in all. The UI cannot
-#: usefully draw more, and uncapped a bank of a few thousand observations derives hundreds of
-#: thousands -- seconds of Python on the event loop and a multi-MB answer (#5703).
+#: entity) -- so at most twice this in all. The UI cannot usefully draw more, and uncapped a bank
+#: of a few thousand observations derives hundreds of thousands -- seconds of Python on the event
+#: loop and a multi-MB answer (#5703).
 GRAPH_MAX_EDGES = 10_000
 
 
