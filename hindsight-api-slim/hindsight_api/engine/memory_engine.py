@@ -923,10 +923,9 @@ def _build_llm(
             f"let {operation} use the global strategy, or give it 'failover'/'round-robin'."
         )
 
-    # Inherit ``fallback_prefix``'s *effective* chain, not its raw slot: an empty
-    # fallback slot inherits the global one in turn, as it does for that operation
-    # itself. Otherwise refresh -> empty reflect slot stopped short of the global
-    # chain and ran on the bare primary, never failing over (#5724).
+    # The fallback slot's *effective* chain, not its raw one: reading only the raw
+    # reflect slot left refresh on the bare primary whenever the chain was declared
+    # globally, so it never failed over (#5724).
     if prefix:
         if not members:
             members = getattr(config, f"{fallback_prefix}llm_members") or config.llm_members
