@@ -450,10 +450,40 @@ async def test_refresh_cut_off_by_the_wall_timeout_counts_as_failed(memory: Memo
         mm_id = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
 
     await memory.on_task_wall_timeout(
-        {"type": "refresh_mental_model", "bank_id": bank, "mental_model_id": mm_id}, None, "timed out"
+        {"type": "refresh_mental_model", "bank_id": bank, "mental_model_id": mm_id},
+        None,
+        "timed out",
+        "llm.codex.tools.attempt=1/2",
     )
 
     assert await memory._automatic_refresh_paused(bank, mm_id) is True
+
+
+@pytest.mark.asyncio
+async def test_refresh_cut_off_during_a_retry_backoff_does_not_pause(
+    memory: MemoryEngine, request_context, monkeypatch
+):
+    """#5561: a provider outage left the refresh sleeping out a retry backoff when the
+    ceiling fired, and the page stayed paused for days after the provider came back.
+    The failure is still recorded in history, but the next automatic trigger runs."""
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
+        await _insert_fact(conn, bank)
+
+    await memory.on_task_wall_timeout(
+        {"type": "refresh_mental_model", "bank_id": bank, "mental_model_id": mm_id},
+        None,
+        "timed out",
+        "llm.codex.tools.attempt=1/2.backoff",
+    )
+
+    assert await memory._automatic_refresh_paused(bank, mm_id) is False
+    history = await memory.get_mental_model_history(bank, mm_id, request_context=request_context)
+    assert [h["kind"] for h in history] == ["refresh_failed"]
+    _stall_worker(memory, monkeypatch)
+    await MaintenanceLoop(memory)._run_scheduled_mm_refresh()
+    assert await _count_refresh_ops(memory, bank) == 1
 
 
 @pytest.mark.asyncio

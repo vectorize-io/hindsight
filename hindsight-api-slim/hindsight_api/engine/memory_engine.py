@@ -4879,7 +4879,9 @@ class MemoryEngine(MemoryEngineInterface):
                         )
                     raise
 
-    async def on_task_wall_timeout(self, task_dict: dict[str, Any], schema: str | None, error_message: str) -> None:
+    async def on_task_wall_timeout(
+        self, task_dict: dict[str, Any], schema: str | None, error_message: str, stage: str
+    ) -> None:
         """Fire the failure notifications a wall-clock-cancelled task could not fire itself.
 
         The worker's ceiling cancels the executor, so ``execute_task``'s ``except``
@@ -4892,6 +4894,11 @@ class MemoryEngine(MemoryEngineInterface):
         A timed-out mental-model refresh is recorded like any other failed refresh,
         for the same reason: its ``except`` blocks never ran, and without the record
         the automatic triggers would queue it again on the next tick (#4532).
+
+        Except when the ceiling fired during a retry backoff (``stage`` ends in
+        ``.backoff``): the time ran out waiting for a provider that had just failed,
+        not on a prompt that can never finish. That is the temporary failure #5394
+        already declines to pause on, so it is recorded without pausing (#5561).
         """
         if task_dict.get("type") == "refresh_mental_model":
             token = _current_schema.set(schema)
@@ -4902,6 +4909,7 @@ class MemoryEngine(MemoryEngineInterface):
                     outcome="refresh_failed_error",
                     failure_reason="unexpected_error",
                     error_message=error_message,
+                    pause_automatic=not stage.endswith(".backoff"),
                 )
             finally:
                 _current_schema.reset(token)

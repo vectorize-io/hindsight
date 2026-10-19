@@ -188,6 +188,8 @@ async def _attempt_permits(scope: str):
             # provider classifies the error and sleeps out its backoff. Suffix
             # the stage so `attempt=N` always means "permits held, request in
             # flight" (#3002); the next attempt re-stamps after re-acquiring.
+            # MemoryEngine.on_task_wall_timeout reads this suffix: a refresh cut off
+            # during a backoff does not pause automatic refresh (#5561).
             stage = get_stage()
             if stage is not None and not stage.endswith(".backoff"):
                 set_stage(f"{stage}.backoff")

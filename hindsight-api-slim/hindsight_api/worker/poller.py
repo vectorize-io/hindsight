@@ -340,7 +340,7 @@ class WorkerPoller:
         slot_reservations: dict[str, int] | None = None,
         consolidation_bank_priority: dict[str, int] | None = None,
         max_retries: int = 3,
-        on_wall_timeout: Callable[[dict[str, Any], str | None, str], Awaitable[None]] | None = None,
+        on_wall_timeout: Callable[[dict[str, Any], str | None, str, str], Awaitable[None]] | None = None,
     ):
         """
         Initialize the worker poller.
@@ -366,7 +366,7 @@ class WorkerPoller:
             max_retries: Maximum retry attempts before a task is marked failed.
                 Must be >= 0. Default 3 (matches DEFAULT_WORKER_MAX_RETRIES).
             on_wall_timeout: Optional async hook called with (task_dict, schema,
-                error_message) after a task is failed by its wall-clock ceiling.
+                error_message, stage) after a task is failed by its wall-clock ceiling.
                 The ceiling cancels the executor, so the engine's own failure
                 handling (which fires the consolidation failure webhook) never
                 runs for that outcome; this hook is how the engine still gets told.
@@ -1215,7 +1215,7 @@ class WorkerPoller:
                 raise _WallTimeoutExceeded(wall_timeout, ceiling) from e
             raise
 
-    async def _notify_wall_timeout(self, task: ClaimedTask, message: str) -> None:
+    async def _notify_wall_timeout(self, task: ClaimedTask, message: str, stage: str) -> None:
         """Tell the engine a task was failed by its ceiling. Never fatal.
 
         The whole point of the ceiling is that it cancels the executor, which means
@@ -1226,7 +1226,7 @@ class WorkerPoller:
         if self._on_wall_timeout is None:
             return
         try:
-            await self._on_wall_timeout(task.task_dict, task.schema, message)
+            await self._on_wall_timeout(task.task_dict, task.schema, message, stage)
         except Exception as e:
             logger.warning(f"Wall-timeout notification failed for task {task.operation_id}: {e}")
 
@@ -1284,7 +1284,7 @@ class WorkerPoller:
             message = e.describe(task_type, stage)
             logger.error(f"Task {task.operation_id} timed out: {message}")
             await self._write_terminal(task, "failed", lambda: self._mark_all_failed(task, message))
-            await self._notify_wall_timeout(task, message)
+            await self._notify_wall_timeout(task, message, stage)
             terminal_success = False
         except DeferOperation as e:
             # Deferral is not a terminal outcome — do not record a completion.
