@@ -103,3 +103,32 @@ async def test_entities_carry_their_kind(memory: MemoryEngine, request_context: 
             assert "entity_kind" in item, "entity_kind is part of the entity read model"
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_detail_carries_consolidation_state(memory: MemoryEngine, request_context: RequestContext):
+    """The detail view carries the same consolidation fields as the list row (#5730)."""
+    bank_id = f"test-lmu-consolidation-{uuid.uuid4().hex[:8]}"
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+    try:
+        await _retain(memory, bank_id, "Erin adopted a cat named Miso.", request_context)
+        page = await memory.list_memory_units(bank_id, limit=500, request_context=request_context)
+        unit_id = next(item["id"] for item in page["items"] if item["fact_type"] != "observation")
+
+        # Seeded with SQL: whether consolidation succeeds is not what this test is about.
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE memory_units SET consolidated_at = NULL, consolidation_failed_at = NOW() WHERE id = $1",
+                uuid.UUID(unit_id),
+            )
+
+        page = await memory.list_memory_units(bank_id, limit=500, request_context=request_context)
+        row = next(item for item in page["items"] if item["id"] == unit_id)
+        detail = await memory.get_memory_unit(bank_id, unit_id, request_context)
+
+        assert row["consolidation_failed_at"] is not None
+        assert detail["consolidation_failed_at"] == row["consolidation_failed_at"]
+        assert detail["consolidated_at"] == row["consolidated_at"] is None
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
