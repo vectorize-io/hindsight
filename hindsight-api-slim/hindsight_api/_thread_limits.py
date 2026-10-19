@@ -32,7 +32,10 @@ load time — which is why it is invoked at the very top of
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from onnxruntime import SessionOptions
 
 # Native threading env vars, each read by the respective library at load time.
 _NATIVE_THREAD_VARS = (
@@ -103,6 +106,10 @@ def _cgroup_cpu_quota(proc_cgroup: str = "/proc/self/cgroup", root: str = "/sys/
         with open(proc_cgroup) as fh:
             for line in fh:
                 _, controllers, path = line.rstrip("\n").split(":", 2)
+                if ".." in path.split("/"):
+                    # Our cgroup is outside this cgroup namespace's root, so it has no
+                    # directory under the mount; the root fallback below still applies.
+                    continue
                 if controllers == "":  # cgroup v2 unified hierarchy
                     candidates += _cgroup_ancestors(root, path)
                 elif "cpu" in controllers.split(","):  # cgroup v1 cpu controller
@@ -171,7 +178,7 @@ def onnx_intra_op_threads() -> int:
         return default_native_thread_count()
 
 
-def bound_onnx_session(options: Any, threads: int = 0) -> None:
+def bound_onnx_session(options: "SessionOptions", threads: int = 0) -> None:
     """Size an ``ort.SessionOptions`` to the CPU budget; ``threads`` > 0 overrides.
 
     Idle workers otherwise busy-wait between ops, which under a CFS quota burns the

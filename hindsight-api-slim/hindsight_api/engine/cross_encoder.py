@@ -1641,6 +1641,9 @@ class FlashRankCrossEncoder(CrossEncoderModel):
         # Configure ONNX session options before Ranker creates the session.
         # When cpu_mem_arena=False (default), ONNX won't pre-allocate an arena
         # that grows monotonically, keeping RSS bounded after rerank batches.
+        # The session is always rebuilt, not only when the arena is off: FlashRank's
+        # own session sizes its pool to every physical core with spinning on, which
+        # under a CPU quota throttled each recall for minutes (#5725).
         import onnxruntime as ort
 
         session_options = ort.SessionOptions()
@@ -1801,7 +1804,7 @@ class OnnxCrossEncoder(CrossEncoderModel):
             raise ValueError("ONNX reranker batch_size must be >= 1")
         self.batch_size = batch_size
         if threads < 0:
-            raise ValueError("ONNX reranker threads must be >= 0 (0 = ONNX Runtime default)")
+            raise ValueError("ONNX reranker threads must be >= 0 (0 = the native thread cap)")
         self.threads = threads
         self.cpu_mem_arena = cpu_mem_arena
         self.timeout = timeout

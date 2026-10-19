@@ -16,6 +16,8 @@ from hindsight_api._thread_limits import (
     _quota_to_cpus,
     apply_default_thread_limits,
     bound_onnx_session,
+    native_thread_summary,
+    onnx_intra_op_threads,
     default_native_thread_count,
 )
 
@@ -201,3 +203,22 @@ def test_bound_onnx_session(monkeypatch: pytest.MonkeyPatch) -> None:
     assert entries == {"session.intra_op.allow_spinning": "0"}
     bound_onnx_session(options, threads=5)
     assert options.intra_op_num_threads == 5
+
+
+def test_cgroup_quota_ignores_path_outside_namespace(tmp_path) -> None:
+    """A '..' path has no directory under the mount; only the root is read."""
+    proc, root = _cgroup_tree(tmp_path, "0::/../sibling\n", {"cpu.max": "200000 100000"})
+    assert _cgroup_cpu_quota(proc, root) == 2
+
+
+def test_onnx_intra_op_threads_falls_back_on_bad_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OMP_NUM_THREADS", "lots")
+    assert onnx_intra_op_threads() == default_native_thread_count()
+    monkeypatch.delenv("OMP_NUM_THREADS")
+    assert onnx_intra_op_threads() == default_native_thread_count()
+
+
+def test_native_thread_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OMP_NUM_THREADS", "3")
+    assert native_thread_summary().startswith("Native threads: 3 per pool (available CPUs=")
+    assert "cgroup CPU quota=" in native_thread_summary()
