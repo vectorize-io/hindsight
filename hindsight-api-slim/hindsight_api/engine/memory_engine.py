@@ -4372,6 +4372,7 @@ class MemoryEngine(MemoryEngineInterface):
             operation_id=task_dict.get("operation_id"),
             observation_scopes=task_dict.get("observation_scopes"),
             pending_refresh_tags=task_dict.get("pending_refresh_tags"),
+            caller_requested=task_dict.get("caller_requested", False),
         )
 
         logger.info(f"[CONSOLIDATION] bank={bank_id} completed: {result.get('memories_processed', 0)} processed")
@@ -23130,6 +23131,8 @@ class MemoryEngine(MemoryEngineInterface):
                 every affected mental model exactly once (#3411). Not a caller-facing knob.
             caller_requested: True when the caller asked for this run (the HTTP endpoint),
                 which a tag-scoped caller may not; False for the runs writes queue themselves.
+                Carried in the task payload so a round-limited chain the caller started keeps
+                re-queuing until drained, even with ``enable_auto_consolidation`` off (#5590).
 
         Returns:
             Dict with operation_id
@@ -23161,6 +23164,8 @@ class MemoryEngine(MemoryEngineInterface):
             task_payload["observation_scopes"] = observation_scopes
         if pending_refresh_tags is not None:
             task_payload["pending_refresh_tags"] = pending_refresh_tags
+        if caller_requested:
+            task_payload["caller_requested"] = True
 
         # Skip bank-level deduplication when scoped — the caller wants a
         # targeted run that should not be merged into a pending full-bank sweep.

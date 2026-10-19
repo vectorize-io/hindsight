@@ -1516,6 +1516,7 @@ async def run_consolidation_job(
     operation_id: str | None = None,
     observation_scopes: list[list[str]] | None = None,
     pending_refresh_tags: list[str] | None = None,
+    caller_requested: bool = False,
 ) -> dict[str, Any]:
     """
     Run consolidation job for a bank.
@@ -1533,6 +1534,8 @@ async def run_consolidation_job(
         pending_refresh_tags: Tags of memories consolidated by earlier rounds of this
             round-limited chain, carried through the re-queue so the final round can
             refresh every affected mental model exactly once (#3411).
+        caller_requested: True for a chain started by an explicit ``/consolidate`` call,
+            which drains the whole backlog even when ``enable_auto_consolidation`` is off.
 
     Returns:
         Dict with consolidation results
@@ -1560,6 +1563,7 @@ async def run_consolidation_job(
             operation_id,
             observation_scopes,
             pending_refresh_tags,
+            caller_requested,
         )
     finally:
         if trace_token is not None:
@@ -1578,6 +1582,7 @@ async def _run_consolidation_job(
     operation_id: str | None = None,
     observation_scopes: list[list[str]] | None = None,
     pending_refresh_tags: list[str] | None = None,
+    caller_requested: bool = False,
 ) -> dict[str, Any]:
     """Core consolidation flow. See ``run_consolidation_job`` for the public entrypoint."""
     perf = ConsolidationPerfLog(bank_id)
@@ -2156,7 +2161,13 @@ async def _run_consolidation_job(
     if operation_id:
         all_refresh_tags |= await _read_pending_refresh_tags(pool, operation_id)
 
-    if hit_round_limit:
+    # An automatic chain stops re-queuing once auto-consolidation is turned off; only
+    # an explicit /consolidate run keeps draining the backlog (#5590).
+    if hit_round_limit and not (caller_requested or config.enable_auto_consolidation):
+        logger.info(
+            f"[CONSOLIDATION] bank={bank_id} hit round limit but auto-consolidation is disabled; not re-queuing."
+        )
+    elif hit_round_limit:
         remaining = total_count - stats["memories_processed"]
         logger.info(
             f"[CONSOLIDATION] bank={bank_id} hit round limit of {max_memories_per_round} memories,"
@@ -2167,6 +2178,7 @@ async def _run_consolidation_job(
             request_context=request_context,
             observation_scopes=observation_scopes,
             pending_refresh_tags=sorted(all_refresh_tags) or None,
+            caller_requested=caller_requested,
         )
 
     # Build summary
@@ -3360,6 +3372,10 @@ async def _find_related_observations(
             # each retrieval arm's top hits a slot, so the semantic-#1 twin is always shown
             # to the LLM, which then UPDATEs instead of creating a duplicate.
             reranking="interleave",
+            # One DB connection per recall, like reflect's internal recalls: a batch fans
+            # out one recall per fact, so the default budget of 4 multiplies pool pressure
+            # and starves user recalls on a small pool (#5590).
+            _connection_budget=1,
             _quiet=True,  # Suppress logging
         )
     finally:

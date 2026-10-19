@@ -93,3 +93,33 @@ async def test_a_trigger_over_an_already_consolidated_bank_is_harmless(client, l
 
     after = sorted(m.text for m in (await client.memory.list_memories(bank_id, limit=100)).items)
     assert after == before
+
+
+async def test_a_trigger_drains_the_backlog_with_auto_consolidation_off(client, llm, bank_id, settled):
+    """A bank with auto-consolidation off still consolidates everything when asked.
+
+    A round processes at most ``consolidation_max_memories_per_round`` facts and
+    re-queues itself for the rest. That re-queue stops once auto-consolidation is
+    off, so an automatic chain winds down (#5590) — but a run the caller asked for
+    must keep going until the backlog is empty, not stop after the first round.
+    """
+    await client.banks.update_bank_config(
+        bank_id, {"updates": {"enable_auto_consolidation": False, "consolidation_max_memories_per_round": 1}}
+    )
+    llm.on_step("extract_facts").returns(
+        extracted(
+            *(fact(f"Alice visited {city}", who="Alice", entities=["Alice", city]) for city in ("Berlin", "Paris", "Rome"))
+        )
+    )
+    llm.on_step("consolidate").answers_with(observes(OBSERVATION))
+    await client.aretain(bank_id=bank_id, content="Alice visited Berlin, Paris and Rome.")
+    await settled(bank_id)
+
+    pending = await client.memory.list_memories(bank_id, consolidation_state="pending", limit=10)
+    assert pending.total == 3, "with auto-consolidation off, retain alone must leave the facts unconsolidated"
+
+    await client.banks.trigger_consolidation(bank_id)
+    await settled(bank_id)
+
+    pending = await client.memory.list_memories(bank_id, consolidation_state="pending", limit=10)
+    assert pending.total == 0, "an explicit trigger must drain every round, not stop at the round limit"
