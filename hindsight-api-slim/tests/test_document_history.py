@@ -130,3 +130,40 @@ async def test_a_retain_with_no_operation_leaves_no_retain_event(memory: MemoryE
 
     assert [e.kind for e in (await _history(memory, bank_id, "notes", request_context)).items] == ["consolidation"]
     await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_append_invalidation_and_retag_are_each_recorded(memory: MemoryEngine, request_context: RequestContext):
+    bank_id = f"test-doc-history-kinds-{uuid.uuid4().hex[:8]}"
+    doc_id = "session-1"
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    await memory.submit_async_retain(
+        bank_id,
+        [{"content": "Alice started physio on Monday.", "document_id": doc_id}],
+        request_context=request_context,
+    )
+    await memory.submit_async_retain(
+        bank_id,
+        [{"content": "Alice also started swimming on Friday.", "document_id": doc_id, "update_mode": "append"}],
+        request_context=request_context,
+    )
+    facts = await _ids(memory, bank_id, request_context, document_id=doc_id, fact_type=["world", "experience"])
+
+    with patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()):
+        await memory.update_memory_unit(bank_id, facts[0], state="invalidated", request_context=request_context)
+    # A tag change moves every fact's observation scope, so it drops what was built on them.
+    await memory.update_document(doc_id, bank_id, tags=["patient:alice"], request_context=request_context)
+
+    history = await _history(memory, bank_id, doc_id, request_context)
+    by_kind = {e.kind: e for e in reversed(history.items)}  # newest of each kind wins
+    assert {"retain", "append", "fact_invalidated", "retag"} <= set(by_kind)
+    assert by_kind["append"].facts_added > 0
+    assert by_kind["fact_invalidated"].fact_id == facts[0]
+    assert by_kind["retag"].observations_removed.count > 0
+    # Both are recorded on the consolidation they queued, where its rebuild (if any) lands too.
+    for kind in ("fact_invalidated", "retag"):
+        op = await memory.get_operation_status(bank_id, by_kind[kind].operation_id, request_context=request_context)
+        assert op["operation_type"] == "consolidation", (kind, op)
+
+    await memory.delete_bank(bank_id, request_context=request_context)

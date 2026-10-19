@@ -3997,11 +3997,11 @@
               "type": "integer",
               "maximum": 1000,
               "minimum": 1,
-              "description": "Maximum number of events to return",
+              "description": "Maximum number of operations to read",
               "default": 100,
               "title": "Limit"
             },
-            "description": "Maximum number of events to return"
+            "description": "Maximum number of operations to read"
           },
           {
             "name": "offset",
@@ -4010,11 +4010,11 @@
             "schema": {
               "type": "integer",
               "minimum": 0,
-              "description": "Offset for pagination",
+              "description": "Offset for pagination, in operations",
               "default": 0,
               "title": "Offset"
             },
-            "description": "Offset for pagination"
+            "description": "Offset for pagination, in operations"
           },
           {
             "name": "authorization",

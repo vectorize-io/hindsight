@@ -415,13 +415,13 @@ type ApiGetDocumentHistoryRequest struct {
 	authorization *string
 }
 
-// Maximum number of events to return
+// Maximum number of operations to read
 func (r ApiGetDocumentHistoryRequest) Limit(limit int32) ApiGetDocumentHistoryRequest {
 	r.limit = &limit
 	return r
 }
 
-// Offset for pagination
+// Offset for pagination, in operations
 func (r ApiGetDocumentHistoryRequest) Offset(offset int32) ApiGetDocumentHistoryRequest {
 	r.offset = &offset
 	return r

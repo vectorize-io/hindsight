@@ -916,8 +916,8 @@ class DocumentsApi:
         self,
         bank_id: StrictStr,
         document_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]], Field(description="Maximum number of events to return")] = None,
-        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]], Field(description="Maximum number of operations to read")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination, in operations")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -940,9 +940,9 @@ class DocumentsApi:
         :type bank_id: str
         :param document_id: (required)
         :type document_id: str
-        :param limit: Maximum number of events to return
+        :param limit: Maximum number of operations to read
         :type limit: int
-        :param offset: Offset for pagination
+        :param offset: Offset for pagination, in operations
         :type offset: int
         :param authorization:
         :type authorization: str
@@ -1000,8 +1000,8 @@ class DocumentsApi:
         self,
         bank_id: StrictStr,
         document_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]], Field(description="Maximum number of events to return")] = None,
-        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]], Field(description="Maximum number of operations to read")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination, in operations")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1024,9 +1024,9 @@ class DocumentsApi:
         :type bank_id: str
         :param document_id: (required)
         :type document_id: str
-        :param limit: Maximum number of events to return
+        :param limit: Maximum number of operations to read
         :type limit: int
-        :param offset: Offset for pagination
+        :param offset: Offset for pagination, in operations
         :type offset: int
         :param authorization:
         :type authorization: str
@@ -1084,8 +1084,8 @@ class DocumentsApi:
         self,
         bank_id: StrictStr,
         document_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]], Field(description="Maximum number of events to return")] = None,
-        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]], Field(description="Maximum number of operations to read")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination, in operations")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1108,9 +1108,9 @@ class DocumentsApi:
         :type bank_id: str
         :param document_id: (required)
         :type document_id: str
-        :param limit: Maximum number of events to return
+        :param limit: Maximum number of operations to read
         :type limit: int
-        :param offset: Offset for pagination
+        :param offset: Offset for pagination, in operations
         :type offset: int
         :param authorization:
         :type authorization: str

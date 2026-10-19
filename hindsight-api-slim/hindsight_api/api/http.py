@@ -8119,8 +8119,8 @@ def _register_routes(app: FastAPI):
     async def api_get_document_history(
         bank_id: str,
         document_id: str,
-        limit: int = Query(default=100, ge=1, le=1000, description="Maximum number of events to return"),
-        offset: int = Query(default=0, ge=0, description="Offset for pagination"),
+        limit: int = Query(default=100, ge=1, le=1000, description="Maximum number of operations to read"),
+        offset: int = Query(default=0, ge=0, description="Offset for pagination, in operations"),
         request_context: RequestContext = Depends(get_request_context),
     ):
         try:

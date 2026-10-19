@@ -589,22 +589,33 @@ for _, event := range history.GetItems() {
 ```json
 {
   "document_id": "call-2026-10-01",
-  "total": 3,
+  "total": 2,
+  "limit": 50,
+  "offset": 0,
   "items": [
     {
+      "document_id": "call-2026-10-01",
       "kind": "consolidation",
       "created_at": "2026-10-19T10:02:11Z",
-      "observations_created": { "count": 1, "ids": ["9f2c…"] },
-      "observations_updated": { "count": 0, "ids": [] },
-      "observations_removed": { "count": 0, "ids": [] },
+      "operation_id": "ce29121a-…",
+      "fact_id": null,
       "facts_added": 0,
-      "facts_removed": 0
+      "facts_removed": 0,
+      "observations_created": { "count": 0, "ids": [] },
+      "observations_updated": { "count": 2, "ids": ["9545…", "c51c…"] },
+      "observations_removed": { "count": 0, "ids": [] }
     },
     {
+      "document_id": "call-2026-10-01",
       "kind": "fact_edited",
-      "fact_id": "41ab…",
       "created_at": "2026-10-19T10:01:50Z",
-      "observations_removed": { "count": 2, "ids": ["c01d…", "77e3…"] }
+      "operation_id": "ce29121a-…",
+      "fact_id": "41ab…",
+      "facts_added": 0,
+      "facts_removed": 0,
+      "observations_created": { "count": 0, "ids": [] },
+      "observations_updated": { "count": 0, "ids": [] },
+      "observations_removed": { "count": 1, "ids": ["2098…"] }
     }
   ]
 }

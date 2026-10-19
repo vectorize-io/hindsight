@@ -9402,13 +9402,13 @@ export type GetDocumentHistoryData = {
     /**
      * Limit
      *
-     * Maximum number of events to return
+     * Maximum number of operations to read
      */
     limit?: number;
     /**
      * Offset
      *
-     * Offset for pagination
+     * Offset for pagination, in operations
      */
     offset?: number;
   };

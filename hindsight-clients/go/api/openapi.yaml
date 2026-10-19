@@ -2781,27 +2781,27 @@ paths:
           title: Document Id
           type: string
         style: simple
-      - description: Maximum number of events to return
+      - description: Maximum number of operations to read
         explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 100
-          description: Maximum number of events to return
+          description: Maximum number of operations to read
           maximum: 1000
           minimum: 1
           title: Limit
           type: integer
         style: form
-      - description: Offset for pagination
+      - description: "Offset for pagination, in operations"
         explode: true
         in: query
         name: offset
         required: false
         schema:
           default: 0
-          description: Offset for pagination
+          description: "Offset for pagination, in operations"
           minimum: 0
           title: Offset
           type: integer
