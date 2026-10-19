@@ -366,8 +366,8 @@ _VALIDATE_SQL_SCHEMAS = True
 # Transient upstream outages (LLM provider down, DB flapping, tenant-ext
 # blip) must eventually recover; the worker should keep trying rather than
 # silently dead-lettering a bank's consolidation backlog. Deterministic
-# failures (integrity violations, embedding dimension mismatches) are
-# filtered upstream by `_is_non_retryable_task_error` and never reach the
+# failures (integrity violations, embedding dimension mismatches, a rejected
+# LLM key) are filtered upstream by `_is_non_retryable_task_error` and never reach the
 # retry path. The dedup-by-bank guard prevents per-op retries from
 # multiplying when a peer consolidation is already pending for the bank.
 #
