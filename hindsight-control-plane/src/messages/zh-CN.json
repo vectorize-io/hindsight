@@ -958,7 +958,8 @@
     "dateRangeCustom": "自定义范围",
     "dateRangeFrom": "从",
     "dateRangeTo": "至",
-    "dateRangeReversed": "结束时间必须晚于开始时间"
+    "dateRangeReversed": "结束时间必须晚于开始时间",
+    "historyTab": "历史"
   },
   "entitiesView": {
     "viewRelations": "关系",
@@ -2048,7 +2049,8 @@
         "chunks": "获取文档分块失败",
         "reprocess": "重新处理文档失败",
         "export": "导出文档失败",
-        "import": "导入文档失败"
+        "import": "导入文档失败",
+        "history": "获取文档历史失败"
       },
       "files": {
         "upload": "上传文件失败"
@@ -2276,5 +2278,36 @@
     "pausedTitle": "上次刷新失败，该模型不再自动刷新——手动刷新可恢复",
     "retrying": "重试中",
     "retryingTitle": "上次尝试失败，已排队下一次尝试——只有这次也失败才会停止自动刷新"
+  },
+  "documentHistory": {
+    "explainer": "每次变更对此文档的事实和观察做了什么。观察会被重建而非保留版本：变更删除的观察，这里的 ID 是唯一痕迹。历史由银行的操作重建，因此同步保留和关闭自动整合时的变更不会列出。展开一行查看 ID；将鼠标悬停在 ID 上可在其他行中找到它。",
+    "empty": "尚无变更记录。历史来自此银行的操作：异步保留，以及编辑后的整合。",
+    "loadError": "无法加载历史。",
+    "idsRemoved": "已删除",
+    "idsCreated": "已创建",
+    "idsUpdated": "已更新",
+    "chipRemoved": "被此变更删除——已不存在",
+    "chipOpen": "打开此观察",
+    "moreIds": "还有 {count} 个",
+    "kind": {
+      "retain": "已保留",
+      "append": "已追加",
+      "reprocess": "已重新处理",
+      "retag": "标签已更改",
+      "fact_edited": "事实已编辑",
+      "fact_invalidated": "事实已失效",
+      "fact_restored": "事实已恢复",
+      "consolidation": "已整合"
+    },
+    "loadOlder": "加载更早的",
+    "colWhen": "时间",
+    "colChange": "变更",
+    "colFacts": "事实",
+    "colObservations": "观察",
+    "colOperation": "操作",
+    "legendExists": "仍然存在——点击打开",
+    "legendRemovedLater": "被之后的变更删除",
+    "legendRemovedHere": "被此变更删除",
+    "chipRemovedLater": "之后被删除：{kind}（{when}）"
   }
 }

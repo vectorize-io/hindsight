@@ -2621,6 +2621,10 @@ class MemoriesExtension(Extension, ABC):
         Returns how many observations were removed. Called whenever facts are
         replaced or deleted, so an observation never outlives the facts it
         summarises; sources that survive go back in the consolidation queue.
+
+        Pass what was removed to ``document_history.note_observations_removed``
+        before returning: the rows are gone for good, and the document change
+        history is the only place their ids survive (#5638).
         """
 
     # ------------------------------------------------------------------ maintenance

@@ -518,6 +518,98 @@ A `q` search counts at most 1,000 matches. Past that, `total` is a lower bound, 
 | `all_strict` | Document must have **all** specified tags. Untagged docs excluded. |
 | `all` | Same as `all_strict` but also includes untagged documents. |
 
+## Document History
+
+Every change to a document is recorded with what it did: each retain, append and reprocess (facts added and removed), each fact edit, invalidation and restore, each tag change, and each consolidation run (observations created, updated and removed, filed under every document their source facts came from).
+
+Observations are rebuilt rather than versioned, so when a change deletes one, this history is the only place its id is still recorded. Each event stores ids and counts only, never text, and each id list is capped at 100. The control plane shows this as the **History** tab of a document.
+
+The history is rebuilt from the bank's [operations](./operations.md), which carry these events, so two limits apply:
+
+- It reaches back only as far as operations are kept (`HINDSIGHT_API_OPERATION_RETENTION_DAYS`, unlimited by default).
+- A change that ran without an operation is not in it: a synchronous retain (`async: false`), or a fact edit or tag change while auto-consolidation is off. A fact edit or tag change is recorded on the consolidation operation it queues, next to the rebuild it causes.
+
+### Python
+
+```python
+async def document_history_example():
+    api = DocumentsApi(ApiClient(Configuration(host="http://localhost:8888")))
+
+    # What each retain, fact edit and consolidation did to this document, newest first
+    history = await api.get_document_history(bank_id="my-bank", document_id="meeting-2024-03-15", limit=50)
+    for event in history.items:
+        print(
+            f"{event.created_at} {event.kind}: +{event.facts_added}/-{event.facts_removed} facts, "
+            f"observations removed: {event.observations_removed.ids}"
+        )
+
+asyncio.run(document_history_example())
+```
+
+### Node.js
+
+```javascript
+// What each retain, fact edit and consolidation did to this document, newest first
+const { data: history, error: historyError } = await sdk.getDocumentHistory({
+    client: apiClient,
+    path: { bank_id: 'my-bank', document_id: 'meeting-2024-03-15-section-1' },
+    query: { limit: 50 }
+});
+
+if (historyError) {
+    throw new Error(`Failed to get document history: ${JSON.stringify(historyError)}`);
+}
+
+for (const event of history.items) {
+    console.log(`${event.created_at} ${event.kind}: removed ${event.observations_removed.ids.join(', ')}`);
+}
+```
+
+### CLI
+
+```bash
+# What each retain, fact edit and consolidation did to this document, newest first
+hindsight document history "$BANK_ID" notes-2024-03-15 --limit 50
+```
+
+### Go
+
+```go
+// What each retain, fact edit and consolidation did to this document, newest first
+history, _, err := client.DocumentsAPI.GetDocumentHistory(ctx, "my-bank", "meeting-2024-03-15").Limit(50).Execute()
+if err != nil {
+	log.Fatalf("Failed to get document history: %v", err)
+}
+for _, event := range history.GetItems() {
+	removed := event.GetObservationsRemoved()
+	fmt.Printf("%s: +%d facts, observations removed: %v\n", event.GetKind(), event.GetFactsAdded(), removed.GetIds())
+}
+```
+
+```json
+{
+  "document_id": "call-2026-10-01",
+  "total": 3,
+  "items": [
+    {
+      "kind": "consolidation",
+      "created_at": "2026-10-19T10:02:11Z",
+      "observations_created": { "count": 1, "ids": ["9f2c…"] },
+      "observations_updated": { "count": 0, "ids": [] },
+      "observations_removed": { "count": 0, "ids": [] },
+      "facts_added": 0,
+      "facts_removed": 0
+    },
+    {
+      "kind": "fact_edited",
+      "fact_id": "41ab…",
+      "created_at": "2026-10-19T10:01:50Z",
+      "observations_removed": { "count": 2, "ids": ["c01d…", "77e3…"] }
+    }
+  ]
+}
+```
+
 ## Document Response Format
 
 ```json

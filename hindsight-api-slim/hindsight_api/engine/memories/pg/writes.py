@@ -20,6 +20,7 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from ....config import get_config
+from ...document_history import note_observations_removed
 from ..base import StoredMemory
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -275,6 +276,8 @@ async def delete_stale_observations(
     affected_obs = await observations_for_sources(
         conn=conn, ops=ops, fq_table=fq_table, bank_id=bank_id, unit_ids=fact_uuids
     )
+    # The rows go for good below; the change history keeps their ids (#5638).
+    note_observations_removed({obs.unit_id: list(obs.source_memory_ids) for obs in affected_obs}, fact_uuids)
     if not affected_obs:
         return 0
 

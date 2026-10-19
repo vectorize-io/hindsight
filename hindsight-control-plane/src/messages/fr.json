@@ -958,7 +958,8 @@
     "dateRangeCustom": "Période personnalisée",
     "dateRangeFrom": "Du",
     "dateRangeTo": "Au",
-    "dateRangeReversed": "La fin doit suivre le début"
+    "dateRangeReversed": "La fin doit suivre le début",
+    "historyTab": "Historique"
   },
   "entitiesView": {
     "viewRelations": "Relations",
@@ -2048,7 +2049,8 @@
         "chunks": "Impossible de récupérer les fragments du document",
         "reprocess": "Impossible de retraiter le document",
         "export": "Échec de l'exportation des documents",
-        "import": "Échec de l'importation des documents"
+        "import": "Échec de l'importation des documents",
+        "history": "Impossible de récupérer l'historique du document"
       },
       "files": {
         "upload": "Impossible de téléverser les fichiers"
@@ -2276,5 +2278,36 @@
     "pausedTitle": "La dernière actualisation a échoué : ce modèle ne s'actualise plus tout seul — actualisez-le pour reprendre",
     "retrying": "Nouvel essai",
     "retryingTitle": "La dernière tentative a échoué et une autre est en file — les actualisations automatiques ne s'arrêtent que si celle-ci échoue aussi"
+  },
+  "documentHistory": {
+    "explainer": "Ce que chaque changement a fait aux faits et observations de ce document. Les observations sont reconstruites, pas versionnées : quand un changement en supprime une, son id ici est la seule trace. Reconstruit à partir des opérations de la banque : les retains synchrones et les changements faits avec la consolidation automatique désactivée n'y figurent pas. Dépliez une ligne pour voir les ids ; survolez un id pour le retrouver dans d'autres lignes.",
+    "empty": "Aucun changement enregistré. L'historique provient des opérations de cette banque : retains asynchrones et consolidations qui suivent les modifications.",
+    "loadError": "Impossible de charger l'historique.",
+    "idsRemoved": "Supprimées",
+    "idsCreated": "Créées",
+    "idsUpdated": "Mises à jour",
+    "chipRemoved": "Supprimée par ce changement — n'existe plus",
+    "chipOpen": "Ouvrir cette observation",
+    "moreIds": "+{count} de plus",
+    "kind": {
+      "retain": "Retenu",
+      "append": "Ajouté",
+      "reprocess": "Retraité",
+      "retag": "Tags modifiés",
+      "fact_edited": "Fait modifié",
+      "fact_invalidated": "Fait invalidé",
+      "fact_restored": "Fait restauré",
+      "consolidation": "Consolidé"
+    },
+    "loadOlder": "Charger les plus anciens",
+    "colWhen": "Quand",
+    "colChange": "Changement",
+    "colFacts": "Faits",
+    "colObservations": "Observations",
+    "colOperation": "Opération",
+    "legendExists": "Existe encore — cliquer pour ouvrir",
+    "legendRemovedLater": "Supprimée par un changement ultérieur",
+    "legendRemovedHere": "Supprimée par ce changement",
+    "chipRemovedLater": "Supprimée plus tard par : {kind} ({when})"
   }
 }

@@ -2022,6 +2022,62 @@ export type DispositionTraits = {
 };
 
 /**
+ * DocumentEvent
+ *
+ * One change to a document, and its effect on the facts and observations built from it.
+ */
+export type DocumentEvent = {
+  /**
+   * Document Id
+   */
+  document_id: string;
+  kind: DocumentEventKind;
+  /**
+   * Created At
+   */
+  created_at?: string;
+  /**
+   * Operation Id
+   *
+   * The operation this event was recorded on (filled in when read).
+   */
+  operation_id?: string | null;
+  /**
+   * Fact Id
+   *
+   * The fact a fact_* event changed.
+   */
+  fact_id?: string | null;
+  /**
+   * Facts Added
+   */
+  facts_added?: number;
+  /**
+   * Facts Removed
+   */
+  facts_removed?: number;
+  observations_created?: ObservationIdSample;
+  observations_updated?: ObservationIdSample;
+  observations_removed?: ObservationIdSample;
+};
+
+/**
+ * DocumentEventKind
+ *
+ * What a change was. A named enum, not a Literal: inline enums are named after their field by
+ * the generated Rust client, and ``kind`` already names the knowledge-base node enum there.
+ */
+export type DocumentEventKind =
+  | "retain"
+  | "append"
+  | "reprocess"
+  | "retag"
+  | "fact_edited"
+  | "fact_invalidated"
+  | "fact_restored"
+  | "consolidation";
+
+/**
  * DocumentExportSubmitResponse
  *
  * Response for the async document-export endpoint (202).
@@ -2040,6 +2096,35 @@ export type DocumentExportSubmitResponse = {
    * Status
    */
   status?: string;
+};
+
+/**
+ * DocumentHistoryResponse
+ *
+ * A document's change history, newest first. ``total``, ``limit`` and ``offset`` count operations:
+ * one operation can carry several events for the same document (an oversized retain in slices).
+ */
+export type DocumentHistoryResponse = {
+  /**
+   * Document Id
+   */
+  document_id: string;
+  /**
+   * Total
+   */
+  total: number;
+  /**
+   * Limit
+   */
+  limit: number;
+  /**
+   * Offset
+   */
+  offset: number;
+  /**
+   * Items
+   */
+  items: Array<DocumentEvent>;
 };
 
 /**
@@ -5066,6 +5151,22 @@ export type MinScores = {
    * Post-query: minimum final ranking score. Applied to every returned result.
    */
   final?: number | null;
+};
+
+/**
+ * ObservationIdSample
+ *
+ * How many observations an event touched, and (up to ``MAX_IDS``) which.
+ */
+export type ObservationIdSample = {
+  /**
+   * Count
+   */
+  count?: number;
+  /**
+   * Ids
+   */
+  ids?: Array<string>;
 };
 
 /**
@@ -9278,6 +9379,60 @@ export type ListDocumentChunksResponses = {
 
 export type ListDocumentChunksResponse =
   ListDocumentChunksResponses[keyof ListDocumentChunksResponses];
+
+export type GetDocumentHistoryData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Document Id
+     */
+    document_id: string;
+  };
+  query?: {
+    /**
+     * Limit
+     *
+     * Maximum number of events to return
+     */
+    limit?: number;
+    /**
+     * Offset
+     *
+     * Offset for pagination
+     */
+    offset?: number;
+  };
+  url: "/v1/default/banks/{bank_id}/documents/{document_id}/history";
+};
+
+export type GetDocumentHistoryErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetDocumentHistoryError = GetDocumentHistoryErrors[keyof GetDocumentHistoryErrors];
+
+export type GetDocumentHistoryResponses = {
+  /**
+   * Successful Response
+   */
+  200: DocumentHistoryResponse;
+};
+
+export type GetDocumentHistoryResponse =
+  GetDocumentHistoryResponses[keyof GetDocumentHistoryResponses];
 
 export type ReprocessDocumentData = {
   body?: never;

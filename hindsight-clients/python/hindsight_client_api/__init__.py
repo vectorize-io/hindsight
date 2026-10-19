@@ -101,7 +101,10 @@ from hindsight_client_api.models.delete_response import DeleteResponse
 from hindsight_client_api.models.directive_list_response import DirectiveListResponse
 from hindsight_client_api.models.directive_response import DirectiveResponse
 from hindsight_client_api.models.disposition_traits import DispositionTraits
+from hindsight_client_api.models.document_event import DocumentEvent
+from hindsight_client_api.models.document_event_kind import DocumentEventKind
 from hindsight_client_api.models.document_export_submit_response import DocumentExportSubmitResponse
+from hindsight_client_api.models.document_history_response import DocumentHistoryResponse
 from hindsight_client_api.models.document_import_submit_response import DocumentImportSubmitResponse
 from hindsight_client_api.models.document_list_item import DocumentListItem
 from hindsight_client_api.models.document_response import DocumentResponse
@@ -179,6 +182,7 @@ from hindsight_client_api.models.mental_model_trigger_output import MentalModelT
 from hindsight_client_api.models.min_scores import MinScores
 from hindsight_client_api.models.model_not import ModelNot
 from hindsight_client_api.models.not1 import Not1
+from hindsight_client_api.models.observation_id_sample import ObservationIdSample
 from hindsight_client_api.models.observation_scope import ObservationScope
 from hindsight_client_api.models.observation_scopes import ObservationScopes
 from hindsight_client_api.models.observation_scopes_response import ObservationScopesResponse

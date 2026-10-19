@@ -23,6 +23,7 @@ from datetime import datetime
 from typing import Any
 
 from ...db_utils import acquire_with_retry
+from ...document_history import note_observations_removed
 from ...search.tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause
 from ...time_filter import DOCUMENT_TIME_FIELDS, build_time_clause
 from ..base import (
@@ -557,6 +558,9 @@ async def retag_document_memories(
             )
         if affected_obs:
             obs_ids = [obs["id"] for obs in affected_obs]
+            note_observations_removed(
+                {str(obs["id"]): [str(src) for src in obs["source_memory_ids"] or []] for obs in affected_obs}, unit_ids
+            )
 
             seen: set[str] = set()
             other_source_uuids: list[uuid.UUID] = []

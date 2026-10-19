@@ -234,6 +234,51 @@ pub fn get(
     }
 }
 
+pub fn history(
+    client: &ApiClient,
+    agent_id: &str,
+    document_id: &str,
+    limit: i32,
+    offset: i32,
+    output_format: OutputFormat,
+) -> Result<()> {
+    let history = client.get_document_history(agent_id, document_id, limit, offset)?;
+    if output_format != OutputFormat::Pretty {
+        return output::print_output(&history, output_format);
+    }
+    ui::print_info(&format!(
+        "History of {} ({} operations, newest first)",
+        history.document_id, history.total
+    ));
+    // Optional in the schema (they default to empty), so absent reads as zero.
+    let count = |s: &Option<hindsight_client::types::ObservationIdSample>| {
+        s.as_ref().map_or(0, |s| s.count)
+    };
+    for e in &history.items {
+        let removed_ids = e
+            .observations_removed
+            .as_ref()
+            .map(|s| s.ids.join(", "))
+            .unwrap_or_default();
+        println!(
+            "  {}  {:<17} facts +{}/-{}  observations +{} ~{} -{}{}",
+            e.created_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
+            e.kind.to_string(),
+            e.facts_added,
+            e.facts_removed,
+            count(&e.observations_created),
+            count(&e.observations_updated),
+            count(&e.observations_removed),
+            if removed_ids.is_empty() {
+                String::new()
+            } else {
+                format!("  removed: {removed_ids}")
+            }
+        );
+    }
+    Ok(())
+}
+
 pub fn delete(
     client: &ApiClient,
     agent_id: &str,

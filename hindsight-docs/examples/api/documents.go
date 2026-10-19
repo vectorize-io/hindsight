@@ -69,6 +69,18 @@ func main() {
 	fmt.Printf("Memory units: %d\n", doc.GetMemoryUnitCount())
 	// [/docs:document-get]
 
+	// [docs:document-history]
+	// What each retain, fact edit and consolidation did to this document, newest first
+	history, _, err := client.DocumentsAPI.GetDocumentHistory(ctx, "my-bank", "meeting-2024-03-15").Limit(50).Execute()
+	if err != nil {
+		log.Fatalf("Failed to get document history: %v", err)
+	}
+	for _, event := range history.GetItems() {
+		removed := event.GetObservationsRemoved()
+		fmt.Printf("%s: +%d facts, observations removed: %v\n", event.GetKind(), event.GetFactsAdded(), removed.GetIds())
+	}
+	// [/docs:document-history]
+
 	// [docs:document-update-tags]
 	// Replace the document's tags (the full set it should end up with)
 	updateResult, _, err := client.DocumentsAPI.UpdateDocument(ctx, "my-bank", "meeting-2024-03-15").

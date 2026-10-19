@@ -958,7 +958,8 @@
     "dateRangeCustom": "사용자 지정 기간",
     "dateRangeFrom": "시작",
     "dateRangeTo": "종료",
-    "dateRangeReversed": "종료는 시작보다 뒤여야 합니다"
+    "dateRangeReversed": "종료는 시작보다 뒤여야 합니다",
+    "historyTab": "기록"
   },
   "entitiesView": {
     "viewRelations": "관계",
@@ -2048,7 +2049,8 @@
         "chunks": "문서 청크를 가져오지 못했습니다",
         "reprocess": "문서를 다시 처리하지 못했습니다",
         "export": "문서 내보내기에 실패했습니다",
-        "import": "문서 가져오기에 실패했습니다"
+        "import": "문서 가져오기에 실패했습니다",
+        "history": "문서 기록을 가져오지 못했습니다"
       },
       "files": {
         "upload": "파일을 업로드하지 못했습니다"
@@ -2276,5 +2278,36 @@
     "pausedTitle": "마지막 새로 고침이 실패하여 이 모델은 더 이상 자동으로 새로 고쳐지지 않습니다. 새로 고치면 다시 시작됩니다",
     "retrying": "재시도 중",
     "retryingTitle": "마지막 시도가 실패했고 다음 시도가 대기 중입니다. 이번에도 실패하면 자동 새로 고침이 중지됩니다"
+  },
+  "documentHistory": {
+    "explainer": "각 변경이 이 문서의 사실과 관찰에 한 일입니다. 관찰은 버전 관리되지 않고 다시 만들어집니다. 변경으로 삭제된 관찰은 여기의 ID가 유일한 흔적입니다. 뱅크의 작업에서 다시 구성하므로 동기 보존과 자동 통합이 꺼진 상태의 변경은 나오지 않습니다. 행을 펼치면 ID가 보이고, ID에 마우스를 올리면 다른 행에서 찾을 수 있습니다.",
+    "empty": "기록된 변경이 없습니다. 기록은 이 뱅크의 작업(비동기 보존과 편집 후 통합)에서 옵니다.",
+    "loadError": "기록을 불러오지 못했습니다.",
+    "idsRemoved": "삭제됨",
+    "idsCreated": "생성됨",
+    "idsUpdated": "업데이트됨",
+    "chipRemoved": "이 변경으로 삭제됨 — 더 이상 존재하지 않음",
+    "chipOpen": "이 관찰 열기",
+    "moreIds": "+{count}개 더",
+    "kind": {
+      "retain": "보존됨",
+      "append": "추가됨",
+      "reprocess": "재처리됨",
+      "retag": "태그 변경",
+      "fact_edited": "사실 편집",
+      "fact_invalidated": "사실 무효화",
+      "fact_restored": "사실 복원",
+      "consolidation": "통합됨"
+    },
+    "loadOlder": "이전 항목 불러오기",
+    "colWhen": "시각",
+    "colChange": "변경",
+    "colFacts": "사실",
+    "colObservations": "관찰",
+    "colOperation": "작업",
+    "legendExists": "아직 존재함 — 클릭하여 열기",
+    "legendRemovedLater": "이후 변경으로 삭제됨",
+    "legendRemovedHere": "이 변경으로 삭제됨",
+    "chipRemovedLater": "나중에 삭제됨: {kind} ({when})"
   }
 }

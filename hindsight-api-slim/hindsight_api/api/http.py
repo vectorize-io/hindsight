@@ -37,6 +37,7 @@ from hindsight_api.engine.audit import (
     AuditLogListResponse,
     AuditLogStatsResponse,
 )
+from hindsight_api.engine.document_history import DocumentHistoryResponse
 from hindsight_api.engine.llm_trace import LLMRequestListResponse, LLMRequestStatsResponse
 from hindsight_api.extensions import AuthenticationError, BankWriteOperation, PrecheckOperation
 
@@ -8095,6 +8096,46 @@ def _register_routes(app: FastAPI):
             raise
         except Exception as e:
             raise _internal_error(e, f"/v1/default/banks/{bank_id}/documents/{document_id}/chunks")
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/documents/{document_id:path}/history",
+        response_model=DocumentHistoryResponse,
+        summary="Get document change history",
+        description=(
+            "What each change to a document did, newest first: every retain, append and reprocess "
+            "(facts added and removed), every fact edit, invalidation, restore and retag (observations "
+            "removed), and every consolidation run (observations created, updated and removed). "
+            "Observations are rebuilt, not versioned, so this is the only record of the ones a change "
+            "removed. Ids and counts only, with each id list capped at 100.\n\n"
+            "Rebuilt from the bank's async operations, which carry these events: it reaches back only as "
+            "far as operations are kept (HINDSIGHT_API_OPERATION_RETENTION_DAYS, unlimited by default), and "
+            "a change that ran without an operation is not in it — a synchronous retain (async=false), or a "
+            "fact edit or retag while auto-consolidation is off. A fact edit or retag is recorded on the "
+            "consolidation operation it queues. total, limit and offset count operations, not events."
+        ),
+        operation_id="get_document_history",
+        tags=["Documents"],
+    )
+    async def api_get_document_history(
+        bank_id: str,
+        document_id: str,
+        limit: int = Query(default=100, ge=1, le=1000, description="Maximum number of events to return"),
+        offset: int = Query(default=0, ge=0, description="Offset for pagination"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        try:
+            result = await app.state.memory.get_document_history(
+                bank_id, document_id, limit=limit, offset=offset, request_context=request_context
+            )
+            if result is None:
+                raise HTTPException(status_code=404, detail="Document not found")
+            return result
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/documents/{document_id}/history")
 
     @app.post(
         "/v1/default/banks/{bank_id}/documents/{document_id:path}/reprocess",

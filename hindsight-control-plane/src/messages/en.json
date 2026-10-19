@@ -958,7 +958,8 @@
     "dateRangeCustom": "Custom range",
     "dateRangeFrom": "From",
     "dateRangeTo": "To",
-    "dateRangeReversed": "End must be after start"
+    "dateRangeReversed": "End must be after start",
+    "historyTab": "History"
   },
   "entitiesView": {
     "viewRelations": "Relations",
@@ -2048,7 +2049,8 @@
         "chunks": "Failed to fetch document chunks",
         "reprocess": "Failed to reprocess document",
         "export": "Failed to export documents",
-        "import": "Failed to import documents"
+        "import": "Failed to import documents",
+        "history": "Failed to fetch document history"
       },
       "files": {
         "upload": "Failed to upload files"
@@ -2276,5 +2278,36 @@
     "pausedTitle": "The last refresh failed, so this model does not refresh itself any more — refresh it to resume",
     "retrying": "Retrying",
     "retryingTitle": "The last attempt failed and another is queued — automatic refreshes stop only if this one fails too"
+  },
+  "documentHistory": {
+    "explainer": "What each change did to this document's facts and observations. Observations are rebuilt, not versioned: when a change removes one, its id here is the only trace left. Rebuilt from the bank's operations, so synchronous retains and changes made with auto-consolidation off are not listed. Expand a row to see the ids; hover an id to find it in other rows.",
+    "empty": "No changes recorded. History comes from this bank's operations: async retains, and the consolidations that follow edits.",
+    "loadError": "Could not load the history.",
+    "idsRemoved": "Removed",
+    "idsCreated": "Created",
+    "idsUpdated": "Updated",
+    "chipRemoved": "Removed by this change — no longer exists",
+    "chipOpen": "Open this observation",
+    "moreIds": "+{count} more",
+    "kind": {
+      "retain": "Retained",
+      "append": "Appended",
+      "reprocess": "Reprocessed",
+      "retag": "Tags changed",
+      "fact_edited": "Fact edited",
+      "fact_invalidated": "Fact invalidated",
+      "fact_restored": "Fact restored",
+      "consolidation": "Consolidated"
+    },
+    "loadOlder": "Load older",
+    "colWhen": "When",
+    "colChange": "Change",
+    "colFacts": "Facts",
+    "colObservations": "Observations",
+    "colOperation": "Operation",
+    "legendExists": "Still exists — click to open",
+    "legendRemovedLater": "Removed by a later change",
+    "legendRemovedHere": "Removed by this change",
+    "chipRemovedLater": "Removed later by: {kind} ({when})"
   }
 }

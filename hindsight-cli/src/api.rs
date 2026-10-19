@@ -529,6 +529,29 @@ impl ApiClient {
         })
     }
 
+    pub fn get_document_history(
+        &self,
+        agent_id: &str,
+        document_id: &str,
+        limit: i32,
+        offset: i32,
+    ) -> Result<types::DocumentHistoryResponse> {
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .get_document_history(
+                    agent_id,
+                    document_id,
+                    std::num::NonZeroU64::new(limit.max(1) as u64),
+                    Some(offset as u64),
+                    None, // authorization
+                )
+                .humanized()
+                .await?;
+            Ok(response.into_inner())
+        })
+    }
+
     pub fn delete_document(
         &self,
         agent_id: &str,

@@ -958,7 +958,8 @@
     "dateRangeCustom": "Intervalo personalizado",
     "dateRangeFrom": "De",
     "dateRangeTo": "Até",
-    "dateRangeReversed": "O fim deve ser posterior ao início"
+    "dateRangeReversed": "O fim deve ser posterior ao início",
+    "historyTab": "Histórico"
   },
   "entitiesView": {
     "viewRelations": "Relações",
@@ -2048,7 +2049,8 @@
         "chunks": "Falha ao buscar fragmentos do documento",
         "reprocess": "Falha ao reprocessar documento",
         "export": "Falha ao exportar documentos",
-        "import": "Falha ao importar documentos"
+        "import": "Falha ao importar documentos",
+        "history": "Falha ao buscar o histórico do documento"
       },
       "files": {
         "upload": "Falha ao enviar arquivos"
@@ -2276,5 +2278,36 @@
     "pausedTitle": "A última atualização falhou, por isso este modelo já não se atualiza sozinho — atualize-o para retomar",
     "retrying": "A repetir",
     "retryingTitle": "A última tentativa falhou e há outra em fila — as atualizações automáticas só param se esta também falhar"
+  },
+  "documentHistory": {
+    "explainer": "O que cada alteração fez aos fatos e observações deste documento. Observações são reconstruídas, não versionadas: quando uma alteração remove uma, o id aqui é o único rastro. Reconstruído a partir das operações do banco, então retenções síncronas e alterações feitas com a consolidação automática desligada não aparecem. Expanda uma linha para ver os ids; passe o mouse sobre um id para encontrá-lo em outras linhas.",
+    "empty": "Nenhuma alteração registrada. O histórico vem das operações deste banco: retenções assíncronas e as consolidações após edições.",
+    "loadError": "Não foi possível carregar o histórico.",
+    "idsRemoved": "Removidas",
+    "idsCreated": "Criadas",
+    "idsUpdated": "Atualizadas",
+    "chipRemoved": "Removida por esta alteração — não existe mais",
+    "chipOpen": "Abrir esta observação",
+    "moreIds": "+{count} mais",
+    "kind": {
+      "retain": "Retido",
+      "append": "Anexado",
+      "reprocess": "Reprocessado",
+      "retag": "Tags alteradas",
+      "fact_edited": "Fato editado",
+      "fact_invalidated": "Fato invalidado",
+      "fact_restored": "Fato restaurado",
+      "consolidation": "Consolidado"
+    },
+    "loadOlder": "Carregar anteriores",
+    "colWhen": "Quando",
+    "colChange": "Alteração",
+    "colFacts": "Fatos",
+    "colObservations": "Observações",
+    "colOperation": "Operação",
+    "legendExists": "Ainda existe — clique para abrir",
+    "legendRemovedLater": "Removida por uma alteração posterior",
+    "legendRemovedHere": "Removida por esta alteração",
+    "chipRemovedLater": "Removida depois por: {kind} ({when})"
   }
 }

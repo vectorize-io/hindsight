@@ -773,6 +773,23 @@ enum DocumentCommands {
         document_id: String,
     },
 
+    /// Show what each change did to a document's facts and observations (rebuilt from operations)
+    History {
+        /// Bank ID
+        bank_id: String,
+
+        /// Document ID
+        document_id: String,
+
+        /// Maximum number of operations to read
+        #[arg(short = 'l', long, default_value = "50")]
+        limit: i32,
+
+        /// Offset for pagination, in operations
+        #[arg(short = 's', long, default_value = "0")]
+        offset: i32,
+    },
+
     /// Delete a document and all its memory units
     Delete {
         /// Bank ID
@@ -1868,6 +1885,19 @@ fn run() -> Result<()> {
                 bank_id,
                 document_id,
             } => commands::document::get(&client, &bank_id, &document_id, verbose, output_format),
+            DocumentCommands::History {
+                bank_id,
+                document_id,
+                limit,
+                offset,
+            } => commands::document::history(
+                &client,
+                &bank_id,
+                &document_id,
+                limit,
+                offset,
+                output_format,
+            ),
             DocumentCommands::Delete {
                 bank_id,
                 document_id,

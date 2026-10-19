@@ -414,6 +414,43 @@ export interface BankAliasesResponse {
   aliases: BankAliasEntry[];
 }
 
+export type DocumentEventKind =
+  | "retain"
+  | "append"
+  | "reprocess"
+  | "retag"
+  | "fact_edited"
+  | "fact_invalidated"
+  | "fact_restored"
+  | "consolidation";
+
+/** How many observations an event touched, and (up to 100) which. */
+export interface ObservationIdSample {
+  count: number;
+  ids: string[];
+}
+
+export interface DocumentEvent {
+  document_id: string;
+  kind: DocumentEventKind;
+  created_at: string;
+  operation_id: string | null;
+  fact_id: string | null;
+  facts_added: number;
+  facts_removed: number;
+  observations_created: ObservationIdSample;
+  observations_updated: ObservationIdSample;
+  observations_removed: ObservationIdSample;
+}
+
+interface DocumentHistoryResponse {
+  document_id: string;
+  total: number;
+  limit: number;
+  offset: number;
+  items: DocumentEvent[];
+}
+
 export class ControlPlaneClient {
   private async fetchApi<T>(
     path: string,
@@ -1128,6 +1165,16 @@ export class ControlPlaneClient {
       limit: number;
       offset: number;
     }>(`${documentApi(params.document_id, params.bank_id, "/chunks")}&${queryParams}`);
+  }
+
+  /**
+   * A document's change history, newest first: what each retain, fact edit and
+   * consolidation did to its facts and observations.
+   */
+  async getDocumentHistory(documentId: string, bankId: string, offset = 0, limit = 100) {
+    return this.fetchApi<DocumentHistoryResponse>(
+      `${documentApi(documentId, bankId, "/history")}&limit=${limit}&offset=${offset}`
+    );
   }
 
   /**

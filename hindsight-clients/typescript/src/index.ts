@@ -62,6 +62,7 @@ import type {
   Base64AttachmentSource,
   DirectiveListResponse,
   DirectiveResponse,
+  DocumentHistoryResponse,
   DocumentResponse,
   DryRunExtractRequest,
   DryRunExtractionResult,
@@ -1730,6 +1731,30 @@ export class HindsightClient {
   }
 
   /**
+   * What each change did to a document's facts and observations, newest first. Rebuilt from the
+   * bank's operations: `limit`/`offset` count operations, and changes that ran without one (a
+   * synchronous retain) are not listed. Returns null if the document is outside the caller's scope.
+   */
+  async getDocumentHistory(
+    bankId: string,
+    documentId: string,
+    options?: { limit?: number; offset?: number; signal?: AbortSignal }
+  ): Promise<DocumentHistoryResponse | null> {
+    const response = await sdk.getDocumentHistory({
+      client: this.client,
+      path: { bank_id: bankId, document_id: documentId },
+      query: { limit: options?.limit, offset: options?.offset },
+      signal: options?.signal,
+    });
+
+    if ((response as any).response?.status === 404) {
+      return null;
+    }
+
+    return this.validateResponse(response, "getDocumentHistory");
+  }
+
+  /**
    * List documents in a bank.
    */
   async listDocuments(
@@ -2136,6 +2161,7 @@ export type {
   CreateMentalModelResponse,
   DirectiveListResponse,
   DirectiveResponse,
+  DocumentHistoryResponse,
   DocumentResponse,
   DryRunExtractRequest,
   DryRunExtractionResult,

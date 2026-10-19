@@ -39,6 +39,13 @@ from ...metrics import get_metrics_collector
 from ...worker.stage import set_stage
 from ..db import DatabaseBackend
 from ..db_utils import acquire_with_retry
+from ..document_history import (
+    note_observation_written,
+    note_observations_removed,
+    observation_changes_tracked,
+    record_consolidation_events,
+    track_observation_changes,
+)
 from ..llm_interface import OutputTooLongError, PromptCachePrefix, ProviderRateLimitResetError
 from ..llm_trace import (
     record_created_memory_ids,
@@ -410,6 +417,7 @@ async def _apply_dedup_create_fold(
             outcome.best_id[:8],
         )
         return None
+    note_observation_written(outcome.best_id, [str(i) for i in live_source_ids], created=False)
     return outcome.best_id
 
 
@@ -1553,24 +1561,27 @@ async def run_consolidation_job(
     # trace — flushed onto every trace row on exit by attach_memory_ids.
     trace_ctx = trace_context_of(llm_config)
     trace_token = set_trace_context(trace_ctx) if trace_ctx is not None else None
-    try:
-        return await _run_consolidation_job(
-            memory_engine,
-            bank_id,
-            request_context,
-            config,
-            llm_config,
-            operation_id,
-            observation_scopes,
-            pending_refresh_tags,
-            caller_requested,
-        )
-    finally:
-        if trace_token is not None:
-            reset_trace_context(trace_token)
-            # Fire-and-forget: patched on a background task, off the consolidation
-            # critical path.
-            memory_engine._llm_recorder.attach_memory_ids(trace_ctx)
+    with track_observation_changes() as observation_changes:
+        try:
+            return await _run_consolidation_job(
+                memory_engine,
+                bank_id,
+                request_context,
+                config,
+                llm_config,
+                operation_id,
+                observation_scopes,
+                pending_refresh_tags,
+                caller_requested,
+            )
+        finally:
+            if trace_token is not None:
+                reset_trace_context(trace_token)
+                # Fire-and-forget: patched on a background task, off the consolidation
+                # critical path.
+                memory_engine._llm_recorder.attach_memory_ids(trace_ctx)
+            # Also on failure: every batch that got this far committed its writes.
+            await record_consolidation_events(memory_engine._backend, bank_id, observation_changes, operation_id)
 
 
 async def _run_consolidation_job(
@@ -3138,6 +3149,7 @@ async def _apply_update_action(
 
     # Map the updated observation onto the consolidation trace as a produced memory.
     record_created_memory_ids([observation_id])
+    note_observation_written(observation_id, [str(s) for s in source_ids], created=False)
     logger.debug(f"Updated observation {observation_id} from {len(source_memory_ids)} source memories")
     return embedding_str
 
@@ -3175,6 +3187,7 @@ async def _apply_create_action(
     new_id = created.get("observation_id")
     if new_id:
         record_created_memory_ids([new_id])
+        note_observation_written(new_id, [str(s) for s in prepared.source_memory_ids], created=True)
     logger.debug(f"Created observation from {len(prepared.source_memory_ids)} source memories")
     return created["action"]
 
@@ -3249,6 +3262,12 @@ async def _execute_delete_action(
     observation_id: str,
 ) -> None:
     """Delete a superseded or contradicted observation."""
+    if observation_changes_tracked():
+        # Read before deleting: the change history files the removal under its sources' documents.
+        gone = await get_memories().get_memories(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[observation_id]
+        )
+        note_observations_removed({observation_id: list(gone[0].source_memory_ids) if gone else []})
     await get_memories().delete_observation(
         conn=conn, fq_table=fq_table, bank_id=bank_id, observation_id=observation_id
     )

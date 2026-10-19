@@ -958,7 +958,8 @@
     "dateRangeCustom": "Benutzerdefiniert",
     "dateRangeFrom": "Von",
     "dateRangeTo": "Bis",
-    "dateRangeReversed": "Ende muss nach dem Start liegen"
+    "dateRangeReversed": "Ende muss nach dem Start liegen",
+    "historyTab": "Verlauf"
   },
   "entitiesView": {
     "viewRelations": "Beziehungen",
@@ -2048,7 +2049,8 @@
         "chunks": "Dokument-Chunks konnten nicht abgerufen werden",
         "reprocess": "Dokument konnte nicht erneut verarbeitet werden",
         "export": "Dokumente konnten nicht exportiert werden",
-        "import": "Dokumente konnten nicht importiert werden"
+        "import": "Dokumente konnten nicht importiert werden",
+        "history": "Dokumentverlauf konnte nicht abgerufen werden"
       },
       "files": {
         "upload": "Dateien konnten nicht hochgeladen werden"
@@ -2276,5 +2278,36 @@
     "pausedTitle": "Die letzte Aktualisierung ist fehlgeschlagen, daher aktualisiert sich dieses Modell nicht mehr selbst – aktualisieren Sie es, um fortzufahren",
     "retrying": "Wiederholung",
     "retryingTitle": "Der letzte Versuch ist fehlgeschlagen, ein weiterer steht an – automatische Aktualisierungen stoppen nur, wenn auch dieser fehlschlägt"
+  },
+  "documentHistory": {
+    "explainer": "Was jede Änderung an den Fakten und Beobachtungen dieses Dokuments bewirkt hat. Beobachtungen werden neu aufgebaut, nicht versioniert: Entfernt eine Änderung eine, ist ihre ID hier die einzige Spur. Aus den Vorgängen der Bank rekonstruiert, daher fehlen synchrone Retains und Änderungen bei deaktivierter Auto-Konsolidierung. Zeile aufklappen für die IDs; über eine ID fahren, um sie in anderen Zeilen zu finden.",
+    "empty": "Keine Änderungen erfasst. Der Verlauf stammt aus den Vorgängen dieser Bank: asynchrone Retains und die Konsolidierungen nach Bearbeitungen.",
+    "loadError": "Verlauf konnte nicht geladen werden.",
+    "idsRemoved": "Entfernt",
+    "idsCreated": "Erstellt",
+    "idsUpdated": "Aktualisiert",
+    "chipRemoved": "Durch diese Änderung entfernt – existiert nicht mehr",
+    "chipOpen": "Diese Beobachtung öffnen",
+    "moreIds": "+{count} weitere",
+    "kind": {
+      "retain": "Gespeichert",
+      "append": "Angehängt",
+      "reprocess": "Neu verarbeitet",
+      "retag": "Tags geändert",
+      "fact_edited": "Fakt bearbeitet",
+      "fact_invalidated": "Fakt invalidiert",
+      "fact_restored": "Fakt wiederhergestellt",
+      "consolidation": "Konsolidiert"
+    },
+    "loadOlder": "Ältere laden",
+    "colWhen": "Zeitpunkt",
+    "colChange": "Änderung",
+    "colFacts": "Fakten",
+    "colObservations": "Beobachtungen",
+    "colOperation": "Vorgang",
+    "legendExists": "Existiert noch – zum Öffnen klicken",
+    "legendRemovedLater": "Durch eine spätere Änderung entfernt",
+    "legendRemovedHere": "Durch diese Änderung entfernt",
+    "chipRemovedLater": "Später entfernt durch: {kind} ({when})"
   }
 }

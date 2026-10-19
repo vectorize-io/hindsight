@@ -126,6 +126,9 @@ import type {
   GetDirectiveResponses,
   GetDocumentData,
   GetDocumentErrors,
+  GetDocumentHistoryData,
+  GetDocumentHistoryErrors,
+  GetDocumentHistoryResponses,
   GetDocumentResponses,
   GetEntityData,
   GetEntityErrors,
@@ -1030,6 +1033,22 @@ export const listDocumentChunks = <ThrowOnError extends boolean = false>(
     ListDocumentChunksErrors,
     ThrowOnError
   >({ url: "/v1/default/banks/{bank_id}/documents/{document_id}/chunks", ...options });
+
+/**
+ * Get document change history
+ *
+ * What each change to a document did, newest first: every retain, append and reprocess (facts added and removed), every fact edit, invalidation, restore and retag (observations removed), and every consolidation run (observations created, updated and removed). Observations are rebuilt, not versioned, so this is the only record of the ones a change removed. Ids and counts only, with each id list capped at 100.
+ *
+ * Rebuilt from the bank's async operations, which carry these events: it reaches back only as far as operations are kept (HINDSIGHT_API_OPERATION_RETENTION_DAYS, unlimited by default), and a change that ran without an operation is not in it — a synchronous retain (async=false), or a fact edit or retag while auto-consolidation is off. A fact edit or retag is recorded on the consolidation operation it queues. total, limit and offset count operations, not events.
+ */
+export const getDocumentHistory = <ThrowOnError extends boolean = false>(
+  options: Options<GetDocumentHistoryData, ThrowOnError>
+) =>
+  (options.client ?? client).get<
+    GetDocumentHistoryResponses,
+    GetDocumentHistoryErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/documents/{document_id}/history", ...options });
 
 /**
  * Reprocess document

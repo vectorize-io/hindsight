@@ -68,6 +68,15 @@ from .db.ops_postgresql import pg_search_vector_expr
 from .db.postgresql import PostgreSQLBackend
 from .db.postgresql import apply_session_settings as _apply_session_settings
 from .db_budget import budgeted_operation
+from .document_history import (
+    DocumentEvent,
+    DocumentEventKind,
+    DocumentHistoryResponse,
+    ObservationIdSample,
+    append_operation_events,
+    list_document_events,
+    track_observation_changes,
+)
 from .llm_interface import ProviderAuthError, ProviderContentPolicyError, ProviderRateLimitResetError
 from .llm_trace import (
     LLMRequestEntry,
@@ -323,6 +332,14 @@ def _shared_document_id(contents: "Iterable[Mapping[str, Any]]") -> str | None:
     """
     ids = {item.get("document_id") for item in contents}
     return ids.pop() if len(ids) == 1 else None
+
+
+# The curation actions that change a fact, as change-history kinds ("reason" only relabels one).
+_CURATION_EVENT_KINDS: dict[str, DocumentEventKind] = {
+    "edit": DocumentEventKind.FACT_EDITED,
+    "invalidate": DocumentEventKind.FACT_INVALIDATED,
+    "revert": DocumentEventKind.FACT_RESTORED,
+}
 
 
 def fq_table(table_name: str) -> str:
@@ -11153,102 +11170,105 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
         invalidated_obs = 0
         requeued_units = 0
-        async with acquire_with_retry(backend) as conn:
-            async with conn.transaction():
-                from .memories import get_memories
-                from .retain.entity_labels import label_tag_keys, split_label_tags
+        with track_observation_changes() as retag_changes:
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    from .memories import get_memories
+                    from .retain.entity_labels import label_tag_keys, split_label_tags
 
-                _store = get_memories()
+                    _store = get_memories()
 
-                # Read the tags the document already carries BEFORE overwriting them.
-                # A tags array equal to the current one is a semantic no-op, and a bulk
-                # tag-normalisation sweep re-sends an identical array on every run. The
-                # retag cascade below is not cheap enough to pay for that: it deletes
-                # every observation built over this document's memories and then
-                # requeues each of those observations' OTHER sources, so one no-op
-                # PATCH re-consolidates memories reaching well past the document
-                # itself, and a repeated sweep multiplies that by its document count.
-                # Compare as SETS — consolidation scopes a memory by its tag set, never
-                # by the order the array arrived in, so a reordered array changes
-                # nothing that consolidation can observe.
-                _current = await _store.current_document_tags(
-                    conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
-                )
-                current_tags = _current.tags
-
-                # `None` means "could not read the current tags" (document not found, or
-                # a store record that does not carry them) — never claim unchanged on a
-                # value we did not see, or a real retag would be silently skipped.
-                retag = (
-                    tags if (tags is not None and (current_tags is None or set(current_tags) != set(tags))) else None
-                )
-
-                # A retag replaces the DOCUMENT's tags on every unit, but the column also
-                # holds the projection of the `entity_labels` groups flagged `tag: true` —
-                # derived per memory from that memory's own entities at extraction, not
-                # from the document. This PATCH re-processes nothing, so it has no business
-                # rewriting them: each unit keeps the ones it carries (issue #4068).
-                _label_keys: set[str] = set()
-                if retag is not None:
-                    _retag_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
-                    _label_keys = label_tag_keys(getattr(_retag_config, "entity_labels", None))
-
-                def _retagged(existing: list[str] | None) -> list[str]:
-                    if retag is None:
-                        # A scope change alone: every unit keeps the tags it has.
-                        return list(existing or [])
-                    merged = list(retag)
-                    seen = set(merged)
-                    for t in split_label_tags(existing, _label_keys):
-                        if t not in seen:
-                            seen.add(t)
-                            merged.append(t)
-                    return merged
-
-                def _rescoped(scopes: Any) -> str | None:
-                    # The unit's scopes after the PATCH, as JSON — or None when they do not change.
-                    # Requested scopes win; otherwise a retag carries a rename into explicit ones.
-                    if observation_scopes is not None:
-                        new_scopes: Any = observation_scopes
-                    else:
-                        new_scopes = _renamed_scopes(scopes, current_tags, retag or [])
-                    return json.dumps(new_scopes) if new_scopes != _normalize_scopes(scopes) else None
-
-                try:
-                    found = await _store.update_document_tags(
-                        conn=conn,
-                        fq_table=fq_table,
-                        bank_id=bank_id,
-                        document_id=document_id,
-                        tags=tags,
-                        found=_current.found,
-                        observation_scopes=observation_scopes,
+                    # Read the tags the document already carries BEFORE overwriting them.
+                    # A tags array equal to the current one is a semantic no-op, and a bulk
+                    # tag-normalisation sweep re-sends an identical array on every run. The
+                    # retag cascade below is not cheap enough to pay for that: it deletes
+                    # every observation built over this document's memories and then
+                    # requeues each of those observations' OTHER sources, so one no-op
+                    # PATCH re-consolidates memories reaching well past the document
+                    # itself, and a repeated sweep multiplies that by its document count.
+                    # Compare as SETS — consolidation scopes a memory by its tag set, never
+                    # by the order the array arrived in, so a reordered array changes
+                    # nothing that consolidation can observe.
+                    _current = await _store.current_document_tags(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
                     )
-                except NotImplementedError:
-                    if observation_scopes is None:
-                        raise
-                    from hindsight_api.extensions import OperationValidationError
+                    current_tags = _current.tags
 
-                    raise OperationValidationError(
-                        "This bank's memory store does not support changing observation_scopes", status_code=400
+                    # `None` means "could not read the current tags" (document not found, or
+                    # a store record that does not carry them) — never claim unchanged on a
+                    # value we did not see, or a real retag would be silently skipped.
+                    retag = (
+                        tags
+                        if (tags is not None and (current_tags is None or set(current_tags) != set(tags)))
+                        else None
                     )
-                if not found:
-                    return False
-                # Whether any unit's scopes actually move is decided per unit inside, against the
-                # resolved scopes (write_scopes_changed) — a no-op change requeues nothing.
-                if retag is not None or observation_scopes is not None:
-                    retagged_result = await _store.retag_document_memories(
-                        conn=conn,
-                        ops=self._backend.ops,
-                        fq_table=fq_table,
-                        bank_id=bank_id,
-                        document_id=document_id,
-                        tags=retag,
-                        retagged=_retagged,
-                        rescoped=_rescoped,
-                    )
-                    invalidated_obs = retagged_result.invalidated_observations
-                    requeued_units = retagged_result.requeued_units
+
+                    # A retag replaces the DOCUMENT's tags on every unit, but the column also
+                    # holds the projection of the `entity_labels` groups flagged `tag: true` —
+                    # derived per memory from that memory's own entities at extraction, not
+                    # from the document. This PATCH re-processes nothing, so it has no business
+                    # rewriting them: each unit keeps the ones it carries (issue #4068).
+                    _label_keys: set[str] = set()
+                    if retag is not None:
+                        _retag_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+                        _label_keys = label_tag_keys(getattr(_retag_config, "entity_labels", None))
+
+                    def _retagged(existing: list[str] | None) -> list[str]:
+                        if retag is None:
+                            # A scope change alone: every unit keeps the tags it has.
+                            return list(existing or [])
+                        merged = list(retag)
+                        seen = set(merged)
+                        for t in split_label_tags(existing, _label_keys):
+                            if t not in seen:
+                                seen.add(t)
+                                merged.append(t)
+                        return merged
+
+                    def _rescoped(scopes: Any) -> str | None:
+                        # The unit's scopes after the PATCH, as JSON — or None when they do not change.
+                        # Requested scopes win; otherwise a retag carries a rename into explicit ones.
+                        if observation_scopes is not None:
+                            new_scopes: Any = observation_scopes
+                        else:
+                            new_scopes = _renamed_scopes(scopes, current_tags, retag or [])
+                        return json.dumps(new_scopes) if new_scopes != _normalize_scopes(scopes) else None
+
+                    try:
+                        found = await _store.update_document_tags(
+                            conn=conn,
+                            fq_table=fq_table,
+                            bank_id=bank_id,
+                            document_id=document_id,
+                            tags=tags,
+                            found=_current.found,
+                            observation_scopes=observation_scopes,
+                        )
+                    except NotImplementedError:
+                        if observation_scopes is None:
+                            raise
+                        from hindsight_api.extensions import OperationValidationError
+
+                        raise OperationValidationError(
+                            "This bank's memory store does not support changing observation_scopes", status_code=400
+                        )
+                    if not found:
+                        return False
+                    # Whether any unit's scopes actually move is decided per unit inside, against the
+                    # resolved scopes (write_scopes_changed) — a no-op change requeues nothing.
+                    if retag is not None or observation_scopes is not None:
+                        retagged_result = await _store.retag_document_memories(
+                            conn=conn,
+                            ops=self._backend.ops,
+                            fq_table=fq_table,
+                            bank_id=bank_id,
+                            document_id=document_id,
+                            tags=retag,
+                            retagged=_retagged,
+                            rescoped=_rescoped,
+                        )
+                        invalidated_obs = retagged_result.invalidated_observations
+                        requeued_units = retagged_result.requeued_units
 
         if invalidated_obs > 0:
             # Observation units were deleted, changing the counts get_bank_stats
@@ -11262,8 +11282,17 @@ class MemoryEngine(MemoryEngineInterface):
         if invalidated_obs > 0 or requeued_units > 0:
             config = await self._config_resolver.resolve_full_config(bank_id, request_context)
             if config.enable_auto_consolidation:
+                # Built (and so timestamped) now, before the consolidation it is recorded on can run.
+                retag_event = DocumentEvent(
+                    document_id=document_id,
+                    kind=DocumentEventKind.RETAG,
+                    observations_removed=ObservationIdSample.of(retag_changes.removed),
+                )
                 try:
-                    await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+                    submitted = await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+                    # On the consolidation that rebuilds what the retag removed, so the history
+                    # shows the removal next to its rebuild (see document_history).
+                    await append_operation_events(backend, submitted["operation_id"], [retag_event])
                 except Exception as e:
                     logger.warning(f"Failed to submit consolidation after document update for bank {bank_id}: {e}")
 
@@ -12481,186 +12510,187 @@ class MemoryEngine(MemoryEngineInterface):
         curation_action: MemoryCurationAction | None = None
         reembedded_text: str | None = None
         try:
-            async with acquire_with_retry(backend) as conn:
-                async with conn.transaction():
-                    # Re-read under the write transaction: moving the embed out widened the read→write
-                    # window, so re-validate existence and skip cleanly if the row was concurrently
-                    # moved or deleted between the phases.
-                    live_batch2 = await store.get_memories(
-                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
-                    )
-                    live2 = live_batch2[0] if live_batch2 else None
-                    archived2 = (
-                        None
-                        if live2
-                        else await store.get_archived_memory(
-                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid)
+            with track_observation_changes() as edit_changes:
+                async with acquire_with_retry(backend) as conn:
+                    async with conn.transaction():
+                        # Re-read under the write transaction: moving the embed out widened the read→write
+                        # window, so re-validate existence and skip cleanly if the row was concurrently
+                        # moved or deleted between the phases.
+                        live_batch2 = await store.get_memories(
+                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
                         )
-                    )
-                    if live2 is None and archived2 is None:
-                        return None
-
-                    # --- Apply edit (live rows only) ---
-                    if edit_plan is not None and live2:
-                        if edit_plan.entity_names_for_store is not None:
-                            # The store owns its entity registry: apply_edit below resolves + mints
-                            # these names and rewrites the memory's entity ids. There are no SQL
-                            # postings to clear/relink and no prune queue — the store keeps entity
-                            # ids on the memory itself, so the edit's rewrite replaces the whole set.
-                            edit_embedding = edit_plan.embedding
-                        elif edit_plan.resolved_for_unit is not None:
-                            # Entities are being changed: rebuild unit_entities to the resolved set.
-                            # The entities this unit is about to stop referencing may have been
-                            # holding on by that posting alone, so queue them as prune candidates
-                            # first — after the clear there is nothing left to read them from.
-                            await enqueue_entity_prune_candidates(conn, bank_id, [memory_id])
-                            await store.clear_unit_entities(
+                        live2 = live_batch2[0] if live_batch2 else None
+                        archived2 = (
+                            None
+                            if live2
+                            else await store.get_archived_memory(
                                 conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid)
                             )
-                            if edit_plan.resolved_for_unit:
-                                # Reassert on this connection first so a concurrent graph-maintenance
-                                # prune (retain #2662 race) blocks until commit, then link exactly
-                                # the resolved set the embedding named.
-                                await self.entity_resolver.reassert_entities_batch(
-                                    bank_id, edit_plan.entity_resolution.resolved_entities, conn=conn
-                                )
-                                await self.entity_resolver.link_units_to_entities_batch(
-                                    [
-                                        (str(memory_uuid), eid, edit_plan.entity_date)
-                                        for eid in edit_plan.resolved_for_unit
-                                    ],
-                                    conn=conn,
-                                    bank_id=bank_id,
-                                )
-                            edit_embedding = edit_plan.embedding
-                        else:
-                            # Entities NOT changing: the precomputed embedding used the Phase-1
-                            # names. Re-read them under the write lock — a concurrent entity-only
-                            # edit between the phases could have changed the set, leaving the
-                            # embedding naming stale entities. Only on that (rare) mismatch do we
-                            # re-embed in-transaction, keeping the stored vector consistent with the links.
-                            emap2 = await store.entity_map_for_units(
-                                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
-                            )
-                            locked_names = [e["canonical_name"] for e in emap2.get(str(memory_uuid), [])]
-                            if locked_names != edit_plan.names:
-                                edit_embedding = await self._reembed_memory_text(
-                                    text=edit_plan.new_text,
-                                    occurred_start=edit_plan.new_occ_start,
-                                    occurred_end=edit_plan.new_occ_end,
-                                    mentioned_at=edit_plan.mentioned_at,
-                                    entities=locked_names,
-                                )
-                            else:
+                        )
+                        if live2 is None and archived2 is None:
+                            return None
+
+                        # --- Apply edit (live rows only) ---
+                        if edit_plan is not None and live2:
+                            if edit_plan.entity_names_for_store is not None:
+                                # The store owns its entity registry: apply_edit below resolves + mints
+                                # these names and rewrites the memory's entity ids. There are no SQL
+                                # postings to clear/relink and no prune queue — the store keeps entity
+                                # ids on the memory itself, so the edit's rewrite replaces the whole set.
                                 edit_embedding = edit_plan.embedding
-                        # Sweep before this memory's row is written, in the sweep's lock order (see
-                        # delete_document); the sweep after the edit stays for racing inserts.
-                        await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
-                        # Capture relink victims before this memory's links change, then apply the
-                        # field edit through the store: it resets consolidation, stamps the edit, and
-                        # drops the derived links (rebuilt with victims — the edit leaves the unit
-                        # live, so its own outgoing adjacency is rebuilt too, #2864).
-                        await enqueue_relink_victims(conn, bank_id, [memory_id], include_affected_units=True)
-                        await store.apply_edit(
-                            conn=conn,
-                            fq_table=fq_table,
-                            bank_id=bank_id,
-                            unit_id=str(memory_uuid),
-                            text=edit_plan.new_text,
-                            context=edit_plan.new_context,
-                            fact_type=edit_plan.new_fact,
-                            occurred_start=edit_plan.new_occ_start,
-                            occurred_end=edit_plan.new_occ_end,
-                            event_date=edit_plan.new_event_date,
-                            mentioned_at=edit_plan.mentioned_at,
-                            entity_ids=edit_plan.edit_entity_ids,
-                            entity_names=edit_plan.entity_names_for_store,
-                            # Only when the caller opted out, so a store that predates the
-                            # argument keeps working for every other edit (#5050).
-                            **(
-                                {"exact_entity_names": True}
-                                if edit_plan.entity_names_for_store is not None and not resolve_entities
-                                else {}
-                            ),
-                            # The vector describes the text being written by this same call, so
-                            # it goes with it: a following set_memory_embedding would be a second
-                            # write of the row apply_edit just wrote.
-                            embedding=edit_embedding,
-                            # The memory's type as it stands, so the store need not re-read the
-                            # memory to see whether this edit changes it. `live2` is the re-read
-                            # this transaction already did, so it is free here.
-                            current_fact_type=live2.fact_type,
-                        )
-                        await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
-                        need_consolidation = True
-                        need_graph = True
-                        edit_applied = True
-                        curation_action = "edit"
-                        reembedded_text = edit_plan.new_text
-
-                    # --- Invalidate: move live → archive ---
-                    if do_invalidate and live2:
-                        # Sweep before the row moves, in the sweep's lock order (see delete_document).
-                        await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
-                        # Capture relink victims and entity prune candidates before the row
-                        # (and its links and postings) go.
-                        await enqueue_relink_victims(conn, bank_id, [memory_id])
-                        await enqueue_entity_prune_candidates(conn, bank_id, [memory_id])
-                        await store.invalidate_memory(
-                            conn=conn,
-                            fq_table=fq_table,
-                            bank_id=bank_id,
-                            unit_id=str(memory_uuid),
-                            reason=reason,
-                        )
-                        # Sweep after the move, so a racing observation insert is caught too.
-                        await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
-                        need_consolidation = True
-                        need_graph = True
-                        curation_action = "invalidate"
-                    elif do_reason_update and archived2 and reason is not None:
-                        # Already archived — just update the recorded reason.
-                        await store.set_invalidation_reason(
-                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid), reason=reason
-                        )
-                        curation_action = "reason"
-
-                    # --- Revert: move archive → live ---
-                    elif do_revert and archived2 and revert_plan is not None:
-                        restored = await store.restore_memory(
-                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid)
-                        )
-                        if restored is not None:
-                            # The Phase-1 embedding used the archive snapshot's entity names. If the
-                            # restored (surviving) entity set differs — some pruned as orphans after
-                            # the original move — re-embed in-transaction so the stored vector matches.
-                            emap2 = await store.entity_map_for_units(
-                                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
+                            elif edit_plan.resolved_for_unit is not None:
+                                # Entities are being changed: rebuild unit_entities to the resolved set.
+                                # The entities this unit is about to stop referencing may have been
+                                # holding on by that posting alone, so queue them as prune candidates
+                                # first — after the clear there is nothing left to read them from.
+                                await enqueue_entity_prune_candidates(conn, bank_id, [memory_id])
+                                await store.clear_unit_entities(
+                                    conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid)
+                                )
+                                if edit_plan.resolved_for_unit:
+                                    # Reassert on this connection first so a concurrent graph-maintenance
+                                    # prune (retain #2662 race) blocks until commit, then link exactly
+                                    # the resolved set the embedding named.
+                                    await self.entity_resolver.reassert_entities_batch(
+                                        bank_id, edit_plan.entity_resolution.resolved_entities, conn=conn
+                                    )
+                                    await self.entity_resolver.link_units_to_entities_batch(
+                                        [
+                                            (str(memory_uuid), eid, edit_plan.entity_date)
+                                            for eid in edit_plan.resolved_for_unit
+                                        ],
+                                        conn=conn,
+                                        bank_id=bank_id,
+                                    )
+                                edit_embedding = edit_plan.embedding
+                            else:
+                                # Entities NOT changing: the precomputed embedding used the Phase-1
+                                # names. Re-read them under the write lock — a concurrent entity-only
+                                # edit between the phases could have changed the set, leaving the
+                                # embedding naming stale entities. Only on that (rare) mismatch do we
+                                # re-embed in-transaction, keeping the stored vector consistent with the links.
+                                emap2 = await store.entity_map_for_units(
+                                    conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
+                                )
+                                locked_names = [e["canonical_name"] for e in emap2.get(str(memory_uuid), [])]
+                                if locked_names != edit_plan.names:
+                                    edit_embedding = await self._reembed_memory_text(
+                                        text=edit_plan.new_text,
+                                        occurred_start=edit_plan.new_occ_start,
+                                        occurred_end=edit_plan.new_occ_end,
+                                        mentioned_at=edit_plan.mentioned_at,
+                                        entities=locked_names,
+                                    )
+                                else:
+                                    edit_embedding = edit_plan.embedding
+                            # Sweep before this memory's row is written, in the sweep's lock order (see
+                            # delete_document); the sweep after the edit stays for racing inserts.
+                            await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
+                            # Capture relink victims before this memory's links change, then apply the
+                            # field edit through the store: it resets consolidation, stamps the edit, and
+                            # drops the derived links (rebuilt with victims — the edit leaves the unit
+                            # live, so its own outgoing adjacency is rebuilt too, #2864).
+                            await enqueue_relink_victims(conn, bank_id, [memory_id], include_affected_units=True)
+                            await store.apply_edit(
+                                conn=conn,
+                                fq_table=fq_table,
+                                bank_id=bank_id,
+                                unit_id=str(memory_uuid),
+                                text=edit_plan.new_text,
+                                context=edit_plan.new_context,
+                                fact_type=edit_plan.new_fact,
+                                occurred_start=edit_plan.new_occ_start,
+                                occurred_end=edit_plan.new_occ_end,
+                                event_date=edit_plan.new_event_date,
+                                mentioned_at=edit_plan.mentioned_at,
+                                entity_ids=edit_plan.edit_entity_ids,
+                                entity_names=edit_plan.entity_names_for_store,
+                                # Only when the caller opted out, so a store that predates the
+                                # argument keeps working for every other edit (#5050).
+                                **(
+                                    {"exact_entity_names": True}
+                                    if edit_plan.entity_names_for_store is not None and not resolve_entities
+                                    else {}
+                                ),
+                                # The vector describes the text being written by this same call, so
+                                # it goes with it: a following set_memory_embedding would be a second
+                                # write of the row apply_edit just wrote.
+                                embedding=edit_embedding,
+                                # The memory's type as it stands, so the store need not re-read the
+                                # memory to see whether this edit changes it. `live2` is the re-read
+                                # this transaction already did, so it is free here.
+                                current_fact_type=live2.fact_type,
                             )
-                            locked_names = [e["canonical_name"] for e in emap2.get(str(memory_uuid), [])]
-                            revert_embedding = revert_plan.embedding
-                            if locked_names != revert_plan.names:
-                                revert_embedding = await self._reembed_memory_text(
-                                    text=restored.text,
-                                    occurred_start=restored.occurred_start,
-                                    occurred_end=restored.occurred_end,
-                                    mentioned_at=restored.mentioned_at,
-                                    entities=locked_names,
-                                )
-                            if revert_embedding is not None:
-                                await store.set_memory_embedding(
-                                    conn=conn,
-                                    fq_table=fq_table,
-                                    bank_id=bank_id,
-                                    unit_id=str(memory_uuid),
-                                    embedding=revert_embedding,
-                                )
-                            curation_action = "revert"
-                            reembedded_text = restored.text if revert_embedding is not None else None
-                        need_consolidation = True
-                        need_graph = True
+                            await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
+                            need_consolidation = True
+                            need_graph = True
+                            edit_applied = True
+                            curation_action = "edit"
+                            reembedded_text = edit_plan.new_text
 
-                phase2_committed = True
+                        # --- Invalidate: move live → archive ---
+                        if do_invalidate and live2:
+                            # Sweep before the row moves, in the sweep's lock order (see delete_document).
+                            await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
+                            # Capture relink victims and entity prune candidates before the row
+                            # (and its links and postings) go.
+                            await enqueue_relink_victims(conn, bank_id, [memory_id])
+                            await enqueue_entity_prune_candidates(conn, bank_id, [memory_id])
+                            await store.invalidate_memory(
+                                conn=conn,
+                                fq_table=fq_table,
+                                bank_id=bank_id,
+                                unit_id=str(memory_uuid),
+                                reason=reason,
+                            )
+                            # Sweep after the move, so a racing observation insert is caught too.
+                            await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
+                            need_consolidation = True
+                            need_graph = True
+                            curation_action = "invalidate"
+                        elif do_reason_update and archived2 and reason is not None:
+                            # Already archived — just update the recorded reason.
+                            await store.set_invalidation_reason(
+                                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid), reason=reason
+                            )
+                            curation_action = "reason"
+
+                        # --- Revert: move archive → live ---
+                        elif do_revert and archived2 and revert_plan is not None:
+                            restored = await store.restore_memory(
+                                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid)
+                            )
+                            if restored is not None:
+                                # The Phase-1 embedding used the archive snapshot's entity names. If the
+                                # restored (surviving) entity set differs — some pruned as orphans after
+                                # the original move — re-embed in-transaction so the stored vector matches.
+                                emap2 = await store.entity_map_for_units(
+                                    conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
+                                )
+                                locked_names = [e["canonical_name"] for e in emap2.get(str(memory_uuid), [])]
+                                revert_embedding = revert_plan.embedding
+                                if locked_names != revert_plan.names:
+                                    revert_embedding = await self._reembed_memory_text(
+                                        text=restored.text,
+                                        occurred_start=restored.occurred_start,
+                                        occurred_end=restored.occurred_end,
+                                        mentioned_at=restored.mentioned_at,
+                                        entities=locked_names,
+                                    )
+                                if revert_embedding is not None:
+                                    await store.set_memory_embedding(
+                                        conn=conn,
+                                        fq_table=fq_table,
+                                        bank_id=bank_id,
+                                        unit_id=str(memory_uuid),
+                                        embedding=revert_embedding,
+                                    )
+                                curation_action = "revert"
+                                reembedded_text = restored.text if revert_embedding is not None else None
+                            need_consolidation = True
+                            need_graph = True
+
+                    phase2_committed = True
         finally:
             # Entities were resolved (and possibly autocommitted) in Phase 1 but the edit did not
             # durably apply (row concurrently invalidated → live2 None, or Phase 2 raised), so the
@@ -12680,13 +12710,30 @@ class MemoryEngine(MemoryEngineInterface):
                 except Exception as e:
                     logger.warning(f"Failed to submit orphan-entity cleanup after a failed edit in bank {bank_id}: {e}")
 
+        # Built (and so timestamped) now, before the consolidation it is recorded on can run.
+        curated = live2 or archived2
+        curation_events = (
+            [
+                DocumentEvent(
+                    document_id=curated.document_id,
+                    kind=_CURATION_EVENT_KINDS[curation_action],
+                    fact_id=memory_id,
+                    observations_removed=ObservationIdSample.of(edit_changes.removed),
+                )
+            ]
+            if curation_action in _CURATION_EVENT_KINDS and curated and curated.document_id
+            else []
+        )
         consolidation_submitted = False
         if need_consolidation:
             config = await self._config_resolver.resolve_full_config(bank_id, request_context)
             if config.enable_auto_consolidation:
                 try:
-                    await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+                    submitted = await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
                     consolidation_submitted = True
+                    # On the consolidation that rebuilds what this change removed, so the history
+                    # shows the removal next to its rebuild (see document_history).
+                    await append_operation_events(backend, submitted["operation_id"], curation_events)
                 except Exception as e:
                     logger.warning(f"Failed to submit consolidation after curating memory in bank {bank_id}: {e}")
         if need_graph:
@@ -13810,6 +13857,28 @@ class MemoryEngine(MemoryEngineInterface):
                 "chunk_text": chunk["chunk_text"],
                 "created_at": chunk["created_at"].isoformat() if chunk["created_at"] else "",
             }
+
+    async def get_document_history(
+        self,
+        bank_id: str,
+        document_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        request_context: "RequestContext",
+    ) -> DocumentHistoryResponse | None:
+        """A document's change history, newest first: what each retain, fact edit and consolidation
+        did to its facts and observations. None when the document is outside the caller's tag scope."""
+        await self._authenticate_tenant(request_context)
+        from hindsight_api.extensions import BankReadOperation
+
+        tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.GET_DOCUMENT_HISTORY, request_context)
+        backend = await self._get_backend()
+        if tag_scope:
+            async with acquire_with_retry(backend) as conn:
+                if not await self._document_in_tag_scope(conn, bank_id, document_id, tag_scope):
+                    return None
+        return await list_document_events(backend, bank_id, document_id, limit=limit, offset=offset)
 
     async def list_document_chunks(
         self,

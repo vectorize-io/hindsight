@@ -102,6 +102,23 @@ console.log(`Memory count: ${doc.memory_unit_count}`);
 console.log(`Created: ${doc.created_at}`);
 // [/docs:document-get]
 
+// [docs:document-history]
+// What each retain, fact edit and consolidation did to this document, newest first
+const { data: history, error: historyError } = await sdk.getDocumentHistory({
+    client: apiClient,
+    path: { bank_id: 'my-bank', document_id: 'meeting-2024-03-15-section-1' },
+    query: { limit: 50 }
+});
+
+if (historyError) {
+    throw new Error(`Failed to get document history: ${JSON.stringify(historyError)}`);
+}
+
+for (const event of history.items) {
+    console.log(`${event.created_at} ${event.kind}: removed ${event.observations_removed.ids.join(', ')}`);
+}
+// [/docs:document-history]
+
 
 // [docs:document-update-tags]
 // Fix tags on a document retained with the wrong scope

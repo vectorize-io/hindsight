@@ -3962,6 +3962,101 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/documents/{document_id}/history": {
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Get document change history",
+        "description": "What each change to a document did, newest first: every retain, append and reprocess (facts added and removed), every fact edit, invalidation, restore and retag (observations removed), and every consolidation run (observations created, updated and removed). Observations are rebuilt, not versioned, so this is the only record of the ones a change removed. Ids and counts only, with each id list capped at 100.\n\nRebuilt from the bank's async operations, which carry these events: it reaches back only as far as operations are kept (HINDSIGHT_API_OPERATION_RETENTION_DAYS, unlimited by default), and a change that ran without an operation is not in it \u2014 a synchronous retain (async=false), or a fact edit or retag while auto-consolidation is off. A fact edit or retag is recorded on the consolidation operation it queues. total, limit and offset count operations, not events.",
+        "operationId": "get_document_history",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "description": "Maximum number of events to return",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Maximum number of events to return"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Offset for pagination",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Offset for pagination"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentHistoryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/documents/{document_id}/reprocess": {
       "post": {
         "tags": [
@@ -11512,6 +11607,87 @@
           "skepticism": 3
         }
       },
+      "DocumentEvent": {
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/DocumentEventKind"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Id",
+            "description": "The operation this event was recorded on (filled in when read)."
+          },
+          "fact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fact Id",
+            "description": "The fact a fact_* event changed."
+          },
+          "facts_added": {
+            "type": "integer",
+            "title": "Facts Added",
+            "default": 0
+          },
+          "facts_removed": {
+            "type": "integer",
+            "title": "Facts Removed",
+            "default": 0
+          },
+          "observations_created": {
+            "$ref": "#/components/schemas/ObservationIdSample"
+          },
+          "observations_updated": {
+            "$ref": "#/components/schemas/ObservationIdSample"
+          },
+          "observations_removed": {
+            "$ref": "#/components/schemas/ObservationIdSample"
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_id",
+          "kind"
+        ],
+        "title": "DocumentEvent",
+        "description": "One change to a document, and its effect on the facts and observations built from it."
+      },
+      "DocumentEventKind": {
+        "type": "string",
+        "enum": [
+          "retain",
+          "append",
+          "reprocess",
+          "retag",
+          "fact_edited",
+          "fact_invalidated",
+          "fact_restored",
+          "consolidation"
+        ],
+        "title": "DocumentEventKind",
+        "description": "What a change was. A named enum, not a Literal: inline enums are named after their field by\nthe generated Rust client, and ``kind`` already names the knowledge-base node enum there."
+      },
       "DocumentExportSubmitResponse": {
         "properties": {
           "operation_id": {
@@ -11530,6 +11706,43 @@
         ],
         "title": "DocumentExportSubmitResponse",
         "description": "Response for the async document-export endpoint (202).\n\nThe export runs in the background; poll the operations endpoint for status.\nOn completion the operation's ``result_metadata`` carries ``download_url``\n(fetch the ZIP from GET /v1/default/files/download/{key}), ``storage_key``,\n``byte_size``, and ``filename``."
+      },
+      "DocumentHistoryResponse": {
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentEvent"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_id",
+          "total",
+          "limit",
+          "offset",
+          "items"
+        ],
+        "title": "DocumentHistoryResponse",
+        "description": "A document's change history, newest first. ``total``, ``limit`` and ``offset`` count operations:\none operation can carry several events for the same document (an oversized retain in slices)."
       },
       "DocumentImportSubmitResponse": {
         "properties": {
@@ -16308,6 +16521,25 @@
         "type": "object",
         "title": "MinScores",
         "description": "Optional per-stage score floors for recall. Every floor is inclusive (``>=``).\n\nThe four floors act at two different levels, and the distinction decides what a\nreturned result is guaranteed to satisfy.\n\n``semantic`` and ``keyword`` are **retrieval-level** cutoffs pushed into their own\nSQL arm (overriding the global ``semantic_min_similarity`` / ``bm25_min_score``\nconfig for this request), so they prune weak matches before fusion. Each one\nconstrains **only the arm it names**. Recall fuses four arms \u2014 semantic, keyword,\ngraph and temporal \u2014 and a result reaches the response if *any* arm surfaced it,\nso a returned result may legitimately carry ``null`` for a stage it was not\nsurfaced by, and results reached through the graph or temporal arm carry neither\n``semantic`` nor ``keyword``. A *non-null* score always clears its floor \u2014 the\ngap is only ever a ``null``. Setting both does **not** restrict the response to\nresults that clear both: they are not a predicate over each fused result. This is\ndeliberate \u2014 an intersection would discard the strong single-arm matches that\nhybrid retrieval exists to find (a paraphrase with no lexical overlap, an exact\nidentifier the embedding scores poorly).\n\n``reranker`` and ``final`` are **post-query** filters applied to every scored\nresult after fusion and reranking, so these *are* per-result predicates: a\nreturned result always clears them. Use them, not the retrieval floors, to make\nrecall abstain on low-confidence queries.\n\nAny field left None imposes no floor; all-None (the default) means no score\nfiltering."
+      },
+      "ObservationIdSample": {
+        "properties": {
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "default": 0
+          },
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Ids"
+          }
+        },
+        "type": "object",
+        "title": "ObservationIdSample",
+        "description": "How many observations an event touched, and (up to ``MAX_IDS``) which."
       },
       "ObservationScope": {
         "properties": {

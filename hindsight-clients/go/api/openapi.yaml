@@ -2757,6 +2757,79 @@ paths:
       summary: List document chunks
       tags:
       - Documents
+  /v1/default/banks/{bank_id}/documents/{document_id}/history:
+    get:
+      description: |-
+        What each change to a document did, newest first: every retain, append and reprocess (facts added and removed), every fact edit, invalidation, restore and retag (observations removed), and every consolidation run (observations created, updated and removed). Observations are rebuilt, not versioned, so this is the only record of the ones a change removed. Ids and counts only, with each id list capped at 100.
+
+        Rebuilt from the bank's async operations, which carry these events: it reaches back only as far as operations are kept (HINDSIGHT_API_OPERATION_RETENTION_DAYS, unlimited by default), and a change that ran without an operation is not in it — a synchronous retain (async=false), or a fact edit or retag while auto-consolidation is off. A fact edit or retag is recorded on the consolidation operation it queues. total, limit and offset count operations, not events.
+      operationId: get_document_history
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: document_id
+        required: true
+        schema:
+          title: Document Id
+          type: string
+        style: simple
+      - description: Maximum number of events to return
+        explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 100
+          description: Maximum number of events to return
+          maximum: 1000
+          minimum: 1
+          title: Limit
+          type: integer
+        style: form
+      - description: Offset for pagination
+        explode: true
+        in: query
+        name: offset
+        required: false
+        schema:
+          default: 0
+          description: Offset for pagination
+          minimum: 0
+          title: Offset
+          type: integer
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentHistoryResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get document change history
+      tags:
+      - Documents
   /v1/default/banks/{bank_id}/documents/{document_id}/reprocess:
     post:
       description: "Re-run the retain pipeline on an existing document without changing\
@@ -7836,6 +7909,81 @@ components:
       - literalism
       - skepticism
       title: DispositionTraits
+    DocumentEvent:
+      description: "One change to a document, and its effect on the facts and observations\
+        \ built from it."
+      example:
+        observations_removed:
+          count: 2
+          ids:
+          - ids
+          - ids
+        observations_created:
+          count: 2
+          ids:
+          - ids
+          - ids
+        fact_id: fact_id
+        kind: retain
+        facts_removed: 5
+        observations_updated:
+          count: 2
+          ids:
+          - ids
+          - ids
+        created_at: 2000-01-23T04:56:07.000+00:00
+        facts_added: 5
+        operation_id: operation_id
+        document_id: document_id
+      properties:
+        document_id:
+          title: Document Id
+          type: string
+        kind:
+          $ref: '#/components/schemas/DocumentEventKind'
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        operation_id:
+          nullable: true
+          type: string
+        fact_id:
+          nullable: true
+          type: string
+        facts_added:
+          default: 0
+          title: Facts Added
+          type: integer
+        facts_removed:
+          default: 0
+          title: Facts Removed
+          type: integer
+        observations_created:
+          $ref: '#/components/schemas/ObservationIdSample'
+        observations_updated:
+          $ref: '#/components/schemas/ObservationIdSample'
+        observations_removed:
+          $ref: '#/components/schemas/ObservationIdSample'
+      required:
+      - document_id
+      - kind
+      title: DocumentEvent
+    DocumentEventKind:
+      description: |-
+        What a change was. A named enum, not a Literal: inline enums are named after their field by
+        the generated Rust client, and ``kind`` already names the knowledge-base node enum there.
+      enum:
+      - retain
+      - append
+      - reprocess
+      - retag
+      - fact_edited
+      - fact_invalidated
+      - fact_restored
+      - consolidation
+      title: DocumentEventKind
+      type: string
     DocumentExportSubmitResponse:
       description: |-
         Response for the async document-export endpoint (202).
@@ -7858,6 +8006,84 @@ components:
       required:
       - operation_id
       title: DocumentExportSubmitResponse
+    DocumentHistoryResponse:
+      description: |-
+        A document's change history, newest first. ``total``, ``limit`` and ``offset`` count operations:
+        one operation can carry several events for the same document (an oversized retain in slices).
+      example:
+        total: 0
+        offset: 1
+        limit: 6
+        document_id: document_id
+        items:
+        - observations_removed:
+            count: 2
+            ids:
+            - ids
+            - ids
+          observations_created:
+            count: 2
+            ids:
+            - ids
+            - ids
+          fact_id: fact_id
+          kind: retain
+          facts_removed: 5
+          observations_updated:
+            count: 2
+            ids:
+            - ids
+            - ids
+          created_at: 2000-01-23T04:56:07.000+00:00
+          facts_added: 5
+          operation_id: operation_id
+          document_id: document_id
+        - observations_removed:
+            count: 2
+            ids:
+            - ids
+            - ids
+          observations_created:
+            count: 2
+            ids:
+            - ids
+            - ids
+          fact_id: fact_id
+          kind: retain
+          facts_removed: 5
+          observations_updated:
+            count: 2
+            ids:
+            - ids
+            - ids
+          created_at: 2000-01-23T04:56:07.000+00:00
+          facts_added: 5
+          operation_id: operation_id
+          document_id: document_id
+      properties:
+        document_id:
+          title: Document Id
+          type: string
+        total:
+          title: Total
+          type: integer
+        limit:
+          title: Limit
+          type: integer
+        offset:
+          title: Offset
+          type: integer
+        items:
+          items:
+            $ref: '#/components/schemas/DocumentEvent'
+          type: array
+      required:
+      - document_id
+      - items
+      - limit
+      - offset
+      - total
+      title: DocumentHistoryResponse
     DocumentImportSubmitResponse:
       description: |-
         Response for the async document-import endpoint (202).
@@ -11270,6 +11496,24 @@ components:
           nullable: true
           type: number
       title: MinScores
+    ObservationIdSample:
+      description: "How many observations an event touched, and (up to ``MAX_IDS``)\
+        \ which."
+      example:
+        count: 2
+        ids:
+        - ids
+        - ids
+      properties:
+        count:
+          default: 0
+          title: Count
+          type: integer
+        ids:
+          items:
+            type: string
+          type: array
+      title: ObservationIdSample
     ObservationScope:
       description: "A distinct observation scope: an exact tag set plus its observation\
         \ count."

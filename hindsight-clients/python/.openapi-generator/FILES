@@ -77,7 +77,10 @@ hindsight_client_api/models/delete_response.py
 hindsight_client_api/models/directive_list_response.py
 hindsight_client_api/models/directive_response.py
 hindsight_client_api/models/disposition_traits.py
+hindsight_client_api/models/document_event.py
+hindsight_client_api/models/document_event_kind.py
 hindsight_client_api/models/document_export_submit_response.py
+hindsight_client_api/models/document_history_response.py
 hindsight_client_api/models/document_import_submit_response.py
 hindsight_client_api/models/document_list_item.py
 hindsight_client_api/models/document_response.py
@@ -155,6 +158,7 @@ hindsight_client_api/models/mental_model_trigger_output.py
 hindsight_client_api/models/min_scores.py
 hindsight_client_api/models/model_not.py
 hindsight_client_api/models/not1.py
+hindsight_client_api/models/observation_id_sample.py
 hindsight_client_api/models/observation_scope.py
 hindsight_client_api/models/observation_scopes.py
 hindsight_client_api/models/observation_scopes_response.py

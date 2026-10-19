@@ -958,7 +958,8 @@
     "dateRangeCustom": "自訂範圍",
     "dateRangeFrom": "由",
     "dateRangeTo": "至",
-    "dateRangeReversed": "結束時間必須喺開始之後"
+    "dateRangeReversed": "結束時間必須喺開始之後",
+    "historyTab": "歷史"
   },
   "entitiesView": {
     "viewRelations": "關係",
@@ -2048,7 +2049,8 @@
         "chunks": "未能載入文件片段",
         "reprocess": "未能重新處理文件",
         "export": "匯出文件失敗",
-        "import": "匯入文件失敗"
+        "import": "匯入文件失敗",
+        "history": "攞唔到文件歷史"
       },
       "files": {
         "upload": "未能上傳檔案"
@@ -2276,5 +2278,36 @@
     "pausedTitle": "上次重新整理失敗，呢個模型唔會再自動更新——手動重新整理就會恢復",
     "retrying": "重試緊",
     "retryingTitle": "上次嘗試失敗咗，下一次已經排緊隊——今次再失敗先會停止自動更新"
+  },
+  "documentHistory": {
+    "explainer": "每次變更對呢份文件嘅事實同觀察做咗乜。觀察會重建而唔會保留版本：變更刪除咗嘅觀察，呢度嘅 ID 就係唯一痕跡。歷史由銀行嘅操作重建，所以同步保留同埋關咗自動整合時嘅變更唔會列出。展開一行睇 ID；將滑鼠停喺 ID 上面就可以喺其他行搵到佢。",
+    "empty": "未有變更紀錄。歷史嚟自呢個銀行嘅操作：非同步保留，同埋編輯之後嘅整合。",
+    "loadError": "載入唔到歷史。",
+    "idsRemoved": "已刪除",
+    "idsCreated": "已建立",
+    "idsUpdated": "已更新",
+    "chipRemoved": "俾呢次變更刪除咗——已經唔存在",
+    "chipOpen": "打開呢個觀察",
+    "moreIds": "仲有 {count} 個",
+    "kind": {
+      "retain": "已保留",
+      "append": "已附加",
+      "reprocess": "已重新處理",
+      "retag": "標籤已變更",
+      "fact_edited": "事實已編輯",
+      "fact_invalidated": "事實已失效",
+      "fact_restored": "事實已還原",
+      "consolidation": "已整合"
+    },
+    "loadOlder": "載入更早嘅",
+    "colWhen": "時間",
+    "colChange": "變更",
+    "colFacts": "事實",
+    "colObservations": "觀察",
+    "colOperation": "操作",
+    "legendExists": "仲存在——撳一下打開",
+    "legendRemovedLater": "俾之後嘅變更刪除",
+    "legendRemovedHere": "俾呢次變更刪除",
+    "chipRemovedLater": "之後俾呢個刪除：{kind}（{when}）"
   }
 }
