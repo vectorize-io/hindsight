@@ -159,6 +159,9 @@ _NOTHING_TO_SEARCH = "NONE"
 _ROUND_RECALL_MAX_TOKENS = 8192
 
 DEFAULT_MAX_ITERATIONS = 10
+
+# The tools that search the bank: any one that returns a result satisfies the done guardrail.
+_RETRIEVAL_TOOLS = frozenset({"search_mental_models", "read_mental_models", "search_observations", "recall"})
 _COMPACTED_TOOL_RESULT = "[Earlier tool result omitted to fit the context budget; it is kept for the final answer.]"
 
 #: How many times a ``done`` document whose shape the schema refuses is fed back
@@ -1326,6 +1329,8 @@ async def _run_reflect_agent_inner(
     # from the page or observation layer alone (#4567). Prompt-level rules for
     # this were measured and ignored; the bool on ``done`` is checkable in code.
     recall_ran = False
+    # A retrieval tool returned a result, even an empty one (see the done guardrail).
+    searched = False
     absence_recall_forced = False
     for iteration in range(max_iterations):
         # Cooperative cancellation checkpoint: abort the agent loop between
@@ -1627,11 +1632,9 @@ async def _run_reflect_agent_inner(
         # Check for done tool call (handle various LLM output formats)
         done_call = next((tc for tc in result.tool_calls if _is_done_tool(tc.name)), None)
         if done_call:
-            # Guardrail: Require evidence before done
-            has_gathered_evidence = (
-                bool(available_memory_ids) or bool(available_mental_model_ids) or bool(available_observation_ids)
-            )
-            if not has_gathered_evidence and iteration < max_iterations - 1:
+            # Guardrail: a search must have run before done. One that ran and found
+            # nothing counts: "nothing is recorded" is then the honest answer (#5702).
+            if not searched and iteration < max_iterations - 1:
                 # Add assistant message and fake tool result asking for evidence.
                 # This branch loops, so its tool_use lands in the same request as
                 # every later turn -- it needs a deduped wire id just like the
@@ -1931,6 +1934,9 @@ async def _run_reflect_agent_inner(
                     logger.warning(
                         f"[REFLECT {reflect_id}] Tool {normalized_tool_name} returned error: {output['error']}"
                     )
+
+                if normalized_tool_name in _RETRIEVAL_TOOLS and isinstance(output, dict) and "error" not in output:
+                    searched = True
 
                 # Track available IDs from tool results (only for successful responses)
                 if (

@@ -102,3 +102,24 @@ async def test_reflect_reports_what_the_answer_cost(client, llm, bank_with_facts
 
     assert response.usage.total_tokens > 0
     assert response.usage.input_tokens > 0
+
+
+async def test_a_scope_with_nothing_in_it_is_answered_on_the_first_try(client, llm, bank_with_facts):
+    """Searching and finding nothing is still searching (#5702).
+
+    A tag scope that matches no memory makes every search come back empty. The
+    loop used to read "no evidence collected" as "no search ran" and bounce the
+    model's answer with "search first" until the iterations ran out, paying for
+    each turn. The searches ran: "nothing is recorded" is the honest answer, and
+    the first one should stand.
+    """
+    nothing = "Nothing in this scope records where Alice lives."
+    reflect_loop(llm, answer=nothing)
+
+    response = await client.areflect(
+        bank_id=bank_with_facts, query=QUERY, tags=["no-memory-has-this-tag"], tags_match="all_strict"
+    )
+
+    assert response.text == nothing
+    bounced = [prompt for prompt in llm.prompts_for("reflect") if "search for information first" in prompt]
+    assert not bounced, "the answer after an empty search was sent back as if no search had run"

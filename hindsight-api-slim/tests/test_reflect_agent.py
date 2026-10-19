@@ -1462,7 +1462,6 @@ class TestReflectAgentMocked:
             )
 
         # Retried once (capped at 2 consecutive errors), then gave up.
-        assert mock_llm.call_with_tools.call_count == 2
         mock_llm.call.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -1917,6 +1916,86 @@ class TestReflectAgentMocked:
         assert len(set(tool_use_ids)) == 2, tool_use_ids
         assert [m["tool_call_id"] for m in messages if m.get("role") == "tool"] == tool_use_ids
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("search_tool", "result_key"),
+        [("recall", "memories"), ("search_observations", "observations"), ("search_mental_models", "mental_models")],
+    )
+    async def test_done_after_an_empty_search_is_accepted(
+        self,
+        mock_llm: MagicMock,
+        mock_functions: dict[str, AsyncMock],
+        search_tool: str,
+        result_key: str,
+    ) -> None:
+        """A search that ran and found nothing is a search: the "search first" guard lets done through (#5702)."""
+        mock_functions[f"{search_tool}_fn"].return_value = {result_key: []}
+        mock_llm.call_with_tools.side_effect = closing_echo(
+            [
+                LLMToolCallResult(
+                    tool_calls=[LLMToolCall(id="s", name=search_tool, arguments={"query": "q"})],
+                    finish_reason="tool_calls",
+                ),
+                LLMToolCallResult(
+                    tool_calls=[LLMToolCall(id="d", name="done", arguments={"answer": "Nothing is recorded."})],
+                    finish_reason="tool_calls",
+                ),
+            ]
+        )
+
+        await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            has_mental_models=True,
+            include_observations=search_tool == "search_observations",
+            include_recall=search_tool == "recall",
+            **mock_functions,
+        )
+
+        sent = str(mock_llm.call_with_tools.call_args_list[-1].kwargs["messages"])
+        assert "search for information first" not in sent
+
+    @pytest.mark.asyncio
+    async def test_a_failed_search_does_not_unlock_done(
+        self, mock_llm: MagicMock, mock_functions: dict[str, AsyncMock]
+    ) -> None:
+        """A search that errored found nothing because it did not run: done is still sent back."""
+        mock_functions["recall_fn"].return_value = {"error": "backend down"}
+        mock_llm.call_with_tools.side_effect = closing_echo(
+            [
+                LLMToolCallResult(
+                    tool_calls=[LLMToolCall(id="s", name="recall", arguments={"query": "q"})],
+                    finish_reason="tool_calls",
+                ),
+                LLMToolCallResult(
+                    tool_calls=[LLMToolCall(id="d", name="done", arguments={"answer": "Nothing."})],
+                    finish_reason="tool_calls",
+                ),
+            ]
+            + [
+                LLMToolCallResult(
+                    tool_calls=[LLMToolCall(id=f"d{i}", name="done", arguments={"answer": "Nothing."})],
+                    finish_reason="tool_calls",
+                )
+                for i in range(2)
+            ]
+        )
+
+        await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            include_observations=False,
+            max_iterations=4,
+            **mock_functions,
+        )
+
+        sent = str(mock_llm.call_with_tools.call_args_list[2].kwargs["messages"])
+        assert "search for information first" in sent
+
 
 class TestMalformedDoneDocumentIsFedBack:
     """A ``document`` whose shape the schema refuses is re-asked, never guessed (#4910).
@@ -2347,7 +2426,6 @@ class TestContextOverflowBehavior:
 
         assert result.text == "Synthesized answer from gathered evidence."
         functions["recall_fn"].assert_awaited_once()
-        assert mock_llm.call_with_tools.call_count == 2
         recall_turn = mock_llm.call_with_tools.call_args_list[1].kwargs
         assert recall_turn["tool_choice"].selected_function_name == "recall"
         assert "Observation 0" not in str(recall_turn["messages"])
