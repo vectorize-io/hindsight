@@ -7,8 +7,11 @@ These tests use mocked models — they do not load real SentenceTransformers or
 FlashRank weights, so they run fast in CI without network access.
 """
 
+import asyncio
 import inspect
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -172,6 +175,43 @@ class TestLocalSTCrossEncoder:
                 await encoder.predict([("q", "doc")])
 
         assert cleanup_calls == ["cleanup"]
+
+    @pytest.mark.parametrize("bucket_batching", [False, True])
+    async def test_cancel_skips_batches_not_yet_started(self, monkeypatch, bucket_batching):
+        """Cancelling the caller lets the in-flight batch finish but starts no more,
+        so the next request does not queue behind abandoned work (#5722)."""
+        executor = ThreadPoolExecutor(max_workers=1)
+        monkeypatch.setattr(LocalSTCrossEncoder, "_executor", executor)
+        encoder = self._make_encoder(batch_size=1, bucket_batching=bucket_batching)
+        started, release = threading.Event(), threading.Event()
+        calls: list[str] = []
+
+        def gated_predict(batch, **kwargs):
+            calls.append(batch[0][1])
+            if len(calls) == 1:
+                started.set()
+                assert release.wait(5)
+            return [0.5] * len(batch)
+
+        encoder._model.predict.side_effect = gated_predict
+        try:
+            abandoned = asyncio.create_task(encoder.predict([("q", "a0"), ("q", "a1"), ("q", "a2")]))
+            assert await asyncio.to_thread(started.wait, 5)
+            # Queued behind the in-flight batch, then cancelled before it ever runs.
+            queued = asyncio.create_task(encoder.predict([("q", "queued")]))
+            await asyncio.sleep(0)
+            for task in (abandoned, queued):
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            successor = asyncio.create_task(encoder.predict([("q", "successor")]))
+            release.set()
+
+            assert await asyncio.wait_for(successor, 5) == [0.5]
+            assert calls[1:] == ["successor"]
+        finally:
+            release.set()
+            executor.shutdown(wait=True)
 
 
 class TestFlashRankCrossEncoder:

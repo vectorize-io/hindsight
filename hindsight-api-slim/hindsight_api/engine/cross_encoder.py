@@ -10,6 +10,7 @@ import asyncio
 import contextvars
 import logging
 import os
+import threading
 import time
 import warnings
 from abc import ABC, abstractmethod
@@ -391,13 +392,15 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         else:
             logger.info(f"Reranker: local provider initialized (device: {self._device_type}, using existing executor)")
 
-    def _predict_sync(self, pairs: list[tuple[str, str]]) -> list[float]:
+    def _predict_sync(self, pairs: list[tuple[str, str]], cancelled: threading.Event | None = None) -> list[float]:
         """Synchronous prediction wrapper for thread pool execution.
 
         Scores in explicit batches rather than one `predict()` call so the wall-clock
         budget can be enforced between them — a blocking call already inside torch
         cannot be cancelled from the event loop, and abandoning it with `wait_for`
-        would leave it burning the executor's only worker (#4696).
+        would leave it burning the executor's only worker (#4696). For the same
+        reason ``cancelled`` is checked between batches: once the awaiting task is
+        cancelled, the batches not yet started are skipped (#5722).
 
         Supports two optimizations (controlled via .env):
         - bucket_batching: sort pairs by token length to reduce padding waste (36-54% speedup)
@@ -419,6 +422,8 @@ class LocalSTCrossEncoder(CrossEncoderModel):
             deadline = time.monotonic() + self.timeout if self.timeout > 0 else None
 
             for start in range(0, len(order), self.batch_size):
+                if cancelled is not None and cancelled.is_set():
+                    raise asyncio.CancelledError()
                 if deadline is not None and time.monotonic() >= deadline:
                     raise RerankTimeoutError(scores, self.timeout, self.model_name)
                 batch = order[start : start + self.batch_size]
@@ -449,11 +454,17 @@ class LocalSTCrossEncoder(CrossEncoderModel):
 
         # Use dedicated executor - limited workers naturally limits concurrency
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            LocalSTCrossEncoder._executor,
-            self._predict_sync,
-            pairs,
-        )
+        cancelled = threading.Event()
+        try:
+            return await loop.run_in_executor(
+                LocalSTCrossEncoder._executor,
+                self._predict_sync,
+                pairs,
+                cancelled,
+            )
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
 
 
 class RemoteTEICrossEncoder(CrossEncoderModel):
