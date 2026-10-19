@@ -410,6 +410,14 @@ _TIME_WINDOW_NOTE = (
     "timestamp, and can be 0 on a bank that is not empty."
 )
 
+# The shared prose for the memory list and graph `q` filter (#5649). It is an unindexed
+# scan by design, so the docs say so instead of the store growing an index for it.
+_MEMORY_Q_DESCRIPTION = (
+    "Case-insensitive substring filter on memory text and context. Not indexed: it scans the "
+    "bank, so it slows as the bank grows. Meant for browsing and inspection, not for "
+    "high-volume or latency-sensitive workloads — use recall for that."
+)
+
 # 499 is the de facto reverse-proxy status for "client closed request".
 _CLIENT_CLOSED_REQUEST_STATUS_CODE = 499
 
@@ -5890,7 +5898,7 @@ def _register_routes(app: FastAPI):
         bank_id: str,
         type: str | None = None,
         limit: int = Query(default=1000, ge=0),
-        q: str | None = None,
+        q: str | None = Query(None, description=_MEMORY_Q_DESCRIPTION),
         tags: list[str] | None = Query(None),
         tags_match: TagsMatch = "all_strict",
         document_id: str | None = None,
@@ -5935,7 +5943,7 @@ def _register_routes(app: FastAPI):
         response_model=ListMemoryUnitsResponse,
         summary="List memory units",
         description=(
-            "List memory units with pagination and optional full-text search. Supports filtering by type, "
+            "List memory units with pagination and an optional substring filter (`q`). Supports filtering by type, "
             "source document, linked entity ID, and a time window. Results are sorted by most recent first "
             "(mentioned_at DESC, then created_at DESC) unless a time window selects another axis."
         ),
@@ -5946,7 +5954,7 @@ def _register_routes(app: FastAPI):
     async def api_list(
         bank_id: str,
         type: str | None = None,
-        q: str | None = None,
+        q: str | None = Query(None, description=_MEMORY_Q_DESCRIPTION),
         consolidation_state: str | None = None,
         state: str | None = None,
         document_id: str | None = None,
@@ -5968,7 +5976,7 @@ def _register_routes(app: FastAPI):
         request_context: RequestContext = Depends(get_request_context),
     ):
         """
-        List memory units for table view with optional full-text search.
+        List memory units for table view with an optional substring filter.
 
         Results are ordered by most recent first, using mentioned_at timestamp
         (when the memory was mentioned/learned), falling back to created_at.

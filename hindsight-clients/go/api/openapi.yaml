@@ -117,7 +117,11 @@ paths:
           title: Limit
           type: integer
         style: form
-      - explode: true
+      - description: "Case-insensitive substring filter on memory text and context.\
+          \ Not indexed: it scans the bank, so it slows as the bank grows. Meant for\
+          \ browsing and inspection, not for high-volume or latency-sensitive workloads\
+          \ — use recall for that."
+        explode: true
         in: query
         name: q
         required: false
@@ -195,10 +199,10 @@ paths:
       - Memory
   /v1/default/banks/{bank_id}/memories/list:
     get:
-      description: "List memory units with pagination and optional full-text search.\
-        \ Supports filtering by type, source document, linked entity ID, and a time\
-        \ window. Results are sorted by most recent first (mentioned_at DESC, then\
-        \ created_at DESC) unless a time window selects another axis."
+      description: "List memory units with pagination and an optional substring filter\
+        \ (`q`). Supports filtering by type, source document, linked entity ID, and\
+        \ a time window. Results are sorted by most recent first (mentioned_at DESC,\
+        \ then created_at DESC) unless a time window selects another axis."
       operationId: list_memories
       parameters:
       - explode: false
@@ -217,7 +221,11 @@ paths:
           nullable: true
           type: string
         style: form
-      - explode: true
+      - description: "Case-insensitive substring filter on memory text and context.\
+          \ Not indexed: it scans the bank, so it slows as the bank grows. Meant for\
+          \ browsing and inspection, not for high-volume or latency-sensitive workloads\
+          \ — use recall for that."
+        explode: true
         in: query
         name: q
         required: false

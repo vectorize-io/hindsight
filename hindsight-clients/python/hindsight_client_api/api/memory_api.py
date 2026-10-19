@@ -1249,7 +1249,7 @@ class MemoryApi:
         bank_id: StrictStr,
         type: Optional[StrictStr] = None,
         limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
-        q: Optional[StrictStr] = None,
+        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.")] = None,
         tags: Optional[List[Optional[StrictStr]]] = None,
         tags_match: Optional[StrictStr] = None,
         document_id: Optional[StrictStr] = None,
@@ -1278,7 +1278,7 @@ class MemoryApi:
         :type type: str
         :param limit:
         :type limit: int
-        :param q:
+        :param q: Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
         :type q: str
         :param tags:
         :type tags: List[Optional[str]]
@@ -1350,7 +1350,7 @@ class MemoryApi:
         bank_id: StrictStr,
         type: Optional[StrictStr] = None,
         limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
-        q: Optional[StrictStr] = None,
+        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.")] = None,
         tags: Optional[List[Optional[StrictStr]]] = None,
         tags_match: Optional[StrictStr] = None,
         document_id: Optional[StrictStr] = None,
@@ -1379,7 +1379,7 @@ class MemoryApi:
         :type type: str
         :param limit:
         :type limit: int
-        :param q:
+        :param q: Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
         :type q: str
         :param tags:
         :type tags: List[Optional[str]]
@@ -1451,7 +1451,7 @@ class MemoryApi:
         bank_id: StrictStr,
         type: Optional[StrictStr] = None,
         limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
-        q: Optional[StrictStr] = None,
+        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.")] = None,
         tags: Optional[List[Optional[StrictStr]]] = None,
         tags_match: Optional[StrictStr] = None,
         document_id: Optional[StrictStr] = None,
@@ -1480,7 +1480,7 @@ class MemoryApi:
         :type type: str
         :param limit:
         :type limit: int
-        :param q:
+        :param q: Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
         :type q: str
         :param tags:
         :type tags: List[Optional[str]]
@@ -2235,7 +2235,7 @@ class MemoryApi:
         self,
         bank_id: StrictStr,
         type: Optional[StrictStr] = None,
-        q: Optional[StrictStr] = None,
+        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.")] = None,
         consolidation_state: Optional[StrictStr] = None,
         state: Optional[StrictStr] = None,
         document_id: Optional[StrictStr] = None,
@@ -2263,13 +2263,13 @@ class MemoryApi:
     ) -> ListMemoryUnitsResponse:
         """List memory units
 
-        List memory units with pagination and optional full-text search. Supports filtering by type, source document, linked entity ID, and a time window. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC) unless a time window selects another axis.
+        List memory units with pagination and an optional substring filter (`q`). Supports filtering by type, source document, linked entity ID, and a time window. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC) unless a time window selects another axis.
 
         :param bank_id: (required)
         :type bank_id: str
         :param type:
         :type type: str
-        :param q:
+        :param q: Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
         :type q: str
         :param consolidation_state:
         :type consolidation_state: str
@@ -2360,7 +2360,7 @@ class MemoryApi:
         self,
         bank_id: StrictStr,
         type: Optional[StrictStr] = None,
-        q: Optional[StrictStr] = None,
+        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.")] = None,
         consolidation_state: Optional[StrictStr] = None,
         state: Optional[StrictStr] = None,
         document_id: Optional[StrictStr] = None,
@@ -2388,13 +2388,13 @@ class MemoryApi:
     ) -> ApiResponse[ListMemoryUnitsResponse]:
         """List memory units
 
-        List memory units with pagination and optional full-text search. Supports filtering by type, source document, linked entity ID, and a time window. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC) unless a time window selects another axis.
+        List memory units with pagination and an optional substring filter (`q`). Supports filtering by type, source document, linked entity ID, and a time window. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC) unless a time window selects another axis.
 
         :param bank_id: (required)
         :type bank_id: str
         :param type:
         :type type: str
-        :param q:
+        :param q: Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
         :type q: str
         :param consolidation_state:
         :type consolidation_state: str
@@ -2485,7 +2485,7 @@ class MemoryApi:
         self,
         bank_id: StrictStr,
         type: Optional[StrictStr] = None,
-        q: Optional[StrictStr] = None,
+        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.")] = None,
         consolidation_state: Optional[StrictStr] = None,
         state: Optional[StrictStr] = None,
         document_id: Optional[StrictStr] = None,
@@ -2513,13 +2513,13 @@ class MemoryApi:
     ) -> RESTResponseType:
         """List memory units
 
-        List memory units with pagination and optional full-text search. Supports filtering by type, source document, linked entity ID, and a time window. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC) unless a time window selects another axis.
+        List memory units with pagination and an optional substring filter (`q`). Supports filtering by type, source document, linked entity ID, and a time window. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC) unless a time window selects another axis.
 
         :param bank_id: (required)
         :type bank_id: str
         :param type:
         :type type: str
-        :param q:
+        :param q: Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
         :type q: str
         :param consolidation_state:
         :type consolidation_state: str

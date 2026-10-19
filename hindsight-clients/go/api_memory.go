@@ -568,6 +568,7 @@ func (r ApiGetGraphRequest) Limit(limit int32) ApiGetGraphRequest {
 	return r
 }
 
+// Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
 func (r ApiGetGraphRequest) Q(q string) ApiGetGraphRequest {
 	r.q = &q
 	return r
@@ -1020,6 +1021,7 @@ func (r ApiListMemoriesRequest) Type_(type_ string) ApiListMemoriesRequest {
 	return r
 }
 
+// Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
 func (r ApiListMemoriesRequest) Q(q string) ApiListMemoriesRequest {
 	r.q = &q
 	return r
@@ -1095,7 +1097,7 @@ func (r ApiListMemoriesRequest) Execute() (*ListMemoryUnitsResponse, *http.Respo
 /*
 ListMemories List memory units
 
-List memory units with pagination and optional full-text search. Supports filtering by type, source document, linked entity ID, and a time window. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC) unless a time window selects another axis.
+List memory units with pagination and an optional substring filter (`q`). Supports filtering by type, source document, linked entity ID, and a time window. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC) unless a time window selects another axis.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId

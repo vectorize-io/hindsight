@@ -175,8 +175,10 @@
                   "type": "null"
                 }
               ],
+              "description": "Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads \u2014 use recall for that.",
               "title": "Q"
-            }
+            },
+            "description": "Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads \u2014 use recall for that."
           },
           {
             "name": "tags",
@@ -296,7 +298,7 @@
           "Memory"
         ],
         "summary": "List memory units",
-        "description": "List memory units with pagination and optional full-text search. Supports filtering by type, source document, linked entity ID, and a time window. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC) unless a time window selects another axis.",
+        "description": "List memory units with pagination and an optional substring filter (`q`). Supports filtering by type, source document, linked entity ID, and a time window. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC) unless a time window selects another axis.",
         "operationId": "list_memories",
         "parameters": [
           {
@@ -337,8 +339,10 @@
                   "type": "null"
                 }
               ],
+              "description": "Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads \u2014 use recall for that.",
               "title": "Q"
-            }
+            },
+            "description": "Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads \u2014 use recall for that."
           },
           {
             "name": "consolidation_state",
