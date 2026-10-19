@@ -61,6 +61,7 @@ export function SidebarMenuButton() {
 export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
   const t = useTranslations("bank.sidebar");
   const tBank = useTranslations("bank");
+  const tCommon = useTranslations("common");
   const { currentBank, currentBankName } = useBank();
   const [isCollapsed, setIsCollapsed] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -213,7 +214,7 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
               </DialogPrimitive.Title>
               <DialogPrimitive.Close
                 className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                aria-label={t("collapseSidebar")}
+                aria-label={tCommon("close")}
               >
                 <X className="h-5 w-5" />
               </DialogPrimitive.Close>

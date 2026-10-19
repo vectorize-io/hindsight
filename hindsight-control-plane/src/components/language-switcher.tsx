@@ -24,7 +24,7 @@ export function useSwitchLocale() {
 
 export function LanguageSwitcher() {
   const t = useTranslations("common");
-  const { locale, switchLocale: handleLocaleChange } = useSwitchLocale();
+  const { locale, switchLocale } = useSwitchLocale();
 
   return (
     <DropdownMenu>
@@ -37,7 +37,7 @@ export function LanguageSwitcher() {
         {locales.map((l) => (
           <DropdownMenuItem
             key={l}
-            onClick={() => handleLocaleChange(l)}
+            onClick={() => switchLocale(l)}
             className={l === locale ? "bg-accent" : ""}
           >
             {localeNames[l]}
