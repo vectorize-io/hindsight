@@ -83,3 +83,47 @@ async def test_raw_recall_is_unaffected_by_the_observation(client, consolidated_
     response = await client.arecall(bank_id=consolidated_bank, query="Where is Alice?", types=["world"])
 
     assert sorted(r.text for r in response.results) == sorted([BERLIN, STAYED])
+
+
+# Fields the listing and the single-memory read both return under the same name.
+# The detail view names the fact type `type` and lists entities instead of joining
+# them; both are compared separately below.
+SHARED_FIELDS = [
+    "id",
+    "text",
+    "context",
+    "date",
+    "document_id",
+    "chunk_id",
+    "mentioned_at",
+    "occurred_start",
+    "occurred_end",
+    "tags",
+    "metadata",
+    "state",
+    "invalidation_reason",
+    "invalidated_at",
+    "edited_at",
+    "consolidated_at",
+    "consolidation_failed_at",
+]
+
+
+async def test_reading_a_fact_alone_agrees_with_the_listing(client, consolidated_bank):
+    """Opening one memory must show what the listing showed for it, including
+    when it was consolidated. The single read used to drop the consolidation
+    fields, so a caller could not tell from it whether the fact was synthesised
+    (#5730)."""
+    memories = await client.memory.list_memories(consolidated_bank, limit=100)
+    facts = [m for m in memories.items if m.fact_type != "observation"]
+    assert len(facts) == 2
+
+    for row in facts:
+        assert row.consolidated_at is not None
+        assert row.consolidation_failed_at is None
+        listed = row.model_dump(by_alias=True)
+        detail = await client.memory.get_memory(consolidated_bank, row.id)
+
+        assert {f: detail[f] for f in SHARED_FIELDS} == {f: listed[f] for f in SHARED_FIELDS}
+        assert detail["type"] == row.fact_type
+        assert ", ".join(detail["entities"]) == row.entities

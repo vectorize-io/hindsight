@@ -86,6 +86,24 @@ async def test_the_failure_is_visible_in_the_bank_stats(client, failed_round):
     assert stats.failed_consolidation > 0
 
 
+async def test_reading_a_failed_fact_alone_shows_the_failure(client, failed_round):
+    """The failure is visible on the single read too, not only in the listing.
+    It used to drop `consolidation_failed_at`, so opening a stranded fact looked
+    the same as opening one that was never tried (#5730)."""
+    memories = await client.memory.list_memories(failed_round, limit=100)
+    assert len(memories.items) == 2
+
+    for row in memories.items:
+        assert row.consolidation_failed_at is not None
+        assert row.consolidated_at is None
+        listed = row.model_dump(by_alias=True)
+        detail = await client.memory.get_memory(failed_round, row.id)
+
+        for field in ("id", "text", "state", "tags", "document_id", "consolidated_at", "consolidation_failed_at"):
+            assert detail[field] == listed[field], field
+        assert detail["type"] == row.fact_type
+
+
 async def test_recovery_is_explicit_and_clears_the_backlog(client, llm, failed_round):
     """The failure is transient, not terminal — but recovery has to be asked for.
 
