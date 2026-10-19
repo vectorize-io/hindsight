@@ -12399,40 +12399,41 @@ class MemoryEngine(MemoryEngineInterface):
 
                     deleted_count = await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
 
-                    # Also reset this memory's own consolidated_at so it gets re-consolidated
-                    # (the memory was a source for the deleted observations, so it needs new ones).
-                    # Bookkeeping only: `updated_at` stays put (see META_UPDATED_AT).
+                    # Also reset this memory's own consolidated_at so it gets re-consolidated —
+                    # even when nothing was deleted (e.g. a pass that kept no observation from it):
+                    # this is an explicit reset request (#5731). Bookkeeping only: `updated_at`
+                    # stays put (see META_UPDATED_AT).
+                    from .memories import get_memories
+
+                    await get_memories().requeue_source_memory(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=uuid_module.UUID(memory_id)
+                    )
+                    # The memory's document, where the change history files this clear. Only a
+                    # clear that removed something is recorded there.
                     cleared_doc: str | None = None
                     if deleted_count > 0:
-                        from .memories import get_memories
-
-                        await get_memories().requeue_source_memory(
-                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=uuid_module.UUID(memory_id)
-                        )
-                        # The memory's document, where the change history files this clear.
                         found = await get_memories().get_memories(
                             conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[memory_id]
                         )
                         cleared_doc = found[0].document_id if found else None
 
-        if deleted_count > 0:
-            config = await self._config_resolver.resolve_full_config(bank_id, request_context)
-            if config.enable_auto_consolidation:
-                # Built (and so timestamped) now, before the consolidation it is recorded on can run.
-                clear_events = (
-                    [
-                        DocumentEvent(
-                            document_id=cleared_doc,
-                            kind=DocumentEventKind.OBSERVATIONS_CLEARED,
-                            fact_id=memory_id,
-                            observations_removed=ObservationIdSample.of(clear_changes.removed),
-                        )
-                    ]
-                    if cleared_doc
-                    else []
-                )
-                submitted = await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
-                await append_operation_events(backend, submitted["operation_id"], clear_events)
+        config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+        if config.enable_auto_consolidation:
+            # Built (and so timestamped) now, before the consolidation it is recorded on can run.
+            clear_events = (
+                [
+                    DocumentEvent(
+                        document_id=cleared_doc,
+                        kind=DocumentEventKind.OBSERVATIONS_CLEARED,
+                        fact_id=memory_id,
+                        observations_removed=ObservationIdSample.of(clear_changes.removed),
+                    )
+                ]
+                if cleared_doc
+                else []
+            )
+            submitted = await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+            await append_operation_events(backend, submitted["operation_id"], clear_events)
 
         return {"deleted_count": deleted_count}
 
