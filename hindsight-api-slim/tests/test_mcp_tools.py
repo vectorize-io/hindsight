@@ -1623,10 +1623,15 @@ class TestMemoryBrowsingTools:
     async def test_update_memory_edits_fields(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"update_memory"}, include_bank_id=True)
         await _tools(mcp)["update_memory"].fn(
-            memory_id="mem-1", text="corrected", fact_type="experience", entities=["Alice"]
+            memory_id="mem-1",
+            text="corrected",
+            fact_type="experience",
+            entities=["Alice"],
+            mentioned_at="2019-05-01",
         )
         call_kwargs = mock_memory.update_memory_unit.call_args.kwargs
         assert call_kwargs["text"] == "corrected"
+        assert call_kwargs["mentioned_at"] == "2019-05-01"
         assert call_kwargs["new_fact_type"] == "experience"
         assert call_kwargs["entities"] == ["Alice"]
         # update_memory does not change state — that's invalidate_memory's job.

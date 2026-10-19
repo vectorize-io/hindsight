@@ -528,6 +528,8 @@ class TestEdit:
         async with pool.acquire() as conn:
             no_occ = await _insert_memory(conn, memory, bank_id, "The user likes tea.")
             with_occ = await _insert_memory(conn, memory, bank_id, "The user visited Rome.")
+            # Raw SQL because no public API sets an occurrence and a mention independently;
+            # the state under test is a memory as retain leaves it, occurrence plus mention.
             await conn.execute(
                 "UPDATE memory_units SET occurred_start = $2, mentioned_at = $3, event_date = $2 WHERE id = $1",
                 with_occ,

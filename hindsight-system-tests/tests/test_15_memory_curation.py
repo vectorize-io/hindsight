@@ -80,6 +80,28 @@ async def test_an_edit_is_marked_as_such(client, curated_bank):
     assert edited.state == "valid"
 
 
+async def test_redating_a_mention_moves_it_on_the_mention_clock(client, curated_bank):
+    """A memory retained from a backfill carries the ingest time as its mention,
+    which is wrong for material written years earlier. Correcting `mentioned_at`
+    on that one memory has to move it on the mention clock the time window reads,
+    and leave its neighbour where it was."""
+    target = await _memory_named(client, curated_bank, "cello")
+
+    await client.memory.update_memory(curated_bank, target.id, {"mentioned_at": "2019-05-01T12:00:00Z"})
+
+    in_2019 = await client.memory.list_memories(
+        curated_bank,
+        time_field="mentioned_at",
+        start_date="2019-01-01T00:00:00Z",
+        end_date="2020-01-01T00:00:00Z",
+        limit=100,
+    )
+    assert [item.text for item in in_2019.items] == [CELLO]
+    assert in_2019.total == 1
+    assert in_2019.items[0].mentioned_at.startswith("2019-05-01T12:00:00")
+    assert in_2019.items[0].edited_at is not None
+
+
 async def test_an_invalidated_memory_stops_answering_recalls(client, curated_bank):
     target = await _memory_named(client, curated_bank, "cello")
 
