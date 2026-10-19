@@ -155,10 +155,11 @@ async def test_falls_back_to_reflect(memory, request_context, gated, monkeypatch
     assert "delta_gate" not in refreshed["reflect_response"]
 
 
-async def test_the_refresh_switch_does_not_turn_the_gate_off(memory, request_context, gated):
-    """Each decision-model path has its own opt-out: turning off the refresh's reflect one leaves the gate on."""
+@pytest.mark.parametrize("switch", ["mental_model_refresh_use_decision_model", "reflect_use_decision_model"])
+async def test_other_decision_switches_leave_the_gate_on(memory, request_context, gated, switch):
+    """Each decision-model path has its own opt-out: turning off reflect's leaves the gate on."""
     page = await _page_with_new_memories(memory, request_context)
-    await memory._config_resolver.update_bank_config(page.bank_id, {"mental_model_refresh_use_decision_model": False})
+    await memory._config_resolver.update_bank_config(page.bank_id, {switch: False})
 
     refreshed = await memory.refresh_mental_model(
         bank_id=page.bank_id, mental_model_id=page.mm_id, request_context=request_context

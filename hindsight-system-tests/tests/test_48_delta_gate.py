@@ -1,17 +1,18 @@
 """A delta page refresh that asks a decision model which new memories to read.
 
-With a decision model set up, a delta refresh skips the reflect loop. It reads the memories new since its last run, asks
-the decision model of each whether it could change the page, and hands only those to
-the edit. None kept means no LLM call at all.
+With a decision model set up, a delta refresh skips the reflect loop. It reads the
+memories new since its last run, asks the decision model of each whether it could change
+the page, and hands only those to the edit. None kept means no LLM call at all. A bank
+turns it off with ``mental_model_delta_use_decision_model``.
 
 Each step is unit-tested on its own. What only a story shows is that they meet: the
 page the gate is shown is the page the bank stored, the memories it is asked about are
 the ones retain wrote after the last refresh, and what it keeps is what reaches the
 edit and the refresh's report.
 
-The decision model is server-level, so the server under test is ``decision_model_server``. Its worker
-is off, so the main server builds the page and the story refreshes by dry run, which
-runs in the gate's process and changes nothing between the two stories.
+The decision model is server-level, so the server under test is ``decision_model_server``.
+Its worker is off, so the main server builds the page and the story refreshes by dry run,
+which runs in the gate's process and changes nothing between the stories.
 """
 
 from __future__ import annotations
@@ -45,8 +46,8 @@ class _Page:
 async def page(decision_model_client, client, llm) -> AsyncIterator[_Page]:
     """A page built from one fact, then two new facts it has not read yet.
 
-    Asks for ``client`` only to have the main server running: the gate server's worker
-    is off, so the main one extracts the facts and builds the page.
+    Asks for ``client`` only to have the main server running: the decision-model server's
+    worker is off, so the main one extracts the facts and builds the page.
     """
     bank = f"systest-{uuid.uuid4().hex[:12]}"
     llm.on_step("extract_facts").returns(extracted(fact("Alice moved to Berlin", who="Alice", entities=["Alice"])))
@@ -119,3 +120,18 @@ async def test_nothing_that_changes_the_page_means_no_llm_call(decision_model_cl
     assert result.would_persist is False
     assert result.preview_content == result.current_content
     assert result.warnings == []
+
+
+async def test_a_bank_that_opts_out_refreshes_with_reflect(decision_model_client, llm, stubs, page):
+    await decision_model_client.banks.update_bank_config(
+        page.bank_id, {"updates": {"mental_model_delta_use_decision_model": False}}
+    )
+    llm.on_step("reflect_round_query").returns_text(QUERY)
+    reflect_loop(llm, answer=ANSWER, query=QUERY)
+    llm.on_step("mental_model_delta").returns(add_section("Moves", "Alice moved to Munich."))
+
+    result = await decision_model_client.mental_models.dry_run_refresh_mental_model(page.bank_id, page.mental_model_id)
+
+    assert not any("New memory: " in state for state in stubs.rerank.states), "the gate was not asked"
+    assert _calls(llm, "reflect_round_query"), "the refresh ran reflect instead"
+    assert result.effective_mode == "delta"
