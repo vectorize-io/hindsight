@@ -1284,6 +1284,7 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | `HINDSIGHT_API_RERANKER_ONNX_THREADS` | CPU threads one forward pass may use. `0` lets ONNX Runtime use every physical core. Set `2`–`4` on a laptop to keep recall from pinning the whole CPU. | `0` |
 | `HINDSIGHT_API_RERANKER_ONNX_MAX_CONCURRENT` | Forward passes allowed at once. Concurrent recalls queue behind each other, so CPU use never exceeds `THREADS` cores. | `1` |
 | `HINDSIGHT_API_RERANKER_ONNX_CPU_MEM_ARENA` | Enable ONNX Runtime's CPU memory arena. It never returns freed memory, so RSS holds its high-water mark. | `false` |
+| `HINDSIGHT_API_RERANKER_ONNX_TIMEOUT` | Wall-clock ceiling for scoring one recall's candidates, same as `HINDSIGHT_API_RERANKER_LOCAL_TIMEOUT`: on expiry the unscored candidates keep their pre-rerank order behind the scored ones. `0` disables. | `300` |
 | `HINDSIGHT_API_RERANKER_JINA_MLX_MODEL_PATH` | Local path to downloaded `jina-reranker-v3-mlx` model (auto-downloads from HuggingFace if unset) | - |
 
 :::note Apple Silicon: the local providers run on CPU

@@ -1,6 +1,7 @@
 """Tests for the ONNX Runtime reranker provider (issue #5567)."""
 
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -8,7 +9,8 @@ import numpy as np
 import pytest
 
 from hindsight_api.config import clear_config_cache
-from hindsight_api.engine.cross_encoder import OnnxCrossEncoder, create_cross_encoder_from_env
+from hindsight_api.engine import cross_encoder
+from hindsight_api.engine.cross_encoder import OnnxCrossEncoder, RerankTimeoutError, create_cross_encoder_from_env
 
 
 @pytest.fixture
@@ -96,8 +98,6 @@ def test_batches_are_bounded_and_batching_does_not_change_scores():
 @pytest.mark.asyncio
 async def test_predict_runs_on_the_executor_and_handles_empty_input():
     encoder = _encoder()
-    from concurrent.futures import ThreadPoolExecutor
-
     OnnxCrossEncoder._executor = ThreadPoolExecutor(max_workers=1)
     assert await encoder.predict([]) == []
     assert await encoder.predict(PAIRS) == [3.0, 9.0, 1.0, 7.0, 5.0]
@@ -159,3 +159,19 @@ def test_factory_reads_primary_and_indexed_onnx_settings(monkeypatch, _fresh_con
     assert fallback.model_id == "BAAI/bge-reranker-base"
     assert fallback.model_path is None
     assert fallback.batch_size == 32
+
+
+def test_budget_exhaustion_returns_what_was_scored(monkeypatch):
+    """A model too slow for the CPU hands back partial scores instead of holding recall."""
+    clock = iter([0.0, 0.0, 99.0])  # deadline set, first pass in time, second pass too late
+    monkeypatch.setattr(cross_encoder.time, "monotonic", lambda: next(clock))
+    encoder = _encoder(batch_size=2, timeout=10.0)
+
+    with pytest.raises(RerankTimeoutError) as exc_info:
+        encoder._predict_sync(PAIRS)
+    # The longest two (9 and 7 chars) were scored in the first pass; the rest were not.
+    assert exc_info.value.scores == [None, 9.0, None, 7.0, None]
+
+
+def test_zero_timeout_disables_the_budget():
+    assert _encoder(batch_size=1, timeout=0)._predict_sync(PAIRS) == [3.0, 9.0, 1.0, 7.0, 5.0]

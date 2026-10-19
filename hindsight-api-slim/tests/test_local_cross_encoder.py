@@ -19,6 +19,7 @@ from hindsight_api.engine.cross_encoder import (
     FlashRankCrossEncoder,
     JinaMLXCrossEncoder,
     LocalSTCrossEncoder,
+    OnnxCrossEncoder,
     RerankTimeoutError,
 )
 
@@ -372,6 +373,7 @@ class TestInProcessRerankerTimeoutCoverage:
     BACKENDS = {
         "local": LocalSTCrossEncoder,
         "flashrank": FlashRankCrossEncoder,
+        "onnx": OnnxCrossEncoder,
         "jina-mlx": JinaMLXCrossEncoder,
     }
 

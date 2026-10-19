@@ -2808,6 +2808,38 @@ def _parse_llm_members(prefix: str) -> list[LLMMemberConfig]:
 
 
 @dataclass
+class OnnxRerankerConfig:
+    """Settings of the ``onnx`` reranker provider, read from ``{prefix}ONNX_*``."""
+
+    model_id: str
+    model_path: str | None
+    tokenizer_name_or_path: str | None
+    file: str
+    max_tokens: int
+    batch_size: int
+    threads: int
+    max_concurrent: int
+    cpu_mem_arena: bool
+    timeout: float
+
+    @classmethod
+    def from_env(cls, base: str) -> "OnnxRerankerConfig":
+        """Read one member's settings; the primary and indexed members differ only in ``base``."""
+        return cls(
+            model_id=_member_str(base, "ONNX_MODEL_ID", DEFAULT_RERANKER_LOCAL_MODEL),
+            model_path=_member_opt_str(base, "ONNX_MODEL_PATH"),
+            tokenizer_name_or_path=_member_opt_str(base, "ONNX_TOKENIZER_NAME_OR_PATH"),
+            file=_member_str(base, "ONNX_FILE", DEFAULT_RERANKER_ONNX_FILE),
+            max_tokens=_member_int(base, "ONNX_MAX_TOKENS", DEFAULT_RERANKER_ONNX_MAX_TOKENS),
+            batch_size=_member_int(base, "ONNX_BATCH_SIZE", DEFAULT_RERANKER_ONNX_BATCH_SIZE),
+            threads=_member_int(base, "ONNX_THREADS", DEFAULT_RERANKER_ONNX_THREADS),
+            max_concurrent=_member_int(base, "ONNX_MAX_CONCURRENT", DEFAULT_RERANKER_ONNX_MAX_CONCURRENT),
+            cpu_mem_arena=_member_bool(base, "ONNX_CPU_MEM_ARENA", DEFAULT_RERANKER_ONNX_CPU_MEM_ARENA),
+            timeout=_member_float(base, "ONNX_TIMEOUT", DEFAULT_RERANKER_LOCAL_TIMEOUT),
+        )
+
+
+@dataclass
 class RerankerMemberConfig:
     """One reranker in the failover chain.
 
@@ -2857,16 +2889,7 @@ class RerankerMemberConfig:
     flashrank_cache_dir: str | None
     flashrank_cpu_mem_arena: bool
     flashrank_batch_size: int
-    # onnx
-    onnx_model_id: str
-    onnx_model_path: str | None
-    onnx_tokenizer_name_or_path: str | None
-    onnx_file: str
-    onnx_max_tokens: int
-    onnx_batch_size: int
-    onnx_threads: int
-    onnx_max_concurrent: int
-    onnx_cpu_mem_arena: bool
+    onnx: OnnxRerankerConfig
     # litellm (proxy)
     litellm_api_base: str
     litellm_api_key: str | None
@@ -2976,25 +2999,6 @@ def _member_float(base: str, suffix: str, default: float) -> float:
         raise ValueError(f"Invalid {base}{suffix}: expected a number, got {raw!r}") from e
 
 
-def _onnx_member_fields(base: str) -> dict[str, Any]:
-    """The ``onnx_*`` fields of a reranker member, read from ``{base}ONNX_*``.
-
-    Shared by the primary (``base`` = ``HINDSIGHT_API_RERANKER_``) and the indexed
-    members, which differ only in the prefix.
-    """
-    return {
-        "onnx_model_id": _member_str(base, "ONNX_MODEL_ID", DEFAULT_RERANKER_LOCAL_MODEL),
-        "onnx_model_path": _member_opt_str(base, "ONNX_MODEL_PATH"),
-        "onnx_tokenizer_name_or_path": _member_opt_str(base, "ONNX_TOKENIZER_NAME_OR_PATH"),
-        "onnx_file": _member_str(base, "ONNX_FILE", DEFAULT_RERANKER_ONNX_FILE),
-        "onnx_max_tokens": _member_int(base, "ONNX_MAX_TOKENS", DEFAULT_RERANKER_ONNX_MAX_TOKENS),
-        "onnx_batch_size": _member_int(base, "ONNX_BATCH_SIZE", DEFAULT_RERANKER_ONNX_BATCH_SIZE),
-        "onnx_threads": _member_int(base, "ONNX_THREADS", DEFAULT_RERANKER_ONNX_THREADS),
-        "onnx_max_concurrent": _member_int(base, "ONNX_MAX_CONCURRENT", DEFAULT_RERANKER_ONNX_MAX_CONCURRENT),
-        "onnx_cpu_mem_arena": _member_bool(base, "ONNX_CPU_MEM_ARENA", DEFAULT_RERANKER_ONNX_CPU_MEM_ARENA),
-    }
-
-
 def _parse_reranker_members() -> list[RerankerMemberConfig]:
     """Parse the indexed reranker fallback members.
 
@@ -3052,7 +3056,7 @@ def _parse_reranker_members() -> list[RerankerMemberConfig]:
                     base, "FLASHRANK_CPU_MEM_ARENA", DEFAULT_RERANKER_FLASHRANK_CPU_MEM_ARENA
                 ),
                 flashrank_batch_size=_member_int(base, "FLASHRANK_BATCH_SIZE", DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE),
-                **_onnx_member_fields(base),
+                onnx=OnnxRerankerConfig.from_env(base),
                 litellm_api_base=_member_str(base, "LITELLM_API_BASE", DEFAULT_LITELLM_API_BASE),
                 litellm_api_key=_member_opt_str(base, "LITELLM_API_KEY"),
                 litellm_model=_member_str(base, "LITELLM_MODEL", DEFAULT_RERANKER_LITELLM_MODEL),
@@ -4162,7 +4166,7 @@ class HindsightConfig:
                 os.environ.get(ENV_RERANKER_FLASHRANK_BATCH_SIZE, "").strip() or DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE
             ),
             # onnx, like flashrank, has no HindsightConfig fields — read from the env directly
-            **_onnx_member_fields("HINDSIGHT_API_RERANKER_"),
+            onnx=OnnxRerankerConfig.from_env("HINDSIGHT_API_RERANKER_"),
             litellm_api_base=self.reranker_litellm_api_base,
             litellm_api_key=self.reranker_litellm_api_key,
             litellm_model=self.reranker_litellm_model,

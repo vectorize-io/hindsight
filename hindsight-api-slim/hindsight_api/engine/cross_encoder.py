@@ -1732,6 +1732,7 @@ class OnnxCrossEncoder(CrossEncoderModel):
         threads: int = DEFAULT_RERANKER_ONNX_THREADS,
         max_concurrent: int = DEFAULT_RERANKER_ONNX_MAX_CONCURRENT,
         cpu_mem_arena: bool = DEFAULT_RERANKER_ONNX_CPU_MEM_ARENA,
+        timeout: float = DEFAULT_RERANKER_LOCAL_TIMEOUT,
     ):
         self.model_id = model_id
         self.model_path = model_path
@@ -1751,6 +1752,7 @@ class OnnxCrossEncoder(CrossEncoderModel):
             raise ValueError("ONNX reranker threads must be >= 0 (0 = ONNX Runtime default)")
         self.threads = threads
         self.cpu_mem_arena = cpu_mem_arena
+        self.timeout = timeout
         self._session = None
         self._tokenizer = None
         OnnxCrossEncoder._max_concurrent = max(1, max_concurrent)
@@ -1828,18 +1830,23 @@ class OnnxCrossEncoder(CrossEncoderModel):
 
         Each pass pads to its longest pair and allocates ``batch * heads * seq^2``
         attention, so batches stay small (#3355) and similar lengths share a batch.
-        Padding is masked, so grouping never changes a score.
+        Padding is masked, so grouping never changes a score. Shares the ``local``
+        provider's wall-clock budget (#4696), checked between passes: a model too big
+        for the CPU hands back what it scored instead of holding recall for minutes.
         """
         if self._session is None or self._tokenizer is None:
             raise RuntimeError("Reranker not initialized. Call initialize() first.")
         order = sorted(range(len(pairs)), key=lambda i: len(pairs[i][0]) + len(pairs[i][1]), reverse=True)
-        scores = [0.0] * len(pairs)
+        scores: list[float | None] = [None] * len(pairs)
+        deadline = time.monotonic() + self.timeout if self.timeout > 0 else None
         for start in range(0, len(order), self.batch_size):
+            if deadline is not None and time.monotonic() >= deadline:
+                raise RerankTimeoutError(scores, self.timeout, self.model_path or self.model_id)
             window = order[start : start + self.batch_size]
             batch = self._score_batch([pairs[i] for i in window])
             for index, score in zip(window, batch, strict=True):
                 scores[index] = score
-        return scores
+        return [0.0 if score is None else score for score in scores]
 
     def _score_batch(self, pairs: list[tuple[str, str]]) -> list[float]:
         """Run one forward pass and reduce the logits to one raw score per pair."""
@@ -2667,16 +2674,18 @@ def _create_cross_encoder_backend(member: RerankerMemberConfig) -> CrossEncoderM
             batch_size=member.flashrank_batch_size,
         )
     elif provider == "onnx":
+        onnx = member.onnx
         return OnnxCrossEncoder(
-            model_id=member.onnx_model_id,
-            model_path=member.onnx_model_path,
-            tokenizer_name_or_path=member.onnx_tokenizer_name_or_path,
-            onnx_file=member.onnx_file,
-            max_tokens=member.onnx_max_tokens,
-            batch_size=member.onnx_batch_size,
-            threads=member.onnx_threads,
-            max_concurrent=member.onnx_max_concurrent,
-            cpu_mem_arena=member.onnx_cpu_mem_arena,
+            model_id=onnx.model_id,
+            model_path=onnx.model_path,
+            tokenizer_name_or_path=onnx.tokenizer_name_or_path,
+            onnx_file=onnx.file,
+            max_tokens=onnx.max_tokens,
+            batch_size=onnx.batch_size,
+            threads=onnx.threads,
+            max_concurrent=onnx.max_concurrent,
+            cpu_mem_arena=onnx.cpu_mem_arena,
+            timeout=onnx.timeout,
         )
     elif provider == "litellm":
         return LiteLLMCrossEncoder(
