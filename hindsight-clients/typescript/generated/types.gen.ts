@@ -6817,6 +6817,12 @@ export type UpdateMemoryRequest = {
    */
   occurred_end?: string | null;
   /**
+   * Mentioned At
+   *
+   * New mention time — when the fact was said or written (ISO 8601). '' clears it; omit to leave unchanged.
+   */
+  mentioned_at?: string | null;
+  /**
    * Fact Type
    *
    * Reclassify the fact: 'world' or 'experience'. Omit to leave unchanged.

@@ -1667,6 +1667,7 @@
     "curationSave": "저장",
     "curationStateInvalidated": "무효화됨",
     "editFieldContext": "컨텍스트",
+    "editFieldMentionedAt": "언급일",
     "editFieldOccurredEnd": "종료일",
     "editFieldOccurredStart": "시작일",
     "editFieldType": "유형"

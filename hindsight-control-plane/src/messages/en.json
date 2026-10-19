@@ -1667,6 +1667,7 @@
     "curationSave": "Save",
     "curationStateInvalidated": "Invalidated",
     "editFieldContext": "Context",
+    "editFieldMentionedAt": "Mentioned",
     "editFieldOccurredEnd": "End date",
     "editFieldOccurredStart": "Start date",
     "editFieldType": "Type"

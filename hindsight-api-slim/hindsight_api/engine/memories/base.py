@@ -2418,7 +2418,7 @@ class MemoriesExtension(Extension, ABC):
     ) -> None:
         """Apply a curation field edit to a live memory.
 
-        Writes the new text / context / fact_type / occurred window, resets the
+        Writes the new text / context / fact_type / occurred window / mention time, resets the
         consolidation markers (the memory re-consolidates) and stamps the edit
         time, and drops the memory's derived links (they are recomputed).
 

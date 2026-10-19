@@ -565,10 +565,9 @@ async def apply_edit(
     entity_ids: list[str] | None,
     embedding=None,
 ) -> None:
-    # `entity_ids` and `mentioned_at` are unused here: the entity postings are
-    # re-linked into `unit_entities` by the caller, and an edit does not move the
-    # mention time. Both are on the signature for a store that carries entities on
-    # the memory and rebuilds it wholesale.
+    # `entity_ids` is unused here: the entity postings are re-linked into
+    # `unit_entities` by the caller. It is on the signature for a store that carries
+    # entities on the memory and rebuilds it wholesale.
     from ...causal_links import CAUSAL_LINK_TYPES
     from ...db.ops_postgresql import pg_search_vector_expr
 
@@ -586,7 +585,17 @@ async def apply_edit(
     # The re-embedded vector rides the edit's own UPDATE. It describes the text being written by
     # this statement, so writing it here is what keeps the two from ever disagreeing — and it
     # spares a store whose write is not a row update a second write of this row.
-    params: list = [str(unit_id), bank_id, text, context, fact_type, occurred_start, occurred_end, event_date]
+    params: list = [
+        str(unit_id),
+        bank_id,
+        text,
+        context,
+        fact_type,
+        occurred_start,
+        occurred_end,
+        event_date,
+        mentioned_at,
+    ]
     embedding_clause = ""
     if embedding is not None:
         params.append(embedding)
@@ -595,7 +604,7 @@ async def apply_edit(
         f"""
         UPDATE {mu}
         SET text = $3, context = $4, fact_type = $5, occurred_start = $6, occurred_end = $7,
-            event_date = $8, consolidated_at = NULL, consolidation_failed_at = NULL,
+            event_date = $8, mentioned_at = $9, consolidated_at = NULL, consolidation_failed_at = NULL,
             edited_at = now(), updated_at = now(){sv_clause}{embedding_clause}
         WHERE id = $1 AND bank_id = $2
         """,

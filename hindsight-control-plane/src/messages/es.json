@@ -1667,6 +1667,7 @@
     "curationSave": "Guardar",
     "curationStateInvalidated": "Invalidada",
     "editFieldContext": "Contexto",
+    "editFieldMentionedAt": "Mencionado",
     "editFieldOccurredEnd": "Fecha de fin",
     "editFieldOccurredStart": "Fecha de inicio",
     "editFieldType": "Tipo"

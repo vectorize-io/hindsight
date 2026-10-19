@@ -1287,6 +1287,7 @@ export class ControlPlaneClient {
       context?: string;
       occurredStart?: string;
       occurredEnd?: string;
+      mentionedAt?: string;
       factType?: "world" | "experience";
       entities?: string[];
       resolveEntities?: boolean;
@@ -1299,6 +1300,7 @@ export class ControlPlaneClient {
     if (update.context !== undefined) body.context = update.context;
     if (update.occurredStart !== undefined) body.occurred_start = update.occurredStart;
     if (update.occurredEnd !== undefined) body.occurred_end = update.occurredEnd;
+    if (update.mentionedAt !== undefined) body.mentioned_at = update.mentionedAt;
     if (update.factType !== undefined) body.fact_type = update.factType;
     if (update.entities !== undefined) body.entities = update.entities;
     if (update.resolveEntities !== undefined) body.resolve_entities = update.resolveEntities;

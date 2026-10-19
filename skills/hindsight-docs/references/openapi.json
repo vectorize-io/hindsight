@@ -19330,6 +19330,18 @@
             "title": "Occurred End",
             "description": "New occurred-range end (ISO 8601). '' clears it; omit to leave unchanged."
           },
+          "mentioned_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mentioned At",
+            "description": "New mention time \u2014 when the fact was said or written (ISO 8601). '' clears it; omit to leave unchanged."
+          },
           "fact_type": {
             "anyOf": [
               {

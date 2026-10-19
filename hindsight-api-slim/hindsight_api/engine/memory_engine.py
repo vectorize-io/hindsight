@@ -12119,6 +12119,7 @@ class MemoryEngine(MemoryEngineInterface):
         context: str | None = None,
         occurred_start: str | None = None,
         occurred_end: str | None = None,
+        mentioned_at: str | None = None,
         new_fact_type: str | None = None,
         entities: list[str] | None = None,
         resolve_entities: bool = True,
@@ -12134,7 +12135,7 @@ class MemoryEngine(MemoryEngineInterface):
         graph queries therefore need no state predicate.
 
         - **Edit** (``text``/``context``/``occurred_start``/``occurred_end``/
-          ``new_fact_type``/``entities``): correct what the LLM extracted.
+          ``mentioned_at``/``new_fact_type``/``entities``): correct what the LLM extracted.
           Re-embeds (text + dates + entities feed the embedding), drops derived
           observations + temporal/semantic links, and re-consolidates. For date/context fields,
           ``""`` clears to NULL and ``None`` leaves unchanged; ``new_fact_type``
@@ -12207,7 +12208,8 @@ class MemoryEngine(MemoryEngineInterface):
             return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
         doing_edit = any(
-            v is not None for v in (text, context, occurred_start, occurred_end, new_fact_type, new_entities)
+            v is not None
+            for v in (text, context, occurred_start, occurred_end, mentioned_at, new_fact_type, new_entities)
         )
 
         await self._authenticate_tenant(request_context)
@@ -12299,15 +12301,17 @@ class MemoryEngine(MemoryEngineInterface):
                 new_fact = new_fact_type if new_fact_type is not None else live.fact_type
                 new_occ_start = _parse_edit_date(occurred_start) if occurred_start is not None else live.occurred_start
                 new_occ_end = _parse_edit_date(occurred_end) if occurred_end is not None else live.occurred_end
+                new_mentioned_at = _parse_edit_date(mentioned_at) if mentioned_at is not None else live.mentioned_at
                 # event_date (legacy single date, still what temporal links and the curation
                 # list's `date` are built from) tracks the occurred start when it's set. An
                 # explicit occurred_start edit — including "" to clear it — re-derives it with
                 # retain's own rule (`occurred_start or mentioned_at`, see memories/pg/writes.py),
-                # so clearing an occurrence cannot leave the legacy date on the old one. An
-                # omitted occurred_start is not an occurrence edit and leaves it untouched.
+                # so clearing an occurrence cannot leave the legacy date on the old one. A
+                # mentioned_at edit re-derives it the same way, since it is the fallback. An
+                # edit touching neither leaves it untouched.
                 new_event_date = (
-                    (new_occ_start if new_occ_start is not None else live.mentioned_at)
-                    if occurred_start is not None
+                    (new_occ_start if new_occ_start is not None else new_mentioned_at)
+                    if occurred_start is not None or mentioned_at is not None
                     else live.event_date
                 )
 
@@ -12317,7 +12321,7 @@ class MemoryEngine(MemoryEngineInterface):
                 entity_names_for_store = None
                 entity_date = None
                 if new_entities is not None:
-                    entity_date = new_occ_start or live.mentioned_at
+                    entity_date = new_occ_start or new_mentioned_at
                     entities_resolved = True
                     if store.store_owned_for(bank_id):
                         # The store owns its entity registry: hand it the raw names and let its
@@ -12376,7 +12380,7 @@ class MemoryEngine(MemoryEngineInterface):
                     new_occ_start=new_occ_start,
                     new_occ_end=new_occ_end,
                     new_event_date=new_event_date,
-                    mentioned_at=live.mentioned_at,
+                    mentioned_at=new_mentioned_at,
                     entity_resolution=entity_resolution,
                     resolved_for_unit=resolved_for_unit,
                     edit_entity_ids=edit_entity_ids,

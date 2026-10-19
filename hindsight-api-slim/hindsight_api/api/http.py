@@ -2860,6 +2860,11 @@ class UpdateMemoryRequest(BaseModel):
         default=None,
         description="New occurred-range end (ISO 8601). '' clears it; omit to leave unchanged.",
     )
+    mentioned_at: str | None = Field(
+        default=None,
+        description="New mention time — when the fact was said or written (ISO 8601). '' clears it; "
+        "omit to leave unchanged.",
+    )
     fact_type: str | None = Field(
         default=None,
         description="Reclassify the fact: 'world' or 'experience'. Omit to leave unchanged.",
@@ -2900,12 +2905,13 @@ class UpdateMemoryRequest(BaseModel):
                 self.context,
                 self.occurred_start,
                 self.occurred_end,
+                self.mentioned_at,
                 self.fact_type,
                 self.entities,
                 self.state,
             )
         )
-        has_date_clear = bool({"occurred_start", "occurred_end"} & self.model_fields_set)
+        has_date_clear = bool({"occurred_start", "occurred_end", "mentioned_at"} & self.model_fields_set)
         if not has_value_edit and not has_date_clear:
             raise ValueError("Provide at least one field to update.")
         if self.state is not None and self.state not in ("valid", "invalidated"):
@@ -6222,6 +6228,11 @@ def _register_routes(app: FastAPI):
                 if "occurred_end" in request.model_fields_set and request.occurred_end is None
                 else request.occurred_end
             )
+            mentioned_at = (
+                ""
+                if "mentioned_at" in request.model_fields_set and request.mentioned_at is None
+                else request.mentioned_at
+            )
             data = await app.state.memory.update_memory_unit(
                 bank_id=bank_id,
                 memory_id=memory_id,
@@ -6229,6 +6240,7 @@ def _register_routes(app: FastAPI):
                 context=request.context,
                 occurred_start=occurred_start,
                 occurred_end=occurred_end,
+                mentioned_at=mentioned_at,
                 new_fact_type=request.fact_type,
                 entities=request.entities,
                 resolve_entities=request.resolve_entities,

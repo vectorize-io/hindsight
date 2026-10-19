@@ -1667,6 +1667,7 @@
     "curationSave": "儲存",
     "curationStateInvalidated": "已失效",
     "editFieldContext": "情境",
+    "editFieldMentionedAt": "提及日期",
     "editFieldOccurredEnd": "結束日期",
     "editFieldOccurredStart": "開始日期",
     "editFieldType": "類型"

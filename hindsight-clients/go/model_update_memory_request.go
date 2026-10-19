@@ -23,6 +23,7 @@ type UpdateMemoryRequest struct {
 	Context NullableString `json:"context,omitempty"`
 	OccurredStart NullableString `json:"occurred_start,omitempty"`
 	OccurredEnd NullableString `json:"occurred_end,omitempty"`
+	MentionedAt NullableString `json:"mentioned_at,omitempty"`
 	FactType NullableString `json:"fact_type,omitempty"`
 	Entities []string `json:"entities,omitempty"`
 	// Whether the names in 'entities' are resolved against the entities already in the bank. True (default) is what retain does: a similar existing entity is reused when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead of the one you wrote. False takes the names literally — an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and names in the same request are never merged with each other. Use False for hand-authored corrections, where the name you sent is the answer rather than a guess. Ignored when 'entities' is omitted.
@@ -218,6 +219,48 @@ func (o *UpdateMemoryRequest) SetOccurredEndNil() {
 // UnsetOccurredEnd ensures that no value is present for OccurredEnd, not even an explicit nil
 func (o *UpdateMemoryRequest) UnsetOccurredEnd() {
 	o.OccurredEnd.Unset()
+}
+
+// GetMentionedAt returns the MentionedAt field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *UpdateMemoryRequest) GetMentionedAt() string {
+	if o == nil || IsNil(o.MentionedAt.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.MentionedAt.Get()
+}
+
+// GetMentionedAtOk returns a tuple with the MentionedAt field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *UpdateMemoryRequest) GetMentionedAtOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.MentionedAt.Get(), o.MentionedAt.IsSet()
+}
+
+// HasMentionedAt returns a boolean if a field has been set.
+func (o *UpdateMemoryRequest) HasMentionedAt() bool {
+	if o != nil && o.MentionedAt.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetMentionedAt gets a reference to the given NullableString and assigns it to the MentionedAt field.
+func (o *UpdateMemoryRequest) SetMentionedAt(v string) {
+	o.MentionedAt.Set(&v)
+}
+// SetMentionedAtNil sets the value for MentionedAt to be an explicit nil
+func (o *UpdateMemoryRequest) SetMentionedAtNil() {
+	o.MentionedAt.Set(nil)
+}
+
+// UnsetMentionedAt ensures that no value is present for MentionedAt, not even an explicit nil
+func (o *UpdateMemoryRequest) UnsetMentionedAt() {
+	o.MentionedAt.Unset()
 }
 
 // GetFactType returns the FactType field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -432,6 +475,9 @@ func (o UpdateMemoryRequest) ToMap() (map[string]interface{}, error) {
 	}
 	if o.OccurredEnd.IsSet() {
 		toSerialize["occurred_end"] = o.OccurredEnd.Get()
+	}
+	if o.MentionedAt.IsSet() {
+		toSerialize["mentioned_at"] = o.MentionedAt.Get()
 	}
 	if o.FactType.IsSet() {
 		toSerialize["fact_type"] = o.FactType.Get()

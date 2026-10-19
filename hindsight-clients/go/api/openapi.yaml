@@ -13039,6 +13039,9 @@ components:
         occurred_end:
           nullable: true
           type: string
+        mentioned_at:
+          nullable: true
+          type: string
         fact_type:
           nullable: true
           type: string

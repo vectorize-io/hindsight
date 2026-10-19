@@ -1667,6 +1667,7 @@
     "curationSave": "保存",
     "curationStateInvalidated": "無効化済み",
     "editFieldContext": "コンテキスト",
+    "editFieldMentionedAt": "言及日",
     "editFieldOccurredEnd": "終了日",
     "editFieldOccurredStart": "開始日",
     "editFieldType": "タイプ"
