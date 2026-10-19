@@ -1631,6 +1631,7 @@ class Hindsight:
         detail: Literal["metadata", "content", "full"] | None = None,
         limit: int | None = None,
         offset: int | None = None,
+        exclude_knowledge_pages: bool | None = None,
     ):
         """
         List all mental models in a bank (sync wrapper — prefer :meth:`alist_mental_models` in async code).
@@ -1645,6 +1646,7 @@ class Hindsight:
                 detail=detail,
                 limit=limit,
                 offset=offset,
+                exclude_knowledge_pages=exclude_knowledge_pages,
             )
         )
 
@@ -1656,6 +1658,7 @@ class Hindsight:
         detail: Literal["metadata", "content", "full"] | None = None,
         limit: int | None = None,
         offset: int | None = None,
+        exclude_knowledge_pages: bool | None = None,
     ):
         """
         List all mental models in a bank (async — preferred over :meth:`list_mental_models`).
@@ -1671,6 +1674,8 @@ class Hindsight:
                 text, or read a single model with get_mental_model.
             limit: Maximum number of mental models to return
             offset: Number of mental models to skip (for pagination)
+            exclude_knowledge_pages: Leave out the models that hold knowledge page
+                content, listing standalone mental models only (server default: false)
 
         Returns:
             ListMentalModelsResponse with items
@@ -1682,6 +1687,7 @@ class Hindsight:
             detail=detail,
             limit=limit,
             offset=offset,
+            exclude_knowledge_pages=exclude_knowledge_pages,
             _request_timeout=self._timeout,
         )
 

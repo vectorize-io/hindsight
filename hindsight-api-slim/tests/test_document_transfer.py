@@ -30,7 +30,12 @@ from hindsight_api.engine.retain import bank_utils
 from hindsight_api.engine.schema import fq_store_table
 from hindsight_api.engine.storage import bank_storage_prefix
 from hindsight_api.engine.transfer import import_documents
-from hindsight_api.engine.transfer.importer import _EMBED_BATCH_SIZE, _embed_in_batches, parse_archive
+from hindsight_api.engine.transfer.importer import (
+    _EMBED_BATCH_SIZE,
+    _embed_in_batches,
+    parse_archive,
+    parse_bank_archive,
+)
 from hindsight_api.engine.transfer.schema import (
     SCHEMA_VERSION,
     TransferCausalRelation,
@@ -1022,6 +1027,14 @@ async def test_bank_roundtrip_carries_knowledge_pages(memory, request_context):
             content="Company overview and mission statement.",
             request_context=request_context,
         )
+        # A standalone model beside the pages: only it counts as a mental model (#5665).
+        await memory.create_mental_model(
+            bank_id=bank,
+            name="Coding preferences",
+            source_query="How does the user like code written?",
+            content="Functional style.",
+            request_context=request_context,
+        )
 
         def _tree(nodes):
             return sorted(
@@ -1039,10 +1052,15 @@ async def test_bank_roundtrip_carries_knowledge_pages(memory, request_context):
         backend = await memory._get_backend()
         async with acquire_with_retry(backend) as conn:
             archive = await export_bank(conn, bank)
+        with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+            manifest = parse_bank_archive(zf).manifest
+        assert manifest.mental_model_count == 1
+        assert manifest.knowledge_page_count == 4
         # Delete then restore into the same id — exact round-trip, no PK collisions.
         await memory.delete_bank(bank, request_context=request_context)
         result = await memory.import_bank_async(archive, request_context)
         assert result.knowledge_pages_imported == 4  # 2 folders + 2 pages
+        assert result.mental_models_imported == 1
 
         # Tree restored exactly: ids, parents, backing mental models, managed flag.
         after = _tree(await memory.list_knowledge_nodes(bank, request_context=request_context))
