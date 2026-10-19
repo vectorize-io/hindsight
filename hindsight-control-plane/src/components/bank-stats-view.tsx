@@ -1216,7 +1216,7 @@ export function BankStatsView() {
     );
   }
 
-  if (!stats) return null;
+  if (!stats || !currentBank) return null;
 
   // Done / pending / failed are shown side by side and must not overlap: the API's
   // pending_consolidation already excludes permanently failed memories, so those are

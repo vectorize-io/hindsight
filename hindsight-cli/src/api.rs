@@ -940,7 +940,7 @@ impl ApiClient {
         self.runtime.block_on(async {
             let response = self
                 .client
-                .list_mental_models(bank_id, Some(detail), None, None, None, None, None)
+                .list_mental_models(bank_id, Some(detail), None, None, None, None, None, None)
                 .humanized()
                 .await?;
             Ok(response.into_inner())
