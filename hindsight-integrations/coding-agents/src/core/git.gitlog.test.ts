@@ -236,7 +236,6 @@ describe("syncGitLog", () => {
     });
     const client = {
       retain,
-      opIds: [],
       listDocumentIds: async (tag: string) =>
         new Set([...docs].filter(([, tags]) => tags.includes(tag)).map(([id]) => id)),
       documentTags: async (id: string) => docs.get(id),
@@ -326,7 +325,6 @@ describe("syncGitLog appends", () => {
     const client = {
       bank: "test-bank",
       retain,
-      opIds: [],
       listDocumentIds: async (tag: string) =>
         new Set([...docs].filter(([, d]) => d.tags.includes(tag)).map(([id]) => id)),
       documentTags: async (id: string) => docs.get(id)?.tags,

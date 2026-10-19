@@ -227,7 +227,7 @@ function gitLogRecords(raw: string): string[] {
  * force-push, a branch that diverged from the last writer): there the document holds commits
  * `head` does not, and only a full re-send describes its history.
  */
-export function gitLogRecordsSince(repo: string, baseSha: string, head: string): string[] | null {
+function gitLogRecordsSince(repo: string, baseSha: string, head: string): string[] | null {
   if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(baseSha)) return null;
   try {
     git(repo, "merge-base", "--is-ancestor", baseSha, head);
@@ -363,14 +363,13 @@ export async function ingestGitLog(
  * the limit is smaller), or a server that cannot append safely (no `operation_id` dedupe, or a bank
  * that does not store document text — see HindsightClient.supportsAppendRetain).
  */
-export async function appendGitLog(
+async function appendGitLog(
   client: HindsightClient,
   repo: string,
-  opts: GitLogOpts
+  opts: GitLogOpts,
+  head: string
 ): Promise<number | null> {
   const log = opts.log ?? (() => {});
-  const head = gitHeadSha(repo);
-  if (!head) return null;
   const canonical = `gitlog:${repoNameOf(repo)}`;
   const tags = await client.documentTags?.(canonical).catch(() => undefined);
   const base = tags?.find((t) => t.startsWith(GITLOG_HEAD))?.slice(GITLOG_HEAD.length);
@@ -450,5 +449,7 @@ export async function syncGitLog(
     log("[gitlog] current with HEAD — skipping");
     return 0;
   }
-  return (await appendGitLog(client, repo, opts)) ?? ingestGitLog(client, repo, opts);
+  return (
+    (head ? await appendGitLog(client, repo, opts, head) : null) ?? ingestGitLog(client, repo, opts)
+  );
 }
