@@ -225,7 +225,7 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
             {renderNav(false)}
             {apiVersion && (
               <div className="border-t border-border p-3 text-center text-xs text-muted-foreground/60">
-                Hindsight v{apiVersion}
+                {`Hindsight v${apiVersion}`}
               </div>
             )}
           </DialogPrimitive.Content>
