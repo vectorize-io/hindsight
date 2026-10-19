@@ -1417,8 +1417,8 @@ class TestMoveRenameDelete:
 class TestListReportsTheContentItDelivers:
     """A list that carries content is a bulk read of that content.
 
-    A knowledge page is a mental_models row and is not excluded from
-    list_mental_models, so a list that returns content hands back every
+    A knowledge page is a mental_models row and list_mental_models includes
+    it by default, so a list that returns content hands back every
     page in the bank. Reporting the single-page read while leaving that
     unreported would watch the narrow door and leave the wide one open — a
     caller could enumerate a bank's synthesized knowledge by asking for it in

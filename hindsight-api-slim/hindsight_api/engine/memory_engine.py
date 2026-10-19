@@ -16985,7 +16985,8 @@ class MemoryEngine(MemoryEngineInterface):
         # that directly rather than re-deriving it from the detail string.
         #
         # This matters most for knowledge pages: a page is a mental_models
-        # row and is not excluded from this query, so an unreported list
+        # row and is listed here unless the caller passes
+        # ``exclude_knowledge_pages`` (off by default), so an unreported list
         # hands back every page in a bank while a single-page read is
         # reported. The narrow door should not be the only one watched.
         #
