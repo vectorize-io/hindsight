@@ -13,8 +13,9 @@ import os
 import time
 import warnings
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 import aiohttp
 from pydantic import BaseModel
@@ -59,6 +60,7 @@ from ..config import (
 )
 from .aiohttp_session import LoopLocal, LoopLocalSession, UpstreamHTTPError, per_phase_timeout, raise_for_status
 from .bank_attribution import reranker_bank_attribution_headers
+from .decision_model import overflowed_window
 from .local_device import (
     LOCAL_MODEL_BUILD_LOCK,
     align_local_model_weights,
@@ -73,6 +75,7 @@ from .tei_retry import TEI_KEEPALIVE_EXPIRY_SECONDS, is_retryable_tei_transport_
 from .token_encoding import count_tokens, truncate_to_tokens
 
 logger = logging.getLogger(__name__)
+_T = TypeVar("_T")
 
 # Which member produced the scores for the predict() running in this task.
 # MultiCrossEncoder._active is shared by every request on the chain, so reading
@@ -1184,8 +1187,14 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
 
     # Context window safety limit for Jev /v1/systemone.
     # Single question context limit is 32k. A defensive safety margin (26k vs 32k)
-    # absorbs cross-tokenizer divergence and JSON envelope formatting overheads.
+    # absorbs JSON framing and most cross-tokenizer divergence, but not all of it: on
+    # mixed-script text Jev counts twice what we do (#5715). A request Jev still finds
+    # too long is rebuilt at half the budget (see _within_window), down to
+    # MIN_QUESTION_TOKENS.
     MAX_QUESTION_TOKENS = 26_000
+    # Three halvings: 26k -> 3.25k covers an 8x divergence, well past the 2x measured.
+    # A request still refused there will never fit, so it fails rather than retrying on.
+    MIN_QUESTION_TOKENS = 3_000
 
     # Ordered depths for the cut. The model picks the level; these are the
     # granularity offered, which is a design choice and not a tuned threshold.
@@ -1258,6 +1267,19 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
                 await raise_for_status(response)
                 return await response.json(content_type=None)
 
+    async def _within_window(self, build: Callable[[int], Awaitable[_T]]) -> _T:
+        """``build(budget)`` at the full question budget, halved each time Jev finds the
+        request longer than its window, since only Jev can count its own tokens."""
+        budget = self.MAX_QUESTION_TOKENS
+        while True:
+            try:
+                return await build(budget)
+            except Exception as e:
+                if not overflowed_window(e) or budget // 2 < self.MIN_QUESTION_TOKENS:
+                    raise
+            budget //= 2
+            logger.warning(f"Reranker: TypeSafe request overflowed Jev's window, retrying at {budget} tokens")
+
     async def _rank_once(self, query: str, docs: list[str], indices: list[int]) -> list[int]:
         """Rank one group of candidates, returning their indices best first."""
         body = {
@@ -1278,7 +1300,7 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         by_probability = sorted(range(len(indices)), key=lambda position: -float(probabilities[f"c{position}"]))
         return [indices[position] for position in by_probability]
 
-    async def _rank(self, query: str, docs: list[str], indices: list[int]) -> list[int]:
+    async def _rank(self, query: str, docs: list[str], indices: list[int], budget: int) -> list[int]:
         """Rank a whole pool best first, in rounds when it exceeds option or token limits.
 
         Each round's probabilities are normalised within its own call, so the winners
@@ -1294,7 +1316,7 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         state_tokens = count_tokens(f"Question: {query}")
         # +30: cushion for the question's JSON framing (type, keys) around the instructions.
         instr_tokens = count_tokens(f"{_RANK_INSTRUCTIONS_PREFIX}{query}") + 30
-        net_budget = max(50, self.MAX_QUESTION_TOKENS - state_tokens - instr_tokens)
+        net_budget = max(50, budget - state_tokens - instr_tokens)
 
         # Pre-truncate outlier documents that individually exceed the question budget,
         # and copy docs so we don't mutate caller's list.
@@ -1382,24 +1404,27 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
             count_tokens(_SUFFICIENCY_INSTRUCTIONS) + sum(count_tokens(level) for level in self.SUFFICIENCY_LEVELS) + 50
         )
         prefix = f"Question: {query}\n\nEvidence:\n"
-        budget = max(100, self.MAX_QUESTION_TOKENS - overhead - count_tokens(prefix))
-        if count_tokens(evidence) > budget:
+
+        async def ask(question_budget: int) -> dict:
+            budget = max(100, question_budget - overhead - count_tokens(prefix))
             # ponytail: keeps the head of the evidence; the agent's own results come
             # first (pages, then observations, then facts), so the tail is raw facts.
-            evidence = truncate_to_tokens(evidence, budget).text
-        result = await self._ask(
-            {
-                "state": f"{prefix}{evidence}",
-                "model": self.model,
-                "questions": {
-                    "sufficient": {
-                        "type": "score",
-                        "instructions": _SUFFICIENCY_INSTRUCTIONS,
-                        "criteria": self.SUFFICIENCY_LEVELS,
-                    }
-                },
-            }
-        )
+            fitted = truncate_to_tokens(evidence, budget).text if count_tokens(evidence) > budget else evidence
+            return await self._ask(
+                {
+                    "state": f"{prefix}{fitted}",
+                    "model": self.model,
+                    "questions": {
+                        "sufficient": {
+                            "type": "score",
+                            "instructions": _SUFFICIENCY_INSTRUCTIONS,
+                            "criteria": self.SUFFICIENCY_LEVELS,
+                        }
+                    },
+                }
+            )
+
+        result = await self._within_window(ask)
         answer = result["answers"]["sufficient"]
         # The most likely level, not the rounded expected score: an expected 1.43 is "partly" when
         # rounded, though "fully" was the likeliest verdict at 0.54 (sde-bench boltons-budget), and
@@ -1427,34 +1452,37 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
             + count_tokens(prefix)
             + 50
         )
-        budget = max(100, self.MAX_QUESTION_TOKENS - overhead)
-        if count_tokens(page) > budget:
+        policy = self.retry_policy or RetryPolicy()
+
+        async def ask(question_budget: int) -> dict:
+            budget = max(100, question_budget - overhead)
             # ponytail: keeps the head of the page (its first sections); a page past
             # ~25k tokens is already far over its own budget.
-            page = truncate_to_tokens(page, budget).text
-        body = {
-            "state": f"{prefix}{page}",
-            "model": self.model,
-            "questions": {
-                "impact": {
-                    "type": "choice",
-                    "instructions": _PAGE_IMPACT_INSTRUCTIONS,
-                    "criteria": _PAGE_IMPACT_OPTIONS,
-                }
-            },
-        }
-        # A refresh asks this once per new memory, all at once, so a rate limit is the
-        # expected failure rather than a rare one: retried, not handed back as "search".
-        policy = self.retry_policy or RetryPolicy()
-        result = await acall_with_retry(
-            lambda: self._ask(body), policy=policy, budget=policy.new_budget(), provider=self.provider_name
-        )
+            fitted = truncate_to_tokens(page, budget).text if count_tokens(page) > budget else page
+            body = {
+                "state": f"{prefix}{fitted}",
+                "model": self.model,
+                "questions": {
+                    "impact": {
+                        "type": "choice",
+                        "instructions": _PAGE_IMPACT_INSTRUCTIONS,
+                        "criteria": _PAGE_IMPACT_OPTIONS,
+                    }
+                },
+            }
+            # A refresh asks this once per new memory, all at once, so a rate limit is the
+            # expected failure rather than a rare one: retried, not handed back as "search".
+            return await acall_with_retry(
+                lambda: self._ask(body), policy=policy, budget=policy.new_budget(), provider=self.provider_name
+            )
+
+        result = await self._within_window(ask)
         answer = result["answers"]["impact"]
         probabilities = answer.get("probabilities") or {}
         choice = answer.get("choice") or max(probabilities, key=lambda key: float(probabilities[key]), default="yes")
         return choice != "no"
 
-    async def _cut(self, query: str, docs: list[str], order: list[int]) -> int:
+    async def _cut(self, query: str, docs: list[str], order: list[int], budget: int) -> int:
         """How many of the ranked candidates are relevant, as the model sees it."""
         shortlist = order[: self.SHORTLIST]
         if not shortlist:
@@ -1464,7 +1492,7 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         cut_overhead = count_tokens(_CUT_INSTRUCTIONS) + sum(count_tokens(c) for c in self.CUT_LEVELS) + 50
         prefix = f"Question: {query}\n\nCandidates, already ranked best first:\n"
         prefix_tokens = count_tokens(prefix)
-        available_listing_tokens = max(100, self.MAX_QUESTION_TOKENS - cut_overhead - prefix_tokens)
+        available_listing_tokens = max(100, budget - cut_overhead - prefix_tokens)
 
         # Truncate shortlist documents if they exceed the available listing budget
         shortlist_docs = [docs[index] for index in shortlist]
@@ -1505,8 +1533,12 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         if count_tokens(query) > effective_query_cap:
             query = truncate_to_tokens(query, effective_query_cap).text
 
-        order = await self._rank(query, docs, indices)
-        keep = await self._cut(query, docs, order) if self.prunes_candidates else len(order)
+        order = await self._within_window(lambda budget: self._rank(query, docs, indices, budget))
+        keep = (
+            await self._within_window(lambda budget: self._cut(query, docs, order, budget))
+            if self.prunes_candidates
+            else len(order)
+        )
         keep = max(keep, min(self.MIN_KEEP, len(order)))
         # Positions, not confidences — see the class docstring. Descending from 1.0 so
         # the caller's ordering is preserved, and 0.0 for everything past the cut,
