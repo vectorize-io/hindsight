@@ -14616,16 +14616,27 @@ class MemoryEngine(MemoryEngineInterface):
             )
             await self._validate_operation(self._operation_validator.validate_create_bank(ctx))
 
+        # BEFORE the row, not after: the row is what makes the bank readable to every other
+        # request, and a store that owns its own storage answers a read against a bank whose
+        # storage does not exist yet with an error, not with an empty bank. The window between
+        # the two is a real one — the create is a round trip to an external service and can take
+        # seconds under load — and a first read landing inside it is a 500 on a bank that was
+        # only just asked for, which is what a client does immediately after creating one.
+        #
+        # Ordering it this way inverts which half can be left behind, and the orphan is the
+        # harmless one: storage with no bank row is inert and the create is idempotent, so the
+        # eventual real create adopts it. A committed row with no storage is the failure that
+        # matters, because every read against it faults.
+        await self._ensure_bank_storage(bank_id)
+
         if conn is not None:
             created_on_conn = await bank_utils.create_bank_row_on_conn(conn, bank_id, ops=backend.ops)
-            await self._ensure_bank_storage(bank_id)
             return created_on_conn
 
         # Second connection, on purpose: the validator hook above must not run
         # while one is held. Only ever paid once per bank, on the call that
         # creates it — every later call returns above on the probe.
         created = await bank_utils.create_bank_if_missing(backend, bank_id)
-        await self._ensure_bank_storage(bank_id)
         if created:
             await self._apply_default_bank_template(bank_id, request_context)
         return created
@@ -14641,11 +14652,11 @@ class MemoryEngine(MemoryEngineInterface):
 
         A store that keeps memories in SQL implements this as a no-op.
 
-        Ordering note: on the `conn` path this runs inside the caller's transaction. If that
-        transaction rolls back, an empty namespace is left behind for a bank that does not
-        exist — an inert orphan, and a create-if-absent makes the eventual real creation a no-op.
-        The reverse (a committed bank with no storage) is the failure that matters, because every
-        read against it looks like an empty bank rather than a fault.
+        Ordering note: this runs BEFORE the row is written, and on the `conn` path inside the
+        caller's transaction. Either way the leftover of a failure is storage for a bank that
+        does not exist — an inert orphan, and a create-if-absent makes the eventual real creation
+        a no-op. The reverse (a committed bank with no storage) is the failure that matters,
+        because every read against it faults until something ensures it.
         """
         from .memories import get_memories
 

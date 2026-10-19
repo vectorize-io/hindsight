@@ -1889,6 +1889,32 @@ async def test_ensuring_a_bank_ensures_its_storage(memory, request_context, rest
     assert "lifecycle-bank" in store.ensured
 
 
+async def test_storage_is_ensured_before_the_bank_row_is_visible(memory, request_context, restore_default_store):
+    """The row is what makes a bank readable to every other request, so the storage goes first.
+
+    A store that owns its storage faults a read against a bank whose storage is not there yet —
+    correctly, since it cannot tell that from storage that has gone missing. With the row written
+    first, every request arriving in the gap gets that fault on a bank that was only just asked
+    for, and the gap is not nominal: the create is a round trip to an external service. A client
+    that creates a bank and immediately reads it is the normal case, not a race to be tolerated.
+    """
+    from hindsight_api.engine.retain import bank_utils
+
+    backend = await memory._get_backend()
+    row_was_there: list[bool] = []
+
+    class _ProbesTheRow(InMemoryMemories):
+        async def ensure_bank_storage(self, bank_id):
+            row_was_there.append(await bank_utils.bank_exists(backend, bank_id))
+            await super().ensure_bank_storage(bank_id)
+
+    set_memories(_ProbesTheRow({}))
+
+    await memory._ensure_bank_exists("storage-first-bank", request_context)
+
+    assert row_was_there == [False], "the bank row must not be visible before its storage exists"
+
+
 async def test_ensuring_an_existing_bank_still_ensures_its_storage(memory, request_context, restore_default_store):
     """Ensuring is not gated on the bank row having just been inserted.
 
