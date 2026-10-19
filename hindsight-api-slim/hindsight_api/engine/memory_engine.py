@@ -17803,14 +17803,36 @@ class MemoryEngine(MemoryEngineInterface):
                 ]
         return _DeltaGate(listed=listed, kept=kept)
 
-    async def _bank_has_readable_document(self, bank_id: str, *, excluding_id: str) -> bool:
-        """Does this bank hold another mental model the reflect agent could read?
+    async def _siblings_are_a_source(
+        self,
+        bank_id: str,
+        scope: MentalModelRefreshScope,
+        *,
+        has_content: bool,
+        has_read_memories: bool,
+    ) -> bool:
+        """With no memory in scope, may sibling pages alone drive this refresh?
 
         ``search_mental_models`` returns sibling documents, so one with real content is
         something to reflect over even when no memory is — and it applies no time bound,
-        so that holds inside a delta window too. Only the model being refreshed is
-        excluded, not its full ``exclude_mental_model_ids`` list: over-counting keeps a
-        refresh running, which is the safe direction to be wrong in.
+        so that holds inside a delta window too.
+
+        But pages alone may only write a document with nothing to lose: an empty one, or
+        one no refresh has ever written with memories in scope. A document built from
+        memories whose memory scope is now empty — a delta window with nothing new, a tag
+        no memory carries — was otherwise rewritten from pages that do not cover its
+        topic, and the agent wrote "no records" over the real content (#5728). Its scope
+        says there is nothing new to read, so it is kept.
+
+        "Ever written with memories in scope" is ``last_memory_seen_at`` being set: a
+        refresh stamps it only when its scope held a memory. Not the stored
+        ``based_on``, which was tried first: it lists what the agent chose to cite, and
+        an answer written from memories can cite only a page.
+
+        Asked under the same scope that search applies — the model's tag filter and its
+        whole ``exclude_mental_model_ids`` list — because a sibling the agent cannot
+        read is not a source. Counting one anyway sent a refresh into the loop with
+        nothing it could retrieve (#5728).
 
         A sibling that has not yet been refreshed does not count. That is exactly the
         state a bank's default pages are all in while they wait on each other, and
@@ -17823,17 +17845,24 @@ class MemoryEngine(MemoryEngineInterface):
         pages by any other measure — counting them because the column happens to be
         non-empty would re-open #3875 for exactly the banks the check protects.
         """
+        if has_content and has_read_memories:
+            return False
+        tag_clause = KnowledgeTagFilter(
+            tags=scope.tags, tags_match=scope.tags_match, tag_groups=scope.tag_groups
+        ).clause(param_offset=4)
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             other_documents = await conn.fetchval(
                 f"SELECT COUNT(*) FROM {fq_table('mental_models')} "
-                f"WHERE bank_id = $1 AND id <> $2 AND LENGTH(TRIM(content)) > 0 AND content NOT LIKE $3",
+                f"WHERE bank_id = $1 AND id != ALL($2::text[]) AND LENGTH(TRIM(content)) > 0 "
+                f"AND content NOT LIKE $3 {tag_clause.sql}",
                 bank_id,
-                excluding_id,
+                scope.exclude_mental_model_ids,
                 # Prefix match, not equality: the placeholder was stored as written but
                 # read back through the structured render, which ends it with a newline.
                 # It carries no LIKE wildcard of its own, so it needs no escaping.
                 f"{_LEGACY_PENDING_PLACEHOLDER}%",
+                *tag_clause.params,
             )
         return bool(other_documents)
 
@@ -18060,7 +18089,12 @@ class MemoryEngine(MemoryEngineInterface):
         # is there a query to pay, and only while sibling documents are still in reach.
         has_sources = scope_watermark.newest_in_scope is not None
         if not has_sources and not exclude_mental_models:
-            has_sources = await self._bank_has_readable_document(bank_id, excluding_id=mental_model_id)
+            has_sources = await self._siblings_are_a_source(
+                bank_id,
+                scope,
+                has_content=has_delta_baseline,
+                has_read_memories=mental_model.get("last_memory_seen_at") is not None,
+            )
         gate: _DeltaGate | None = None
         if created_after is not None and scope_watermark.newest_in_scope is not None:
             gate = await self._gate_delta_refresh(

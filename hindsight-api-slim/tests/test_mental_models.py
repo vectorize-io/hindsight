@@ -3620,6 +3620,123 @@ class TestRefreshSkipsEmptyScope:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_siblings_do_not_rewrite_a_document_whose_memory_scope_is_empty(
+        self, memory: MemoryEngine, request_context
+    ):
+        """#5728: a document built from memories, whose memory scope is now empty, must
+        not be rewritten from sibling pages. Reflect over pages that do not cover its
+        topic writes a "no records" report over the real content."""
+        bank_id = f"test-mm-sibling-keep-{uuid.uuid4().hex[:8]}"
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+        await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Architecture",
+            source_query="How is the system built?",
+            content="# Architecture\n\nA monorepo with an API and a control plane.",
+            request_context=request_context,
+        )
+        existing = "# Current State\n\nShipping the billing rewrite this week."
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Current State",
+            source_query="What is the team working on?",
+            content=existing,
+            trigger={"exclude_mental_models": False},
+            request_context=request_context,
+        )
+        # A refresh that read memories stamped this: the content came from them.
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            refresh_watermark=datetime.now(timezone.utc),
+            refresh_completed=True,
+            request_context=request_context,
+        )
+        calls = self._stub_reflect(memory)
+
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+
+        assert calls == [], "pages alone replaced a document built from memories (#5728)"
+        assert refreshed is not None
+        assert refreshed["content"].strip() == existing
+        assert refreshed["reflect_response"]["reflect_skipped"] == "no_sources_in_scope"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_a_document_written_from_pages_keeps_refreshing_from_them(
+        self, memory: MemoryEngine, request_context
+    ):
+        """The other half of #5728: a model composed from sibling pages has no memory
+        scope to lose, so pages stay its source after its first write."""
+        bank_id = f"test-mm-sibling-composed-{uuid.uuid4().hex[:8]}"
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+        await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Architecture",
+            source_query="How is the system built?",
+            content="# Architecture\n\nA monorepo with an API and a control plane.",
+            request_context=request_context,
+        )
+        # Content, but never a refresh with memories in scope: written from pages.
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Overview",
+            source_query="Summarise the other pages.",
+            content="# Overview\n\nSee Architecture.",
+            trigger={"exclude_mental_models": False},
+            request_context=request_context,
+        )
+        calls = self._stub_reflect(memory)
+
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
+
+        assert len(calls) == 1, "a document written from pages alone must still refresh from them"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_siblings_the_agent_cannot_read_are_not_sources(self, memory: MemoryEngine, request_context):
+        """A sibling outside the model's tag scope, or in its exclude list, is never
+        returned by ``search_mental_models`` — so it is not something to reflect over."""
+        bank_id = f"test-mm-sibling-scope-{uuid.uuid4().hex[:8]}"
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+        sibling = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Architecture",
+            source_query="How is the system built?",
+            content="# Architecture\n\nA monorepo with an API and a control plane.",
+            tags=["backend"],
+            request_context=request_context,
+        )
+        out_of_scope = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Design System",
+            source_query="How is the design system organised?",
+            content="",
+            tags=["design-system"],
+            trigger={"tags_match": "all_strict", "exclude_mental_models": False},
+            request_context=request_context,
+        )
+        excluded = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Onboarding",
+            source_query="What should a new engineer read first?",
+            content="",
+            trigger={"exclude_mental_models": False, "exclude_mental_model_ids": [sibling["id"]]},
+            request_context=request_context,
+        )
+        calls = self._stub_reflect(memory)
+
+        for mm in (out_of_scope, excluded):
+            await memory.refresh_mental_model(
+                bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+            )
+
+        assert calls == [], "the only sibling is one this model's page search can never return"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
     async def test_siblings_still_generating_are_not_sources(self, memory: MemoryEngine, request_context):
         """The bank-init shape exactly: several pages created together, each holding the
         placeholder and each waiting on content none of them has. Counting a placeholder

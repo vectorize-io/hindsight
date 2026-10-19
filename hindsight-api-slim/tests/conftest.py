@@ -782,7 +782,7 @@ def stub_refresh_has_sources(monkeypatch, memory) -> None:
     async def _has_document(*args, **kwargs) -> bool:
         return True
 
-    monkeypatch.setattr(memory, "_bank_has_readable_document", _has_document)
+    monkeypatch.setattr(memory, "_siblings_are_a_source", _has_document)
 
 
 def enable_audit_default(memory, enabled: bool) -> None:

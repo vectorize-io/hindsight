@@ -84,6 +84,46 @@ async def test_a_refresh_over_a_scope_that_matches_nothing_keeps_the_answer(clie
     assert current.content.strip() == ANSWER, "an empty refresh wiped an answer it could not replace"
 
 
+async def test_a_sibling_page_does_not_stand_in_for_an_empty_memory_scope(client, llm, bank_id, settled):
+    """The wipe guard, with another page in reach (#5728).
+
+    The same empty scope, but the bank now holds a second model the refresh can
+    read. Pages alone cannot tell this model anything about its topic: running the
+    loop over them is how a self-hosted bank got "there are no records" written over
+    a good answer. Built from memories, the answer stays until memories come back.
+    """
+    llm.on_step("extract_facts").returns(
+        extracted(fact("Alice moved to Berlin", who="Alice", entities=["Alice", "Berlin"]))
+    )
+    llm.on_step("consolidate").returns(consolidation())
+    reflect_loop(llm, answer=ANSWER)
+
+    await client.aretain(bank_id=bank_id, content="Alice moved to Berlin.", tags=["housing"])
+    await settled(bank_id)
+
+    scoped = await client.mental_models.create_mental_model(
+        bank_id, {"name": "Scoped", "source_query": "Where does Alice live?", "tags": ["housing"]}
+    )
+    sibling = await client.mental_models.create_mental_model(
+        bank_id, {"name": "Sibling", "source_query": "Where is Alice?", "tags": ["housing"]}
+    )
+    await settled(bank_id)
+    assert (await _read(client, bank_id, sibling.mental_model_id)).content.strip() == ANSWER
+
+    # Both move onto a tag no memory carries: the sibling stays readable to the
+    # scoped model, while the scoped model's memories are all out of reach.
+    for model_id in (scoped.mental_model_id, sibling.mental_model_id):
+        await client.mental_models.update_mental_model(bank_id, model_id, {"tags": ["a-tag-nothing-carries"]})
+    await settled(bank_id)
+    llm.reset()
+    reflect_loop(llm, answer="There are no records about where Alice lives.")
+    await client.mental_models.refresh_mental_model(bank_id, scoped.mental_model_id)
+    await settled(bank_id)
+
+    current = await _read(client, bank_id, scoped.mental_model_id)
+    assert current.content.strip() == ANSWER, "a sibling page let an empty refresh overwrite the answer"
+
+
 async def test_a_dry_run_reports_what_would_happen(client, llm, bank_id, model, settled):
     """The point of a dry run is the report, so it has to say something useful:
     which mode it would run in, what scope it would read, and whether it would
