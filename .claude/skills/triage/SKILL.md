@@ -50,7 +50,16 @@ Before writing anything, find what is already there:
 
 ## 4. Build a POC fix and prove it
 
-Make the smallest change that fixes the root cause. Then prove it:
+**No workarounds.** The POC — and the plan built on it — must be the long-term fix: the one you'd
+want in the codebase in a year. Not a retry around a race, a special case for the reporter's input,
+a bigger timeout, a swallowed error, a flag to turn the problem off, or a guard at one call site
+when the cause sits underneath. Think it through first: why does the code allow this at all, what's
+the right place and design to fix it, and does the fix still hold when the data grows or a new
+caller shows up? If the right fix is big, the POC can cover the core of it — but it must be that
+fix, not a stand-in. If you see a quick patch too, you may mention it, but only as "not
+recommended", and say why.
+
+Then prove it:
 
 - The reproduction from step 1 fails before the change and passes after it.
 - Nearby tests still pass.
