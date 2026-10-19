@@ -419,6 +419,16 @@ jobs:
         .venv-smoke/bin/python -m compileall -q hindsight_api
         .venv-smoke/bin/python -c "import hindsight_api, hindsight_api.main, hindsight_api.config; from hindsight_api.engine import memory_engine, llm_wrapper; print('import OK')"
 
+    # The step above resolves fresh, so it never sees the workspace lock. Dev
+    # setups and packagers (e.g. uv2nix) install from uv.lock, which once pinned
+    # a dependency with no wheel for 3.14 (#5709). Install from the lock too.
+    - name: Install from uv.lock on Python ${{ matrix.python-version }}
+      env:
+        UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/.venv-locked
+      run: |
+        uv sync --frozen --python ${{ matrix.python-version }} --package hindsight-api-slim
+        .venv-locked/bin/python -c "import hindsight_api.main, onnxruntime, magika, markitdown, asyncpg; print('locked import OK')"
+
   build-typescript-client:
     needs: [detect-changes]
     if: >-

@@ -735,10 +735,10 @@ class OnnxEmbeddings(Embeddings):
             ort_inputs["token_type_ids"] = np.zeros_like(encoded["input_ids"])
 
         outputs = self._session.run([self.output_name] if self.output_name else None, ort_inputs)
-        token_embeddings = outputs[0]
+        token_embeddings = np.asarray(outputs[0])
 
         # Some exported models expose a pooled 2-D embedding as their first output.
-        if getattr(token_embeddings, "ndim", 0) == 2:
+        if token_embeddings.ndim == 2:
             embeddings = token_embeddings
         elif self.pooling == "cls":
             embeddings = token_embeddings[:, 0]
