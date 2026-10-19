@@ -1943,6 +1943,18 @@
             }
           },
           {
+            "name": "exclude_knowledge_pages",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Leave out the mental models that hold knowledge page content (list standalone models only).",
+              "default": false,
+              "title": "Exclude Knowledge Pages"
+            },
+            "description": "Leave out the mental models that hold knowledge page content (list standalone models only)."
+          },
+          {
             "name": "authorization",
             "in": "header",
             "required": false,
@@ -15574,6 +15586,18 @@
               }
             ],
             "title": "Created At"
+          },
+          "is_knowledge_page": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Knowledge Page",
+            "description": "True when this model holds a knowledge page's content rather than being a standalone mental model. Set by the list and get endpoints."
           },
           "reflect_response": {
             "anyOf": [

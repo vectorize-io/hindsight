@@ -333,7 +333,22 @@
     "timeFieldMentionedShort": "Erwähnt",
     "timeFieldMentionedLong": "Wann Fakten erwähnt wurden (Ereigniszeit)",
     "timeFieldOccurredShort": "Geschehen",
-    "timeFieldOccurredLong": "Wann das zugrunde liegende Ereignis begann"
+    "timeFieldOccurredLong": "Wann das zugrunde liegende Ereignis begann",
+    "knowledgePages": "Wissensseiten",
+    "noKnowledgePages": "Keine Wissensseiten",
+    "knowledgeSection": "Wissen",
+    "hintConsolidationDone": "Erinnerungen, die die Konsolidierung bereits verarbeitet hat. Die Konsolidierung macht aus Roh-Erinnerungen Beobachtungen.",
+    "hintConsolidationPending": "Erinnerungen, die auf den nächsten Konsolidierungslauf warten.",
+    "hintConsolidationFailed": "Erinnerungen, die die Konsolidierung nicht verarbeiten konnte. Klicke auf die Zahl, um sie zu sehen und erneut zu versuchen.",
+    "hintConsolidationLast": "Wann die Konsolidierung zuletzt lief.",
+    "hintModelsInSync": "Mentale Modelle, die jede neue Erinnerung in ihrem Bereich gelesen haben.",
+    "hintModelsStale": "Mentale Modelle mit neuen Erinnerungen in ihrem Bereich seit der letzten Aktualisierung. Sie holen bei der nächsten Aktualisierung auf.",
+    "hintModelsFailed": "Mentale Modelle, deren letzte Aktualisierung fehlgeschlagen ist. Automatische Aktualisierungen bleiben pausiert, bis du sie manuell aktualisierst.",
+    "hintModelsLast": "Die jüngste Aktualisierung eines beliebigen mentalen Modells.",
+    "hintPagesInSync": "Wissensseiten, die jede neue Erinnerung in ihrem Bereich gelesen haben.",
+    "hintPagesStale": "Wissensseiten mit neuen Erinnerungen in ihrem Bereich seit der letzten Aktualisierung. Sie holen bei der nächsten Aktualisierung auf.",
+    "hintPagesFailed": "Wissensseiten, deren letzte Aktualisierung fehlgeschlagen ist. Automatische Aktualisierungen bleiben pausiert, bis du sie manuell aktualisierst.",
+    "hintPagesLast": "Die jüngste Aktualisierung einer beliebigen Wissensseite."
   },
   "bankConfig": {
     "noBankSelected": "Keine Bank ausgewählt",
@@ -1127,7 +1142,8 @@
     "actionOpenDetail": "Öffnen",
     "nextRefreshPaused": "pausiert nach fehlgeschlagener Aktualisierung",
     "nextRefreshRetrying": "Wiederholung, nächster Versuch {time}",
-    "nextRefreshRunning": "wird gerade aktualisiert"
+    "nextRefreshRunning": "wird gerade aktualisiert",
+    "hideKnowledgePages": "Wissensseiten ausblenden"
   },
   "cronPreview": {
     "invalid": "Ungültiger Cron-Ausdruck",

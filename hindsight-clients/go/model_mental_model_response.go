@@ -34,6 +34,7 @@ type MentalModelResponse struct {
 	LastRefreshFailedAt NullableString `json:"last_refresh_failed_at,omitempty"`
 	LastFullRefreshedAt NullableString `json:"last_full_refreshed_at,omitempty"`
 	CreatedAt NullableString `json:"created_at,omitempty"`
+	IsKnowledgePage NullableBool `json:"is_knowledge_page,omitempty"`
 	ReflectResponse map[string]interface{} `json:"reflect_response,omitempty"`
 	IsStale NullableBool `json:"is_stale,omitempty"`
 }
@@ -542,6 +543,48 @@ func (o *MentalModelResponse) UnsetCreatedAt() {
 	o.CreatedAt.Unset()
 }
 
+// GetIsKnowledgePage returns the IsKnowledgePage field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *MentalModelResponse) GetIsKnowledgePage() bool {
+	if o == nil || IsNil(o.IsKnowledgePage.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.IsKnowledgePage.Get()
+}
+
+// GetIsKnowledgePageOk returns a tuple with the IsKnowledgePage field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *MentalModelResponse) GetIsKnowledgePageOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.IsKnowledgePage.Get(), o.IsKnowledgePage.IsSet()
+}
+
+// HasIsKnowledgePage returns a boolean if a field has been set.
+func (o *MentalModelResponse) HasIsKnowledgePage() bool {
+	if o != nil && o.IsKnowledgePage.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetIsKnowledgePage gets a reference to the given NullableBool and assigns it to the IsKnowledgePage field.
+func (o *MentalModelResponse) SetIsKnowledgePage(v bool) {
+	o.IsKnowledgePage.Set(&v)
+}
+// SetIsKnowledgePageNil sets the value for IsKnowledgePage to be an explicit nil
+func (o *MentalModelResponse) SetIsKnowledgePageNil() {
+	o.IsKnowledgePage.Set(nil)
+}
+
+// UnsetIsKnowledgePage ensures that no value is present for IsKnowledgePage, not even an explicit nil
+func (o *MentalModelResponse) UnsetIsKnowledgePage() {
+	o.IsKnowledgePage.Unset()
+}
+
 // GetReflectResponse returns the ReflectResponse field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *MentalModelResponse) GetReflectResponse() map[string]interface{} {
 	if o == nil {
@@ -659,6 +702,9 @@ func (o MentalModelResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if o.CreatedAt.IsSet() {
 		toSerialize["created_at"] = o.CreatedAt.Get()
+	}
+	if o.IsKnowledgePage.IsSet() {
+		toSerialize["is_knowledge_page"] = o.IsKnowledgePage.Get()
 	}
 	if o.ReflectResponse != nil {
 		toSerialize["reflect_response"] = o.ReflectResponse

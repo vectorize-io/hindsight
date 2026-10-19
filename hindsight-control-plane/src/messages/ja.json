@@ -333,7 +333,22 @@
     "timeFieldMentionedShort": "言及",
     "timeFieldMentionedLong": "事実が言及された時刻（イベント時刻）",
     "timeFieldOccurredShort": "発生",
-    "timeFieldOccurredLong": "基となるイベントが開始した時刻"
+    "timeFieldOccurredLong": "基となるイベントが開始した時刻",
+    "knowledgePages": "ナレッジページ",
+    "noKnowledgePages": "ナレッジページはありません",
+    "knowledgeSection": "ナレッジ",
+    "hintConsolidationDone": "統合処理が完了したメモリ。統合処理は生のメモリを観察に変換します。",
+    "hintConsolidationPending": "次の統合処理を待っているメモリ。",
+    "hintConsolidationFailed": "統合処理できなかったメモリ。数字をクリックすると一覧を表示して再試行できます。",
+    "hintConsolidationLast": "統合処理が最後に実行された日時。",
+    "hintModelsInSync": "対象範囲の新しいメモリをすべて読み込んだメンタルモデル。",
+    "hintModelsStale": "前回の更新以降、対象範囲に新しいメモリがあるメンタルモデル。次回の更新で追いつきます。",
+    "hintModelsFailed": "前回の更新に失敗したメンタルモデル。手動で更新するまで自動更新は停止します。",
+    "hintModelsLast": "いずれかのメンタルモデルの最新の更新日時。",
+    "hintPagesInSync": "対象範囲の新しいメモリをすべて読み込んだナレッジページ。",
+    "hintPagesStale": "前回の更新以降、対象範囲に新しいメモリがあるナレッジページ。次回の更新で追いつきます。",
+    "hintPagesFailed": "前回の更新に失敗したナレッジページ。手動で更新するまで自動更新は停止します。",
+    "hintPagesLast": "いずれかのナレッジページの最新の更新日時。"
   },
   "bankConfig": {
     "noBankSelected": "バンクが選択されていません",
@@ -1127,7 +1142,8 @@
     "actionOpenDetail": "詳細を開く",
     "nextRefreshPaused": "更新失敗により一時停止中",
     "nextRefreshRetrying": "再試行中、次は{time}",
-    "nextRefreshRunning": "更新中"
+    "nextRefreshRunning": "更新中",
+    "hideKnowledgePages": "ナレッジページを非表示"
   },
   "cronPreview": {
     "invalid": "無効な cron 式",

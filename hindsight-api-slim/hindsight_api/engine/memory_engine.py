@@ -2086,6 +2086,14 @@ def _mm_row_field(mm_row: Any, field: str) -> Any:
         return None
 
 
+def _backs_knowledge_page_sql() -> str:
+    """SQL test: the ``mm`` mental_models row holds a knowledge page's content."""
+    return (
+        f"EXISTS (SELECT 1 FROM {fq_table('knowledge_pages')} kp"
+        " WHERE kp.bank_id = mm.bank_id AND kp.mental_model_id = mm.id)"
+    )
+
+
 def _mental_model_stale_scope_from_row(mm_row: Any, *, key: str) -> "MemoryScopeWatermark | None":
     """:func:`_mental_model_stale_scope` for a ``mental_models`` row."""
     return _mental_model_stale_scope(
@@ -16868,6 +16876,7 @@ class MemoryEngine(MemoryEngineInterface):
         limit: int | None = 100,
         offset: int = 0,
         with_staleness: bool = False,
+        exclude_knowledge_pages: bool = False,
         request_context: "RequestContext",
     ) -> MentalModelPage:
         """List pinned mental models for a bank.
@@ -16887,6 +16896,8 @@ class MemoryEngine(MemoryEngineInterface):
                 extra query for the whole page, scoped per model. Off for internal
                 callers (bank-template export/import) that only move rows around
                 and would pay for an answer nobody reads.
+            exclude_knowledge_pages: Leave out the models that hold a knowledge
+                page's content, so only standalone mental models are listed.
             request_context: Request context for authentication
 
         Returns:
@@ -16915,11 +16926,13 @@ class MemoryEngine(MemoryEngineInterface):
             scope_clause = build_tag_groups_where_clause(tag_scope, len(filter_params) + 1)
             tag_filter += f" {scope_clause.sql}"
             filter_params.extend(scope_clause.params)
+            if exclude_knowledge_pages:
+                tag_filter += f" AND NOT {_backs_knowledge_page_sql()}"
 
             total = await conn.fetchval(
                 f"""
                 SELECT COUNT(*)
-                FROM {fq_table("mental_models")}
+                FROM {fq_table("mental_models")} mm
                 WHERE bank_id = $1 {tag_filter}
                 """,
                 *filter_params,
@@ -16942,8 +16955,9 @@ class MemoryEngine(MemoryEngineInterface):
                 f"""
                 SELECT id, bank_id, name, source_query, content, tags,
                        last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, last_full_refreshed_at, created_at, reflect_response,
-                       max_tokens, trigger, structured_content
-                FROM {fq_table("mental_models")}
+                       max_tokens, trigger, structured_content,
+                       CASE WHEN {_backs_knowledge_page_sql()} THEN 1 ELSE 0 END AS is_knowledge_page
+                FROM {fq_table("mental_models")} mm
                 WHERE bank_id = $1 {tag_filter}
                 ORDER BY last_refreshed_at DESC, id DESC
                 {pagination}
@@ -17016,8 +17030,9 @@ class MemoryEngine(MemoryEngineInterface):
                 f"""
                 SELECT id, bank_id, name, source_query, content, tags,
                        last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, last_full_refreshed_at, created_at, reflect_response,
-                       max_tokens, trigger, structured_content
-                FROM {fq_table("mental_models")}
+                       max_tokens, trigger, structured_content,
+                       CASE WHEN {_backs_knowledge_page_sql()} THEN 1 ELSE 0 END AS is_knowledge_page
+                FROM {fq_table("mental_models")} mm
                 WHERE bank_id = $1 AND id = $2
                 """,
                 bank_id,
@@ -20811,6 +20826,10 @@ class MemoryEngine(MemoryEngineInterface):
             ),
             "created_at": row["created_at"].isoformat() if row["created_at"] else None,
         }
+        # Only the list and get queries select it; other paths leave it unset.
+        is_knowledge_page = row.get("is_knowledge_page")
+        if is_knowledge_page is not None:
+            result["is_knowledge_page"] = bool(is_knowledge_page)
         if detail == "metadata":
             return result
 

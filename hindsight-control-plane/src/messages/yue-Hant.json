@@ -333,7 +333,22 @@
     "timeFieldMentionedShort": "提及時間",
     "timeFieldMentionedLong": "事實提及嘅時間（事件時間）",
     "timeFieldOccurredShort": "發生時間",
-    "timeFieldOccurredLong": "底層事件開始的時間"
+    "timeFieldOccurredLong": "底層事件開始的時間",
+    "knowledgePages": "知識頁面",
+    "noKnowledgePages": "未有知識頁面",
+    "knowledgeSection": "知識",
+    "hintConsolidationDone": "整合已經處理好嘅記憶。整合會將原始記憶變成觀察。",
+    "hintConsolidationPending": "等緊下一次整合嘅記憶。",
+    "hintConsolidationFailed": "整合處理唔到嘅記憶。撳個數字可以睇返佢哋同重試。",
+    "hintConsolidationLast": "上次整合嘅時間。",
+    "hintModelsInSync": "已經讀晒範圍內所有新記憶嘅心智模型。",
+    "hintModelsStale": "上次更新之後範圍內有新記憶嘅心智模型。下次更新時會追返。",
+    "hintModelsFailed": "上次更新失敗嘅心智模型。手動更新之前，自動更新會暫停。",
+    "hintModelsLast": "所有心智模型之中最近一次更新嘅時間。",
+    "hintPagesInSync": "已經讀晒範圍內所有新記憶嘅知識頁面。",
+    "hintPagesStale": "上次更新之後範圍內有新記憶嘅知識頁面。下次更新時會追返。",
+    "hintPagesFailed": "上次更新失敗嘅知識頁面。手動更新之前，自動更新會暫停。",
+    "hintPagesLast": "所有知識頁面之中最近一次更新嘅時間。"
   },
   "bankConfig": {
     "noBankSelected": "未選擇記憶庫",
@@ -1127,7 +1142,8 @@
     "actionOpenDetail": "睇詳細",
     "nextRefreshPaused": "重新整理失敗後暫停",
     "nextRefreshRetrying": "重試緊，下次嘗試{time}",
-    "nextRefreshRunning": "更新緊"
+    "nextRefreshRunning": "更新緊",
+    "hideKnowledgePages": "隱藏知識頁面"
   },
   "cronPreview": {
     "invalid": "無效嘅 cron 運算式",

@@ -61,6 +61,7 @@ from .schema import (
     TransferObservation,
     TransferObservationSource,
     TransferScope,
+    standalone_mental_models,
 )
 
 if TYPE_CHECKING:
@@ -416,11 +417,8 @@ async def import_documents(
             # JSON strings as raw JSON here; treating them as decoded values
             # would encode an object such as trigger_data as a JSON string,
             # which later makes mental-model listing/tree endpoints fail.
-            result.mental_models_imported = await _restore_rows(
-                conn,
-                "mental_models",
-                mental_models,
-                bank_rows_json_encoding="serialized",
+            result.mental_models_imported = await _restore_mental_models(
+                conn, mental_models, knowledge_pages, bank_rows_json_encoding="serialized"
             )
             await _apply_mental_model_derived_state(conn, bank_id, mm_embeddings, config)
             result.knowledge_pages_imported = await _restore_knowledge_pages(conn, bank_id, knowledge_pages)
@@ -629,6 +627,29 @@ def parse_bank_archive(zf: zipfile.ZipFile) -> ParsedBankArchive:
 def _resolve_bank_rows_json_encoding(manifest: TransferManifest) -> BankRowsJSONEncoding:
     """Resolve row JSON provenance, including the released v1 archive contract."""
     return manifest.bank_rows_json_encoding or "decoded"
+
+
+async def _restore_mental_models(
+    conn: Any,
+    rows: list[dict],
+    knowledge_pages: list[TransferKnowledgePage],
+    *,
+    bank_rows_json_encoding: BankRowsJSONEncoding,
+) -> int:
+    """Restore every mental_models row; return how many standalone models were imported.
+
+    Rows backing a knowledge page are restored too (the pages need them) but are
+    counted under ``knowledge_pages_imported``, not as mental models.
+    """
+    standalone = standalone_mental_models(rows, knowledge_pages)
+    standalone_ids = {str(row["id"]) for row in standalone}
+    await _restore_rows(
+        conn,
+        "mental_models",
+        [row for row in rows if str(row["id"]) not in standalone_ids],
+        bank_rows_json_encoding=bank_rows_json_encoding,
+    )
+    return await _restore_rows(conn, "mental_models", standalone, bank_rows_json_encoding=bank_rows_json_encoding)
 
 
 async def _restore_rows(
@@ -1375,11 +1396,8 @@ async def _restore_bank(
             # Synthesized knowledge rides with the memories: the evidence remapped
             # just above points at the facts the replay has now written, so these
             # rows are only coherent alongside them.
-            result.mental_models_imported = await _restore_rows(
-                conn,
-                "mental_models",
-                mm_rows,
-                bank_rows_json_encoding=bank_rows_json_encoding,
+            result.mental_models_imported = await _restore_mental_models(
+                conn, mm_rows, parsed.knowledge_pages, bank_rows_json_encoding=bank_rows_json_encoding
             )
             # Apply the regenerated embedding + backend-specific lexical state onto the
             # restored rows (native search_vector already repopulated on insert).

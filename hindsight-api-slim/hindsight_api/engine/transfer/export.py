@@ -47,6 +47,7 @@ from .schema import (
     TransferObservationSource,
     TransferScope,
     TransferScopeManifest,
+    standalone_mental_models,
 )
 from .stream_archive import ZipStreamer
 
@@ -369,7 +370,7 @@ async def stream_export_documents(
         document_count=tally.count,
         fact_count=tally.facts,
         observation_count=len(observations),
-        mental_model_count=len(mental_models),
+        mental_model_count=len(standalone_mental_models(mental_models, knowledge_pages)),
         knowledge_page_count=len(knowledge_pages),
     )
     async for chunk in streamer.write_file_bytes("manifest.json", pydantic_core.to_json(manifest, indent=2)):
@@ -616,7 +617,7 @@ async def stream_export_bank(
         fact_count=tally.facts,
         observation_count=len(observations),
         archive_type="bank",
-        mental_model_count=len(bank_rows.get("mental_models", [])),
+        mental_model_count=len(standalone_mental_models(bank_rows.get("mental_models", []), knowledge_pages)),
         knowledge_page_count=len(knowledge_pages),
         directive_count=len(bank_rows.get("directives", [])),
         webhook_count=len(bank_rows.get("webhooks", [])),
@@ -643,7 +644,7 @@ async def stream_export_bank(
         len(observations),
         len(attachments),
         len(operational_rows.get("async_operations", [])),
-        len(bank_rows.get("mental_models", [])),
+        len(standalone_mental_models(bank_rows.get("mental_models", []), knowledge_pages)),
         len(knowledge_pages),
         len(bank_rows.get("directives", [])),
         len(bank_rows.get("webhooks", [])),
@@ -888,7 +889,7 @@ async def build_bank_archive(payload: BankExportPayload) -> bytes:
         len(payload.observations),
         len(payload.attachments),
         len(payload.data_rows.get("async_operations", [])),
-        len(payload.bank_rows.get("mental_models", [])),
+        len(standalone_mental_models(payload.bank_rows.get("mental_models", []), payload.knowledge_pages)),
         len(payload.knowledge_pages),
         len(payload.bank_rows.get("directives", [])),
         len(payload.bank_rows.get("webhooks", [])),
@@ -955,7 +956,7 @@ def _build_bank_archive_bytes(payload: BankExportPayload) -> bytes:
             fact_count=fact_total,
             observation_count=len(observations),
             archive_type="bank",
-            mental_model_count=len(bank_rows.get("mental_models", [])),
+            mental_model_count=len(standalone_mental_models(bank_rows.get("mental_models", []), knowledge_pages)),
             knowledge_page_count=len(knowledge_pages),
             directive_count=len(bank_rows.get("directives", [])),
             webhook_count=len(bank_rows.get("webhooks", [])),

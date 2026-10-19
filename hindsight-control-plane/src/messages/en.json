@@ -333,7 +333,22 @@
     "timeFieldMentionedShort": "Mentioned",
     "timeFieldMentionedLong": "When facts were mentioned (event time)",
     "timeFieldOccurredShort": "Occurred",
-    "timeFieldOccurredLong": "When the underlying event started"
+    "timeFieldOccurredLong": "When the underlying event started",
+    "knowledgePages": "Knowledge Pages",
+    "noKnowledgePages": "No knowledge pages",
+    "knowledgeSection": "Knowledge",
+    "hintConsolidationDone": "Memories consolidation has already worked through. Consolidation turns raw memories into observations.",
+    "hintConsolidationPending": "Memories waiting for the next consolidation run.",
+    "hintConsolidationFailed": "Memories consolidation could not process. Click the number to see them and retry.",
+    "hintConsolidationLast": "When consolidation last ran.",
+    "hintModelsInSync": "Mental models that have read every new memory in their scope.",
+    "hintModelsStale": "Mental models with new memories in their scope since their last refresh. They catch up the next time they are refreshed.",
+    "hintModelsFailed": "Mental models whose last refresh failed. Automatic refreshes stay paused until you refresh them by hand.",
+    "hintModelsLast": "The most recent refresh of any mental model.",
+    "hintPagesInSync": "Knowledge pages that have read every new memory in their scope.",
+    "hintPagesStale": "Knowledge pages with new memories in their scope since their last refresh. They catch up the next time they are refreshed.",
+    "hintPagesFailed": "Knowledge pages whose last refresh failed. Automatic refreshes stay paused until you refresh them by hand.",
+    "hintPagesLast": "The most recent refresh of any knowledge page."
   },
   "bankConfig": {
     "noBankSelected": "No bank selected",
@@ -1127,7 +1142,8 @@
     "actionOpenDetail": "Open",
     "nextRefreshPaused": "paused after a failed refresh",
     "nextRefreshRetrying": "retrying, next attempt {time}",
-    "nextRefreshRunning": "refreshing now"
+    "nextRefreshRunning": "refreshing now",
+    "hideKnowledgePages": "Hide knowledge pages"
   },
   "cronPreview": {
     "invalid": "Invalid cron expression",

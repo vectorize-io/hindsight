@@ -1356,6 +1356,19 @@ paths:
           title: Offset
           type: integer
         style: form
+      - description: Leave out the mental models that hold knowledge page content
+          (list standalone models only).
+        explode: true
+        in: query
+        name: exclude_knowledge_pages
+        required: false
+        schema:
+          default: false
+          description: Leave out the mental models that hold knowledge page content
+            (list standalone models only).
+          title: Exclude Knowledge Pages
+          type: boolean
+        style: form
       - explode: false
         in: header
         name: authorization
@@ -10507,6 +10520,7 @@ components:
           - tags
           last_full_refreshed_at: last_full_refreshed_at
           source_query: source_query
+          is_knowledge_page: true
           bank_id: bank_id
           reflect_response:
             key: ""
@@ -10558,6 +10572,7 @@ components:
           - tags
           last_full_refreshed_at: last_full_refreshed_at
           source_query: source_query
+          is_knowledge_page: true
           bank_id: bank_id
           reflect_response:
             key: ""
@@ -10775,6 +10790,7 @@ components:
         - tags
         last_full_refreshed_at: last_full_refreshed_at
         source_query: source_query
+        is_knowledge_page: true
         bank_id: bank_id
         reflect_response:
           key: ""
@@ -10821,6 +10837,9 @@ components:
         created_at:
           nullable: true
           type: string
+        is_knowledge_page:
+          nullable: true
+          type: boolean
         reflect_response:
           additionalProperties: {}
           nullable: true

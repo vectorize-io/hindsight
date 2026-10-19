@@ -280,6 +280,8 @@ export interface MentalModel {
   created_at: string;
   reflect_response?: any;
   is_stale?: boolean | null;
+  /** True when this model holds a knowledge page's content (not a standalone model). */
+  is_knowledge_page?: boolean | null;
   /** When the last refresh failed. Set = automatic refreshes are paused for this model. */
   last_refresh_failed_at?: string | null;
   /** When a refresh last ran in full mode. `trigger.full_refresh_cron` comes due against this. */
@@ -1751,6 +1753,8 @@ export class ControlPlaneClient {
       detail?: "metadata" | "content" | "full";
       limit?: number;
       offset?: number;
+      /** Leave out the models that back knowledge pages (standalone models only). */
+      excludeKnowledgePages?: boolean;
     } = {}
   ) {
     const params = new URLSearchParams();
@@ -1768,6 +1772,9 @@ export class ControlPlaneClient {
     }
     if (options.offset !== undefined) {
       params.append("offset", String(options.offset));
+    }
+    if (options.excludeKnowledgePages) {
+      params.append("exclude_knowledge_pages", "true");
     }
     const query = params.toString();
     // Shape of detail="full"; the endpoint DEFAULTS to "metadata", which omits
@@ -1806,6 +1813,8 @@ export class ControlPlaneClient {
         last_memory_seen_at: string | null;
         /** Whether a memory in this model's own scope has been written since it last read them. */
         is_stale: boolean | null;
+        /** True when this model holds a knowledge page's content (not a standalone model). */
+        is_knowledge_page?: boolean | null;
         /** When the last refresh failed. Set = automatic refreshes are paused for this model. */
         last_refresh_failed_at?: string | null;
         created_at: string;
@@ -1829,7 +1838,12 @@ export class ControlPlaneClient {
    */
   async listAllMentalModels(
     bankId: string,
-    options: { tags?: string[]; tagsMatch?: string; detail?: "metadata" | "content" | "full" } = {}
+    options: {
+      tags?: string[];
+      tagsMatch?: string;
+      detail?: "metadata" | "content" | "full";
+      excludeKnowledgePages?: boolean;
+    } = {}
   ) {
     const PAGE_SIZE = 1000;
     const items: Awaited<ReturnType<typeof this.listMentalModels>>["items"] = [];

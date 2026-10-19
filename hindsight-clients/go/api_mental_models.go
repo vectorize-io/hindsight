@@ -813,6 +813,7 @@ type ApiListMentalModelsRequest struct {
 	detail *string
 	limit *int32
 	offset *int32
+	excludeKnowledgePages *bool
 	authorization *string
 }
 
@@ -841,6 +842,12 @@ func (r ApiListMentalModelsRequest) Limit(limit int32) ApiListMentalModelsReques
 
 func (r ApiListMentalModelsRequest) Offset(offset int32) ApiListMentalModelsRequest {
 	r.offset = &offset
+	return r
+}
+
+// Leave out the mental models that hold knowledge page content (list standalone models only).
+func (r ApiListMentalModelsRequest) ExcludeKnowledgePages(excludeKnowledgePages bool) ApiListMentalModelsRequest {
+	r.excludeKnowledgePages = &excludeKnowledgePages
 	return r
 }
 
@@ -926,6 +933,12 @@ func (a *MentalModelsAPIService) ListMentalModelsExecute(r ApiListMentalModelsRe
 	} else {
 		var defaultValue int32 = 0
 		r.offset = &defaultValue
+	}
+	if r.excludeKnowledgePages != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "exclude_knowledge_pages", r.excludeKnowledgePages, "form", "")
+	} else {
+		var defaultValue bool = false
+		r.excludeKnowledgePages = &defaultValue
 	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}

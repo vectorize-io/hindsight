@@ -333,7 +333,22 @@
     "timeFieldMentionedShort": "Mencionado",
     "timeFieldMentionedLong": "Quando os fatos foram mencionados (hora do evento)",
     "timeFieldOccurredShort": "Ocorrido",
-    "timeFieldOccurredLong": "Quando o evento subjacente começou"
+    "timeFieldOccurredLong": "Quando o evento subjacente começou",
+    "knowledgePages": "Páginas de conhecimento",
+    "noKnowledgePages": "Nenhuma página de conhecimento",
+    "knowledgeSection": "Conhecimento",
+    "hintConsolidationDone": "Memórias que a consolidação já processou. A consolidação transforma memórias brutas em observações.",
+    "hintConsolidationPending": "Memórias aguardando a próxima execução da consolidação.",
+    "hintConsolidationFailed": "Memórias que a consolidação não conseguiu processar. Clique no número para vê-las e tentar novamente.",
+    "hintConsolidationLast": "Quando a consolidação foi executada pela última vez.",
+    "hintModelsInSync": "Modelos mentais que leram todas as memórias novas do seu escopo.",
+    "hintModelsStale": "Modelos mentais com memórias novas no seu escopo desde a última atualização. Eles se atualizam na próxima vez que forem atualizados.",
+    "hintModelsFailed": "Modelos mentais cuja última atualização falhou. As atualizações automáticas ficam pausadas até você atualizá-los manualmente.",
+    "hintModelsLast": "A atualização mais recente de qualquer modelo mental.",
+    "hintPagesInSync": "Páginas de conhecimento que leram todas as memórias novas do seu escopo.",
+    "hintPagesStale": "Páginas de conhecimento com memórias novas no seu escopo desde a última atualização. Elas se atualizam na próxima vez que forem atualizadas.",
+    "hintPagesFailed": "Páginas de conhecimento cuja última atualização falhou. As atualizações automáticas ficam pausadas até você atualizá-las manualmente.",
+    "hintPagesLast": "A atualização mais recente de qualquer página de conhecimento."
   },
   "bankConfig": {
     "noBankSelected": "Nenhum banco selecionado",
@@ -1127,7 +1142,8 @@
     "actionOpenDetail": "Abrir",
     "nextRefreshPaused": "em pausa após uma atualização falhada",
     "nextRefreshRetrying": "a repetir, próxima tentativa {time}",
-    "nextRefreshRunning": "a atualizar agora"
+    "nextRefreshRunning": "a atualizar agora",
+    "hideKnowledgePages": "Ocultar páginas de conhecimento"
   },
   "cronPreview": {
     "invalid": "Expressão cron inválida",

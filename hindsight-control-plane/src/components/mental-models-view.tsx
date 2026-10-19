@@ -9,6 +9,7 @@ import { downloadMarkdown, mentalModelDownload, printPage } from "@/lib/page-dow
 import { useBank } from "@/lib/bank-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
@@ -144,6 +145,8 @@ export function MentalModelsView() {
   const [filesSelectedId, setFilesSelectedId] = useState<string | null>(null);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tagsMatch, setTagsMatch] = useState<"any" | "all">("any");
+  // Off by default: knowledge pages are mental models too, and are listed unless hidden.
+  const [hideKnowledgePages, setHideKnowledgePages] = useState(false);
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
   const [mentalModelToUpdate, setMentalModelToUpdate] = useState<MentalModel | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{
@@ -182,6 +185,7 @@ export function MentalModelsView() {
         tags: selectedTags.length > 0 ? selectedTags : undefined,
         tagsMatch: selectedTags.length > 0 ? tagsMatch : undefined,
         detail: "content",
+        excludeKnowledgePages: hideKnowledgePages,
       });
       setMentalModels(all);
     } catch (error) {
@@ -266,7 +270,7 @@ export function MentalModelsView() {
     if (currentBank) {
       loadData();
     }
-  }, [currentBank, selectedTags, tagsMatch]);
+  }, [currentBank, selectedTags, tagsMatch, hideKnowledgePages]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -330,6 +334,10 @@ export function MentalModelsView() {
               onMatchModeChange={setTagsMatch}
               className="flex-1 min-w-[260px]"
             />
+            <label className="flex items-center gap-2 h-9 text-sm text-muted-foreground">
+              <Switch checked={hideKnowledgePages} onCheckedChange={setHideKnowledgePages} />
+              {t("hideKnowledgePages")}
+            </label>
             <Button onClick={() => setShowCreateMentalModel(true)} size="sm">
               <Plus className="w-4 h-4 mr-2" />
               {t("addMentalModel")}

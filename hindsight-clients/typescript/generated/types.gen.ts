@@ -4633,6 +4633,12 @@ export type MentalModelResponse = {
    */
   created_at?: string | null;
   /**
+   * Is Knowledge Page
+   *
+   * True when this model holds a knowledge page's content rather than being a standalone mental model. Set by the list and get endpoints.
+   */
+  is_knowledge_page?: boolean | null;
+  /**
    * Reflect Response
    *
    * Full reflect API response payload including based_on facts and observations
@@ -8175,6 +8181,12 @@ export type ListMentalModelsData = {
      * Offset
      */
     offset?: number;
+    /**
+     * Exclude Knowledge Pages
+     *
+     * Leave out the mental models that hold knowledge page content (list standalone models only).
+     */
+    exclude_knowledge_pages?: boolean;
   };
   url: "/v1/default/banks/{bank_id}/mental-models";
 };

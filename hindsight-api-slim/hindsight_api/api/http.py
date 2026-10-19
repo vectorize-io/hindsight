@@ -3543,6 +3543,13 @@ class MentalModelResponse(BaseModel):
         ),
     )
     created_at: str | None = None
+    is_knowledge_page: bool | None = Field(
+        default=None,
+        description=(
+            "True when this model holds a knowledge page's content rather than being a standalone "
+            "mental model. Set by the list and get endpoints."
+        ),
+    )
     reflect_response: dict | None = Field(
         default=None,
         description="Full reflect API response payload including based_on facts and observations",
@@ -7070,6 +7077,10 @@ def _register_routes(app: FastAPI):
         ),
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
+        exclude_knowledge_pages: bool = Query(
+            False,
+            description="Leave out the mental models that hold knowledge page content (list standalone models only).",
+        ),
         request_context: RequestContext = Depends(get_request_context),
     ):
         """List mental models for a bank.
@@ -7095,6 +7106,7 @@ def _register_routes(app: FastAPI):
                 limit=limit,
                 offset=offset,
                 with_staleness=True,
+                exclude_knowledge_pages=exclude_knowledge_pages,
                 request_context=request_context,
             )
             return MentalModelListResponse(
@@ -8993,8 +9005,14 @@ def _register_routes(app: FastAPI):
             # tags, max_tokens and trigger and nothing else. Asking for content
             # would pull every model's synthesized body across the wire, and
             # report a read of it, for a field this endpoint discards.
+            # Knowledge pages are left out: a template carries no pages, and their
+            # models would come back on import as standalone mental models.
             mental_models_raw = await app.state.memory.list_mental_models(
-                bank_id=bank_id, limit=None, detail="config", request_context=request_context
+                bank_id=bank_id,
+                limit=None,
+                detail="config",
+                exclude_knowledge_pages=True,
+                request_context=request_context,
             )
             template_mental_models: list[BankTemplateMentalModel] = []
             for mm in mental_models_raw.items:

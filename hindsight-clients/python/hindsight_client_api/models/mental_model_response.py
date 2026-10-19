@@ -40,9 +40,10 @@ class MentalModelResponse(BaseModel):
     last_refresh_failed_at: Optional[StrictStr] = None
     last_full_refreshed_at: Optional[StrictStr] = None
     created_at: Optional[StrictStr] = None
+    is_knowledge_page: Optional[StrictBool] = None
     reflect_response: Optional[Dict[str, Any]] = None
     is_stale: Optional[StrictBool] = None
-    __properties: ClassVar[List[str]] = ["id", "bank_id", "name", "source_query", "content", "tags", "max_tokens", "trigger", "last_refreshed_at", "last_memory_seen_at", "last_refresh_failed_at", "last_full_refreshed_at", "created_at", "reflect_response", "is_stale"]
+    __properties: ClassVar[List[str]] = ["id", "bank_id", "name", "source_query", "content", "tags", "max_tokens", "trigger", "last_refreshed_at", "last_memory_seen_at", "last_refresh_failed_at", "last_full_refreshed_at", "created_at", "is_knowledge_page", "reflect_response", "is_stale"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -131,6 +132,11 @@ class MentalModelResponse(BaseModel):
         if self.created_at is None and "created_at" in self.model_fields_set:
             _dict['created_at'] = None
 
+        # set to None if is_knowledge_page (nullable) is None
+        # and model_fields_set contains the field
+        if self.is_knowledge_page is None and "is_knowledge_page" in self.model_fields_set:
+            _dict['is_knowledge_page'] = None
+
         # set to None if reflect_response (nullable) is None
         # and model_fields_set contains the field
         if self.reflect_response is None and "reflect_response" in self.model_fields_set:
@@ -166,6 +172,7 @@ class MentalModelResponse(BaseModel):
             "last_refresh_failed_at": obj.get("last_refresh_failed_at"),
             "last_full_refreshed_at": obj.get("last_full_refreshed_at"),
             "created_at": obj.get("created_at"),
+            "is_knowledge_page": obj.get("is_knowledge_page"),
             "reflect_response": obj.get("reflect_response"),
             "is_stale": obj.get("is_stale")
         })

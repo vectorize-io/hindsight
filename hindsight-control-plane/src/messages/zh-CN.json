@@ -333,7 +333,22 @@
     "timeFieldMentionedShort": "提及时间",
     "timeFieldMentionedLong": "事实提及的时间（事件时间）",
     "timeFieldOccurredShort": "发生时间",
-    "timeFieldOccurredLong": "底层事件开始的时间"
+    "timeFieldOccurredLong": "底层事件开始的时间",
+    "knowledgePages": "知识页面",
+    "noKnowledgePages": "暂无知识页面",
+    "knowledgeSection": "知识",
+    "hintConsolidationDone": "整合已处理完的记忆。整合会把原始记忆变成观察。",
+    "hintConsolidationPending": "等待下一次整合的记忆。",
+    "hintConsolidationFailed": "整合无法处理的记忆。点击数字可查看并重试。",
+    "hintConsolidationLast": "上次整合的时间。",
+    "hintModelsInSync": "已读完其范围内所有新记忆的心智模型。",
+    "hintModelsStale": "自上次刷新以来范围内有新记忆的心智模型。下次刷新时会补上。",
+    "hintModelsFailed": "上次刷新失败的心智模型。在手动刷新之前，自动刷新会一直暂停。",
+    "hintModelsLast": "所有心智模型中最近一次刷新的时间。",
+    "hintPagesInSync": "已读完其范围内所有新记忆的知识页面。",
+    "hintPagesStale": "自上次刷新以来范围内有新记忆的知识页面。下次刷新时会补上。",
+    "hintPagesFailed": "上次刷新失败的知识页面。在手动刷新之前，自动刷新会一直暂停。",
+    "hintPagesLast": "所有知识页面中最近一次刷新的时间。"
   },
   "bankConfig": {
     "noBankSelected": "未选择记忆库",
@@ -1127,7 +1142,8 @@
     "actionOpenDetail": "查看详情",
     "nextRefreshPaused": "刷新失败后已暂停",
     "nextRefreshRetrying": "重试中，下次尝试{time}",
-    "nextRefreshRunning": "正在刷新"
+    "nextRefreshRunning": "正在刷新",
+    "hideKnowledgePages": "隐藏知识页面"
   },
   "cronPreview": {
     "invalid": "无效的 cron 表达式",

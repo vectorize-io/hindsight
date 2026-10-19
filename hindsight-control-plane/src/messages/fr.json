@@ -333,7 +333,22 @@
     "timeFieldMentionedShort": "Mentionné",
     "timeFieldMentionedLong": "Quand les faits ont été mentionnés (heure de l'événement)",
     "timeFieldOccurredShort": "Survenu",
-    "timeFieldOccurredLong": "Quand l'événement sous-jacent a commencé"
+    "timeFieldOccurredLong": "Quand l'événement sous-jacent a commencé",
+    "knowledgePages": "Pages de connaissances",
+    "noKnowledgePages": "Aucune page de connaissances",
+    "knowledgeSection": "Connaissances",
+    "hintConsolidationDone": "Souvenirs déjà traités par la consolidation. La consolidation transforme les souvenirs bruts en observations.",
+    "hintConsolidationPending": "Souvenirs en attente de la prochaine consolidation.",
+    "hintConsolidationFailed": "Souvenirs que la consolidation n'a pas pu traiter. Cliquez sur le nombre pour les voir et réessayer.",
+    "hintConsolidationLast": "Date de la dernière consolidation.",
+    "hintModelsInSync": "Modèles mentaux qui ont lu tous les nouveaux souvenirs de leur périmètre.",
+    "hintModelsStale": "Modèles mentaux ayant de nouveaux souvenirs dans leur périmètre depuis leur dernière actualisation. Ils se mettent à jour à la prochaine actualisation.",
+    "hintModelsFailed": "Modèles mentaux dont la dernière actualisation a échoué. Les actualisations automatiques restent suspendues jusqu'à une actualisation manuelle.",
+    "hintModelsLast": "L'actualisation la plus récente parmi tous les modèles mentaux.",
+    "hintPagesInSync": "Pages de connaissances qui ont lu tous les nouveaux souvenirs de leur périmètre.",
+    "hintPagesStale": "Pages de connaissances ayant de nouveaux souvenirs dans leur périmètre depuis leur dernière actualisation. Elles se mettent à jour à la prochaine actualisation.",
+    "hintPagesFailed": "Pages de connaissances dont la dernière actualisation a échoué. Les actualisations automatiques restent suspendues jusqu'à une actualisation manuelle.",
+    "hintPagesLast": "L'actualisation la plus récente parmi toutes les pages de connaissances."
   },
   "bankConfig": {
     "noBankSelected": "Aucune banque sélectionnée",
@@ -1127,7 +1142,8 @@
     "actionOpenDetail": "Ouvrir",
     "nextRefreshPaused": "en pause après un échec",
     "nextRefreshRetrying": "nouvel essai, prochaine tentative {time}",
-    "nextRefreshRunning": "actualisation en cours"
+    "nextRefreshRunning": "actualisation en cours",
+    "hideKnowledgePages": "Masquer les pages de connaissances"
   },
   "cronPreview": {
     "invalid": "Expression cron non valide",
