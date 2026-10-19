@@ -35,32 +35,36 @@ def _pg_upgrade() -> None:
     # ScaNN uses a global vector index by design — nothing stale to repair.
     if os.getenv("HINDSIGHT_API_VECTOR_EXTENSION", "pgvector").lower() == "scann":
         return
-    schema = context.config.get_main_option("target_schema") or "public"
-    bind = op.get_bind()
-    names = (
-        bind.execute(
+    # An unset target_schema arrives as "" or None depending on the alembic version;
+    # both fall back to current_schema(), like 2071c7518f88.
+    target_schema = context.config.get_main_option("target_schema") or None
+    rows = (
+        op.get_bind()
+        .execute(
             text("""
-            SELECT i.relname
+            SELECT n.nspname, i.relname
             FROM pg_index x
             JOIN pg_class t ON t.oid = x.indrelid
             JOIN pg_namespace n ON n.oid = t.relnamespace
             JOIN pg_class i ON i.oid = x.indexrelid
             JOIN pg_am am ON am.oid = i.relam
-            WHERE n.nspname = :schema
+            WHERE n.nspname = COALESCE(:target_schema, current_schema())
               AND t.relname = 'memory_units'
               AND x.indpred IS NULL
               AND am.amname IN ('hnsw', 'vchordrq', 'diskann', 'scann')
         """),
-            {"schema": schema},
+            {"target_schema": target_schema},
         )
-        .scalars()
-        .all()
+        .fetchall()
     )
     # Fail fast on a write-busy table rather than queue traffic behind
     # ACCESS EXCLUSIVE; the next migration pass retries (see f2a6d8c4b1e9).
     op.execute("SET LOCAL lock_timeout = '10s'")
-    for name in names:
-        op.execute(f'DROP INDEX IF EXISTS "{schema}"."{name}"')
+    for schema_name, index_name in rows:
+        # DDL identifiers cannot be bound parameters, so escape inline.
+        safe_schema = schema_name.replace('"', '""')
+        safe_index = index_name.replace('"', '""')
+        op.execute(f'DROP INDEX IF EXISTS "{safe_schema}"."{safe_index}"')
 
 
 def _pg_downgrade() -> None:

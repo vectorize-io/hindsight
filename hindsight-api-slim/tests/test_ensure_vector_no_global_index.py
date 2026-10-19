@@ -10,7 +10,9 @@ Contract under test:
   index on a fresh schema;
 - the reconcile must be hands-off when a legacy schema still carries the index
   (no runtime DROP INDEX — that DDL belongs in the migration path);
-- migration f2a6d8c4b1e9 removes the leftover index.
+- migration f2a6d8c4b1e9 removes the leftover index;
+- the startup embedding-dimension resize does not build one either, and migration
+  e8c1a4f7b2d9 removes any global vector index it left behind, whatever its name (#5707).
 """
 
 import asyncio
