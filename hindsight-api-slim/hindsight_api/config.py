@@ -2658,7 +2658,9 @@ class LLMStrategyConfig(BaseModel):
     ``weights`` is round-robin only: positive integers, one per member (primary
     first), giving an unbalanced rotation; ``None`` means uniform. ``routes`` is
     metadata only: the first route matching an item wins, and an item matching
-    none uses the primary.
+    none uses the primary. ``cooldown_seconds`` moves a member that just failed
+    to the back of the order for that long, doubling on each further failure
+    (capped at an hour) and clearing on its next success; ``0`` turns it off.
     """
 
     model_config = ConfigDict(strict=True, extra="forbid")
@@ -2666,6 +2668,7 @@ class LLMStrategyConfig(BaseModel):
     mode: str
     weights: list[int] | None = None
     routes: list[LLMMetadataRoute] | None = None
+    cooldown_seconds: int = Field(default=60, ge=0)
 
     @field_validator("mode")
     @classmethod

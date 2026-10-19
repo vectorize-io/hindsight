@@ -627,6 +627,8 @@ The strategy JSON supports three modes:
 - `{"mode": "round-robin"}` — rotate the starting member per request to spread load, then fall through the rest on failure. Add `"weights": [3, 1, ...]` (positive ints, one per member, primary first) for an **unbalanced** rotation.
 - `{"mode": "metadata", "routes": [...]}` — **retain only**: pick the member from each retained item's own `metadata`. See [Metadata routing](#metadata-routing) below.
 
+**Cooldown.** In `failover` and `round-robin`, a member that fails (after its own retries) is moved to the back of the order for `cooldown_seconds` (default `60`), so later requests stop waiting on its errors and timeouts — useful when a member has run out of a daily or weekly quota. Each further failure doubles its cooldown, up to one hour, and its next success clears it. A cooling member is only deprioritized, never dropped: if every other member fails too, it is still tried. Set `"cooldown_seconds": 0` to try every member in order on every request. The cooldown is held in memory per process, so a restart clears it.
+
 ```bash
 # Primary OpenAI, failover to Groq then Anthropic
 export HINDSIGHT_API_LLM_PROVIDER=openai
@@ -639,6 +641,9 @@ export HINDSIGHT_API_LLM_STRATEGY='{"mode": "failover"}'
 
 # Weighted round-robin: serve the primary 3x as often as member 1
 export HINDSIGHT_API_LLM_STRATEGY='{"mode": "round-robin", "weights": [3, 1]}'
+
+# Failover, re-probing a failed member after 5 minutes (then 10, 20, ... up to 1h)
+export HINDSIGHT_API_LLM_STRATEGY='{"mode": "failover", "cooldown_seconds": 300}'
 ```
 
 #### Metadata routing
