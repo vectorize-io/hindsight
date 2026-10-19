@@ -1195,9 +1195,9 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `nvidia`, `typesafe`, `alibaba`, `google`, `flashrank`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
+| `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `nvidia`, `typesafe`, `alibaba`, `google`, `flashrank`, `onnx`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
 | `HINDSIGHT_API_RERANKER_MAX_TOKENS_PER_CANDIDATE` | Applies to **every** provider. If set, truncate each rerank candidate to this many tokens (tiktoken, approximate) before reranking. Set it below the model's context window (e.g. `900` for a 1024-token model), or lower to bound request size when documents can be very long (keeps a CPU-only rerank server from running out of memory). Each fallback member has its own (`HINDSIGHT_API_RERANKER_<n>_MAX_TOKENS_PER_CANDIDATE`). Off by default. (Deprecated alias: `HINDSIGHT_API_RERANKER_LITELLM_MAX_TOKENS_PER_DOC`.) | - |
-| `HINDSIGHT_API_RERANKER_MAX_RETRIES` | Retries after the first attempt when a remote rerank call fails transiently (5xx, timeout, connection error, `429` quota). `0` disables retrying. Applies to every remote provider except `tei`, which has its own retry loop; the in-process providers (`local`, `flashrank`, `jina-mlx`, `rrf`) are unaffected. 4xx auth/validation errors are never retried. | `3` |
+| `HINDSIGHT_API_RERANKER_MAX_RETRIES` | Retries after the first attempt when a remote rerank call fails transiently (5xx, timeout, connection error, `429` quota). `0` disables retrying. Applies to every remote provider except `tei`, which has its own retry loop; the in-process providers (`local`, `flashrank`, `onnx`, `jina-mlx`, `rrf`) are unaffected. 4xx auth/validation errors are never retried. | `3` |
 | `HINDSIGHT_API_RERANKER_INITIAL_BACKOFF` | Initial backoff in seconds between rerank retries (doubles per attempt, with jitter) | `0.5` |
 | `HINDSIGHT_API_RERANKER_MAX_BACKOFF` | Cap on the backoff between rerank retries, in seconds | `4.0` |
 | `HINDSIGHT_API_RERANKER_RETRY_BUDGET` | Wall-clock ceiling, in seconds, on the time one rerank may spend retrying (failed attempts plus backoff). Tighter than the embedding budget because rerank runs after retrieval has already spent time on the same request. With a fallback chain configured, each member spends its own budget before the chain advances. | `10.0` |
@@ -1261,6 +1261,15 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | `HINDSIGHT_API_RERANKER_FLASHRANK_CACHE_DIR` | Cache directory for FlashRank models | System default |
 | `HINDSIGHT_API_RERANKER_FLASHRANK_CPU_MEM_ARENA` | Enable ONNX Runtime CPU memory arena for FlashRank. When `true`, ONNX pre-allocates a memory arena that never shrinks, causing RSS to grow monotonically. `false` trades slightly slower per-call allocation for bounded RSS. | `false` |
 | `HINDSIGHT_API_RERANKER_FLASHRANK_BATCH_SIZE` | Passages scored per FlashRank forward pass. Each pass allocates attention tensors sized `batch × heads × seq²`, and FlashRank pads a batch to its longest passage, so raising this raises peak memory sharply on long candidates. Lower it if the reranker is the memory ceiling on a large bank. | `32` |
+| `HINDSIGHT_API_RERANKER_ONNX_MODEL_ID` | Hugging Face repo for the `onnx` provider. Hindsight downloads `HINDSIGHT_API_RERANKER_ONNX_FILE` from it, and uses it as the tokenizer fallback. | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
+| `HINDSIGHT_API_RERANKER_ONNX_MODEL_PATH` | Local path to an ONNX cross-encoder graph. Use this for models whose repo ships no ONNX file (export them yourself, see below). | - |
+| `HINDSIGHT_API_RERANKER_ONNX_TOKENIZER_NAME_OR_PATH` | Hugging Face tokenizer repo or local tokenizer directory. Set this with `HINDSIGHT_API_RERANKER_ONNX_MODEL_PATH`. | Falls back to `HINDSIGHT_API_RERANKER_ONNX_MODEL_ID` |
+| `HINDSIGHT_API_RERANKER_ONNX_FILE` | ONNX file path inside the Hugging Face repo (also downloads its `_data` sidecar when present). | `onnx/model.onnx` |
+| `HINDSIGHT_API_RERANKER_ONNX_MAX_TOKENS` | Max tokens per (query, document) pair; longer pairs are truncated. | `512` |
+| `HINDSIGHT_API_RERANKER_ONNX_BATCH_SIZE` | Pairs scored per forward pass. Bounds peak memory the same way as the FlashRank setting above. | `32` |
+| `HINDSIGHT_API_RERANKER_ONNX_THREADS` | CPU threads one forward pass may use. `0` lets ONNX Runtime use every physical core. Set `2`–`4` on a laptop to keep recall from pinning the whole CPU. | `0` |
+| `HINDSIGHT_API_RERANKER_ONNX_MAX_CONCURRENT` | Forward passes allowed at once. Concurrent recalls queue behind each other, so CPU use never exceeds `THREADS` cores. | `1` |
+| `HINDSIGHT_API_RERANKER_ONNX_CPU_MEM_ARENA` | Enable ONNX Runtime's CPU memory arena. It never returns freed memory, so RSS holds its high-water mark. | `false` |
 | `HINDSIGHT_API_RERANKER_JINA_MLX_MODEL_PATH` | Local path to downloaded `jina-reranker-v3-mlx` model (auto-downloads from HuggingFace if unset) | - |
 
 > **📝 Apple Silicon: the local providers run on CPU**
@@ -1492,6 +1501,26 @@ memory is wasted context.
 provider therefore hands back rank positions, and exactly `0.0` for anything past the
 cut.
 
+#### Local ONNX reranker
+
+The `onnx` provider runs any cross-encoder exported to ONNX in-process with ONNX Runtime, so a model outside FlashRank's catalog needs neither PyTorch nor a TEI server. It needs the `local-onnx` extra (`pip install 'hindsight-api-slim[local-onnx]'`). Scores are the model's raw logits, the same as the `local` provider, so switching between the two keeps the ranking. Models with a single output score and binary `[irrelevant, relevant]` heads both work.
+
+With no settings it downloads `onnx/model.onnx` from the default `cross-encoder/ms-marco-MiniLM-L-6-v2` repo. For a model whose repo ships no ONNX file, export it once and point Hindsight at the files:
+
+```bash
+uvx --from "optimum-onnx[onnxruntime]" optimum-cli export onnx \
+  --model nlpai-lab/KURE-Reranker-nano --task text-classification ./models/kure-reranker-nano
+
+export HINDSIGHT_API_RERANKER_PROVIDER=onnx
+export HINDSIGHT_API_RERANKER_ONNX_MODEL_PATH=./models/kure-reranker-nano/model.onnx
+export HINDSIGHT_API_RERANKER_ONNX_TOKENIZER_NAME_OR_PATH=./models/kure-reranker-nano
+```
+
+One forward pass runs at a time and uses up to `HINDSIGHT_API_RERANKER_ONNX_THREADS` cores (all physical cores by default), so concurrent recalls queue instead of oversubscribing the CPU. On a laptop, set the thread count to `2`–`4`, and lower `HINDSIGHT_API_RERANKER_MAX_CANDIDATES` if recall latency matters more than the last bit of ranking quality: rerank cost grows linearly with the candidate count.
+
+> **📝 On Apple Silicon, `local` is usually faster**
+>
+PyTorch uses Apple's Accelerate matrix units, which ONNX Runtime's CPU backend does not. On an M3 Max the `local` provider reranked 2–4x faster than `onnx` with the same model and the same scores. The `onnx` provider pays off on Linux and x86 servers, and wherever you want to run without PyTorch.
 #### Jina MLX (Apple Silicon)
 
 The `jina-mlx` provider uses [`jinaai/jina-reranker-v3-mlx`](https://huggingface.co/jinaai/jina-reranker-v3-mlx), optimized for Apple Silicon. The model (~1.2 GB) is downloaded from HuggingFace Hub automatically on first startup and cached locally.

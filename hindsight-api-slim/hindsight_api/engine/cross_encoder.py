@@ -37,6 +37,12 @@ from ..config import (
     DEFAULT_RERANKER_NVIDIA_BATCH_SIZE,
     DEFAULT_RERANKER_NVIDIA_MAX_CONCURRENT,
     DEFAULT_RERANKER_NVIDIA_MODEL,
+    DEFAULT_RERANKER_ONNX_BATCH_SIZE,
+    DEFAULT_RERANKER_ONNX_CPU_MEM_ARENA,
+    DEFAULT_RERANKER_ONNX_FILE,
+    DEFAULT_RERANKER_ONNX_MAX_CONCURRENT,
+    DEFAULT_RERANKER_ONNX_MAX_TOKENS,
+    DEFAULT_RERANKER_ONNX_THREADS,
     DEFAULT_RERANKER_SILICONFLOW_BASE_URL,
     DEFAULT_RERANKER_SILICONFLOW_MODEL,
     DEFAULT_RERANKER_TEI_BATCH_SIZE,
@@ -1701,6 +1707,180 @@ class FlashRankCrossEncoder(CrossEncoderModel):
         return await loop.run_in_executor(FlashRankCrossEncoder._executor, self._predict_sync, pairs)
 
 
+class OnnxCrossEncoder(CrossEncoderModel):
+    """Any cross-encoder exported to ONNX, run in-process with ONNX Runtime.
+
+    The reranking twin of ``OnnxEmbeddings``: an ``onnxruntime`` session for the graph
+    and ``AutoTokenizer`` for the tokenizer, so models outside FlashRank's catalog run
+    without PyTorch or a TEI sidecar. Scores are the model's raw logits, like the
+    ``local`` provider, so switching between the two keeps the ranking and the
+    downstream sigmoid unchanged.
+    """
+
+    # Shared executor across instances: its worker count is what caps concurrent passes.
+    _executor: ThreadPoolExecutor | None = None
+    _max_concurrent: int = DEFAULT_RERANKER_ONNX_MAX_CONCURRENT
+
+    def __init__(
+        self,
+        model_id: str = DEFAULT_RERANKER_LOCAL_MODEL,
+        model_path: str | None = None,
+        tokenizer_name_or_path: str | None = None,
+        onnx_file: str = DEFAULT_RERANKER_ONNX_FILE,
+        max_tokens: int = DEFAULT_RERANKER_ONNX_MAX_TOKENS,
+        batch_size: int = DEFAULT_RERANKER_ONNX_BATCH_SIZE,
+        threads: int = DEFAULT_RERANKER_ONNX_THREADS,
+        max_concurrent: int = DEFAULT_RERANKER_ONNX_MAX_CONCURRENT,
+        cpu_mem_arena: bool = DEFAULT_RERANKER_ONNX_CPU_MEM_ARENA,
+    ):
+        self.model_id = model_id
+        self.model_path = model_path
+        if model_path and tokenizer_name_or_path is None:
+            logger.warning(
+                "Reranker: ONNX model_path is set without tokenizer_name_or_path; falling back to tokenizer "
+                "from model_id %s. Set HINDSIGHT_API_RERANKER_ONNX_TOKENIZER_NAME_OR_PATH when using local files.",
+                model_id,
+            )
+        self.tokenizer_name_or_path = tokenizer_name_or_path or model_id
+        self.onnx_file = onnx_file
+        self.max_tokens = max_tokens
+        if batch_size < 1:
+            raise ValueError("ONNX reranker batch_size must be >= 1")
+        self.batch_size = batch_size
+        if threads < 0:
+            raise ValueError("ONNX reranker threads must be >= 0 (0 = ONNX Runtime default)")
+        self.threads = threads
+        self.cpu_mem_arena = cpu_mem_arena
+        self._session = None
+        self._tokenizer = None
+        OnnxCrossEncoder._max_concurrent = max(1, max_concurrent)
+
+    @property
+    def provider_name(self) -> str:
+        return "onnx"
+
+    @property
+    def blocking_init(self) -> bool:
+        return True
+
+    async def initialize(self) -> None:
+        if self._session is not None:
+            return
+
+        try:
+            import onnxruntime as ort
+            from transformers import AutoTokenizer
+        except ImportError as exc:
+            raise ImportError(
+                "onnxruntime and transformers are required for the 'onnx' reranker. "
+                "Install with: pip install 'hindsight-api-slim[local-onnx]'"
+            ) from exc
+
+        model_path = self.model_path
+        if not model_path:
+            try:
+                from huggingface_hub import snapshot_download
+            except ImportError as exc:
+                raise ImportError(
+                    "huggingface-hub is required to download ONNX reranker models. "
+                    "Set HINDSIGHT_API_RERANKER_ONNX_MODEL_PATH or install local-onnx."
+                ) from exc
+            # Also fetch the conventional external-weights sidecar of large exports.
+            snapshot_dir = snapshot_download(
+                repo_id=self.model_id, allow_patterns=[self.onnx_file, f"{self.onnx_file}_data"]
+            )
+            model_path = os.path.join(snapshot_dir, self.onnx_file)
+
+        logger.info(
+            "Reranker: initializing ONNX provider with %s (threads=%s, max_concurrent=%s, batch_size=%s)",
+            model_path,
+            self.threads or "ort-default",
+            OnnxCrossEncoder._max_concurrent,
+            self.batch_size,
+        )
+        self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name_or_path)
+        session_options = ort.SessionOptions()
+        # The arena caches freed activation blocks and never returns them, so RSS would
+        # hold the largest batch's high-water mark forever (same as FlashRank/OnnxEmbeddings).
+        session_options.enable_cpu_mem_arena = self.cpu_mem_arena
+        if self.threads:
+            session_options.intra_op_num_threads = self.threads
+        # Idle worker threads otherwise busy-wait for the next op; measured ~1 core of
+        # burn per pass for no latency gain on a 300-candidate rerank.
+        session_options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+        self._session = ort.InferenceSession(
+            model_path, sess_options=session_options, providers=["CPUExecutionProvider"]
+        )
+
+        assert_finite_local_output(
+            self._predict_sync([("hindsight startup probe", "hindsight startup probe")]),
+            label=f"Reranker[{model_path}]",
+        )
+
+        if OnnxCrossEncoder._executor is None:
+            OnnxCrossEncoder._executor = ThreadPoolExecutor(
+                max_workers=OnnxCrossEncoder._max_concurrent, thread_name_prefix="onnx-reranker"
+            )
+        logger.info("Reranker: ONNX provider initialized")
+
+    def _predict_sync(self, pairs: list[tuple[str, str]]) -> list[float]:
+        """Score ``pairs`` in bounded forward passes, longest first.
+
+        Each pass pads to its longest pair and allocates ``batch * heads * seq^2``
+        attention, so batches stay small (#3355) and similar lengths share a batch.
+        Padding is masked, so grouping never changes a score.
+        """
+        if self._session is None or self._tokenizer is None:
+            raise RuntimeError("Reranker not initialized. Call initialize() first.")
+        order = sorted(range(len(pairs)), key=lambda i: len(pairs[i][0]) + len(pairs[i][1]), reverse=True)
+        scores = [0.0] * len(pairs)
+        for start in range(0, len(order), self.batch_size):
+            window = order[start : start + self.batch_size]
+            batch = self._score_batch([pairs[i] for i in window])
+            for index, score in zip(window, batch, strict=True):
+                scores[index] = score
+        return scores
+
+    def _score_batch(self, pairs: list[tuple[str, str]]) -> list[float]:
+        """Run one forward pass and reduce the logits to one raw score per pair."""
+        assert self._session is not None and self._tokenizer is not None
+
+        import numpy as np
+
+        encoded = self._tokenizer(
+            [query for query, _ in pairs],
+            [doc for _, doc in pairs],
+            padding=True,
+            truncation=True,
+            max_length=self.max_tokens,
+            return_tensors="np",
+        )
+        input_names = {inp.name for inp in self._session.get_inputs()}
+        ort_inputs = {name: value for name, value in encoded.items() if name in input_names}
+        if "token_type_ids" in input_names and "token_type_ids" not in ort_inputs:
+            ort_inputs["token_type_ids"] = np.zeros_like(encoded["input_ids"])
+
+        logits = np.asarray(self._session.run(None, ort_inputs)[0], dtype=np.float64)
+        logits = logits.reshape(len(pairs), -1)
+        if logits.shape[1] == 1:
+            return logits[:, 0].tolist()
+        if logits.shape[1] == 2:
+            # Binary [irrelevant, relevant] heads: the log-odds of "relevant", whose
+            # sigmoid (applied downstream) is exactly the model's softmax probability.
+            return (logits[:, 1] - logits[:, 0]).tolist()
+        raise ValueError(
+            f"ONNX reranker {self.model_path or self.model_id} returned {logits.shape[1]} logits per pair; expected 1 or 2"
+        )
+
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        if self._session is None:
+            raise RuntimeError("Reranker not initialized. Call initialize() first.")
+        if not pairs:
+            return []
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(OnnxCrossEncoder._executor, self._predict_sync, pairs)
+
+
 def _truncate_docs_to_tokens(texts: list[str], max_tokens: int) -> list[str]:
     """Truncate every candidate document to at most ``max_tokens``.
 
@@ -2381,6 +2561,7 @@ _RERANKER_PROVIDERS_WITHOUT_RETRY = {
     # tensor, an OOM) is not fixed by trying again.
     "local": "in-process model",
     "flashrank": "in-process model",
+    "onnx": "in-process model",
     "jina-mlx": "in-process model",
     "rrf": "passthrough, does no work",
     # Already retries internally, including TEI's 429-as-backpressure handling.
@@ -2485,6 +2666,18 @@ def _create_cross_encoder_backend(member: RerankerMemberConfig) -> CrossEncoderM
             cpu_mem_arena=member.flashrank_cpu_mem_arena,
             batch_size=member.flashrank_batch_size,
         )
+    elif provider == "onnx":
+        return OnnxCrossEncoder(
+            model_id=member.onnx_model_id,
+            model_path=member.onnx_model_path,
+            tokenizer_name_or_path=member.onnx_tokenizer_name_or_path,
+            onnx_file=member.onnx_file,
+            max_tokens=member.onnx_max_tokens,
+            batch_size=member.onnx_batch_size,
+            threads=member.onnx_threads,
+            max_concurrent=member.onnx_max_concurrent,
+            cpu_mem_arena=member.onnx_cpu_mem_arena,
+        )
     elif provider == "litellm":
         return LiteLLMCrossEncoder(
             api_base=member.litellm_api_base,
@@ -2584,7 +2777,7 @@ def _create_cross_encoder_backend(member: RerankerMemberConfig) -> CrossEncoderM
         return JinaMLXCrossEncoder()
     else:
         raise ValueError(
-            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'siliconflow', 'nvidia', 'typesafe', 'alibaba', 'google', 'flashrank', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
+            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'siliconflow', 'nvidia', 'typesafe', 'alibaba', 'google', 'flashrank', 'onnx', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
         )
 
 

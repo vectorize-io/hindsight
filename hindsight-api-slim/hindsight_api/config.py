@@ -1464,6 +1464,15 @@ DEFAULT_RERANKER_FLASHRANK_CPU_MEM_ARENA = False  # Disable ONNX CPU memory aren
 # costs gigabytes and can OOM the container (issue #3355). Matches the local
 # reranker's default batch size.
 DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE = 32
+# ONNX reranker. The model defaults to the local provider's, whose HF repo ships onnx/model.onnx.
+DEFAULT_RERANKER_ONNX_FILE = "onnx/model.onnx"
+DEFAULT_RERANKER_ONNX_MAX_TOKENS = 512
+DEFAULT_RERANKER_ONNX_BATCH_SIZE = 32  # Pairs per forward pass; bounds peak memory like FlashRank's
+DEFAULT_RERANKER_ONNX_THREADS = 0  # Threads per pass; 0 = ONNX Runtime default (all physical cores)
+# One pass at a time: a pass already spreads over every thread, so a second concurrent
+# one adds contention, not throughput, and the CPU ceiling stays `threads` cores.
+DEFAULT_RERANKER_ONNX_MAX_CONCURRENT = 1
+DEFAULT_RERANKER_ONNX_CPU_MEM_ARENA = False  # Arena never shrinks; off keeps RSS bounded
 
 DEFAULT_EMBEDDINGS_COHERE_MODEL = "embed-english-v3.0"
 DEFAULT_RERANKER_COHERE_MODEL = "rerank-english-v3.0"
@@ -2848,6 +2857,16 @@ class RerankerMemberConfig:
     flashrank_cache_dir: str | None
     flashrank_cpu_mem_arena: bool
     flashrank_batch_size: int
+    # onnx
+    onnx_model_id: str
+    onnx_model_path: str | None
+    onnx_tokenizer_name_or_path: str | None
+    onnx_file: str
+    onnx_max_tokens: int
+    onnx_batch_size: int
+    onnx_threads: int
+    onnx_max_concurrent: int
+    onnx_cpu_mem_arena: bool
     # litellm (proxy)
     litellm_api_base: str
     litellm_api_key: str | None
@@ -2957,6 +2976,25 @@ def _member_float(base: str, suffix: str, default: float) -> float:
         raise ValueError(f"Invalid {base}{suffix}: expected a number, got {raw!r}") from e
 
 
+def _onnx_member_fields(base: str) -> dict[str, Any]:
+    """The ``onnx_*`` fields of a reranker member, read from ``{base}ONNX_*``.
+
+    Shared by the primary (``base`` = ``HINDSIGHT_API_RERANKER_``) and the indexed
+    members, which differ only in the prefix.
+    """
+    return {
+        "onnx_model_id": _member_str(base, "ONNX_MODEL_ID", DEFAULT_RERANKER_LOCAL_MODEL),
+        "onnx_model_path": _member_opt_str(base, "ONNX_MODEL_PATH"),
+        "onnx_tokenizer_name_or_path": _member_opt_str(base, "ONNX_TOKENIZER_NAME_OR_PATH"),
+        "onnx_file": _member_str(base, "ONNX_FILE", DEFAULT_RERANKER_ONNX_FILE),
+        "onnx_max_tokens": _member_int(base, "ONNX_MAX_TOKENS", DEFAULT_RERANKER_ONNX_MAX_TOKENS),
+        "onnx_batch_size": _member_int(base, "ONNX_BATCH_SIZE", DEFAULT_RERANKER_ONNX_BATCH_SIZE),
+        "onnx_threads": _member_int(base, "ONNX_THREADS", DEFAULT_RERANKER_ONNX_THREADS),
+        "onnx_max_concurrent": _member_int(base, "ONNX_MAX_CONCURRENT", DEFAULT_RERANKER_ONNX_MAX_CONCURRENT),
+        "onnx_cpu_mem_arena": _member_bool(base, "ONNX_CPU_MEM_ARENA", DEFAULT_RERANKER_ONNX_CPU_MEM_ARENA),
+    }
+
+
 def _parse_reranker_members() -> list[RerankerMemberConfig]:
     """Parse the indexed reranker fallback members.
 
@@ -3014,6 +3052,7 @@ def _parse_reranker_members() -> list[RerankerMemberConfig]:
                     base, "FLASHRANK_CPU_MEM_ARENA", DEFAULT_RERANKER_FLASHRANK_CPU_MEM_ARENA
                 ),
                 flashrank_batch_size=_member_int(base, "FLASHRANK_BATCH_SIZE", DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE),
+                **_onnx_member_fields(base),
                 litellm_api_base=_member_str(base, "LITELLM_API_BASE", DEFAULT_LITELLM_API_BASE),
                 litellm_api_key=_member_opt_str(base, "LITELLM_API_KEY"),
                 litellm_model=_member_str(base, "LITELLM_MODEL", DEFAULT_RERANKER_LITELLM_MODEL),
@@ -4122,6 +4161,8 @@ class HindsightConfig:
             flashrank_batch_size=int(
                 os.environ.get(ENV_RERANKER_FLASHRANK_BATCH_SIZE, "").strip() or DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE
             ),
+            # onnx, like flashrank, has no HindsightConfig fields — read from the env directly
+            **_onnx_member_fields("HINDSIGHT_API_RERANKER_"),
             litellm_api_base=self.reranker_litellm_api_base,
             litellm_api_key=self.reranker_litellm_api_key,
             litellm_model=self.reranker_litellm_model,
