@@ -124,6 +124,9 @@ async def test_create_observation_rejects_zero_length_embedding_before_insert():
 
 
 @pytest.mark.asyncio
+# Seeds source liveness through a mocked `conn`, which a store-owned bank never reads: the
+# preflight asks the store, finds nothing, and short-circuits before the behaviour under test.
+@pytest.mark.memory_backend_incompatible
 async def test_create_observation_skips_before_embedding_when_all_sources_dead(monkeypatch):
     # All sources gone -> the create must short-circuit at the preflight, BEFORE the embedder
     # (patched to explode if reached). No write may run.
@@ -139,6 +142,9 @@ async def test_create_observation_skips_before_embedding_when_all_sources_dead(m
 
 
 @pytest.mark.asyncio
+# Seeds source liveness through a mocked `conn`, which a store-owned bank never reads: the
+# preflight asks the store, finds nothing, and short-circuits before the behaviour under test.
+@pytest.mark.memory_backend_incompatible
 async def test_update_action_skips_before_embedding_when_all_sources_dead(monkeypatch):
     # Same preflight contract on the UPDATE path: all sources gone -> skip (return None) BEFORE
     # the embedder runs. The existing real-DB update test asserts only post-state, so it would

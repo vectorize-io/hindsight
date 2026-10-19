@@ -162,3 +162,21 @@ def observes(text: str) -> Callable[["ChatRequest"], Consolidation]:
         )
 
     return build
+
+
+class AddSection(BaseModel):
+    """One operation of a delta refresh's edit: a new section at the end of the page."""
+
+    op: Literal["add_section"] = "add_section"
+    heading: str
+    blocks: list[str]
+
+
+class DeltaOperations(BaseModel):
+    """What a delta knowledge-page refresh's edit call returns."""
+
+    operations: list[AddSection]
+
+
+def add_section(heading: str, *blocks: str) -> DeltaOperations:
+    return DeltaOperations(operations=[AddSection(heading=heading, blocks=list(blocks))])

@@ -1417,8 +1417,8 @@ class TestMoveRenameDelete:
 class TestListReportsTheContentItDelivers:
     """A list that carries content is a bulk read of that content.
 
-    A knowledge page is a mental_models row and is not excluded from
-    list_mental_models, so a list that returns content hands back every
+    A knowledge page is a mental_models row and list_mental_models includes
+    it by default, so a list that returns content hands back every
     page in the bank. Reporting the single-page read while leaving that
     unreported would watch the narrow door and leave the wide one open — a
     caller could enumerate a bank's synthesized knowledge by asking for it in
@@ -1526,6 +1526,58 @@ class TestListReportsTheContentItDelivers:
 
         assert any(m["id"] == legacy["id"] for m in page.items), "the page is still listed"
         assert legacy["id"] not in validator.model_reads
+
+
+class TestListStandaloneMentalModels:
+    """The Mental Models tab lists standalone models only (#5665).
+
+    A knowledge page keeps its content in a mental_models row; with
+    exclude_knowledge_pages those rows stay out of the list and its total.
+    """
+
+    async def test_page_backing_models_are_left_out(self, api_client, memory, kb_bank, request_context):
+        bank_id, ids = kb_bank
+        standalone = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Coding preferences",
+            source_query="How does the user like code written?",
+            content="Functional style.",
+            request_context=request_context,
+        )
+
+        everything = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/mental-models")
+        flags = {m["id"]: m["is_knowledge_page"] for m in everything.json()["items"]}
+        assert flags[ids.orders_mm] is True
+        assert flags[standalone["id"]] is False
+
+        resp = await api_client.get(
+            f"/v1/default/banks/{_enc(bank_id)}/mental-models", params={"exclude_knowledge_pages": "true"}
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert [m["id"] for m in body["items"]] == [standalone["id"]]
+        assert body["total"] == 1
+
+    async def test_get_says_whether_a_model_backs_a_page(self, api_client, kb_bank):
+        bank_id, ids = kb_bank
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/mental-models/{ids.orders_mm}")
+        assert resp.status_code == 200
+        assert resp.json()["is_knowledge_page"] is True
+
+    async def test_template_export_leaves_pages_out(self, api_client, memory, kb_bank, request_context):
+        # A template carries no pages; their models would come back as standalone ones.
+        bank_id, _ = kb_bank
+        standalone = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Coding preferences",
+            source_query="How does the user like code written?",
+            content="Functional style.",
+            request_context=request_context,
+        )
+
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/export")
+        assert resp.status_code == 200
+        assert [m["id"] for m in resp.json()["mental_models"]] == [standalone["id"]]
 
 
 class TestExportReportsOnceNotPerPage:

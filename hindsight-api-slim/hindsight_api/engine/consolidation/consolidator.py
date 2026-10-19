@@ -39,6 +39,13 @@ from ...metrics import get_metrics_collector
 from ...worker.stage import set_stage
 from ..db import DatabaseBackend
 from ..db_utils import acquire_with_retry
+from ..document_history import (
+    note_observation_written,
+    note_observations_removed,
+    observation_changes_tracked,
+    record_consolidation_events,
+    track_observation_changes,
+)
 from ..llm_interface import OutputTooLongError, PromptCachePrefix, ProviderRateLimitResetError
 from ..llm_trace import (
     record_created_memory_ids,
@@ -410,6 +417,7 @@ async def _apply_dedup_create_fold(
             outcome.best_id[:8],
         )
         return None
+    note_observation_written(outcome.best_id, [str(i) for i in live_source_ids], created=False)
     return outcome.best_id
 
 
@@ -1516,6 +1524,7 @@ async def run_consolidation_job(
     operation_id: str | None = None,
     observation_scopes: list[list[str]] | None = None,
     pending_refresh_tags: list[str] | None = None,
+    caller_requested: bool = False,
 ) -> dict[str, Any]:
     """
     Run consolidation job for a bank.
@@ -1533,6 +1542,8 @@ async def run_consolidation_job(
         pending_refresh_tags: Tags of memories consolidated by earlier rounds of this
             round-limited chain, carried through the re-queue so the final round can
             refresh every affected mental model exactly once (#3411).
+        caller_requested: True for a chain started by an explicit ``/consolidate`` call,
+            which drains the whole backlog even when ``enable_auto_consolidation`` is off.
 
     Returns:
         Dict with consolidation results
@@ -1550,23 +1561,27 @@ async def run_consolidation_job(
     # trace — flushed onto every trace row on exit by attach_memory_ids.
     trace_ctx = trace_context_of(llm_config)
     trace_token = set_trace_context(trace_ctx) if trace_ctx is not None else None
-    try:
-        return await _run_consolidation_job(
-            memory_engine,
-            bank_id,
-            request_context,
-            config,
-            llm_config,
-            operation_id,
-            observation_scopes,
-            pending_refresh_tags,
-        )
-    finally:
-        if trace_token is not None:
-            reset_trace_context(trace_token)
-            # Fire-and-forget: patched on a background task, off the consolidation
-            # critical path.
-            memory_engine._llm_recorder.attach_memory_ids(trace_ctx)
+    with track_observation_changes() as observation_changes:
+        try:
+            return await _run_consolidation_job(
+                memory_engine,
+                bank_id,
+                request_context,
+                config,
+                llm_config,
+                operation_id,
+                observation_scopes,
+                pending_refresh_tags,
+                caller_requested,
+            )
+        finally:
+            if trace_token is not None:
+                reset_trace_context(trace_token)
+                # Fire-and-forget: patched on a background task, off the consolidation
+                # critical path.
+                memory_engine._llm_recorder.attach_memory_ids(trace_ctx)
+            # Also on failure: every batch that got this far committed its writes.
+            await record_consolidation_events(memory_engine._backend, bank_id, observation_changes, operation_id)
 
 
 async def _run_consolidation_job(
@@ -1578,6 +1593,7 @@ async def _run_consolidation_job(
     operation_id: str | None = None,
     observation_scopes: list[list[str]] | None = None,
     pending_refresh_tags: list[str] | None = None,
+    caller_requested: bool = False,
 ) -> dict[str, Any]:
     """Core consolidation flow. See ``run_consolidation_job`` for the public entrypoint."""
     perf = ConsolidationPerfLog(bank_id)
@@ -2156,7 +2172,13 @@ async def _run_consolidation_job(
     if operation_id:
         all_refresh_tags |= await _read_pending_refresh_tags(pool, operation_id)
 
-    if hit_round_limit:
+    # An automatic chain stops re-queuing once auto-consolidation is turned off; only
+    # an explicit /consolidate run keeps draining the backlog (#5590).
+    if hit_round_limit and not (caller_requested or config.enable_auto_consolidation):
+        logger.info(
+            f"[CONSOLIDATION] bank={bank_id} hit round limit but auto-consolidation is disabled; not re-queuing."
+        )
+    elif hit_round_limit:
         remaining = total_count - stats["memories_processed"]
         logger.info(
             f"[CONSOLIDATION] bank={bank_id} hit round limit of {max_memories_per_round} memories,"
@@ -2167,6 +2189,7 @@ async def _run_consolidation_job(
             request_context=request_context,
             observation_scopes=observation_scopes,
             pending_refresh_tags=sorted(all_refresh_tags) or None,
+            caller_requested=caller_requested,
         )
 
     # Build summary
@@ -2443,6 +2466,12 @@ async def _process_memory_batch(
     # When obs_tags_override is set, use it as the observation scope for all facts.
     t0 = time.perf_counter()
     observation_scope_tags = obs_tags_override if obs_tags_override is not None else None
+    # Every recall's query vector in ONE embedder call: each recall embedding its own fact
+    # text cost one round trip per fact, up to batch_size × parallelism at once (#5647).
+    # Same texts, same input type, so the vectors are the ones each recall made itself.
+    query_embeddings = await embedding_utils.generate_embeddings_batch(
+        memory_engine.embeddings, [m["text"] for m in memories], input_type="query"
+    )
     recall_tasks = [
         _find_related_observations(
             memory_engine=memory_engine,
@@ -2451,8 +2480,9 @@ async def _process_memory_batch(
             request_context=request_context,
             tags=observation_scope_tags if observation_scope_tags is not None else (m.get("tags") or []),
             config=config,
+            query_embedding=query_embedding,
         )
-        for m in memories
+        for m, query_embedding in zip(memories, query_embeddings, strict=True)
     ]
     # A failed recall must fail the batch rather than degrade to "no related
     # observations": proceeding with an empty candidate set would hide an
@@ -2600,13 +2630,15 @@ async def _process_memory_batch(
         )
 
     # --- Prepare: updates -----------------------------------------------------
-    # Each action is prepared on its own: a liveness preflight, an embedding and, with semantic
-    # dedup on, a nearest-observation probe and possibly a focused LLM verdict. None of it depends
-    # on another action's preparation — the probes read the state the batch started from, which is
-    # also why two near-twin CREATEs in one response can both land (see below) — so the actions are
-    # prepared concurrently. Done one after another, a response with many actions paid every
-    # round trip and every dedup verdict in sequence. Order is preserved: the lists below keep the
-    # response's order, which the apply step relies on.
+    # Each action is prepared in three steps: cheap in-memory checks (sources resolved, security,
+    # a liveness preflight), an embedding and, with semantic dedup on, a nearest-observation probe
+    # and possibly a focused LLM verdict. The checks run first for every action so that the
+    # embeddings of all the survivors go out in ONE embedder call (#5552) — embedded one action at
+    # a time, a remote embedder cost one round trip per action. The dedup probes then run
+    # concurrently: none depends on another action's preparation — they read the state the batch
+    # started from, which is also why two near-twin CREATEs in one response can both land (see
+    # below). Order is preserved: the lists below keep the response's order, which the apply step
+    # relies on.
     prepare_slots = asyncio.Semaphore(_PREPARE_CONCURRENCY)
 
     # Every action's sources are facts of this batch, so ONE liveness read answers the preflight
@@ -2617,7 +2649,7 @@ async def _process_memory_batch(
         async with prepare_slots:
             return await coro
 
-    async def _prepare_update(update: _UpdateAction) -> _PreparedUpdate | None:
+    def _check_update(update: _UpdateAction) -> _PreparedUpdate | None:
         source_mems = [mem_by_id[fid] for fid in update.source_fact_ids if fid in mem_by_id]
         if not source_mems:
             _log_unresolved_action("update", update.source_fact_ids, update.text, perf)
@@ -2643,36 +2675,35 @@ async def _process_memory_batch(
                 f"{update.observation_id} were deleted before embedding"
             )
             return None
-        embedding_str = await _embed_observation_text(memory_engine, update.text, perf)
-        prepared = _PreparedUpdate(
+        return _PreparedUpdate(
             update=update,
             model=model,
             source_mems=source_mems,
             source_memory_ids=source_memory_ids,
             source_fact_tags=agg.tags,
             source_bounds=_TemporalBounds.of(agg),
-            embedding_str=embedding_str,
+            embedding_str=None,
         )
+
+    async def _adjudicate_update(prepared: _PreparedUpdate) -> _PreparedUpdate:
         # Reconcile the rewritten observation against its neighbours: the re-embed may have
         # drifted it into a near-twin of another existing observation (the residual-duplicate
         # source). Adjudicated here, folded inside the transaction below.
-        if dedup_enabled and embedding_str is not None:
+        if dedup_enabled and prepared.embedding_str is not None:
             prepared.dedup = await _dedup_adjudicate(
                 pool,
                 memory_engine,
                 bank_id,
                 config,
                 dedup_llm_config,
-                update.text,
-                embedding_str,
-                agg.tags,
-                exclude_id=update.observation_id,
+                prepared.update.text,
+                prepared.embedding_str,
+                prepared.source_fact_tags,
+                exclude_id=prepared.update.observation_id,
             )
         return prepared
 
-    prepared_updates: list[_PreparedUpdate] = [
-        p for p in await _gather_or_cancel([_bounded(_prepare_update(u)) for u in llm_result.updates]) if p is not None
-    ]
+    checked_updates = [p for p in map(_check_update, llm_result.updates) if p is not None]
 
     # --- Prepare: creates -----------------------------------------------------
     # Deterministic dedup guard: map the observations the LLM was SHOWN by their
@@ -2686,7 +2717,7 @@ async def _process_memory_batch(
     # response (the model occasionally UPDATEs the twin to text X and also CREATEs X).
     update_texts = {_norm_obs_text(u.text) for u in llm_result.updates if u.text}
 
-    async def _prepare_create(create: _CreateAction) -> _PreparedCreate | None:
+    def _check_create(create: _CreateAction) -> _PreparedCreate | None:
         source_mems = [mem_by_id[fid] for fid in create.source_fact_ids if fid in mem_by_id]
         if not source_mems:
             _log_unresolved_action("create", create.source_fact_ids, create.text, perf)
@@ -2712,15 +2743,16 @@ async def _process_memory_batch(
         if not any(str(mid) in live_before_prepare for mid in create_source_ids):
             logger.debug(f"Create skipped: all {len(create_source_ids)} source memories were deleted before embedding")
             return None
-        embedding_str = await _embed_observation_text(memory_engine, create.text, perf)
-        prepared_create = _PreparedCreate(
+        return _PreparedCreate(
             text=create.text,
             source_mems=source_mems,
             source_memory_ids=create_source_ids,
             source_fact_tags=agg.tags,
             agg=agg,
-            embedding_str=embedding_str,
+            embedding_str=None,
         )
+
+    async def _adjudicate_create(prepared_create: _PreparedCreate) -> _PreparedCreate:
         # Semantic near-duplicate reconciliation: merge this CREATE into an existing
         # near-identical observation (LLM-adjudicated, 1-by-1) instead of inserting a dup.
         # The probe reads the state the batch started from, so two near-twin CREATEs in ONE
@@ -2733,16 +2765,30 @@ async def _process_memory_batch(
                 bank_id,
                 config,
                 dedup_llm_config,
-                create.text,
-                embedding_str,
-                agg.tags,
+                prepared_create.text,
+                prepared_create.embedding_str,
+                prepared_create.source_fact_tags,
                 exclude_id=None,
             )
         return prepared_create
 
-    prepared_creates: list[_PreparedCreate] = [
-        p for p in await _gather_or_cancel([_bounded(_prepare_create(c)) for c in llm_result.creates]) if p is not None
-    ]
+    checked_creates = [p for p in map(_check_create, llm_result.creates) if p is not None]
+
+    # One embedder call for every action that survived its checks.
+    vectors = await _embed_observation_texts(
+        memory_engine, [p.update.text for p in checked_updates] + [p.text for p in checked_creates], perf
+    )
+    for prepared_update in checked_updates:
+        prepared_update.embedding_str = vectors.get(prepared_update.update.text)
+    for prepared_create in checked_creates:
+        prepared_create.embedding_str = vectors.get(prepared_create.text)
+
+    prepared_updates: list[_PreparedUpdate] = await _gather_or_cancel(
+        [_bounded(_adjudicate_update(p)) for p in checked_updates]
+    )
+    prepared_creates: list[_PreparedCreate] = await _gather_or_cancel(
+        [_bounded(_adjudicate_create(p)) for p in checked_creates]
+    )
 
     # --- Apply: one transaction for everything this LLM response decided ------
     deleted_count = 0
@@ -2761,6 +2807,19 @@ async def _process_memory_batch(
         try:
             async with acquire_with_retry(pool) as conn:
                 async with conn.transaction():
+                    # Before any other lock: everything this response can write, in the order a
+                    # retain takes it (documents, then memories), so the two cannot deadlock (#5433).
+                    touched: list[str | None] = [d.observation_id for d in prepared_deletes]
+                    touched += [d.merged_into for d in prepared_deletes]
+                    touched += [u.update.observation_id for u in prepared_updates]
+                    touched += [p.dedup.best_id for p in [*prepared_updates, *prepared_creates] if p.dedup]
+                    await get_memories().lock_consolidation_write_set(
+                        conn=conn,
+                        fq_table=fq_table,
+                        bank_id=bank_id,
+                        fact_ids=[str(m["id"]) for m in memories],
+                        observation_ids=[oid for oid in touched if oid],
+                    )
                     changed_ids = await _sources_changed_since_read(conn, bank_id, memories)
                     if changed_ids:
                         # Drop the whole response, stamps included: the facts stay pending and the
@@ -3103,6 +3162,7 @@ async def _apply_update_action(
 
     # Map the updated observation onto the consolidation trace as a produced memory.
     record_created_memory_ids([observation_id])
+    note_observation_written(observation_id, [str(s) for s in source_ids], created=False)
     logger.debug(f"Updated observation {observation_id} from {len(source_memory_ids)} source memories")
     return embedding_str
 
@@ -3140,6 +3200,7 @@ async def _apply_create_action(
     new_id = created.get("observation_id")
     if new_id:
         record_created_memory_ids([new_id])
+        note_observation_written(new_id, [str(s) for s in prepared.source_memory_ids], created=True)
     logger.debug(f"Created observation from {len(prepared.source_memory_ids)} source memories")
     return created["action"]
 
@@ -3214,6 +3275,12 @@ async def _execute_delete_action(
     observation_id: str,
 ) -> None:
     """Delete a superseded or contradicted observation."""
+    if observation_changes_tracked():
+        # Read before deleting: the change history files the removal under its sources' documents.
+        gone = await get_memories().get_memories(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[observation_id]
+        )
+        note_observations_removed({observation_id: list(gone[0].source_memory_ids) if gone else []})
     await get_memories().delete_observation(
         conn=conn, fq_table=fq_table, bank_id=bank_id, observation_id=observation_id
     )
@@ -3272,22 +3339,27 @@ async def _fold_deleted_evidence(
     )
 
 
-async def _embed_observation_text(
+async def _embed_observation_texts(
     memory_engine: "MemoryEngine",
-    text: str,
+    texts: list[str],
     perf: ConsolidationPerfLog | None = None,
-) -> str | None:
-    """Embed one observation text into a pgvector literal, with no connection held.
+) -> dict[str, str]:
+    """Embed observation texts in ONE embedder call, keyed by text to its pgvector literal.
 
-    Every caller is in the prepare phase of a batch (#3876): the embedder is the slowest
-    thing consolidation does per action, and it must finish before the batch's single write
-    transaction opens.
+    Runs in the prepare phase of a batch, with no connection held (#3876): the embedder is the
+    slowest thing consolidation does per action, and it must finish before the batch's single
+    write transaction opens. It used to take one text per action, so a response with N actions
+    paid N round trips to an embedder that batches internally (#5552). Repeated texts are
+    embedded once; an empty list makes no call.
     """
+    unique = list(dict.fromkeys(texts))
+    if not unique:
+        return {}
     t0 = time.perf_counter()
-    embeddings = await embedding_utils.generate_embeddings_batch(memory_engine.embeddings, [text])
+    embeddings = await embedding_utils.generate_embeddings_batch(memory_engine.embeddings, unique)
     if perf:
         perf.record_timing("embedding", time.perf_counter() - t0)
-    return str(embeddings[0]) if embeddings else None
+    return {text: str(embedding) for text, embedding in zip(unique, embeddings, strict=True)}
 
 
 async def _find_related_observations(
@@ -3297,6 +3369,7 @@ async def _find_related_observations(
     request_context: "RequestContext",
     tags: list[str] | None = None,
     config: Any = None,
+    query_embedding: list[float] | None = None,
 ) -> "RecallResult":
     """
     Find observations related to the given query using optimized recall.
@@ -3309,6 +3382,7 @@ async def _find_related_observations(
 
     Args:
         tags: Optional tags to filter observations (uses all_strict matching for security)
+        query_embedding: ``query`` already embedded with input_type="query"; None embeds it here.
 
     Returns:
         List of related observations with their tags, source memories, and dates
@@ -3360,7 +3434,12 @@ async def _find_related_observations(
             # each retrieval arm's top hits a slot, so the semantic-#1 twin is always shown
             # to the LLM, which then UPDATEs instead of creating a duplicate.
             reranking="interleave",
+            # One DB connection per recall, like reflect's internal recalls: a batch fans
+            # out one recall per fact, so the default budget of 4 multiplies pool pressure
+            # and starves user recalls on a small pool (#5590).
+            _connection_budget=1,
             _quiet=True,  # Suppress logging
+            _query_embedding=query_embedding,
         )
     finally:
         if recall_span:

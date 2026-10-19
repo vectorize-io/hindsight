@@ -64,6 +64,9 @@ def test_recall_scoring_now_falls_back_to_current_time(monkeypatch):
     assert memory_engine._recall_scoring_now(None) == now
 
 
+# Patches the SQL retrieval path, which a store-owned bank never takes: its recall goes to the
+# store for a bank this harness never created, so the patched arms are never reached.
+@pytest.mark.memory_backend_incompatible
 @pytest.mark.asyncio
 async def test_recall_async_passes_question_date_to_combined_scoring(monkeypatch):
     question_date = datetime(2023, 5, 30, 21, 53, tzinfo=timezone(timedelta(hours=8)))

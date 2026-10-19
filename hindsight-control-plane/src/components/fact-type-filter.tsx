@@ -78,11 +78,11 @@ export function FactTypeFilter({
     onChange(value.includes(ft) ? value.filter((f) => f !== ft) : [...value, ft]);
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       {resolvedLabel && (
         <span className="text-sm font-medium text-muted-foreground">{resolvedLabel}</span>
       )}
-      <div className="flex gap-1.5">
+      <div className="flex flex-wrap gap-1.5">
         {ALL_FACT_TYPES.map((ft) => (
           <FactTypePill key={ft} ft={ft} active={value.includes(ft)} onToggle={() => toggle(ft)} />
         ))}

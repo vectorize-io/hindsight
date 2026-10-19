@@ -20,6 +20,7 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from ....config import get_config
+from ...document_history import note_observations_removed
 from ..base import StoredMemory
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -275,6 +276,8 @@ async def delete_stale_observations(
     affected_obs = await observations_for_sources(
         conn=conn, ops=ops, fq_table=fq_table, bank_id=bank_id, unit_ids=fact_uuids
     )
+    # The rows go for good below; the change history keeps their ids (#5638).
+    note_observations_removed({obs.unit_id: list(obs.source_memory_ids) for obs in affected_obs}, fact_uuids)
     if not affected_obs:
         return 0
 
@@ -565,10 +568,9 @@ async def apply_edit(
     entity_ids: list[str] | None,
     embedding=None,
 ) -> None:
-    # `entity_ids` and `mentioned_at` are unused here: the entity postings are
-    # re-linked into `unit_entities` by the caller, and an edit does not move the
-    # mention time. Both are on the signature for a store that carries entities on
-    # the memory and rebuilds it wholesale.
+    # `entity_ids` is unused here: the entity postings are re-linked into
+    # `unit_entities` by the caller. It is on the signature for a store that carries
+    # entities on the memory and rebuilds it wholesale.
     from ...causal_links import CAUSAL_LINK_TYPES
     from ...db.ops_postgresql import pg_search_vector_expr
 
@@ -581,12 +583,27 @@ async def apply_edit(
     # Reference the bind parameters, not the columns: PostgreSQL evaluates the
     # UPDATE's RHS before the sibling SET assignments land, so a column reference
     # would see the pre-edit values.
-    sv_expr = pg_search_vector_expr(get_config(), text_col="$3", context_col="$4")
+    # PostgreSQL only: on Oracle search_vector is a CLOB kept by Oracle's own text index, and the
+    # ``::regconfig`` cast would reach it as an unbound ``:REGCONFIG`` placeholder (DPY-4010) — the
+    # same guard as ``_native_search_vector_update`` in pg/consolidation.py (#3021).
+    from ...schema import _is_oracle
+
+    sv_expr = None if _is_oracle() else pg_search_vector_expr(get_config(), text_col="$3", context_col="$4")
     sv_clause = f", search_vector = {sv_expr}" if sv_expr else ""
     # The re-embedded vector rides the edit's own UPDATE. It describes the text being written by
     # this statement, so writing it here is what keeps the two from ever disagreeing — and it
     # spares a store whose write is not a row update a second write of this row.
-    params: list = [str(unit_id), bank_id, text, context, fact_type, occurred_start, occurred_end, event_date]
+    params: list = [
+        str(unit_id),
+        bank_id,
+        text,
+        context,
+        fact_type,
+        occurred_start,
+        occurred_end,
+        event_date,
+        mentioned_at,
+    ]
     embedding_clause = ""
     if embedding is not None:
         params.append(embedding)
@@ -595,7 +612,7 @@ async def apply_edit(
         f"""
         UPDATE {mu}
         SET text = $3, context = $4, fact_type = $5, occurred_start = $6, occurred_end = $7,
-            event_date = $8, consolidated_at = NULL, consolidation_failed_at = NULL,
+            event_date = $8, mentioned_at = $9, consolidated_at = NULL, consolidation_failed_at = NULL,
             edited_at = now(), updated_at = now(){sv_clause}{embedding_clause}
         WHERE id = $1 AND bank_id = $2
         """,

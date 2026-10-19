@@ -60,7 +60,8 @@
       "copied": "클립보드에 복사됨",
       "viaAlias": "{aliases} 경유"
     },
-    "viewOnGitHub": "GitHub에서 보기"
+    "viewOnGitHub": "GitHub에서 보기",
+    "more": "더 보기"
   },
   "bank": {
     "bankConfiguration": "뱅크 구성",
@@ -146,7 +147,8 @@
       "collapseSidebar": "사이드바 접기",
       "collapse": "접기",
       "knowledge": "지식 베이스",
-      "home": "홈"
+      "home": "홈",
+      "openNavigation": "탐색 열기"
     },
     "overviewAndOperations": "이 메모리 뱅크의 개요 통계 및 백그라운드 작업.",
     "operations": "작업",
@@ -333,7 +335,22 @@
     "timeFieldMentionedShort": "언급",
     "timeFieldMentionedLong": "사실이 언급된 시점(이벤트 시간)",
     "timeFieldOccurredShort": "발생",
-    "timeFieldOccurredLong": "기본 이벤트가 시작된 시점"
+    "timeFieldOccurredLong": "기본 이벤트가 시작된 시점",
+    "knowledgePages": "지식 페이지",
+    "noKnowledgePages": "지식 페이지 없음",
+    "knowledgeSection": "지식",
+    "hintConsolidationDone": "통합이 이미 처리한 메모리입니다. 통합은 원시 메모리를 관찰로 바꿉니다.",
+    "hintConsolidationPending": "다음 통합 실행을 기다리는 메모리입니다.",
+    "hintConsolidationFailed": "통합이 처리하지 못한 메모리입니다. 숫자를 클릭하면 목록을 보고 다시 시도할 수 있습니다.",
+    "hintConsolidationLast": "통합이 마지막으로 실행된 시각입니다.",
+    "hintModelsInSync": "범위 안의 새 메모리를 모두 읽은 멘탈 모델입니다.",
+    "hintModelsStale": "마지막 새로 고침 이후 범위 안에 새 메모리가 있는 멘탈 모델입니다. 다음 새로 고침 때 따라잡습니다.",
+    "hintModelsFailed": "마지막 새로 고침이 실패한 멘탈 모델입니다. 직접 새로 고칠 때까지 자동 새로 고침이 멈춥니다.",
+    "hintModelsLast": "모든 멘탈 모델 중 가장 최근의 새로 고침 시각입니다.",
+    "hintPagesInSync": "범위 안의 새 메모리를 모두 읽은 지식 페이지입니다.",
+    "hintPagesStale": "마지막 새로 고침 이후 범위 안에 새 메모리가 있는 지식 페이지입니다. 다음 새로 고침 때 따라잡습니다.",
+    "hintPagesFailed": "마지막 새로 고침이 실패한 지식 페이지입니다. 직접 새로 고칠 때까지 자동 새로 고침이 멈춥니다.",
+    "hintPagesLast": "모든 지식 페이지 중 가장 최근의 새로 고침 시각입니다."
   },
   "bankConfig": {
     "noBankSelected": "선택된 뱅크 없음",
@@ -943,7 +960,8 @@
     "dateRangeCustom": "사용자 지정 기간",
     "dateRangeFrom": "시작",
     "dateRangeTo": "종료",
-    "dateRangeReversed": "종료는 시작보다 뒤여야 합니다"
+    "dateRangeReversed": "종료는 시작보다 뒤여야 합니다",
+    "historyTab": "기록"
   },
   "entitiesView": {
     "viewRelations": "관계",
@@ -1127,7 +1145,8 @@
     "actionOpenDetail": "상세 보기",
     "nextRefreshPaused": "새로 고침 실패로 일시 중지됨",
     "nextRefreshRetrying": "재시도 중, 다음 시도 {time}",
-    "nextRefreshRunning": "새로 고치는 중"
+    "nextRefreshRunning": "새로 고치는 중",
+    "hideKnowledgePages": "지식 페이지 숨기기"
   },
   "cronPreview": {
     "invalid": "잘못된 cron 표현식",
@@ -1667,6 +1686,7 @@
     "curationSave": "저장",
     "curationStateInvalidated": "무효화됨",
     "editFieldContext": "컨텍스트",
+    "editFieldMentionedAt": "언급일",
     "editFieldOccurredEnd": "종료일",
     "editFieldOccurredStart": "시작일",
     "editFieldType": "유형"
@@ -2031,7 +2051,8 @@
         "chunks": "문서 청크를 가져오지 못했습니다",
         "reprocess": "문서를 다시 처리하지 못했습니다",
         "export": "문서 내보내기에 실패했습니다",
-        "import": "문서 가져오기에 실패했습니다"
+        "import": "문서 가져오기에 실패했습니다",
+        "history": "문서 기록을 가져오지 못했습니다"
       },
       "files": {
         "upload": "파일을 업로드하지 못했습니다"
@@ -2259,5 +2280,38 @@
     "pausedTitle": "마지막 새로 고침이 실패하여 이 모델은 더 이상 자동으로 새로 고쳐지지 않습니다. 새로 고치면 다시 시작됩니다",
     "retrying": "재시도 중",
     "retryingTitle": "마지막 시도가 실패했고 다음 시도가 대기 중입니다. 이번에도 실패하면 자동 새로 고침이 중지됩니다"
+  },
+  "documentHistory": {
+    "explainer": "각 변경이 이 문서의 사실과 관찰에 한 일입니다. 관찰은 버전 관리되지 않고 다시 만들어집니다. 변경으로 삭제된 관찰은 여기의 ID가 유일한 흔적입니다. 뱅크의 작업에서 다시 구성하므로 동기 보존과 자동 통합이 꺼진 상태의 변경은 나오지 않습니다. 행을 펼치면 ID가 보이고, ID에 마우스를 올리면 다른 행에서 찾을 수 있습니다.",
+    "empty": "기록된 변경이 없습니다. 기록은 이 뱅크의 작업(비동기 보존과 편집 후 통합)에서 옵니다.",
+    "loadError": "기록을 불러오지 못했습니다.",
+    "idsRemoved": "삭제됨",
+    "idsCreated": "생성됨",
+    "idsUpdated": "업데이트됨",
+    "chipRemoved": "이 변경으로 삭제됨 — 더 이상 존재하지 않음",
+    "chipOpen": "이 관찰 열기",
+    "moreIds": "+{count}개 더",
+    "kind": {
+      "retain": "보존됨",
+      "append": "추가됨",
+      "reprocess": "재처리됨",
+      "retag": "태그 변경",
+      "fact_edited": "사실 편집",
+      "fact_invalidated": "사실 무효화",
+      "fact_restored": "사실 복원",
+      "fact_deleted": "사실 삭제",
+      "observations_cleared": "관찰 삭제",
+      "consolidation": "통합됨"
+    },
+    "loadOlder": "이전 항목 불러오기",
+    "colWhen": "시각",
+    "colChange": "변경",
+    "colFacts": "사실",
+    "colObservations": "관찰",
+    "colOperation": "작업",
+    "legendExists": "아직 존재함 — 클릭하여 열기",
+    "legendRemovedLater": "이후 변경으로 삭제됨",
+    "legendRemovedHere": "이 변경으로 삭제됨",
+    "chipRemovedLater": "나중에 삭제됨: {kind} ({when})"
   }
 }

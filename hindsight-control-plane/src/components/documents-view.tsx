@@ -13,6 +13,7 @@ import { useBank } from "@/lib/bank-context";
 import { useFeatures } from "@/lib/features-context";
 import { DataView } from "./data-view";
 import { TraceDialog } from "./llm-requests-view";
+import { DocumentHistory } from "./document-history";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -81,6 +82,7 @@ import {
   Lock,
   RotateCcw,
   Search,
+  History,
 } from "lucide-react";
 import { TagFilterInput } from "./tag-filter-input";
 import { FacetLegend, MetadataChip, TagChip } from "@/components/ui/facet-chip";
@@ -1943,7 +1945,7 @@ export function DocumentsView() {
           ) : selectedDocument ? (
             <Tabs defaultValue="general" className="flex-1 flex flex-col overflow-hidden">
               <div className="flex items-center justify-between gap-2">
-                <TabsList className="grid grid-cols-3 w-full max-w-md">
+                <TabsList className="grid grid-cols-4 w-full max-w-lg">
                   <TabsTrigger value="general" className="flex items-center gap-1.5">
                     <Settings className="w-3.5 h-3.5" />
                     General
@@ -1963,6 +1965,10 @@ export function DocumentsView() {
                   >
                     <Layers className="w-3.5 h-3.5" />
                     Chunks{chunksLoaded ? ` (${chunksTotal})` : ""}
+                  </TabsTrigger>
+                  <TabsTrigger value="history" className="flex items-center gap-1.5">
+                    <History className="w-3.5 h-3.5" />
+                    {t("historyTab")}
                   </TabsTrigger>
                 </TabsList>
                 <DropdownMenu>
@@ -2351,6 +2357,11 @@ export function DocumentsView() {
                       </div>
                     </div>
                   )}
+                </TabsContent>
+
+                {/* History Tab — what each change did to facts and observations */}
+                <TabsContent value="history" className="mt-0">
+                  <DocumentHistory bankId={currentBank ?? ""} documentId={selectedDocument.id} />
                 </TabsContent>
               </div>
             </Tabs>

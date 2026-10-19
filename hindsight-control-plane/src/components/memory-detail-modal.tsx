@@ -165,6 +165,7 @@ export function MemoryDetailModal({
         context: fields.context,
         occurredStart: fields.occurredStart,
         occurredEnd: fields.occurredEnd,
+        mentionedAt: fields.mentionedAt,
         factType: fields.factType,
         entities: fields.entities,
         // A person editing the entity list here is naming the entity they mean, so the

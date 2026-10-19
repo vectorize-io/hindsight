@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field
 
 from .._cross_loop import CrossLoopSemaphore
 from ..config import DecisionModelConfig
-from .aiohttp_session import LoopLocalSession, per_phase_timeout, raise_for_status
+from .aiohttp_session import LoopLocalSession, UpstreamHTTPError, per_phase_timeout, raise_for_status
 from .remote_retry import RetryPolicy, acall_with_retry
 from .token_encoding import count_tokens
 
@@ -80,6 +80,17 @@ class DecisionResponse(BaseModel):
     #: Keyed by the question ids the caller sent.
     answers: dict[str, DecisionAnswer]
     usage: DecisionUsage = Field(default_factory=DecisionUsage)
+
+
+def overflowed_window(exc: BaseException) -> bool:
+    """Whether System One refused a request as longer than its context window.
+
+    The window is counted in the model's own tokens, which no client can count: on
+    mixed-script text Jev's tokenizer runs twice ours (#5715), so a request sized to fit
+    can still come back ``400 {"detail": {"error_type": "max_tokens_exceeded"}}``. Not
+    retryable as sent; the caller has to send less.
+    """
+    return isinstance(exc, UpstreamHTTPError) and exc.status_code == 400 and "max_tokens_exceeded" in exc.body
 
 
 class DecisionRefusedError(Exception):
@@ -210,13 +221,30 @@ class DecisionModel:
         """Ask ``questions`` (keyed by caller-chosen ids) about ``state`` in one request.
 
         Retried on its own when it fails transiently — a 429 above all, which a single
-        endpoint replica returns as soon as a few recalls overlap.
+        endpoint replica returns as soon as a few recalls overlap. A request the endpoint
+        finds longer than its window is asked again in two halves, until one question
+        alone is too long, which raises.
         """
-        return await acall_with_retry(
-            lambda: self._ask_once(state, questions),
-            policy=self.retry_policy,
-            budget=self.retry_policy.new_budget(),
-            provider=f"decision_model:{self.provider}",
+        try:
+            return await acall_with_retry(
+                lambda: self._ask_once(state, questions),
+                policy=self.retry_policy,
+                budget=self.retry_policy.new_budget(),
+                provider=f"decision_model:{self.provider}",
+            )
+        except Exception as e:
+            if not overflowed_window(e) or len(questions) < 2:
+                raise
+        items = list(questions.items())
+        half = len(items) // 2
+        logger.warning(f"Decision model: {len(items)} questions overflowed the window, asking them in two halves")
+        first, second = await asyncio.gather(self.ask(state, dict(items[:half])), self.ask(state, dict(items[half:])))
+        return DecisionResponse(
+            answers={**first.answers, **second.answers},
+            usage=DecisionUsage(
+                input_tokens=first.usage.input_tokens + second.usage.input_tokens,
+                output_tokens=first.usage.output_tokens + second.usage.output_tokens,
+            ),
         )
 
     async def ask_all(
@@ -224,21 +252,14 @@ class DecisionModel:
     ) -> dict[str, DecisionAnswer]:
         """Ask ``questions`` in as many requests as it takes for each to fit the window.
 
-        A request that still fails after its retries is logged and its answers are left
-        out, so the caller decides what an unanswered question means rather than losing
-        every answer to one failed request.
+        A request that still fails after its retries raises: an unanswered question is
+        not a "no", and leaving it out would pass one off as the other. It used to be
+        logged and left out, and recall's decision reranker then quietly ranked every
+        candidate of a request Jev found too long behind the rest (#5715).
         """
-
-        async def ask(part: dict[str, DecisionQuestion]) -> dict[str, DecisionAnswer]:
-            try:
-                return (await self.ask(state, part)).answers
-            except Exception as e:
-                logger.warning(f"Decision model: a request of {len(part)} questions failed: {e}")
-                return {}
-
         answers: dict[str, DecisionAnswer] = {}
-        for part in await asyncio.gather(*(ask(part) for part in self._split(state, questions))):
-            answers.update(part)
+        for part in await asyncio.gather(*(self.ask(state, part) for part in self._split(state, questions))):
+            answers.update(part.answers)
         return answers
 
     def _split(

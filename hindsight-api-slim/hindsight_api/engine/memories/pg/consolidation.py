@@ -54,6 +54,52 @@ async def lock_live_memory_ids(
     return {str(r["id"]) for r in rows}
 
 
+async def lock_consolidation_write_set(
+    *, conn, fq_table: Callable[[str], str], bank_id: str, fact_ids: list[str], observation_ids: list[str]
+) -> None:
+    """Lock everything one consolidation response writes, in the order retains lock it (#5433).
+
+    A retain row-locks its document first and holds it to commit, then sweeps observations and
+    rewrites the document's facts. Consolidation reached those same facts and observations
+    without the document, in the opposite order, and the two deadlocked — on plain row locks,
+    and on pgvectorscale through the DiskANN index's transaction-wide insert lock. So: first the
+    documents of every memory this transaction can touch (the batch, the observations, and the
+    observations' current sources, which the update, merge and dedup paths re-check), sorted;
+    then all those memories in one sorted statement. A retain of one of those documents is
+    waited for while nothing is held, and once this returns the transaction waits on no retain,
+    so it never holds the index lock while waiting. ``FOR SHARE`` on the documents still
+    conflicts with a retain's document lock but lets parallel consolidation groups share one.
+    """
+    from .reads import get_memories  # noqa: PLC0415
+
+    observations = (
+        await get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=observation_ids)
+        if observation_ids
+        else []
+    )
+    unit_ids = sorted(
+        {
+            uuid.UUID(str(u))
+            for u in [*fact_ids, *observation_ids, *(s for o in observations for s in o.source_memory_ids)]
+        }
+    )
+    if not unit_ids:
+        return
+    await conn.execute(
+        f"SELECT d.id FROM {fq_table('documents')} d WHERE d.bank_id = $1 AND d.id IN "
+        f"(SELECT mu.document_id FROM {fq_table('memory_units')} mu WHERE mu.bank_id = $1 AND mu.id = ANY($2::uuid[])) "
+        "ORDER BY d.id FOR SHARE",
+        bank_id,
+        unit_ids,
+    )
+    await conn.execute(
+        f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 AND id = ANY($2::uuid[]) "
+        "ORDER BY id FOR NO KEY UPDATE",
+        bank_id,
+        unit_ids,
+    )
+
+
 async def lock_observation_tags(
     *, conn, fq_table: Callable[[str], str], bank_id: str, observation_id: str
 ) -> list[str] | None:

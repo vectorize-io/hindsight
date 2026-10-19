@@ -150,6 +150,7 @@ async def _build_overlap_bank(conn, mu, ue, ml, bank_id: str, entities_table: st
     }
 
 
+@pytest.mark.memory_backend_incompatible
 @pytest.mark.asyncio
 async def test_observation_expansion_performs_one_fetch(memory, request_context):
     """A normal observation expansion performs one fetch, not two (#3857).
@@ -194,6 +195,7 @@ async def test_observation_expansion_performs_one_fetch(memory, request_context)
         await memory.delete_bank(bank_id=bank_id, request_context=request_context)
 
 
+@pytest.mark.memory_backend_incompatible
 @pytest.mark.asyncio
 async def test_fusion_preserves_ids_scores_counts_and_ordering(memory, request_context):
     """IDs, scores, counts, and ordering survive the fusion unchanged.
@@ -271,6 +273,7 @@ async def test_fusion_preserves_ids_scores_counts_and_ordering(memory, request_c
         await memory.delete_bank(bank_id=bank_id, request_context=request_context)
 
 
+@pytest.mark.memory_backend_incompatible
 @pytest.mark.asyncio
 async def test_time_window_binds_every_fused_arm(memory, request_context):
     """created_after/created_before narrow the fused arms alike ($3/$4 binds).
@@ -341,6 +344,7 @@ async def test_time_window_binds_every_fused_arm(memory, request_context):
         await memory.delete_bank(bank_id=bank_id, request_context=request_context)
 
 
+@pytest.mark.memory_backend_incompatible
 @pytest.mark.asyncio
 async def test_seed_without_sources_keeps_semantic_and_causal_arms(memory, request_context):
     """A seed with no source facts yields an empty entity arm, and that is all.

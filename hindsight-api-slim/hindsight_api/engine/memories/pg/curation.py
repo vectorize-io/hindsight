@@ -332,7 +332,7 @@ async def get_memory_unit(*, conn, ops, fq_table, bank_id: str, unit_id: str) ->
     select_cols = (
         "id, text, context, event_date, occurred_start, occurred_end, "
         "mentioned_at, fact_type, document_id, chunk_id, tags, metadata, source_memory_ids, "
-        "observation_scopes, edited_at"
+        "observation_scopes, edited_at, consolidated_at, consolidation_failed_at"
     )
     row = await conn.fetchrow(
         f"SELECT {select_cols}, NULL::text AS invalidation_reason, NULL::timestamptz AS invalidated_at "
@@ -383,6 +383,10 @@ async def get_memory_unit(*, conn, ops, fq_table, bank_id: str, unit_id: str) ->
         "invalidation_reason": row["invalidation_reason"],
         "invalidated_at": row["invalidated_at"].isoformat() if row["invalidated_at"] else None,
         "edited_at": row["edited_at"].isoformat() if row["edited_at"] else None,
+        "consolidated_at": row["consolidated_at"].isoformat() if row["consolidated_at"] else None,
+        "consolidation_failed_at": (
+            row["consolidation_failed_at"].isoformat() if row["consolidation_failed_at"] else None
+        ),
     }
 
     # For observations, include source_memory_ids

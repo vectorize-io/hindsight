@@ -82,6 +82,7 @@ async def test_round_limit_caps_processed_memories(memory: MemoryEngine, request
         request_context=request_context,
         observation_scopes=None,
         pending_refresh_tags=None,
+        caller_requested=False,
     )
 
     # This bank has no mental models, so nothing is refreshed on any round.

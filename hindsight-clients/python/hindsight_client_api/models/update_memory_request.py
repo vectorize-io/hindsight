@@ -30,12 +30,13 @@ class UpdateMemoryRequest(BaseModel):
     context: Optional[StrictStr] = None
     occurred_start: Optional[StrictStr] = None
     occurred_end: Optional[StrictStr] = None
+    mentioned_at: Optional[StrictStr] = None
     fact_type: Optional[StrictStr] = None
     entities: Optional[List[StrictStr]] = None
     resolve_entities: Optional[StrictBool] = Field(default=True, description="Whether the names in 'entities' are resolved against the entities already in the bank. True (default) is what retain does: a similar existing entity is reused when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead of the one you wrote. False takes the names literally — an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and names in the same request are never merged with each other. Use False for hand-authored corrections, where the name you sent is the answer rather than a guess. Ignored when 'entities' is omitted.")
     state: Optional[StrictStr] = None
     reason: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["text", "context", "occurred_start", "occurred_end", "fact_type", "entities", "resolve_entities", "state", "reason"]
+    __properties: ClassVar[List[str]] = ["text", "context", "occurred_start", "occurred_end", "mentioned_at", "fact_type", "entities", "resolve_entities", "state", "reason"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -96,6 +97,11 @@ class UpdateMemoryRequest(BaseModel):
         if self.occurred_end is None and "occurred_end" in self.model_fields_set:
             _dict['occurred_end'] = None
 
+        # set to None if mentioned_at (nullable) is None
+        # and model_fields_set contains the field
+        if self.mentioned_at is None and "mentioned_at" in self.model_fields_set:
+            _dict['mentioned_at'] = None
+
         # set to None if fact_type (nullable) is None
         # and model_fields_set contains the field
         if self.fact_type is None and "fact_type" in self.model_fields_set:
@@ -132,6 +138,7 @@ class UpdateMemoryRequest(BaseModel):
             "context": obj.get("context"),
             "occurred_start": obj.get("occurred_start"),
             "occurred_end": obj.get("occurred_end"),
+            "mentioned_at": obj.get("mentioned_at"),
             "fact_type": obj.get("fact_type"),
             "entities": obj.get("entities"),
             "resolve_entities": obj.get("resolve_entities") if obj.get("resolve_entities") is not None else True,

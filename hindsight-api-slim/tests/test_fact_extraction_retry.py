@@ -190,7 +190,7 @@ async def test_non_dict_json_all_retries_raises():
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
         return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
     ):
-        with pytest.raises(RuntimeError, match="non-dict JSON"):
+        with pytest.raises(RuntimeError, match="no top-level .facts. list"):
             await _extract_facts_from_chunk(
                 chunk="Alice visited Paris in 2023.",
                 chunk_index=0,
@@ -248,6 +248,71 @@ async def test_top_level_fact_list_is_accepted_without_retry():
     assert llm_config.call.call_count == 1
     assert len(facts) == 1
     assert "Alice visited Paris" in facts[0].fact
+
+
+@pytest.mark.asyncio
+async def test_missing_facts_key_retries_with_correction():
+    """A dict without a top-level ``facts`` list is a broken envelope, not an empty
+    extraction (#5582): the retry must tell the model what was wrong, and the
+    corrected reply's facts must be kept."""
+    from hindsight_api.engine.retain.fact_extraction import _ENVELOPE_CORRECTION, _extract_facts_from_chunk
+
+    fact = {"what": "Alice visited Paris", "when": "2023", "where": "Paris", "who": "Alice", "why": "N/A"}
+    fact |= {"fact_type": "world", "fact_kind": "conversation"}
+    wrapped = {"final": {"facts": [fact]}}
+    config = _make_config(llm_max_retries=3, retain_llm_max_retries=None)
+    llm_config = _make_llm_config(mock_response=None)
+    llm_config.call.side_effect = [
+        LLMCallResult(content=wrapped, usage=TokenUsage()),
+        LLMCallResult(content={"facts": [fact]}, usage=TokenUsage()),
+    ]
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
+    ):
+        facts, _usage = await _extract_facts_from_chunk(
+            chunk="Alice visited Paris in 2023.",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            context="",
+            llm_config=llm_config,
+            config=config,
+            agent_name="test-agent",
+        )
+
+    assert len(facts) == 1
+    assert llm_config.call.call_count == 2
+    retry_messages = llm_config.call.call_args_list[1].kwargs["messages"]
+    assert retry_messages[-1] == {"role": "user", "content": _ENVELOPE_CORRECTION}
+
+
+@pytest.mark.asyncio
+async def test_missing_facts_key_on_every_attempt_raises():
+    """A model that never returns the envelope fails loudly, never commits 0 facts."""
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=1, retain_llm_max_retries=None)
+    llm_config = _make_llm_config(mock_response={"final": {"facts": []}})
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
+    ):
+        with pytest.raises(RuntimeError, match="no top-level .facts. list"):
+            await _extract_facts_from_chunk(
+                chunk="Alice visited Paris in 2023.",
+                chunk_index=0,
+                total_chunks=1,
+                event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+                context="",
+                llm_config=llm_config,
+                config=config,
+                agent_name="test-agent",
+            )
+
+    assert llm_config.call.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -472,7 +537,7 @@ async def test_non_dict_json_with_default_max_retries_raises():
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
         return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
     ):
-        with pytest.raises(RuntimeError, match="non-dict JSON"):
+        with pytest.raises(RuntimeError, match="no top-level .facts. list"):
             await _extract_facts_from_chunk(
                 chunk="Some text.",
                 chunk_index=0,
@@ -503,7 +568,7 @@ async def test_retain_llm_max_retries_overrides_global():
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
         return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
     ):
-        with pytest.raises(RuntimeError, match="non-dict JSON"):
+        with pytest.raises(RuntimeError, match="no top-level .facts. list"):
             await _extract_facts_from_chunk(
                 chunk="Bob likes Python.",
                 chunk_index=0,
@@ -817,7 +882,7 @@ async def test_malformed_response_still_attempts_then_fails_loudly(retain_config
     config = retain_config(retain_budget)
     llm = _make_recording_llm(["not a dict"])
 
-    with pytest.raises(RuntimeError, match="non-dict JSON") as exc:
+    with pytest.raises(RuntimeError, match="no top-level .facts. list") as exc:
         await extract_facts_from_text(
             text="Alice visited Paris in 2023.",
             event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),

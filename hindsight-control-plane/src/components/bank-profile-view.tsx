@@ -938,7 +938,7 @@ function DirectiveDetailPanel({
   const [showEditModal, setShowEditModal] = useState(false);
 
   return (
-    <div className="fixed right-0 top-0 h-screen w-1/2 bg-card border-l-2 border-rose-500 shadow-2xl z-50 overflow-y-auto animate-in slide-in-from-right duration-300 ease-out">
+    <div className="fixed right-0 top-0 h-dvh w-full md:w-1/2 bg-card border-l-2 border-rose-500 shadow-2xl z-50 overflow-y-auto animate-in slide-in-from-right duration-300 ease-out">
       <div className="p-6">
         {/* Header */}
         <div className="flex justify-between items-start mb-8 pb-5 border-b border-border">

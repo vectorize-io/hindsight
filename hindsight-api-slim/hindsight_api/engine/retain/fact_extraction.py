@@ -17,7 +17,12 @@ from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
-from ..llm_interface import PromptCachePrefix, ProviderContentPolicyError, ProviderRateLimitResetError
+from ..llm_interface import (
+    PromptCachePrefix,
+    ProviderAuthError,
+    ProviderContentPolicyError,
+    ProviderRateLimitResetError,
+)
 from ..llm_wrapper import (
     AnyLLMProvider,
     OutputTooLongError,
@@ -26,6 +31,7 @@ from ..llm_wrapper import (
     sanitize_value,
 )
 from ..operation_metadata import RetainExtractionErrors
+from ..remote_retry import status_code_of
 from ..response_models import TokenUsage
 from ..structured_output import provider_json_schema, strict_json_schema
 from . import attachment_content
@@ -2002,10 +2008,22 @@ def _shape_repair_message(observed_keys: Collection[str], expected_keys: Sequenc
     )
 
 
+_ENVELOPE_CORRECTION = (
+    'Your reply was not a JSON object with a top-level "facts" array. Reply again with exactly '
+    '{"facts": [...]} following the schema, with no wrapper object around it. '
+    'If the text holds no facts, reply {"facts": []}.'
+)
+
+
 def _coerce_fact_response(response: Any) -> dict[str, Any] | None:
-    """Accept the schema wrapper, or a recoverable top-level facts array."""
+    """Accept the schema wrapper, or a recoverable top-level facts array.
+
+    A dict without a top-level ``facts`` list is a broken envelope, not an empty
+    extraction: reading it as ``[]`` would commit the document with 0 facts and
+    report success (#5582). Only an explicit ``{"facts": []}`` means "nothing here".
+    """
     if isinstance(response, dict):
-        return response
+        return response if isinstance(response.get("facts"), list) else None
     if isinstance(response, list) and all(isinstance(item, dict) for item in response):
         return {"facts": response}
     return None
@@ -2154,17 +2172,21 @@ async def _extract_facts_from_chunk(
             if coerced_response_json is None:
                 if attempt < outer_attempts - 1:
                     logger.warning(
-                        f"LLM returned non-dict JSON on attempt {attempt + 1}/{outer_attempts}: {type(extraction_response_json).__name__}. Retrying..."
+                        f"LLM reply had no top-level 'facts' list on attempt {attempt + 1}/{outer_attempts}: "
+                        f"{str(extraction_response_json)[:200]}. Retrying..."
                     )
+                    # Without this the retry resends the identical prompt to a model
+                    # that just ignored the envelope, and it tends to do so again.
+                    repair_hint = _ENVELOPE_CORRECTION
                     continue
                 else:
-                    # A non-dict response is malformed (the schema is {"facts": [...]}).
-                    # Raise instead of returning [] so the failure propagates to the
-                    # worker's retry machinery and ultimately fails loudly — never
-                    # silently commit the document with 0 facts. See issue #1833.
+                    # The schema is {"facts": [...]}. Raise instead of returning [] so
+                    # the failure propagates to the worker's retry machinery and fails
+                    # loudly — never silently commit the document with 0 facts (#1833).
                     raise RuntimeError(
-                        f"Fact extraction failed: LLM returned non-dict JSON after {outer_attempts} attempts "
-                        f"({type(extraction_response_json).__name__}). Raw: {str(extraction_response_json)[:500]}"
+                        f"Fact extraction failed: LLM reply had no top-level 'facts' list after {outer_attempts} "
+                        f"attempts ({type(extraction_response_json).__name__}). "
+                        f"Raw: {str(extraction_response_json)[:500]}"
                     )
             extraction_response_json = coerced_response_json
 
@@ -2172,7 +2194,7 @@ async def _extract_facts_from_chunk(
 
             if not raw_facts:
                 logger.debug(
-                    f"LLM response missing 'facts' field or returned empty list. "
+                    f"LLM returned an empty facts list. "
                     f"Response: {extraction_response_json}. "
                     f"Input: "
                     f"date: {event_date.isoformat() if event_date else 'unset'}, "
@@ -2777,6 +2799,17 @@ async def extract_facts_from_text(
                 f"succeed. First failures: {failed_summary}"
             ) from policy_errors[0]
 
+        # A credential rejection (HTTP 401/403) is just as deterministic: every
+        # replay sends the same key (issue #5644). One is enough — the retain
+        # cannot succeed while the key is rejected.
+        auth_errors = [err for _, err in failed_chunks if status_code_of(err) in (401, 403)]
+        if auth_errors:
+            raise ProviderAuthError(
+                f"Fact extraction rejected by provider authentication: {len(auth_errors)} of "
+                f"{len(failed_chunks)} failed chunks ({len(chunks)} total) got HTTP 401/403; retrying with "
+                f"the same credentials cannot succeed. First failures: {failed_summary}"
+            ) from auth_errors[0]
+
         # Fail the entire retain — partial extraction is not acceptable.
         # All successfully extracted facts are discarded because the transaction
         # hasn't committed yet. The worker poller will retry the entire task.
@@ -3139,7 +3172,7 @@ async def extract_facts_from_contents_batch_api(
         response_type_name = type(extraction_response_json).__name__
         extraction_response_json = _coerce_fact_response(extraction_response_json)
         if extraction_response_json is None:
-            message = f"{custom_id}: LLM returned non-dict JSON ({response_type_name})"
+            message = f"{custom_id}: LLM reply had no top-level 'facts' list ({response_type_name})"
             logger.error(message)
             extraction_errors.add(message)
             chunks_metadata.append(

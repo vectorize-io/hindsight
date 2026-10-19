@@ -3906,3 +3906,34 @@ class TestFactExtractionQuality:
             )
         finally:
             await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_multi_document_retain_bounds_group_fan_out_on_sql_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A multi-document retain on the SQL path (no store-owned session) must not run every
+    document at once. Each in-flight document holds a pool connection while acquiring another,
+    so a fan-out wider than the pool deadlocks it (#5442). The groups run through the recursive
+    ``retain_batch`` call, so wrapping it counts how many are in flight at the same time.
+    """
+    from hindsight_api.engine.response_models import TokenUsage
+    from hindsight_api.engine.retain import orchestrator
+    from hindsight_api.engine.retain.types import RetainBatchResult
+
+    real_retain_batch = orchestrator.retain_batch
+    in_flight = 0
+    peak = 0
+
+    async def counting_group(*args: object, contents_dicts: list, **kwargs: object) -> RetainBatchResult:
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+        return RetainBatchResult([[] for _ in contents_dicts], TokenUsage(), 0)
+
+    monkeypatch.setattr(orchestrator, "retain_batch", counting_group)
+
+    docs = [{"content": f"item {i}", "document_id": f"doc-{i}"} for i in range(40)]
+    await real_retain_batch(None, None, None, None, None, "bank", docs, None)
+
+    assert 1 < peak <= 8

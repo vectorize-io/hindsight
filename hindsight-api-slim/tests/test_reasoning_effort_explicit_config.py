@@ -61,6 +61,8 @@ async def _capture_call_params(llm: OpenAICompatibleLLM) -> dict:
     response.usage.completion_tokens = 5
     response.usage.total_tokens = 15
     response.usage.completion_tokens_details = None
+    response.error = None
+    response.model_dump.return_value = {}
     response.choices[0].finish_reason = "stop"
     response.choices[0].message.content = "ok"
     response.choices[0].message.tool_calls = None
@@ -82,6 +84,8 @@ async def _capture_tool_call_params(llm: OpenAICompatibleLLM) -> dict:
     response.usage.completion_tokens = 40
     response.usage.total_tokens = 160
     response.usage.completion_tokens_details = None
+    response.error = None
+    response.model_dump.return_value = {}
     response.choices[0].finish_reason = "tool_calls"
     response.choices[0].message.content = None
     response.choices[0].message.tool_calls = [tool_call]
@@ -153,6 +157,8 @@ class TestConfiguredEffortReachesTheEndpoint:
         response.usage.completion_tokens = 5
         response.usage.total_tokens = 15
         response.usage.completion_tokens_details = None
+        response.error = None
+        response.model_dump.return_value = {}
         response.choices[0].finish_reason = "stop"
         response.choices[0].message.content = "ok"
         response.choices[0].message.tool_calls = None
@@ -196,6 +202,8 @@ class TestConfiguredEffortReachesTheEndpoint:
         response.usage.completion_tokens = 5
         response.usage.total_tokens = 15
         response.usage.completion_tokens_details = None
+        response.error = None
+        response.model_dump.return_value = {}
         response.choices[0].finish_reason = "stop"
         response.choices[0].message.content = "ok"
         response.choices[0].message.tool_calls = None

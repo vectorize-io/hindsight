@@ -729,6 +729,12 @@ def _create_embedding_vector_index(
     row_count: int,
 ) -> None:
     """Build the vector index on ``table_name.embedding`` for the detected extension."""
+    if table_name == "memory_units" and uses_per_bank_vector_indexes(vector_ext):
+        # Per-bank backends serve every memory_units vector search from the
+        # idx_mu_emb_* partial indexes (owned by the maintenance sweep). A global
+        # index here is never used and doubles the vector write cost (#5707).
+        logger.debug(f"Per-bank vector backend ({vector_ext}); no global vector index on memory_units")
+        return
     if vector_ext == "pgvector" and dimension > 2000:
         raise RuntimeError(
             f"Embedding dimension {dimension} exceeds pgvector HNSW index limit of 2000. "
@@ -932,16 +938,20 @@ def ensure_vector_extension(
                 # INDEX takes an ACCESS EXCLUSIVE lock on memory_units at
                 # unpredictable times (startup, tenant provisioning); index DDL
                 # belongs in the versioned migration path. Leftover globals are
-                # removed by migration f2a6d8c4b1e9. This continue also keeps
+                # removed by migrations f2a6d8c4b1e9 and e8c1a4f7b2d9. This continue also keeps
                 # memory_units out of the type-mismatch reconcile below, which
                 # would otherwise recreate a global index with the new type on a
                 # backend switch.
                 if current_index_rows:
-                    stale_names = ", ".join(row[1] for row in current_index_rows)
-                    logger.info(
-                        f"Global vector index ({stale_names}) present on {schema_name}.memory_units "
-                        f"with per-bank backend ({target_ext}); left untouched — removed by "
-                        f"migration f2a6d8c4b1e9"
+                    # Migrations are at head here, and they drop every global
+                    # index on per-bank backends — so one that survived needs an
+                    # operator, not a promise that a migration will handle it.
+                    drops = "; ".join(
+                        f'DROP INDEX CONCURRENTLY "{schema_name}"."{row[1]}"' for row in current_index_rows
+                    )
+                    logger.warning(
+                        f"Unused global vector index on {schema_name}.memory_units with per-bank backend "
+                        f"({target_ext}); it slows every write. Drop it with: {drops}"
                     )
                 else:
                     logger.debug(

@@ -57,7 +57,10 @@ from hindsight_api.engine.vector_index_health import (
 # doing that to one table outlasts any retry budget (the same storm as
 # f9cef24cb). Advisory locks are banned, so the isolation has to come from the
 # scheduler.
-pytestmark = pytest.mark.xdist_group("vector_index_reconcile")
+# memory_backend_incompatible: every test here asserts which pgvector indexes exist on
+# memory_units. A store that keeps memories outside SQL builds none, so the plans come back
+# empty by construction rather than by a bug.
+pytestmark = [pytest.mark.xdist_group("vector_index_reconcile"), pytest.mark.memory_backend_incompatible]
 
 _TEST_SCHEMA = "public"
 

@@ -183,6 +183,22 @@ uv run run-amb --api-url http://localhost:8888 --dataset sdebench --split bolton
 # then export bank sde-coding-<task> with export_bank into fixtures/coding-agent-banks/
 ```
 
+**`test_11` — a page takes the update.** `test_01` grades a page being built; this
+grades a page already written, then a wave that changes what it says. Six cases, one per
+way an update reaches a page: a memory only the page links to the topic ("Dana left the
+company", on a page naming Dana as on-call), an update naming a service by a new name the
+same wave introduces, a correction of an earlier figure, a list gaining one member and
+losing another, a new item the topic covers, and a wave with nothing for the page at all.
+The wave-1 page must state the old value first; the trap is the page still asserting it.
+Every wave also carries the hard corpus, so most of what arrives is unrelated.
+
+Behind it: with a decision model set up, a delta refresh asks it which new memories to
+read and keeps only the ones it judges could change the page, one memory at a time. A
+memory it drops is never read again, and on one cost run a decision model dropped all 20
+on-topic memories without a sign anywhere but the page. Run it with the gate on and off
+(`HINDSIGHT_EVAL_SET_MENTAL_MODEL_DELTA_USE_DECISION_MODEL=false`, same decision model);
+the gate is only worth its savings if this stays level.
+
 **`test_08` — ranked retrieval on BEIR.** The only suite graded against labels
 nobody here wrote, and the only one that makes **no model call**. It records a
 *baseline*: what this pipeline scores on a public IR benchmark, and on what.

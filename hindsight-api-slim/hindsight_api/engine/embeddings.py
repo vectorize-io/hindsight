@@ -27,6 +27,7 @@ import aiohttp
 import orjson
 from pydantic import BaseModel
 
+from .._thread_limits import bound_onnx_session
 from ..config import (
     DEFAULT_EMBEDDINGS_COHERE_MODEL,
     DEFAULT_EMBEDDINGS_GEMINI_MODEL,
@@ -631,10 +632,9 @@ class OnnxEmbeddings(Embeddings):
         # never returned to the OS, so RSS ratchets up to the largest batch ever run and
         # holds that plateau for the life of the process. The reranker disables it for
         # the same reason (see FlashRankCrossEncoder).
-        session_options = None
-        if not self.cpu_mem_arena:
-            session_options = ort.SessionOptions()
-            session_options.enable_cpu_mem_arena = False
+        session_options = ort.SessionOptions()
+        session_options.enable_cpu_mem_arena = self.cpu_mem_arena
+        bound_onnx_session(session_options)
         try:
             session = ort.InferenceSession(model_path, sess_options=session_options, providers=providers)
         except Exception as exc:
@@ -737,10 +737,10 @@ class OnnxEmbeddings(Embeddings):
             ort_inputs["token_type_ids"] = np.zeros_like(encoded["input_ids"])
 
         outputs = self._session.run([self.output_name] if self.output_name else None, ort_inputs)
-        token_embeddings = outputs[0]
+        token_embeddings = np.asarray(outputs[0])
 
         # Some exported models expose a pooled 2-D embedding as their first output.
-        if getattr(token_embeddings, "ndim", 0) == 2:
+        if token_embeddings.ndim == 2:
             embeddings = token_embeddings
         elif self.pooling == "cls":
             embeddings = token_embeddings[:, 0]

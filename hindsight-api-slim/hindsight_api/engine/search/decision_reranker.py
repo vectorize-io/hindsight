@@ -37,6 +37,8 @@ rerank_shared_context: contextvars.ContextVar[str | None] = contextvars.ContextV
 # that ceiling, so a low one still leaves half of each request for the questions.
 _MAX_QUERY_TOKENS = 2_000
 _MAX_SHARED_CONTEXT_TOKENS = 4_000
+# The same for each candidate's text, which one question carries alone.
+_MAX_MEMORY_TOKENS = 4_000
 
 # The question asked of each candidate. Four wordings were tried on the same pool; this
 # one is the best calibrated, lifting the wanted candidate to 0.74 against 0.59 for
@@ -84,10 +86,14 @@ class DecisionModelReranker(CrossEncoderModel):
         return f"{shared}\n\nQuestion: {query}" if shared else f"Question: {query}"
 
     async def _rerank(self, query: str, docs: list[str], indices: list[int], scores: list[float]) -> None:
-        """Scores ``indices`` by position, best first. A candidate whose request failed has
-        no answer and falls behind every answered one, keeping its input order there."""
+        """Scores ``indices`` by position, best first."""
+        # Each memory capped like the query, so no single question can outgrow the window:
+        # a failed request now raises instead of ranking its candidates last.
         questions = {
-            f"m{slot}": DecisionQuestion(type="noul", instructions={"task": _KEEP_INSTRUCTIONS, "memory": docs[index]})
+            f"m{slot}": DecisionQuestion(
+                type="noul",
+                instructions={"task": _KEEP_INSTRUCTIONS, "memory": self._capped(docs[index], _MAX_MEMORY_TOKENS)},
+            )
             for slot, index in enumerate(indices)
         }
         answers = await self._client.ask_all(self._state(query), questions)

@@ -1326,7 +1326,7 @@ class OperationsApi:
     ) -> RetryOperationResponse:
         """Retry a failed async operation
 
-        Re-queue a failed async operation so the worker picks it up again
+        Re-queue a failed or cancelled async operation so the worker picks it up again. On a deferred operation (pending with a future next_retry_at), runs it now.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1402,7 +1402,7 @@ class OperationsApi:
     ) -> ApiResponse[RetryOperationResponse]:
         """Retry a failed async operation
 
-        Re-queue a failed async operation so the worker picks it up again
+        Re-queue a failed or cancelled async operation so the worker picks it up again. On a deferred operation (pending with a future next_retry_at), runs it now.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1478,7 +1478,7 @@ class OperationsApi:
     ) -> RESTResponseType:
         """Retry a failed async operation
 
-        Re-queue a failed async operation so the worker picks it up again
+        Re-queue a failed or cancelled async operation so the worker picks it up again. On a deferred operation (pending with a future next_retry_at), runs it now.
 
         :param bank_id: (required)
         :type bank_id: str

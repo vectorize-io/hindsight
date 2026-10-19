@@ -30,6 +30,7 @@ from unittest.mock import patch
 import pytest
 
 from hindsight_api.engine.chunk_ids import build_chunk_id
+from hindsight_api.engine.db import DatabaseBackend
 from hindsight_api.extensions import OperationValidationError
 from hindsight_api.engine.memories import create_memories, get_memories, set_memories
 from hindsight_api.engine.memories.base import (
@@ -855,8 +856,8 @@ class InMemoryMemories(MemoriesExtension):
 
     # -- transfer (#4969): the archive and document provenance an export/import carries ----------
 
-    async def dump_archived_memories(self, *, conn, fq_table, bank_id):
-        return [
+    async def iter_archived_memories(self, *, backend, fq_table, bank_id, page_size):
+        yield [
             {
                 "text": row.text,
                 "fact_type": row.fact_type,
@@ -1887,6 +1888,62 @@ async def test_ensuring_a_bank_ensures_its_storage(memory, request_context, rest
 
     assert "ensure_bank_storage" in store.calls
     assert "lifecycle-bank" in store.ensured
+
+
+class _ProbesTheRow(InMemoryMemories):
+    """Records, on each ensure, whether the bank row was already visible to other requests."""
+
+    def __init__(self, backend: DatabaseBackend):
+        super().__init__({})
+        self._backend = backend
+        self.row_was_there: list[bool] = []
+
+    async def ensure_bank_storage(self, bank_id: str) -> None:
+        from hindsight_api.engine.retain import bank_utils
+
+        self.row_was_there.append(await bank_utils.bank_exists(self._backend, bank_id))
+        await super().ensure_bank_storage(bank_id)
+
+
+async def test_storage_is_ensured_before_the_bank_row_is_visible(memory, request_context, restore_default_store):
+    """The row is what makes a bank readable to every other request, so the storage goes first.
+
+    A store that owns its storage faults a read against a bank whose storage is not there yet —
+    correctly, since it cannot tell that from storage that has gone missing. With the row written
+    first, every request arriving in the gap gets that fault on a bank that was only just asked
+    for, and the gap is not nominal: the create is a round trip to an external service. A client
+    that creates a bank and immediately reads it is the normal case, not a race to be tolerated.
+    """
+    store = _ProbesTheRow(await memory._get_backend())
+    set_memories(store)
+
+    await memory._ensure_bank_exists("storage-first-bank", request_context)
+
+    assert store.row_was_there == [False], "the bank row must not be visible before its storage exists"
+
+
+async def test_importing_a_bank_ensures_its_storage_before_the_row(memory, request_context, restore_default_store):
+    """Import writes the bank row itself, bypassing the create path, so it needs the same order."""
+    from hindsight_api.engine.db_utils import acquire_with_retry
+    from hindsight_api.engine.transfer import export_bank
+
+    bank_id = f"storage-first-import-{uuid.uuid4().hex[:8]}"
+    backend = await memory._get_backend()
+    # Exported and deleted under the default store, so only the restore runs against the probe.
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+    async with acquire_with_retry(backend) as conn:
+        archive = await export_bank(conn, bank_id)
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+    store = _ProbesTheRow(backend)
+    set_memories(store)
+    try:
+        await memory.import_bank_async(archive, request_context)
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    # Later ensures of the now-existing bank see the row; only the first one, the import's, must not.
+    assert store.row_was_there[:1] == [False], "the restored bank row must not be visible before its storage"
 
 
 async def test_ensuring_an_existing_bank_still_ensures_its_storage(memory, request_context, restore_default_store):

@@ -45,6 +45,7 @@ from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usag
 from hindsight_api.engine.llm_transport import build_aiohttp_timeout
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences
+from hindsight_api.engine.providers.openai_responses_llm import _messages_to_responses_input
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
@@ -1065,33 +1066,13 @@ class CodexLLM(LLMInterface):
         # the client carrying a token that's already past ``exp``.
         await self._ensure_fresh_token()
 
-        # Prepare system instructions
-        system_instruction = ""
-        user_messages = []
-
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-
-            if role == "system":
-                system_instruction += ("\n\n" + content) if system_instruction else content
-            elif role == "tool":
-                # Handle tool results
-                user_messages.append(
-                    {
-                        "type": "message",
-                        "role": "user",
-                        "content": f"Tool result: {content}",
-                    }
-                )
-            else:
-                user_messages.append(
-                    {
-                        "type": "message",
-                        "role": role,
-                        "content": content,
-                    }
-                )
+        # System messages become the instructions; the rest replays through the shared
+        # Responses converter, so earlier tool calls go back as function_call /
+        # function_call_output items linked by call_id. This used to flatten them into an
+        # empty assistant message plus a "Tool result: ..." user message, which lost the
+        # link and made reflect re-run searches it had already done (#5701).
+        system_instruction = "\n\n".join(m.get("content", "") for m in messages if m.get("role") == "system")
+        user_messages = _messages_to_responses_input([m for m in messages if m.get("role") != "system"])
 
         # Convert tools to Codex format
         # Codex expects tools with type and name/description/parameters at top level

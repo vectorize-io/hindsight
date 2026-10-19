@@ -31,7 +31,14 @@ from hindsight_api.engine.llm_interface import (
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
-from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences, visible_token_usage
+from hindsight_api.engine.providers.openai_compatible_llm import (
+    ProviderResponseError,
+    _raise_if_generation_failed,
+    _served_by,
+    _strip_code_fences,
+    record_retried_attempt,
+    visible_token_usage,
+)
 from hindsight_api.engine.remote_retry import is_transient_remote_error, jittered_backoff
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
@@ -125,6 +132,13 @@ _KEYED_LITELLM_BACKENDS = frozenset(
         "hosted_vllm",
     }
 )
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """A transient transport error, or a 200 whose body says the generation failed (#5612)."""
+    if isinstance(exc, ProviderResponseError):
+        return exc.retryable
+    return is_transient_remote_error(exc)
 
 
 class LiteLLMLLM(LLMInterface):
@@ -389,9 +403,11 @@ class LiteLLMLLM(LLMInterface):
                 # these tokens (#2387).
                 stash_response_usage(_usage_from_litellm_response(response))
 
-                message = response.choices[0].message
+                choice = response.choices[0]
+                _raise_if_generation_failed(response, choice, provider=self.provider, model=self.model, scope=scope)
+                message = choice.message
                 content = message.content or ""
-                finish_reason = response.choices[0].finish_reason
+                finish_reason = choice.finish_reason
                 model_name = self._resolve_completion_model(response)
 
                 if use_forced_tool:
@@ -468,6 +484,7 @@ class LiteLLMLLM(LLMInterface):
                     error=None,
                     cached_tokens=response_usage.cached_tokens,
                     thoughts_tokens=thoughts_tokens,
+                    served_by=_served_by(response),
                 )
 
                 if duration > 10.0:
@@ -535,7 +552,16 @@ class LiteLLMLLM(LLMInterface):
                 # but the message often omits the status -- Bedrock's transient 503
                 # failed on its first attempt -- and a 400 mentioning a "limit" was
                 # retried (#5009).
-                if attempt < max_retries and is_transient_remote_error(e):
+                if attempt < max_retries and _is_retryable(e):
+                    if isinstance(e, ProviderResponseError):
+                        record_retried_attempt(
+                            provider=self.provider,
+                            model=self.model,
+                            scope=scope,
+                            messages=messages,
+                            error=e,
+                            started=start_time,
+                        )
                     await asyncio.sleep(jittered_backoff(attempt, initial_backoff, max_backoff))
                     continue
 
@@ -590,9 +616,11 @@ class LiteLLMLLM(LLMInterface):
                 # the #2396 usage-on-error coverage.
                 stash_response_usage(_usage_from_litellm_response(response))
 
-                message = response.choices[0].message
+                choice = response.choices[0]
+                _raise_if_generation_failed(response, choice, provider=self.provider, model=self.model, scope=scope)
+                message = choice.message
                 content = message.content
-                finish_reason = response.choices[0].finish_reason
+                finish_reason = choice.finish_reason
                 model_name = self._resolve_completion_model(response)
 
                 # Extract tool calls
@@ -654,6 +682,7 @@ class LiteLLMLLM(LLMInterface):
                     tool_calls=tool_calls_dict,
                     cached_tokens=response_usage.cached_tokens,
                     thoughts_tokens=thoughts_tokens,
+                    served_by=_served_by(response),
                 )
 
                 return LLMToolCallResult(
@@ -689,7 +718,16 @@ class LiteLLMLLM(LLMInterface):
 
                 last_exception = e
                 # Status-based, same as call() (#5009).
-                if attempt < max_retries and is_transient_remote_error(e):
+                if attempt < max_retries and _is_retryable(e):
+                    if isinstance(e, ProviderResponseError):
+                        record_retried_attempt(
+                            provider=self.provider,
+                            model=self.model,
+                            scope=scope,
+                            messages=messages,
+                            error=e,
+                            started=start_time,
+                        )
                     await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
                     continue
 

@@ -135,6 +135,7 @@ async def _build_bank_vector_indexes(pool, bank_id: str) -> list[str]:
     return names
 
 
+@pytest.mark.memory_backend_incompatible
 @pytest.mark.asyncio
 async def test_retain_still_ends_up_with_per_bank_indexes(memory, request_context):
     """At the shipped default a retained bank has the coverage it always had.

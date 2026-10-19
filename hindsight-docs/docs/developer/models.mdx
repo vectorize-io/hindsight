@@ -223,6 +223,8 @@ export HINDSIGHT_API_LLM_MODEL=your-local-model
 export HINDSIGHT_API_LLM_PROVIDER=minimax
 export HINDSIGHT_API_LLM_API_KEY=your-minimax-api-key
 export HINDSIGHT_API_LLM_MODEL=MiniMax-M3  # or MiniMax-M2.7 for the previous generation
+# MiniMax-M3.1-* always thinks (Hindsight sends thinking=adaptive) and defaults to max effort;
+# lower it with: export HINDSIGHT_API_LLM_REASONING_EFFORT=low
 
 # DeepSeek (https://api.deepseek.com)
 export HINDSIGHT_API_LLM_PROVIDER=deepseek
@@ -1147,6 +1149,7 @@ Reranks initial search results to improve precision.
 | `google` | Google Discovery Engine ranking API (REST + Google auth) | Production, GCP integration |
 | `tei` | HuggingFace Text Embeddings Inference | Production, self-hosted |
 | `flashrank` | FlashRank (lightweight, fast) | Resource-constrained environments |
+| `onnx` | Any cross-encoder exported to ONNX, in-process via ONNX Runtime | Custom models without PyTorch or a TEI server |
 | `litellm` | LiteLLM proxy (unified gateway) | Multi-provider setups |
 | `litellm-sdk` | LiteLLM SDK (direct API, no proxy) | Multi-provider, simpler setup |
 | `jina-mlx` | Jina rerank v3 via Apple Silicon MLX (local, no API key) | Apple Silicon (M1+) local inference |

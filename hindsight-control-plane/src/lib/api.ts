@@ -280,6 +280,8 @@ export interface MentalModel {
   created_at: string;
   reflect_response?: any;
   is_stale?: boolean | null;
+  /** True when this model holds a knowledge page's content (not a standalone model). */
+  is_knowledge_page?: boolean | null;
   /** When the last refresh failed. Set = automatic refreshes are paused for this model. */
   last_refresh_failed_at?: string | null;
   /** When a refresh last ran in full mode. `trigger.full_refresh_cron` comes due against this. */
@@ -410,6 +412,45 @@ export interface BankAliasesResponse {
   /** The bank's own id, which an alias never replaces. */
   bank_id: string;
   aliases: BankAliasEntry[];
+}
+
+export type DocumentEventKind =
+  | "retain"
+  | "append"
+  | "reprocess"
+  | "retag"
+  | "fact_edited"
+  | "fact_invalidated"
+  | "fact_restored"
+  | "fact_deleted"
+  | "observations_cleared"
+  | "consolidation";
+
+/** How many observations an event touched, and (up to 100) which. */
+export interface ObservationIdSample {
+  count: number;
+  ids: string[];
+}
+
+export interface DocumentEvent {
+  document_id: string;
+  kind: DocumentEventKind;
+  created_at: string;
+  operation_id: string | null;
+  fact_id: string | null;
+  facts_added: number;
+  facts_removed: number;
+  observations_created: ObservationIdSample;
+  observations_updated: ObservationIdSample;
+  observations_removed: ObservationIdSample;
+}
+
+interface DocumentHistoryResponse {
+  document_id: string;
+  total: number;
+  limit: number;
+  offset: number;
+  items: DocumentEvent[];
 }
 
 export class ControlPlaneClient {
@@ -1129,6 +1170,16 @@ export class ControlPlaneClient {
   }
 
   /**
+   * A document's change history, newest first: what each retain, fact edit and
+   * consolidation did to its facts and observations.
+   */
+  async getDocumentHistory(documentId: string, bankId: string, offset = 0, limit = 100) {
+    return this.fetchApi<DocumentHistoryResponse>(
+      `${documentApi(documentId, bankId, "/history")}&limit=${limit}&offset=${offset}`
+    );
+  }
+
+  /**
    * Reprocess a document (re-run retain with existing content)
    */
   async reprocessDocument(documentId: string, bankId: string) {
@@ -1287,6 +1338,7 @@ export class ControlPlaneClient {
       context?: string;
       occurredStart?: string;
       occurredEnd?: string;
+      mentionedAt?: string;
       factType?: "world" | "experience";
       entities?: string[];
       resolveEntities?: boolean;
@@ -1299,6 +1351,7 @@ export class ControlPlaneClient {
     if (update.context !== undefined) body.context = update.context;
     if (update.occurredStart !== undefined) body.occurred_start = update.occurredStart;
     if (update.occurredEnd !== undefined) body.occurred_end = update.occurredEnd;
+    if (update.mentionedAt !== undefined) body.mentioned_at = update.mentionedAt;
     if (update.factType !== undefined) body.fact_type = update.factType;
     if (update.entities !== undefined) body.entities = update.entities;
     if (update.resolveEntities !== undefined) body.resolve_entities = update.resolveEntities;
@@ -1749,6 +1802,8 @@ export class ControlPlaneClient {
       detail?: "metadata" | "content" | "full";
       limit?: number;
       offset?: number;
+      /** Leave out the models that back knowledge pages (standalone models only). */
+      excludeKnowledgePages?: boolean;
     } = {}
   ) {
     const params = new URLSearchParams();
@@ -1766,6 +1821,9 @@ export class ControlPlaneClient {
     }
     if (options.offset !== undefined) {
       params.append("offset", String(options.offset));
+    }
+    if (options.excludeKnowledgePages) {
+      params.append("exclude_knowledge_pages", "true");
     }
     const query = params.toString();
     // Shape of detail="full"; the endpoint DEFAULTS to "metadata", which omits
@@ -1804,6 +1862,8 @@ export class ControlPlaneClient {
         last_memory_seen_at: string | null;
         /** Whether a memory in this model's own scope has been written since it last read them. */
         is_stale: boolean | null;
+        /** True when this model holds a knowledge page's content (not a standalone model). */
+        is_knowledge_page?: boolean | null;
         /** When the last refresh failed. Set = automatic refreshes are paused for this model. */
         last_refresh_failed_at?: string | null;
         created_at: string;
@@ -1827,7 +1887,12 @@ export class ControlPlaneClient {
    */
   async listAllMentalModels(
     bankId: string,
-    options: { tags?: string[]; tagsMatch?: string; detail?: "metadata" | "content" | "full" } = {}
+    options: {
+      tags?: string[];
+      tagsMatch?: string;
+      detail?: "metadata" | "content" | "full";
+      excludeKnowledgePages?: boolean;
+    } = {}
   ) {
     const PAGE_SIZE = 1000;
     const items: Awaited<ReturnType<typeof this.listMentalModels>>["items"] = [];

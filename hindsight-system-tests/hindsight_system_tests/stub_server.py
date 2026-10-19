@@ -81,7 +81,10 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
 
         if reply.error_status is not None:
             return _provider_error(
-                f"stub provider error {reply.error_status}", code="stub_error", status=reply.error_status
+                f"stub provider error {reply.error_status}",
+                code="stub_error",
+                status=reply.error_status,
+                retry_after_seconds=reply.retry_after_seconds,
             )
 
         return JSONResponse(
@@ -167,6 +170,9 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
     async def embeddings(request: Request) -> JSONResponse:
         body = await request.json()
         validate_embeddings(body)
+        if stubs.embeddings.fail_with_status is not None:
+            status = stubs.embeddings.fail_with_status
+            return _provider_error(f"stub provider error {status}", code="stub_error", status=status)
 
         raw_input = body["input"]
         inputs = [raw_input] if isinstance(raw_input, str) else raw_input
@@ -209,7 +215,8 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
 
         A ``choice`` whose options are the candidates is the ranking: every option
         gets a probability, and they sum to 1, so the stub scores each option's text
-        lexically and normalises. A ``noul`` asks about one memory, and is answered
+        lexically and normalises, except the ``impact`` choice, a delta refresh's gate,
+        which is the rulebook's verdict on the memory as yes or no. A ``noul`` asks about one memory, and is answered
         with the rulebook's verdict for it, else its lexical relevance to the state. A
         ``score`` is the cut: its answer is a level, and the rulebook decides which
         one.
@@ -243,6 +250,18 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
                 memory = question["instructions"]["memory"]
                 stubs.rerank.states.append(body["state"])
                 answers[question_id] = {"type": "noul", "noul": stubs.rerank.verdict(body["state"], memory)}
+            elif question_id == "impact":
+                # A delta refresh's gate: could this new memory change the page? The memory
+                # is a line of the state, and the rulebook's verdict for it decides.
+                memory = body["state"].split("New memory: ", 1)[1].split("\n", 1)[0]
+                stubs.rerank.states.append(body["state"])
+                keep = stubs.rerank.verdict(body["state"], memory) >= 0.5
+                answers[question_id] = {
+                    "type": "choice",
+                    "choice": "yes" if keep else "no",
+                    "probabilities": {"yes": 0.9, "no": 0.1} if keep else {"yes": 0.1, "no": 0.9},
+                    "confidence": 0.9,
+                }
             elif question["type"] == "choice":
                 criteria = question["criteria"]
                 scores = {
@@ -298,11 +317,14 @@ def _usage(
     return usage
 
 
-def _provider_error(message: str, *, code: str, status: int = 400) -> JSONResponse:
+def _provider_error(
+    message: str, *, code: str, status: int = 400, retry_after_seconds: int | None = None
+) -> JSONResponse:
     """The error envelope OpenAI-compatible clients expect, so the SDK parses it."""
     return JSONResponse(
         status_code=status,
         content={"error": {"message": message, "type": "invalid_request_error", "code": code, "param": None}},
+        headers={"retry-after": str(retry_after_seconds)} if retry_after_seconds is not None else None,
     )
 
 

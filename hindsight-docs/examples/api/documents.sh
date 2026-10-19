@@ -39,6 +39,11 @@ hindsight memory retain "$BANK_ID" "Project deadline: April 15 (extended)" --doc
 hindsight document get "$BANK_ID" notes-2024-03-15
 # [/docs:document-get]
 
+# [docs:document-history]
+# What each retain, fact edit and consolidation did to this document, newest first
+hindsight document history "$BANK_ID" notes-2024-03-15 --limit 50
+# [/docs:document-history]
+
 # [docs:document-update-tags]
 # Replace tags with new values (comma-separated)
 hindsight document update "$BANK_ID" notes-2024-03-15 --tags team-a,team-b

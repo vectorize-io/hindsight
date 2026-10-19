@@ -10,7 +10,9 @@ Contract under test:
   index on a fresh schema;
 - the reconcile must be hands-off when a legacy schema still carries the index
   (no runtime DROP INDEX — that DDL belongs in the migration path);
-- migration f2a6d8c4b1e9 removes the leftover index.
+- migration f2a6d8c4b1e9 removes the leftover index;
+- the startup embedding-dimension resize does not build one either, and migration
+  e8c1a4f7b2d9 removes any global vector index it left behind, whatever its name (#5707).
 """
 
 import asyncio
@@ -25,7 +27,12 @@ from sqlalchemy import Connection, create_engine, text
 import hindsight_api
 from hindsight_api._vector_index import uses_per_bank_vector_indexes
 from hindsight_api.config import HindsightConfig
-from hindsight_api.migrations import ensure_vector_extension, run_migrations, to_libpq_url
+from hindsight_api.migrations import (
+    ensure_embedding_dimension,
+    ensure_vector_extension,
+    run_migrations,
+    to_libpq_url,
+)
 
 
 @pytest.fixture(scope="module")
@@ -57,6 +64,23 @@ def _global_index_count(conn: Connection, schema: str) -> int:
         ),
         {"schema": schema},
     ).scalar()
+
+
+def _non_partial_vector_index_names(conn: Connection, schema: str) -> list[str]:
+    """Every global (non-partial) vector index on memory_units, whatever its name."""
+    rows = conn.execute(
+        text(
+            "SELECT i.relname FROM pg_index x "
+            "JOIN pg_class t ON t.oid = x.indrelid "
+            "JOIN pg_namespace n ON n.oid = t.relnamespace "
+            "JOIN pg_class i ON i.oid = x.indexrelid "
+            "JOIN pg_am am ON am.oid = i.relam "
+            "WHERE n.nspname = :schema AND t.relname = 'memory_units' "
+            "AND x.indpred IS NULL AND am.amname IN ('hnsw', 'vchordrq', 'diskann', 'scann')"
+        ),
+        {"schema": schema},
+    ).fetchall()
+    return [row[0] for row in rows]
 
 
 def _reset_schema(db_url: str, schema: str) -> None:
@@ -145,6 +169,7 @@ def test_reconcile_leaves_stale_global_index_untouched(vec_db_url):
 
 
 @pytest.mark.xdist_group("vecidx_pg0")
+@pytest.mark.memory_backend_incompatible
 def test_migration_drops_stale_global_index(vec_db_url):
     """Upgrading from the pre-repair revision removes a leftover global index."""
     _skip_unless_per_bank_backend()
@@ -191,3 +216,77 @@ def test_migration_drops_stale_global_index(vec_db_url):
         engine.dispose()
 
     assert count_after == 0
+
+
+@pytest.mark.xdist_group("vecidx_pg0")
+def test_embedding_dimension_resize_does_not_create_global_index(vec_db_url):
+    """#5707: a fresh schema whose model dimension differs from the column default
+    goes through the resize path, which must not build a global memory_units index."""
+    vec = _skip_unless_per_bank_backend()
+
+    schema = "vecidx_resize"
+    _reset_schema(vec_db_url, schema)
+    run_migrations(vec_db_url, schema=schema)
+    ensure_embedding_dimension(vec_db_url, 1024, schema=schema, vector_extension=vec)
+    ensure_vector_extension(vec_db_url, vector_extension=vec, schema=schema)
+
+    engine = create_engine(vec_db_url)
+    try:
+        with engine.connect() as conn:
+            leftover = _non_partial_vector_index_names(conn, schema)
+            conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+            conn.commit()
+    finally:
+        engine.dispose()
+
+    assert leftover == []
+
+
+@pytest.mark.xdist_group("vecidx_pg0")
+def test_migration_drops_global_index_by_any_name(vec_db_url):
+    """#5707: the resize path left ``idx_memory_units_embedding_hnsw`` behind, which
+    f2a6d8c4b1e9 never matched. e8c1a4f7b2d9 drops every global vector index found in
+    the catalog, and keeps the per-bank partial ones."""
+    _skip_unless_per_bank_backend()
+
+    schema = "vecidx_migration_any_name"
+    _reset_schema(vec_db_url, schema)
+    run_migrations(vec_db_url, schema=schema)
+
+    cfg = _alembic_config(vec_db_url, schema)
+    parent = ScriptDirectory.from_config(cfg).get_revision("e8c1a4f7b2d9").down_revision
+    assert isinstance(parent, str)
+    command.downgrade(cfg, parent)
+
+    engine = create_engine(vec_db_url)
+    try:
+        with engine.connect() as conn:
+            conn.execute(
+                text(
+                    f'CREATE INDEX idx_memory_units_embedding_hnsw ON "{schema}".memory_units '
+                    "USING hnsw (embedding vector_cosine_ops)"
+                )
+            )
+            conn.execute(
+                text(
+                    f'CREATE INDEX idx_mu_emb_partial ON "{schema}".memory_units '
+                    "USING hnsw (embedding vector_cosine_ops) WHERE fact_type = 'world'"
+                )
+            )
+            conn.commit()
+
+        command.upgrade(cfg, "heads")
+
+        with engine.connect() as conn:
+            leftover = _non_partial_vector_index_names(conn, schema)
+            partial_kept = conn.execute(
+                text("SELECT COUNT(*) FROM pg_indexes WHERE schemaname = :s AND indexname = 'idx_mu_emb_partial'"),
+                {"s": schema},
+            ).scalar()
+            conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+            conn.commit()
+    finally:
+        engine.dispose()
+
+    assert leftover == []
+    assert partial_kept == 1

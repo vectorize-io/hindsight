@@ -60,7 +60,8 @@
       "copied": "Copiado al portapapeles",
       "viaAlias": "vía {aliases}"
     },
-    "viewOnGitHub": "Ver en GitHub"
+    "viewOnGitHub": "Ver en GitHub",
+    "more": "Más"
   },
   "bank": {
     "bankConfiguration": "Configuración del banco",
@@ -146,7 +147,8 @@
       "collapseSidebar": "Contraer barra lateral",
       "collapse": "Contraer",
       "knowledge": "Base de conocimiento",
-      "home": "Inicio"
+      "home": "Inicio",
+      "openNavigation": "Abrir navegación"
     },
     "overviewAndOperations": "Estadísticas generales y operaciones en segundo plano de este banco de memoria.",
     "operations": "Operaciones",
@@ -333,7 +335,22 @@
     "timeFieldMentionedShort": "Mencionado",
     "timeFieldMentionedLong": "Cuando se mencionaron los hechos (hora del evento)",
     "timeFieldOccurredShort": "Ocurrido",
-    "timeFieldOccurredLong": "Cuando comenzó el evento subyacente"
+    "timeFieldOccurredLong": "Cuando comenzó el evento subyacente",
+    "knowledgePages": "Páginas de conocimiento",
+    "noKnowledgePages": "No hay páginas de conocimiento",
+    "knowledgeSection": "Conocimiento",
+    "hintConsolidationDone": "Recuerdos que la consolidación ya ha procesado. La consolidación convierte los recuerdos en observaciones.",
+    "hintConsolidationPending": "Recuerdos que esperan la próxima ejecución de consolidación.",
+    "hintConsolidationFailed": "Recuerdos que la consolidación no pudo procesar. Haz clic en el número para verlos y reintentar.",
+    "hintConsolidationLast": "Cuándo se ejecutó la consolidación por última vez.",
+    "hintModelsInSync": "Modelos mentales que han leído todos los recuerdos nuevos de su ámbito.",
+    "hintModelsStale": "Modelos mentales con recuerdos nuevos en su ámbito desde su última actualización. Se ponen al día la próxima vez que se actualicen.",
+    "hintModelsFailed": "Modelos mentales cuya última actualización falló. Las actualizaciones automáticas quedan en pausa hasta que los actualices manualmente.",
+    "hintModelsLast": "La actualización más reciente de cualquier modelo mental.",
+    "hintPagesInSync": "Páginas de conocimiento que han leído todos los recuerdos nuevos de su ámbito.",
+    "hintPagesStale": "Páginas de conocimiento con recuerdos nuevos en su ámbito desde su última actualización. Se ponen al día la próxima vez que se actualicen.",
+    "hintPagesFailed": "Páginas de conocimiento cuya última actualización falló. Las actualizaciones automáticas quedan en pausa hasta que las actualices manualmente.",
+    "hintPagesLast": "La actualización más reciente de cualquier página de conocimiento."
   },
   "bankConfig": {
     "noBankSelected": "Ningún banco seleccionado",
@@ -943,7 +960,8 @@
     "dateRangeCustom": "Intervalo personalizado",
     "dateRangeFrom": "Desde",
     "dateRangeTo": "Hasta",
-    "dateRangeReversed": "El fin debe ser posterior al inicio"
+    "dateRangeReversed": "El fin debe ser posterior al inicio",
+    "historyTab": "Historial"
   },
   "entitiesView": {
     "viewRelations": "Relaciones",
@@ -1127,7 +1145,8 @@
     "actionOpenDetail": "Abrir",
     "nextRefreshPaused": "en pausa tras una actualización fallida",
     "nextRefreshRetrying": "reintentando, próximo intento {time}",
-    "nextRefreshRunning": "actualizando ahora"
+    "nextRefreshRunning": "actualizando ahora",
+    "hideKnowledgePages": "Ocultar páginas de conocimiento"
   },
   "cronPreview": {
     "invalid": "Expresión cron no válida",
@@ -1667,6 +1686,7 @@
     "curationSave": "Guardar",
     "curationStateInvalidated": "Invalidada",
     "editFieldContext": "Contexto",
+    "editFieldMentionedAt": "Mencionado",
     "editFieldOccurredEnd": "Fecha de fin",
     "editFieldOccurredStart": "Fecha de inicio",
     "editFieldType": "Tipo"
@@ -2031,7 +2051,8 @@
         "chunks": "No se pudieron obtener los fragmentos del documento",
         "reprocess": "No se pudo reprocesar el documento",
         "export": "No se pudieron exportar los documentos",
-        "import": "No se pudieron importar los documentos"
+        "import": "No se pudieron importar los documentos",
+        "history": "No se pudo obtener el historial del documento"
       },
       "files": {
         "upload": "No se pudieron subir los archivos"
@@ -2259,5 +2280,38 @@
     "pausedTitle": "La última actualización falló, así que este modelo ya no se actualiza solo: actualízalo para reanudarlo",
     "retrying": "Reintentando",
     "retryingTitle": "El último intento falló y hay otro en cola: las actualizaciones automáticas solo se detienen si este también falla"
+  },
+  "documentHistory": {
+    "explainer": "Qué hizo cada cambio a los hechos y observaciones de este documento. Las observaciones se reconstruyen, no se versionan: cuando un cambio elimina una, su id aquí es el único rastro. Se reconstruye a partir de las operaciones del banco, así que no aparecen las retenciones síncronas ni los cambios hechos con la consolidación automática desactivada. Expande una fila para ver los ids; pasa el cursor sobre un id para encontrarlo en otras filas.",
+    "empty": "No hay cambios registrados. El historial sale de las operaciones de este banco: retenciones asíncronas y las consolidaciones tras las ediciones.",
+    "loadError": "No se pudo cargar el historial.",
+    "idsRemoved": "Eliminadas",
+    "idsCreated": "Creadas",
+    "idsUpdated": "Actualizadas",
+    "chipRemoved": "Eliminada por este cambio: ya no existe",
+    "chipOpen": "Abrir esta observación",
+    "moreIds": "+{count} más",
+    "kind": {
+      "retain": "Retenido",
+      "append": "Añadido",
+      "reprocess": "Reprocesado",
+      "retag": "Etiquetas cambiadas",
+      "fact_edited": "Hecho editado",
+      "fact_invalidated": "Hecho invalidado",
+      "fact_restored": "Hecho restaurado",
+      "fact_deleted": "Hecho eliminado",
+      "observations_cleared": "Observaciones borradas",
+      "consolidation": "Consolidado"
+    },
+    "loadOlder": "Cargar anteriores",
+    "colWhen": "Cuándo",
+    "colChange": "Cambio",
+    "colFacts": "Hechos",
+    "colObservations": "Observaciones",
+    "colOperation": "Operación",
+    "legendExists": "Aún existe: haz clic para abrir",
+    "legendRemovedLater": "Eliminada por un cambio posterior",
+    "legendRemovedHere": "Eliminada por este cambio",
+    "chipRemovedLater": "Eliminada después por: {kind} ({when})"
   }
 }

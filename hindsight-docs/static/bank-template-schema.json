@@ -185,6 +185,19 @@
           "description": "The same, for knowledge-page refreshes",
           "title": "Mental Model Refresh Use Decision Model"
         },
+        "mental_model_delta_use_decision_model": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When the server has a decision model, a delta knowledge-page refresh asks it which new memories could change the page instead of running reflect",
+          "title": "Mental Model Delta Use Decision Model"
+        },
         "disposition_skepticism": {
           "anyOf": [
             {

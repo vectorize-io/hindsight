@@ -16,6 +16,7 @@ import difflib
 import functools
 import hashlib
 import inspect
+import itertools
 import json
 import logging
 import random
@@ -68,7 +69,17 @@ from .db.ops_postgresql import pg_search_vector_expr
 from .db.postgresql import PostgreSQLBackend
 from .db.postgresql import apply_session_settings as _apply_session_settings
 from .db_budget import budgeted_operation
-from .llm_interface import ProviderContentPolicyError, ProviderRateLimitResetError
+from .document_history import (
+    DocumentEvent,
+    DocumentEventKind,
+    DocumentHistoryResponse,
+    ObservationIdSample,
+    append_operation_events,
+    deletion_events,
+    list_document_events,
+    track_observation_changes,
+)
+from .llm_interface import ProviderAuthError, ProviderContentPolicyError, ProviderRateLimitResetError
 from .llm_trace import (
     LLMRequestEntry,
     LLMRequestListResponse,
@@ -325,6 +336,14 @@ def _shared_document_id(contents: "Iterable[Mapping[str, Any]]") -> str | None:
     return ids.pop() if len(ids) == 1 else None
 
 
+# The curation actions that change a fact, as change-history kinds ("reason" only relabels one).
+_CURATION_EVENT_KINDS: dict[str, DocumentEventKind] = {
+    "edit": DocumentEventKind.FACT_EDITED,
+    "invalidate": DocumentEventKind.FACT_INVALIDATED,
+    "revert": DocumentEventKind.FACT_RESTORED,
+}
+
+
 def fq_table(table_name: str) -> str:
     """Get fully-qualified table name with current schema.
 
@@ -366,8 +385,8 @@ _VALIDATE_SQL_SCHEMAS = True
 # Transient upstream outages (LLM provider down, DB flapping, tenant-ext
 # blip) must eventually recover; the worker should keep trying rather than
 # silently dead-lettering a bank's consolidation backlog. Deterministic
-# failures (integrity violations, embedding dimension mismatches) are
-# filtered upstream by `_is_non_retryable_task_error` and never reach the
+# failures (integrity violations, embedding dimension mismatches, a rejected
+# LLM key) are filtered upstream by `_is_non_retryable_task_error` and never reach the
 # retry path. The dedup-by-bank guard prevents per-op retries from
 # multiplying when a peer consolidation is already pending for the bank.
 #
@@ -698,7 +717,7 @@ from .reflect.tools import (
     tool_search_mental_models,
     tool_search_observations,
 )
-from .remote_retry import is_transient_remote_error
+from .remote_retry import is_transient_remote_error, status_code_of
 from .response_models import (
     VALID_RECALL_FACT_TYPES,
     ConsolidationStrategiesPreview,
@@ -894,7 +913,8 @@ def _build_llm(
     ``prefix`` is ``""`` (global) or ``"retain_"`` / ``"reflect_"`` /
     ``"consolidation_"`` / ``"mental_model_refresh_"``. A per-op slot with no
     indexed members (or no strategy) inherits the chain of ``fallback_prefix``
-    (the global one by default), mirroring how per-op base config falls back.
+    (the global one by default) — and an empty fallback slot inherits the global
+    chain in turn — mirroring how per-op base config falls back.
     Returns ``base`` unchanged when no chain is configured (byte-identical hot
     path).
 
@@ -922,11 +942,14 @@ def _build_llm(
             f"let {operation} use the global strategy, or give it 'failover'/'round-robin'."
         )
 
+    # The fallback slot's *effective* chain, not its raw one: reading only the raw
+    # reflect slot left refresh on the bare primary whenever the chain was declared
+    # globally, so it never failed over (#5724).
     if prefix:
         if not members:
-            members = getattr(config, f"{fallback_prefix}llm_members")
+            members = getattr(config, f"{fallback_prefix}llm_members") or config.llm_members
         if strategy is None:
-            strategy = getattr(config, f"{fallback_prefix}llm_strategy")
+            strategy = getattr(config, f"{fallback_prefix}llm_strategy") or config.llm_strategy
 
     if not strategy or not members:
         return base
@@ -1608,6 +1631,11 @@ def _is_non_retryable_task_error(e: Exception) -> bool:
         # the moment: re-running the task feeds the same chunk to the same model
         # and earns the same refusal (issue #3690).
         or isinstance(e, ProviderContentPolicyError)
+        # A credential rejection (401/403) is a function of the configured key:
+        # every replay sends the same key (issue #5644). The status check covers
+        # tasks that let the provider's own error through (consolidation, refresh).
+        or isinstance(e, ProviderAuthError)
+        or status_code_of(e) in (401, 403)
     )
 
 
@@ -1817,6 +1845,28 @@ class KnowledgeTagFilter:
             filter_results_by_tags(probe, self.tags, self.tags_match)
             and filter_results_by_tag_groups(probe, self.tag_groups)
         )
+
+
+#: Above this many new memories a delta refresh searches instead of asking about each:
+#: search and pruning are what handle volume, and the per-memory questions add up.
+# ponytail: one question per memory, run in parallel; batch several memories per request
+# if a burst this size turns out slow.
+_DELTA_GATE_MAX_MEMORIES = 200
+
+
+@dataclass(frozen=True)
+class _DeltaGate:
+    """What the decision model kept of the memories new since a page's last refresh."""
+
+    listed: dict[str, int]
+    """New memories in the page's scope and window, per fact type."""
+    kept: dict[str, list[MemoryFact]]
+    """The ones it said could change the page, plus the bank's directives when any were
+    kept, shaped like reflect's ``based_on``."""
+
+    @property
+    def memories_kept(self) -> int:
+        return sum(len(v) for k, v in self.kept.items() if k != "directives")
 
 
 @dataclass(frozen=True)
@@ -2079,6 +2129,14 @@ def _mm_row_field(mm_row: Any, field: str) -> Any:
         return mm_row[field]
     except (KeyError, TypeError):
         return None
+
+
+def _backs_knowledge_page_sql() -> str:
+    """SQL test: the ``mm`` mental_models row holds a knowledge page's content."""
+    return (
+        f"EXISTS (SELECT 1 FROM {fq_table('knowledge_pages')} kp"
+        " WHERE kp.bank_id = mm.bank_id AND kp.mental_model_id = mm.id)"
+    )
 
 
 def _mental_model_stale_scope_from_row(mm_row: Any, *, key: str) -> "MemoryScopeWatermark | None":
@@ -2495,6 +2553,225 @@ def _provider_default_base_url(provider: str | None) -> str:
             return "https://ollama.com/v1"
         case _:
             return ""
+
+
+# Each unit links to at most this many later units that share an entity with it.
+_GRAPH_ENTITY_NEIGHBORS_PER_UNIT = 10
+
+_GRAPH_LINK_STYLE = {
+    "temporal": ("#00bcd4", "dashed"),
+    "semantic": ("#ff69b4", "solid"),
+    "entity": ("#ffd700", "solid"),
+}
+
+
+def _assemble_graph_data(
+    units: list[dict[str, Any]],
+    links: list[dict[str, Any]],
+    unit_entities: list[dict[str, Any]],
+    total_count: int,
+    limit: int,
+) -> dict[str, Any]:
+    """Turn the store's graph page into the nodes, edges and table rows the UI renders.
+
+    Pure CPU work on rows already read -- the caller runs it off the event loop. Its cost is
+    linear in the units and their entity rows. Edges come in two budgets of ``GRAPH_MAX_EDGES``:
+    the stored links (the store orders them by weight) and the ones observations inherit from
+    their source memories; then the derived ones, observations sharing a source before units
+    sharing an entity (rarest entity first, since a name in every memory links everything to
+    everything and says nothing).
+    """
+    from .memories.base import GRAPH_MAX_EDGES
+
+    unit_ids = [row["id"] for row in units]
+    unit_id_set = set(unit_ids)
+
+    # Observations inherit links from their source memories via source_memory_ids
+    source_to_observations: dict[Any, list[Any]] = {}
+    for unit in units:
+        for source_id in unit["source_memory_ids"] or ():
+            source_to_observations.setdefault(source_id, []).append(unit["id"])
+
+    # Build entity mapping
+    entity_map: dict[Any, list[str]] = {}
+    for row in unit_entities:
+        entity_map.setdefault(row["unit_id"], []).append(row["canonical_name"])
+
+    # For observations, inherit entities from source memories
+    for unit in units:
+        if unit["source_memory_ids"] and unit["id"] not in entity_map:
+            source_entities = [
+                name for source_id in unit["source_memory_ids"] for name in entity_map.get(source_id, ())
+            ]
+            if source_entities:
+                # Deduplicate while preserving order
+                entity_map[unit["id"]] = list(dict.fromkeys(source_entities))
+
+    def direct_links() -> Iterator[dict[str, Any]]:
+        for link in links:
+            if link["from_unit_id"] in unit_id_set and link["to_unit_id"] in unit_id_set:
+                yield link
+
+    def copied_links() -> Iterator[dict[str, Any]]:
+        for link in links:
+            from_id = link["from_unit_id"]
+            to_id = link["to_unit_id"]
+            from_observations = source_to_observations.get(from_id, [])
+            to_observations = source_to_observations.get(to_id, [])
+
+            # If from_id is a source memory, copy links to its observations (when the target is visible)
+            if from_observations and (to_id in unit_id_set or to_observations):
+                target = to_observations[0] if to_observations and to_id not in unit_id_set else to_id
+                for obs_id in from_observations:
+                    if target in unit_id_set and obs_id != target:
+                        yield {**link, "from_unit_id": obs_id, "to_unit_id": target}
+
+            # If to_id is a source memory, copy links to its observations
+            if to_observations and from_id in unit_id_set:
+                for obs_id in to_observations:
+                    if from_id != obs_id:
+                        yield {**link, "from_unit_id": from_id, "to_unit_id": obs_id}
+
+    def semantic_links() -> Iterator[dict[str, Any]]:
+        # Observations never have direct memory_links rows: pair those that share a source memory
+        source_to_obs: dict[Any, list[Any]] = {}
+        for unit in units:
+            if unit["fact_type"] == "observation":
+                for src_id in unit["source_memory_ids"] or ():
+                    source_to_obs.setdefault(src_id, []).append(unit["id"])
+        for obs_ids in source_to_obs.values():
+            for i, obs_a in enumerate(obs_ids):
+                for obs_b in obs_ids[i + 1 :]:
+                    yield {"from_unit_id": obs_a, "to_unit_id": obs_b, "link_type": "semantic", "weight": 1.0}
+
+    def entity_links() -> Iterator[dict[str, Any]]:
+        # Sliding window per entity: each unit links to its next few units sharing it, so every
+        # unit that shares an entity gets edges, ~N * cap per entity instead of N².
+        entity_to_units: dict[str, list[Any]] = {}
+        for unit_id in unit_ids:
+            for entity_name in entity_map.get(unit_id, ()):
+                entity_to_units.setdefault(entity_name, []).append(unit_id)
+        for entity_name, ent_unit_ids in sorted(entity_to_units.items(), key=lambda kv: len(kv[1])):
+            n = len(ent_unit_ids)
+            for i, unit_a in enumerate(ent_unit_ids):
+                for j in range(i + 1, min(i + 1 + _GRAPH_ENTITY_NEIGHBORS_PER_UNIT, n)):
+                    yield {
+                        "from_unit_id": unit_a,
+                        "to_unit_id": ent_unit_ids[j],
+                        "link_type": "entity",
+                        "weight": 1.0,
+                        "entity_name": entity_name,
+                    }
+
+    def inferred_links() -> Iterator[dict[str, Any]]:
+        # A pair inferred twice (two shared sources, or both ways round) is one edge
+        seen: set[tuple[str, str, str, str]] = set()
+        for row in itertools.chain(semantic_links(), entity_links()):
+            a, b = str(row["from_unit_id"]), str(row["to_unit_id"])
+            pair = (min(a, b), max(a, b), row["link_type"], row.get("entity_name") or "")
+            if pair not in seen:
+                seen.add(pair)
+                yield row
+
+    edges: list[dict[str, Any]] = []
+    seen_edges: set[tuple[str, str, str, str]] = set()
+
+    def add_edges(rows: Iterator[dict[str, Any]]) -> None:
+        added = 0
+        for row in rows:
+            if added >= GRAPH_MAX_EDGES:
+                return
+            from_id = str(row["from_unit_id"])
+            to_id = str(row["to_unit_id"])
+            link_type = row["link_type"]
+            entity_name = row.get("entity_name") or ""
+            edge_key = (from_id, to_id, link_type, entity_name)
+            if edge_key in seen_edges:
+                continue
+            seen_edges.add(edge_key)
+            added += 1
+            color, line_style = _GRAPH_LINK_STYLE.get(link_type, ("#999999", "solid"))
+            edges.append(
+                {
+                    "data": {
+                        "id": f"{from_id}-{to_id}-{link_type}",
+                        "source": from_id,
+                        "target": to_id,
+                        "linkType": link_type,
+                        "weight": row["weight"],
+                        "entityName": entity_name,
+                        "color": color,
+                        "lineStyle": line_style,
+                    }
+                }
+            )
+
+    # Stored links and derived edges each get their own budget: a well-linked bank fills the
+    # first with stored links, and sharing one would leave it with no entity edges at all.
+    add_edges(itertools.chain(direct_links(), copied_links()))
+    add_edges(inferred_links())
+
+    # Build nodes
+    nodes = []
+    for row in units:
+        unit_id = row["id"]
+        text = row["text"]
+        event_date = row["event_date"]
+        context = row["context"]
+
+        entities = entity_map.get(unit_id, [])
+        entity_count = len(entities)
+
+        # Color by entity count
+        if entity_count == 0:
+            color = "#e0e0e0"
+        elif entity_count == 1:
+            color = "#90caf9"
+        else:
+            color = "#42a5f5"
+
+        nodes.append(
+            {
+                "data": {
+                    "id": str(unit_id),
+                    "label": f"{text[:30]}..." if len(text) > 30 else text,
+                    "text": text,
+                    "date": event_date.isoformat() if event_date else "",
+                    "context": context if context else "",
+                    "entities": ", ".join(entities) if entities else "None",
+                    "color": color,
+                }
+            }
+        )
+
+    # Build table rows
+    table_rows = []
+    for row in units:
+        unit_id = row["id"]
+        entities = entity_map.get(unit_id, [])
+
+        table_rows.append(
+            {
+                "id": str(unit_id),
+                "text": row["text"],
+                "context": row["context"] if row["context"] else "N/A",
+                "occurred_start": row["occurred_start"].isoformat() if row["occurred_start"] else None,
+                "occurred_end": row["occurred_end"].isoformat() if row["occurred_end"] else None,
+                "mentioned_at": row["mentioned_at"].isoformat() if row["mentioned_at"] else None,
+                "date": row["event_date"].strftime("%Y-%m-%d %H:%M")
+                if row["event_date"]
+                else "N/A",  # Deprecated, kept for backwards compatibility
+                "entities": ", ".join(entities) if entities else "None",
+                "document_id": row["document_id"],
+                "chunk_id": row["chunk_id"] if row["chunk_id"] else None,
+                "fact_type": row["fact_type"],
+                "tags": list(row["tags"]) if row["tags"] else [],
+                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                "proof_count": row["proof_count"] if row["proof_count"] else None,
+            }
+        )
+
+    return {"nodes": nodes, "edges": edges, "table_rows": table_rows, "total_units": total_count, "limit": limit}
 
 
 class MemoryEngine(MemoryEngineInterface):
@@ -4372,6 +4649,7 @@ class MemoryEngine(MemoryEngineInterface):
             operation_id=task_dict.get("operation_id"),
             observation_scopes=task_dict.get("observation_scopes"),
             pending_refresh_tags=task_dict.get("pending_refresh_tags"),
+            caller_requested=task_dict.get("caller_requested", False),
         )
 
         logger.info(f"[CONSOLIDATION] bank={bank_id} completed: {result.get('memories_processed', 0)} processed")
@@ -4879,7 +5157,9 @@ class MemoryEngine(MemoryEngineInterface):
                         )
                     raise
 
-    async def on_task_wall_timeout(self, task_dict: dict[str, Any], schema: str | None, error_message: str) -> None:
+    async def on_task_wall_timeout(
+        self, task_dict: dict[str, Any], schema: str | None, error_message: str, stage: str
+    ) -> None:
         """Fire the failure notifications a wall-clock-cancelled task could not fire itself.
 
         The worker's ceiling cancels the executor, so ``execute_task``'s ``except``
@@ -4892,6 +5172,11 @@ class MemoryEngine(MemoryEngineInterface):
         A timed-out mental-model refresh is recorded like any other failed refresh,
         for the same reason: its ``except`` blocks never ran, and without the record
         the automatic triggers would queue it again on the next tick (#4532).
+
+        Except when the ceiling fired during a retry backoff (``stage`` ends in
+        ``.backoff``): the time ran out waiting for a provider that had just failed,
+        not on a prompt that can never finish. That is the temporary failure #5394
+        already declines to pause on, so it is recorded without pausing (#5561).
         """
         if task_dict.get("type") == "refresh_mental_model":
             token = _current_schema.set(schema)
@@ -4902,6 +5187,7 @@ class MemoryEngine(MemoryEngineInterface):
                     outcome="refresh_failed_error",
                     failure_reason="unexpected_error",
                     error_message=error_message,
+                    pause_automatic=not stage.endswith(".backoff"),
                 )
             finally:
                 _current_schema.reset(token)
@@ -8938,6 +9224,11 @@ class MemoryEngine(MemoryEngineInterface):
         temporal_window: TemporalWindow | None = None,
         _connection_budget: int | None = None,
         _quiet: bool = False,
+        # A vector the caller already embedded from ``query`` with input_type="query", so a
+        # caller recalling many queries at once (consolidation) pays one embedder call for
+        # all of them instead of one each (#5647). It must be the query-side vector of this
+        # exact text: a stored document vector differs on asymmetric models.
+        _query_embedding: list[float] | None = None,
         reranking: RecallReranking = "cross_encoder",
     ) -> RecallResultModel:
         """
@@ -9206,6 +9497,7 @@ class MemoryEngine(MemoryEngineInterface):
                             temporal_window=temporal_window,
                             connection_budget=_connection_budget,
                             quiet=_quiet,
+                            query_embedding=_query_embedding,
                             include_source_facts=include_source_facts,
                             max_source_facts_tokens=max_source_facts_tokens,
                             max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
@@ -9381,6 +9673,7 @@ class MemoryEngine(MemoryEngineInterface):
         temporal_window: TemporalWindow | None = None,
         connection_budget: int | None = None,
         quiet: bool = False,
+        query_embedding: list[float] | None = None,
         include_source_facts: bool = False,
         max_source_facts_tokens: int = 4096,
         max_source_facts_tokens_per_observation: int = -1,
@@ -9478,12 +9771,13 @@ class MemoryEngine(MemoryEngineInterface):
 
             try:
                 get_metrics_collector().record_recall_phase("swr_prelude", time.perf_counter() - backend_acquire_start)
-                query_embeddings = await embedding_utils.generate_embeddings_batch(
-                    self.embeddings,
-                    [query],
-                    input_type="query",
-                )
-                query_embedding = query_embeddings[0]
+                if query_embedding is None:
+                    query_embeddings = await embedding_utils.generate_embeddings_batch(
+                        self.embeddings,
+                        [query],
+                        input_type="query",
+                    )
+                    query_embedding = query_embeddings[0]
                 step_duration = time.perf_counter() - step_start
                 log_buffer.append(f"  [1] Generate query embedding: {step_duration:.3f}s")
             finally:
@@ -10941,6 +11235,9 @@ class MemoryEngine(MemoryEngineInterface):
                 from .memories import get_memories
 
                 _store = get_memories()
+                # The document before its memories, as retain and consolidation take it (#5433):
+                # the sweep below locks the memories, and the delete then needs this row.
+                await _store.lock_document_row(conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id)
                 _doc_units = await _store.document_source_units(
                     conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
                 )
@@ -11101,102 +11398,105 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
         invalidated_obs = 0
         requeued_units = 0
-        async with acquire_with_retry(backend) as conn:
-            async with conn.transaction():
-                from .memories import get_memories
-                from .retain.entity_labels import label_tag_keys, split_label_tags
+        with track_observation_changes() as retag_changes:
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    from .memories import get_memories
+                    from .retain.entity_labels import label_tag_keys, split_label_tags
 
-                _store = get_memories()
+                    _store = get_memories()
 
-                # Read the tags the document already carries BEFORE overwriting them.
-                # A tags array equal to the current one is a semantic no-op, and a bulk
-                # tag-normalisation sweep re-sends an identical array on every run. The
-                # retag cascade below is not cheap enough to pay for that: it deletes
-                # every observation built over this document's memories and then
-                # requeues each of those observations' OTHER sources, so one no-op
-                # PATCH re-consolidates memories reaching well past the document
-                # itself, and a repeated sweep multiplies that by its document count.
-                # Compare as SETS — consolidation scopes a memory by its tag set, never
-                # by the order the array arrived in, so a reordered array changes
-                # nothing that consolidation can observe.
-                _current = await _store.current_document_tags(
-                    conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
-                )
-                current_tags = _current.tags
-
-                # `None` means "could not read the current tags" (document not found, or
-                # a store record that does not carry them) — never claim unchanged on a
-                # value we did not see, or a real retag would be silently skipped.
-                retag = (
-                    tags if (tags is not None and (current_tags is None or set(current_tags) != set(tags))) else None
-                )
-
-                # A retag replaces the DOCUMENT's tags on every unit, but the column also
-                # holds the projection of the `entity_labels` groups flagged `tag: true` —
-                # derived per memory from that memory's own entities at extraction, not
-                # from the document. This PATCH re-processes nothing, so it has no business
-                # rewriting them: each unit keeps the ones it carries (issue #4068).
-                _label_keys: set[str] = set()
-                if retag is not None:
-                    _retag_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
-                    _label_keys = label_tag_keys(getattr(_retag_config, "entity_labels", None))
-
-                def _retagged(existing: list[str] | None) -> list[str]:
-                    if retag is None:
-                        # A scope change alone: every unit keeps the tags it has.
-                        return list(existing or [])
-                    merged = list(retag)
-                    seen = set(merged)
-                    for t in split_label_tags(existing, _label_keys):
-                        if t not in seen:
-                            seen.add(t)
-                            merged.append(t)
-                    return merged
-
-                def _rescoped(scopes: Any) -> str | None:
-                    # The unit's scopes after the PATCH, as JSON — or None when they do not change.
-                    # Requested scopes win; otherwise a retag carries a rename into explicit ones.
-                    if observation_scopes is not None:
-                        new_scopes: Any = observation_scopes
-                    else:
-                        new_scopes = _renamed_scopes(scopes, current_tags, retag or [])
-                    return json.dumps(new_scopes) if new_scopes != _normalize_scopes(scopes) else None
-
-                try:
-                    found = await _store.update_document_tags(
-                        conn=conn,
-                        fq_table=fq_table,
-                        bank_id=bank_id,
-                        document_id=document_id,
-                        tags=tags,
-                        found=_current.found,
-                        observation_scopes=observation_scopes,
+                    # Read the tags the document already carries BEFORE overwriting them.
+                    # A tags array equal to the current one is a semantic no-op, and a bulk
+                    # tag-normalisation sweep re-sends an identical array on every run. The
+                    # retag cascade below is not cheap enough to pay for that: it deletes
+                    # every observation built over this document's memories and then
+                    # requeues each of those observations' OTHER sources, so one no-op
+                    # PATCH re-consolidates memories reaching well past the document
+                    # itself, and a repeated sweep multiplies that by its document count.
+                    # Compare as SETS — consolidation scopes a memory by its tag set, never
+                    # by the order the array arrived in, so a reordered array changes
+                    # nothing that consolidation can observe.
+                    _current = await _store.current_document_tags(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
                     )
-                except NotImplementedError:
-                    if observation_scopes is None:
-                        raise
-                    from hindsight_api.extensions import OperationValidationError
+                    current_tags = _current.tags
 
-                    raise OperationValidationError(
-                        "This bank's memory store does not support changing observation_scopes", status_code=400
+                    # `None` means "could not read the current tags" (document not found, or
+                    # a store record that does not carry them) — never claim unchanged on a
+                    # value we did not see, or a real retag would be silently skipped.
+                    retag = (
+                        tags
+                        if (tags is not None and (current_tags is None or set(current_tags) != set(tags)))
+                        else None
                     )
-                if not found:
-                    return False
-                # Whether any unit's scopes actually move is decided per unit inside, against the
-                # resolved scopes (write_scopes_changed) — a no-op change requeues nothing.
-                if retag is not None or observation_scopes is not None:
-                    retagged_result = await _store.retag_document_memories(
-                        conn=conn,
-                        ops=self._backend.ops,
-                        fq_table=fq_table,
-                        bank_id=bank_id,
-                        document_id=document_id,
-                        tags=retag,
-                        retagged=_retagged,
-                        rescoped=_rescoped,
-                    )
-                    invalidated_obs = retagged_result.invalidated_observations
-                    requeued_units = retagged_result.requeued_units
+
+                    # A retag replaces the DOCUMENT's tags on every unit, but the column also
+                    # holds the projection of the `entity_labels` groups flagged `tag: true` —
+                    # derived per memory from that memory's own entities at extraction, not
+                    # from the document. This PATCH re-processes nothing, so it has no business
+                    # rewriting them: each unit keeps the ones it carries (issue #4068).
+                    _label_keys: set[str] = set()
+                    if retag is not None:
+                        _retag_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+                        _label_keys = label_tag_keys(getattr(_retag_config, "entity_labels", None))
+
+                    def _retagged(existing: list[str] | None) -> list[str]:
+                        if retag is None:
+                            # A scope change alone: every unit keeps the tags it has.
+                            return list(existing or [])
+                        merged = list(retag)
+                        seen = set(merged)
+                        for t in split_label_tags(existing, _label_keys):
+                            if t not in seen:
+                                seen.add(t)
+                                merged.append(t)
+                        return merged
+
+                    def _rescoped(scopes: Any) -> str | None:
+                        # The unit's scopes after the PATCH, as JSON — or None when they do not change.
+                        # Requested scopes win; otherwise a retag carries a rename into explicit ones.
+                        if observation_scopes is not None:
+                            new_scopes: Any = observation_scopes
+                        else:
+                            new_scopes = _renamed_scopes(scopes, current_tags, retag or [])
+                        return json.dumps(new_scopes) if new_scopes != _normalize_scopes(scopes) else None
+
+                    try:
+                        found = await _store.update_document_tags(
+                            conn=conn,
+                            fq_table=fq_table,
+                            bank_id=bank_id,
+                            document_id=document_id,
+                            tags=tags,
+                            found=_current.found,
+                            observation_scopes=observation_scopes,
+                        )
+                    except NotImplementedError:
+                        if observation_scopes is None:
+                            raise
+                        from hindsight_api.extensions import OperationValidationError
+
+                        raise OperationValidationError(
+                            "This bank's memory store does not support changing observation_scopes", status_code=400
+                        )
+                    if not found:
+                        return False
+                    # Whether any unit's scopes actually move is decided per unit inside, against the
+                    # resolved scopes (write_scopes_changed) — a no-op change requeues nothing.
+                    if retag is not None or observation_scopes is not None:
+                        retagged_result = await _store.retag_document_memories(
+                            conn=conn,
+                            ops=self._backend.ops,
+                            fq_table=fq_table,
+                            bank_id=bank_id,
+                            document_id=document_id,
+                            tags=retag,
+                            retagged=_retagged,
+                            rescoped=_rescoped,
+                        )
+                        invalidated_obs = retagged_result.invalidated_observations
+                        requeued_units = retagged_result.requeued_units
 
         if invalidated_obs > 0:
             # Observation units were deleted, changing the counts get_bank_stats
@@ -11210,8 +11510,17 @@ class MemoryEngine(MemoryEngineInterface):
         if invalidated_obs > 0 or requeued_units > 0:
             config = await self._config_resolver.resolve_full_config(bank_id, request_context)
             if config.enable_auto_consolidation:
+                # Built (and so timestamped) now, before the consolidation it is recorded on can run.
+                retag_event = DocumentEvent(
+                    document_id=document_id,
+                    kind=DocumentEventKind.RETAG,
+                    observations_removed=ObservationIdSample.of(retag_changes.removed),
+                )
                 try:
-                    await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+                    submitted = await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+                    # On the consolidation that rebuilds what the retag removed, so the history
+                    # shows the removal next to its rebuild (see document_history).
+                    await append_operation_events(backend, submitted["operation_id"], [retag_event])
                 except Exception as e:
                     logger.warning(f"Failed to submit consolidation after document update for bank {bank_id}: {e}")
 
@@ -11254,68 +11563,78 @@ class MemoryEngine(MemoryEngineInterface):
         invalidated_obs = 0
         bank_id_for_consolidation: str | None = None
         bank_id_for_graph_maintenance: str | None = None
-        async with acquire_with_retry(backend) as conn:
-            async with conn.transaction():
-                # Get bank_id and fact_type before deletion. A SQL store discovers the bank from
-                # the row itself; a store that keeps memories outside SQL is partitioned by bank,
-                # so the caller must say which one — hence the optional `bank_id` argument.
-                from .memories import get_memories
+        with track_observation_changes() as delete_changes:
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    # Get bank_id and fact_type before deletion. A SQL store discovers the bank from
+                    # the row itself; a store that keeps memories outside SQL is partitioned by bank,
+                    # so the caller must say which one — hence the optional `bank_id` argument.
+                    from .memories import get_memories
 
-                _store = get_memories()
-                _location = await _store.locate_memory(
-                    conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(unit_uuid)
-                )
-                bank_id = _location.bank_id if _location else None
-                fact_type = _location.fact_type if _location else None
+                    _store = get_memories()
+                    _location = await _store.locate_memory(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(unit_uuid)
+                    )
+                    bank_id = _location.bank_id if _location else None
+                    fact_type = _location.fact_type if _location else None
+                    # Its document, read before the row goes: the change history files the delete there.
+                    deleted_from: dict[str, str | None] = {}
+                    if bank_id and fact_type in ("experience", "world"):
+                        deleted_from = {
+                            m.unit_id: m.document_id
+                            for m in await _store.get_memories(
+                                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(unit_uuid)]
+                            )
+                        }
 
-                # Sweep before the delete as well, in the sweep's lock order (see delete_document).
-                if bank_id and fact_type in ("experience", "world"):
-                    invalidated_obs = await self._delete_stale_observations_for_memories(conn, bank_id, [unit_id])
+                    # Sweep before the delete as well, in the sweep's lock order (see delete_document).
+                    if bank_id and fact_type in ("experience", "world"):
+                        invalidated_obs = await self._delete_stale_observations_for_memories(conn, bank_id, [unit_id])
 
-                # Capture relink victims and entity prune candidates BEFORE the
-                # cascade — once the row is gone, the joins finding them return
-                # nothing.
-                if bank_id:
-                    from .graph_maintenance import enqueue_entity_prune_candidates, enqueue_relink_victims
+                    # Capture relink victims and entity prune candidates BEFORE the
+                    # cascade — once the row is gone, the joins finding them return
+                    # nothing.
+                    if bank_id:
+                        from .graph_maintenance import enqueue_entity_prune_candidates, enqueue_relink_victims
 
-                    # Only fact rows carry temporal/semantic adjacency worth
-                    # rebuilding; entity postings hang off any unit that has
-                    # them, so the prune candidates are captured unconditionally.
-                    if fact_type in ("experience", "world"):
-                        await enqueue_relink_victims(conn, bank_id, [unit_id])
-                    await enqueue_entity_prune_candidates(conn, bank_id, [unit_id])
+                        # Only fact rows carry temporal/semantic adjacency worth
+                        # rebuilding; entity postings hang off any unit that has
+                        # them, so the prune candidates are captured unconditionally.
+                        if fact_type in ("experience", "world"):
+                            await enqueue_relink_victims(conn, bank_id, [unit_id])
+                        await enqueue_entity_prune_candidates(conn, bank_id, [unit_id])
 
-                # Delete the memory unit first (cascades to links and associations).
-                # The stale-observation sweep runs AFTER the delete so it also catches
-                # observations inserted concurrently by consolidation (otherwise a
-                # racing insert committed between the sweep and the delete would
-                # leave an orphan referencing this just-deleted source memory).
-                # For a store that owns its memories the tombstone is the ONLY write here: the
-                # relink/prune enqueues above route to the store too, so nothing in this Postgres
-                # transaction has to be atomic with it.
-                deleted = await _store.delete_memory(
-                    conn=conn, ops=self._backend.ops, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id
-                )
+                    # Delete the memory unit first (cascades to links and associations).
+                    # The stale-observation sweep runs AFTER the delete so it also catches
+                    # observations inserted concurrently by consolidation (otherwise a
+                    # racing insert committed between the sweep and the delete would
+                    # leave an orphan referencing this just-deleted source memory).
+                    # For a store that owns its memories the tombstone is the ONLY write here: the
+                    # relink/prune enqueues above route to the store too, so nothing in this Postgres
+                    # transaction has to be atomic with it.
+                    deleted = await _store.delete_memory(
+                        conn=conn, ops=self._backend.ops, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id
+                    )
 
-                # Invalidate observations referencing this (now-deleted) source memory
-                if bank_id and fact_type in ("experience", "world"):
-                    invalidated_obs += await self._delete_stale_observations_for_memories(conn, bank_id, [unit_id])
-                    if invalidated_obs > 0:
-                        bank_id_for_consolidation = bank_id
+                    # Invalidate observations referencing this (now-deleted) source memory
+                    if bank_id and fact_type in ("experience", "world"):
+                        invalidated_obs += await self._delete_stale_observations_for_memories(conn, bank_id, [unit_id])
+                        if invalidated_obs > 0:
+                            bank_id_for_consolidation = bank_id
 
-                # Run graph_maintenance whenever a source-memory unit was
-                # removed — even if no relink victims were enqueued, the
-                # deleted unit's entities may now be orphans.
-                if deleted and bank_id and fact_type in ("experience", "world"):
-                    bank_id_for_graph_maintenance = bank_id
+                    # Run graph_maintenance whenever a source-memory unit was
+                    # removed — even if no relink victims were enqueued, the
+                    # deleted unit's entities may now be orphans.
+                    if deleted and bank_id and fact_type in ("experience", "world"):
+                        bank_id_for_graph_maintenance = bank_id
 
-                result = {
-                    "success": deleted is not None,
-                    "unit_id": str(deleted) if deleted else None,
-                    "message": "Memory unit and all its links deleted successfully"
-                    if deleted
-                    else "Memory unit not found",
-                }
+                    result = {
+                        "success": deleted is not None,
+                        "unit_id": str(deleted) if deleted else None,
+                        "message": "Memory unit and all its links deleted successfully"
+                        if deleted
+                        else "Memory unit not found",
+                    }
 
         # Drop any cached stats for this bank — the deleted unit (and its
         # cascaded links/entities) changed the counts get_bank_stats reports,
@@ -11333,10 +11652,13 @@ class MemoryEngine(MemoryEngineInterface):
         if bank_id_for_consolidation:
             config = await self._config_resolver.resolve_full_config(bank_id_for_consolidation, request_context)
             if config.enable_auto_consolidation:
+                # Built (and so timestamped) now, before the consolidation it is recorded on can run.
+                delete_events = deletion_events(deleted_from, delete_changes)
                 try:
-                    await self.submit_async_consolidation(
+                    submitted = await self.submit_async_consolidation(
                         bank_id=bank_id_for_consolidation, request_context=request_context
                     )
+                    await append_operation_events(backend, submitted["operation_id"], delete_events)
                 except Exception as e:
                     logger.warning(
                         f"Failed to submit consolidation after memory deletion"
@@ -11455,74 +11777,91 @@ class MemoryEngine(MemoryEngineInterface):
         # graph_maintenance + consolidation after the transaction commits.
         banks_with_source_deletes: set[str] = set()
         banks_with_invalidated_obs: set[str] = set()
+        # Per bank, each deleted fact's document: the change history files each delete there.
+        deleted_from: dict[str, dict[str, str | None]] = {}
         total_deleted = 0
         from .memories import get_memories
 
         store = get_memories()
 
-        async with acquire_with_retry(backend) as conn:
-            async with conn.transaction():
-                # Step 1 — resolve (bank_id, fact_type) for every id in one shot.
-                # Ids not found silently drop out of the batch (they might have
-                # been deleted between the caller's discovery query and this
-                # call; a missing id is not an error).
-                locations = await store.locate_memories(
-                    conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=validated_ids
-                )
-
-                # Step 2 — group by bank.
-                by_bank: dict[str, list[str]] = {}
-                source_ids_by_bank: dict[str, list[str]] = {}
-                for loc in locations:
-                    if bank_id is not None and loc.bank_id != bank_id:
-                        continue
-                    by_bank.setdefault(loc.bank_id, []).append(loc.unit_id)
-                    if loc.fact_type in ("experience", "world"):
-                        source_ids_by_bank.setdefault(loc.bank_id, []).append(loc.unit_id)
-
-                # Step 3 — per-bank cascade.
-                for target_bank, ids_for_bank in by_bank.items():
-                    source_ids = source_ids_by_bank.get(target_bank, [])
-
-                    # Sweep before the delete as well, in the sweep's lock order (see delete_document).
-                    invalidated = 0
-                    if source_ids:
-                        invalidated = await self._delete_stale_observations_for_memories(conn, target_bank, source_ids)
-
-                    # 3a. Capture relink victims and entity prune candidates
-                    # BEFORE the cascade. Victims come from the fact rows (only
-                    # those carry temporal/semantic adjacency); prune candidates
-                    # from every doomed unit in the bank, since any of them may
-                    # hold the last posting to an entity.
-                    from .graph_maintenance import enqueue_entity_prune_candidates, enqueue_relink_victims
-
-                    if source_ids:
-                        await enqueue_relink_victims(conn, target_bank, source_ids)
-                    await enqueue_entity_prune_candidates(conn, target_bank, ids_for_bank)
-
-                    # 3b. The delete itself. Postgres drops the links in lock order, then the
-                    # rows in chunks (the cascade handles unit_entities / memory_links /
-                    # observation history); a store that owns its memories deletes them itself.
-                    deleted_this_bank = await store.delete_memories(
-                        conn=conn, ops=self._backend.ops, fq_table=fq_table, bank_id=target_bank, unit_ids=ids_for_bank
+        with track_observation_changes() as delete_changes:
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    # Step 1 — resolve (bank_id, fact_type) for every id in one shot.
+                    # Ids not found silently drop out of the batch (they might have
+                    # been deleted between the caller's discovery query and this
+                    # call; a missing id is not an error).
+                    locations = await store.locate_memories(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=validated_ids
                     )
 
-                    # 3c. Racing-observation sweep — only fires for banks
-                    # whose source facts were touched (observations reference
-                    # source_memory_ids).
-                    if source_ids:
-                        invalidated += await self._delete_stale_observations_for_memories(conn, target_bank, source_ids)
-                        if invalidated > 0:
-                            banks_with_invalidated_obs.add(target_bank)
+                    # Step 2 — group by bank.
+                    by_bank: dict[str, list[str]] = {}
+                    source_ids_by_bank: dict[str, list[str]] = {}
+                    for loc in locations:
+                        if bank_id is not None and loc.bank_id != bank_id:
+                            continue
+                        by_bank.setdefault(loc.bank_id, []).append(loc.unit_id)
+                        if loc.fact_type in ("experience", "world"):
+                            source_ids_by_bank.setdefault(loc.bank_id, []).append(loc.unit_id)
 
-                    if source_ids:
-                        banks_with_source_deletes.add(target_bank)
+                    # Step 3 — per-bank cascade.
+                    for target_bank, ids_for_bank in by_bank.items():
+                        source_ids = source_ids_by_bank.get(target_bank, [])
 
-                    per_bank[target_bank] = {
-                        "deleted": deleted_this_bank,
-                        "invalidated_observations": invalidated,
-                    }
-                    total_deleted += deleted_this_bank
+                        # Sweep before the delete as well, in the sweep's lock order (see delete_document).
+                        invalidated = 0
+                        if source_ids:
+                            deleted_from[target_bank] = {
+                                m.unit_id: m.document_id
+                                for m in await store.get_memories(
+                                    conn=conn, fq_table=fq_table, bank_id=target_bank, unit_ids=source_ids
+                                )
+                            }
+                            invalidated = await self._delete_stale_observations_for_memories(
+                                conn, target_bank, source_ids
+                            )
+
+                        # 3a. Capture relink victims and entity prune candidates
+                        # BEFORE the cascade. Victims come from the fact rows (only
+                        # those carry temporal/semantic adjacency); prune candidates
+                        # from every doomed unit in the bank, since any of them may
+                        # hold the last posting to an entity.
+                        from .graph_maintenance import enqueue_entity_prune_candidates, enqueue_relink_victims
+
+                        if source_ids:
+                            await enqueue_relink_victims(conn, target_bank, source_ids)
+                        await enqueue_entity_prune_candidates(conn, target_bank, ids_for_bank)
+
+                        # 3b. The delete itself. Postgres drops the links in lock order, then the
+                        # rows in chunks (the cascade handles unit_entities / memory_links /
+                        # observation history); a store that owns its memories deletes them itself.
+                        deleted_this_bank = await store.delete_memories(
+                            conn=conn,
+                            ops=self._backend.ops,
+                            fq_table=fq_table,
+                            bank_id=target_bank,
+                            unit_ids=ids_for_bank,
+                        )
+
+                        # 3c. Racing-observation sweep — only fires for banks
+                        # whose source facts were touched (observations reference
+                        # source_memory_ids).
+                        if source_ids:
+                            invalidated += await self._delete_stale_observations_for_memories(
+                                conn, target_bank, source_ids
+                            )
+                            if invalidated > 0:
+                                banks_with_invalidated_obs.add(target_bank)
+
+                        if source_ids:
+                            banks_with_source_deletes.add(target_bank)
+
+                        per_bank[target_bank] = {
+                            "deleted": deleted_this_bank,
+                            "invalidated_observations": invalidated,
+                        }
+                        total_deleted += deleted_this_bank
 
         # Step 4 — post-commit side effects, best-effort per bank.
         current_schema = get_current_schema()
@@ -11540,7 +11879,12 @@ class MemoryEngine(MemoryEngineInterface):
             try:
                 config = await self._config_resolver.resolve_full_config(target_bank, request_context)
                 if config.enable_auto_consolidation:
-                    await self.submit_async_consolidation(bank_id=target_bank, request_context=request_context)
+                    # Built (and so timestamped) now, before the consolidation it is recorded on can run.
+                    delete_events = deletion_events(deleted_from.get(target_bank, {}), delete_changes)
+                    submitted = await self.submit_async_consolidation(
+                        bank_id=target_bank, request_context=request_context
+                    )
+                    await append_operation_events(backend, submitted["operation_id"], delete_events)
             except Exception as e:
                 logger.warning(f"Failed to submit consolidation after bulk memory deletion for bank {target_bank}: {e}")
 
@@ -12048,26 +12392,48 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
         deleted_count = 0
 
-        async with acquire_with_retry(backend) as conn:
-            async with conn.transaction():
-                import uuid as uuid_module
+        with track_observation_changes() as clear_changes:
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    import uuid as uuid_module
 
-                deleted_count = await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
+                    deleted_count = await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
 
-                # Also reset this memory's own consolidated_at so it gets re-consolidated
-                # (the memory was a source for the deleted observations, so it needs new ones).
-                # Bookkeeping only: `updated_at` stays put (see META_UPDATED_AT).
-                if deleted_count > 0:
+                    # Also reset this memory's own consolidated_at so it gets re-consolidated —
+                    # even when nothing was deleted (e.g. a pass that kept no observation from it):
+                    # this is an explicit reset request (#5731). Bookkeeping only: `updated_at`
+                    # stays put (see META_UPDATED_AT).
                     from .memories import get_memories
 
                     await get_memories().requeue_source_memory(
                         conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=uuid_module.UUID(memory_id)
                     )
+                    # The memory's document, where the change history files this clear. Only a
+                    # clear that removed something is recorded there.
+                    cleared_doc: str | None = None
+                    if deleted_count > 0:
+                        found = await get_memories().get_memories(
+                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[memory_id]
+                        )
+                        cleared_doc = found[0].document_id if found else None
 
-        if deleted_count > 0:
-            config = await self._config_resolver.resolve_full_config(bank_id, request_context)
-            if config.enable_auto_consolidation:
-                await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+        config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+        if config.enable_auto_consolidation:
+            # Built (and so timestamped) now, before the consolidation it is recorded on can run.
+            clear_events = (
+                [
+                    DocumentEvent(
+                        document_id=cleared_doc,
+                        kind=DocumentEventKind.OBSERVATIONS_CLEARED,
+                        fact_id=memory_id,
+                        observations_removed=ObservationIdSample.of(clear_changes.removed),
+                    )
+                ]
+                if cleared_doc
+                else []
+            )
+            submitted = await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+            await append_operation_events(backend, submitted["operation_id"], clear_events)
 
         return {"deleted_count": deleted_count}
 
@@ -12111,6 +12477,7 @@ class MemoryEngine(MemoryEngineInterface):
         context: str | None = None,
         occurred_start: str | None = None,
         occurred_end: str | None = None,
+        mentioned_at: str | None = None,
         new_fact_type: str | None = None,
         entities: list[str] | None = None,
         resolve_entities: bool = True,
@@ -12126,7 +12493,7 @@ class MemoryEngine(MemoryEngineInterface):
         graph queries therefore need no state predicate.
 
         - **Edit** (``text``/``context``/``occurred_start``/``occurred_end``/
-          ``new_fact_type``/``entities``): correct what the LLM extracted.
+          ``mentioned_at``/``new_fact_type``/``entities``): correct what the LLM extracted.
           Re-embeds (text + dates + entities feed the embedding), drops derived
           observations + temporal/semantic links, and re-consolidates. For date/context fields,
           ``""`` clears to NULL and ``None`` leaves unchanged; ``new_fact_type``
@@ -12199,7 +12566,8 @@ class MemoryEngine(MemoryEngineInterface):
             return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
         doing_edit = any(
-            v is not None for v in (text, context, occurred_start, occurred_end, new_fact_type, new_entities)
+            v is not None
+            for v in (text, context, occurred_start, occurred_end, mentioned_at, new_fact_type, new_entities)
         )
 
         await self._authenticate_tenant(request_context)
@@ -12291,15 +12659,17 @@ class MemoryEngine(MemoryEngineInterface):
                 new_fact = new_fact_type if new_fact_type is not None else live.fact_type
                 new_occ_start = _parse_edit_date(occurred_start) if occurred_start is not None else live.occurred_start
                 new_occ_end = _parse_edit_date(occurred_end) if occurred_end is not None else live.occurred_end
+                new_mentioned_at = _parse_edit_date(mentioned_at) if mentioned_at is not None else live.mentioned_at
                 # event_date (legacy single date, still what temporal links and the curation
                 # list's `date` are built from) tracks the occurred start when it's set. An
                 # explicit occurred_start edit — including "" to clear it — re-derives it with
                 # retain's own rule (`occurred_start or mentioned_at`, see memories/pg/writes.py),
-                # so clearing an occurrence cannot leave the legacy date on the old one. An
-                # omitted occurred_start is not an occurrence edit and leaves it untouched.
+                # so clearing an occurrence cannot leave the legacy date on the old one. A
+                # mentioned_at edit re-derives it the same way, since it is the fallback. An
+                # edit touching neither leaves it untouched.
                 new_event_date = (
-                    (new_occ_start if new_occ_start is not None else live.mentioned_at)
-                    if occurred_start is not None
+                    (new_occ_start if new_occ_start is not None else new_mentioned_at)
+                    if occurred_start is not None or mentioned_at is not None
                     else live.event_date
                 )
 
@@ -12309,7 +12679,7 @@ class MemoryEngine(MemoryEngineInterface):
                 entity_names_for_store = None
                 entity_date = None
                 if new_entities is not None:
-                    entity_date = new_occ_start or live.mentioned_at
+                    entity_date = new_occ_start or new_mentioned_at
                     entities_resolved = True
                     if store.store_owned_for(bank_id):
                         # The store owns its entity registry: hand it the raw names and let its
@@ -12368,7 +12738,7 @@ class MemoryEngine(MemoryEngineInterface):
                     new_occ_start=new_occ_start,
                     new_occ_end=new_occ_end,
                     new_event_date=new_event_date,
-                    mentioned_at=live.mentioned_at,
+                    mentioned_at=new_mentioned_at,
                     entity_resolution=entity_resolution,
                     resolved_for_unit=resolved_for_unit,
                     edit_entity_ids=edit_entity_ids,
@@ -12425,186 +12795,187 @@ class MemoryEngine(MemoryEngineInterface):
         curation_action: MemoryCurationAction | None = None
         reembedded_text: str | None = None
         try:
-            async with acquire_with_retry(backend) as conn:
-                async with conn.transaction():
-                    # Re-read under the write transaction: moving the embed out widened the read→write
-                    # window, so re-validate existence and skip cleanly if the row was concurrently
-                    # moved or deleted between the phases.
-                    live_batch2 = await store.get_memories(
-                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
-                    )
-                    live2 = live_batch2[0] if live_batch2 else None
-                    archived2 = (
-                        None
-                        if live2
-                        else await store.get_archived_memory(
-                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid)
+            with track_observation_changes() as edit_changes:
+                async with acquire_with_retry(backend) as conn:
+                    async with conn.transaction():
+                        # Re-read under the write transaction: moving the embed out widened the read→write
+                        # window, so re-validate existence and skip cleanly if the row was concurrently
+                        # moved or deleted between the phases.
+                        live_batch2 = await store.get_memories(
+                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
                         )
-                    )
-                    if live2 is None and archived2 is None:
-                        return None
-
-                    # --- Apply edit (live rows only) ---
-                    if edit_plan is not None and live2:
-                        if edit_plan.entity_names_for_store is not None:
-                            # The store owns its entity registry: apply_edit below resolves + mints
-                            # these names and rewrites the memory's entity ids. There are no SQL
-                            # postings to clear/relink and no prune queue — the store keeps entity
-                            # ids on the memory itself, so the edit's rewrite replaces the whole set.
-                            edit_embedding = edit_plan.embedding
-                        elif edit_plan.resolved_for_unit is not None:
-                            # Entities are being changed: rebuild unit_entities to the resolved set.
-                            # The entities this unit is about to stop referencing may have been
-                            # holding on by that posting alone, so queue them as prune candidates
-                            # first — after the clear there is nothing left to read them from.
-                            await enqueue_entity_prune_candidates(conn, bank_id, [memory_id])
-                            await store.clear_unit_entities(
+                        live2 = live_batch2[0] if live_batch2 else None
+                        archived2 = (
+                            None
+                            if live2
+                            else await store.get_archived_memory(
                                 conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid)
                             )
-                            if edit_plan.resolved_for_unit:
-                                # Reassert on this connection first so a concurrent graph-maintenance
-                                # prune (retain #2662 race) blocks until commit, then link exactly
-                                # the resolved set the embedding named.
-                                await self.entity_resolver.reassert_entities_batch(
-                                    bank_id, edit_plan.entity_resolution.resolved_entities, conn=conn
-                                )
-                                await self.entity_resolver.link_units_to_entities_batch(
-                                    [
-                                        (str(memory_uuid), eid, edit_plan.entity_date)
-                                        for eid in edit_plan.resolved_for_unit
-                                    ],
-                                    conn=conn,
-                                    bank_id=bank_id,
-                                )
-                            edit_embedding = edit_plan.embedding
-                        else:
-                            # Entities NOT changing: the precomputed embedding used the Phase-1
-                            # names. Re-read them under the write lock — a concurrent entity-only
-                            # edit between the phases could have changed the set, leaving the
-                            # embedding naming stale entities. Only on that (rare) mismatch do we
-                            # re-embed in-transaction, keeping the stored vector consistent with the links.
-                            emap2 = await store.entity_map_for_units(
-                                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
-                            )
-                            locked_names = [e["canonical_name"] for e in emap2.get(str(memory_uuid), [])]
-                            if locked_names != edit_plan.names:
-                                edit_embedding = await self._reembed_memory_text(
-                                    text=edit_plan.new_text,
-                                    occurred_start=edit_plan.new_occ_start,
-                                    occurred_end=edit_plan.new_occ_end,
-                                    mentioned_at=edit_plan.mentioned_at,
-                                    entities=locked_names,
-                                )
-                            else:
+                        )
+                        if live2 is None and archived2 is None:
+                            return None
+
+                        # --- Apply edit (live rows only) ---
+                        if edit_plan is not None and live2:
+                            if edit_plan.entity_names_for_store is not None:
+                                # The store owns its entity registry: apply_edit below resolves + mints
+                                # these names and rewrites the memory's entity ids. There are no SQL
+                                # postings to clear/relink and no prune queue — the store keeps entity
+                                # ids on the memory itself, so the edit's rewrite replaces the whole set.
                                 edit_embedding = edit_plan.embedding
-                        # Sweep before this memory's row is written, in the sweep's lock order (see
-                        # delete_document); the sweep after the edit stays for racing inserts.
-                        await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
-                        # Capture relink victims before this memory's links change, then apply the
-                        # field edit through the store: it resets consolidation, stamps the edit, and
-                        # drops the derived links (rebuilt with victims — the edit leaves the unit
-                        # live, so its own outgoing adjacency is rebuilt too, #2864).
-                        await enqueue_relink_victims(conn, bank_id, [memory_id], include_affected_units=True)
-                        await store.apply_edit(
-                            conn=conn,
-                            fq_table=fq_table,
-                            bank_id=bank_id,
-                            unit_id=str(memory_uuid),
-                            text=edit_plan.new_text,
-                            context=edit_plan.new_context,
-                            fact_type=edit_plan.new_fact,
-                            occurred_start=edit_plan.new_occ_start,
-                            occurred_end=edit_plan.new_occ_end,
-                            event_date=edit_plan.new_event_date,
-                            mentioned_at=edit_plan.mentioned_at,
-                            entity_ids=edit_plan.edit_entity_ids,
-                            entity_names=edit_plan.entity_names_for_store,
-                            # Only when the caller opted out, so a store that predates the
-                            # argument keeps working for every other edit (#5050).
-                            **(
-                                {"exact_entity_names": True}
-                                if edit_plan.entity_names_for_store is not None and not resolve_entities
-                                else {}
-                            ),
-                            # The vector describes the text being written by this same call, so
-                            # it goes with it: a following set_memory_embedding would be a second
-                            # write of the row apply_edit just wrote.
-                            embedding=edit_embedding,
-                            # The memory's type as it stands, so the store need not re-read the
-                            # memory to see whether this edit changes it. `live2` is the re-read
-                            # this transaction already did, so it is free here.
-                            current_fact_type=live2.fact_type,
-                        )
-                        await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
-                        need_consolidation = True
-                        need_graph = True
-                        edit_applied = True
-                        curation_action = "edit"
-                        reembedded_text = edit_plan.new_text
-
-                    # --- Invalidate: move live → archive ---
-                    if do_invalidate and live2:
-                        # Sweep before the row moves, in the sweep's lock order (see delete_document).
-                        await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
-                        # Capture relink victims and entity prune candidates before the row
-                        # (and its links and postings) go.
-                        await enqueue_relink_victims(conn, bank_id, [memory_id])
-                        await enqueue_entity_prune_candidates(conn, bank_id, [memory_id])
-                        await store.invalidate_memory(
-                            conn=conn,
-                            fq_table=fq_table,
-                            bank_id=bank_id,
-                            unit_id=str(memory_uuid),
-                            reason=reason,
-                        )
-                        # Sweep after the move, so a racing observation insert is caught too.
-                        await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
-                        need_consolidation = True
-                        need_graph = True
-                        curation_action = "invalidate"
-                    elif do_reason_update and archived2 and reason is not None:
-                        # Already archived — just update the recorded reason.
-                        await store.set_invalidation_reason(
-                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid), reason=reason
-                        )
-                        curation_action = "reason"
-
-                    # --- Revert: move archive → live ---
-                    elif do_revert and archived2 and revert_plan is not None:
-                        restored = await store.restore_memory(
-                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid)
-                        )
-                        if restored is not None:
-                            # The Phase-1 embedding used the archive snapshot's entity names. If the
-                            # restored (surviving) entity set differs — some pruned as orphans after
-                            # the original move — re-embed in-transaction so the stored vector matches.
-                            emap2 = await store.entity_map_for_units(
-                                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
+                            elif edit_plan.resolved_for_unit is not None:
+                                # Entities are being changed: rebuild unit_entities to the resolved set.
+                                # The entities this unit is about to stop referencing may have been
+                                # holding on by that posting alone, so queue them as prune candidates
+                                # first — after the clear there is nothing left to read them from.
+                                await enqueue_entity_prune_candidates(conn, bank_id, [memory_id])
+                                await store.clear_unit_entities(
+                                    conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid)
+                                )
+                                if edit_plan.resolved_for_unit:
+                                    # Reassert on this connection first so a concurrent graph-maintenance
+                                    # prune (retain #2662 race) blocks until commit, then link exactly
+                                    # the resolved set the embedding named.
+                                    await self.entity_resolver.reassert_entities_batch(
+                                        bank_id, edit_plan.entity_resolution.resolved_entities, conn=conn
+                                    )
+                                    await self.entity_resolver.link_units_to_entities_batch(
+                                        [
+                                            (str(memory_uuid), eid, edit_plan.entity_date)
+                                            for eid in edit_plan.resolved_for_unit
+                                        ],
+                                        conn=conn,
+                                        bank_id=bank_id,
+                                    )
+                                edit_embedding = edit_plan.embedding
+                            else:
+                                # Entities NOT changing: the precomputed embedding used the Phase-1
+                                # names. Re-read them under the write lock — a concurrent entity-only
+                                # edit between the phases could have changed the set, leaving the
+                                # embedding naming stale entities. Only on that (rare) mismatch do we
+                                # re-embed in-transaction, keeping the stored vector consistent with the links.
+                                emap2 = await store.entity_map_for_units(
+                                    conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
+                                )
+                                locked_names = [e["canonical_name"] for e in emap2.get(str(memory_uuid), [])]
+                                if locked_names != edit_plan.names:
+                                    edit_embedding = await self._reembed_memory_text(
+                                        text=edit_plan.new_text,
+                                        occurred_start=edit_plan.new_occ_start,
+                                        occurred_end=edit_plan.new_occ_end,
+                                        mentioned_at=edit_plan.mentioned_at,
+                                        entities=locked_names,
+                                    )
+                                else:
+                                    edit_embedding = edit_plan.embedding
+                            # Sweep before this memory's row is written, in the sweep's lock order (see
+                            # delete_document); the sweep after the edit stays for racing inserts.
+                            await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
+                            # Capture relink victims before this memory's links change, then apply the
+                            # field edit through the store: it resets consolidation, stamps the edit, and
+                            # drops the derived links (rebuilt with victims — the edit leaves the unit
+                            # live, so its own outgoing adjacency is rebuilt too, #2864).
+                            await enqueue_relink_victims(conn, bank_id, [memory_id], include_affected_units=True)
+                            await store.apply_edit(
+                                conn=conn,
+                                fq_table=fq_table,
+                                bank_id=bank_id,
+                                unit_id=str(memory_uuid),
+                                text=edit_plan.new_text,
+                                context=edit_plan.new_context,
+                                fact_type=edit_plan.new_fact,
+                                occurred_start=edit_plan.new_occ_start,
+                                occurred_end=edit_plan.new_occ_end,
+                                event_date=edit_plan.new_event_date,
+                                mentioned_at=edit_plan.mentioned_at,
+                                entity_ids=edit_plan.edit_entity_ids,
+                                entity_names=edit_plan.entity_names_for_store,
+                                # Only when the caller opted out, so a store that predates the
+                                # argument keeps working for every other edit (#5050).
+                                **(
+                                    {"exact_entity_names": True}
+                                    if edit_plan.entity_names_for_store is not None and not resolve_entities
+                                    else {}
+                                ),
+                                # The vector describes the text being written by this same call, so
+                                # it goes with it: a following set_memory_embedding would be a second
+                                # write of the row apply_edit just wrote.
+                                embedding=edit_embedding,
+                                # The memory's type as it stands, so the store need not re-read the
+                                # memory to see whether this edit changes it. `live2` is the re-read
+                                # this transaction already did, so it is free here.
+                                current_fact_type=live2.fact_type,
                             )
-                            locked_names = [e["canonical_name"] for e in emap2.get(str(memory_uuid), [])]
-                            revert_embedding = revert_plan.embedding
-                            if locked_names != revert_plan.names:
-                                revert_embedding = await self._reembed_memory_text(
-                                    text=restored.text,
-                                    occurred_start=restored.occurred_start,
-                                    occurred_end=restored.occurred_end,
-                                    mentioned_at=restored.mentioned_at,
-                                    entities=locked_names,
-                                )
-                            if revert_embedding is not None:
-                                await store.set_memory_embedding(
-                                    conn=conn,
-                                    fq_table=fq_table,
-                                    bank_id=bank_id,
-                                    unit_id=str(memory_uuid),
-                                    embedding=revert_embedding,
-                                )
-                            curation_action = "revert"
-                            reembedded_text = restored.text if revert_embedding is not None else None
-                        need_consolidation = True
-                        need_graph = True
+                            await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
+                            need_consolidation = True
+                            need_graph = True
+                            edit_applied = True
+                            curation_action = "edit"
+                            reembedded_text = edit_plan.new_text
 
-                phase2_committed = True
+                        # --- Invalidate: move live → archive ---
+                        if do_invalidate and live2:
+                            # Sweep before the row moves, in the sweep's lock order (see delete_document).
+                            await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
+                            # Capture relink victims and entity prune candidates before the row
+                            # (and its links and postings) go.
+                            await enqueue_relink_victims(conn, bank_id, [memory_id])
+                            await enqueue_entity_prune_candidates(conn, bank_id, [memory_id])
+                            await store.invalidate_memory(
+                                conn=conn,
+                                fq_table=fq_table,
+                                bank_id=bank_id,
+                                unit_id=str(memory_uuid),
+                                reason=reason,
+                            )
+                            # Sweep after the move, so a racing observation insert is caught too.
+                            await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
+                            need_consolidation = True
+                            need_graph = True
+                            curation_action = "invalidate"
+                        elif do_reason_update and archived2 and reason is not None:
+                            # Already archived — just update the recorded reason.
+                            await store.set_invalidation_reason(
+                                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid), reason=reason
+                            )
+                            curation_action = "reason"
+
+                        # --- Revert: move archive → live ---
+                        elif do_revert and archived2 and revert_plan is not None:
+                            restored = await store.restore_memory(
+                                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid)
+                            )
+                            if restored is not None:
+                                # The Phase-1 embedding used the archive snapshot's entity names. If the
+                                # restored (surviving) entity set differs — some pruned as orphans after
+                                # the original move — re-embed in-transaction so the stored vector matches.
+                                emap2 = await store.entity_map_for_units(
+                                    conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
+                                )
+                                locked_names = [e["canonical_name"] for e in emap2.get(str(memory_uuid), [])]
+                                revert_embedding = revert_plan.embedding
+                                if locked_names != revert_plan.names:
+                                    revert_embedding = await self._reembed_memory_text(
+                                        text=restored.text,
+                                        occurred_start=restored.occurred_start,
+                                        occurred_end=restored.occurred_end,
+                                        mentioned_at=restored.mentioned_at,
+                                        entities=locked_names,
+                                    )
+                                if revert_embedding is not None:
+                                    await store.set_memory_embedding(
+                                        conn=conn,
+                                        fq_table=fq_table,
+                                        bank_id=bank_id,
+                                        unit_id=str(memory_uuid),
+                                        embedding=revert_embedding,
+                                    )
+                                curation_action = "revert"
+                                reembedded_text = restored.text if revert_embedding is not None else None
+                            need_consolidation = True
+                            need_graph = True
+
+                    phase2_committed = True
         finally:
             # Entities were resolved (and possibly autocommitted) in Phase 1 but the edit did not
             # durably apply (row concurrently invalidated → live2 None, or Phase 2 raised), so the
@@ -12624,13 +12995,30 @@ class MemoryEngine(MemoryEngineInterface):
                 except Exception as e:
                     logger.warning(f"Failed to submit orphan-entity cleanup after a failed edit in bank {bank_id}: {e}")
 
+        # Built (and so timestamped) now, before the consolidation it is recorded on can run.
+        curated = live2 or archived2
+        curation_events = (
+            [
+                DocumentEvent(
+                    document_id=curated.document_id,
+                    kind=_CURATION_EVENT_KINDS[curation_action],
+                    fact_id=memory_id,
+                    observations_removed=ObservationIdSample.of(edit_changes.removed),
+                )
+            ]
+            if curation_action in _CURATION_EVENT_KINDS and curated and curated.document_id
+            else []
+        )
         consolidation_submitted = False
         if need_consolidation:
             config = await self._config_resolver.resolve_full_config(bank_id, request_context)
             if config.enable_auto_consolidation:
                 try:
-                    await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+                    submitted = await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
                     consolidation_submitted = True
+                    # On the consolidation that rebuilds what this change removed, so the history
+                    # shows the removal next to its rebuild (see document_history).
+                    await append_operation_events(backend, submitted["operation_id"], curation_events)
                 except Exception as e:
                     logger.warning(f"Failed to submit consolidation after curating memory in bank {bank_id}: {e}")
         if need_graph:
@@ -12781,278 +13169,21 @@ class MemoryEngine(MemoryEngineInterface):
             units = page["units"]
             total_count = page["total"]
 
-            # Get links, filtering to only include links between units of the selected agent
-            # Use DISTINCT ON with LEAST/GREATEST to deduplicate bidirectional links
-            unit_ids = [row["id"] for row in units]
-            unit_id_set = set(unit_ids)
-
-            # Collect source memory IDs from observations
-            source_memory_ids = []
-            for unit in units:
-                if unit["source_memory_ids"]:
-                    source_memory_ids.extend(unit["source_memory_ids"])
-            source_memory_ids = list(set(source_memory_ids))  # Deduplicate
-
             # Links and entity rows came back with the units: which memories are visible, how they
             # link, and what they mention are three questions about ONE set of memories, and
             # `graph_view` reads that set once. Asked as three calls, a store that keeps memories
             # outside SQL fetched the whole visible set three times per render.
             #
             # Links cover both endpoints in the visible set (or its source memories); entity edges
-            # are derived below from `unit_entities` rather than materialized as memory_links rows
+            # are derived from `unit_entities` rather than materialized as memory_links rows
             # (dropped in migration e9b2c7d1f3a4), so no link_type filter is needed. The store caps
-            # the edge count — the UI cannot usefully render more, and a densely-linked bank (1000
-            # nodes, 500k+ edges) is too slow uncapped.
+            # the links it reads, and the assembly caps what it derives, at GRAPH_MAX_EDGES each.
             links = page["links"]
             unit_entities = page["entity_rows"]
 
-            # Copy links from source memories to observations
-            # Observations inherit links from their source memories via source_memory_ids
-            # Build a map from source_id to observation_ids
-            source_to_observations = {}
-            for unit in units:
-                if unit["source_memory_ids"]:
-                    for source_id in unit["source_memory_ids"]:
-                        if source_id not in source_to_observations:
-                            source_to_observations[source_id] = []
-                        source_to_observations[source_id].append(unit["id"])
-
-            copied_links = []
-            for link in links:
-                from_id = link["from_unit_id"]
-                to_id = link["to_unit_id"]
-
-                # Get observations that should inherit this link
-                from_observations = source_to_observations.get(from_id, [])
-                to_observations = source_to_observations.get(to_id, [])
-
-                # If from_id is a source memory, copy links to its observations
-                if from_observations:
-                    for obs_id in from_observations:
-                        # Only include if the target is visible
-                        if to_id in unit_id_set or to_observations:
-                            target = to_observations[0] if to_observations and to_id not in unit_id_set else to_id
-                            if target in unit_id_set and obs_id != target:
-                                copied_links.append(
-                                    {
-                                        "from_unit_id": obs_id,
-                                        "to_unit_id": target,
-                                        "link_type": link["link_type"],
-                                        "weight": link["weight"],
-                                        "entity_name": link["entity_name"],
-                                    }
-                                )
-
-                # If to_id is a source memory, copy links to its observations
-                if to_observations and from_id in unit_id_set:
-                    for obs_id in to_observations:
-                        if from_id != obs_id:
-                            copied_links.append(
-                                {
-                                    "from_unit_id": from_id,
-                                    "to_unit_id": obs_id,
-                                    "link_type": link["link_type"],
-                                    "weight": link["weight"],
-                                    "entity_name": link["entity_name"],
-                                }
-                            )
-
-            # Keep only direct links between visible nodes
-            direct_links = [
-                link for link in links if link["from_unit_id"] in unit_id_set and link["to_unit_id"] in unit_id_set
-            ]
-
-        # Build entity mapping
-        entity_map = {}
-        for row in unit_entities:
-            unit_id = row["unit_id"]
-            entity_name = row["canonical_name"]
-            if unit_id not in entity_map:
-                entity_map[unit_id] = []
-            entity_map[unit_id].append(entity_name)
-
-        # For observations, inherit entities from source memories
-        for unit in units:
-            if unit["source_memory_ids"] and unit["id"] not in entity_map:
-                # Collect entities from all source memories
-                source_entities = []
-                for source_id in unit["source_memory_ids"]:
-                    if source_id in entity_map:
-                        source_entities.extend(entity_map[source_id])
-                if source_entities:
-                    # Deduplicate while preserving order
-                    entity_map[unit["id"]] = list(dict.fromkeys(source_entities))
-
-        # Build nodes
-        nodes = []
-        for row in units:
-            unit_id = row["id"]
-            text = row["text"]
-            event_date = row["event_date"]
-            context = row["context"]
-
-            entities = entity_map.get(unit_id, [])
-            entity_count = len(entities)
-
-            # Color by entity count
-            if entity_count == 0:
-                color = "#e0e0e0"
-            elif entity_count == 1:
-                color = "#90caf9"
-            else:
-                color = "#42a5f5"
-
-            nodes.append(
-                {
-                    "data": {
-                        "id": str(unit_id),
-                        "label": f"{text[:30]}..." if len(text) > 30 else text,
-                        "text": text,
-                        "date": event_date.isoformat() if event_date else "",
-                        "context": context if context else "",
-                        "entities": ", ".join(entities) if entities else "None",
-                        "color": color,
-                    }
-                }
-            )
-
-        # Build derived links: entity edges for all visible units (from unit_entities)
-        # and observation semantic edges via shared source memories.
-        # Observations never have direct memory_links rows, so all their links are derived.
-        observation_units = [unit for unit in units if unit["fact_type"] == "observation"]
-
-        # Entity links: pair any visible units that share at least one entity.
-        # Each unit links to up to max_neighbors_per_unit subsequent units in the
-        # per-entity list, so every unit that shares an entity with another visible
-        # unit gets edges (matches the historical writer cap, which was per-unit).
-        # Bounds total edges to ~N * cap per entity instead of N² for hot entities.
-        max_neighbors_per_unit = 10
-        entity_to_units_visible: dict[str, list] = {}
-        for unit_id in unit_ids:
-            for entity_name in entity_map.get(unit_id, []):
-                entity_to_units_visible.setdefault(entity_name, []).append(unit_id)
-
-        # Semantic links: pair observations that share at least one source memory
-        source_to_obs_for_semantic: dict = {}
-        for unit in observation_units:
-            if unit["source_memory_ids"]:
-                for src_id in unit["source_memory_ids"]:
-                    source_to_obs_for_semantic.setdefault(src_id, []).append(unit["id"])
-
-        observation_inferred_links = []
-        seen_inferred: set[tuple] = set()
-
-        for entity_name, ent_unit_ids in entity_to_units_visible.items():
-            n = len(ent_unit_ids)
-            for i, unit_a in enumerate(ent_unit_ids):
-                # Sliding window: link unit_a to its next max_neighbors_per_unit
-                # in the list. Each pair is also "incoming" for the later unit,
-                # so every unit ends up with up to ~2*max_neighbors_per_unit edges
-                # for this entity (its successors + its predecessors via their pairs).
-                for j in range(i + 1, min(i + 1 + max_neighbors_per_unit, n)):
-                    unit_b = ent_unit_ids[j]
-                    pair = (min(str(unit_a), str(unit_b)), max(str(unit_a), str(unit_b)), "entity", entity_name)
-                    if pair not in seen_inferred:
-                        seen_inferred.add(pair)
-                        observation_inferred_links.append(
-                            {
-                                "from_unit_id": unit_a,
-                                "to_unit_id": unit_b,
-                                "link_type": "entity",
-                                "weight": 1.0,
-                                "entity_name": entity_name,
-                            }
-                        )
-
-        for src_id, obs_ids in source_to_obs_for_semantic.items():
-            for i, obs_a in enumerate(obs_ids):
-                for obs_b in obs_ids[i + 1 :]:
-                    pair = (min(str(obs_a), str(obs_b)), max(str(obs_a), str(obs_b)), "semantic", "")
-                    if pair not in seen_inferred:
-                        seen_inferred.add(pair)
-                        observation_inferred_links.append(
-                            {
-                                "from_unit_id": obs_a,
-                                "to_unit_id": obs_b,
-                                "link_type": "semantic",
-                                "weight": 1.0,
-                                "entity_name": None,
-                            }
-                        )
-
-        # Build edges (combine direct links, copied links from sources, and observation-inferred links)
-        edges = []
-        seen_edges: set[tuple] = set()
-        all_links = direct_links + copied_links + observation_inferred_links
-        for row in all_links:
-            from_id = str(row["from_unit_id"])
-            to_id = str(row["to_unit_id"])
-            link_type = row["link_type"]
-            weight = row["weight"]
-            entity_name = row.get("entity_name")
-
-            # Color by link type
-            if link_type == "temporal":
-                color = "#00bcd4"
-                line_style = "dashed"
-            elif link_type == "semantic":
-                color = "#ff69b4"
-                line_style = "solid"
-            elif link_type == "entity":
-                color = "#ffd700"
-                line_style = "solid"
-            else:
-                color = "#999999"
-                line_style = "solid"
-
-            edge_key = (from_id, to_id, link_type, entity_name or "")
-            if edge_key in seen_edges:
-                continue
-            seen_edges.add(edge_key)
-
-            edges.append(
-                {
-                    "data": {
-                        "id": f"{from_id}-{to_id}-{link_type}",
-                        "source": from_id,
-                        "target": to_id,
-                        "linkType": link_type,
-                        "weight": weight,
-                        "entityName": entity_name if entity_name else "",
-                        "color": color,
-                        "lineStyle": line_style,
-                    }
-                }
-            )
-
-        # Build table rows
-        table_rows = []
-        for row in units:
-            unit_id = row["id"]
-            entities = entity_map.get(unit_id, [])
-
-            table_rows.append(
-                {
-                    "id": str(unit_id),
-                    "text": row["text"],
-                    "context": row["context"] if row["context"] else "N/A",
-                    "occurred_start": row["occurred_start"].isoformat() if row["occurred_start"] else None,
-                    "occurred_end": row["occurred_end"].isoformat() if row["occurred_end"] else None,
-                    "mentioned_at": row["mentioned_at"].isoformat() if row["mentioned_at"] else None,
-                    "date": row["event_date"].strftime("%Y-%m-%d %H:%M")
-                    if row["event_date"]
-                    else "N/A",  # Deprecated, kept for backwards compatibility
-                    "entities": ", ".join(entities) if entities else "None",
-                    "document_id": row["document_id"],
-                    "chunk_id": row["chunk_id"] if row["chunk_id"] else None,
-                    "fact_type": row["fact_type"],
-                    "tags": list(row["tags"]) if row["tags"] else [],
-                    "created_at": row["created_at"].isoformat() if row["created_at"] else None,
-                    "proof_count": row["proof_count"] if row["proof_count"] else None,
-                }
-            )
-
-        return {"nodes": nodes, "edges": edges, "table_rows": table_rows, "total_units": total_count, "limit": limit}
+        # Seconds of pure Python on a big bank: run it off the event loop, after the
+        # connection is back in the pool, so health checks and other requests keep going.
+        return await asyncio.to_thread(_assemble_graph_data, units, links, unit_entities, total_count, limit)
 
     # Prompt-affecting settings overridable per dry-run extraction call.
     _EXTRACTION_OVERRIDE_FIELDS = frozenset(
@@ -13754,6 +13885,28 @@ class MemoryEngine(MemoryEngineInterface):
                 "chunk_text": chunk["chunk_text"],
                 "created_at": chunk["created_at"].isoformat() if chunk["created_at"] else "",
             }
+
+    async def get_document_history(
+        self,
+        bank_id: str,
+        document_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        request_context: "RequestContext",
+    ) -> DocumentHistoryResponse | None:
+        """A document's change history, newest first: what each retain, fact edit and consolidation
+        did to its facts and observations. None when the document is outside the caller's tag scope."""
+        await self._authenticate_tenant(request_context)
+        from hindsight_api.extensions import BankReadOperation
+
+        tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.GET_DOCUMENT_HISTORY, request_context)
+        backend = await self._get_backend()
+        if tag_scope:
+            async with acquire_with_retry(backend) as conn:
+                if not await self._document_in_tag_scope(conn, bank_id, document_id, tag_scope):
+                    return None
+        return await list_document_events(backend, bank_id, document_id, limit=limit, offset=offset)
 
     async def list_document_chunks(
         self,
@@ -14568,16 +14721,27 @@ class MemoryEngine(MemoryEngineInterface):
             )
             await self._validate_operation(self._operation_validator.validate_create_bank(ctx))
 
+        # BEFORE the row, not after: the row is what makes the bank readable to every other
+        # request, and a store that owns its own storage answers a read against a bank whose
+        # storage does not exist yet with an error, not with an empty bank. The window between
+        # the two is a real one — the create is a round trip to an external service and can take
+        # seconds under load — and a first read landing inside it is a 500 on a bank that was
+        # only just asked for, which is what a client does immediately after creating one.
+        #
+        # Ordering it this way inverts which half can be left behind, and the orphan is the
+        # harmless one: storage with no bank row is inert and the create is idempotent, so the
+        # eventual real create adopts it. A committed row with no storage is the failure that
+        # matters, because every read against it faults.
+        await self._ensure_bank_storage(bank_id)
+
         if conn is not None:
             created_on_conn = await bank_utils.create_bank_row_on_conn(conn, bank_id, ops=backend.ops)
-            await self._ensure_bank_storage(bank_id)
             return created_on_conn
 
         # Second connection, on purpose: the validator hook above must not run
         # while one is held. Only ever paid once per bank, on the call that
         # creates it — every later call returns above on the probe.
         created = await bank_utils.create_bank_if_missing(backend, bank_id)
-        await self._ensure_bank_storage(bank_id)
         if created:
             await self._apply_default_bank_template(bank_id, request_context)
         return created
@@ -14593,11 +14757,11 @@ class MemoryEngine(MemoryEngineInterface):
 
         A store that keeps memories in SQL implements this as a no-op.
 
-        Ordering note: on the `conn` path this runs inside the caller's transaction. If that
-        transaction rolls back, an empty namespace is left behind for a bank that does not
-        exist — an inert orphan, and a create-if-absent makes the eventual real creation a no-op.
-        The reverse (a committed bank with no storage) is the failure that matters, because every
-        read against it looks like an empty bank rather than a fault.
+        Ordering note: this runs BEFORE the row is written, and on the `conn` path inside the
+        caller's transaction. Either way the leftover of a failure is storage for a bank that
+        does not exist — an inert orphan, and a create-if-absent makes the eventual real creation
+        a no-op. The reverse (a committed bank with no storage) is the failure that matters,
+        because every read against it faults until something ensures it.
         """
         from .memories import get_memories
 
@@ -16850,6 +17014,7 @@ class MemoryEngine(MemoryEngineInterface):
         limit: int | None = 100,
         offset: int = 0,
         with_staleness: bool = False,
+        exclude_knowledge_pages: bool = False,
         request_context: "RequestContext",
     ) -> MentalModelPage:
         """List pinned mental models for a bank.
@@ -16869,6 +17034,8 @@ class MemoryEngine(MemoryEngineInterface):
                 extra query for the whole page, scoped per model. Off for internal
                 callers (bank-template export/import) that only move rows around
                 and would pay for an answer nobody reads.
+            exclude_knowledge_pages: Leave out the models that hold a knowledge
+                page's content, so only standalone mental models are listed.
             request_context: Request context for authentication
 
         Returns:
@@ -16897,11 +17064,13 @@ class MemoryEngine(MemoryEngineInterface):
             scope_clause = build_tag_groups_where_clause(tag_scope, len(filter_params) + 1)
             tag_filter += f" {scope_clause.sql}"
             filter_params.extend(scope_clause.params)
+            if exclude_knowledge_pages:
+                tag_filter += f" AND NOT {_backs_knowledge_page_sql()}"
 
             total = await conn.fetchval(
                 f"""
                 SELECT COUNT(*)
-                FROM {fq_table("mental_models")}
+                FROM {fq_table("mental_models")} mm
                 WHERE bank_id = $1 {tag_filter}
                 """,
                 *filter_params,
@@ -16924,8 +17093,9 @@ class MemoryEngine(MemoryEngineInterface):
                 f"""
                 SELECT id, bank_id, name, source_query, content, tags,
                        last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, last_full_refreshed_at, created_at, reflect_response,
-                       max_tokens, trigger, structured_content
-                FROM {fq_table("mental_models")}
+                       max_tokens, trigger, structured_content,
+                       CASE WHEN {_backs_knowledge_page_sql()} THEN 1 ELSE 0 END AS is_knowledge_page
+                FROM {fq_table("mental_models")} mm
                 WHERE bank_id = $1 {tag_filter}
                 ORDER BY last_refreshed_at DESC, id DESC
                 {pagination}
@@ -16953,7 +17123,8 @@ class MemoryEngine(MemoryEngineInterface):
         # that directly rather than re-deriving it from the detail string.
         #
         # This matters most for knowledge pages: a page is a mental_models
-        # row and is not excluded from this query, so an unreported list
+        # row and is listed here unless the caller passes
+        # ``exclude_knowledge_pages`` (off by default), so an unreported list
         # hands back every page in a bank while a single-page read is
         # reported. The narrow door should not be the only one watched.
         #
@@ -16998,8 +17169,9 @@ class MemoryEngine(MemoryEngineInterface):
                 f"""
                 SELECT id, bank_id, name, source_query, content, tags,
                        last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, last_full_refreshed_at, created_at, reflect_response,
-                       max_tokens, trigger, structured_content
-                FROM {fq_table("mental_models")}
+                       max_tokens, trigger, structured_content,
+                       CASE WHEN {_backs_knowledge_page_sql()} THEN 1 ELSE 0 END AS is_knowledge_page
+                FROM {fq_table("mental_models")} mm
                 WHERE bank_id = $1 AND id = $2
                 """,
                 bank_id,
@@ -17540,6 +17712,97 @@ class MemoryEngine(MemoryEngineInterface):
             )
         return _MentalModelScopeWatermark(newest_in_scope=newest_in_scope, watermark=newest_in_scope)
 
+    async def _gate_delta_refresh(
+        self,
+        bank_id: str,
+        *,
+        source_query: str,
+        current_content: str,
+        tag_filtering: RefreshTagFiltering,
+        fact_types: list[str] | None,
+        created_after: datetime,
+        refresh_cutoff: datetime,
+        request_context: "RequestContext",
+    ) -> _DeltaGate | None:
+        """Pick the new memories that could change a page, without running reflect.
+
+        A delta refresh only needs the memories written since its last run, and those are
+        one read away: the scope and window are the ones the watermark is taken over. The
+        decision model is asked, per memory, whether it could change the page, and only
+        those reach the delta LLM call. None of them means no LLM call at all.
+
+        None when the gate does not apply (the bank opted out, no decision model, a store
+        that cannot list, more memories than it is worth asking about) or a question failed:
+        the refresh then runs reflect as it always has.
+
+        Sibling pages are not offered, as reflect would: a sibling changes only when its
+        own memories do, and the memories in this page's scope are already here.
+        """
+        decision_model = self._reflect_decision_model()
+        if decision_model is None:
+            return None
+        resolved = await self._config_resolver.resolve_full_config(bank_id, request_context)
+        if not resolved.mental_model_delta_use_decision_model:
+            return None
+        from .memories import get_memories
+
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            memories = await get_memories().memories_updated_between(
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                until=refresh_cutoff,
+                since=created_after,
+                limit=_DELTA_GATE_MAX_MEMORIES + 1,
+                fact_types=fact_types,
+                tags=tag_filtering.tags,
+                tags_match=tag_filtering.tags_match,
+                tag_groups=tag_filtering.tag_groups,
+            )
+        if memories is None or len(memories) > _DELTA_GATE_MAX_MEMORIES:
+            return None
+        try:
+            # A TaskGroup, not gather: one failed question cancels the rest instead of
+            # letting up to 199 retry on their own for a result that is thrown away.
+            # ponytail: these calls are not added to the refresh's usage or llm_calls, like
+            # every other decision-model call; count them there if their cost needs watching.
+            async with asyncio.TaskGroup() as group:
+                questions = [
+                    group.create_task(decision_model.could_change_page(source_query, current_content, m.text))
+                    for m in memories
+                ]
+            verdicts = [q.result() for q in questions]
+        except Exception as exc:
+            cause = exc.exceptions[0] if isinstance(exc, ExceptionGroup) else exc
+            logger.warning(f"[MENTAL_MODELS] Delta gate failed ({cause!r}); searching instead")
+            return None
+        listed: dict[str, int] = {}
+        kept: dict[str, list[MemoryFact]] = {}
+        for memory, could_change in zip(memories, verdicts):
+            listed[memory.fact_type] = listed.get(memory.fact_type, 0) + 1
+            if could_change:
+                kept.setdefault(memory.fact_type, []).append(
+                    MemoryFact(id=memory.unit_id, text=memory.text, fact_type=memory.fact_type, context=memory.context)
+                )
+        if kept:
+            # Reflect hands the delta edit the bank's directives too, scoped like the
+            # memories; without them a gated edit would stop following them.
+            directives = await self.list_directives(
+                bank_id=bank_id,
+                tags=tag_filtering.tags,
+                tags_match=tag_filtering.tags_match,
+                tag_groups=tag_filtering.tag_groups,
+                active_only=True,
+                request_context=request_context,
+                isolation_mode=True,
+            )
+            if directives.items:
+                kept["directives"] = [
+                    MemoryFact(id=str(d["id"]), text=d["content"], fact_type="directives") for d in directives.items
+                ]
+        return _DeltaGate(listed=listed, kept=kept)
+
     async def _bank_has_readable_document(self, bank_id: str, *, excluding_id: str) -> bool:
         """Does this bank hold another mental model the reflect agent could read?
 
@@ -17798,7 +18061,26 @@ class MemoryEngine(MemoryEngineInterface):
         has_sources = scope_watermark.newest_in_scope is not None
         if not has_sources and not exclude_mental_models:
             has_sources = await self._bank_has_readable_document(bank_id, excluding_id=mental_model_id)
-        if has_sources:
+        gate: _DeltaGate | None = None
+        if created_after is not None and scope_watermark.newest_in_scope is not None:
+            gate = await self._gate_delta_refresh(
+                bank_id,
+                source_query=source_query,
+                current_content=current_content,
+                tag_filtering=tag_filtering,
+                fact_types=fact_types,
+                created_after=created_after,
+                refresh_cutoff=refresh_cutoff,
+                request_context=request_context,
+            )
+        if gate is not None:
+            logger.info(
+                f"[MENTAL_MODELS] Refresh for {mental_model_id}: delta gate kept "
+                f"{gate.memories_kept} of {sum(gate.listed.values())} new memories; "
+                f"skipping the reflect loop"
+            )
+            reflect_result = ReflectResult(text="", based_on=gate.kept)
+        elif has_sources:
             reflect_result = await self.reflect_async(**reflect_kwargs)
         else:
             # An empty result, not a shortcut around the rest of the pipeline: the
@@ -17845,7 +18127,7 @@ class MemoryEngine(MemoryEngineInterface):
         # Counted before the delta merge below, which folds in facts from
         # *previous* refreshes — those would misreport this run's evidence.
         facts = MentalModelFactCounts(
-            retrieved=_count_retrieved_facts(reflect_result.tool_trace),
+            retrieved=gate.listed if gate else _count_retrieved_facts(reflect_result.tool_trace),
             used={
                 fact_type: len(serialized)
                 for fact_type, serialized in based_on_serialized_payload.items()
@@ -17929,6 +18211,11 @@ class MemoryEngine(MemoryEngineInterface):
             # Recorded on the model so a refresh that did nothing says why it did
             # nothing — distinct from a reflect that ran and came back empty-handed.
             reflect_response_payload["reflect_skipped"] = "no_sources_in_scope"
+        if gate is not None:
+            reflect_response_payload["delta_gate"] = {
+                "memories": sum(gate.listed.values()),
+                "kept": gate.memories_kept,
+            }
 
         warnings: list[str] = []
         retrieved_total = sum(facts.retrieved.values())
@@ -17945,7 +18232,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "Retrieval returned no facts at all. Check the resolved scope and the time window — "
                 "in delta mode nothing created after the last refresh is in range."
             )
-        elif used_total == 0:
+        elif used_total == 0 and gate is None:
             warnings.append(
                 f"Retrieval returned {retrieved_total} fact(s) but the reflect agent used none of them, "
                 "so the document was written from an empty evidence set. The source query may not match "
@@ -18348,7 +18635,9 @@ class MemoryEngine(MemoryEngineInterface):
         # other hand silently returning the previous content masks upstream
         # failures from callers (workers, tests). So the caller preserves the
         # existing content and raises, rather than persisting the empty render.
-        if not final_content.strip():
+        # A gated delta has no reflect candidate at all, so its empty text says nothing
+        # about the LLM: a failed edit there is reported by the delta guard below.
+        if not final_content.strip() and gate is None:
             warnings.append(
                 "The refresh produced empty content, which usually means an upstream LLM failure. "
                 "A real refresh would preserve the existing content and fail."
@@ -20793,6 +21082,10 @@ class MemoryEngine(MemoryEngineInterface):
             ),
             "created_at": row["created_at"].isoformat() if row["created_at"] else None,
         }
+        # Only the list and get queries select it; other paths leave it unset.
+        is_knowledge_page = row.get("is_knowledge_page")
+        if is_knowledge_page is not None:
+            result["is_knowledge_page"] = bool(is_knowledge_page)
         if detail == "metadata":
             return result
 
@@ -21756,7 +22049,7 @@ class MemoryEngine(MemoryEngineInterface):
         *,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
-        """Re-queue a failed async operation."""
+        """Re-queue a failed or cancelled async operation, or run a deferred one now."""
         await self._authenticate_tenant(request_context)
         from hindsight_api.extensions import OperationValidationError
 
@@ -21791,7 +22084,12 @@ class MemoryEngine(MemoryEngineInterface):
                     updated_at = NOW()
                 WHERE operation_id = $1
                   AND bank_id = $2
-                  AND status IN ('failed', 'cancelled')
+                  AND (
+                      status IN ('failed', 'cancelled')
+                      -- Deferred (e.g. parked until a provider-reported quota
+                      -- reset): retrying runs it now instead of waiting it out.
+                      OR (status = 'pending' AND next_retry_at > NOW())
+                  )
                   AND NOT (operation_type = 'batch_retain' AND task_payload IS NULL)
                 RETURNING operation_id
                 """,
@@ -21834,7 +22132,10 @@ class MemoryEngine(MemoryEngineInterface):
                             updated_at = NOW()
                         WHERE bank_id = $1
                           AND result_metadata::jsonb @> $2::jsonb
-                          AND status IN ('failed', 'cancelled')
+                          AND (
+                              status IN ('failed', 'cancelled')
+                              OR (status = 'pending' AND next_retry_at > NOW())
+                          )
                         """,
                         bank_id,
                         child_filter,
@@ -21878,7 +22179,7 @@ class MemoryEngine(MemoryEngineInterface):
                         409,
                     )
                 raise OperationValidationError(
-                    f"Operation {operation_id} cannot be retried: status is '{row['status']}', expected 'failed' or 'cancelled'",
+                    f"Operation {operation_id} cannot be retried: status is '{row['status']}', expected 'failed', 'cancelled' or deferred",
                     409,
                 )
 
@@ -23130,6 +23431,8 @@ class MemoryEngine(MemoryEngineInterface):
                 every affected mental model exactly once (#3411). Not a caller-facing knob.
             caller_requested: True when the caller asked for this run (the HTTP endpoint),
                 which a tag-scoped caller may not; False for the runs writes queue themselves.
+                Carried in the task payload so a round-limited chain the caller started keeps
+                re-queuing until drained, even with ``enable_auto_consolidation`` off (#5590).
 
         Returns:
             Dict with operation_id
@@ -23161,6 +23464,8 @@ class MemoryEngine(MemoryEngineInterface):
             task_payload["observation_scopes"] = observation_scopes
         if pending_refresh_tags is not None:
             task_payload["pending_refresh_tags"] = pending_refresh_tags
+        if caller_requested:
+            task_payload["caller_requested"] = True
 
         # Skip bank-level deduplication when scoped — the caller wants a
         # targeted run that should not be merged into a pending full-bank sweep.

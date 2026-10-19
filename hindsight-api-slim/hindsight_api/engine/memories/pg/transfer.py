@@ -19,11 +19,11 @@ from typing import Any
 
 from ...causal_links import CAUSAL_LINK_TYPES
 from ...chunk_ids import build_chunk_id, parse_chunk_id
+from ...db_utils import as_connection, iter_keyset_pages
 from ...metadata_utils import as_string_metadata
 from ...transfer.export import (
     _DERIVED_COLUMNS,
     _EXPORTED_FACT_TYPES,
-    _as_connection,
     _as_jsonb,
     _chunk_index_from_chunk_id,
     _iter_id_batches,
@@ -69,14 +69,14 @@ async def iter_documents(
     """
     doc_filter = "AND id = ANY($2)" if document_ids else ""
     params: list[Any] = [bank_id, document_ids] if document_ids else [bank_id]
-    async with _as_connection(backend) as conn:
+    async with as_connection(backend) as conn:
         id_rows = await conn.fetch(
             f"SELECT id FROM {fq_table('documents')} WHERE bank_id = $1 {doc_filter} ORDER BY created_at, id",
             *params,
         )
     all_ids = [row["id"] for row in id_rows]
     for start in range(0, len(all_ids), batch_size):
-        async with _as_connection(backend) as conn:
+        async with as_connection(backend) as conn:
             loaded = await load_documents(
                 conn=conn,
                 fq_table=fq_table,
@@ -338,27 +338,33 @@ async def _attach_causal_relations(conn: Any, fq_table: Callable[[str], str], lo
             )
 
 
-async def dump_entity_maintenance_queue(*, conn: Any, fq_table: Callable[[str], str], bank_id: str) -> list[dict]:
-    """The entity maintenance queue, each entity named rather than numbered.
+async def iter_entity_maintenance_queue(
+    *, backend: Any, fq_table: Callable[[str], str], bank_id: str, page_size: int
+) -> AsyncIterator[list[dict]]:
+    """The entity maintenance queue ``page_size`` rows at a time, each entity named rather than numbered.
 
     Entities are re-resolved by canonical name on the target, so a row whose entity
     has no name here cannot be restored and is left out.
     """
-    entity_queue = await conn.fetch(
+    async for rows in iter_keyset_pages(
+        backend,
         f"""
         SELECT q.bank_id, q.entity_id, q.enqueued_at, e.canonical_name
         FROM {fq_table("entity_maintenance_queue")} q
         LEFT JOIN {fq_table("entities")} e ON e.id = q.entity_id
         WHERE q.bank_id = $1
-        ORDER BY q.enqueued_at
         """,
-        bank_id,
-    )
-    return [{k: v for k, v in dict(row).items() if k != "entity_id"} for row in entity_queue if row["canonical_name"]]
+        [bank_id],
+        key="q.entity_id",
+        page_size=page_size,
+    ):
+        yield [{k: v for k, v in dict(row).items() if k != "entity_id"} for row in rows if row["canonical_name"]]
 
 
-async def dump_archived_memories(*, conn: Any, fq_table: Callable[[str], str], bank_id: str) -> list[dict]:
-    """Dump the curation archive (facts a user invalidated but can still revert).
+async def iter_archived_memories(
+    *, backend: Any, fq_table: Callable[[str], str], bank_id: str, page_size: int
+) -> AsyncIterator[list[dict]]:
+    """The curation archive (facts a user invalidated but can still revert), ``page_size`` rows at a time.
 
     Two columns cannot travel as they are. ``entity_ids`` point at source-bank
     entity rows, so they are carried as canonical names for the target to
@@ -367,30 +373,32 @@ async def dump_archived_memories(*, conn: Any, fq_table: Callable[[str], str], b
     dropped — the replay mints fresh unit ids and nothing references an archived
     one across a transfer.
     """
-    rows = await conn.fetch(
-        f"SELECT * FROM {fq_table('invalidated_memory_units')} WHERE bank_id = $1 ORDER BY invalidated_at, id",
-        bank_id,
-    )
-    if not rows:
-        return []
-    every_entity = {e for row in rows for e in (row["entity_ids"] or [])}
-    names: dict[Any, str] = {}
-    if every_entity:
-        name_rows = await conn.fetch(
-            f"SELECT id, canonical_name FROM {fq_table('entities')} WHERE id = ANY($1)", list(every_entity)
-        )
-        names = {r["id"]: r["canonical_name"] for r in name_rows}
-    dumped: list[dict] = []
-    for row in rows:
-        record = {k: v for k, v in dict(row).items() if k not in _DERIVED_COLUMNS and k not in ("id", "entity_ids")}
-        # parse_chunk_id, not a naive rsplit: ids written since #4244 escape the
-        # separator inside the bank and document components, so splitting on the
-        # last underscore recovers the wrong ordinal for an escaped id.
-        parsed_chunk = parse_chunk_id(record.pop("chunk_id", None))
-        record["chunk_index"] = parsed_chunk.chunk_index if parsed_chunk else None
-        record["entity_names"] = sorted(n for n in (names.get(e) for e in (row["entity_ids"] or [])) if n)
-        dumped.append(record)
-    return dumped
+    async for rows in iter_keyset_pages(
+        backend,
+        f"SELECT * FROM {fq_table('invalidated_memory_units')} WHERE bank_id = $1",
+        [bank_id],
+        key="id",
+        page_size=page_size,
+    ):
+        every_entity = {e for row in rows for e in (row["entity_ids"] or [])}
+        names: dict[Any, str] = {}
+        if every_entity:
+            async with as_connection(backend) as conn:
+                name_rows = await conn.fetch(
+                    f"SELECT id, canonical_name FROM {fq_table('entities')} WHERE id = ANY($1)", list(every_entity)
+                )
+            names = {r["id"]: r["canonical_name"] for r in name_rows}
+        dumped: list[dict] = []
+        for row in rows:
+            record = {k: v for k, v in dict(row).items() if k not in _DERIVED_COLUMNS and k not in ("id", "entity_ids")}
+            # parse_chunk_id, not a naive rsplit: ids written since #4244 escape the
+            # separator inside the bank and document components, so splitting on the
+            # last underscore recovers the wrong ordinal for an escaped id.
+            parsed_chunk = parse_chunk_id(record.pop("chunk_id", None))
+            record["chunk_index"] = parsed_chunk.chunk_index if parsed_chunk else None
+            record["entity_names"] = sorted(n for n in (names.get(e) for e in (row["entity_ids"] or [])) if n)
+            dumped.append(record)
+        yield dumped
 
 
 # ------------------------------------------------------------------ import

@@ -60,7 +60,8 @@
       "copied": "クリップボードにコピーしました",
       "viaAlias": "{aliases} 経由"
     },
-    "viewOnGitHub": "GitHubで表示"
+    "viewOnGitHub": "GitHubで表示",
+    "more": "その他"
   },
   "bank": {
     "bankConfiguration": "バンク設定",
@@ -146,7 +147,8 @@
       "collapseSidebar": "サイドバーを折りたたむ",
       "collapse": "折りたたむ",
       "knowledge": "ナレッジベース",
-      "home": "ホーム"
+      "home": "ホーム",
+      "openNavigation": "ナビゲーションを開く"
     },
     "overviewAndOperations": "このメモリバンクの概要統計とバックグラウンド操作。",
     "operations": "操作",
@@ -333,7 +335,22 @@
     "timeFieldMentionedShort": "言及",
     "timeFieldMentionedLong": "事実が言及された時刻（イベント時刻）",
     "timeFieldOccurredShort": "発生",
-    "timeFieldOccurredLong": "基となるイベントが開始した時刻"
+    "timeFieldOccurredLong": "基となるイベントが開始した時刻",
+    "knowledgePages": "ナレッジページ",
+    "noKnowledgePages": "ナレッジページはありません",
+    "knowledgeSection": "ナレッジ",
+    "hintConsolidationDone": "統合処理が完了したメモリ。統合処理は生のメモリを観察に変換します。",
+    "hintConsolidationPending": "次の統合処理を待っているメモリ。",
+    "hintConsolidationFailed": "統合処理できなかったメモリ。数字をクリックすると一覧を表示して再試行できます。",
+    "hintConsolidationLast": "統合処理が最後に実行された日時。",
+    "hintModelsInSync": "対象範囲の新しいメモリをすべて読み込んだメンタルモデル。",
+    "hintModelsStale": "前回の更新以降、対象範囲に新しいメモリがあるメンタルモデル。次回の更新で追いつきます。",
+    "hintModelsFailed": "前回の更新に失敗したメンタルモデル。手動で更新するまで自動更新は停止します。",
+    "hintModelsLast": "いずれかのメンタルモデルの最新の更新日時。",
+    "hintPagesInSync": "対象範囲の新しいメモリをすべて読み込んだナレッジページ。",
+    "hintPagesStale": "前回の更新以降、対象範囲に新しいメモリがあるナレッジページ。次回の更新で追いつきます。",
+    "hintPagesFailed": "前回の更新に失敗したナレッジページ。手動で更新するまで自動更新は停止します。",
+    "hintPagesLast": "いずれかのナレッジページの最新の更新日時。"
   },
   "bankConfig": {
     "noBankSelected": "バンクが選択されていません",
@@ -943,7 +960,8 @@
     "dateRangeCustom": "カスタム期間",
     "dateRangeFrom": "開始",
     "dateRangeTo": "終了",
-    "dateRangeReversed": "終了は開始より後にしてください"
+    "dateRangeReversed": "終了は開始より後にしてください",
+    "historyTab": "履歴"
   },
   "entitiesView": {
     "viewRelations": "関係",
@@ -1127,7 +1145,8 @@
     "actionOpenDetail": "詳細を開く",
     "nextRefreshPaused": "更新失敗により一時停止中",
     "nextRefreshRetrying": "再試行中、次は{time}",
-    "nextRefreshRunning": "更新中"
+    "nextRefreshRunning": "更新中",
+    "hideKnowledgePages": "ナレッジページを非表示"
   },
   "cronPreview": {
     "invalid": "無効な cron 式",
@@ -1667,6 +1686,7 @@
     "curationSave": "保存",
     "curationStateInvalidated": "無効化済み",
     "editFieldContext": "コンテキスト",
+    "editFieldMentionedAt": "言及日",
     "editFieldOccurredEnd": "終了日",
     "editFieldOccurredStart": "開始日",
     "editFieldType": "タイプ"
@@ -2031,7 +2051,8 @@
         "chunks": "ドキュメントチャンクの取得に失敗しました",
         "reprocess": "ドキュメントの再処理に失敗しました",
         "export": "ドキュメントのエクスポートに失敗しました",
-        "import": "ドキュメントのインポートに失敗しました"
+        "import": "ドキュメントのインポートに失敗しました",
+        "history": "ドキュメント履歴の取得に失敗しました"
       },
       "files": {
         "upload": "ファイルのアップロードに失敗しました"
@@ -2259,5 +2280,38 @@
     "pausedTitle": "前回の更新が失敗したため、このモデルは自動更新されません。更新すると再開します",
     "retrying": "再試行中",
     "retryingTitle": "前回の試行は失敗し、次の試行が待機中です。これも失敗した場合にのみ自動更新が停止します"
+  },
+  "documentHistory": {
+    "explainer": "各変更がこのドキュメントのファクトと観察に与えた影響です。観察はバージョン管理されず再構築されます。変更で削除された観察は、ここにあるIDだけが痕跡です。バンクのオペレーションから再構築するため、同期の保持や自動統合オフ時の変更は表示されません。行を展開するとIDが表示され、IDにカーソルを合わせると他の行で探せます。",
+    "empty": "変更は記録されていません。履歴はこのバンクのオペレーション（非同期の保持と、編集後の統合）から作られます。",
+    "loadError": "履歴を読み込めませんでした。",
+    "idsRemoved": "削除",
+    "idsCreated": "作成",
+    "idsUpdated": "更新",
+    "chipRemoved": "この変更で削除されました（もう存在しません）",
+    "chipOpen": "この観察を開く",
+    "moreIds": "他 {count} 件",
+    "kind": {
+      "retain": "保持",
+      "append": "追記",
+      "reprocess": "再処理",
+      "retag": "タグ変更",
+      "fact_edited": "ファクト編集",
+      "fact_invalidated": "ファクト無効化",
+      "fact_restored": "ファクト復元",
+      "fact_deleted": "ファクト削除",
+      "observations_cleared": "観察をクリア",
+      "consolidation": "統合"
+    },
+    "loadOlder": "古いものを読み込む",
+    "colWhen": "日時",
+    "colChange": "変更",
+    "colFacts": "ファクト",
+    "colObservations": "観察",
+    "colOperation": "オペレーション",
+    "legendExists": "存在します（クリックで開く）",
+    "legendRemovedLater": "後の変更で削除",
+    "legendRemovedHere": "この変更で削除",
+    "chipRemovedLater": "後で削除：{kind}（{when}）"
   }
 }

@@ -2311,6 +2311,37 @@ class TestConsolidationSourceFactsConfig:
             await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    async def test_recall_with_precomputed_query_embedding_skips_embedder(self, memory: MemoryEngine, request_context):
+        """A recall handed its query vector uses it instead of embedding the query again (#5647)."""
+        from hindsight_api.engine import memory_engine as engine_mod
+
+        bank_id = f"test-precomputed-emb-{uuid.uuid4().hex[:8]}"
+        await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+        [vector] = await engine_mod.embedding_utils.generate_embeddings_batch(
+            memory.embeddings, ["test query"], input_type="query"
+        )
+        try:
+            with patch.object(
+                engine_mod.embedding_utils,
+                "generate_embeddings_batch",
+                wraps=engine_mod.embedding_utils.generate_embeddings_batch,
+            ) as embed:
+                await _find_related_observations(
+                    memory_engine=memory,
+                    bank_id=bank_id,
+                    query="test query",
+                    request_context=request_context,
+                    query_embedding=vector,
+                )
+                embed.assert_not_called()
+                await _find_related_observations(
+                    memory_engine=memory, bank_id=bank_id, query="test query", request_context=request_context
+                )
+                embed.assert_called_once()
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
     async def test_consolidation_passes_source_facts_per_obs_tokens_to_recall(
         self, memory: MemoryEngine, request_context
     ):

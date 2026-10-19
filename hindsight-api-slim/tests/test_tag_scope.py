@@ -168,6 +168,7 @@ async def test_document_text_follows_the_document(memory, scoped_bank):
     assert [d["id"] for d in docs["items"]] == ["dan-notes"]
     assert await memory.get_document("kate-sync", scoped_bank, request_context=dan) is None
     assert await memory.list_document_chunks(scoped_bank, "kate-sync", request_context=dan) is None
+    assert await memory.get_document_history(scoped_bank, "kate-sync", request_context=dan) is None
 
     admin_chunks = await memory.list_document_chunks(scoped_bank, "kate-sync", request_context=RequestContext())
     assert admin_chunks is not None
@@ -756,6 +757,27 @@ async def test_reflect_works_where_bank_statistics_are_refused(memory, scoped_ba
     result = await memory.reflect_async(bank_id=scoped_bank, query="What are the rules?", request_context=dan)
     assert result.text is not None
     assert BankReadOperation.GET_BANK_STATS not in seen
+
+
+@pytest.mark.asyncio
+async def test_document_history_is_its_own_read_operation(memory, scoped_bank):
+    """Extensions see the history read under its own name, so they can refuse it without
+    refusing the document itself."""
+    seen: list = []
+
+    async def validate_bank_read(ctx):
+        seen.append(ctx.operation)
+        if ctx.operation == BankReadOperation.GET_DOCUMENT_HISTORY:
+            return ValidationResult.reject("history refused", status_code=403)
+        return ValidationResult.accept()
+
+    memory._operation_validator.validate_bank_read = validate_bank_read
+    admin = RequestContext()
+    with pytest.raises(OperationValidationError) as e:
+        await memory.get_document_history(scoped_bank, "dan-notes", request_context=admin)
+    assert e.value.status_code == 403
+    assert BankReadOperation.GET_DOCUMENT_HISTORY in seen
+    assert await memory.get_document("dan-notes", scoped_bank, request_context=admin) is not None
 
 
 @pytest.mark.asyncio

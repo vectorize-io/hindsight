@@ -1000,7 +1000,7 @@ export function ThinkView() {
 
       {/* Observation Detail Panel */}
       {selectedObservation && (
-        <div className="fixed right-0 top-0 h-screen w-[420px] bg-card border-l shadow-2xl z-50 overflow-y-auto">
+        <div className="fixed right-0 top-0 h-dvh w-full sm:w-[420px] bg-card border-l shadow-2xl z-50 overflow-y-auto">
           <div className="p-6">
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-2">

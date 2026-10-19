@@ -14,7 +14,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 
 export function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="space-y-3">
+    // min-w-0: sections sit in grid columns, and a grid item otherwise refuses to
+    // shrink below its widest field — on a phone that pushed the form off-screen.
+    <section className="min-w-0 space-y-3">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         {title}
       </h3>

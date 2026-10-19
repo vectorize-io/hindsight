@@ -795,6 +795,13 @@ class RecallArms:
 #: How many semantic hits seed the graph arm's link expansion — its entry points into the graph.
 GRAPH_SEED_LIMIT = 20
 
+#: Most edges of each kind one graph-view answer carries: the links a store reads (with the ones
+#: observations inherit from them), and the edges the engine derives (shared source, shared
+#: entity) -- so at most twice this in all. The UI cannot usefully draw more, and uncapped a bank
+#: of a few thousand observations derives hundreds of thousands -- seconds of Python on the event
+#: loop and a multi-MB answer (#5703).
+GRAPH_MAX_EDGES = 10_000
+
 
 @dataclass
 class SemanticBm25Result:
@@ -1380,7 +1387,12 @@ class MemoriesExtension(Extension, ABC):
         """Release resources. Called during engine shutdown."""
 
     async def ensure_bank_storage(self, bank_id: str) -> None:
-        """Ensure per-bank storage exists. Idempotent."""
+        """Ensure per-bank storage exists. Idempotent.
+
+        Called BEFORE the bank row is written (bank creation and bank import), so it must not
+        require the row to exist. A failed create can leave storage behind with no row; the next
+        call for that bank must adopt it.
+        """
 
     def allocate_unit_ids(self, count: int) -> list[str]:
         """Mint unit ids for a batch about to be written.
@@ -2151,6 +2163,28 @@ class MemoriesExtension(Extension, ABC):
         with nothing to read, which is silent rather than wrong-looking.
         """
 
+    async def memories_updated_between(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        until: datetime,
+        since: datetime,
+        limit: int,
+        fact_types: list[str] | None = None,
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
+        tag_groups: list | None = None,
+    ) -> list[StoredMemory] | None:
+        """The memories in :meth:`newest_memory_updated_at`'s scope and window, oldest first.
+
+        A delta knowledge-page refresh reads them to ask a decision model which could
+        change the page, instead of searching for them. None means this store cannot
+        list them, and the refresh searches as it always has.
+        """
+        return None
+
     async def latest_memory_write_at(self, *, conn, fq_table, bank_id: str) -> datetime | None:
         """The newest ``updated_at`` across the bank's memories, or None if it has none.
 
@@ -2418,7 +2452,7 @@ class MemoriesExtension(Extension, ABC):
     ) -> None:
         """Apply a curation field edit to a live memory.
 
-        Writes the new text / context / fact_type / occurred window, resets the
+        Writes the new text / context / fact_type / occurred window / mention time, resets the
         consolidation markers (the memory re-consolidates) and stamps the edit
         time, and drops the memory's derived links (they are recomputed).
 
@@ -2599,6 +2633,10 @@ class MemoriesExtension(Extension, ABC):
         Returns how many observations were removed. Called whenever facts are
         replaced or deleted, so an observation never outlives the facts it
         summarises; sources that survive go back in the consolidation queue.
+
+        Pass what was removed to ``document_history.note_observations_removed``
+        before returning: the rows are gone for good, and the document change
+        history is the only place their ids survive (#5638).
         """
 
     # ------------------------------------------------------------------ maintenance
@@ -3449,6 +3487,10 @@ class MemoriesExtension(Extension, ABC):
         """Insert a ``'__pending__'`` document row if none exists, then row-lock it — the
         zero-batch retain's document tracking. A no-op here: there is no row."""
 
+    async def lock_document_row(self, *, conn, fq_table, bank_id: str, document_id: str) -> None:
+        """Row-lock the document before touching its memories — the order every writer of a
+        document's memories takes, consolidation included (#5433). A no-op here: there is no row."""
+
     async def lock_document_hash(self, *, conn, fq_table, bank_id: str, document_id: str) -> str | None:
         """Row-lock the document and read its content_hash (``None`` if absent) — the delta
         write's concurrency gate. Here the stored hash, unlocked (see :meth:`lock_document_for_write`)."""
@@ -3740,6 +3782,16 @@ class MemoriesExtension(Extension, ABC):
     # consolidation batch's transaction, so every write derived from one LLM response commits or
     # rolls back together (#3876). The defaults are what a store that owns its rows does;
     # Postgres overrides them with the SQL in ``pg/consolidation.py``.
+
+    async def lock_consolidation_write_set(
+        self, *, conn, fq_table, bank_id: str, fact_ids: list[str], observation_ids: list[str]
+    ) -> None:
+        """Lock what one consolidation response writes — the batch ``fact_ids``, the
+        ``observation_ids`` it rewrites, deletes or folds into — before it writes any of it, in
+        the order other writers take them, so the two cannot deadlock (#5433).
+
+        A no-op here: a store that keeps memories outside SQL has its own concurrency model.
+        """
 
     async def lock_live_memory_ids(self, *, conn, fq_table, bank_id: str, unit_ids: list[uuid.UUID]) -> set[str]:
         """Which of ``unit_ids`` still exist, held so a concurrent delete cannot remove one before
@@ -4142,25 +4194,33 @@ class MemoriesExtension(Extension, ABC):
 
         return await _load_observations_from_store(self, bank_id, unit_index)
 
-    async def dump_entity_maintenance_queue(self, *, conn, fq_table, bank_id: str) -> list[dict]:
-        """The bank's entity-maintenance queue for export, each entity named rather than numbered.
+    async def iter_entity_maintenance_queue(
+        self, *, backend, fq_table, bank_id: str, page_size: int
+    ) -> AsyncIterator[list[dict]]:
+        """The bank's entity-maintenance queue for export, ``page_size`` rows at a time, each entity named
+        rather than numbered.
 
-        Postgres joins the queue to `entities` on ``conn``. Empty here: a store that keeps its own
-        entity registry queues no entity maintenance in Postgres (see
-        :meth:`enqueue_entity_prune_candidates`).
+        ``backend`` is a pool or one connection. Postgres joins the queue to `entities`, each page on a
+        connection it returns before the page is yielded. Empty here: a store that keeps its own entity
+        registry queues no entity maintenance in Postgres (see :meth:`enqueue_entity_prune_candidates`).
         """
-        return []
+        return
+        yield  # unreachable: makes this an async generator that yields no pages
 
-    async def dump_archived_memories(self, *, conn, fq_table, bank_id: str) -> list[dict]:
-        """The curation archive (invalidated, still revertable memories) as portable export rows.
+    async def iter_archived_memories(
+        self, *, backend, fq_table, bank_id: str, page_size: int
+    ) -> AsyncIterator[list[dict]]:
+        """The curation archive (invalidated, still revertable memories) as portable export rows, by page.
 
         One dict per archived memory, keyed like an `invalidated_memory_units` row, except that
         ``entity_ids`` becomes ``entity_names`` (canonical names), ``chunk_id`` becomes
-        ``chunk_index`` (the id embeds the bank), and the surrogate ``id`` is dropped. Postgres
-        reads the archive table on ``conn``. No default: the interface has no way to list an
-        archive, so a store that owns its memories must answer this itself.
+        ``chunk_index`` (the id embeds the bank), and the surrogate ``id`` is dropped. ``backend`` is a
+        pool or one connection; Postgres reads the archive table ``page_size`` rows at a time. No
+        default: the interface has no way to list an archive, so a store that owns its memories must
+        answer this itself — raising before it yields anything.
         """
         raise NotImplementedError("this store cannot list its archived memories")
+        yield  # unreachable: makes this an async generator, so the error is raised on first iteration
 
     async def restore_archived_memories(
         self,
@@ -4173,12 +4233,12 @@ class MemoriesExtension(Extension, ABC):
         document_id_map: dict[str, str],
         bank_rows_json_encoding: str,
     ) -> int:
-        """Write :meth:`dump_archived_memories` rows into this bank's archive; returns how many.
+        """Write one page of :meth:`iter_archived_memories` rows into this bank's archive; returns how many.
 
         ``unit_id_map`` / ``document_id_map`` map the source's unit and document ids to the ones the
         import wrote (a causal-link snapshot whose endpoint did not come back is dropped). Postgres
         re-resolves the entity names and inserts on ``conn``. No default, like
-        :meth:`dump_archived_memories`.
+        :meth:`iter_archived_memories`.
         """
         raise NotImplementedError("this store cannot restore archived memories")
 

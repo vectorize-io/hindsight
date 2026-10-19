@@ -450,6 +450,56 @@ async def test_batch_api_records_schema_drifted_facts_as_extraction_errors(
 
 
 @pytest.mark.asyncio
+async def test_batch_api_records_missing_facts_key_as_extraction_error(
+    mock_llm_config, test_contents, hindsight_config
+):
+    """Issue #5582: a reply with no top-level 'facts' list is a broken envelope,
+    not an empty extraction — it must reach extraction_errors, not pass as 0 facts."""
+    mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
+    mock_llm_config._provider_impl.submit_batch = AsyncMock(return_value={"batch_id": "batch_no_facts_key"})
+    mock_llm_config._provider_impl.get_batch_status = AsyncMock(
+        return_value={"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
+    )
+    wrapped = {"final": {"facts": [{"what": "Alice visited Paris", "fact_type": "world"}]}}
+    mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
+        return_value=[
+            {
+                "custom_id": "chunk_0",
+                "response": {
+                    "body": {
+                        "choices": [{"message": {"content": json.dumps(wrapped)}}],
+                        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+                    }
+                },
+            }
+        ]
+    )
+
+    recorded = []
+
+    async def _capture(pool, operation_id, schema, errors):
+        recorded.append(errors)
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._write_batch_extraction_errors",
+        side_effect=_capture,
+    ):
+        extraction = await extract_facts_from_contents_batch_api(
+            contents=[test_contents[0]],
+            llm_config=mock_llm_config,
+            config=hindsight_config,
+            pool=None,
+            operation_id=None,
+            schema=None,
+        )
+
+    assert extraction.facts == []
+    assert extraction.chunks[0].fact_count == 0
+    assert len(recorded) == 1
+    assert recorded[0].sample == ["chunk_0: LLM reply had no top-level 'facts' list (dict)"]
+
+
+@pytest.mark.asyncio
 async def test_batch_api_recovers_fenced_and_control_char_json(mock_llm_config, test_contents, hindsight_config):
     """#2701: batch content that bare json.loads can't parse but parse_llm_json can
     (markdown code fences + an embedded raw control character, e.g. a transient

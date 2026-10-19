@@ -47,6 +47,7 @@ async def _insert_unit(
     return unit_id
 
 
+@pytest.mark.memory_backend_incompatible
 @pytest.mark.asyncio
 async def test_score_counts_distinct_shared_sources(memory, request_context):
     """Score == number of distinct source facts shared with the seed neighbourhood."""
@@ -116,6 +117,7 @@ async def test_score_counts_distinct_shared_sources(memory, request_context):
         await memory.delete_bank(bank_id=bank_id, request_context=request_context)
 
 
+@pytest.mark.memory_backend_incompatible
 @pytest.mark.asyncio
 async def test_wide_source_arrays_do_not_change_results(memory, request_context):
     """A long source array is a cost problem, not a correctness one (#3085).
@@ -173,6 +175,7 @@ async def test_wide_source_arrays_do_not_change_results(memory, request_context)
         await memory.delete_bank(bank_id=bank_id, request_context=request_context)
 
 
+@pytest.mark.memory_backend_incompatible
 @pytest.mark.asyncio
 async def test_per_entity_cap_bounds_hub_traversal(memory, request_context):
     """A hub entity contributes at most ``per_entity_limit`` source facts (#3510).

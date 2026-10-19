@@ -18,6 +18,7 @@ query — and it is the kind of default a refactor silently flattens.
 from __future__ import annotations
 
 import pytest
+from hindsight_client_api.api.bank_templates_api import BankTemplatesApi
 from hindsight_client_api.exceptions import ApiException
 
 from hindsight_system_tests import reflect_loop
@@ -193,3 +194,40 @@ async def test_an_invalid_bank_default_trigger_is_rejected(client, bank_id):
         )
     assert exc.value.status == 400
     assert "knowledge_page_default_trigger" in str(exc.value.body)
+
+
+async def _standalone_model(client, bank_id, settled) -> str:
+    created = await client.mental_models.create_mental_model(
+        bank_id, {"name": "Alice housing", "source_query": SOURCE_QUERY}
+    )
+    await settled(bank_id)
+    return created.mental_model_id
+
+
+async def test_the_model_list_tells_pages_from_standalone_models(client, bank_id, bank_with_page, settled):
+    """A page is stored as a mental model, so the model list carries both — and
+    must say which is which, or the Mental Models view shows every page as a
+    model and counts it twice (#5665). Hiding pages is opt-in: the default list
+    is unchanged."""
+    standalone_id = await _standalone_model(client, bank_id, settled)
+
+    everything = await client.alist_mental_models(bank_id)
+    assert everything.total == 2
+    assert {(m.id, m.is_knowledge_page) for m in everything.items} == {
+        (bank_with_page.mental_model_id, True),
+        (standalone_id, False),
+    }
+
+    standalone_only = await client.alist_mental_models(bank_id, exclude_knowledge_pages=True)
+    assert standalone_only.total == 1
+    assert [m.id for m in standalone_only.items] == [standalone_id]
+
+
+async def test_a_template_carries_standalone_models_but_not_pages(client, bank_id, bank_with_page, settled):
+    """A template has no pages, so a page's model exported into one would come
+    back on import as a standalone model that nobody created (#5665)."""
+    standalone_id = await _standalone_model(client, bank_id, settled)
+
+    template = await BankTemplatesApi(client.banks.api_client).export_bank_template(bank_id)
+
+    assert [m.id for m in template.mental_models] == [standalone_id]

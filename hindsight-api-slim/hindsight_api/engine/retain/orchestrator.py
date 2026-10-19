@@ -27,6 +27,14 @@ from ...metrics import get_metrics_collector
 from ...worker.stage import set_stage
 from ..chunk_ids import build_chunk_id
 from ..db_utils import acquire_with_retry
+from ..document_history import (
+    DocumentEvent,
+    DocumentEventKind,
+    ObservationChanges,
+    ObservationIdSample,
+    append_operation_events,
+    track_observation_changes,
+)
 from ..memory_engine import count_tokens, fq_table
 
 if TYPE_CHECKING:
@@ -578,6 +586,38 @@ async def _record_retain_document_outcome(pool: Any, bank_id: str, document_id: 
         get_metrics_collector().record_retain_document(bank_id=bank_id, memory_unit_count=total)
     except Exception:
         logger.debug("Failed to record retain document outcome metric", exc_info=True)
+
+
+async def _record_retain_event(
+    pool: Any,
+    bank_id: str,
+    document_id: str,
+    update_mode: str | None,
+    force_reextract: bool,
+    operation_id: str | None,
+    result: RetainBatchResult,
+    changes: ObservationChanges,
+) -> None:
+    """Add this retain to the document's change history: facts in, facts out, observations dropped.
+
+    Recorded on the retain's own operation, so a synchronous retain (no operation) leaves none.
+    ponytail: an oversized item the splitter cut into sub-batches records one event per slice.
+    """
+    kind = (
+        DocumentEventKind.REPROCESS
+        if force_reextract
+        else DocumentEventKind.APPEND
+        if update_mode == "append"
+        else DocumentEventKind.RETAIN
+    )
+    event = DocumentEvent(
+        document_id=document_id,
+        kind=kind,
+        facts_added=sum(len(ids) for ids in result.memory_ids),
+        facts_removed=len(changes.swept_facts),
+        observations_removed=ObservationIdSample.of(changes.removed),
+    )
+    await append_operation_events(pool, operation_id, [event])
 
 
 # What a reprocess must NOT replay, because it supplies its own: `content` is the
@@ -1558,14 +1598,14 @@ async def retain_batch(
 
             # Without sub-batching there is nothing else running these in parallel, so the groups
             # do it themselves. Hardcoded rather than a knob: it is not a capacity dial, it is how
-            # many documents of ONE retain may be in flight, and the retain is already bounded by
-            # the caller's own concurrency and by the session's flush threshold.
+            # many documents of ONE retain may be in flight. Bounded on EVERY path, not only the
+            # store-owned one: a token-cut sub-batch of short documents holds dozens of groups, and
+            # on SQL each in-flight group holds a pool connection while acquiring another, so an
+            # unbounded fan-out wider than the pool deadlocks it (#5442).
             _GROUP_CONCURRENCY = 8
-            _group_sem = asyncio.Semaphore(_GROUP_CONCURRENCY) if retain_session is not None else None
+            _group_sem = asyncio.Semaphore(_GROUP_CONCURRENCY)
 
             async def _run_group(doc_key, group_dicts, group_contents):
-                if _group_sem is None:
-                    return await _one_group(doc_key, group_dicts, group_contents)
                 async with _group_sem:
                     return await _one_group(doc_key, group_dicts, group_contents)
 
@@ -1938,34 +1978,38 @@ async def retain_batch(
 
     _delta_provider = _get_memories_delta()
     if not force_reextract and attempts_delta_retain(_delta_provider, bank_id, is_first_batch):
-        delta_result = await _try_delta_retain(
-            pool,
-            embeddings_model,
-            llm_config,
-            entity_resolver,
-            format_date_fn,
-            bank_id,
-            contents_dicts,
-            contents,
-            config,
-            effective_doc_id,
-            fact_type_override,
-            document_tags,
-            log_buffer,
-            elapsed_start,
-            operation_id,
-            schema,
-            outbox_callback,
-            db_semaphore,
-            document_prefetch=document_prefetch,
-            full_document_body=full_document_body,
-            delta_full_body=_delta_full_body,
-            document_body_hash=document_body_hash,
-            append_base_hash=append_base_hash,
-            attachment_loader=attachment_loader,
-            vlm_config=vlm_config,
-        )
+        with track_observation_changes() as delta_changes:
+            delta_result = await _try_delta_retain(
+                pool,
+                embeddings_model,
+                llm_config,
+                entity_resolver,
+                format_date_fn,
+                bank_id,
+                contents_dicts,
+                contents,
+                config,
+                effective_doc_id,
+                fact_type_override,
+                document_tags,
+                log_buffer,
+                elapsed_start,
+                operation_id,
+                schema,
+                outbox_callback,
+                db_semaphore,
+                document_prefetch=document_prefetch,
+                full_document_body=full_document_body,
+                delta_full_body=_delta_full_body,
+                document_body_hash=document_body_hash,
+                append_base_hash=append_base_hash,
+                attachment_loader=attachment_loader,
+                vlm_config=vlm_config,
+            )
         if delta_result is not None:
+            await _record_retain_event(
+                pool, bank_id, effective_doc_id, update_mode, force_reextract, operation_id, delta_result, delta_changes
+            )
             return _align_result(delta_result)
 
     # --- Always use the streaming pipeline (producer-consumer batching) ---
@@ -2014,40 +2058,44 @@ async def retain_batch(
         f"{num_batches} batch{'es' if num_batches != 1 else ''}"
     )
 
-    result = await _streaming_retain_batch(
-        pool=pool,
-        embeddings_model=embeddings_model,
-        llm_config=llm_config,
-        entity_resolver=entity_resolver,
-        format_date_fn=format_date_fn,
-        bank_id=bank_id,
-        contents_dicts=contents_dicts,
-        contents=contents,
-        config=config,
-        document_id=effective_doc_id,
-        is_first_batch=is_first_batch,
-        fact_type_override=fact_type_override,
-        document_tags=document_tags,
-        log_buffer=log_buffer,
-        start_time=elapsed_start,
-        all_pre_chunks=all_pre_chunks,
-        chunk_to_content=chunk_to_content,
-        chunk_batch_size=chunk_batch_size,
-        operation_id=operation_id,
-        schema=schema,
-        outbox_callback=outbox_callback,
-        db_semaphore=db_semaphore,
-        full_document_body=full_document_body,
-        document_body_hash=document_body_hash,
-        chunk_index_offset=chunk_index_offset,
-        body_accum=body_accum,
-        retain_session=retain_session,
-        document_prefetch=document_prefetch,
-        progress_callback=progress_callback,
-        append_base_hash=append_base_hash,
-        force_reextract=force_reextract,
-        attachment_loader=attachment_loader,
-        vlm_config=vlm_config,
+    with track_observation_changes() as stream_changes:
+        result = await _streaming_retain_batch(
+            pool=pool,
+            embeddings_model=embeddings_model,
+            llm_config=llm_config,
+            entity_resolver=entity_resolver,
+            format_date_fn=format_date_fn,
+            bank_id=bank_id,
+            contents_dicts=contents_dicts,
+            contents=contents,
+            config=config,
+            document_id=effective_doc_id,
+            is_first_batch=is_first_batch,
+            fact_type_override=fact_type_override,
+            document_tags=document_tags,
+            log_buffer=log_buffer,
+            start_time=elapsed_start,
+            all_pre_chunks=all_pre_chunks,
+            chunk_to_content=chunk_to_content,
+            chunk_batch_size=chunk_batch_size,
+            operation_id=operation_id,
+            schema=schema,
+            outbox_callback=outbox_callback,
+            db_semaphore=db_semaphore,
+            full_document_body=full_document_body,
+            document_body_hash=document_body_hash,
+            chunk_index_offset=chunk_index_offset,
+            body_accum=body_accum,
+            retain_session=retain_session,
+            document_prefetch=document_prefetch,
+            progress_callback=progress_callback,
+            append_base_hash=append_base_hash,
+            force_reextract=force_reextract,
+            attachment_loader=attachment_loader,
+            vlm_config=vlm_config,
+        )
+    await _record_retain_event(
+        pool, bank_id, effective_doc_id, update_mode, force_reextract, operation_id, result, stream_changes
     )
     return _align_result(result)
 
@@ -2832,11 +2880,13 @@ async def _streaming_retain_batch(
                     f"[streaming] Producer: skipped {skipped_total}/{total_chunks} already-committed chunks"
                 )
 
-            # Wait for all extractions; collect exceptions
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for r in results:
-                if isinstance(r, BaseException):
-                    producer_error.append(r)
+            # Stop at the first failed chunk. The consumer commits nothing once
+            # `producer_error` is set (#5589), so the remaining extractions would be
+            # spend on results that are thrown away; the `finally` below cancels them.
+            try:
+                await asyncio.gather(*tasks)
+            except Exception as exc:
+                producer_error.append(exc)
 
             # Signal the consumer that production is done
             await chunk_queue.put(None)
@@ -2900,7 +2950,7 @@ async def _streaming_retain_batch(
             item = await memory_budget.next_item_or_producer_waiting(chunk_queue) if batch else await chunk_queue.get()
             if item is None:
                 # Process any remaining items
-                if batch and not pipeline_aborted[0]:
+                if batch and not pipeline_aborted[0] and not producer_error:
                     await _process_db_batch(
                         batch,
                         consumer_batch_idx,
@@ -2924,11 +2974,15 @@ async def _streaming_retain_batch(
             # count alone let a batch of fact-dense chunks grow far past any memory a
             # worker was sized for.
             if producer_waiting or len(batch) >= chunk_batch_size or memory_budget.should_flush(batch_bytes):
-                if pipeline_aborted[0]:
-                    # Another request took over the document — discard this batch
+                if pipeline_aborted[0] or producer_error:
+                    # Another request took over the document, or a chunk failed to
+                    # extract — discard this batch. Committing after a failed chunk
+                    # replaces the document (its first write deletes the previous
+                    # memories) with a version the retain is about to report as
+                    # failed (#5589).
                     log_buffer.append(
                         f"[streaming] Consumer: discarding batch of {len(batch)} chunks "
-                        f"(pipeline aborted due to concurrent takeover)"
+                        f"({'a chunk failed to extract' if producer_error else 'pipeline aborted due to concurrent takeover'})"
                     )
                     _release_batch(batch)
                     batch = []

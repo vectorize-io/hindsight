@@ -2,7 +2,10 @@
 
 import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
+import Link from "next/link";
 import { useBank } from "@/lib/bank-context";
+import { bankRoute } from "@/lib/bank-url";
+import { Hint } from "@/components/form-layout";
 import { useFeatures } from "@/lib/features-context";
 import { client, MentalModel } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,6 +16,8 @@ import {
   Activity,
   Clock,
   Brain,
+  BookOpen,
+  ArrowRight,
   CheckCircle2,
   AlertCircle,
   XCircle,
@@ -80,7 +85,10 @@ export interface BankStats {
 
 /** What the mental-models card reads: the per-model staleness answer, nothing else.
  * It also took the two refresh timestamps back when it derived staleness itself. */
-type MentalModelSummary = Pick<MentalModel, "is_stale">;
+type MentalModelSummary = Pick<
+  MentalModel,
+  "is_stale" | "is_knowledge_page" | "last_refreshed_at" | "last_refresh_failed_at"
+>;
 
 type Period = "1h" | "12h" | "1d" | "7d" | "30d" | "90d";
 const PERIODS: Period[] = ["1h", "12h", "1d", "7d", "30d", "90d"];
@@ -495,18 +503,46 @@ function OperationsCard({ byStatus }: { byStatus: Record<string, number> }) {
   );
 }
 
+/** Card title with a "View all" link to the page that lists what the card counts. */
+function StatCardHeader({
+  title,
+  href,
+  Icon,
+}: {
+  title: string;
+  href: string;
+  Icon?: typeof Brain;
+}) {
+  const tHome = useTranslations("home");
+  return (
+    <CardHeader className="pb-2">
+      <div className="flex items-center justify-between gap-2">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          {Icon && <Icon className="w-3.5 h-3.5 text-muted-foreground" />}
+          {title}
+        </CardTitle>
+        <Link href={href} className="text-xs text-primary hover:underline flex items-center gap-1">
+          {tHome("viewAll")} <ArrowRight className="w-3 h-3" />
+        </Link>
+      </div>
+    </CardHeader>
+  );
+}
+
 function ConsolidationCard({
   done,
   pending,
   failed,
   total,
   lastConsolidatedAt,
+  href,
 }: {
   done: number;
   pending: number;
   failed: number;
   total: number;
   lastConsolidatedAt: string | null;
+  href: string;
 }) {
   const t = useTranslations("bankStats");
   const [failedOpen, setFailedOpen] = useState(false);
@@ -514,18 +550,17 @@ function ConsolidationCard({
 
   return (
     <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-semibold">{t("consolidation")}</CardTitle>
-      </CardHeader>
+      <StatCardHeader title={t("consolidation")} href={href} />
       <CardContent className="space-y-4">
         <ProgressRow done={done} total={total} doneColor={CHART_COLORS.success} />
-        <div className="grid grid-cols-4 gap-3 pt-1">
+        <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 pt-1">
           <div className="space-y-0.5">
             <div className="flex items-center gap-1.5">
               <CheckCircle2 className="w-3 h-3 text-emerald-500" />
-              <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+              <span className="text-[10px] uppercase tracking-wider whitespace-nowrap text-muted-foreground font-medium">
                 {t("done")}
               </span>
+              <Hint text={t("hintConsolidationDone")} />
             </div>
             <CompactNumber
               value={done}
@@ -535,26 +570,17 @@ function ConsolidationCard({
           <div className="space-y-0.5">
             <div className="flex items-center gap-1.5">
               <AlertCircle className="w-3 h-3 text-amber-500" />
-              <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+              <span className="text-[10px] uppercase tracking-wider whitespace-nowrap text-muted-foreground font-medium">
                 {t("pending")}
               </span>
+              <Hint text={t("hintConsolidationPending")} />
             </div>
             <CompactNumber
               value={pending}
               className="text-base font-semibold tabular-nums text-foreground block"
             />
           </div>
-          <button
-            type="button"
-            onClick={() => hasFailed && setFailedOpen(true)}
-            disabled={!hasFailed}
-            className={`text-left space-y-0.5 rounded-md -mx-1 px-1 py-0.5 transition-colors ${
-              hasFailed
-                ? "cursor-pointer hover:bg-red-500/10 focus:outline-none focus:ring-2 focus:ring-red-500/40"
-                : "cursor-default"
-            }`}
-            title={hasFailed ? t("viewFailedMemoriesLabel") : undefined}
-          >
+          <div className="space-y-0.5">
             <div className="flex items-center gap-1.5">
               <XCircle
                 className={`w-3 h-3 ${
@@ -562,28 +588,42 @@ function ConsolidationCard({
                 }`}
               />
               <span
-                className={`text-[10px] uppercase tracking-wider font-medium ${
+                className={`text-[10px] uppercase tracking-wider whitespace-nowrap font-medium ${
                   hasFailed ? "text-red-600 dark:text-red-400" : "text-muted-foreground"
                 }`}
               >
                 {t("failed")}
               </span>
+              <Hint text={t("hintConsolidationFailed")} />
             </div>
-            <span
-              className={`text-base font-semibold tabular-nums block ${
-                hasFailed ? "text-red-600 dark:text-red-400" : "text-foreground"
+            <button
+              type="button"
+              onClick={() => hasFailed && setFailedOpen(true)}
+              disabled={!hasFailed}
+              className={`text-left rounded-md -mx-1 px-1 transition-colors ${
+                hasFailed
+                  ? "cursor-pointer hover:bg-red-500/10 focus:outline-none focus:ring-2 focus:ring-red-500/40"
+                  : "cursor-default"
               }`}
+              title={hasFailed ? t("viewFailedMemoriesLabel") : undefined}
             >
-              <CompactNumber value={failed} />
-              {hasFailed && <ExternalLink className="inline w-3 h-3 ml-1 opacity-70" />}
-            </span>
-          </button>
+              <span
+                className={`text-base font-semibold tabular-nums block ${
+                  hasFailed ? "text-red-600 dark:text-red-400" : "text-foreground"
+                }`}
+              >
+                <CompactNumber value={failed} />
+                {hasFailed && <ExternalLink className="inline w-3 h-3 ml-1 opacity-70" />}
+              </span>
+            </button>
+          </div>
           <div className="space-y-0.5">
             <div className="flex items-center gap-1.5">
               <Clock className="w-3 h-3 text-muted-foreground" />
-              <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+              <span className="text-[10px] uppercase tracking-wider whitespace-nowrap text-muted-foreground font-medium">
                 {t("last")}
               </span>
+              <Hint text={t("hintConsolidationLast")} />
             </div>
             <span className="text-base font-semibold text-foreground block leading-tight">
               {formatRelativeTime(lastConsolidatedAt, t as RelativeTimeTranslator)}
@@ -720,7 +760,23 @@ function FailedConsolidationsDialog({
   );
 }
 
-function MentalModelsCard({ models }: { models: MentalModelSummary[] }) {
+/** Freshness of a set of mental models — used for standalone models and for knowledge pages. */
+function MentalModelsCard({
+  models,
+  title,
+  emptyLabel,
+  Icon,
+  href,
+  hints,
+}: {
+  models: MentalModelSummary[];
+  title: string;
+  emptyLabel: string;
+  Icon: typeof Brain;
+  href: string;
+  /** What each number means, worded for this card's items. */
+  hints: { inSync: string; stale: string; failed: string; last: string };
+}) {
   const t = useTranslations("bankStats");
   // The counts use the shared staleness vocabulary so the tile, the tree and the
   // model dialog all say the same word for the same boolean.
@@ -735,28 +791,35 @@ function MentalModelsCard({ models }: { models: MentalModelSummary[] }) {
   // scope was quiet.
   const stale = models.filter((m) => m.is_stale).length;
   const inSync = total - stale;
+  // A failed last refresh pauses the automatic triggers for that model until it is
+  // refreshed by hand, so it is worth seeing even when the model is not stale.
+  const failed = models.filter((m) => m.last_refresh_failed_at).length;
+  const hasFailed = failed > 0;
+  const lastRefreshedAt = models.reduce<string | null>(
+    (latest, m) =>
+      m.last_refreshed_at && (!latest || m.last_refreshed_at > latest)
+        ? m.last_refreshed_at
+        : latest,
+    null
+  );
 
   return (
     <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-semibold flex items-center gap-2">
-          <Brain className="w-3.5 h-3.5 text-muted-foreground" />
-          {t("mentalModels")}
-        </CardTitle>
-      </CardHeader>
+      <StatCardHeader title={title} href={href} Icon={Icon} />
       <CardContent className="space-y-4">
         {total === 0 ? (
-          <div className="text-sm text-muted-foreground py-4">{t("noMentalModels")}</div>
+          <div className="text-sm text-muted-foreground py-4">{emptyLabel}</div>
         ) : (
           <>
             <ProgressRow done={inSync} total={total} doneColor={CHART_COLORS.success} />
-            <div className="grid grid-cols-3 gap-3 pt-1">
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 pt-1">
               <div className="space-y-0.5">
                 <div className="flex items-center gap-1.5">
                   <CheckCircle2 className="w-3 h-3 text-emerald-500" />
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+                  <span className="text-[10px] uppercase tracking-wider whitespace-nowrap text-muted-foreground font-medium">
                     {ts("inSync")}
                   </span>
+                  <Hint text={hints.inSync} />
                 </div>
                 <span className="text-base font-semibold tabular-nums text-foreground block">
                   {inSync}
@@ -765,9 +828,10 @@ function MentalModelsCard({ models }: { models: MentalModelSummary[] }) {
               <div className="space-y-0.5">
                 <div className="flex items-center gap-1.5">
                   <AlertCircle className="w-3 h-3 text-amber-500" />
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+                  <span className="text-[10px] uppercase tracking-wider whitespace-nowrap text-muted-foreground font-medium">
                     {ts("stale")}
                   </span>
+                  <Hint text={hints.stale} />
                 </div>
                 <span className="text-base font-semibold tabular-nums text-foreground block">
                   {stale}
@@ -775,13 +839,38 @@ function MentalModelsCard({ models }: { models: MentalModelSummary[] }) {
               </div>
               <div className="space-y-0.5">
                 <div className="flex items-center gap-1.5">
-                  <Brain className="w-3 h-3 text-muted-foreground" />
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
-                    {t("total")}
+                  <XCircle
+                    className={`w-3 h-3 ${
+                      hasFailed ? "text-red-600 dark:text-red-400" : "text-muted-foreground/50"
+                    }`}
+                  />
+                  <span
+                    className={`text-[10px] uppercase tracking-wider whitespace-nowrap font-medium ${
+                      hasFailed ? "text-red-600 dark:text-red-400" : "text-muted-foreground"
+                    }`}
+                  >
+                    {t("failed")}
                   </span>
+                  <Hint text={hints.failed} />
                 </div>
-                <span className="text-base font-semibold tabular-nums text-foreground block">
-                  {total}
+                <span
+                  className={`text-base font-semibold tabular-nums block ${
+                    hasFailed ? "text-red-600 dark:text-red-400" : "text-foreground"
+                  }`}
+                >
+                  {failed}
+                </span>
+              </div>
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-1.5">
+                  <Clock className="w-3 h-3 text-muted-foreground" />
+                  <span className="text-[10px] uppercase tracking-wider whitespace-nowrap text-muted-foreground font-medium">
+                    {t("last")}
+                  </span>
+                  <Hint text={hints.last} />
+                </div>
+                <span className="text-base font-semibold text-foreground block leading-tight">
+                  {formatRelativeTime(lastRefreshedAt, t as RelativeTimeTranslator)}
                 </span>
               </div>
             </div>
@@ -1127,7 +1216,7 @@ export function BankStatsView() {
     );
   }
 
-  if (!stats) return null;
+  if (!stats || !currentBank) return null;
 
   // Done / pending / failed are shown side by side and must not overlap: the API's
   // pending_consolidation already excludes permanently failed memories, so those are
@@ -1145,18 +1234,44 @@ export function BankStatsView() {
         <MemoryStoreCard stats={stats} observationsEnabled={observationsEnabled} />
       </section>
 
-      {/* CONSOLIDATION */}
+      {/* KNOWLEDGE — consolidation, mental models, knowledge pages */}
       <section>
-        <SectionHeading>{t("consolidation")}</SectionHeading>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <SectionHeading>{t("knowledgeSection")}</SectionHeading>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           <ConsolidationCard
             done={consolidatedDone}
             pending={stats.pending_consolidation}
             failed={stats.failed_consolidation ?? 0}
             total={stats.total_nodes}
             lastConsolidatedAt={stats.last_consolidated_at}
+            href={bankRoute(currentBank, "?view=data&subTab=observations")}
           />
-          <MentalModelsCard models={mentalModels} />
+          <MentalModelsCard
+            models={mentalModels.filter((m) => !m.is_knowledge_page)}
+            title={t("mentalModels")}
+            emptyLabel={t("noMentalModels")}
+            Icon={Brain}
+            href={bankRoute(currentBank, "?view=knowledge&knowledgeTab=models")}
+            hints={{
+              inSync: t("hintModelsInSync"),
+              stale: t("hintModelsStale"),
+              failed: t("hintModelsFailed"),
+              last: t("hintModelsLast"),
+            }}
+          />
+          <MentalModelsCard
+            models={mentalModels.filter((m) => m.is_knowledge_page)}
+            title={t("knowledgePages")}
+            emptyLabel={t("noKnowledgePages")}
+            Icon={BookOpen}
+            href={bankRoute(currentBank, "?view=knowledge&knowledgeTab=pages")}
+            hints={{
+              inSync: t("hintPagesInSync"),
+              stale: t("hintPagesStale"),
+              failed: t("hintPagesFailed"),
+              last: t("hintPagesLast"),
+            }}
+          />
         </div>
       </section>
 

@@ -357,6 +357,42 @@ code, pre {
   font-family: var(--font-mono);
 }
 
+/* Mobile safety nets. These sit outside any @layer so they beat Tailwind
+   utilities, and they key off what an element already says it does, so new
+   components get the right behaviour without remembering to opt in. */
+
+/* The page itself never scrolls sideways: anything wider than the screen has
+   to scroll inside its own container (tables, tab rows) instead. */
+html, body {
+  overflow-x: clip;
+}
+
+/* Touch screens have no hover. Tailwind v4 only applies `hover:` and
+   `group-hover:` on devices that can hover, so a control written as
+   `opacity-0 group-hover:opacity-100` would never appear on a phone. Show
+   every such reveal-on-hover control there instead. */
+@media (hover: none) {
+  [class*="opacity-0"][class*="group-hover"] {
+    opacity: 1;
+  }
+}
+
+/* iOS Safari gives date/time fields a fixed minimum width from their native
+   picker, so `w-full` could not shrink them and they pushed forms off-screen. */
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"] {
+  min-width: 0;
+}
+
+/* iOS zooms the page in on any focused field whose text is under 16px, and
+   leaves it zoomed. Fields here use 13-14px, so bump them on touch screens. */
+@media (pointer: coarse) {
+  input, textarea, select, [contenteditable="true"] {
+    font-size: max(16px, 1em);
+  }
+}
+
 /* Gradient utilities */
 .bg-primary-gradient {
   background: var(--primary-gradient);
@@ -550,9 +586,24 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   animation: soft-fade-in 200ms ease-out both;
 }
 
+/* The phone navigation drawer (components/sidebar.tsx) slides in from the left. */
+@keyframes drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+.animate-drawer-in {
+  animation: drawer-in 200ms ease-out both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-list-row-enter,
-  .animate-soft-fade-in {
+  .animate-soft-fade-in,
+  .animate-drawer-in {
     animation: none;
   }
 }

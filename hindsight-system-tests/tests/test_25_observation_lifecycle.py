@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from hindsight_system_tests.payloads import extracted, fact, observes
+from hindsight_system_tests.payloads import consolidation, extracted, fact, observes
 
 pytestmark = pytest.mark.asyncio
 
@@ -100,3 +100,34 @@ async def test_deleting_the_source_document_takes_the_observation_with_it(client
     assert [r.text for r in response.results] == [], (
         "an observation outlived every fact it was drawn from and is still being recalled"
     )
+
+
+async def test_clearing_one_memory_retries_it_even_when_nothing_was_drawn_from_it(client, llm, bank_id, settled):
+    """A fact consolidation kept nothing from is still marked done. Clearing that
+    one memory is how an operator asks for another pass, so it must reset it and
+    queue the pass even though there was no observation to delete (#5731) — not
+    answer 200 and quietly leave the fact where it was.
+    """
+    llm.on_step("extract_facts").returns(
+        extracted(fact("Alice moved to Berlin", who="Alice", entities=["Alice", "Berlin"]))
+    )
+    llm.on_step("consolidate").returns(consolidation())
+    await client.aretain(bank_id=bank_id, content="Alice moved to Berlin.")
+    await settled(bank_id)
+
+    assert len(llm.prompts_for("consolidate")) == 1, "the fact was never consolidated in the first place"
+    observations, _ = await _split(client, bank_id)
+    assert observations == []
+    memories = await client.memory.list_memories(bank_id, limit=100)
+    [source] = [m.id for m in memories.items if m.fact_type != "observation"]
+
+    llm.reset()
+    llm.on_step("consolidate").answers_with(observes(OBSERVATION))
+    result = await client.memory.clear_memory_observations(bank_id, source)
+    await settled(bank_id)
+
+    assert result.deleted_count == 0
+    assert len(llm.prompts_for("consolidate")) == 1, "the cleared memory was never consolidated again"
+    observations, raw = await _split(client, bank_id)
+    assert observations == [OBSERVATION]
+    assert raw == [BERLIN]

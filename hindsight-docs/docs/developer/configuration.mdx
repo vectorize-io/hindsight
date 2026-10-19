@@ -467,6 +467,10 @@ export HINDSIGHT_API_LLM_MODEL=qwen/qwen3.5-9b
 # provider.require_parameters=true, so OpenRouter only routes them to upstreams
 # that support response_format. Any "provider" keys you set in
 # HINDSIGHT_API_LLM_EXTRA_BODY (e.g. "only") are kept and take precedence.
+# That also means every parameter sent must be supported, temperature included.
+# Models that reject temperature (e.g. anthropic/claude-haiku-5.5) then fail with
+# "No endpoints found that can handle the requested parameters". Fix: omit it.
+# export HINDSIGHT_API_LLM_TEMPERATURE=none
 
 # Requesty (OpenAI-compatible gateway)
 export HINDSIGHT_API_LLM_PROVIDER=requesty
@@ -631,6 +635,8 @@ The strategy JSON supports three modes:
 - `{"mode": "round-robin"}` — rotate the starting member per request to spread load, then fall through the rest on failure. Add `"weights": [3, 1, ...]` (positive ints, one per member, primary first) for an **unbalanced** rotation.
 - `{"mode": "metadata", "routes": [...]}` — **retain only**: pick the member from each retained item's own `metadata`. See [Metadata routing](#metadata-routing) below.
 
+**Cooldown.** In `failover` and `round-robin`, a member that fails (after its own retries) is moved to the back of the order for `cooldown_seconds` (default `60`), so later requests stop waiting on its errors and timeouts — useful when a member has run out of a daily or weekly quota. If it fails again once the cooldown is over, the cooldown doubles, up to one hour; its next success clears it. A cooling member is only deprioritized, never dropped: if every other member fails too, it is still tried. Set `"cooldown_seconds": 0` to try every member in order on every request. The cooldown is held in memory per process, so a restart clears it.
+
 ```bash
 # Primary OpenAI, failover to Groq then Anthropic
 export HINDSIGHT_API_LLM_PROVIDER=openai
@@ -643,6 +649,9 @@ export HINDSIGHT_API_LLM_STRATEGY='{"mode": "failover"}'
 
 # Weighted round-robin: serve the primary 3x as often as member 1
 export HINDSIGHT_API_LLM_STRATEGY='{"mode": "round-robin", "weights": [3, 1]}'
+
+# Failover, re-probing a failed member after 5 minutes (then 10, 20, ... up to 1h)
+export HINDSIGHT_API_LLM_STRATEGY='{"mode": "failover", "cooldown_seconds": 300}'
 ```
 
 #### Metadata routing
@@ -674,7 +683,7 @@ Two further limits:
 - **`update_mode: "append"` routes on the metadata supplied with the append call**, not the stored document's. An append re-extracts the stored body together with the new text, so resupply the same metadata to keep it on the same member.
 - **Batch retain is not supported** with this mode. `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` submits every item of an operation as a single job to a single member, which cannot honour per-item routes, so the combination is rejected at startup.
 
-**Per-operation chains.** Each operation can define its own members + strategy with the `RETAIN` / `REFLECT` / `CONSOLIDATION` / `MENTAL_MODEL_REFRESH` prefix (e.g. `HINDSIGHT_API_RETAIN_LLM_1_PROVIDER`, `HINDSIGHT_API_RETAIN_LLM_STRATEGY`). A per-operation slot with no indexed members (or no strategy) inherits the global chain — except `MENTAL_MODEL_REFRESH`, which inherits the reflect chain.
+**Per-operation chains.** Each operation can define its own members + strategy with the `RETAIN` / `REFLECT` / `CONSOLIDATION` / `MENTAL_MODEL_REFRESH` prefix (e.g. `HINDSIGHT_API_RETAIN_LLM_1_PROVIDER`, `HINDSIGHT_API_RETAIN_LLM_STRATEGY`). A per-operation slot with no indexed members (or no strategy) inherits the global chain — except `MENTAL_MODEL_REFRESH`, which inherits the reflect chain (and, when reflect declares none, the global one).
 
 The indexed members are credential fields — never returned by the bank-config API and server-level only (not per-bank configurable). **Batch retain** runs on the first batch-capable member in declared order, which need not be the primary — so a chain whose primary has no batch API can still use `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` as long as one member supports it. That member serves the whole batch (submit, polling and retrieval all target the account that holds it), so batch does not fail over the way the interactive retain/reflect/consolidation calls do. An in-flight batch is bound to the account that submitted it, so if the worker restarts mid-batch it resumes on that same account even when the chain has since been reordered or extended. Removing that member — or rotating its API key — while a batch is still running makes the operation fail with an explicit error instead of polling a different account.
 
@@ -1209,9 +1218,9 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `nvidia`, `typesafe`, `alibaba`, `google`, `flashrank`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
+| `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `nvidia`, `typesafe`, `alibaba`, `google`, `flashrank`, `onnx`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
 | `HINDSIGHT_API_RERANKER_MAX_TOKENS_PER_CANDIDATE` | Applies to **every** provider. If set, truncate each rerank candidate to this many tokens (tiktoken, approximate) before reranking. Set it below the model's context window (e.g. `900` for a 1024-token model), or lower to bound request size when documents can be very long (keeps a CPU-only rerank server from running out of memory). Each fallback member has its own (`HINDSIGHT_API_RERANKER_<n>_MAX_TOKENS_PER_CANDIDATE`). Off by default. (Deprecated alias: `HINDSIGHT_API_RERANKER_LITELLM_MAX_TOKENS_PER_DOC`.) | - |
-| `HINDSIGHT_API_RERANKER_MAX_RETRIES` | Retries after the first attempt when a remote rerank call fails transiently (5xx, timeout, connection error, `429` quota). `0` disables retrying. Applies to every remote provider except `tei`, which has its own retry loop; the in-process providers (`local`, `flashrank`, `jina-mlx`, `rrf`) are unaffected. 4xx auth/validation errors are never retried. | `3` |
+| `HINDSIGHT_API_RERANKER_MAX_RETRIES` | Retries after the first attempt when a remote rerank call fails transiently (5xx, timeout, connection error, `429` quota). `0` disables retrying. Applies to every remote provider except `tei`, which has its own retry loop; the in-process providers (`local`, `flashrank`, `onnx`, `jina-mlx`, `rrf`) are unaffected. 4xx auth/validation errors are never retried. | `3` |
 | `HINDSIGHT_API_RERANKER_INITIAL_BACKOFF` | Initial backoff in seconds between rerank retries (doubles per attempt, with jitter) | `0.5` |
 | `HINDSIGHT_API_RERANKER_MAX_BACKOFF` | Cap on the backoff between rerank retries, in seconds | `4.0` |
 | `HINDSIGHT_API_RERANKER_RETRY_BUDGET` | Wall-clock ceiling, in seconds, on the time one rerank may spend retrying (failed attempts plus backoff). Tighter than the embedding budget because rerank runs after retrieval has already spent time on the same request. With a fallback chain configured, each member spends its own budget before the chain advances. | `10.0` |
@@ -1275,6 +1284,16 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | `HINDSIGHT_API_RERANKER_FLASHRANK_CACHE_DIR` | Cache directory for FlashRank models | System default |
 | `HINDSIGHT_API_RERANKER_FLASHRANK_CPU_MEM_ARENA` | Enable ONNX Runtime CPU memory arena for FlashRank. When `true`, ONNX pre-allocates a memory arena that never shrinks, causing RSS to grow monotonically. `false` trades slightly slower per-call allocation for bounded RSS. | `false` |
 | `HINDSIGHT_API_RERANKER_FLASHRANK_BATCH_SIZE` | Passages scored per FlashRank forward pass. Each pass allocates attention tensors sized `batch × heads × seq²`, and FlashRank pads a batch to its longest passage, so raising this raises peak memory sharply on long candidates. Lower it if the reranker is the memory ceiling on a large bank. | `32` |
+| `HINDSIGHT_API_RERANKER_ONNX_MODEL_ID` | Hugging Face repo for the `onnx` provider. Hindsight downloads `HINDSIGHT_API_RERANKER_ONNX_FILE` from it, and uses it as the tokenizer fallback. | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
+| `HINDSIGHT_API_RERANKER_ONNX_MODEL_PATH` | Local path to an ONNX cross-encoder graph. Use this for models whose repo ships no ONNX file (export them yourself, see below). | - |
+| `HINDSIGHT_API_RERANKER_ONNX_TOKENIZER_NAME_OR_PATH` | Hugging Face tokenizer repo or local tokenizer directory. Set this with `HINDSIGHT_API_RERANKER_ONNX_MODEL_PATH`. | Falls back to `HINDSIGHT_API_RERANKER_ONNX_MODEL_ID` |
+| `HINDSIGHT_API_RERANKER_ONNX_FILE` | ONNX file path inside the Hugging Face repo (also downloads its `_data` sidecar when present). | `onnx/model.onnx` |
+| `HINDSIGHT_API_RERANKER_ONNX_MAX_TOKENS` | Max tokens per (query, document) pair; longer pairs are truncated. | `512` |
+| `HINDSIGHT_API_RERANKER_ONNX_BATCH_SIZE` | Pairs scored per forward pass. Bounds peak memory the same way as the FlashRank setting above. | `32` |
+| `HINDSIGHT_API_RERANKER_ONNX_THREADS` | CPU threads one forward pass may use. `0` uses the native thread cap (`OMP_NUM_THREADS`, by default `min(16, available CPUs)`). Set `2`–`4` on a laptop to keep recall from pinning the whole CPU. | `0` |
+| `HINDSIGHT_API_RERANKER_ONNX_MAX_CONCURRENT` | Forward passes allowed at once. Concurrent recalls queue behind each other, so CPU use never exceeds `THREADS` cores. | `1` |
+| `HINDSIGHT_API_RERANKER_ONNX_CPU_MEM_ARENA` | Enable ONNX Runtime's CPU memory arena. It never returns freed memory, so RSS holds its high-water mark. | `false` |
+| `HINDSIGHT_API_RERANKER_ONNX_TIMEOUT` | Wall-clock ceiling for scoring one recall's candidates, same as `HINDSIGHT_API_RERANKER_LOCAL_TIMEOUT`: on expiry the unscored candidates keep their pre-rerank order behind the scored ones. `0` disables. | `300` |
 | `HINDSIGHT_API_RERANKER_JINA_MLX_MODEL_PATH` | Local path to downloaded `jina-reranker-v3-mlx` model (auto-downloads from HuggingFace if unset) | - |
 
 :::note Apple Silicon: the local providers run on CPU
@@ -1508,6 +1527,27 @@ memory is wasted context.
 provider therefore hands back rank positions, and exactly `0.0` for anything past the
 cut.
 
+#### Local ONNX reranker
+
+The `onnx` provider runs any cross-encoder exported to ONNX in-process with ONNX Runtime, so a model outside FlashRank's catalog needs neither PyTorch nor a TEI server. It needs the `local-onnx` extra (`pip install 'hindsight-api-slim[local-onnx]'`). Scores are the model's raw logits, the same as the `local` provider, so switching between the two keeps the ranking. Models with a single output score and binary `[irrelevant, relevant]` heads both work.
+
+With no settings it downloads `onnx/model.onnx` from the default `cross-encoder/ms-marco-MiniLM-L-6-v2` repo. For a model whose repo ships no ONNX file, export it once and point Hindsight at the files:
+
+```bash
+uvx --from "optimum-onnx[onnxruntime]" optimum-cli export onnx \
+  --model nlpai-lab/KURE-Reranker-nano --task text-classification ./models/kure-reranker-nano
+
+export HINDSIGHT_API_RERANKER_PROVIDER=onnx
+export HINDSIGHT_API_RERANKER_ONNX_MODEL_PATH=./models/kure-reranker-nano/model.onnx
+export HINDSIGHT_API_RERANKER_ONNX_TOKENIZER_NAME_OR_PATH=./models/kure-reranker-nano
+```
+
+One forward pass runs at a time and uses up to `HINDSIGHT_API_RERANKER_ONNX_THREADS` cores (the native thread cap by default), so concurrent recalls queue instead of oversubscribing the CPU. On a laptop, set the thread count to `2`–`4`, and lower `HINDSIGHT_API_RERANKER_MAX_CANDIDATES` if recall latency matters more than the last bit of ranking quality: rerank cost grows linearly with the candidate count.
+
+:::note On Apple Silicon, `local` is usually faster
+PyTorch uses Apple's Accelerate matrix units, which ONNX Runtime's CPU backend does not. On an M3 Max the `local` provider reranked 2–4x faster than `onnx` with the same model and the same scores. The `onnx` provider pays off on Linux and x86 servers, and wherever you want to run without PyTorch.
+:::
+
 #### Jina MLX (Apple Silicon)
 
 The `jina-mlx` provider uses [`jinaai/jina-reranker-v3-mlx`](https://huggingface.co/jinaai/jina-reranker-v3-mlx), optimized for Apple Silicon. The model (~1.2 GB) is downloaded from HuggingFace Hub automatically on first startup and cached locally.
@@ -1578,6 +1618,15 @@ LLM call; only the rest reach the consolidation LLM. On the consolidation eval t
 calls by about 40% at the same pass rate. Turn it off per bank with
 [`HINDSIGHT_API_CONSOLIDATION_USE_DECISION_MODEL`](#observations), or for every bank with
 `HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_PROVIDER=none`.
+
+**Knowledge pages.** With a decision model, a delta refresh of a knowledge page skips reflect.
+It reads the memories added since the page's last refresh and asks the decision model, for each,
+whether it could change the page. Only those reach the LLM that edits the page, together with the
+bank's directives; none of them means no LLM call at all. A memory it drops is not offered again.
+Above 200 new memories, or when the decision model fails, the refresh runs reflect as before. On
+the refresh cost eval this took a 20-memory refresh from 3 LLM calls to 1 and cut its input tokens
+by about 70%. Only the `typesafe` provider is supported, as for reflect. Turn it off per bank with
+[`HINDSIGHT_API_MENTAL_MODEL_DELTA_USE_DECISION_MODEL`](#reflect).
 
 ### Authentication
 
@@ -2465,6 +2514,7 @@ export HINDSIGHT_API_OBSERVATIONS_MISSION="Observations are recurring patterns i
 | `HINDSIGHT_API_REFLECT_MAX_ITERATIONS` | Max tool call iterations before forcing a response | `10` |
 | `HINDSIGHT_API_REFLECT_USE_DECISION_MODEL` | When a decision model is set up for reflect (see [Decision model](#decision-model)), reflect is decision-orchestrated: one LLM call rewrites the request into a search query (or finds there is nothing to search, and reflect returns an empty answer at once), the layers run in parallel with that query, and the decision model prunes the evidence and judges whether it already answers the request. If it does, the answer is the next LLM call. If not, the LLM writes the next query and another parallel round runs, judged the same way. Fewer LLM calls than agent turns, so it costs less. If the decision model fails, reflect falls back to agent turns. Only the `typesafe` provider is supported here for now: with another provider reflect keeps agent turns and logs a warning. Set `false` to keep agent turns (one LLM turn per retrieval layer, each writing its own query). Hierarchical (per bank). | `true` |
 | `HINDSIGHT_API_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL` | The same, for the reflect that refreshes a knowledge page. Hierarchical (per bank). | `true` |
+| `HINDSIGHT_API_MENTAL_MODEL_DELTA_USE_DECISION_MODEL` | When a decision model is set up for reflect (see [Decision model](#decision-model)), a delta knowledge-page refresh skips reflect: it asks the decision model which of the memories added since its last run could change the page, and edits the page from those alone. None of them means no LLM call. Set `false` to run reflect for delta refreshes too. Hierarchical (per bank). | `true` |
 | `HINDSIGHT_API_REFLECT_MAX_CONTEXT_TOKENS` | Max accumulated context tokens in the reflect loop before forcing final synthesis. Prevents `context_length_exceeded` errors on large banks. Lower this if your LLM has a context window smaller than 128K. | `100000` |
 | `HINDSIGHT_API_REFLECT_WALL_TIMEOUT` | Wall-clock timeout in seconds for the entire reflect operation. If exceeded, the request returns HTTP 504. Also bounds a whole mental-model refresh in the worker: one that runs past it is cancelled and marked failed instead of holding its worker slot. | `300` |
 | `HINDSIGHT_API_REFLECT_MISSION` | Global reflect mission (identity and reasoning framing). Overridden per bank via config API. | - |
@@ -2620,13 +2670,15 @@ A bank alias is an extra id a bank answers to, so callers can be moved onto a ne
 
 When local embeddings or reranking run in-process, the underlying BLAS/ML libraries (OpenBLAS, OpenMP, MKL) each spawn a worker pool sized to the host CPU count. Because Hindsight already parallelizes across requests via its own thread-pool executors, those native pools oversubscribe the CPU — on a many-core host the process can accumulate well over 100 native threads. This inflates memory and, under contention, can degrade throughput. Hindsight therefore bounds each native pool to **16 threads** (or the number of *available* CPUs, whichever is smaller) by default, capping runaway growth on large hosts while leaving within-call parallelism intact.
 
-"Available" CPUs is the budget actually granted to the process — the smallest of the CPU-affinity set, the cgroup CPU quota (`--cpus` / cpuset), and the host core count. This matters in containers: the BLAS libraries otherwise size their pools to the *host's* cores even when the container is limited to a few, so a `--cpus=4` container on a 64-core host would spawn far more BLAS threads than it can run.
+"Available" CPUs is the budget actually granted to the process — the smallest of the CPU-affinity set, the cgroup CPU quota (`--cpus` / cpuset), and the host core count. This matters in containers: the BLAS libraries otherwise size their pools to the *host's* cores even when the container is limited to a few, so a `--cpus=4` container on a 64-core host would spawn far more BLAS threads than it can run. The quota is read from the process's own cgroup and its parents, so a systemd unit's `CPUQuota=` counts too, not only a container's limit. The startup log prints the resulting count and the quota found (`Native threads: ...`).
+
+ONNX Runtime (the FlashRank and `onnx` rerankers, ONNX embeddings) does not read `OMP_NUM_THREADS`, so Hindsight passes the same count to every ONNX session directly, with one inter-op thread and busy-waiting turned off.
 
 To tune, set any of these to the desired thread count; the value you set is always honored (the default applies only when the variable is unset):
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `OMP_NUM_THREADS` | OpenMP worker threads (torch, ONNX Runtime, some BLAS builds) | `min(16, available CPUs)` |
+| `OMP_NUM_THREADS` | OpenMP worker threads (torch, some BLAS builds); also the thread count given to each ONNX Runtime session | `min(16, available CPUs)` |
 | `OPENBLAS_NUM_THREADS` | OpenBLAS worker threads (numpy's default BLAS) | `min(16, available CPUs)` |
 | `MKL_NUM_THREADS` | Intel MKL worker threads (numpy/torch when MKL-backed) | `min(16, available CPUs)` |
 | `NUMEXPR_NUM_THREADS` | numexpr expression-engine threads | `min(16, available CPUs)` |

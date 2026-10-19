@@ -428,6 +428,7 @@ class LLMSpanRecorder:
         tool_calls: Optional[list[dict[str, Any]]] = None,
         cached_tokens: int = 0,
         thoughts_tokens: Optional[int] = None,
+        served_by: Optional[str] = None,
         **_extra: Any,
     ) -> None:
         """
@@ -452,8 +453,11 @@ class LLMSpanRecorder:
             cached_tokens: Cached/cache-read prompt tokens, when reported by the provider.
             thoughts_tokens: Reasoning tokens, when reported by the provider. Not part of
                 ``output_tokens``, which is visible-only.
+            served_by: The upstream a gateway routed the call to. Taken from ``error``
+                when the failing call's exception carries it.
             _extra: Tolerated forward-compatible kwargs from other recorders.
         """
+        served_by = served_by or getattr(error, "served_by", None)
         try:
             # Map provider name to GenAI semantic convention
             genai_provider = PROVIDER_NAME_MAPPING.get(provider.lower(), provider.lower())
@@ -497,6 +501,10 @@ class LLMSpanRecorder:
                 # Add custom attributes for Hindsight context
                 span.set_attribute("hindsight.scope", scope)
                 span.set_attribute("hindsight.provider.internal", provider)
+                # The upstream a gateway (OpenRouter) routed this call to: what lets a
+                # failure rate be attributed to one endpoint rather than the model (#5612).
+                if served_by:
+                    span.set_attribute("hindsight.provider.served_by", served_by)
 
                 # Add tool call information if present
                 if tool_calls:

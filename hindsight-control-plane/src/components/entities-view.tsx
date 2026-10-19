@@ -461,7 +461,7 @@ export function EntitiesView() {
 
       {/* Entity Detail Panel - Fixed overlay */}
       {selectedEntity && (
-        <div className="fixed right-0 top-0 h-screen w-[620px] max-w-[95vw] bg-card border-l-2 border-primary shadow-2xl z-50 overflow-y-auto animate-in slide-in-from-right duration-300 ease-out">
+        <div className="fixed right-0 top-0 h-dvh w-[620px] max-w-[95vw] bg-card border-l-2 border-primary shadow-2xl z-50 overflow-y-auto animate-in slide-in-from-right duration-300 ease-out">
           <div className="p-5">
             {/* Header */}
             <div className="flex justify-between items-center mb-6 pb-4 border-b border-border">

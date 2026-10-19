@@ -125,6 +125,9 @@ async def _run_recall(
     return captured
 
 
+# Patches the SQL retrieval path, which a store-owned bank never takes: its recall goes to the
+# store for a bank this harness never created, so the patched arms are never reached.
+@pytest.mark.memory_backend_incompatible
 @pytest.mark.asyncio
 async def test_temporal_arm_is_ordered_by_temporal_score(monkeypatch):
     """A higher temporal_score must outrank a lower one regardless of which fact-type
@@ -143,6 +146,9 @@ async def test_temporal_arm_is_ordered_by_temporal_score(monkeypatch):
     assert [r.id for r in temporal_arm] == [high.id, low.id]
 
 
+# Patches the SQL retrieval path, which a store-owned bank never takes: its recall goes to the
+# store for a bank this harness never created, so the patched arms are never reached.
+@pytest.mark.memory_backend_incompatible
 @pytest.mark.asyncio
 async def test_temporal_arm_orders_none_score_last(monkeypatch):
     """A result with no temporal_score (None) sorts below every scored result."""

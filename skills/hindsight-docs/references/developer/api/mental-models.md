@@ -512,6 +512,8 @@ for _, mm := range mentalModels.GetItems() {
 }
 ```
 
+A [knowledge page](./knowledge-pages.md) keeps its content in a mental model, so the list includes the models behind pages too. Each item carries `is_knowledge_page` to tell them apart, and `exclude_knowledge_pages=true` lists standalone mental models only (both the items and `total`).
+
 ---
 
 ## Get a Mental Model

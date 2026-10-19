@@ -67,6 +67,18 @@ _REVISION = textwrap.dedent(
 ).strip()
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_extensions(monkeypatch):
+    """Each test configures exactly the one extension it is about.
+
+    The collector walks every kind, so an extension the surrounding run configured
+    (a memories store under test, say) would contribute its own tree and every
+    exact-match assertion here would see one location too many.
+    """
+    for kind in EXTENSION_KINDS:
+        monkeypatch.delenv(f"HINDSIGHT_API_{kind.prefix}_EXTENSION", raising=False)
+
+
 @pytest.fixture
 def extension_tree(tmp_path: Path) -> Path:
     versions = tmp_path / "ext_alembic" / "versions"

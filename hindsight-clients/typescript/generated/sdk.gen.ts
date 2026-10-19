@@ -126,6 +126,9 @@ import type {
   GetDirectiveResponses,
   GetDocumentData,
   GetDocumentErrors,
+  GetDocumentHistoryData,
+  GetDocumentHistoryErrors,
+  GetDocumentHistoryResponses,
   GetDocumentResponses,
   GetEntityData,
   GetEntityErrors,
@@ -400,7 +403,7 @@ export const getGraph = <ThrowOnError extends boolean = false>(
 /**
  * List memory units
  *
- * List memory units with pagination and optional full-text search. Supports filtering by type, source document, linked entity ID, and a time window. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC) unless a time window selects another axis.
+ * List memory units with pagination and an optional substring filter (`q`). Supports filtering by type, source document, linked entity ID, and a time window. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC) unless a time window selects another axis.
  */
 export const listMemories = <ThrowOnError extends boolean = false>(
   options: Options<ListMemoriesData, ThrowOnError>
@@ -1032,6 +1035,22 @@ export const listDocumentChunks = <ThrowOnError extends boolean = false>(
   >({ url: "/v1/default/banks/{bank_id}/documents/{document_id}/chunks", ...options });
 
 /**
+ * Get document change history
+ *
+ * What each change to a document did, newest first: every retain, append and reprocess (facts added and removed), every fact edit, invalidation, restore, delete, retag and per-fact observation clear (observations removed), and every consolidation run (observations created, updated and removed). Observations are rebuilt, not versioned, so this is the only record of the ones a change removed. Ids and counts only, with each id list capped at 100.
+ *
+ * Rebuilt from the bank's async operations, which carry these events: it reaches back only as far as operations are kept (HINDSIGHT_API_OPERATION_RETENTION_DAYS, unlimited by default), and a change that ran without an operation is not in it — a synchronous retain (async=false), or a fact edit, delete or retag while auto-consolidation is off. A fact edit, delete or retag is recorded on the consolidation operation it queues. Clearing every observation in the bank is not listed. total, limit and offset count operations, not events.
+ */
+export const getDocumentHistory = <ThrowOnError extends boolean = false>(
+  options: Options<GetDocumentHistoryData, ThrowOnError>
+) =>
+  (options.client ?? client).get<
+    GetDocumentHistoryResponses,
+    GetDocumentHistoryErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/documents/{document_id}/history", ...options });
+
+/**
  * Reprocess document
  *
  * Re-run the retain pipeline on an existing document without changing its content. This deletes the existing memory units and re-extracts facts using the current engine configuration. Useful when the LLM model, chunking strategy, or extraction settings have changed.
@@ -1174,7 +1193,7 @@ export const getOperationStatus = <ThrowOnError extends boolean = false>(
 /**
  * Retry a failed async operation
  *
- * Re-queue a failed async operation so the worker picks it up again
+ * Re-queue a failed or cancelled async operation so the worker picks it up again. On a deferred operation (pending with a future next_retry_at), runs it now.
  */
 export const retryOperation = <ThrowOnError extends boolean = false>(
   options: Options<RetryOperationData, ThrowOnError>

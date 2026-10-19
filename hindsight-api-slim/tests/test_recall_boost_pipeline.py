@@ -109,6 +109,9 @@ def recall_harness(monkeypatch: pytest.MonkeyPatch) -> _RecallHarness:
     return _RecallHarness(engine=engine)
 
 
+# Patches the SQL retrieval path, which a store-owned bank never takes: its recall goes to the
+# store for a bank this harness never created, so the patched arms are never reached.
+@pytest.mark.memory_backend_incompatible
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cap", [2, 10], ids=["over-cap", "under-cap"])
 @pytest.mark.parametrize("mode", ["explicit", "provider", "failover"])
@@ -132,6 +135,9 @@ async def test_passthrough_skips_stage2_through_recall(
     assert all(r.scores.reranker is None for r in boosted.results)
 
 
+# Patches the SQL retrieval path, which a store-owned bank never takes: its recall goes to the
+# store for a bank this harness never created, so the patched arms are never reached.
+@pytest.mark.memory_backend_incompatible
 @pytest.mark.asyncio
 async def test_min_final_filters_after_rank_decay(recall_harness: _RecallHarness) -> None:
     unfiltered = await recall_harness.recall()
@@ -146,6 +152,9 @@ async def test_min_final_filters_after_rank_decay(recall_harness: _RecallHarness
     assert [r.id for r in at_boundary.results] == [r.id for r in unfiltered.results[:2]]
 
 
+# Patches the SQL retrieval path, which a store-owned bank never takes: its recall goes to the
+# store for a bank this harness never created, so the patched arms are never reached.
+@pytest.mark.memory_backend_incompatible
 @pytest.mark.asyncio
 @pytest.mark.parametrize("first_query", ["primary", "fallback"])
 async def test_concurrent_recalls_use_their_own_rerank_provider(

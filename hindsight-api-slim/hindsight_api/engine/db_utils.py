@@ -223,3 +223,48 @@ async def use_or_acquire(backend_or_pool: Any, conn: Any | None) -> AsyncIterato
         return
     async with acquire_with_retry(backend_or_pool) as owned:
         yield owned
+
+
+@asynccontextmanager
+async def as_connection(conn_or_backend: Any) -> AsyncIterator[Any]:
+    """A connection for one read: the caller's own, or a short-lived one from a pool.
+
+    The admin CLI hands a bank export its single raw connection; the engine hands it
+    the backend, so each read borrows a connection and returns it before the
+    archive bytes it produced are streamed on.
+    """
+    if hasattr(conn_or_backend, "acquire"):
+        async with acquire_with_retry(conn_or_backend) as conn:
+            yield conn
+    else:
+        yield conn_or_backend
+
+
+async def iter_keyset_pages(
+    backend_or_conn: Any, select: str, params: list[Any], *, key: str, page_size: int
+) -> AsyncIterator[list[Any]]:
+    """The rows of ``select`` ``page_size`` at a time, in ``key`` order, each page on its own connection.
+
+    ``select`` is a query up to and including its ``WHERE`` clause, with ``params`` as its
+    ``$n`` parameters; ``key`` is a column unique across its rows (qualified if the query
+    joins), and the page boundary is the last row's value of it. For tables that grow with a
+    bank: neither the rows nor a pooled connection are held for the whole read. Given one
+    connection rather than a pool, every page reuses it.
+    """
+    column = key.rsplit(".", 1)[-1]
+    after: Any = None
+    while True:
+        args = list(params)
+        bound = ""
+        if after is not None:
+            args.append(after)
+            bound = f" AND {key} > ${len(args)}"
+        args.append(page_size)
+        sql = f"{select}{bound} ORDER BY {key} LIMIT ${len(args)}"
+        async with as_connection(backend_or_conn) as conn:
+            rows = await conn.fetch(sql, *args)
+        if rows:
+            yield rows
+        if len(rows) < page_size:
+            return
+        after = rows[-1][column]

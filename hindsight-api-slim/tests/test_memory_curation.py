@@ -518,6 +518,54 @@ class TestEdit:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    async def test_edit_mentioned_at(self, memory: MemoryEngine, request_context: RequestContext):
+        """mentioned_at is editable like the occurred dates, and the legacy event_date follows it
+        whenever it is the fallback (no occurrence) — retain's `occurred_start or mentioned_at`."""
+        bank_id = f"test-curation-mention-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            no_occ = await _insert_memory(conn, memory, bank_id, "The user likes tea.")
+            with_occ = await _insert_memory(conn, memory, bank_id, "The user visited Rome.")
+            # Raw SQL because no public API sets an occurrence and a mention independently;
+            # the state under test is a memory as retain leaves it, occurrence plus mention.
+            await conn.execute(
+                "UPDATE memory_units SET occurred_start = $2, mentioned_at = $3, event_date = $2 WHERE id = $1",
+                with_occ,
+                datetime(2023, 6, 1, tzinfo=UTC),
+                datetime(2024, 1, 15, tzinfo=UTC),
+            )
+
+        with (
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            moved = await memory.update_memory_unit(
+                bank_id, str(no_occ), mentioned_at="2022-03-04T10:00:00", request_context=request_context
+            )
+            kept_occ = await memory.update_memory_unit(
+                bank_id, str(with_occ), mentioned_at="2025-02-02", request_context=request_context
+            )
+            text_only = await memory.update_memory_unit(
+                bank_id, str(no_occ), text="The user loves tea.", request_context=request_context
+            )
+            cleared = await memory.update_memory_unit(
+                bank_id, str(no_occ), mentioned_at="", request_context=request_context
+            )
+
+        assert moved["mentioned_at"].startswith("2022-03-04T10:00:00")
+        assert moved["date"] == moved["mentioned_at"], "no occurrence: event_date follows the mention"
+        assert moved["edited_at"] is not None
+        assert kept_occ["mentioned_at"].startswith("2025-02-02")
+        assert kept_occ["date"].startswith("2023-06-01"), "an occurrence keeps the legacy date on itself"
+        assert text_only["mentioned_at"] == moved["mentioned_at"], "other edits leave the mention alone"
+        assert cleared["mentioned_at"] in (None, "")
+        assert cleared["date"] == "", "clearing the mention with no occurrence clears the legacy date"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
     async def test_edit_replaces_entities(self, memory: MemoryEngine, request_context: RequestContext):
         bank_id = f"test-curation-editent-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)

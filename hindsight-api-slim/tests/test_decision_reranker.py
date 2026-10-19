@@ -7,6 +7,7 @@ import pytest
 from hindsight_api.config import DecisionModelConfig
 from hindsight_api.engine.decision_model import DecisionAnswer
 from hindsight_api.engine.search.decision_reranker import (
+    _MAX_MEMORY_TOKENS,
     _MAX_SHARED_CONTEXT_TOKENS,
     DecisionModelReranker,
     rerank_shared_context,
@@ -66,8 +67,8 @@ class TestRanking:
         assert scores[0] > scores[1] > scores[2] > scores[3]
 
     async def test_an_unanswered_candidate_is_kept_behind_the_answered(self):
-        """A failed request leaves its candidates unanswered. An unranked candidate is
-        recoverable; a deleted one is not."""
+        """A candidate the model gave no answer for is ranked last, not dropped: an
+        unranked candidate is recoverable; a deleted one is not."""
         client = _Client(keep={"b": 0.9})
         reranker = _reranker(client)
 
@@ -142,6 +143,15 @@ class TestSharedState:
         finally:
             rerank_shared_context.reset(token)
         assert count_tokens(client.asked[0][0]) <= _MAX_SHARED_CONTEXT_TOKENS + count_tokens("\n\nQuestion: q")
+
+    async def test_a_huge_memory_is_capped(self):
+        """One question carries one memory; uncapped, a single long one could outgrow the
+        window and fail the whole rerank."""
+        client = _Client()
+        await _reranker(client).predict([("q", "word " * 20_000), ("q", "short")])
+        memories = [q.instructions["memory"] for q in client.asked[0][1].values()]
+        assert count_tokens(memories[0]) <= _MAX_MEMORY_TOKENS
+        assert memories[1] == "short"
 
     async def test_a_low_request_ceiling_shrinks_the_caps(self):
         """A ceiling below the caps would otherwise fail every request."""

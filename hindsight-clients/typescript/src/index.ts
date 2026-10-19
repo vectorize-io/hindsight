@@ -62,6 +62,7 @@ import type {
   Base64AttachmentSource,
   DirectiveListResponse,
   DirectiveResponse,
+  DocumentHistoryResponse,
   DocumentResponse,
   DryRunExtractRequest,
   DryRunExtractionResult,
@@ -983,6 +984,8 @@ export class HindsightClient {
       reflectUseDecisionModel?: boolean;
       /** The same, for knowledge-page refreshes. */
       mentalModelRefreshUseDecisionModel?: boolean;
+      /** When the server has a decision model, a delta knowledge-page refresh asks it which new memories could change the page instead of running reflect. */
+      mentalModelDeltaUseDecisionModel?: boolean;
       /** Token budget for source facts during reflect. -1 disables. */
       reflectSourceFactsMaxTokens?: number;
       /** Token budget for facts returned by recall. */
@@ -1094,6 +1097,8 @@ export class HindsightClient {
       updates.reflect_use_decision_model = options.reflectUseDecisionModel;
     if (options.mentalModelRefreshUseDecisionModel !== undefined)
       updates.mental_model_refresh_use_decision_model = options.mentalModelRefreshUseDecisionModel;
+    if (options.mentalModelDeltaUseDecisionModel !== undefined)
+      updates.mental_model_delta_use_decision_model = options.mentalModelDeltaUseDecisionModel;
     if (options.reflectSourceFactsMaxTokens !== undefined)
       updates.reflect_source_facts_max_tokens = options.reflectSourceFactsMaxTokens;
     if (options.recallMaxTokens !== undefined) updates.recall_max_tokens = options.recallMaxTokens;
@@ -1335,6 +1340,8 @@ export class HindsightClient {
       detail?: "metadata" | "content" | "full";
       limit?: number;
       offset?: number;
+      /** Leave out the models that hold knowledge page content (standalone models only). */
+      excludeKnowledgePages?: boolean;
       signal?: AbortSignal;
     }
   ): Promise<MentalModelListResponse> {
@@ -1347,6 +1354,9 @@ export class HindsightClient {
         ...(options?.detail !== undefined ? { detail: options.detail } : {}),
         ...(options?.limit !== undefined ? { limit: options.limit } : {}),
         ...(options?.offset !== undefined ? { offset: options.offset } : {}),
+        ...(options?.excludeKnowledgePages !== undefined
+          ? { exclude_knowledge_pages: options.excludeKnowledgePages }
+          : {}),
       },
       signal: options?.signal,
     });
@@ -1718,6 +1728,30 @@ export class HindsightClient {
     }
 
     return this.validateResponse(response, "getDocument");
+  }
+
+  /**
+   * What each change did to a document's facts and observations, newest first. Rebuilt from the
+   * bank's operations: `limit`/`offset` count operations, and changes that ran without one (a
+   * synchronous retain) are not listed. Returns null if the document is outside the caller's scope.
+   */
+  async getDocumentHistory(
+    bankId: string,
+    documentId: string,
+    options?: { limit?: number; offset?: number; signal?: AbortSignal }
+  ): Promise<DocumentHistoryResponse | null> {
+    const response = await sdk.getDocumentHistory({
+      client: this.client,
+      path: { bank_id: bankId, document_id: documentId },
+      query: { limit: options?.limit, offset: options?.offset },
+      signal: options?.signal,
+    });
+
+    if ((response as any).response?.status === 404) {
+      return null;
+    }
+
+    return this.validateResponse(response, "getDocumentHistory");
   }
 
   /**
@@ -2127,6 +2161,7 @@ export type {
   CreateMentalModelResponse,
   DirectiveListResponse,
   DirectiveResponse,
+  DocumentHistoryResponse,
   DocumentResponse,
   DryRunExtractRequest,
   DryRunExtractionResult,

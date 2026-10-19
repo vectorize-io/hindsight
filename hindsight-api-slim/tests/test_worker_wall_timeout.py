@@ -377,10 +377,11 @@ class TestWallTimeoutNotification:
 
         poller._mark_failed.assert_awaited_once()
         notified.assert_awaited_once()
-        task_dict, schema, message = notified.await_args.args
+        task_dict, schema, message, stage = notified.await_args.args
         assert task_dict["type"] == "consolidation"
         assert schema == "tenant_x"
         assert "wall-clock limit" in message
+        assert stage in message
 
     @pytest.mark.asyncio
     async def test_notification_is_not_fired_for_ordinary_failures(self):

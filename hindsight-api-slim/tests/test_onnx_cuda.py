@@ -72,7 +72,7 @@ async def test_device_selection_and_warmup(ort_runtime, caplog, device, device_i
     )
     ort_runtime.InferenceSession.assert_called_once()
     options = ort_runtime.InferenceSession.call_args.kwargs["sess_options"]
-    assert options is None if arena else options.enable_cpu_mem_arena is False
+    assert options.enable_cpu_mem_arena is arena
     assert session.disable_fallback.call_count == (1 if device == "cuda" else 0)
     assert ort_runtime.get_available_providers.call_count == (1 if device == "cuda" else 0)
     assert emb.dimension == 2

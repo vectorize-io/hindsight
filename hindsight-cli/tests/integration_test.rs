@@ -166,6 +166,23 @@ fn test_memory_retain_exposes_timestamp_flag() {
 }
 
 #[test]
+fn test_document_history_exposes_paging_flags() {
+    // The history endpoint pages by operation; the command must let callers page past the first.
+    let output = Command::new("cargo")
+        .args(["run", "--", "document", "history", "--help"])
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(output.status.success(), "document history --help failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--limit") && stdout.contains("--offset"),
+        "expected --limit/--offset in document history --help, got: {}",
+        stdout
+    );
+}
+
+#[test]
 fn test_configure_command() {
     // Test that configure command creates/updates config
     let temp_dir = std::env::temp_dir().join(format!("hindsight-test-{}", std::process::id()));

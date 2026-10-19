@@ -13,15 +13,18 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 
-export function LanguageSwitcher() {
+/** The current locale and a function that switches the app to another one. */
+export function useSwitchLocale() {
   const locale = useLocale();
-  const t = useTranslations("common");
   const router = useRouter();
   const pathname = usePathname();
+  const switchLocale = (newLocale: Locale) => router.replace(pathname, { locale: newLocale });
+  return { locale, switchLocale };
+}
 
-  function handleLocaleChange(newLocale: Locale) {
-    router.replace(pathname, { locale: newLocale });
-  }
+export function LanguageSwitcher() {
+  const t = useTranslations("common");
+  const { locale, switchLocale } = useSwitchLocale();
 
   return (
     <DropdownMenu>
@@ -34,7 +37,7 @@ export function LanguageSwitcher() {
         {locales.map((l) => (
           <DropdownMenuItem
             key={l}
-            onClick={() => handleLocaleChange(l)}
+            onClick={() => switchLocale(l)}
             className={l === locale ? "bg-accent" : ""}
           >
             {localeNames[l]}

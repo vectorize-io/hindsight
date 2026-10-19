@@ -1391,6 +1391,9 @@ class TestRetainCompletedWebhook:
         """WebhookEventType.RETAIN_COMPLETED has the correct string value."""
         assert WebhookEventType.RETAIN_COMPLETED == "retain.completed"
 
+    # Seeds the bank with a raw INSERT, so a store that owns its own storage never made one, and
+    # the retain callback's stats read finds no storage for it.
+    @pytest.mark.memory_backend_incompatible
     @pytest.mark.asyncio
     async def test_fire_retain_webhook_queues_per_document(self, memory: MemoryEngine, webhook_manager: WebhookManager):
         """_fire_retain_webhook queues one delivery task per content item."""

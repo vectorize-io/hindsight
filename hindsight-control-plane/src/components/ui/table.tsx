@@ -2,12 +2,20 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
+// Every table in the app goes through this one. On a phone the frame scrolls
+// sideways and the table keeps a 40rem floor: without it, a `table-fixed` table
+// with percentage columns squeezed into the 358px a phone leaves, and each
+// column ended up a few characters wide. A table small enough to fit a phone
+// can opt out with `min-w-0`.
 const Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableElement>>(
   ({ className, ...props }, ref) => (
     <div className="relative w-full overflow-auto rounded-xl ring-1 ring-border/60 bg-card">
       <table
         ref={ref}
-        className={cn("w-full caption-bottom text-sm border-separate border-spacing-0", className)}
+        className={cn(
+          "w-full min-w-[40rem] caption-bottom text-sm border-separate border-spacing-0",
+          className
+        )}
         {...props}
       />
     </div>

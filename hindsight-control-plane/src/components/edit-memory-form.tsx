@@ -14,6 +14,9 @@ export interface EditMemoryFields {
   factType: "world" | "experience";
   occurredStart: string; // YYYY-MM-DD or "" to clear
   occurredEnd: string;
+  // Only set when the user changed it: the date input drops the time of day, so
+  // re-sending an untouched value would move every mention to midnight.
+  mentionedAt?: string;
   entities: string[];
 }
 
@@ -25,6 +28,7 @@ interface EditMemoryFormProps {
     fact_type?: string;
     occurred_start?: string | null;
     occurred_end?: string | null;
+    mentioned_at?: string | null;
     // Graph-node memories carry entities as a ", "-joined string; the detail
     // endpoint returns an array. Accept both and normalize.
     entities?: string[] | string | null;
@@ -53,6 +57,7 @@ export function EditMemoryForm({ memory, busy, onCancel, onSave }: EditMemoryFor
   );
   const [occurredStart, setOccurredStart] = useState(toDateInput(memory.occurred_start));
   const [occurredEnd, setOccurredEnd] = useState(toDateInput(memory.occurred_end));
+  const [mentionedAt, setMentionedAt] = useState(toDateInput(memory.mentioned_at));
   const [entities, setEntities] = useState<string[]>(
     Array.isArray(memory.entities)
       ? memory.entities
@@ -108,7 +113,7 @@ export function EditMemoryForm({ memory, busy, onCancel, onSave }: EditMemoryFor
             ))}
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           <div>
             <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               {t("editFieldOccurredStart")}
@@ -128,6 +133,17 @@ export function EditMemoryForm({ memory, busy, onCancel, onSave }: EditMemoryFor
               type="date"
               value={occurredEnd}
               onChange={(e) => setOccurredEnd(e.target.value)}
+              className="mt-1 h-8 text-sm"
+            />
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {t("editFieldMentionedAt")}
+            </label>
+            <Input
+              type="date"
+              value={mentionedAt}
+              onChange={(e) => setMentionedAt(e.target.value)}
               className="mt-1 h-8 text-sm"
             />
           </div>
@@ -196,6 +212,8 @@ export function EditMemoryForm({ memory, busy, onCancel, onSave }: EditMemoryFor
               factType,
               occurredStart,
               occurredEnd,
+              mentionedAt:
+                mentionedAt !== toDateInput(memory.mentioned_at) ? mentionedAt : undefined,
               entities: finalEntities,
             });
           }}

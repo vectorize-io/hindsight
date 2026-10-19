@@ -248,6 +248,16 @@ class TransferKnowledgePage(BaseModel):
     updated_at: datetime | None = None
 
 
+def standalone_mental_models(mental_models: list[dict], knowledge_pages: list[TransferKnowledgePage]) -> list[dict]:
+    """The mental_models rows that are not a knowledge page's backing model.
+
+    Pages keep their content in a mental_models row, so those rows travel with
+    the archive; they are counted as knowledge pages, not as mental models.
+    """
+    page_model_ids = {p.mental_model_id for p in knowledge_pages if p.mental_model_id}
+    return [row for row in mental_models if str(row["id"]) not in page_model_ids]
+
+
 class TransferManifest(BaseModel):
     """Top-level archive descriptor (``manifest.json``).
 

@@ -186,6 +186,7 @@ def _near_query_vector(seed: int) -> str:
     return "[" + ",".join(f"{v / norm:.5f}" for v in values) + "]"
 
 
+@pytest.mark.memory_backend_incompatible
 @pytest.mark.asyncio
 async def test_the_kill_switch_flips_real_retrieval_depth(memory, request_context, ann_config):
     """End to end, through the pool: on, the budget reaches the index; off, it does not.

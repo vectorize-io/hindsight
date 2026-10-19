@@ -16,7 +16,7 @@ from pydantic import validate_call, Field, StrictFloat, StrictStr, StrictInt
 from typing import Any, Dict, List, Optional, Tuple, Union
 from typing_extensions import Annotated
 
-from pydantic import Field, StrictStr, field_validator
+from pydantic import Field, StrictBool, StrictStr, field_validator
 from typing import Any, List, Optional
 from typing_extensions import Annotated
 from hindsight_client_api.models.async_operation_submit_response import AsyncOperationSubmitResponse
@@ -1843,6 +1843,7 @@ class MentalModelsApi:
         detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.")] = None,
         limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
+        exclude_knowledge_pages: Annotated[Optional[StrictBool], Field(description="Leave out the mental models that hold knowledge page content (list standalone models only).")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1873,6 +1874,8 @@ class MentalModelsApi:
         :type limit: int
         :param offset:
         :type offset: int
+        :param exclude_knowledge_pages: Leave out the mental models that hold knowledge page content (list standalone models only).
+        :type exclude_knowledge_pages: bool
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -1904,6 +1907,7 @@ class MentalModelsApi:
             detail=detail,
             limit=limit,
             offset=offset,
+            exclude_knowledge_pages=exclude_knowledge_pages,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -1936,6 +1940,7 @@ class MentalModelsApi:
         detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.")] = None,
         limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
+        exclude_knowledge_pages: Annotated[Optional[StrictBool], Field(description="Leave out the mental models that hold knowledge page content (list standalone models only).")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1966,6 +1971,8 @@ class MentalModelsApi:
         :type limit: int
         :param offset:
         :type offset: int
+        :param exclude_knowledge_pages: Leave out the mental models that hold knowledge page content (list standalone models only).
+        :type exclude_knowledge_pages: bool
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -1997,6 +2004,7 @@ class MentalModelsApi:
             detail=detail,
             limit=limit,
             offset=offset,
+            exclude_knowledge_pages=exclude_knowledge_pages,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -2029,6 +2037,7 @@ class MentalModelsApi:
         detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.")] = None,
         limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
+        exclude_knowledge_pages: Annotated[Optional[StrictBool], Field(description="Leave out the mental models that hold knowledge page content (list standalone models only).")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -2059,6 +2068,8 @@ class MentalModelsApi:
         :type limit: int
         :param offset:
         :type offset: int
+        :param exclude_knowledge_pages: Leave out the mental models that hold knowledge page content (list standalone models only).
+        :type exclude_knowledge_pages: bool
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -2090,6 +2101,7 @@ class MentalModelsApi:
             detail=detail,
             limit=limit,
             offset=offset,
+            exclude_knowledge_pages=exclude_knowledge_pages,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -2117,6 +2129,7 @@ class MentalModelsApi:
         detail,
         limit,
         offset,
+        exclude_knowledge_pages,
         authorization,
         _request_auth,
         _content_type,
@@ -2162,6 +2175,10 @@ class MentalModelsApi:
         if offset is not None:
             
             _query_params.append(('offset', offset))
+            
+        if exclude_knowledge_pages is not None:
+            
+            _query_params.append(('exclude_knowledge_pages', exclude_knowledge_pages))
             
         # process the header parameters
         if authorization is not None:

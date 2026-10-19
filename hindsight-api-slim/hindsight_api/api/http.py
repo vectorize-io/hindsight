@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from urllib.parse import quote, unquote
 
+import orjson
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -37,6 +38,7 @@ from hindsight_api.engine.audit import (
     AuditLogListResponse,
     AuditLogStatsResponse,
 )
+from hindsight_api.engine.document_history import DocumentHistoryResponse
 from hindsight_api.engine.llm_trace import LLMRequestListResponse, LLMRequestStatsResponse
 from hindsight_api.extensions import AuthenticationError, BankWriteOperation, PrecheckOperation
 
@@ -408,6 +410,14 @@ _TIME_WINDOW_NOTE = (
     "Filtering and ordering both follow `time_field`, and rows with no value on "
     "that column are excluded — so `total` counts only rows carrying that "
     "timestamp, and can be 0 on a bank that is not empty."
+)
+
+# The shared prose for the memory list and graph `q` filter (#5649). It is an unindexed
+# scan by design, so the docs say so instead of the store growing an index for it.
+_MEMORY_Q_DESCRIPTION = (
+    "Case-insensitive substring filter on memory text and context. Not indexed: it scans the "
+    "bank, so it slows as the bank grows. Meant for browsing and inspection, not for "
+    "high-volume or latency-sensitive workloads — use recall for that."
 )
 
 # 499 is the de facto reverse-proxy status for "client closed request".
@@ -2860,6 +2870,11 @@ class UpdateMemoryRequest(BaseModel):
         default=None,
         description="New occurred-range end (ISO 8601). '' clears it; omit to leave unchanged.",
     )
+    mentioned_at: str | None = Field(
+        default=None,
+        description="New mention time — when the fact was said or written (ISO 8601). '' clears it; "
+        "omit to leave unchanged.",
+    )
     fact_type: str | None = Field(
         default=None,
         description="Reclassify the fact: 'world' or 'experience'. Omit to leave unchanged.",
@@ -2900,12 +2915,13 @@ class UpdateMemoryRequest(BaseModel):
                 self.context,
                 self.occurred_start,
                 self.occurred_end,
+                self.mentioned_at,
                 self.fact_type,
                 self.entities,
                 self.state,
             )
         )
-        has_date_clear = bool({"occurred_start", "occurred_end"} & self.model_fields_set)
+        has_date_clear = bool({"occurred_start", "occurred_end", "mentioned_at"} & self.model_fields_set)
         if not has_value_edit and not has_date_clear:
             raise ValueError("Provide at least one field to update.")
         if self.state is not None and self.state not in ("valid", "invalidated"):
@@ -3537,6 +3553,13 @@ class MentalModelResponse(BaseModel):
         ),
     )
     created_at: str | None = None
+    is_knowledge_page: bool | None = Field(
+        default=None,
+        description=(
+            "True when this model holds a knowledge page's content rather than being a standalone "
+            "mental model. Set by the list and get endpoints."
+        ),
+    )
     reflect_response: dict | None = Field(
         default=None,
         description="Full reflect API response payload including based_on facts and observations",
@@ -3954,6 +3977,11 @@ class BankTemplateConfig(BaseModel):
     )
     mental_model_refresh_use_decision_model: bool | None = Field(
         default=None, description="The same, for knowledge-page refreshes"
+    )
+    mental_model_delta_use_decision_model: bool | None = Field(
+        default=None,
+        description="When the server has a decision model, a delta knowledge-page refresh asks it which new "
+        "memories could change the page instead of running reflect",
     )
     disposition_skepticism: int | None = Field(default=None, ge=1, le=5, description="Skepticism trait (1-5)")
     disposition_literalism: int | None = Field(default=None, ge=1, le=5, description="Literalism trait (1-5)")
@@ -5890,7 +5918,7 @@ def _register_routes(app: FastAPI):
         bank_id: str,
         type: str | None = None,
         limit: int = Query(default=1000, ge=0),
-        q: str | None = None,
+        q: str | None = Query(None, description=_MEMORY_Q_DESCRIPTION),
         tags: list[str] | None = Query(None),
         tags_match: TagsMatch = "all_strict",
         document_id: str | None = None,
@@ -5922,7 +5950,10 @@ def _register_routes(app: FastAPI):
             token = get_scope_cancellation_token(http_request.scope)
             if token is not None and token.cancelled:
                 raise HTTPException(status_code=_CLIENT_CLOSED_REQUEST_STATUS_CODE, detail=token.reason)
-            return data
+            # The engine builds this dict to GraphDataResponse's shape (tests/test_graph_assembly.py
+            # holds it to that). Validating thousands of nodes against the model holds the event loop
+            # for a second or more (#5703); orjson encodes the same JSON in milliseconds.
+            return Response(content=orjson.dumps(data), media_type="application/json")
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
@@ -5935,7 +5966,7 @@ def _register_routes(app: FastAPI):
         response_model=ListMemoryUnitsResponse,
         summary="List memory units",
         description=(
-            "List memory units with pagination and optional full-text search. Supports filtering by type, "
+            "List memory units with pagination and an optional substring filter (`q`). Supports filtering by type, "
             "source document, linked entity ID, and a time window. Results are sorted by most recent first "
             "(mentioned_at DESC, then created_at DESC) unless a time window selects another axis."
         ),
@@ -5946,7 +5977,7 @@ def _register_routes(app: FastAPI):
     async def api_list(
         bank_id: str,
         type: str | None = None,
-        q: str | None = None,
+        q: str | None = Query(None, description=_MEMORY_Q_DESCRIPTION),
         consolidation_state: str | None = None,
         state: str | None = None,
         document_id: str | None = None,
@@ -5968,7 +5999,7 @@ def _register_routes(app: FastAPI):
         request_context: RequestContext = Depends(get_request_context),
     ):
         """
-        List memory units for table view with optional full-text search.
+        List memory units for table view with an optional substring filter.
 
         Results are ordered by most recent first, using mentioned_at timestamp
         (when the memory was mentioned/learned), falling back to created_at.
@@ -6222,6 +6253,11 @@ def _register_routes(app: FastAPI):
                 if "occurred_end" in request.model_fields_set and request.occurred_end is None
                 else request.occurred_end
             )
+            mentioned_at = (
+                ""
+                if "mentioned_at" in request.model_fields_set and request.mentioned_at is None
+                else request.mentioned_at
+            )
             data = await app.state.memory.update_memory_unit(
                 bank_id=bank_id,
                 memory_id=memory_id,
@@ -6229,6 +6265,7 @@ def _register_routes(app: FastAPI):
                 context=request.context,
                 occurred_start=occurred_start,
                 occurred_end=occurred_end,
+                mentioned_at=mentioned_at,
                 new_fact_type=request.fact_type,
                 entities=request.entities,
                 resolve_entities=request.resolve_entities,
@@ -7058,6 +7095,10 @@ def _register_routes(app: FastAPI):
         ),
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
+        exclude_knowledge_pages: bool = Query(
+            False,
+            description="Leave out the mental models that hold knowledge page content (list standalone models only).",
+        ),
         request_context: RequestContext = Depends(get_request_context),
     ):
         """List mental models for a bank.
@@ -7083,6 +7124,7 @@ def _register_routes(app: FastAPI):
                 limit=limit,
                 offset=offset,
                 with_staleness=True,
+                exclude_knowledge_pages=exclude_knowledge_pages,
                 request_context=request_context,
             )
             return MentalModelListResponse(
@@ -8059,6 +8101,47 @@ def _register_routes(app: FastAPI):
         except Exception as e:
             raise _internal_error(e, f"/v1/default/banks/{bank_id}/documents/{document_id}/chunks")
 
+    @app.get(
+        "/v1/default/banks/{bank_id}/documents/{document_id:path}/history",
+        response_model=DocumentHistoryResponse,
+        summary="Get document change history",
+        description=(
+            "What each change to a document did, newest first: every retain, append and reprocess "
+            "(facts added and removed), every fact edit, invalidation, restore, delete, retag and "
+            "per-fact observation clear (observations removed), and every consolidation run (observations created, updated and removed). "
+            "Observations are rebuilt, not versioned, so this is the only record of the ones a change "
+            "removed. Ids and counts only, with each id list capped at 100.\n\n"
+            "Rebuilt from the bank's async operations, which carry these events: it reaches back only as "
+            "far as operations are kept (HINDSIGHT_API_OPERATION_RETENTION_DAYS, unlimited by default), and "
+            "a change that ran without an operation is not in it — a synchronous retain (async=false), or a "
+            "fact edit, delete or retag while auto-consolidation is off. A fact edit, delete or retag is "
+            "recorded on the consolidation operation it queues. Clearing every observation in the bank is "
+            "not listed. total, limit and offset count operations, not events."
+        ),
+        operation_id="get_document_history",
+        tags=["Documents"],
+    )
+    async def api_get_document_history(
+        bank_id: str,
+        document_id: str,
+        limit: int = Query(default=100, ge=1, le=1000, description="Maximum number of operations to read"),
+        offset: int = Query(default=0, ge=0, description="Offset for pagination, in operations"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        try:
+            result = await app.state.memory.get_document_history(
+                bank_id, document_id, limit=limit, offset=offset, request_context=request_context
+            )
+            if result is None:
+                raise HTTPException(status_code=404, detail="Document not found")
+            return result
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/documents/{document_id}/history")
+
     @app.post(
         "/v1/default/banks/{bank_id}/documents/{document_id:path}/reprocess",
         response_model=ReprocessDocumentResponse,
@@ -8475,7 +8558,10 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/operations/{operation_id}/retry",
         response_model=RetryOperationResponse,
         summary="Retry a failed async operation",
-        description="Re-queue a failed async operation so the worker picks it up again",
+        description=(
+            "Re-queue a failed or cancelled async operation so the worker picks it up again. "
+            "On a deferred operation (pending with a future next_retry_at), runs it now."
+        ),
         operation_id="retry_operation",
         tags=["Operations"],
     )
@@ -8981,8 +9067,14 @@ def _register_routes(app: FastAPI):
             # tags, max_tokens and trigger and nothing else. Asking for content
             # would pull every model's synthesized body across the wire, and
             # report a read of it, for a field this endpoint discards.
+            # Knowledge pages are left out: a template carries no pages, and their
+            # models would come back on import as standalone mental models.
             mental_models_raw = await app.state.memory.list_mental_models(
-                bank_id=bank_id, limit=None, detail="config", request_context=request_context
+                bank_id=bank_id,
+                limit=None,
+                detail="config",
+                exclude_knowledge_pages=True,
+                request_context=request_context,
             )
             template_mental_models: list[BankTemplateMentalModel] = []
             for mm in mental_models_raw.items:

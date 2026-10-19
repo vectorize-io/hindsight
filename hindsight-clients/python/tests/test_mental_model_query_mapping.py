@@ -41,6 +41,7 @@ def test_list_forwards_every_supported_query_option(monkeypatch):
         detail="metadata",
         limit=25,
         offset=50,
+        exclude_knowledge_pages=True,
     )
 
     assert captured["bank_id"] == "bank-1"
@@ -50,6 +51,7 @@ def test_list_forwards_every_supported_query_option(monkeypatch):
     assert kwargs["detail"] == "metadata"
     assert kwargs["limit"] == 25
     assert kwargs["offset"] == 50
+    assert kwargs["exclude_knowledge_pages"] is True
 
 
 def test_list_defaults_leave_controls_unset(monkeypatch):
@@ -66,6 +68,7 @@ def test_list_defaults_leave_controls_unset(monkeypatch):
     assert kwargs["detail"] is None
     assert kwargs["limit"] is None
     assert kwargs["offset"] is None
+    assert kwargs["exclude_knowledge_pages"] is None
 
 
 def test_list_tags_only_shape_preserved(monkeypatch):

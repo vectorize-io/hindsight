@@ -19,7 +19,7 @@ A **memory unit** is the atomic fact Hindsight extracts and stores. This page co
 
 List the memory units in a bank. The response includes each unit's `fact_type` (`world` | `experience` | `observation`), `state` (`valid` | `invalidated`), metadata, entities, occurred dates, and — for facts a user has edited — an `edited_at` timestamp. Invalidated rows are **included by default** so curation stays auditable; filter with `state=`.
 
-Narrow the results with query parameters: `type=` (fact type), `q=` (full-text search over text and context), `document_id=` (a single source document), and `entity_id=` (memory units linked to a given entity). The `entity_id` filter is an exact reverse lookup over stored entity links — not a text or semantic match — so you can list an entity's evidence (e.g. its observations, with `type=observation`) without scanning every memory. Because entity links exist only for live units, combining `entity_id` with `state=invalidated` returns nothing.
+Narrow the results with query parameters: `type=` (fact type), `q=` (case-insensitive substring filter over text and context — not indexed, so it scans the bank; meant for browsing and inspection, use recall for production search), `document_id=` (a single source document), and `entity_id=` (memory units linked to a given entity). The `entity_id` filter is an exact reverse lookup over stored entity links — not a text or semantic match — so you can list an entity's evidence (e.g. its observations, with `type=observation`) without scanning every memory. Because entity links exist only for live units, combining `entity_id` with `state=invalidated` returns nothing.
 
 ### Time window
 
@@ -186,7 +186,7 @@ Only raw **world** and **experience** facts can be curated. Observations are *de
 
 ### Edit a memory
 
-Correct what the LLM extracted. You can change the **text**, **context**, **occurred dates**, **fact type**, and **entities** — anything the extractor could have gotten wrong. Hindsight re-embeds the fact, drops the observations and links derived from the old version, and re-consolidates, so downstream knowledge reflects the correction. Edited facts are marked with an `edited_at` timestamp (surfaced as an **Edited** badge in the control plane).
+Correct what the LLM extracted. You can change the **text**, **context**, **occurred dates**, **mention time** (`mentioned_at`), **fact type**, and **entities** — anything the extractor could have gotten wrong. Hindsight re-embeds the fact, drops the observations and links derived from the old version, and re-consolidates, so downstream knowledge reflects the correction. Edited facts are marked with an `edited_at` timestamp (surfaced as an **Edited** badge in the control plane).
 
 Correcting a fact never discards the **cause-and-effect relationships** it takes part in: those come from reading the original source, so an edit (or an invalidate/restore round-trip) keeps them intact rather than dropping links nothing could rebuild.
 
@@ -237,7 +237,7 @@ client.MemoryAPI.UpdateMemory(ctx, memBankID, memoryID).
 	}).Execute()
 ```
 
-You can correct the dates, fact type, and entities the same way. For `context`, `occurred_start`, and `occurred_end`, an empty string `""` clears the field and omitting it leaves it unchanged. For `entities`, a list **replaces** the fact's entity set and `[]` detaches them all; omitting it leaves them unchanged.
+You can correct the dates, fact type, and entities the same way. For `context`, `occurred_start`, `occurred_end`, and `mentioned_at`, an empty string `""` clears the field and omitting it leaves it unchanged. For `entities`, a list **replaces** the fact's entity set and `[]` detaches them all; omitting it leaves them unchanged.
 
 ### Resolving entity names
 

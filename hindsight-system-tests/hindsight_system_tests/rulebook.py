@@ -90,6 +90,9 @@ class StubbedReply:
     error_status: int | None = None
     """When set, the stub answers with a provider error at this HTTP status instead."""
 
+    retry_after_seconds: int | None = None
+    """Sent as the error's ``Retry-After`` header: when a rate-limited provider says it resets."""
+
 
 @dataclass(frozen=True)
 class ToolCall:
@@ -153,14 +156,17 @@ class RuleBuilder:
             )
         )
 
-    def fails_with_status(self, status: int) -> LLMStub:
+    def fails_with_status(self, status: int, *, retry_after_seconds: int | None = None) -> LLMStub:
         """Answer with a provider error at ``status`` — a 429 or a 5xx, say.
 
         For stories about how the server treats a provider that is down or
-        rate-limited, which no successful reply can stand in for.
+        rate-limited, which no successful reply can stand in for. ``retry_after_seconds``
+        is the provider's reported quota reset, which the worker defers the operation to.
         """
         return self._register(
-            lambda _request: StubbedReply(message={}, finish_reason="error", error_status=status)
+            lambda _request: StubbedReply(
+                message={}, finish_reason="error", error_status=status, retry_after_seconds=retry_after_seconds
+            )
         )
 
     def returns_text(self, text: str) -> LLMStub:
@@ -449,6 +455,10 @@ class LLMStub:
 class EmbeddingStub:
     """Deterministic embeddings — see ``lexical.py`` for why word overlap suffices."""
 
+    #: Answer every call with this provider error instead — a 429 or a 5xx — for the
+    #: stories about what the server leaves behind when its embeddings backend is down.
+    fail_with_status: int | None = None
+
     def embed(self, text: str) -> list[float]:
         from .lexical import lexical_embedding
 
@@ -564,6 +574,7 @@ class Stubs:
         from what a story set on it (cut level, verdicts) or it recorded, which has to
         go back to its default or it leaks into whatever runs next."""
         self.llm.reset()
+        self.embeddings.fail_with_status = None
         self.rerank.cut_level = RerankStub.cut_level
         self.rerank.verdicts = {}
         self.rerank.states = []

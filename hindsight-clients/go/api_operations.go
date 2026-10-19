@@ -615,7 +615,7 @@ func (r ApiRetryOperationRequest) Execute() (*RetryOperationResponse, *http.Resp
 /*
 RetryOperation Retry a failed async operation
 
-Re-queue a failed async operation so the worker picks it up again
+Re-queue a failed or cancelled async operation so the worker picks it up again. On a deferred operation (pending with a future next_retry_at), runs it now.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId

@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Trash2, Search, X, Plus } from "lucide-react";
@@ -226,7 +227,7 @@ export function BanksOverview() {
   // A search that matches nothing still shows the table UI, so the query can be edited.
   if (!loading && total === 0 && !search) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-80px)] bg-muted/20">
+      <div className="flex items-center justify-center h-[calc(100dvh-80px)] bg-muted/20">
         <div className="max-w-md rounded-lg border-2 border-border bg-card p-10 text-center shadow-lg">
           {/* Tumbling Hindsight mascot — loops forever as a friendly greeting. */}
           <Spinner size="xl" variant="jump" className="mx-auto mb-4" />
@@ -347,9 +348,18 @@ export function BanksOverview() {
                       />
                     </TableCell>
                     <TableCell>
-                      <div className="font-medium text-card-foreground">
+                      {/* A real link so the row is reachable by keyboard; the
+                          row's own onClick stays as the mouse shortcut. */}
+                      <Link
+                        href={bankRoute(bank.bank_id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCurrentBank(bank.bank_id);
+                        }}
+                        className="font-medium text-card-foreground hover:underline focus-visible:underline"
+                      >
                         {bank.name || bank.bank_id}
-                      </div>
+                      </Link>
                       {bank.name && bank.name !== bank.bank_id && (
                         <div className="truncate text-xs text-muted-foreground">{bank.bank_id}</div>
                       )}

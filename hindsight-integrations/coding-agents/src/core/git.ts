@@ -11,10 +11,13 @@ import { projectNameOf } from "./bank";
 import type { HindsightClient } from "./hindsight";
 import type { RetainStamp } from "./retain-stamp";
 import { pool } from "./util";
+import { uuidV5 } from "./uuid";
 
 const US = "\x1f";
 const RS = "\x1e"; // record separator between commits in gitLogText
 const GITLOG_HEAD = "gitlog-head:"; // tag naming the commit the git-log document was written at
+const GITLOG_FORMAT = `--format=%h${US}%ad${US}%an${US}%s${US}%b${RS}`;
+const GITLOG_DIVIDER = "\n\n---\n\n"; // between two commit records in the git-log document
 
 function git(repo: string, ...args: string[]): string {
   // `log.showSignature=true` in the user's config makes `git log`/`git show` print signature
@@ -175,6 +178,10 @@ export async function ingestGit(
  * is rewritten once per step instead of once per commit. Commits that land in the middle of the
  * date order (a merged branch, a rebase) still shift the text, which costs the full re-extraction
  * every commit used to.
+ *
+ * This text is now what a FULL write sends — the first seed, or a history the stored document no
+ * longer describes. Keeping an existing document current appends only the new commits instead
+ * (see appendGitLog), so neither the window's steps nor a merged branch rewrites what is stored.
  */
 export function gitLogText(repo: string, limit: number): string {
   let raw: string;
@@ -190,11 +197,17 @@ export function gitLogText(repo: string, limit: number): string {
       "--no-merges",
       "--reverse", // applied after -n: the newest N, printed oldest first
       "--date=short",
-      `--format=%h${US}%ad${US}%an${US}%s${US}%b${RS}`
+      GITLOG_FORMAT
     );
   } catch {
     return ""; // no commits yet (or not a git repo) — caller handles empty
   }
+  return gitLogRecords(raw).join(GITLOG_DIVIDER);
+}
+
+/** `git log --format=GITLOG_FORMAT` output as one "<shortsha> <date> <author>\n<message>" record
+ *  per commit, in the order git printed them. */
+function gitLogRecords(raw: string): string[] {
   return raw
     .split(RS)
     .map((rec) => rec.trim())
@@ -204,8 +217,38 @@ export function gitLogText(repo: string, limit: number): string {
       const header = `${sha} ${date} ${author}`;
       const msg = subj + (body?.trim() ? "\n\n" + body.trim() : "");
       return `${header}\n${msg}`;
-    })
-    .join("\n\n---\n\n");
+    });
+}
+
+/**
+ * The records of the non-merge commits reachable from `head` but not from `baseSha`, OLDEST first —
+ * exactly what the git-log document written at `baseSha` lacks, in the order they belong at its
+ * end. Null when `baseSha` is not a full object name or not an ancestor of `head` (a rebase, a
+ * force-push, a branch that diverged from the last writer): there the document holds commits
+ * `head` does not, and only a full re-send describes its history.
+ */
+function gitLogRecordsSince(repo: string, baseSha: string, head: string): string[] | null {
+  if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(baseSha)) return null;
+  try {
+    git(repo, "merge-base", "--is-ancestor", baseSha, head);
+  } catch {
+    return null; // exit 1 = not an ancestor; anything else (unknown object) is no better
+  }
+  try {
+    return gitLogRecords(
+      git(
+        repo,
+        "log",
+        "--no-merges",
+        "--reverse",
+        "--date=short",
+        GITLOG_FORMAT,
+        `${baseSha}..${head}`
+      )
+    );
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -223,6 +266,56 @@ export function gitLogNewestAuthorDate(repo: string): string | null {
   }
 }
 
+type GitLogOpts = { limit: number; log?: (m: string) => void; stampFor?: () => RetainStamp };
+
+/**
+ * Write `content` to the repository's canonical git-log document — a replace, or with `append` an
+ * append onto the stored body. Both paths go through here so the document's tags, context and
+ * timestamp never depend on which one wrote last.
+ */
+async function retainGitLog(
+  client: HindsightClient,
+  repo: string,
+  content: string,
+  opts: GitLogOpts,
+  head: string | null,
+  append?: { operationId: string }
+): Promise<void> {
+  const repoName = repoNameOf(repo);
+  // The gitlog-head:<sha> tag records the commit this document is written at: the deepen engine
+  // writes it again only when HEAD has moved past that commit (see gitLogIsCurrent), and an
+  // append starts from it (see appendGitLog). An append REPLACES the document's tags with these,
+  // so the tag always names the newest commit the stored body holds — which is why the caller
+  // passes the HEAD it built `content` from rather than this reading HEAD again.
+  const stamp = opts.stampFor?.();
+  const tags = [
+    ...new Set([
+      ...(stamp?.tags ?? []),
+      "source:git",
+      "source:git-log",
+      ...(head ? [`${GITLOG_HEAD}${head}`] : []),
+    ]),
+  ];
+  await client.retain(
+    content,
+    // No commit count: an append makes the document longer than any count a replace wrote.
+    `git commit-message history for ${repoName}`,
+    `gitlog:${repoName}`,
+    tags,
+    "gitlog",
+    {
+      // Anchor the document in time on the newest commit it contains, so extraction can date the
+      // facts it pulls out of these messages. Previously no timestamp was passed at all: retain
+      // then stamped "now", the extraction prompt got `Event Date: Unknown`, and every fact landed
+      // with a null occurred_start/occurred_end — invisible to temporal search (#3602).
+      timestamp: gitLogNewestAuthorDate(repo) ?? undefined,
+      // `retain` only sets metadata when it is truthy, so an empty stamp sends none.
+      metadata: Object.keys(stamp?.metadata ?? {}).length ? stamp?.metadata : undefined,
+      ...(append ? { updateMode: "append" as const, operationId: append.operationId } : {}),
+    }
+  );
+}
+
 /**
  * Ingest the aggregated commit-message history (last `opts.limit` commits, no diffs) as ONE document —
  * a single retain/extraction op, orders of magnitude cheaper than per-commit full-diff ingestion. The
@@ -233,51 +326,75 @@ export function gitLogNewestAuthorDate(repo: string): string | null {
 export async function ingestGitLog(
   client: HindsightClient,
   repo: string,
-  opts: { limit: number; log?: (m: string) => void; stampFor?: () => RetainStamp } = { limit: 300 }
+  opts: GitLogOpts = { limit: 300 }
 ): Promise<number> {
   const log = opts.log ?? (() => {});
+  const head = gitHeadSha(repo);
   const text = gitLogText(repo, opts.limit);
   if (!text) {
     log("[gitlog] no commits found — skipping");
     return 0;
   }
   const repoName = repoNameOf(repo);
-  const n = text.split("\n\n---\n\n").length;
+  const n = text.split(GITLOG_DIVIDER).length;
   log(`[gitlog] ingesting last ${n} commit messages for ${repoName} as ONE document …`);
   try {
-    // The gitlog-head:<sha> tag records the commit this document is written at: the deepen engine
-    // re-upserts it (same id — replaces, never duplicates) only when HEAD has moved past that
-    // commit (see gitLogIsCurrent).
-    const head = gitHeadSha(repo);
-    const stamp = opts.stampFor?.();
-    const tags = [
-      ...new Set([
-        ...(stamp?.tags ?? []),
-        "source:git",
-        "source:git-log",
-        ...(head ? [`${GITLOG_HEAD}${head}`] : []),
-      ]),
-    ];
-    await client.retain(
-      text,
-      `git commit-message history (last ${n}) for ${repoName}`,
-      `gitlog:${repoName}`,
-      tags,
-      "gitlog",
-      {
-        // Anchor the document in time on the newest commit it contains, so extraction can date the
-        // facts it pulls out of these messages. Previously no timestamp was passed at all: retain
-        // then stamped "now", the extraction prompt got `Event Date: Unknown`, and every fact landed
-        // with a null occurred_start/occurred_end — invisible to temporal search (#3602).
-        timestamp: gitLogNewestAuthorDate(repo) ?? undefined,
-        // `retain` only sets metadata when it is truthy, so an empty stamp sends none.
-        metadata: Object.keys(stamp?.metadata ?? {}).length ? stamp?.metadata : undefined,
-      }
-    );
+    await retainGitLog(client, repo, text, opts, head);
     log(`[gitlog] done: ${n} commit messages ingested as 1 document under strategy 'gitlog'`);
     return 0;
   } catch (e) {
     log(`  ! gitlog ingest failed: ${(e as Error).message?.slice(0, 120)}`);
+    return 1;
+  }
+}
+
+/**
+ * Bring the git-log document up to HEAD by APPENDING only the commits it lacks, oldest first.
+ *
+ * A replace re-sends the whole log for every new commit. The server's delta retain keeps a stored
+ * chunk only when the text before it is unchanged, so whatever moves the text — a commit merged
+ * into the middle of the date order, the window's start advancing — makes it re-extract the whole
+ * log, every time. An append cannot move what is stored: the new records land after it, and only
+ * they are extracted.
+ *
+ * Returns null when an append cannot describe HEAD, and the caller replaces instead: no document
+ * or no gitlog-head tag (first seed), a recorded commit that is not an ancestor of HEAD (a rebase,
+ * a force-push, a diverged worktree), more new commits than the seed `limit` (a replace bounded by
+ * the limit is smaller), or a server that cannot append safely (no `operation_id` dedupe, or a bank
+ * that does not store document text — see HindsightClient.supportsAppendRetain).
+ */
+async function appendGitLog(
+  client: HindsightClient,
+  repo: string,
+  opts: GitLogOpts,
+  head: string
+): Promise<number | null> {
+  const log = opts.log ?? (() => {});
+  const canonical = `gitlog:${repoNameOf(repo)}`;
+  const tags = await client.documentTags?.(canonical).catch(() => undefined);
+  const base = tags?.find((t) => t.startsWith(GITLOG_HEAD))?.slice(GITLOG_HEAD.length);
+  if (!base) return null;
+  const records = gitLogRecordsSince(repo, base, head);
+  if (records === null || records.length > opts.limit) return null;
+  if (!records.length) {
+    // Only merge commits since the recorded one: the log has nothing to add.
+    log("[gitlog] no new non-merge commits — skipping");
+    return 0;
+  }
+  const appendable = await client.supportsAppendRetain?.().catch(() => false);
+  if (!appendable) return null;
+  // The server joins an append onto the stored body with one "\n"; the leading divider makes the
+  // join the same divider that separates every other pair of records.
+  const content = GITLOG_DIVIDER.slice(1) + records.join(GITLOG_DIVIDER);
+  // Same base + same new commits = same operation, so a re-submitted append is collapsed into the
+  // first one server-side rather than applied twice.
+  const operationId = uuidV5(`${client.bank}\n${canonical}\nappend\n${base}\n${content}`);
+  log(`[gitlog] appending ${records.length} new commit message(s) to ${canonical} …`);
+  try {
+    await retainGitLog(client, repo, content, opts, head, { operationId });
+    return 0;
+  } catch (e) {
+    log(`  ! gitlog append failed: ${(e as Error).message?.slice(0, 120)}`);
     return 1;
   }
 }
@@ -312,7 +429,8 @@ export async function gitLogIsCurrent(
 }
 
 /**
- * Ensure this repository's canonical aggregated git-log document is current.
+ * Ensure this repository's canonical aggregated git-log document is current: append the commits
+ * it lacks when it was written at an ancestor of HEAD (appendGitLog), replace it otherwise.
  *
  * Older deepen versions enumerated every `source:git-log` document in the bank and deleted every
  * non-canonical id. A bank can be shared by unrelated repositories, so that name comparison was
@@ -322,7 +440,7 @@ export async function gitLogIsCurrent(
 export async function syncGitLog(
   client: HindsightClient,
   repo: string,
-  opts: { limit: number; log?: (m: string) => void; stampFor?: () => RetainStamp }
+  opts: GitLogOpts
 ): Promise<number> {
   const log = opts.log ?? (() => {});
   const head = gitHeadSha(repo);
@@ -331,5 +449,7 @@ export async function syncGitLog(
     log("[gitlog] current with HEAD — skipping");
     return 0;
   }
-  return ingestGitLog(client, repo, opts);
+  return (
+    (head ? await appendGitLog(client, repo, opts, head) : null) ?? ingestGitLog(client, repo, opts)
+  );
 }

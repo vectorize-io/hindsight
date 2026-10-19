@@ -385,6 +385,7 @@ class BankReadOperation(StrEnum):
     GET_CHUNK = "get_chunk"
     GET_DIRECTIVE = "get_directive"
     GET_DOCUMENT = "get_document"
+    GET_DOCUMENT_HISTORY = "get_document_history"
     GET_ENTITY = "get_entity"
     GET_ENTITY_GRAPH = "get_entity_graph"
     GET_ENTITY_STATE = "get_entity_state"

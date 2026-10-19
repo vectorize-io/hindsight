@@ -517,6 +517,33 @@ class PostgresMemories(MemoriesExtension):
             tag_groups=tag_groups,
         )
 
+    async def memories_updated_between(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        until: datetime,
+        since: datetime,
+        limit: int,
+        fact_types: list[str] | None = None,
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
+        tag_groups: list | None = None,
+    ) -> list[StoredMemory] | None:
+        return await reads.memories_updated_between(
+            conn=conn,
+            fq_table=fq_store_table,
+            bank_id=bank_id,
+            until=until,
+            since=since,
+            limit=limit,
+            fact_types=fact_types,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
+        )
+
     async def latest_memory_write_at(self, *, conn, fq_table, bank_id: str) -> datetime | None:
         return await reads.latest_memory_write_at(conn=conn, fq_table=fq_store_table, bank_id=bank_id)
 
@@ -1168,6 +1195,9 @@ class PostgresMemories(MemoriesExtension):
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, document_id=document_id
         )
 
+    async def lock_document_row(self, *, conn, fq_table, bank_id: str, document_id: str) -> None:
+        await pg_retain.lock_document_hash(conn=conn, fq_table=fq_store_table, bank_id=bank_id, document_id=document_id)
+
     async def lock_document_hash(self, *, conn, fq_table, bank_id: str, document_id: str) -> str | None:
         return await pg_retain.lock_document_hash(
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, document_id=document_id
@@ -1454,6 +1484,13 @@ class PostgresMemories(MemoriesExtension):
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_ids=unit_ids
         )
 
+    async def lock_consolidation_write_set(
+        self, *, conn, fq_table, bank_id: str, fact_ids: list[str], observation_ids: list[str]
+    ) -> None:
+        await pg_consolidation.lock_consolidation_write_set(
+            conn=conn, fq_table=fq_store_table, bank_id=bank_id, fact_ids=fact_ids, observation_ids=observation_ids
+        )
+
     async def lock_observation_tags(self, *, conn, fq_table, bank_id: str, observation_id: str) -> list[str] | None:
         return await pg_consolidation.lock_observation_tags(
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, observation_id=observation_id
@@ -1639,11 +1676,21 @@ class PostgresMemories(MemoriesExtension):
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_index=unit_index
         )
 
-    async def dump_entity_maintenance_queue(self, *, conn, fq_table, bank_id: str) -> list[dict]:
-        return await pg_transfer.dump_entity_maintenance_queue(conn=conn, fq_table=fq_store_table, bank_id=bank_id)
+    async def iter_entity_maintenance_queue(
+        self, *, backend, fq_table, bank_id: str, page_size: int
+    ) -> AsyncIterator[list[dict]]:
+        async for page in pg_transfer.iter_entity_maintenance_queue(
+            backend=backend, fq_table=fq_store_table, bank_id=bank_id, page_size=page_size
+        ):
+            yield page
 
-    async def dump_archived_memories(self, *, conn, fq_table, bank_id: str) -> list[dict]:
-        return await pg_transfer.dump_archived_memories(conn=conn, fq_table=fq_store_table, bank_id=bank_id)
+    async def iter_archived_memories(
+        self, *, backend, fq_table, bank_id: str, page_size: int
+    ) -> AsyncIterator[list[dict]]:
+        async for page in pg_transfer.iter_archived_memories(
+            backend=backend, fq_table=fq_store_table, bank_id=bank_id, page_size=page_size
+        ):
+            yield page
 
     async def restore_archived_memories(
         self,

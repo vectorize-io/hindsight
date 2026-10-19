@@ -60,7 +60,8 @@
       "copied": "In Zwischenablage kopiert",
       "viaAlias": "über {aliases}"
     },
-    "viewOnGitHub": "Auf GitHub ansehen"
+    "viewOnGitHub": "Auf GitHub ansehen",
+    "more": "Mehr"
   },
   "bank": {
     "bankConfiguration": "Bankkonfiguration",
@@ -146,7 +147,8 @@
       "collapseSidebar": "Seitenleiste einklappen",
       "collapse": "Einklappen",
       "knowledge": "Wissensdatenbank",
-      "home": "Startseite"
+      "home": "Startseite",
+      "openNavigation": "Navigation öffnen"
     },
     "overviewAndOperations": "Übersichtsstatistik und Hintergrundoperationen für diesen Speicherbank.",
     "operations": "Operationen",
@@ -333,7 +335,22 @@
     "timeFieldMentionedShort": "Erwähnt",
     "timeFieldMentionedLong": "Wann Fakten erwähnt wurden (Ereigniszeit)",
     "timeFieldOccurredShort": "Geschehen",
-    "timeFieldOccurredLong": "Wann das zugrunde liegende Ereignis begann"
+    "timeFieldOccurredLong": "Wann das zugrunde liegende Ereignis begann",
+    "knowledgePages": "Wissensseiten",
+    "noKnowledgePages": "Keine Wissensseiten",
+    "knowledgeSection": "Wissen",
+    "hintConsolidationDone": "Erinnerungen, die die Konsolidierung bereits verarbeitet hat. Die Konsolidierung macht aus Roh-Erinnerungen Beobachtungen.",
+    "hintConsolidationPending": "Erinnerungen, die auf den nächsten Konsolidierungslauf warten.",
+    "hintConsolidationFailed": "Erinnerungen, die die Konsolidierung nicht verarbeiten konnte. Klicke auf die Zahl, um sie zu sehen und erneut zu versuchen.",
+    "hintConsolidationLast": "Wann die Konsolidierung zuletzt lief.",
+    "hintModelsInSync": "Mentale Modelle, die jede neue Erinnerung in ihrem Bereich gelesen haben.",
+    "hintModelsStale": "Mentale Modelle mit neuen Erinnerungen in ihrem Bereich seit der letzten Aktualisierung. Sie holen bei der nächsten Aktualisierung auf.",
+    "hintModelsFailed": "Mentale Modelle, deren letzte Aktualisierung fehlgeschlagen ist. Automatische Aktualisierungen bleiben pausiert, bis du sie manuell aktualisierst.",
+    "hintModelsLast": "Die jüngste Aktualisierung eines beliebigen mentalen Modells.",
+    "hintPagesInSync": "Wissensseiten, die jede neue Erinnerung in ihrem Bereich gelesen haben.",
+    "hintPagesStale": "Wissensseiten mit neuen Erinnerungen in ihrem Bereich seit der letzten Aktualisierung. Sie holen bei der nächsten Aktualisierung auf.",
+    "hintPagesFailed": "Wissensseiten, deren letzte Aktualisierung fehlgeschlagen ist. Automatische Aktualisierungen bleiben pausiert, bis du sie manuell aktualisierst.",
+    "hintPagesLast": "Die jüngste Aktualisierung einer beliebigen Wissensseite."
   },
   "bankConfig": {
     "noBankSelected": "Keine Bank ausgewählt",
@@ -943,7 +960,8 @@
     "dateRangeCustom": "Benutzerdefiniert",
     "dateRangeFrom": "Von",
     "dateRangeTo": "Bis",
-    "dateRangeReversed": "Ende muss nach dem Start liegen"
+    "dateRangeReversed": "Ende muss nach dem Start liegen",
+    "historyTab": "Verlauf"
   },
   "entitiesView": {
     "viewRelations": "Beziehungen",
@@ -1127,7 +1145,8 @@
     "actionOpenDetail": "Öffnen",
     "nextRefreshPaused": "pausiert nach fehlgeschlagener Aktualisierung",
     "nextRefreshRetrying": "Wiederholung, nächster Versuch {time}",
-    "nextRefreshRunning": "wird gerade aktualisiert"
+    "nextRefreshRunning": "wird gerade aktualisiert",
+    "hideKnowledgePages": "Wissensseiten ausblenden"
   },
   "cronPreview": {
     "invalid": "Ungültiger Cron-Ausdruck",
@@ -1667,6 +1686,7 @@
     "curationSave": "Speichern",
     "curationStateInvalidated": "Ungültig",
     "editFieldContext": "Kontext",
+    "editFieldMentionedAt": "Erwähnt",
     "editFieldOccurredEnd": "Enddatum",
     "editFieldOccurredStart": "Startdatum",
     "editFieldType": "Typ"
@@ -2031,7 +2051,8 @@
         "chunks": "Dokument-Chunks konnten nicht abgerufen werden",
         "reprocess": "Dokument konnte nicht erneut verarbeitet werden",
         "export": "Dokumente konnten nicht exportiert werden",
-        "import": "Dokumente konnten nicht importiert werden"
+        "import": "Dokumente konnten nicht importiert werden",
+        "history": "Dokumentverlauf konnte nicht abgerufen werden"
       },
       "files": {
         "upload": "Dateien konnten nicht hochgeladen werden"
@@ -2259,5 +2280,38 @@
     "pausedTitle": "Die letzte Aktualisierung ist fehlgeschlagen, daher aktualisiert sich dieses Modell nicht mehr selbst – aktualisieren Sie es, um fortzufahren",
     "retrying": "Wiederholung",
     "retryingTitle": "Der letzte Versuch ist fehlgeschlagen, ein weiterer steht an – automatische Aktualisierungen stoppen nur, wenn auch dieser fehlschlägt"
+  },
+  "documentHistory": {
+    "explainer": "Was jede Änderung an den Fakten und Beobachtungen dieses Dokuments bewirkt hat. Beobachtungen werden neu aufgebaut, nicht versioniert: Entfernt eine Änderung eine, ist ihre ID hier die einzige Spur. Aus den Vorgängen der Bank rekonstruiert, daher fehlen synchrone Retains und Änderungen bei deaktivierter Auto-Konsolidierung. Zeile aufklappen für die IDs; über eine ID fahren, um sie in anderen Zeilen zu finden.",
+    "empty": "Keine Änderungen erfasst. Der Verlauf stammt aus den Vorgängen dieser Bank: asynchrone Retains und die Konsolidierungen nach Bearbeitungen.",
+    "loadError": "Verlauf konnte nicht geladen werden.",
+    "idsRemoved": "Entfernt",
+    "idsCreated": "Erstellt",
+    "idsUpdated": "Aktualisiert",
+    "chipRemoved": "Durch diese Änderung entfernt – existiert nicht mehr",
+    "chipOpen": "Diese Beobachtung öffnen",
+    "moreIds": "+{count} weitere",
+    "kind": {
+      "retain": "Gespeichert",
+      "append": "Angehängt",
+      "reprocess": "Neu verarbeitet",
+      "retag": "Tags geändert",
+      "fact_edited": "Fakt bearbeitet",
+      "fact_invalidated": "Fakt invalidiert",
+      "fact_restored": "Fakt wiederhergestellt",
+      "fact_deleted": "Fakt gelöscht",
+      "observations_cleared": "Beobachtungen geleert",
+      "consolidation": "Konsolidiert"
+    },
+    "loadOlder": "Ältere laden",
+    "colWhen": "Zeitpunkt",
+    "colChange": "Änderung",
+    "colFacts": "Fakten",
+    "colObservations": "Beobachtungen",
+    "colOperation": "Vorgang",
+    "legendExists": "Existiert noch – zum Öffnen klicken",
+    "legendRemovedLater": "Durch eine spätere Änderung entfernt",
+    "legendRemovedHere": "Durch diese Änderung entfernt",
+    "chipRemovedLater": "Später entfernt durch: {kind} ({when})"
   }
 }

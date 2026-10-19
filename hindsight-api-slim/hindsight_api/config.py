@@ -1062,6 +1062,7 @@ ENV_CONSOLIDATION_WALL_TIMEOUT = "HINDSIGHT_API_CONSOLIDATION_WALL_TIMEOUT"
 ENV_REFLECT_MAX_ITERATIONS = "HINDSIGHT_API_REFLECT_MAX_ITERATIONS"
 ENV_REFLECT_USE_DECISION_MODEL = "HINDSIGHT_API_REFLECT_USE_DECISION_MODEL"
 ENV_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL"
+ENV_MENTAL_MODEL_DELTA_USE_DECISION_MODEL = "HINDSIGHT_API_MENTAL_MODEL_DELTA_USE_DECISION_MODEL"
 ENV_REFLECT_PROMPT_CACHE_ENABLED = "HINDSIGHT_API_REFLECT_PROMPT_CACHE_ENABLED"
 ENV_REFLECT_MAX_CONTEXT_TOKENS = "HINDSIGHT_API_REFLECT_MAX_CONTEXT_TOKENS"
 ENV_REFLECT_WALL_TIMEOUT = "HINDSIGHT_API_REFLECT_WALL_TIMEOUT"
@@ -1464,6 +1465,15 @@ DEFAULT_RERANKER_FLASHRANK_CPU_MEM_ARENA = False  # Disable ONNX CPU memory aren
 # costs gigabytes and can OOM the container (issue #3355). Matches the local
 # reranker's default batch size.
 DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE = 32
+# ONNX reranker. The model defaults to the local provider's, whose HF repo ships onnx/model.onnx.
+DEFAULT_RERANKER_ONNX_FILE = "onnx/model.onnx"
+DEFAULT_RERANKER_ONNX_MAX_TOKENS = 512
+DEFAULT_RERANKER_ONNX_BATCH_SIZE = 32  # Pairs per forward pass; bounds peak memory like FlashRank's
+DEFAULT_RERANKER_ONNX_THREADS = 0  # Threads per pass; 0 = the native thread cap (OMP_NUM_THREADS)
+# One pass at a time: a pass already spreads over every thread, so a second concurrent
+# one adds contention, not throughput, and the CPU ceiling stays `threads` cores.
+DEFAULT_RERANKER_ONNX_MAX_CONCURRENT = 1
+DEFAULT_RERANKER_ONNX_CPU_MEM_ARENA = False  # Arena never shrinks; off keeps RSS bounded
 
 DEFAULT_EMBEDDINGS_COHERE_MODEL = "embed-english-v3.0"
 DEFAULT_RERANKER_COHERE_MODEL = "rerank-english-v3.0"
@@ -2027,6 +2037,8 @@ DEFAULT_REFLECT_MAX_ITERATIONS = 10  # Max tool call iterations before forcing r
 # On by default, so setting up a decision model is what turns it on; a bank can opt out.
 DEFAULT_REFLECT_USE_DECISION_MODEL = True
 DEFAULT_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL = True
+# A delta refresh asks the decision model which new memories could change the page, in place of reflect.
+DEFAULT_MENTAL_MODEL_DELTA_USE_DECISION_MODEL = True
 # Step-by-step context caching for the reflect tool loop (Gemini). On by default;
 # requires the global prompt cache (HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED) to also
 # be on. Set false to force reflect to run uncached even when prompt caching is on.
@@ -2658,7 +2670,9 @@ class LLMStrategyConfig(BaseModel):
     ``weights`` is round-robin only: positive integers, one per member (primary
     first), giving an unbalanced rotation; ``None`` means uniform. ``routes`` is
     metadata only: the first route matching an item wins, and an item matching
-    none uses the primary.
+    none uses the primary. ``cooldown_seconds`` moves a member that just failed
+    to the back of the order for that long, doubling if it fails again once
+    that is over (capped at an hour) and clearing on its next success; ``0`` turns it off.
     """
 
     model_config = ConfigDict(strict=True, extra="forbid")
@@ -2666,6 +2680,7 @@ class LLMStrategyConfig(BaseModel):
     mode: str
     weights: list[int] | None = None
     routes: list[LLMMetadataRoute] | None = None
+    cooldown_seconds: int = Field(default=60, ge=0)
 
     @field_validator("mode")
     @classmethod
@@ -2799,6 +2814,38 @@ def _parse_llm_members(prefix: str) -> list[LLMMemberConfig]:
 
 
 @dataclass
+class OnnxRerankerConfig:
+    """Settings of the ``onnx`` reranker provider, read from ``{prefix}ONNX_*``."""
+
+    model_id: str
+    model_path: str | None
+    tokenizer_name_or_path: str | None
+    file: str
+    max_tokens: int
+    batch_size: int
+    threads: int
+    max_concurrent: int
+    cpu_mem_arena: bool
+    timeout: float
+
+    @classmethod
+    def from_env(cls, base: str) -> "OnnxRerankerConfig":
+        """Read one member's settings; the primary and indexed members differ only in ``base``."""
+        return cls(
+            model_id=_member_str(base, "ONNX_MODEL_ID", DEFAULT_RERANKER_LOCAL_MODEL),
+            model_path=_member_opt_str(base, "ONNX_MODEL_PATH"),
+            tokenizer_name_or_path=_member_opt_str(base, "ONNX_TOKENIZER_NAME_OR_PATH"),
+            file=_member_str(base, "ONNX_FILE", DEFAULT_RERANKER_ONNX_FILE),
+            max_tokens=_member_int(base, "ONNX_MAX_TOKENS", DEFAULT_RERANKER_ONNX_MAX_TOKENS),
+            batch_size=_member_int(base, "ONNX_BATCH_SIZE", DEFAULT_RERANKER_ONNX_BATCH_SIZE),
+            threads=_member_int(base, "ONNX_THREADS", DEFAULT_RERANKER_ONNX_THREADS),
+            max_concurrent=_member_int(base, "ONNX_MAX_CONCURRENT", DEFAULT_RERANKER_ONNX_MAX_CONCURRENT),
+            cpu_mem_arena=_member_bool(base, "ONNX_CPU_MEM_ARENA", DEFAULT_RERANKER_ONNX_CPU_MEM_ARENA),
+            timeout=_member_float(base, "ONNX_TIMEOUT", DEFAULT_RERANKER_LOCAL_TIMEOUT),
+        )
+
+
+@dataclass
 class RerankerMemberConfig:
     """One reranker in the failover chain.
 
@@ -2848,6 +2895,7 @@ class RerankerMemberConfig:
     flashrank_cache_dir: str | None
     flashrank_cpu_mem_arena: bool
     flashrank_batch_size: int
+    onnx: OnnxRerankerConfig
     # litellm (proxy)
     litellm_api_base: str
     litellm_api_key: str | None
@@ -3014,6 +3062,7 @@ def _parse_reranker_members() -> list[RerankerMemberConfig]:
                     base, "FLASHRANK_CPU_MEM_ARENA", DEFAULT_RERANKER_FLASHRANK_CPU_MEM_ARENA
                 ),
                 flashrank_batch_size=_member_int(base, "FLASHRANK_BATCH_SIZE", DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE),
+                onnx=OnnxRerankerConfig.from_env(base),
                 litellm_api_base=_member_str(base, "LITELLM_API_BASE", DEFAULT_LITELLM_API_BASE),
                 litellm_api_key=_member_opt_str(base, "LITELLM_API_KEY"),
                 litellm_model=_member_str(base, "LITELLM_MODEL", DEFAULT_RERANKER_LITELLM_MODEL),
@@ -3730,6 +3779,7 @@ class HindsightConfig:
     reflect_max_iterations: int
     reflect_use_decision_model: bool
     mental_model_refresh_use_decision_model: bool
+    mental_model_delta_use_decision_model: bool
     reflect_max_context_tokens: int
     reflect_wall_timeout: int
     reflect_prompt_cache_enabled: bool
@@ -4034,6 +4084,7 @@ class HindsightConfig:
         "reflect_mission",
         "reflect_use_decision_model",
         "mental_model_refresh_use_decision_model",
+        "mental_model_delta_use_decision_model",
         "reflect_source_facts_max_tokens",
         "reflect_default_options",
         # Recall settings (used by internal recall, e.g. mental model refresh)
@@ -4122,6 +4173,8 @@ class HindsightConfig:
             flashrank_batch_size=int(
                 os.environ.get(ENV_RERANKER_FLASHRANK_BATCH_SIZE, "").strip() or DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE
             ),
+            # onnx, like flashrank, has no HindsightConfig fields — read from the env directly
+            onnx=OnnxRerankerConfig.from_env("HINDSIGHT_API_RERANKER_"),
             litellm_api_base=self.reranker_litellm_api_base,
             litellm_api_key=self.reranker_litellm_api_key,
             litellm_model=self.reranker_litellm_model,
@@ -5455,6 +5508,10 @@ class HindsightConfig:
                 ENV_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL, str(DEFAULT_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL)
             ).lower()
             == "true",
+            mental_model_delta_use_decision_model=os.getenv(
+                ENV_MENTAL_MODEL_DELTA_USE_DECISION_MODEL, str(DEFAULT_MENTAL_MODEL_DELTA_USE_DECISION_MODEL)
+            ).lower()
+            == "true",
             reflect_prompt_cache_enabled=os.getenv(
                 ENV_REFLECT_PROMPT_CACHE_ENABLED, str(DEFAULT_REFLECT_PROMPT_CACHE_ENABLED)
             ).lower()
@@ -5780,6 +5837,9 @@ class HindsightConfig:
             logger.info("Reranker: replaced by the decision model in recall")
         else:
             logger.info(f"Reranker: provider={self.reranker_provider}")
+        from ._thread_limits import native_thread_summary
+
+        logger.info(native_thread_summary())
         for operation in DECISION_MODEL_OPERATIONS:
             if decision_model := self.decision_model_config(operation):
                 logger.info(

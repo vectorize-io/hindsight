@@ -10,16 +10,19 @@ import asyncio
 import contextvars
 import logging
 import os
+import threading
 import time
 import warnings
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 import aiohttp
 from pydantic import BaseModel
 
 from .._cross_loop import CrossLoopSemaphore
+from .._thread_limits import bound_onnx_session, onnx_intra_op_threads
 from ..config import (
     DEFAULT_LITELLM_API_BASE,
     DEFAULT_RERANKER_ALIBABA_MODEL,
@@ -37,6 +40,12 @@ from ..config import (
     DEFAULT_RERANKER_NVIDIA_BATCH_SIZE,
     DEFAULT_RERANKER_NVIDIA_MAX_CONCURRENT,
     DEFAULT_RERANKER_NVIDIA_MODEL,
+    DEFAULT_RERANKER_ONNX_BATCH_SIZE,
+    DEFAULT_RERANKER_ONNX_CPU_MEM_ARENA,
+    DEFAULT_RERANKER_ONNX_FILE,
+    DEFAULT_RERANKER_ONNX_MAX_CONCURRENT,
+    DEFAULT_RERANKER_ONNX_MAX_TOKENS,
+    DEFAULT_RERANKER_ONNX_THREADS,
     DEFAULT_RERANKER_SILICONFLOW_BASE_URL,
     DEFAULT_RERANKER_SILICONFLOW_MODEL,
     DEFAULT_RERANKER_TEI_BATCH_SIZE,
@@ -52,6 +61,7 @@ from ..config import (
 )
 from .aiohttp_session import LoopLocal, LoopLocalSession, UpstreamHTTPError, per_phase_timeout, raise_for_status
 from .bank_attribution import reranker_bank_attribution_headers
+from .decision_model import overflowed_window
 from .local_device import (
     LOCAL_MODEL_BUILD_LOCK,
     align_local_model_weights,
@@ -66,6 +76,7 @@ from .tei_retry import TEI_KEEPALIVE_EXPIRY_SECONDS, is_retryable_tei_transport_
 from .token_encoding import count_tokens, truncate_to_tokens
 
 logger = logging.getLogger(__name__)
+_T = TypeVar("_T")
 
 # Which member produced the scores for the predict() running in this task.
 # MultiCrossEncoder._active is shared by every request on the chain, so reading
@@ -103,6 +114,26 @@ class RerankTimeoutError(Exception):
         super().__init__(
             f"Reranker {model_name!r} exhausted its {timeout:g}s budget after scoring {scored}/{len(scores)} candidates"
         )
+
+
+async def _run_batches_in_executor(
+    executor: ThreadPoolExecutor | None,
+    predict_sync: Callable[[list[tuple[str, str]], threading.Event], list[float]],
+    pairs: list[tuple[str, str]],
+) -> list[float]:
+    """Run an in-process reranker's batch loop on ``executor``, stopping it on cancel.
+
+    Cancelling the awaiting task cannot interrupt a worker thread, so without this an
+    abandoned rerank kept scoring its remaining batches and the next request queued
+    behind them (#5722). ``predict_sync`` gets an event that is set on cancellation and
+    must check it before each batch; the batch already running still finishes.
+    """
+    cancelled = threading.Event()
+    try:
+        return await asyncio.get_running_loop().run_in_executor(executor, predict_sync, pairs, cancelled)
+    except asyncio.CancelledError:
+        cancelled.set()
+        raise
 
 
 class CrossEncoderModel(ABC):
@@ -381,13 +412,14 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         else:
             logger.info(f"Reranker: local provider initialized (device: {self._device_type}, using existing executor)")
 
-    def _predict_sync(self, pairs: list[tuple[str, str]]) -> list[float]:
+    def _predict_sync(self, pairs: list[tuple[str, str]], cancelled: threading.Event | None = None) -> list[float]:
         """Synchronous prediction wrapper for thread pool execution.
 
         Scores in explicit batches rather than one `predict()` call so the wall-clock
         budget can be enforced between them — a blocking call already inside torch
         cannot be cancelled from the event loop, and abandoning it with `wait_for`
-        would leave it burning the executor's only worker (#4696).
+        would leave it burning the executor's only worker (#4696). ``cancelled`` is
+        checked at the same point (see ``_run_batches_in_executor``).
 
         Supports two optimizations (controlled via .env):
         - bucket_batching: sort pairs by token length to reduce padding waste (36-54% speedup)
@@ -409,6 +441,8 @@ class LocalSTCrossEncoder(CrossEncoderModel):
             deadline = time.monotonic() + self.timeout if self.timeout > 0 else None
 
             for start in range(0, len(order), self.batch_size):
+                if cancelled is not None and cancelled.is_set():
+                    raise asyncio.CancelledError()
                 if deadline is not None and time.monotonic() >= deadline:
                     raise RerankTimeoutError(scores, self.timeout, self.model_name)
                 batch = order[start : start + self.batch_size]
@@ -438,12 +472,7 @@ class LocalSTCrossEncoder(CrossEncoderModel):
             raise RuntimeError("Reranker not initialized. Call initialize() first.")
 
         # Use dedicated executor - limited workers naturally limits concurrency
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            LocalSTCrossEncoder._executor,
-            self._predict_sync,
-            pairs,
-        )
+        return await _run_batches_in_executor(LocalSTCrossEncoder._executor, self._predict_sync, pairs)
 
 
 class RemoteTEICrossEncoder(CrossEncoderModel):
@@ -1112,6 +1141,16 @@ _SUFFICIENCY_INSTRUCTIONS = (
     "not what could be guessed from it."
 )
 
+_PAGE_IMPACT_INSTRUCTIONS = (
+    "Could the new memory change this page? Answer yes if it adds to, updates, corrects or "
+    "contradicts anything the page says, or is about the page's topic in a way the page does "
+    "not cover yet. Answer no only if the page would read the same with or without it."
+)
+_PAGE_IMPACT_OPTIONS = {
+    "yes": "Yes, the page could change because of it",
+    "no": "No, it has nothing to do with this page",
+}
+
 _OPTION_KEY_OVERHEAD = 7  # JSON envelope overhead per choice option: '"c249": "' + comma/newline
 _LISTING_ITEM_OVERHEAD = 10  # Formatting overhead per item in cut listing: "[1] ...\n\n"
 _MAX_QUERY_TOKENS = 2_000  # Defensive ceiling on query tokens in reranker
@@ -1167,8 +1206,14 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
 
     # Context window safety limit for Jev /v1/systemone.
     # Single question context limit is 32k. A defensive safety margin (26k vs 32k)
-    # absorbs cross-tokenizer divergence and JSON envelope formatting overheads.
+    # absorbs JSON framing and most cross-tokenizer divergence, but not all of it: on
+    # mixed-script text Jev counts twice what we do (#5715). A request Jev still finds
+    # too long is rebuilt at half the budget (see _within_window), down to
+    # MIN_QUESTION_TOKENS.
     MAX_QUESTION_TOKENS = 26_000
+    # Three halvings: 26k -> 3.25k covers an 8x divergence, well past the 2x measured.
+    # A request still refused there will never fit, so it fails rather than retrying on.
+    MIN_QUESTION_TOKENS = 3_000
 
     # Ordered depths for the cut. The model picks the level; these are the
     # granularity offered, which is a design choice and not a tuned threshold.
@@ -1241,6 +1286,19 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
                 await raise_for_status(response)
                 return await response.json(content_type=None)
 
+    async def _within_window(self, build: Callable[[int], Awaitable[_T]]) -> _T:
+        """``build(budget)`` at the full question budget, halved each time Jev finds the
+        request longer than its window, since only Jev can count its own tokens."""
+        budget = self.MAX_QUESTION_TOKENS
+        while True:
+            try:
+                return await build(budget)
+            except Exception as e:
+                if not overflowed_window(e) or budget // 2 < self.MIN_QUESTION_TOKENS:
+                    raise
+            budget //= 2
+            logger.warning(f"Reranker: TypeSafe request overflowed Jev's window, retrying at {budget} tokens")
+
     async def _rank_once(self, query: str, docs: list[str], indices: list[int]) -> list[int]:
         """Rank one group of candidates, returning their indices best first."""
         body = {
@@ -1261,7 +1319,7 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         by_probability = sorted(range(len(indices)), key=lambda position: -float(probabilities[f"c{position}"]))
         return [indices[position] for position in by_probability]
 
-    async def _rank(self, query: str, docs: list[str], indices: list[int]) -> list[int]:
+    async def _rank(self, query: str, docs: list[str], indices: list[int], budget: int) -> list[int]:
         """Rank a whole pool best first, in rounds when it exceeds option or token limits.
 
         Each round's probabilities are normalised within its own call, so the winners
@@ -1277,7 +1335,7 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         state_tokens = count_tokens(f"Question: {query}")
         # +30: cushion for the question's JSON framing (type, keys) around the instructions.
         instr_tokens = count_tokens(f"{_RANK_INSTRUCTIONS_PREFIX}{query}") + 30
-        net_budget = max(50, self.MAX_QUESTION_TOKENS - state_tokens - instr_tokens)
+        net_budget = max(50, budget - state_tokens - instr_tokens)
 
         # Pre-truncate outlier documents that individually exceed the question budget,
         # and copy docs so we don't mutate caller's list.
@@ -1365,24 +1423,27 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
             count_tokens(_SUFFICIENCY_INSTRUCTIONS) + sum(count_tokens(level) for level in self.SUFFICIENCY_LEVELS) + 50
         )
         prefix = f"Question: {query}\n\nEvidence:\n"
-        budget = max(100, self.MAX_QUESTION_TOKENS - overhead - count_tokens(prefix))
-        if count_tokens(evidence) > budget:
+
+        async def ask(question_budget: int) -> dict:
+            budget = max(100, question_budget - overhead - count_tokens(prefix))
             # ponytail: keeps the head of the evidence; the agent's own results come
             # first (pages, then observations, then facts), so the tail is raw facts.
-            evidence = truncate_to_tokens(evidence, budget).text
-        result = await self._ask(
-            {
-                "state": f"{prefix}{evidence}",
-                "model": self.model,
-                "questions": {
-                    "sufficient": {
-                        "type": "score",
-                        "instructions": _SUFFICIENCY_INSTRUCTIONS,
-                        "criteria": self.SUFFICIENCY_LEVELS,
-                    }
-                },
-            }
-        )
+            fitted = truncate_to_tokens(evidence, budget).text if count_tokens(evidence) > budget else evidence
+            return await self._ask(
+                {
+                    "state": f"{prefix}{fitted}",
+                    "model": self.model,
+                    "questions": {
+                        "sufficient": {
+                            "type": "score",
+                            "instructions": _SUFFICIENCY_INSTRUCTIONS,
+                            "criteria": self.SUFFICIENCY_LEVELS,
+                        }
+                    },
+                }
+            )
+
+        result = await self._within_window(ask)
         answer = result["answers"]["sufficient"]
         # The most likely level, not the rounded expected score: an expected 1.43 is "partly" when
         # rounded, though "fully" was the likeliest verdict at 0.54 (sde-bench boltons-budget), and
@@ -1395,7 +1456,52 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
             level = round(float(answer["score"]))
         return level >= len(self.SUFFICIENCY_LEVELS) - 1
 
-    async def _cut(self, query: str, docs: list[str], order: list[int]) -> int:
+    async def could_change_page(self, topic: str, page: str, memory: str) -> bool:
+        """Whether ``memory`` could change a page about ``topic`` that reads ``page``: one Choice.
+
+        Gates a delta knowledge-page refresh: a memory answered "no" is never shown to
+        the LLM. Worded so a doubt is a "yes", because a wrong "no" is silent and
+        permanent (the refresh moves past the memory) while a wrong "yes" costs one
+        LLM call, which is what every refresh pays without the gate.
+        """
+        prefix = f"Page topic: {topic}\n\nNew memory: {memory}\n\nThe page as it reads now:\n"
+        overhead = (
+            count_tokens(_PAGE_IMPACT_INSTRUCTIONS)
+            + sum(count_tokens(option) for option in _PAGE_IMPACT_OPTIONS.values())
+            + count_tokens(prefix)
+            + 50
+        )
+        policy = self.retry_policy or RetryPolicy()
+
+        async def ask(question_budget: int) -> dict:
+            budget = max(100, question_budget - overhead)
+            # ponytail: keeps the head of the page (its first sections); a page past
+            # ~25k tokens is already far over its own budget.
+            fitted = truncate_to_tokens(page, budget).text if count_tokens(page) > budget else page
+            body = {
+                "state": f"{prefix}{fitted}",
+                "model": self.model,
+                "questions": {
+                    "impact": {
+                        "type": "choice",
+                        "instructions": _PAGE_IMPACT_INSTRUCTIONS,
+                        "criteria": _PAGE_IMPACT_OPTIONS,
+                    }
+                },
+            }
+            # A refresh asks this once per new memory, all at once, so a rate limit is the
+            # expected failure rather than a rare one: retried, not handed back as "search".
+            return await acall_with_retry(
+                lambda: self._ask(body), policy=policy, budget=policy.new_budget(), provider=self.provider_name
+            )
+
+        result = await self._within_window(ask)
+        answer = result["answers"]["impact"]
+        probabilities = answer.get("probabilities") or {}
+        choice = answer.get("choice") or max(probabilities, key=lambda key: float(probabilities[key]), default="yes")
+        return choice != "no"
+
+    async def _cut(self, query: str, docs: list[str], order: list[int], budget: int) -> int:
         """How many of the ranked candidates are relevant, as the model sees it."""
         shortlist = order[: self.SHORTLIST]
         if not shortlist:
@@ -1405,7 +1511,7 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         cut_overhead = count_tokens(_CUT_INSTRUCTIONS) + sum(count_tokens(c) for c in self.CUT_LEVELS) + 50
         prefix = f"Question: {query}\n\nCandidates, already ranked best first:\n"
         prefix_tokens = count_tokens(prefix)
-        available_listing_tokens = max(100, self.MAX_QUESTION_TOKENS - cut_overhead - prefix_tokens)
+        available_listing_tokens = max(100, budget - cut_overhead - prefix_tokens)
 
         # Truncate shortlist documents if they exceed the available listing budget
         shortlist_docs = [docs[index] for index in shortlist]
@@ -1446,8 +1552,12 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         if count_tokens(query) > effective_query_cap:
             query = truncate_to_tokens(query, effective_query_cap).text
 
-        order = await self._rank(query, docs, indices)
-        keep = await self._cut(query, docs, order) if self.prunes_candidates else len(order)
+        order = await self._within_window(lambda budget: self._rank(query, docs, indices, budget))
+        keep = (
+            await self._within_window(lambda budget: self._cut(query, docs, order, budget))
+            if self.prunes_candidates
+            else len(order)
+        )
         keep = max(keep, min(self.MIN_KEEP, len(order)))
         # Positions, not confidences — see the class docstring. Descending from 1.0 so
         # the caller's ordering is preserved, and 0.0 for everything past the cut,
@@ -1582,13 +1692,14 @@ class FlashRankCrossEncoder(CrossEncoderModel):
         # Configure ONNX session options before Ranker creates the session.
         # When cpu_mem_arena=False (default), ONNX won't pre-allocate an arena
         # that grows monotonically, keeping RSS bounded after rerank batches.
-        if not self.cpu_mem_arena:
-            import onnxruntime as ort
+        # The session is always rebuilt, not only when the arena is off: FlashRank's
+        # own session sizes its pool to every physical core with spinning on, which
+        # under a CPU quota throttled each recall for minutes (#5725).
+        import onnxruntime as ort
 
-            session_options = ort.SessionOptions()
-            session_options.enable_cpu_mem_arena = False
-        else:
-            session_options = None
+        session_options = ort.SessionOptions()
+        session_options.enable_cpu_mem_arena = self.cpu_mem_arena
+        bound_onnx_session(session_options)
 
         # Initialize ranker with optional cache directory
         ranker_kwargs: dict = {"model_name": self.model_name, "max_length": self.max_length}
@@ -1597,12 +1708,9 @@ class FlashRankCrossEncoder(CrossEncoderModel):
 
         self._ranker = Ranker(**ranker_kwargs)
 
-        # Patch the ONNX session options if arena is disabled.
         # FlashRank's Ranker doesn't expose SessionOptions in its API,
         # so we replace the session after initialization.
-        if session_options is not None and hasattr(self._ranker, "session"):
-            import onnxruntime as ort
-
+        if hasattr(self._ranker, "session"):
             model_file = None
             model_dir = getattr(self._ranker, "model_dir", None)
             if model_dir:
@@ -1613,7 +1721,11 @@ class FlashRankCrossEncoder(CrossEncoderModel):
                     break
             if model_file:
                 self._ranker.session = ort.InferenceSession(model_file, sess_options=session_options)
-                logger.info("Reranker: replaced FlashRank ONNX session with cpu_mem_arena=False")
+                logger.info(
+                    "Reranker: replaced FlashRank ONNX session (cpu_mem_arena=%s, threads=%s)",
+                    self.cpu_mem_arena,
+                    session_options.intra_op_num_threads,
+                )
 
         # Initialize shared executor
         if FlashRankCrossEncoder._executor is None:
@@ -1627,7 +1739,7 @@ class FlashRankCrossEncoder(CrossEncoderModel):
         else:
             logger.info("Reranker: FlashRank provider initialized (using existing executor)")
 
-    def _predict_sync(self, pairs: list[tuple[str, str]]) -> list[float]:
+    def _predict_sync(self, pairs: list[tuple[str, str]], cancelled: threading.Event | None = None) -> list[float]:
         """Synchronous predict — each query group, in bounded batches.
 
         FlashRank scores every passage of a request in one ONNX forward pass, and
@@ -1662,6 +1774,8 @@ class FlashRankCrossEncoder(CrossEncoderModel):
                 global_indices = [idx for idx, _ in indexed_texts]
 
                 for start in range(0, len(indexed_texts), self.batch_size):
+                    if cancelled is not None and cancelled.is_set():
+                        raise asyncio.CancelledError()
                     batch = indexed_texts[start : start + self.batch_size]
 
                     # Build passages list for FlashRank. Ids are batch-local, so
@@ -1697,8 +1811,187 @@ class FlashRankCrossEncoder(CrossEncoderModel):
             raise RuntimeError("Reranker not initialized. Call initialize() first.")
 
         # Run in thread pool to avoid blocking event loop
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(FlashRankCrossEncoder._executor, self._predict_sync, pairs)
+        return await _run_batches_in_executor(FlashRankCrossEncoder._executor, self._predict_sync, pairs)
+
+
+class OnnxCrossEncoder(CrossEncoderModel):
+    """Any cross-encoder exported to ONNX, run in-process with ONNX Runtime.
+
+    The reranking twin of ``OnnxEmbeddings``: an ``onnxruntime`` session for the graph
+    and ``AutoTokenizer`` for the tokenizer, so models outside FlashRank's catalog run
+    without PyTorch or a TEI sidecar. Scores are the model's raw logits, like the
+    ``local`` provider, so switching between the two keeps the ranking and the
+    downstream sigmoid unchanged.
+    """
+
+    # Shared executor across instances: its worker count is what caps concurrent passes.
+    _executor: ThreadPoolExecutor | None = None
+    _max_concurrent: int = DEFAULT_RERANKER_ONNX_MAX_CONCURRENT
+
+    def __init__(
+        self,
+        model_id: str = DEFAULT_RERANKER_LOCAL_MODEL,
+        model_path: str | None = None,
+        tokenizer_name_or_path: str | None = None,
+        onnx_file: str = DEFAULT_RERANKER_ONNX_FILE,
+        max_tokens: int = DEFAULT_RERANKER_ONNX_MAX_TOKENS,
+        batch_size: int = DEFAULT_RERANKER_ONNX_BATCH_SIZE,
+        threads: int = DEFAULT_RERANKER_ONNX_THREADS,
+        max_concurrent: int = DEFAULT_RERANKER_ONNX_MAX_CONCURRENT,
+        cpu_mem_arena: bool = DEFAULT_RERANKER_ONNX_CPU_MEM_ARENA,
+        timeout: float = DEFAULT_RERANKER_LOCAL_TIMEOUT,
+    ):
+        self.model_id = model_id
+        self.model_path = model_path
+        if model_path and tokenizer_name_or_path is None:
+            logger.warning(
+                "Reranker: ONNX model_path is set without tokenizer_name_or_path; falling back to tokenizer "
+                "from model_id %s. Set HINDSIGHT_API_RERANKER_ONNX_TOKENIZER_NAME_OR_PATH when using local files.",
+                model_id,
+            )
+        self.tokenizer_name_or_path = tokenizer_name_or_path or model_id
+        self.onnx_file = onnx_file
+        self.max_tokens = max_tokens
+        if batch_size < 1:
+            raise ValueError("ONNX reranker batch_size must be >= 1")
+        self.batch_size = batch_size
+        if threads < 0:
+            raise ValueError("ONNX reranker threads must be >= 0 (0 = the native thread cap)")
+        self.threads = threads
+        self.cpu_mem_arena = cpu_mem_arena
+        self.timeout = timeout
+        self._session = None
+        self._tokenizer = None
+        OnnxCrossEncoder._max_concurrent = max(1, max_concurrent)
+
+    @property
+    def provider_name(self) -> str:
+        return "onnx"
+
+    @property
+    def blocking_init(self) -> bool:
+        return True
+
+    async def initialize(self) -> None:
+        if self._session is not None:
+            return
+
+        try:
+            import onnxruntime as ort
+            from transformers import AutoTokenizer
+        except ImportError as exc:
+            raise ImportError(
+                "onnxruntime and transformers are required for the 'onnx' reranker. "
+                "Install with: pip install 'hindsight-api-slim[local-onnx]'"
+            ) from exc
+
+        model_path = self.model_path
+        if not model_path:
+            try:
+                from huggingface_hub import snapshot_download
+            except ImportError as exc:
+                raise ImportError(
+                    "huggingface-hub is required to download ONNX reranker models. "
+                    "Set HINDSIGHT_API_RERANKER_ONNX_MODEL_PATH or install local-onnx."
+                ) from exc
+            # Also fetch the conventional external-weights sidecar of large exports.
+            snapshot_dir = snapshot_download(
+                repo_id=self.model_id, allow_patterns=[self.onnx_file, f"{self.onnx_file}_data"]
+            )
+            model_path = os.path.join(snapshot_dir, self.onnx_file)
+
+        logger.info(
+            "Reranker: initializing ONNX provider with %s (threads=%s, max_concurrent=%s, batch_size=%s)",
+            model_path,
+            self.threads or onnx_intra_op_threads(),
+            OnnxCrossEncoder._max_concurrent,
+            self.batch_size,
+        )
+        self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name_or_path)
+        session_options = ort.SessionOptions()
+        # The arena caches freed activation blocks and never returns them, so RSS would
+        # hold the largest batch's high-water mark forever (same as FlashRank/OnnxEmbeddings).
+        session_options.enable_cpu_mem_arena = self.cpu_mem_arena
+        # Idle worker threads otherwise busy-wait for the next op; measured ~1 core of
+        # burn per pass for no latency gain on a 300-candidate rerank.
+        bound_onnx_session(session_options, self.threads)
+        self._session = ort.InferenceSession(
+            model_path, sess_options=session_options, providers=["CPUExecutionProvider"]
+        )
+
+        assert_finite_local_output(
+            self._predict_sync([("hindsight startup probe", "hindsight startup probe")]),
+            label=f"Reranker[{model_path}]",
+        )
+
+        if OnnxCrossEncoder._executor is None:
+            OnnxCrossEncoder._executor = ThreadPoolExecutor(
+                max_workers=OnnxCrossEncoder._max_concurrent, thread_name_prefix="onnx-reranker"
+            )
+        logger.info("Reranker: ONNX provider initialized")
+
+    def _predict_sync(self, pairs: list[tuple[str, str]], cancelled: threading.Event | None = None) -> list[float]:
+        """Score ``pairs`` in bounded forward passes, longest first.
+
+        Each pass pads to its longest pair and allocates ``batch * heads * seq^2``
+        attention, so batches stay small (#3355) and similar lengths share a batch.
+        Padding is masked, so grouping never changes a score. Shares the ``local``
+        provider's wall-clock budget (#4696), checked between passes: a model too big
+        for the CPU hands back what it scored instead of holding recall for minutes.
+        """
+        if self._session is None or self._tokenizer is None:
+            raise RuntimeError("Reranker not initialized. Call initialize() first.")
+        order = sorted(range(len(pairs)), key=lambda i: len(pairs[i][0]) + len(pairs[i][1]), reverse=True)
+        scores: list[float | None] = [None] * len(pairs)
+        deadline = time.monotonic() + self.timeout if self.timeout > 0 else None
+        for start in range(0, len(order), self.batch_size):
+            if cancelled is not None and cancelled.is_set():
+                raise asyncio.CancelledError()
+            if deadline is not None and time.monotonic() >= deadline:
+                raise RerankTimeoutError(scores, self.timeout, self.model_path or self.model_id)
+            window = order[start : start + self.batch_size]
+            batch = self._score_batch([pairs[i] for i in window])
+            for index, score in zip(window, batch, strict=True):
+                scores[index] = score
+        return [0.0 if score is None else score for score in scores]
+
+    def _score_batch(self, pairs: list[tuple[str, str]]) -> list[float]:
+        """Run one forward pass and reduce the logits to one raw score per pair."""
+        assert self._session is not None and self._tokenizer is not None
+
+        import numpy as np
+
+        encoded = self._tokenizer(
+            [query for query, _ in pairs],
+            [doc for _, doc in pairs],
+            padding=True,
+            truncation=True,
+            max_length=self.max_tokens,
+            return_tensors="np",
+        )
+        input_names = {inp.name for inp in self._session.get_inputs()}
+        ort_inputs = {name: value for name, value in encoded.items() if name in input_names}
+        if "token_type_ids" in input_names and "token_type_ids" not in ort_inputs:
+            ort_inputs["token_type_ids"] = np.zeros_like(encoded["input_ids"])
+
+        logits = np.asarray(self._session.run(None, ort_inputs)[0], dtype=np.float64)
+        logits = logits.reshape(len(pairs), -1)
+        if logits.shape[1] == 1:
+            return logits[:, 0].tolist()
+        if logits.shape[1] == 2:
+            # Binary [irrelevant, relevant] heads: the log-odds of "relevant", whose
+            # sigmoid (applied downstream) is exactly the model's softmax probability.
+            return (logits[:, 1] - logits[:, 0]).tolist()
+        raise ValueError(
+            f"ONNX reranker {self.model_path or self.model_id} returned {logits.shape[1]} logits per pair; expected 1 or 2"
+        )
+
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        if self._session is None:
+            raise RuntimeError("Reranker not initialized. Call initialize() first.")
+        if not pairs:
+            return []
+        return await _run_batches_in_executor(OnnxCrossEncoder._executor, self._predict_sync, pairs)
 
 
 def _truncate_docs_to_tokens(texts: list[str], max_tokens: int) -> list[str]:
@@ -2381,6 +2674,7 @@ _RERANKER_PROVIDERS_WITHOUT_RETRY = {
     # tensor, an OOM) is not fixed by trying again.
     "local": "in-process model",
     "flashrank": "in-process model",
+    "onnx": "in-process model",
     "jina-mlx": "in-process model",
     "rrf": "passthrough, does no work",
     # Already retries internally, including TEI's 429-as-backpressure handling.
@@ -2485,6 +2779,20 @@ def _create_cross_encoder_backend(member: RerankerMemberConfig) -> CrossEncoderM
             cpu_mem_arena=member.flashrank_cpu_mem_arena,
             batch_size=member.flashrank_batch_size,
         )
+    elif provider == "onnx":
+        onnx = member.onnx
+        return OnnxCrossEncoder(
+            model_id=onnx.model_id,
+            model_path=onnx.model_path,
+            tokenizer_name_or_path=onnx.tokenizer_name_or_path,
+            onnx_file=onnx.file,
+            max_tokens=onnx.max_tokens,
+            batch_size=onnx.batch_size,
+            threads=onnx.threads,
+            max_concurrent=onnx.max_concurrent,
+            cpu_mem_arena=onnx.cpu_mem_arena,
+            timeout=onnx.timeout,
+        )
     elif provider == "litellm":
         return LiteLLMCrossEncoder(
             api_base=member.litellm_api_base,
@@ -2584,7 +2892,7 @@ def _create_cross_encoder_backend(member: RerankerMemberConfig) -> CrossEncoderM
         return JinaMLXCrossEncoder()
     else:
         raise ValueError(
-            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'siliconflow', 'nvidia', 'typesafe', 'alibaba', 'google', 'flashrank', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
+            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'siliconflow', 'nvidia', 'typesafe', 'alibaba', 'google', 'flashrank', 'onnx', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
         )
 
 

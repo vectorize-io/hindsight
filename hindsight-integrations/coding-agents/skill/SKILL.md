@@ -718,8 +718,12 @@ delete:
   "✅ completed" once its findings land. It is retained under the `survey` strategy, whose marker
   rule extracts **nothing** from a status marker, and it drives the re-survey cadence
   (`surveyRefreshCommits`) and `surveyBaseline` in sync status.
-- `gitlog:<repo>` — the aggregated commit-message seed document, re-upserted rather than duplicated
-  when the seed runs again.
+- `gitlog:<repo>` — the aggregated commit-message seed document, oldest commit first. Once seeded it
+  is kept current by **appending** only the commits since the one its `gitlog-head:<sha>` tag
+  names, so a new commit costs the extraction of its own message, not of the whole log. It is
+  written in full again (bounded by `seedLimit`) only when an append cannot describe HEAD: the
+  recorded commit is no longer an ancestor of HEAD (a rebase, a force-push), more than `seedLimit`
+  commits are new, or the server cannot append safely.
 
 ### When memory seems to be missing
 

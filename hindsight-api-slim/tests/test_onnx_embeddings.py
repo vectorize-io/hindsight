@@ -44,6 +44,12 @@ class FakeTokenizer:
 class FakeSessionOptions:
     def __init__(self):
         self.enable_cpu_mem_arena = True
+        self.intra_op_num_threads = 0
+        self.inter_op_num_threads = 0
+        self.config_entries: dict[str, str] = {}
+
+    def add_session_config_entry(self, key, value):
+        self.config_entries[key] = value
 
 
 class FakeOnnxSession:

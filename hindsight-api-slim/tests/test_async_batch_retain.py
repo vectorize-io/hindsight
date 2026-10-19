@@ -1820,3 +1820,58 @@ async def test_async_retain_survives_nul_and_surrogate_in_any_field(memory, requ
     # Nothing hostile may remain anywhere in the round-tripped payload.
     assert nul not in json.dumps(payload)
     assert surrogate not in json.dumps(payload)
+
+
+# ── retrying a deferred operation runs it now ───────────────────────────────
+# A provider can report a quota reset days out (#5684). Retry is the user's way
+# to run a parked operation now instead of waiting out a stale window.
+
+
+@pytest.mark.asyncio
+async def test_retry_deferred_operation_clears_next_retry_at(memory, request_context):
+    from hindsight_api.engine.db_utils import acquire_with_retry
+
+    bank_id = f"retry-deferred-{uuid.uuid4().hex[:8]}"
+    op_id = uuid.uuid4()
+    backend = await memory._get_backend()
+    async with acquire_with_retry(backend) as conn:
+        await conn.execute("INSERT INTO banks (bank_id, name) VALUES ($1, $1)", bank_id)
+        await conn.execute(
+            "INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, next_retry_at) "
+            "VALUES ($1, $2, 'retain', 'pending', $3::jsonb, NOW() + INTERVAL '3 days')",
+            op_id,
+            bank_id,
+            json.dumps({"contents": []}),
+        )
+
+    result = await memory.retry_operation(bank_id, str(op_id), request_context=request_context)
+    assert result["success"] is True
+
+    async with acquire_with_retry(backend) as conn:
+        row = await conn.fetchrow("SELECT status, next_retry_at FROM async_operations WHERE operation_id = $1", op_id)
+    assert row["status"] == "pending"
+    assert row["next_retry_at"] is None, "retry must release the park so a worker claims it now"
+
+
+@pytest.mark.asyncio
+async def test_retry_queued_operation_is_rejected(memory, request_context):
+    # A plain queued op (no future next_retry_at) is not deferred: nothing to do.
+    from hindsight_api.engine.db_utils import acquire_with_retry
+    from hindsight_api.extensions import OperationValidationError
+
+    bank_id = f"retry-deferred-{uuid.uuid4().hex[:8]}"
+    op_id = uuid.uuid4()
+    backend = await memory._get_backend()
+    async with acquire_with_retry(backend) as conn:
+        await conn.execute("INSERT INTO banks (bank_id, name) VALUES ($1, $1)", bank_id)
+        await conn.execute(
+            "INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload) "
+            "VALUES ($1, $2, 'retain', 'pending', $3::jsonb)",
+            op_id,
+            bank_id,
+            json.dumps({"contents": []}),
+        )
+
+    with pytest.raises(OperationValidationError) as exc:
+        await memory.retry_operation(bank_id, str(op_id), request_context=request_context)
+    assert exc.value.status_code == 409

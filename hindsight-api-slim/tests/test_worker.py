@@ -5772,3 +5772,32 @@ class TestCancelledStatusIsFinal:
 
         row = await pool.fetchrow("SELECT status FROM async_operations WHERE operation_id = $1", op_id)
         assert row["status"] == "cancelled", "a cancelled operation must not be resurrected by the failure path"
+
+
+@pytest.mark.asyncio
+async def test_finished_task_wakes_the_idle_poll_at_once():
+    """A slot freed mid-wait is refilled now, not after the rest of the poll interval (#5650)."""
+    from hindsight_api.worker import WorkerPoller
+
+    poller = WorkerPoller(backend=MagicMock(), worker_id="w-wake", executor=AsyncMock(), poll_interval_ms=60_000)
+    poller.claim_batch = AsyncMock(return_value=[])
+    poller._log_progress_if_due = AsyncMock()
+    poller._active_tasks["op-1"] = MagicMock()
+    poller._in_flight_count = 1
+    poller._in_flight_by_type["retain"] = 1
+
+    async def claims_reach(n: int) -> None:
+        while poller.claim_batch.await_count < n:
+            await asyncio.sleep(0.01)
+
+    polling = asyncio.create_task(poller._poll_loop())
+    await asyncio.wait_for(claims_reach(1), timeout=5)
+    await asyncio.sleep(0.05)
+    assert poller.claim_batch.await_count == 1  # idle: nothing wakes it before the 60 s interval
+
+    await poller._cleanup_task("op-1", "retain")
+    # Well under the 60 s interval, so only the wake can produce the second claim.
+    await asyncio.wait_for(claims_reach(2), timeout=5)
+
+    poller._shutdown.set()
+    await asyncio.wait_for(polling, timeout=1)

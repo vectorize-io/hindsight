@@ -10,6 +10,7 @@ import pytest
 from hindsight_api import MemoryEngine
 from hindsight_api.config import clear_config_cache, get_config
 from hindsight_api.engine.llm_wrapper import _scope_to_operation
+from hindsight_api.engine.multi_llm import MultiLLMProvider
 
 BASE_ENV = {
     "HINDSIGHT_API_SKIP_LLM_VERIFICATION": "true",
@@ -134,6 +135,34 @@ def test_own_timeout_wins_over_reflect(engine_env):
 
     assert engine._mental_model_refresh_llm_config.timeout == 2700.0
     assert engine._reflect_llm_config.timeout == 30.0
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {},  # default install: refresh's own timeout differs from reflect's, so it gets its own provider
+        {"HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL": "refresh-model"},
+    ],
+)
+def test_refresh_inherits_the_global_chain_through_an_empty_reflect_slot(engine_env, extra):
+    """Refresh falls back to reflect's chain, and reflect's falls back to the global one (#5724).
+
+    With the failover chain declared only globally, refresh used to read reflect's raw,
+    empty slot and stop there, so it ran on the bare primary and never failed over.
+    """
+    engine = engine_env(
+        HINDSIGHT_API_LLM_1_PROVIDER="mock",
+        HINDSIGHT_API_LLM_1_MODEL="fallback-model",
+        HINDSIGHT_API_LLM_STRATEGY='{"mode":"failover"}',
+        **extra,
+    )
+
+    reflect = engine._reflect_llm_config
+    refresh = engine._mental_model_refresh_llm_config
+    assert isinstance(reflect, MultiLLMProvider)
+    assert isinstance(refresh, MultiLLMProvider)
+    assert [m.model for m in refresh.members[1:]] == ["fallback-model"]
+    assert refresh.strategy.mode == "failover"
 
 
 @pytest.mark.parametrize(

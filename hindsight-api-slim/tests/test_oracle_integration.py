@@ -16,7 +16,6 @@ from datetime import datetime, timezone
 from typing import Any, NoReturn
 
 import pytest
-import pytest_asyncio
 
 from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.engine.db import DatabaseConnection
@@ -680,8 +679,8 @@ class TestOracleRetainSql:
 
     @pytest.mark.asyncio
     async def test_semantic_ann_links_delete_chunks(self, oracle_memory: MemoryEngine, request_context: RequestContext):
-        from hindsight_api.engine.retain.chunk_storage import delete_chunks_by_ids
         from hindsight_api.engine.memories.pg.links import compute_semantic_links_ann
+        from hindsight_api.engine.retain.chunk_storage import delete_chunks_by_ids
 
         bank_id = _bank_id("retainsql")
         dim = oracle_memory.embeddings.dimension
@@ -1704,5 +1703,45 @@ class TestEdgeCases:
             docs_after = await oracle_memory.list_documents(bank_id=bank_id, request_context=request_context)
             items_after = docs_after.get("items", docs_after.get("documents", []))
             assert len(items_after) >= 2
+        finally:
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
+
+
+class TestOracleDocumentHistory:
+    """The history is read out of async_operations.result_metadata. Oracle needs its own JSON path
+    filter there (the rewriter turns any `result_metadata @> :N` into a parent-operation lookup), so
+    the round trip — events written onto operations, then found again by document — runs here too."""
+
+    @pytest.mark.asyncio
+    async def test_retain_and_edit_events_round_trip(
+        self, oracle_memory: MemoryEngine, request_context: RequestContext
+    ):
+        bank_id = _bank_id("dochist")
+        doc_id = "call-1"
+        try:
+            await oracle_memory.submit_async_retain(
+                bank_id,
+                [{"content": "Alice started physio on Monday after her knee surgery.", "document_id": doc_id}],
+                request_context=request_context,
+            )
+            page = await oracle_memory.list_memory_units(
+                bank_id, document_id=doc_id, fact_type=["world", "experience"], request_context=request_context
+            )
+            facts = [m["id"] for m in page["items"]]
+            assert facts
+
+            await oracle_memory.update_memory_unit(
+                bank_id, facts[0], occurred_start="2026-10-01T10:00:00Z", request_context=request_context
+            )
+
+            history = await oracle_memory.get_document_history(bank_id, doc_id, request_context=request_context)
+            assert history is not None
+            kinds = [e.kind for e in history.items]
+            assert "retain" in kinds and "fact_edited" in kinds, kinds
+            assert all(e.document_id == doc_id for e in history.items)
+            assert history.total >= 2
+
+            other = await oracle_memory.get_document_history(bank_id, "another-doc", request_context=request_context)
+            assert other is not None and other.items == []
         finally:
             await _safe_cleanup(oracle_memory, bank_id, request_context)

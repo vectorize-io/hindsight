@@ -139,6 +139,7 @@ async def test_rename_refuses_without_changing_anything(rename_schema):
     assert await _counts(conn, schema, "old") == before
 
 
+@pytest.mark.memory_backend_incompatible
 @pytest.mark.asyncio
 async def test_rename_rebuilds_vector_indexes_for_the_new_id(rename_schema):
     """The per-bank indexes are partial on the bank_id literal: left alone they cover nothing."""

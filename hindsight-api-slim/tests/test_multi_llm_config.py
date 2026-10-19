@@ -305,6 +305,37 @@ def test_build_llm_per_op_inherits_global(clean_llm_env):
     assert [m.provider for m in result.members[1:]] == ["ollama"]  # inherited
 
 
+def test_build_llm_fallback_slot_inherits_global_when_empty(clean_llm_env):
+    # Refresh -> empty reflect slot must keep going to the global chain (#5724).
+    config = _empty_config(
+        llm_members=[_member("ollama")],
+        llm_strategy=LLMStrategyConfig(mode="failover"),
+        reflect_llm_members=[],
+        reflect_llm_strategy=None,
+        mental_model_refresh_llm_members=[],
+        mental_model_refresh_llm_strategy=None,
+    )
+    result = _build_llm(_base_llm(), config, "mental_model_refresh_", _NO_CALL_DEFAULTS, fallback_prefix="reflect_")
+    assert isinstance(result, MultiLLMProvider)
+    assert [m.provider for m in result.members[1:]] == ["ollama"]
+    assert result.strategy.mode == "failover"
+
+
+def test_build_llm_fallback_slot_wins_over_global(clean_llm_env):
+    config = _empty_config(
+        llm_members=[_member("ollama")],
+        llm_strategy=LLMStrategyConfig(mode="failover"),
+        reflect_llm_members=[_member("lmstudio")],
+        reflect_llm_strategy=LLMStrategyConfig(mode="round-robin"),
+        mental_model_refresh_llm_members=[],
+        mental_model_refresh_llm_strategy=None,
+    )
+    result = _build_llm(_base_llm(), config, "mental_model_refresh_", _NO_CALL_DEFAULTS, fallback_prefix="reflect_")
+    assert isinstance(result, MultiLLMProvider)
+    assert [m.provider for m in result.members[1:]] == ["lmstudio"]
+    assert result.strategy.mode == "round-robin"
+
+
 def test_build_llm_per_op_overrides_global(clean_llm_env):
     config = _empty_config(
         llm_members=[_member("ollama")],

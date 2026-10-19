@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,9 +11,13 @@ from hindsight_api._thread_limits import (
     _MAX_NATIVE_THREADS,
     _NATIVE_THREAD_VARS,
     _available_cpu_count,
+    _cgroup_cpu_quota,
     _parse_cgroup_v2_cpu_max,
     _quota_to_cpus,
     apply_default_thread_limits,
+    bound_onnx_session,
+    native_thread_summary,
+    onnx_intra_op_threads,
     default_native_thread_count,
 )
 
@@ -130,3 +135,90 @@ def test_import_caps_native_thread_oversubscription() -> None:
         pytest.skip(f"numpy BLAS is not multi-threaded here (capped={capped}, uncapped={uncapped})")
 
     assert capped < uncapped, f"thread cap had no effect: capped={capped}, uncapped={uncapped}"
+
+
+def _cgroup_tree(tmp_path, proc_line: str, files: dict[str, str]) -> tuple[str, str]:
+    root = tmp_path / "cgroup"
+    for rel, text in files.items():
+        f = root / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text)
+    root.mkdir(exist_ok=True)
+    proc = tmp_path / "proc_cgroup"
+    proc.write_text(proc_line)
+    return str(proc), str(root)
+
+
+def test_cgroup_quota_found_on_own_systemd_unit(tmp_path) -> None:
+    """A systemd unit's CPUQuota sits on its own cgroup, not the root (#5725)."""
+    proc, root = _cgroup_tree(
+        tmp_path, "0::/system.slice/hindsight.service\n", {"system.slice/hindsight.service/cpu.max": "200000 100000"}
+    )
+    assert _cgroup_cpu_quota(proc, root) == 2
+
+
+def test_cgroup_quota_takes_tightest_ancestor(tmp_path) -> None:
+    proc, root = _cgroup_tree(
+        tmp_path,
+        "0::/user.slice/app.scope\n",
+        {"user.slice/cpu.max": "100000 100000", "user.slice/app.scope/cpu.max": "max 100000"},
+    )
+    assert _cgroup_cpu_quota(proc, root) == 1
+
+
+def test_cgroup_quota_container_root(tmp_path) -> None:
+    """With a private cgroup namespace the own path is '/', i.e. the mount root."""
+    proc, root = _cgroup_tree(tmp_path, "0::/\n", {"cpu.max": "300000 100000"})
+    assert _cgroup_cpu_quota(proc, root) == 3
+
+
+def test_cgroup_quota_v1_cpu_controller(tmp_path) -> None:
+    proc, root = _cgroup_tree(
+        tmp_path,
+        "5:memory:/system.slice/x.service\n4:cpu,cpuacct:/system.slice/x.service\n",
+        {
+            "cpu/system.slice/x.service/cpu.cfs_quota_us": "400000",
+            "cpu/system.slice/x.service/cpu.cfs_period_us": "100000",
+        },
+    )
+    assert _cgroup_cpu_quota(proc, root) == 4
+
+
+def test_cgroup_quota_none_when_unlimited(tmp_path) -> None:
+    proc, root = _cgroup_tree(
+        tmp_path, "0::/system.slice/x.service\n", {"system.slice/x.service/cpu.max": "max 100000"}
+    )
+    assert _cgroup_cpu_quota(proc, root) is None
+
+
+def test_bound_onnx_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ONNX Runtime ignores OMP_NUM_THREADS, so each session gets the count explicitly."""
+    entries: dict[str, str] = {}
+    options = SimpleNamespace(
+        intra_op_num_threads=0, inter_op_num_threads=0, add_session_config_entry=entries.__setitem__
+    )
+    monkeypatch.setenv("OMP_NUM_THREADS", "2")
+    bound_onnx_session(options)
+    assert (options.intra_op_num_threads, options.inter_op_num_threads) == (2, 1)
+    assert entries == {"session.intra_op.allow_spinning": "0"}
+    bound_onnx_session(options, threads=5)
+    assert options.intra_op_num_threads == 5
+
+
+def test_cgroup_quota_ignores_path_outside_namespace(tmp_path) -> None:
+    """A '..' path has no directory under the mount; only the root is read."""
+    proc, root = _cgroup_tree(tmp_path, "0::/../sibling\n", {"cpu.max": "200000 100000"})
+    assert _cgroup_cpu_quota(proc, root) == 2
+
+
+def test_onnx_intra_op_threads_falls_back_on_bad_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OMP_NUM_THREADS", "lots")
+    assert onnx_intra_op_threads() == default_native_thread_count()
+    monkeypatch.delenv("OMP_NUM_THREADS")
+    assert onnx_intra_op_threads() == default_native_thread_count()
+
+
+def test_native_thread_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OMP_NUM_THREADS", "3")
+    assert native_thread_summary().startswith("Native threads: 3 per pool (available CPUs=")
+    assert "cgroup CPU quota=" in native_thread_summary()

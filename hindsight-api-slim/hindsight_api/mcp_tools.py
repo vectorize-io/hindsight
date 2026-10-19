@@ -3688,8 +3688,8 @@ def _register_update_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
     _EDIT_DOC = """
             Edit a memory unit to correct what was extracted.
 
-            Pass any of text / context / occurred_start / occurred_end / fact_type /
-            entities. For context and the dates, "" clears the field and omitting it
+            Pass any of text / context / occurred_start / occurred_end / mentioned_at /
+            fact_type / entities. For context and the dates, "" clears the field and omitting it
             leaves it unchanged; entities replaces the fact's entity set ([] detaches
             all). The memory is re-embedded and its derived observations, links, and
             graph are recomputed automatically.
@@ -3712,6 +3712,7 @@ def _register_update_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
         context: str | None,
         occurred_start: str | None,
         occurred_end: str | None,
+        mentioned_at: str | None,
         fact_type: str | None,
         entities: list[str] | None,
         resolve_entities: bool,
@@ -3723,6 +3724,7 @@ def _register_update_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
             context=context,
             occurred_start=occurred_start,
             occurred_end=occurred_end,
+            mentioned_at=mentioned_at,
             new_fact_type=fact_type,
             entities=entities,
             resolve_entities=resolve_entities,
@@ -3741,6 +3743,7 @@ def _register_update_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
             context: str | None = None,
             occurred_start: str | None = None,
             occurred_end: str | None = None,
+            mentioned_at: str | None = None,
             fact_type: str | None = None,
             entities: list[str] | None = None,
             resolve_entities: bool = True,
@@ -3763,6 +3766,7 @@ def _register_update_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
                     context,
                     occurred_start,
                     occurred_end,
+                    mentioned_at,
                     fact_type,
                     entities,
                     resolve_entities,
@@ -3779,6 +3783,7 @@ def _register_update_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
             context: str | None = None,
             occurred_start: str | None = None,
             occurred_end: str | None = None,
+            mentioned_at: str | None = None,
             fact_type: str | None = None,
             entities: list[str] | None = None,
             resolve_entities: bool = True,
@@ -3799,6 +3804,7 @@ def _register_update_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
                     context,
                     occurred_start,
                     occurred_end,
+                    mentioned_at,
                     fact_type,
                     entities,
                     resolve_entities,

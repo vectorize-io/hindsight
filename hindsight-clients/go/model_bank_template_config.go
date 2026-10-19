@@ -33,6 +33,7 @@ type BankTemplateConfig struct {
 	EnableReranking NullableBool `json:"enable_reranking,omitempty"`
 	ReflectUseDecisionModel NullableBool `json:"reflect_use_decision_model,omitempty"`
 	MentalModelRefreshUseDecisionModel NullableBool `json:"mental_model_refresh_use_decision_model,omitempty"`
+	MentalModelDeltaUseDecisionModel NullableBool `json:"mental_model_delta_use_decision_model,omitempty"`
 	DispositionSkepticism NullableInt32 `json:"disposition_skepticism,omitempty"`
 	DispositionLiteralism NullableInt32 `json:"disposition_literalism,omitempty"`
 	DispositionEmpathy NullableInt32 `json:"disposition_empathy,omitempty"`
@@ -679,6 +680,48 @@ func (o *BankTemplateConfig) SetMentalModelRefreshUseDecisionModelNil() {
 // UnsetMentalModelRefreshUseDecisionModel ensures that no value is present for MentalModelRefreshUseDecisionModel, not even an explicit nil
 func (o *BankTemplateConfig) UnsetMentalModelRefreshUseDecisionModel() {
 	o.MentalModelRefreshUseDecisionModel.Unset()
+}
+
+// GetMentalModelDeltaUseDecisionModel returns the MentalModelDeltaUseDecisionModel field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetMentalModelDeltaUseDecisionModel() bool {
+	if o == nil || IsNil(o.MentalModelDeltaUseDecisionModel.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.MentalModelDeltaUseDecisionModel.Get()
+}
+
+// GetMentalModelDeltaUseDecisionModelOk returns a tuple with the MentalModelDeltaUseDecisionModel field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetMentalModelDeltaUseDecisionModelOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.MentalModelDeltaUseDecisionModel.Get(), o.MentalModelDeltaUseDecisionModel.IsSet()
+}
+
+// HasMentalModelDeltaUseDecisionModel returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasMentalModelDeltaUseDecisionModel() bool {
+	if o != nil && o.MentalModelDeltaUseDecisionModel.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetMentalModelDeltaUseDecisionModel gets a reference to the given NullableBool and assigns it to the MentalModelDeltaUseDecisionModel field.
+func (o *BankTemplateConfig) SetMentalModelDeltaUseDecisionModel(v bool) {
+	o.MentalModelDeltaUseDecisionModel.Set(&v)
+}
+// SetMentalModelDeltaUseDecisionModelNil sets the value for MentalModelDeltaUseDecisionModel to be an explicit nil
+func (o *BankTemplateConfig) SetMentalModelDeltaUseDecisionModelNil() {
+	o.MentalModelDeltaUseDecisionModel.Set(nil)
+}
+
+// UnsetMentalModelDeltaUseDecisionModel ensures that no value is present for MentalModelDeltaUseDecisionModel, not even an explicit nil
+func (o *BankTemplateConfig) UnsetMentalModelDeltaUseDecisionModel() {
+	o.MentalModelDeltaUseDecisionModel.Unset()
 }
 
 // GetDispositionSkepticism returns the DispositionSkepticism field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -2373,6 +2416,9 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.MentalModelRefreshUseDecisionModel.IsSet() {
 		toSerialize["mental_model_refresh_use_decision_model"] = o.MentalModelRefreshUseDecisionModel.Get()
+	}
+	if o.MentalModelDeltaUseDecisionModel.IsSet() {
+		toSerialize["mental_model_delta_use_decision_model"] = o.MentalModelDeltaUseDecisionModel.Get()
 	}
 	if o.DispositionSkepticism.IsSet() {
 		toSerialize["disposition_skepticism"] = o.DispositionSkepticism.Get()
