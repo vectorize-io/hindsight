@@ -16,6 +16,7 @@ import difflib
 import functools
 import hashlib
 import inspect
+import itertools
 import json
 import logging
 import random
@@ -2530,6 +2531,216 @@ def _provider_default_base_url(provider: str | None) -> str:
             return "https://ollama.com/v1"
         case _:
             return ""
+
+
+# Each unit links to at most this many later units that share an entity with it.
+_GRAPH_ENTITY_NEIGHBORS_PER_UNIT = 10
+
+_GRAPH_LINK_STYLE = {
+    "temporal": ("#00bcd4", "dashed"),
+    "semantic": ("#ff69b4", "solid"),
+    "entity": ("#ffd700", "solid"),
+}
+
+
+def _assemble_graph_data(
+    units: list[dict[str, Any]],
+    links: list[dict[str, Any]],
+    unit_entities: list[dict[str, Any]],
+    total_count: int,
+    limit: int,
+) -> dict[str, Any]:
+    """Turn the store's graph page into the nodes, edges and table rows the UI renders.
+
+    Pure CPU work on rows already read -- the caller runs it off the event loop. Its cost is
+    linear in the units and their entity rows; edges stop at ``GRAPH_MAX_EDGES``, taken in
+    order of how much they say: stored links first (the store orders them by weight), then the
+    ones observations inherit from their source memories, then observations sharing a source,
+    then units sharing an entity (rarest entity first, since a name in every memory links
+    everything to everything and says nothing).
+    """
+    from .memories.base import GRAPH_MAX_EDGES
+
+    unit_ids = [row["id"] for row in units]
+    unit_id_set = set(unit_ids)
+
+    # Observations inherit links from their source memories via source_memory_ids
+    source_to_observations: dict[Any, list[Any]] = {}
+    for unit in units:
+        for source_id in unit["source_memory_ids"] or ():
+            source_to_observations.setdefault(source_id, []).append(unit["id"])
+
+    # Build entity mapping
+    entity_map: dict[Any, list[str]] = {}
+    for row in unit_entities:
+        entity_map.setdefault(row["unit_id"], []).append(row["canonical_name"])
+
+    # For observations, inherit entities from source memories
+    for unit in units:
+        if unit["source_memory_ids"] and unit["id"] not in entity_map:
+            source_entities = [
+                name for source_id in unit["source_memory_ids"] for name in entity_map.get(source_id, ())
+            ]
+            if source_entities:
+                # Deduplicate while preserving order
+                entity_map[unit["id"]] = list(dict.fromkeys(source_entities))
+
+    def direct_links() -> Iterator[dict[str, Any]]:
+        for link in links:
+            if link["from_unit_id"] in unit_id_set and link["to_unit_id"] in unit_id_set:
+                yield link
+
+    def copied_links() -> Iterator[dict[str, Any]]:
+        for link in links:
+            from_id = link["from_unit_id"]
+            to_id = link["to_unit_id"]
+            from_observations = source_to_observations.get(from_id, [])
+            to_observations = source_to_observations.get(to_id, [])
+
+            # If from_id is a source memory, copy links to its observations (when the target is visible)
+            if from_observations and (to_id in unit_id_set or to_observations):
+                target = to_observations[0] if to_observations and to_id not in unit_id_set else to_id
+                for obs_id in from_observations:
+                    if target in unit_id_set and obs_id != target:
+                        yield {**link, "from_unit_id": obs_id, "to_unit_id": target}
+
+            # If to_id is a source memory, copy links to its observations
+            if to_observations and from_id in unit_id_set:
+                for obs_id in to_observations:
+                    if from_id != obs_id:
+                        yield {**link, "from_unit_id": from_id, "to_unit_id": obs_id}
+
+    def semantic_links() -> Iterator[dict[str, Any]]:
+        # Observations never have direct memory_links rows: pair those that share a source memory
+        source_to_obs: dict[Any, list[Any]] = {}
+        for unit in units:
+            if unit["fact_type"] == "observation":
+                for src_id in unit["source_memory_ids"] or ():
+                    source_to_obs.setdefault(src_id, []).append(unit["id"])
+        for obs_ids in source_to_obs.values():
+            for i, obs_a in enumerate(obs_ids):
+                for obs_b in obs_ids[i + 1 :]:
+                    yield {"from_unit_id": obs_a, "to_unit_id": obs_b, "link_type": "semantic", "weight": 1.0}
+
+    def entity_links() -> Iterator[dict[str, Any]]:
+        # Sliding window per entity: each unit links to its next few units sharing it, so every
+        # unit that shares an entity gets edges, ~N * cap per entity instead of N².
+        entity_to_units: dict[str, list[Any]] = {}
+        for unit_id in unit_ids:
+            for entity_name in entity_map.get(unit_id, ()):
+                entity_to_units.setdefault(entity_name, []).append(unit_id)
+        for entity_name, ent_unit_ids in sorted(entity_to_units.items(), key=lambda kv: len(kv[1])):
+            n = len(ent_unit_ids)
+            for i, unit_a in enumerate(ent_unit_ids):
+                for j in range(i + 1, min(i + 1 + _GRAPH_ENTITY_NEIGHBORS_PER_UNIT, n)):
+                    yield {
+                        "from_unit_id": unit_a,
+                        "to_unit_id": ent_unit_ids[j],
+                        "link_type": "entity",
+                        "weight": 1.0,
+                        "entity_name": entity_name,
+                    }
+
+    def inferred_links() -> Iterator[dict[str, Any]]:
+        # A pair inferred twice (two shared sources, or both ways round) is one edge
+        seen: set[tuple[str, str, str, str]] = set()
+        for row in itertools.chain(semantic_links(), entity_links()):
+            a, b = str(row["from_unit_id"]), str(row["to_unit_id"])
+            pair = (min(a, b), max(a, b), row["link_type"], row.get("entity_name") or "")
+            if pair not in seen:
+                seen.add(pair)
+                yield row
+
+    edges: list[dict[str, Any]] = []
+    seen_edges: set[tuple[str, str, str, str]] = set()
+    for row in itertools.chain(direct_links(), copied_links(), inferred_links()):
+        if len(edges) >= GRAPH_MAX_EDGES:
+            break
+        from_id = str(row["from_unit_id"])
+        to_id = str(row["to_unit_id"])
+        link_type = row["link_type"]
+        entity_name = row.get("entity_name") or ""
+        edge_key = (from_id, to_id, link_type, entity_name)
+        if edge_key in seen_edges:
+            continue
+        seen_edges.add(edge_key)
+        color, line_style = _GRAPH_LINK_STYLE.get(link_type, ("#999999", "solid"))
+        edges.append(
+            {
+                "data": {
+                    "id": f"{from_id}-{to_id}-{link_type}",
+                    "source": from_id,
+                    "target": to_id,
+                    "linkType": link_type,
+                    "weight": row["weight"],
+                    "entityName": entity_name,
+                    "color": color,
+                    "lineStyle": line_style,
+                }
+            }
+        )
+
+    # Build nodes
+    nodes = []
+    for row in units:
+        unit_id = row["id"]
+        text = row["text"]
+        event_date = row["event_date"]
+        context = row["context"]
+
+        entities = entity_map.get(unit_id, [])
+        entity_count = len(entities)
+
+        # Color by entity count
+        if entity_count == 0:
+            color = "#e0e0e0"
+        elif entity_count == 1:
+            color = "#90caf9"
+        else:
+            color = "#42a5f5"
+
+        nodes.append(
+            {
+                "data": {
+                    "id": str(unit_id),
+                    "label": f"{text[:30]}..." if len(text) > 30 else text,
+                    "text": text,
+                    "date": event_date.isoformat() if event_date else "",
+                    "context": context if context else "",
+                    "entities": ", ".join(entities) if entities else "None",
+                    "color": color,
+                }
+            }
+        )
+
+    # Build table rows
+    table_rows = []
+    for row in units:
+        unit_id = row["id"]
+        entities = entity_map.get(unit_id, [])
+
+        table_rows.append(
+            {
+                "id": str(unit_id),
+                "text": row["text"],
+                "context": row["context"] if row["context"] else "N/A",
+                "occurred_start": row["occurred_start"].isoformat() if row["occurred_start"] else None,
+                "occurred_end": row["occurred_end"].isoformat() if row["occurred_end"] else None,
+                "mentioned_at": row["mentioned_at"].isoformat() if row["mentioned_at"] else None,
+                "date": row["event_date"].strftime("%Y-%m-%d %H:%M")
+                if row["event_date"]
+                else "N/A",  # Deprecated, kept for backwards compatibility
+                "entities": ", ".join(entities) if entities else "None",
+                "document_id": row["document_id"],
+                "chunk_id": row["chunk_id"] if row["chunk_id"] else None,
+                "fact_type": row["fact_type"],
+                "tags": list(row["tags"]) if row["tags"] else [],
+                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                "proof_count": row["proof_count"] if row["proof_count"] else None,
+            }
+        )
+
+    return {"nodes": nodes, "edges": edges, "table_rows": table_rows, "total_units": total_count, "limit": limit}
 
 
 class MemoryEngine(MemoryEngineInterface):
@@ -12829,278 +13040,21 @@ class MemoryEngine(MemoryEngineInterface):
             units = page["units"]
             total_count = page["total"]
 
-            # Get links, filtering to only include links between units of the selected agent
-            # Use DISTINCT ON with LEAST/GREATEST to deduplicate bidirectional links
-            unit_ids = [row["id"] for row in units]
-            unit_id_set = set(unit_ids)
-
-            # Collect source memory IDs from observations
-            source_memory_ids = []
-            for unit in units:
-                if unit["source_memory_ids"]:
-                    source_memory_ids.extend(unit["source_memory_ids"])
-            source_memory_ids = list(set(source_memory_ids))  # Deduplicate
-
             # Links and entity rows came back with the units: which memories are visible, how they
             # link, and what they mention are three questions about ONE set of memories, and
             # `graph_view` reads that set once. Asked as three calls, a store that keeps memories
             # outside SQL fetched the whole visible set three times per render.
             #
             # Links cover both endpoints in the visible set (or its source memories); entity edges
-            # are derived below from `unit_entities` rather than materialized as memory_links rows
+            # are derived from `unit_entities` rather than materialized as memory_links rows
             # (dropped in migration e9b2c7d1f3a4), so no link_type filter is needed. The store caps
-            # the edge count — the UI cannot usefully render more, and a densely-linked bank (1000
-            # nodes, 500k+ edges) is too slow uncapped.
+            # the links it reads, and the assembly caps the edges it derives, at GRAPH_MAX_EDGES.
             links = page["links"]
             unit_entities = page["entity_rows"]
 
-            # Copy links from source memories to observations
-            # Observations inherit links from their source memories via source_memory_ids
-            # Build a map from source_id to observation_ids
-            source_to_observations = {}
-            for unit in units:
-                if unit["source_memory_ids"]:
-                    for source_id in unit["source_memory_ids"]:
-                        if source_id not in source_to_observations:
-                            source_to_observations[source_id] = []
-                        source_to_observations[source_id].append(unit["id"])
-
-            copied_links = []
-            for link in links:
-                from_id = link["from_unit_id"]
-                to_id = link["to_unit_id"]
-
-                # Get observations that should inherit this link
-                from_observations = source_to_observations.get(from_id, [])
-                to_observations = source_to_observations.get(to_id, [])
-
-                # If from_id is a source memory, copy links to its observations
-                if from_observations:
-                    for obs_id in from_observations:
-                        # Only include if the target is visible
-                        if to_id in unit_id_set or to_observations:
-                            target = to_observations[0] if to_observations and to_id not in unit_id_set else to_id
-                            if target in unit_id_set and obs_id != target:
-                                copied_links.append(
-                                    {
-                                        "from_unit_id": obs_id,
-                                        "to_unit_id": target,
-                                        "link_type": link["link_type"],
-                                        "weight": link["weight"],
-                                        "entity_name": link["entity_name"],
-                                    }
-                                )
-
-                # If to_id is a source memory, copy links to its observations
-                if to_observations and from_id in unit_id_set:
-                    for obs_id in to_observations:
-                        if from_id != obs_id:
-                            copied_links.append(
-                                {
-                                    "from_unit_id": from_id,
-                                    "to_unit_id": obs_id,
-                                    "link_type": link["link_type"],
-                                    "weight": link["weight"],
-                                    "entity_name": link["entity_name"],
-                                }
-                            )
-
-            # Keep only direct links between visible nodes
-            direct_links = [
-                link for link in links if link["from_unit_id"] in unit_id_set and link["to_unit_id"] in unit_id_set
-            ]
-
-        # Build entity mapping
-        entity_map = {}
-        for row in unit_entities:
-            unit_id = row["unit_id"]
-            entity_name = row["canonical_name"]
-            if unit_id not in entity_map:
-                entity_map[unit_id] = []
-            entity_map[unit_id].append(entity_name)
-
-        # For observations, inherit entities from source memories
-        for unit in units:
-            if unit["source_memory_ids"] and unit["id"] not in entity_map:
-                # Collect entities from all source memories
-                source_entities = []
-                for source_id in unit["source_memory_ids"]:
-                    if source_id in entity_map:
-                        source_entities.extend(entity_map[source_id])
-                if source_entities:
-                    # Deduplicate while preserving order
-                    entity_map[unit["id"]] = list(dict.fromkeys(source_entities))
-
-        # Build nodes
-        nodes = []
-        for row in units:
-            unit_id = row["id"]
-            text = row["text"]
-            event_date = row["event_date"]
-            context = row["context"]
-
-            entities = entity_map.get(unit_id, [])
-            entity_count = len(entities)
-
-            # Color by entity count
-            if entity_count == 0:
-                color = "#e0e0e0"
-            elif entity_count == 1:
-                color = "#90caf9"
-            else:
-                color = "#42a5f5"
-
-            nodes.append(
-                {
-                    "data": {
-                        "id": str(unit_id),
-                        "label": f"{text[:30]}..." if len(text) > 30 else text,
-                        "text": text,
-                        "date": event_date.isoformat() if event_date else "",
-                        "context": context if context else "",
-                        "entities": ", ".join(entities) if entities else "None",
-                        "color": color,
-                    }
-                }
-            )
-
-        # Build derived links: entity edges for all visible units (from unit_entities)
-        # and observation semantic edges via shared source memories.
-        # Observations never have direct memory_links rows, so all their links are derived.
-        observation_units = [unit for unit in units if unit["fact_type"] == "observation"]
-
-        # Entity links: pair any visible units that share at least one entity.
-        # Each unit links to up to max_neighbors_per_unit subsequent units in the
-        # per-entity list, so every unit that shares an entity with another visible
-        # unit gets edges (matches the historical writer cap, which was per-unit).
-        # Bounds total edges to ~N * cap per entity instead of N² for hot entities.
-        max_neighbors_per_unit = 10
-        entity_to_units_visible: dict[str, list] = {}
-        for unit_id in unit_ids:
-            for entity_name in entity_map.get(unit_id, []):
-                entity_to_units_visible.setdefault(entity_name, []).append(unit_id)
-
-        # Semantic links: pair observations that share at least one source memory
-        source_to_obs_for_semantic: dict = {}
-        for unit in observation_units:
-            if unit["source_memory_ids"]:
-                for src_id in unit["source_memory_ids"]:
-                    source_to_obs_for_semantic.setdefault(src_id, []).append(unit["id"])
-
-        observation_inferred_links = []
-        seen_inferred: set[tuple] = set()
-
-        for entity_name, ent_unit_ids in entity_to_units_visible.items():
-            n = len(ent_unit_ids)
-            for i, unit_a in enumerate(ent_unit_ids):
-                # Sliding window: link unit_a to its next max_neighbors_per_unit
-                # in the list. Each pair is also "incoming" for the later unit,
-                # so every unit ends up with up to ~2*max_neighbors_per_unit edges
-                # for this entity (its successors + its predecessors via their pairs).
-                for j in range(i + 1, min(i + 1 + max_neighbors_per_unit, n)):
-                    unit_b = ent_unit_ids[j]
-                    pair = (min(str(unit_a), str(unit_b)), max(str(unit_a), str(unit_b)), "entity", entity_name)
-                    if pair not in seen_inferred:
-                        seen_inferred.add(pair)
-                        observation_inferred_links.append(
-                            {
-                                "from_unit_id": unit_a,
-                                "to_unit_id": unit_b,
-                                "link_type": "entity",
-                                "weight": 1.0,
-                                "entity_name": entity_name,
-                            }
-                        )
-
-        for src_id, obs_ids in source_to_obs_for_semantic.items():
-            for i, obs_a in enumerate(obs_ids):
-                for obs_b in obs_ids[i + 1 :]:
-                    pair = (min(str(obs_a), str(obs_b)), max(str(obs_a), str(obs_b)), "semantic", "")
-                    if pair not in seen_inferred:
-                        seen_inferred.add(pair)
-                        observation_inferred_links.append(
-                            {
-                                "from_unit_id": obs_a,
-                                "to_unit_id": obs_b,
-                                "link_type": "semantic",
-                                "weight": 1.0,
-                                "entity_name": None,
-                            }
-                        )
-
-        # Build edges (combine direct links, copied links from sources, and observation-inferred links)
-        edges = []
-        seen_edges: set[tuple] = set()
-        all_links = direct_links + copied_links + observation_inferred_links
-        for row in all_links:
-            from_id = str(row["from_unit_id"])
-            to_id = str(row["to_unit_id"])
-            link_type = row["link_type"]
-            weight = row["weight"]
-            entity_name = row.get("entity_name")
-
-            # Color by link type
-            if link_type == "temporal":
-                color = "#00bcd4"
-                line_style = "dashed"
-            elif link_type == "semantic":
-                color = "#ff69b4"
-                line_style = "solid"
-            elif link_type == "entity":
-                color = "#ffd700"
-                line_style = "solid"
-            else:
-                color = "#999999"
-                line_style = "solid"
-
-            edge_key = (from_id, to_id, link_type, entity_name or "")
-            if edge_key in seen_edges:
-                continue
-            seen_edges.add(edge_key)
-
-            edges.append(
-                {
-                    "data": {
-                        "id": f"{from_id}-{to_id}-{link_type}",
-                        "source": from_id,
-                        "target": to_id,
-                        "linkType": link_type,
-                        "weight": weight,
-                        "entityName": entity_name if entity_name else "",
-                        "color": color,
-                        "lineStyle": line_style,
-                    }
-                }
-            )
-
-        # Build table rows
-        table_rows = []
-        for row in units:
-            unit_id = row["id"]
-            entities = entity_map.get(unit_id, [])
-
-            table_rows.append(
-                {
-                    "id": str(unit_id),
-                    "text": row["text"],
-                    "context": row["context"] if row["context"] else "N/A",
-                    "occurred_start": row["occurred_start"].isoformat() if row["occurred_start"] else None,
-                    "occurred_end": row["occurred_end"].isoformat() if row["occurred_end"] else None,
-                    "mentioned_at": row["mentioned_at"].isoformat() if row["mentioned_at"] else None,
-                    "date": row["event_date"].strftime("%Y-%m-%d %H:%M")
-                    if row["event_date"]
-                    else "N/A",  # Deprecated, kept for backwards compatibility
-                    "entities": ", ".join(entities) if entities else "None",
-                    "document_id": row["document_id"],
-                    "chunk_id": row["chunk_id"] if row["chunk_id"] else None,
-                    "fact_type": row["fact_type"],
-                    "tags": list(row["tags"]) if row["tags"] else [],
-                    "created_at": row["created_at"].isoformat() if row["created_at"] else None,
-                    "proof_count": row["proof_count"] if row["proof_count"] else None,
-                }
-            )
-
-        return {"nodes": nodes, "edges": edges, "table_rows": table_rows, "total_units": total_count, "limit": limit}
+        # Seconds of pure Python on a big bank: run it off the event loop, after the
+        # connection is back in the pool, so health checks and other requests keep going.
+        return await asyncio.to_thread(_assemble_graph_data, units, links, unit_entities, total_count, limit)
 
     # Prompt-affecting settings overridable per dry-run extraction call.
     _EXTRACTION_OVERRIDE_FIELDS = frozenset(

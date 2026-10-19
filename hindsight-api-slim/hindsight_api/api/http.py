@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from urllib.parse import quote, unquote
 
+import orjson
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -5948,7 +5949,10 @@ def _register_routes(app: FastAPI):
             token = get_scope_cancellation_token(http_request.scope)
             if token is not None and token.cancelled:
                 raise HTTPException(status_code=_CLIENT_CLOSED_REQUEST_STATUS_CODE, detail=token.reason)
-            return data
+            # The engine builds this dict to GraphDataResponse's shape (tests/test_graph_assembly.py
+            # holds it to that). Validating thousands of nodes against the model holds the event loop
+            # for a second or more (#5703); orjson encodes the same JSON in milliseconds.
+            return Response(content=orjson.dumps(data), media_type="application/json")
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):

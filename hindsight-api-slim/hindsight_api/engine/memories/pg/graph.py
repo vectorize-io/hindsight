@@ -37,7 +37,7 @@ from typing import Any
 from ....config import get_config
 from ...db.base import DatabaseConnection
 from ...search.tags import TagGroup, TagsMatch, build_tag_filter_clause
-from ..base import EntityPrunePassResult, RelinkPassResult
+from ..base import GRAPH_MAX_EDGES, EntityPrunePassResult, RelinkPassResult
 from .links import (
     MAX_TEMPORAL_LINKS_PER_UNIT,
     _bulk_insert_links,
@@ -100,10 +100,6 @@ _PRUNE_BATCH_MAX_RETRIES = 3
 # 1000-element IN-list limit (ops_oracle expands ``= ANY(...)`` into a literal
 # list), which a bulk delete would otherwise blow straight through.
 _ENQUEUE_LOOKUP_CHUNK = 500
-
-# Cap at 10k edges — the UI can't usefully render more, and uncapped queries
-# on highly-connected graphs (e.g. 1000 nodes with 500k+ edges) are too slow.
-_GRAPH_MAX_EDGES = 10000
 
 # Columns the graph view renders: nodes take id/text/date/context/entities,
 # the table rows take the rest, and `source_memory_ids` is what lets the caller
@@ -323,7 +319,7 @@ async def graph_direct_links(
         LIMIT $2
         """,
         _as_uuids(unit_ids),
-        _GRAPH_MAX_EDGES,
+        GRAPH_MAX_EDGES,
     )
     return [dict(row) for row in rows]
 

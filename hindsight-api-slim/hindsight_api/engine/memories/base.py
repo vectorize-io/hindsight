@@ -795,6 +795,12 @@ class RecallArms:
 #: How many semantic hits seed the graph arm's link expansion — its entry points into the graph.
 GRAPH_SEED_LIMIT = 20
 
+#: Most edges one graph-view answer carries: the links a store reads, and the edges the engine
+#: derives on top of them (inherited, shared source, shared entity), together. The UI cannot
+#: usefully draw more, and uncapped a bank of a few thousand observations derives hundreds of
+#: thousands -- seconds of Python on the event loop and a multi-MB answer (#5703).
+GRAPH_MAX_EDGES = 10_000
+
 
 @dataclass
 class SemanticBm25Result:
