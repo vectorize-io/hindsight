@@ -55,6 +55,8 @@ def _tool_call_response() -> MagicMock:
     resp.usage.completion_tokens = 20
     resp.usage.total_tokens = 120
     resp.usage.completion_tokens_details = None
+    resp.error = None
+    resp.model_dump.return_value = {}
     resp.choices[0].finish_reason = "tool_calls"
     resp.choices[0].message.content = None
     resp.choices[0].message.tool_calls = [tc]

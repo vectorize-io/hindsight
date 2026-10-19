@@ -66,6 +66,8 @@ def _make_tool_call_response() -> MagicMock:
     # Explicit None: an auto-MagicMock is truthy and the reasoning-token
     # accounting would do arithmetic on it and crash.
     mock_response.usage.completion_tokens_details = None
+    mock_response.error = None
+    mock_response.model_dump.return_value = {}
     mock_response.choices[0].finish_reason = "tool_calls"
     mock_response.choices[0].message.content = None
     mock_response.choices[0].message.tool_calls = [mock_tc]
@@ -148,6 +150,8 @@ class TestToolPathReasoningEffort:
         plain_response.usage.completion_tokens = 5
         plain_response.usage.total_tokens = 15
         plain_response.usage.completion_tokens_details = None
+        plain_response.error = None
+        plain_response.model_dump.return_value = {}
         plain_response.choices[0].finish_reason = "stop"
         plain_response.choices[0].message.content = "ok"
         plain_response.choices[0].message.tool_calls = None

@@ -52,7 +52,7 @@ from hindsight_api.engine.llm_interface import (
     OutputTooLongError,
     ProviderRateLimitResetError,
 )
-from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.llm_trace import LLMResponseUsage, current_response_usage, stash_response_usage
 from hindsight_api.engine.llm_transport import (
     build_aiohttp_timeout,
     build_sdk_timeout,
@@ -129,9 +129,11 @@ def _ensure_v1_base_url(base_url: str) -> str:
 class ProviderResponseError(RuntimeError):
     """Raised when a provider returns a success response without usable content."""
 
-    def __init__(self, message: str, *, retryable: bool = True):
+    def __init__(self, message: str, *, retryable: bool = True, served_by: str | None = None):
         super().__init__(message)
         self.retryable = retryable
+        # The upstream a gateway routed the call to (OpenRouter's response "provider").
+        self.served_by = served_by
 
 
 def _is_json(text: str) -> bool:
@@ -342,6 +344,31 @@ def _message_refusal(message: Any) -> Any:
     return _response_get(message, "refusal")
 
 
+def _served_by(response: Any) -> str | None:
+    """The upstream a gateway such as OpenRouter served the call from, when it says."""
+    served_by = _response_get(response, "provider")
+    return served_by if isinstance(served_by, str) else None
+
+
+def _raise_if_generation_failed(response: Any, choice: Any, *, provider: str, model: str, scope: str) -> None:
+    # OpenRouter reports an upstream that died mid-generation as HTTP 200 with
+    # finish_reason="error" and the cause on the choice. That is a transport failure,
+    # not an answer: whatever content or tool calls it carries are partial, so it is
+    # retried like a 5xx instead of being read as "the model chose nothing" (#5612).
+    # LiteLLM rewrites this finish_reason to "stop" and keeps the original, and the
+    # error, under the choice's provider_specific_fields.
+    litellm_fields = _response_get(choice, "provider_specific_fields") or {}
+    if _finish_reason_for_choice(choice) == "error" or litellm_fields.get("native_finish_reason") == "error":
+        served_by = _served_by(response)
+        raise ProviderResponseError(
+            f"Provider ended generation with an error ({provider}/{model}, scope={scope}, "
+            f"finish_reason=error, served_by={served_by}): "
+            f"{_summarize_provider_error_payload(_response_get(choice, 'error') or litellm_fields.get('error'))}",
+            retryable=True,
+            served_by=served_by,
+        )
+
+
 def _first_choice_or_error(response: Any, *, provider: str, model: str, scope: str) -> Any:
     """Return the first choice or raise a clear error for malformed success responses."""
 
@@ -360,7 +387,55 @@ def _first_choice_or_error(response: Any, *, provider: str, model: str, scope: s
             f"Provider returned no choices ({provider}/{model}, scope={scope})",
             retryable=True,
         )
-    return choices[0]
+    choice = choices[0]
+    _raise_if_generation_failed(response, choice, provider=provider, model=model, scope=scope)
+    return choice
+
+
+def record_retried_attempt(
+    *,
+    provider: str,
+    model: str,
+    scope: str,
+    messages: list[dict[str, Any]],
+    error: ProviderResponseError,
+    started: float,
+) -> None:
+    """Trace an attempt that came back unusable and is about to be retried.
+
+    The final failure is traced by the wrapper, but a retried attempt otherwise leaves
+    only a log line: it was still billed (often for reasoning tokens), and counting
+    these per upstream is how a flaky gateway route is found (#5612).
+    """
+    from hindsight_api.tracing import get_span_recorder
+
+    usage = current_response_usage()
+    duration = time.perf_counter() - started
+    get_metrics_collector().record_llm_call(
+        provider=provider,
+        model=model,
+        scope=scope,
+        duration=duration,
+        input_tokens=usage.input_tokens if usage else 0,
+        output_tokens=usage.output_tokens if usage else 0,
+        success=False,
+        cached_input_tokens=usage.cached_tokens if usage else 0,
+        thoughts_tokens=usage.thoughts_tokens if usage else 0,
+    )
+    get_span_recorder().record_llm_call(
+        provider=provider,
+        model=model,
+        scope=scope,
+        messages=messages,
+        response_content=None,
+        input_tokens=usage.input_tokens if usage else 0,
+        output_tokens=usage.output_tokens if usage else 0,
+        cached_tokens=usage.cached_tokens if usage else 0,
+        thoughts_tokens=usage.thoughts_tokens if usage else 0,
+        duration=duration,
+        error=error,
+        served_by=error.served_by,
+    )
 
 
 def _is_openrouter(provider: str, base_url: str | None) -> bool:
@@ -1484,6 +1559,7 @@ class OpenAICompatibleLLM(LLMInterface):
                     error=None,
                     cached_tokens=cached_tokens,
                     thoughts_tokens=thoughts_tokens,
+                    served_by=_served_by(response),
                 )
 
                 # Log slow calls
@@ -1608,6 +1684,14 @@ class OpenAICompatibleLLM(LLMInterface):
             except ProviderResponseError as e:
                 last_exception = e
                 if e.retryable and attempt < max_retries:
+                    record_retried_attempt(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        messages=messages,
+                        error=e,
+                        started=start_time,
+                    )
                     logger.warning(
                         f"Provider response error ({self.provider}/{self.model}, scope={scope}, "
                         f"attempt {attempt + 1}/{max_retries + 1}): {e}"
@@ -1775,8 +1859,9 @@ class OpenAICompatibleLLM(LLMInterface):
                     )
                     stash_response_usage(_usage_from_openai_response(response))
 
-                message = response.choices[0].message
-                finish_reason = response.choices[0].finish_reason
+                choice = _first_choice_or_error(response, provider=self.provider, model=self.model, scope=scope)
+                message = choice.message
+                finish_reason = choice.finish_reason
 
                 # Extract tool calls if present
                 tool_calls: list[LLMToolCall] = []
@@ -1839,6 +1924,7 @@ class OpenAICompatibleLLM(LLMInterface):
                     tool_calls=tool_calls_dict,
                     cached_tokens=cached_tokens,
                     thoughts_tokens=thoughts_tokens,
+                    served_by=_served_by(response),
                 )
 
                 return LLMToolCallResult(
@@ -1919,6 +2005,28 @@ class OpenAICompatibleLLM(LLMInterface):
                 logger.error(
                     f"API error in tool call after {attempts_allowed} attempts "
                     f"({self.provider}/{self.model}, scope={scope}): {_summarize_status_error(e)}"
+                )
+                raise
+            except ProviderResponseError as e:
+                last_exception = e
+                if e.retryable and attempt + 1 < attempts_allowed:
+                    record_retried_attempt(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        messages=messages,
+                        error=e,
+                        started=start_time,
+                    )
+                    logger.warning(
+                        f"Provider response error in tool call ({self.provider}/{self.model}, scope={scope}, "
+                        f"attempt {attempt + 1}/{attempts_allowed}): {e}"
+                    )
+                    await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
+                    continue
+                logger.error(
+                    f"Provider response error in tool call after {attempt + 1} attempts "
+                    f"({self.provider}/{self.model}, scope={scope}): {e}"
                 )
                 raise
             except Exception:
@@ -2162,6 +2270,14 @@ class OpenAICompatibleLLM(LLMInterface):
             except ProviderResponseError as e:
                 last_exception = e
                 if e.retryable and attempt < max_retries:
+                    record_retried_attempt(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        messages=messages,
+                        error=e,
+                        started=start_time,
+                    )
                     logger.warning(f"Ollama response error (attempt {attempt + 1}/{max_retries + 1}): {e}")
                     backoff = min(initial_backoff * (2**attempt), max_backoff)
                     await asyncio.sleep(backoff)

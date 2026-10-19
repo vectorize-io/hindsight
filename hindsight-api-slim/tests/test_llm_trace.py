@@ -33,6 +33,7 @@ from hindsight_api.engine.llm_trace import (
     set_trace_context,
 )
 from hindsight_api.engine.llm_wrapper import LLMProvider
+from hindsight_api.engine.providers.openai_compatible_llm import ProviderResponseError
 
 # ── serialization helpers ─────────────────────────────────────────────────────
 
@@ -415,7 +416,7 @@ async def test_openai_tool_parse_error_keeps_billed_reasoning_usage(registered_r
     response.choices = []
     llm._provider_impl._client.chat.completions.create = AsyncMock(return_value=response)
 
-    with pytest.raises(IndexError):
+    with pytest.raises(ProviderResponseError, match="no choices"):
         await llm.call_with_tools(
             messages=[{"role": "user", "content": "answer"}], tools=[], scope="tools", max_retries=0
         )

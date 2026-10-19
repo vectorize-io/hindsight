@@ -73,6 +73,8 @@ def _tool_call_response() -> MagicMock:
     response.usage.completion_tokens = 5
     response.usage.total_tokens = 15
     response.usage.completion_tokens_details = None
+    response.error = None
+    response.model_dump.return_value = {}
     response.choices[0].finish_reason = "tool_calls"
     response.choices[0].message.content = None
     response.choices[0].message.tool_calls = [tc]
@@ -87,6 +89,8 @@ def _plain_response() -> MagicMock:
     response.usage.completion_tokens = 5
     response.usage.total_tokens = 15
     response.usage.completion_tokens_details = None
+    response.error = None
+    response.model_dump.return_value = {}
     response.choices[0].finish_reason = "stop"
     response.choices[0].message.content = "ok"
     response.choices[0].message.tool_calls = None
