@@ -197,14 +197,14 @@ A `q` search counts at most 1,000 matches. Past that, `total` is a lower bound, 
 
 ## Document History
 
-Every change to a document is recorded with what it did: each retain, append and reprocess (facts added and removed), each fact edit, invalidation and restore, each tag change, and each consolidation run (observations created, updated and removed, filed under every document their source facts came from).
+Every change to a document is recorded with what it did: each retain, append and reprocess (facts added and removed), each fact edit, invalidation, restore and delete, each per-fact observation clear, each tag change, and each consolidation run (observations created, updated and removed, filed under every document their source facts came from).
 
 Observations are rebuilt rather than versioned, so when a change deletes one, this history is the only place its id is still recorded. Each event stores ids and counts only, never text, and each id list is capped at 100. The control plane shows this as the **History** tab of a document.
 
 The history is rebuilt from the bank's [operations](./operations), which carry these events, so two limits apply:
 
 - It reaches back only as far as operations are kept (`HINDSIGHT_API_OPERATION_RETENTION_DAYS`, unlimited by default).
-- A change that ran without an operation is not in it: a synchronous retain (`async: false`), or a fact edit or tag change while auto-consolidation is off. A fact edit or tag change is recorded on the consolidation operation it queues, next to the rebuild it causes.
+- A change that ran without an operation is not in it: a synchronous retain (`async: false`), or a fact edit, delete or tag change while auto-consolidation is off. A fact edit, delete or tag change is recorded on the consolidation operation it queues, next to the rebuild it causes. Clearing every observation in the bank is not listed.
 
 <Tabs>
 <TabItem value="python" label="Python">

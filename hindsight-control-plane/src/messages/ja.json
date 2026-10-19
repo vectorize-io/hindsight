@@ -2297,6 +2297,8 @@
       "fact_edited": "ファクト編集",
       "fact_invalidated": "ファクト無効化",
       "fact_restored": "ファクト復元",
+      "fact_deleted": "ファクト削除",
+      "observations_cleared": "観察をクリア",
       "consolidation": "統合"
     },
     "loadOlder": "古いものを読み込む",

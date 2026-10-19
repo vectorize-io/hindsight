@@ -2075,6 +2075,8 @@ export type DocumentEventKind =
   | "fact_edited"
   | "fact_invalidated"
   | "fact_restored"
+  | "fact_deleted"
+  | "observations_cleared"
   | "consolidation";
 
 /**

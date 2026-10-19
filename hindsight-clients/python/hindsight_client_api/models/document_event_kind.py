@@ -33,6 +33,8 @@ class DocumentEventKind(str, Enum):
     FACT_EDITED = 'fact_edited'
     FACT_INVALIDATED = 'fact_invalidated'
     FACT_RESTORED = 'fact_restored'
+    FACT_DELETED = 'fact_deleted'
+    OBSERVATIONS_CLEARED = 'observations_cleared'
     CONSOLIDATION = 'consolidation'
 
     @classmethod

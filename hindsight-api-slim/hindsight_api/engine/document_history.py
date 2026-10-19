@@ -56,6 +56,8 @@ class DocumentEventKind(StrEnum):
     FACT_EDITED = "fact_edited"
     FACT_INVALIDATED = "fact_invalidated"
     FACT_RESTORED = "fact_restored"
+    FACT_DELETED = "fact_deleted"
+    OBSERVATIONS_CLEARED = "observations_cleared"
     CONSOLIDATION = "consolidation"
 
 
@@ -134,6 +136,27 @@ class ObservationChanges:
             )
             for doc_id, changes in per_doc.items()
         }
+
+
+def deletion_events(deleted: dict[str, str | None], changes: ObservationChanges) -> list[DocumentEvent]:
+    """One ``fact_deleted`` event per document, given the deleted facts (fact id -> document id) and
+    what the sweep removed: each document gets the observations that stood on its own facts."""
+    by_doc: dict[str, set[str]] = {}
+    for fact_id, document_id in deleted.items():
+        if document_id:
+            by_doc.setdefault(document_id, set()).add(fact_id)
+    return [
+        DocumentEvent(
+            document_id=document_id,
+            kind=DocumentEventKind.FACT_DELETED,
+            fact_id=next(iter(facts)) if len(facts) == 1 else None,
+            facts_removed=len(facts),
+            observations_removed=ObservationIdSample.of(
+                obs_id for obs_id, sources in changes.removed.items() if facts.intersection(sources)
+            ),
+        )
+        for document_id, facts in by_doc.items()
+    ]
 
 
 # Child tasks copy the context, so the object bound here is the one every parallel batch notes on.

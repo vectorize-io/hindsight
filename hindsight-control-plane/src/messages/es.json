@@ -2297,6 +2297,8 @@
       "fact_edited": "Hecho editado",
       "fact_invalidated": "Hecho invalidado",
       "fact_restored": "Hecho restaurado",
+      "fact_deleted": "Hecho eliminado",
+      "observations_cleared": "Observaciones borradas",
       "consolidation": "Consolidado"
     },
     "loadOlder": "Cargar anteriores",

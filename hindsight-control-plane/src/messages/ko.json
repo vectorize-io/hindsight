@@ -2297,6 +2297,8 @@
       "fact_edited": "사실 편집",
       "fact_invalidated": "사실 무효화",
       "fact_restored": "사실 복원",
+      "fact_deleted": "사실 삭제",
+      "observations_cleared": "관찰 삭제",
       "consolidation": "통합됨"
     },
     "loadOlder": "이전 항목 불러오기",

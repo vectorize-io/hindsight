@@ -74,6 +74,7 @@ from .document_history import (
     DocumentHistoryResponse,
     ObservationIdSample,
     append_operation_events,
+    deletion_events,
     list_document_events,
     track_observation_changes,
 )
@@ -11335,68 +11336,78 @@ class MemoryEngine(MemoryEngineInterface):
         invalidated_obs = 0
         bank_id_for_consolidation: str | None = None
         bank_id_for_graph_maintenance: str | None = None
-        async with acquire_with_retry(backend) as conn:
-            async with conn.transaction():
-                # Get bank_id and fact_type before deletion. A SQL store discovers the bank from
-                # the row itself; a store that keeps memories outside SQL is partitioned by bank,
-                # so the caller must say which one — hence the optional `bank_id` argument.
-                from .memories import get_memories
+        with track_observation_changes() as delete_changes:
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    # Get bank_id and fact_type before deletion. A SQL store discovers the bank from
+                    # the row itself; a store that keeps memories outside SQL is partitioned by bank,
+                    # so the caller must say which one — hence the optional `bank_id` argument.
+                    from .memories import get_memories
 
-                _store = get_memories()
-                _location = await _store.locate_memory(
-                    conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(unit_uuid)
-                )
-                bank_id = _location.bank_id if _location else None
-                fact_type = _location.fact_type if _location else None
+                    _store = get_memories()
+                    _location = await _store.locate_memory(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(unit_uuid)
+                    )
+                    bank_id = _location.bank_id if _location else None
+                    fact_type = _location.fact_type if _location else None
+                    # Its document, read before the row goes: the change history files the delete there.
+                    deleted_from: dict[str, str | None] = {}
+                    if bank_id and fact_type in ("experience", "world"):
+                        deleted_from = {
+                            m.unit_id: m.document_id
+                            for m in await _store.get_memories(
+                                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(unit_uuid)]
+                            )
+                        }
 
-                # Sweep before the delete as well, in the sweep's lock order (see delete_document).
-                if bank_id and fact_type in ("experience", "world"):
-                    invalidated_obs = await self._delete_stale_observations_for_memories(conn, bank_id, [unit_id])
+                    # Sweep before the delete as well, in the sweep's lock order (see delete_document).
+                    if bank_id and fact_type in ("experience", "world"):
+                        invalidated_obs = await self._delete_stale_observations_for_memories(conn, bank_id, [unit_id])
 
-                # Capture relink victims and entity prune candidates BEFORE the
-                # cascade — once the row is gone, the joins finding them return
-                # nothing.
-                if bank_id:
-                    from .graph_maintenance import enqueue_entity_prune_candidates, enqueue_relink_victims
+                    # Capture relink victims and entity prune candidates BEFORE the
+                    # cascade — once the row is gone, the joins finding them return
+                    # nothing.
+                    if bank_id:
+                        from .graph_maintenance import enqueue_entity_prune_candidates, enqueue_relink_victims
 
-                    # Only fact rows carry temporal/semantic adjacency worth
-                    # rebuilding; entity postings hang off any unit that has
-                    # them, so the prune candidates are captured unconditionally.
-                    if fact_type in ("experience", "world"):
-                        await enqueue_relink_victims(conn, bank_id, [unit_id])
-                    await enqueue_entity_prune_candidates(conn, bank_id, [unit_id])
+                        # Only fact rows carry temporal/semantic adjacency worth
+                        # rebuilding; entity postings hang off any unit that has
+                        # them, so the prune candidates are captured unconditionally.
+                        if fact_type in ("experience", "world"):
+                            await enqueue_relink_victims(conn, bank_id, [unit_id])
+                        await enqueue_entity_prune_candidates(conn, bank_id, [unit_id])
 
-                # Delete the memory unit first (cascades to links and associations).
-                # The stale-observation sweep runs AFTER the delete so it also catches
-                # observations inserted concurrently by consolidation (otherwise a
-                # racing insert committed between the sweep and the delete would
-                # leave an orphan referencing this just-deleted source memory).
-                # For a store that owns its memories the tombstone is the ONLY write here: the
-                # relink/prune enqueues above route to the store too, so nothing in this Postgres
-                # transaction has to be atomic with it.
-                deleted = await _store.delete_memory(
-                    conn=conn, ops=self._backend.ops, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id
-                )
+                    # Delete the memory unit first (cascades to links and associations).
+                    # The stale-observation sweep runs AFTER the delete so it also catches
+                    # observations inserted concurrently by consolidation (otherwise a
+                    # racing insert committed between the sweep and the delete would
+                    # leave an orphan referencing this just-deleted source memory).
+                    # For a store that owns its memories the tombstone is the ONLY write here: the
+                    # relink/prune enqueues above route to the store too, so nothing in this Postgres
+                    # transaction has to be atomic with it.
+                    deleted = await _store.delete_memory(
+                        conn=conn, ops=self._backend.ops, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id
+                    )
 
-                # Invalidate observations referencing this (now-deleted) source memory
-                if bank_id and fact_type in ("experience", "world"):
-                    invalidated_obs += await self._delete_stale_observations_for_memories(conn, bank_id, [unit_id])
-                    if invalidated_obs > 0:
-                        bank_id_for_consolidation = bank_id
+                    # Invalidate observations referencing this (now-deleted) source memory
+                    if bank_id and fact_type in ("experience", "world"):
+                        invalidated_obs += await self._delete_stale_observations_for_memories(conn, bank_id, [unit_id])
+                        if invalidated_obs > 0:
+                            bank_id_for_consolidation = bank_id
 
-                # Run graph_maintenance whenever a source-memory unit was
-                # removed — even if no relink victims were enqueued, the
-                # deleted unit's entities may now be orphans.
-                if deleted and bank_id and fact_type in ("experience", "world"):
-                    bank_id_for_graph_maintenance = bank_id
+                    # Run graph_maintenance whenever a source-memory unit was
+                    # removed — even if no relink victims were enqueued, the
+                    # deleted unit's entities may now be orphans.
+                    if deleted and bank_id and fact_type in ("experience", "world"):
+                        bank_id_for_graph_maintenance = bank_id
 
-                result = {
-                    "success": deleted is not None,
-                    "unit_id": str(deleted) if deleted else None,
-                    "message": "Memory unit and all its links deleted successfully"
-                    if deleted
-                    else "Memory unit not found",
-                }
+                    result = {
+                        "success": deleted is not None,
+                        "unit_id": str(deleted) if deleted else None,
+                        "message": "Memory unit and all its links deleted successfully"
+                        if deleted
+                        else "Memory unit not found",
+                    }
 
         # Drop any cached stats for this bank — the deleted unit (and its
         # cascaded links/entities) changed the counts get_bank_stats reports,
@@ -11414,10 +11425,13 @@ class MemoryEngine(MemoryEngineInterface):
         if bank_id_for_consolidation:
             config = await self._config_resolver.resolve_full_config(bank_id_for_consolidation, request_context)
             if config.enable_auto_consolidation:
+                # Built (and so timestamped) now, before the consolidation it is recorded on can run.
+                delete_events = deletion_events(deleted_from, delete_changes)
                 try:
-                    await self.submit_async_consolidation(
+                    submitted = await self.submit_async_consolidation(
                         bank_id=bank_id_for_consolidation, request_context=request_context
                     )
+                    await append_operation_events(backend, submitted["operation_id"], delete_events)
                 except Exception as e:
                     logger.warning(
                         f"Failed to submit consolidation after memory deletion"
@@ -11536,74 +11550,91 @@ class MemoryEngine(MemoryEngineInterface):
         # graph_maintenance + consolidation after the transaction commits.
         banks_with_source_deletes: set[str] = set()
         banks_with_invalidated_obs: set[str] = set()
+        # Per bank, each deleted fact's document: the change history files each delete there.
+        deleted_from: dict[str, dict[str, str | None]] = {}
         total_deleted = 0
         from .memories import get_memories
 
         store = get_memories()
 
-        async with acquire_with_retry(backend) as conn:
-            async with conn.transaction():
-                # Step 1 — resolve (bank_id, fact_type) for every id in one shot.
-                # Ids not found silently drop out of the batch (they might have
-                # been deleted between the caller's discovery query and this
-                # call; a missing id is not an error).
-                locations = await store.locate_memories(
-                    conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=validated_ids
-                )
-
-                # Step 2 — group by bank.
-                by_bank: dict[str, list[str]] = {}
-                source_ids_by_bank: dict[str, list[str]] = {}
-                for loc in locations:
-                    if bank_id is not None and loc.bank_id != bank_id:
-                        continue
-                    by_bank.setdefault(loc.bank_id, []).append(loc.unit_id)
-                    if loc.fact_type in ("experience", "world"):
-                        source_ids_by_bank.setdefault(loc.bank_id, []).append(loc.unit_id)
-
-                # Step 3 — per-bank cascade.
-                for target_bank, ids_for_bank in by_bank.items():
-                    source_ids = source_ids_by_bank.get(target_bank, [])
-
-                    # Sweep before the delete as well, in the sweep's lock order (see delete_document).
-                    invalidated = 0
-                    if source_ids:
-                        invalidated = await self._delete_stale_observations_for_memories(conn, target_bank, source_ids)
-
-                    # 3a. Capture relink victims and entity prune candidates
-                    # BEFORE the cascade. Victims come from the fact rows (only
-                    # those carry temporal/semantic adjacency); prune candidates
-                    # from every doomed unit in the bank, since any of them may
-                    # hold the last posting to an entity.
-                    from .graph_maintenance import enqueue_entity_prune_candidates, enqueue_relink_victims
-
-                    if source_ids:
-                        await enqueue_relink_victims(conn, target_bank, source_ids)
-                    await enqueue_entity_prune_candidates(conn, target_bank, ids_for_bank)
-
-                    # 3b. The delete itself. Postgres drops the links in lock order, then the
-                    # rows in chunks (the cascade handles unit_entities / memory_links /
-                    # observation history); a store that owns its memories deletes them itself.
-                    deleted_this_bank = await store.delete_memories(
-                        conn=conn, ops=self._backend.ops, fq_table=fq_table, bank_id=target_bank, unit_ids=ids_for_bank
+        with track_observation_changes() as delete_changes:
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    # Step 1 — resolve (bank_id, fact_type) for every id in one shot.
+                    # Ids not found silently drop out of the batch (they might have
+                    # been deleted between the caller's discovery query and this
+                    # call; a missing id is not an error).
+                    locations = await store.locate_memories(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=validated_ids
                     )
 
-                    # 3c. Racing-observation sweep — only fires for banks
-                    # whose source facts were touched (observations reference
-                    # source_memory_ids).
-                    if source_ids:
-                        invalidated += await self._delete_stale_observations_for_memories(conn, target_bank, source_ids)
-                        if invalidated > 0:
-                            banks_with_invalidated_obs.add(target_bank)
+                    # Step 2 — group by bank.
+                    by_bank: dict[str, list[str]] = {}
+                    source_ids_by_bank: dict[str, list[str]] = {}
+                    for loc in locations:
+                        if bank_id is not None and loc.bank_id != bank_id:
+                            continue
+                        by_bank.setdefault(loc.bank_id, []).append(loc.unit_id)
+                        if loc.fact_type in ("experience", "world"):
+                            source_ids_by_bank.setdefault(loc.bank_id, []).append(loc.unit_id)
 
-                    if source_ids:
-                        banks_with_source_deletes.add(target_bank)
+                    # Step 3 — per-bank cascade.
+                    for target_bank, ids_for_bank in by_bank.items():
+                        source_ids = source_ids_by_bank.get(target_bank, [])
 
-                    per_bank[target_bank] = {
-                        "deleted": deleted_this_bank,
-                        "invalidated_observations": invalidated,
-                    }
-                    total_deleted += deleted_this_bank
+                        # Sweep before the delete as well, in the sweep's lock order (see delete_document).
+                        invalidated = 0
+                        if source_ids:
+                            deleted_from[target_bank] = {
+                                m.unit_id: m.document_id
+                                for m in await store.get_memories(
+                                    conn=conn, fq_table=fq_table, bank_id=target_bank, unit_ids=source_ids
+                                )
+                            }
+                            invalidated = await self._delete_stale_observations_for_memories(
+                                conn, target_bank, source_ids
+                            )
+
+                        # 3a. Capture relink victims and entity prune candidates
+                        # BEFORE the cascade. Victims come from the fact rows (only
+                        # those carry temporal/semantic adjacency); prune candidates
+                        # from every doomed unit in the bank, since any of them may
+                        # hold the last posting to an entity.
+                        from .graph_maintenance import enqueue_entity_prune_candidates, enqueue_relink_victims
+
+                        if source_ids:
+                            await enqueue_relink_victims(conn, target_bank, source_ids)
+                        await enqueue_entity_prune_candidates(conn, target_bank, ids_for_bank)
+
+                        # 3b. The delete itself. Postgres drops the links in lock order, then the
+                        # rows in chunks (the cascade handles unit_entities / memory_links /
+                        # observation history); a store that owns its memories deletes them itself.
+                        deleted_this_bank = await store.delete_memories(
+                            conn=conn,
+                            ops=self._backend.ops,
+                            fq_table=fq_table,
+                            bank_id=target_bank,
+                            unit_ids=ids_for_bank,
+                        )
+
+                        # 3c. Racing-observation sweep — only fires for banks
+                        # whose source facts were touched (observations reference
+                        # source_memory_ids).
+                        if source_ids:
+                            invalidated += await self._delete_stale_observations_for_memories(
+                                conn, target_bank, source_ids
+                            )
+                            if invalidated > 0:
+                                banks_with_invalidated_obs.add(target_bank)
+
+                        if source_ids:
+                            banks_with_source_deletes.add(target_bank)
+
+                        per_bank[target_bank] = {
+                            "deleted": deleted_this_bank,
+                            "invalidated_observations": invalidated,
+                        }
+                        total_deleted += deleted_this_bank
 
         # Step 4 — post-commit side effects, best-effort per bank.
         current_schema = get_current_schema()
@@ -11621,7 +11652,12 @@ class MemoryEngine(MemoryEngineInterface):
             try:
                 config = await self._config_resolver.resolve_full_config(target_bank, request_context)
                 if config.enable_auto_consolidation:
-                    await self.submit_async_consolidation(bank_id=target_bank, request_context=request_context)
+                    # Built (and so timestamped) now, before the consolidation it is recorded on can run.
+                    delete_events = deletion_events(deleted_from.get(target_bank, {}), delete_changes)
+                    submitted = await self.submit_async_consolidation(
+                        bank_id=target_bank, request_context=request_context
+                    )
+                    await append_operation_events(backend, submitted["operation_id"], delete_events)
             except Exception as e:
                 logger.warning(f"Failed to submit consolidation after bulk memory deletion for bank {target_bank}: {e}")
 
@@ -12129,26 +12165,47 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
         deleted_count = 0
 
-        async with acquire_with_retry(backend) as conn:
-            async with conn.transaction():
-                import uuid as uuid_module
+        with track_observation_changes() as clear_changes:
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    import uuid as uuid_module
 
-                deleted_count = await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
+                    deleted_count = await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
 
-                # Also reset this memory's own consolidated_at so it gets re-consolidated
-                # (the memory was a source for the deleted observations, so it needs new ones).
-                # Bookkeeping only: `updated_at` stays put (see META_UPDATED_AT).
-                if deleted_count > 0:
-                    from .memories import get_memories
+                    # Also reset this memory's own consolidated_at so it gets re-consolidated
+                    # (the memory was a source for the deleted observations, so it needs new ones).
+                    # Bookkeeping only: `updated_at` stays put (see META_UPDATED_AT).
+                    cleared_doc: str | None = None
+                    if deleted_count > 0:
+                        from .memories import get_memories
 
-                    await get_memories().requeue_source_memory(
-                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=uuid_module.UUID(memory_id)
-                    )
+                        await get_memories().requeue_source_memory(
+                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=uuid_module.UUID(memory_id)
+                        )
+                        # The memory's document, where the change history files this clear.
+                        found = await get_memories().get_memories(
+                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[memory_id]
+                        )
+                        cleared_doc = found[0].document_id if found else None
 
         if deleted_count > 0:
             config = await self._config_resolver.resolve_full_config(bank_id, request_context)
             if config.enable_auto_consolidation:
-                await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+                # Built (and so timestamped) now, before the consolidation it is recorded on can run.
+                clear_events = (
+                    [
+                        DocumentEvent(
+                            document_id=cleared_doc,
+                            kind=DocumentEventKind.OBSERVATIONS_CLEARED,
+                            fact_id=memory_id,
+                            observations_removed=ObservationIdSample.of(clear_changes.removed),
+                        )
+                    ]
+                    if cleared_doc
+                    else []
+                )
+                submitted = await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+                await append_operation_events(backend, submitted["operation_id"], clear_events)
 
         return {"deleted_count": deleted_count}
 

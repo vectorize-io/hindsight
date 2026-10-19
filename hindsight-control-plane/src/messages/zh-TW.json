@@ -2297,6 +2297,8 @@
       "fact_edited": "事實已編輯",
       "fact_invalidated": "事實已失效",
       "fact_restored": "事實已還原",
+      "fact_deleted": "事實已刪除",
+      "observations_cleared": "觀察已清除",
       "consolidation": "已整合"
     },
     "loadOlder": "載入更早的",

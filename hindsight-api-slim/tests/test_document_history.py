@@ -16,6 +16,7 @@ from hindsight_api.engine.document_history import (
     ObservationChanges,
     ObservationIdSample,
     note_observation_written,
+    deletion_events,
     note_observations_removed,
     track_observation_changes,
 )
@@ -46,6 +47,17 @@ def test_consolidation_changes_are_filed_under_every_source_document():
     assert events["doc-b"].observations_created.count == 0
     assert events["doc-b"].observations_updated.ids == ["upd"]
     assert events["doc-b"].observations_removed.ids == ["gone"]
+
+
+def test_a_delete_files_each_document_under_the_observations_its_own_facts_held():
+    changes = ObservationChanges(removed={"o1": ["f1", "x"], "o2": ["f2"], "o3": ["f3"]})
+    events = {e.document_id: e for e in deletion_events({"f1": "a", "f2": "a", "f3": "b", "f4": None}, changes)}
+
+    assert set(events) == {"a", "b"}, "a fact with no document is not filed anywhere"
+    assert (events["a"].facts_removed, events["a"].fact_id) == (2, None)
+    assert events["a"].observations_removed.ids == ["o1", "o2"]
+    assert (events["b"].facts_removed, events["b"].fact_id) == (1, "f3")
+    assert events["b"].observations_removed.ids == ["o3"]
 
 
 def test_notes_outside_a_tracked_operation_are_dropped():
@@ -165,5 +177,46 @@ async def test_append_invalidation_and_retag_are_each_recorded(memory: MemoryEng
     for kind in ("fact_invalidated", "retag"):
         op = await memory.get_operation_status(bank_id, by_kind[kind].operation_id, request_context=request_context)
         assert op["operation_type"] == "consolidation", (kind, op)
+
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_deletes_and_clears_are_recorded_on_the_consolidation_they_queue(
+    memory: MemoryEngine, request_context: RequestContext
+):
+    bank_id = f"test-doc-history-delete-{uuid.uuid4().hex[:8]}"
+    doc_id = "visit-notes"
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+    await memory.submit_async_retain(
+        bank_id,
+        [
+            {
+                "content": "Bob moved to Lisbon. Bob adopted a dog. Bob started learning Portuguese.",
+                "document_id": doc_id,
+            }
+        ],
+        request_context=request_context,
+    )
+    facts = await _ids(memory, bank_id, request_context, document_id=doc_id, fact_type=["world", "experience"])
+    assert len(facts) >= 3
+
+    with patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()):
+        await memory.clear_observations_for_memory(bank_id, facts[0], request_context=request_context)
+        await memory.delete_memory_unit(facts[1], bank_id=bank_id, request_context=request_context)
+        await memory.delete_memory_units(facts[2:], bank_id=bank_id, request_context=request_context)
+
+    history = await _history(memory, bank_id, doc_id, request_context)
+    changes = [e for e in history.items if e.kind in ("observations_cleared", "fact_deleted")]
+    # Newest first: the bulk delete, the single delete, then the clear.
+    assert [(e.kind, e.fact_id, e.facts_removed) for e in changes] == [
+        ("fact_deleted", facts[2] if len(facts) == 3 else None, len(facts) - 2),
+        ("fact_deleted", facts[1], 1),
+        ("observations_cleared", facts[0], 0),
+    ]
+    for event in changes:
+        assert event.observations_removed.count > 0
+        op = await memory.get_operation_status(bank_id, event.operation_id, request_context=request_context)
+        assert op["operation_type"] == "consolidation"
 
     await memory.delete_bank(bank_id, request_context=request_context)
