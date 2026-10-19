@@ -6,7 +6,39 @@ export type ObservationsEdits = {
   observations_mission: string | null;
   max_observations_per_scope: number | null;
   consolidation_strategies: ConsolidationStrategy[] | null;
+  default_observation_scopes: ObservationScopes | null;
 };
+
+/** How a retained memory's observations are scoped: a mode, or a list of scopes
+ *  (each a list of tags, where `key:*` matches the memory's own `key:` tags). */
+export type ObservationScopes = ObservationScopesMode | string[][];
+
+export const OBSERVATION_SCOPES_MODES = [
+  "combined",
+  "per_tag",
+  "all_combinations",
+  "shared",
+] as const;
+export type ObservationScopesMode = (typeof OBSERVATION_SCOPES_MODES)[number];
+
+/** The custom-scopes editor's text form: one scope per line, tags separated by commas. */
+export function scopesToText(scopes: string[][]): string {
+  return scopes.map((scope) => scope.join(", ")).join("\n");
+}
+
+/** Parse the editor's text back into scopes. Blank lines and empty tags are dropped, so a
+ *  half-typed line never stores an empty (untagged, bank-wide) scope. */
+export function textToScopes(text: string): string[][] {
+  return text
+    .split("\n")
+    .map((line) =>
+      line
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+    )
+    .filter((scope) => scope.length > 0);
+}
 
 /** The settings a consolidation strategy can override. The bank-level values of
  *  these same four fields are what the UI calls the "Default" strategy: they apply
@@ -46,6 +78,7 @@ const OBSERVATIONS_KEYS = [
   "observations_mission",
   "max_observations_per_scope",
   "consolidation_strategies",
+  "default_observation_scopes",
 ] as const satisfies readonly (keyof ObservationsEdits)[];
 
 function resolvedObservationsSlice(resolvedConfig: ObservationsConfig): ObservationsEdits {
@@ -59,6 +92,7 @@ function resolvedObservationsSlice(resolvedConfig: ObservationsConfig): Observat
     observations_mission: resolvedConfig.observations_mission ?? null,
     max_observations_per_scope: resolvedConfig.max_observations_per_scope ?? null,
     consolidation_strategies: resolvedConfig.consolidation_strategies ?? null,
+    default_observation_scopes: resolvedConfig.default_observation_scopes ?? null,
   };
 }
 
@@ -137,6 +171,7 @@ export function reconcileObservationsEdits(
     observations_mission: reconcileField("observations_mission"),
     max_observations_per_scope: reconcileField("max_observations_per_scope"),
     consolidation_strategies: reconcileField("consolidation_strategies"),
+    default_observation_scopes: reconcileField("default_observation_scopes"),
   };
 }
 

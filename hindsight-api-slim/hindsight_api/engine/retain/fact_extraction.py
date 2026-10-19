@@ -3435,6 +3435,7 @@ async def extract_facts_from_contents_batch_api(
 
     # Step 8: Auto-tag facts from label groups with tag=True
     _inject_label_tags(extracted_facts, config)
+    _apply_default_observation_scopes(extracted_facts, config)
 
     await _write_batch_extraction_errors(pool, operation_id, schema, extraction_errors)
 
@@ -3656,6 +3657,7 @@ async def extract_facts_from_contents(
 
     # Step 6: Auto-tag facts from label groups with tag=True
     _inject_label_tags(extracted_facts, config)
+    _apply_default_observation_scopes(extracted_facts, config)
 
     return ExtractionResult(extracted_facts, chunks_metadata, total_usage)
 
@@ -3755,6 +3757,20 @@ def _add_temporal_offsets(facts: list[ExtractedFactType], contents: list[RetainC
             fact.occurred_end = parse_datetime_flexible(fact.occurred_end) + offset
         if fact.mentioned_at:
             fact.mentioned_at = parse_datetime_flexible(fact.mentioned_at) + offset
+
+
+def _apply_default_observation_scopes(facts: list[ExtractedFactType], config) -> None:
+    """Give facts whose retain declared no ``observation_scopes`` the bank's default.
+
+    Stamped on the stored memory rather than resolved at consolidation time, so changing
+    the default later never re-scopes memories already retained under the old one.
+    """
+    default = config.default_observation_scopes
+    if not default:
+        return
+    for fact in facts:
+        if fact.observation_scopes is None:
+            fact.observation_scopes = default
 
 
 def _inject_label_tags(facts: list[ExtractedFactType], config) -> None:

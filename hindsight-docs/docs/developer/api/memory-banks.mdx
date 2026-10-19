@@ -247,6 +247,10 @@ Controls whether consolidation runs automatically after retain, delete, and upda
 
 This is useful when you want full control over consolidation timing — for example, batching many retains before consolidating, or running [targeted consolidation](/developer/observations#targeted-consolidation) for specific scopes only.
 
+### default_observation_scopes {#default_observation_scopes}
+
+The [`observation_scopes`](./retain#observation_scopes) applied to retained items that send none. Defaults to `combined`, which groups each memory by its full tag set. Set it to `[["topic:*"]]` to group memories by their own `topic:` tags only — e.g. ones added by an [entity label](#entity-labels) with `tag: true` — so memories about the same subject from different agents or sessions consolidate together without changing any client. Stored on each memory at retain, so changing it never re-scopes memories already retained.
+
 ### observations_mission
 
 Defines what this bank should synthesise into durable observations. Replaces the built-in consolidation rules entirely — leave blank to use the server default.

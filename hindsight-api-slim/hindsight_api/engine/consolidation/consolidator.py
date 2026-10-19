@@ -505,6 +505,39 @@ def _parse_observation_scopes(memory: dict[str, Any]) -> Any:
         return raw
 
 
+def _expand_scope_globs(scopes: list[list[str]], tags: list[str]) -> list[list[str]]:
+    """Resolve tag globs (``topic:*``) in an explicit scope list against a memory's tags (#5666).
+
+    A glob is replaced by every tag of the memory it matches (``fnmatchcase``, the same
+    matching consolidation strategies use for their ``company:*`` patterns), so
+    ``[["topic:*", "user:*"]]`` scopes a memory by its own topic and user tags while
+    ignoring the rest (``session:``, ``source:`` ...). That is what lets a client — or the
+    bank's ``default_observation_scopes`` — name a scope whose values only the server
+    knows, e.g. ``topic:`` tags added from entity labels during retain.
+
+    Only ``*`` marks a glob: ``?`` and ``[`` are common enough in literal tags that
+    treating them as metacharacters would silently change existing explicit scopes.
+
+    A scope whose globs all matched nothing is dropped rather than kept empty — an
+    empty scope is the untagged, bank-wide one, and a memory the pattern missed must
+    not silently become visible to everyone. A scope written empty on purpose
+    (``[[]]``) has no globs and is kept. When every scope drops, the result is ``[]``,
+    which the callers treat as the combined pass over the memory's own tags.
+    """
+    resolved: list[list[str]] = []
+    for scope in scopes:
+        if not any("*" in entry for entry in scope):
+            resolved.append(scope)
+            continue
+        expanded = sorted(
+            {entry for entry in scope if "*" not in entry}
+            | {t for entry in scope if "*" in entry for t in tags if fnmatchcase(t, entry)}
+        )
+        if expanded:
+            resolved.append(expanded)
+    return resolved
+
+
 def _resolve_obs_tags_list(memory: dict[str, Any]) -> list[list[str]] | None:
     """Resolve a memory's ``observation_scopes`` spec into concrete scope tags.
 
@@ -533,7 +566,7 @@ def _resolve_obs_tags_list(memory: dict[str, Any]) -> list[list[str]] | None:
         return [[]]
     if parsed == "combined" or parsed is None:
         return None
-    return parsed  # explicit list[list[str]]
+    return _expand_scope_globs(parsed, tags)  # explicit list[list[str]]
 
 
 def _resolve_write_scopes(memory: dict[str, Any]) -> list[frozenset[str]]:
@@ -569,8 +602,9 @@ def _resolve_write_scopes(memory: dict[str, Any]) -> list[frozenset[str]]:
     # Explicit list[list[str]]. An *empty* list resolves to no passes at all, and
     # the pass loop (``if obs_tags_list:``) then falls back to the combined
     # single pass over the memory's own tags — so report that scope here too,
-    # or the group takes no lock for the scope it actually writes.
-    return [frozenset(s) for s in parsed] or [frozenset(tags)]
+    # or the group takes no lock for the scope it actually writes. Globs resolve
+    # the same way the pass loop resolves them, including scopes they drop.
+    return [frozenset(s) for s in _expand_scope_globs(parsed, tags)] or [frozenset(tags)]
 
 
 def write_scopes_changed(

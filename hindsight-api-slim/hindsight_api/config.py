@@ -355,6 +355,43 @@ def _resolve_operation_strict_schema(operation_env: str) -> bool:
     return raw.strip().lower() in ("true", "1")
 
 
+OBSERVATION_SCOPES_MODES = ("combined", "per_tag", "all_combinations", "shared")
+
+
+def validate_observation_scopes(value: object, name: str) -> None:
+    """Reject an ``observation_scopes`` value retain would not accept: a mode, or a list of tag lists.
+
+    Shared by the env parser (so a typo stops start-up instead of failing every consolidation
+    later) and the bank-config API.
+    """
+    if isinstance(value, str) and value in OBSERVATION_SCOPES_MODES:
+        return
+    if isinstance(value, list) and all(
+        isinstance(scope, list) and all(isinstance(tag, str) for tag in scope) for scope in value
+    ):
+        return
+    raise ValueError(
+        f"{name} must be one of {', '.join(OBSERVATION_SCOPES_MODES)} or a list of tag lists "
+        f'(e.g. [["topic:*"]]), got {value!r}'
+    )
+
+
+def _parse_observation_scopes_env(raw: str | None) -> str | list | None:
+    """A mode name (``combined``, ``shared`` ...) as-is, or a JSON scope list (``[["topic:*"]]``)."""
+    if not raw or not raw.strip():
+        return None
+    raw = raw.strip()
+    if raw.startswith("["):
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid {ENV_DEFAULT_OBSERVATION_SCOPES}: invalid JSON: {e}") from e
+    else:
+        value = raw
+    validate_observation_scopes(value, ENV_DEFAULT_OBSERVATION_SCOPES)
+    return value
+
+
 def _parse_boolean_env(env_name: str, default: bool) -> bool:
     """Parse a boolean environment variable, rejecting ambiguous values."""
     raw = os.getenv(env_name)
@@ -919,6 +956,7 @@ ENV_CONSOLIDATION_USE_DECISION_MODEL = "HINDSIGHT_API_CONSOLIDATION_USE_DECISION
 ENV_OBSERVATIONS_MISSION = "HINDSIGHT_API_OBSERVATIONS_MISSION"
 ENV_MAX_OBSERVATIONS_PER_SCOPE = "HINDSIGHT_API_MAX_OBSERVATIONS_PER_SCOPE"
 ENV_OBSERVATION_SCOPE_LIMITS = "HINDSIGHT_API_OBSERVATION_SCOPE_LIMITS"
+ENV_DEFAULT_OBSERVATION_SCOPES = "HINDSIGHT_API_DEFAULT_OBSERVATION_SCOPES"
 ENV_CONSOLIDATION_STRATEGIES = "HINDSIGHT_API_CONSOLIDATION_STRATEGIES"
 ENV_ENABLE_OBSERVATION_HISTORY = "HINDSIGHT_API_ENABLE_OBSERVATION_HISTORY"
 ENV_OBSERVATION_HISTORY_MAX_ENTRIES = "HINDSIGHT_API_OBSERVATION_HISTORY_MAX_ENTRIES"
@@ -1905,6 +1943,9 @@ DEFAULT_MAX_OBSERVATIONS_PER_SCOPE = -1  # Max observations per tag scope (-1 = 
 # Per-scope overrides of the cap above: list of {"scope": [tag-globs], "limit": int}.
 # First rule whose pattern exact-covers a scope's tags wins; else the default above.
 DEFAULT_OBSERVATION_SCOPE_LIMITS: list | None = None
+# observation_scopes applied to a retained item that declares none. None keeps the
+# historical behaviour (combined: each memory's own tag set).
+DEFAULT_DEFAULT_OBSERVATION_SCOPES: str | list | None = None
 # Per-scope consolidation settings: list of
 # {"scopes": [{"tags": [tag-globs], "tags_match": "all"|"exact"}, ...], "observations_mission": str, ...}
 # (each setting optional). A strategy claims a scope when ANY of its patterns
@@ -3679,6 +3720,8 @@ class HindsightConfig:
     # DEPRECATED — superseded by consolidation_strategies below, which carries
     # the mission too. Still honoured, consulted after the strategies.
     observation_scope_limits: list | None
+    # observation_scopes for retained items that declare none (mode string, or list[list[str]] with optional globs)
+    default_observation_scopes: str | list | None
     # Per-scope consolidation settings (mission / observation cap).
     # Raw JSON shape: [{"scopes": [{"tags": ["company:*"]}], "observations_mission": "...",
     #                   "max_observations_per_scope": 20}, ...]
@@ -4076,6 +4119,7 @@ class HindsightConfig:
         "observations_mission",
         "max_observations_per_scope",
         "observation_scope_limits",
+        "default_observation_scopes",
         "consolidation_strategies",
         # Mental model settings
         "mental_model_min_refresh_interval_seconds",
@@ -5423,6 +5467,8 @@ class HindsightConfig:
             ),
             observation_scope_limits=json.loads(os.getenv(ENV_OBSERVATION_SCOPE_LIMITS, "null"))
             or DEFAULT_OBSERVATION_SCOPE_LIMITS,
+            default_observation_scopes=_parse_observation_scopes_env(os.getenv(ENV_DEFAULT_OBSERVATION_SCOPES))
+            or DEFAULT_DEFAULT_OBSERVATION_SCOPES,
             consolidation_strategies=json.loads(os.getenv(ENV_CONSOLIDATION_STRATEGIES, "null"))
             or DEFAULT_CONSOLIDATION_STRATEGIES,
             entity_labels=None,

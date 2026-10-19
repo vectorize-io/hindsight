@@ -3696,14 +3696,21 @@ class MemoryEngine(MemoryEngineInterface):
 
         if write_scope is not None:
             label_tags_by_strategy: dict[str | None, list[str]] = {}
+            default_scopes_by_strategy: dict[str | None, Any] = {}
             for item in contents:
                 item_strategy = item.get("strategy") or strategy
                 if item_strategy not in label_tags_by_strategy:
                     config = await self._resolve_retain_config(bank_id, request_context, item_strategy)
                     label_tags_by_strategy[item_strategy] = label_tag_candidates(config.entity_labels)
+                    default_scopes_by_strategy[item_strategy] = config.default_observation_scopes
                 item_tags = sorted({*(item.get("tags") or []), *(document_tags or [])})
                 self._refuse_unwritable(item_tags, write_scope, "memories")
-                self._refuse_unwritable_scopes(item.get("observation_scopes"), write_scope)
+                # An item that declares no scopes gets the bank default at retain, so that
+                # default is a write by this caller too ("shared" would write untagged ones).
+                item_scopes = item.get("observation_scopes")
+                if item_scopes is None:
+                    item_scopes = default_scopes_by_strategy[item_strategy]
+                self._refuse_unwritable_scopes(item_scopes, write_scope)
                 self._refuse_unwritable_label_tags(label_tags_by_strategy[item_strategy], write_scope, item_strategy)
 
         document_ids = sorted({str(c["document_id"]) for c in contents if c.get("document_id")})
@@ -3739,8 +3746,14 @@ class MemoryEngine(MemoryEngineInterface):
         if observation_scopes == "shared":
             self._refuse_unwritable([], write_scope, "observations")
         elif isinstance(observation_scopes, list):
+            # Globs (``topic:*``) only ever pick tags the memory itself carries, and those
+            # are checked above as item and label tags — so only the literal tags are new.
+            # A scope of globs alone checks nothing: a glob that matches no tag drops its scope
+            # rather than leaving the untagged one.
             for scope_tags in observation_scopes:
-                self._refuse_unwritable(list(scope_tags), write_scope, "observations")
+                literal = [t for t in scope_tags if "*" not in t]
+                if literal or len(literal) == len(scope_tags):
+                    self._refuse_unwritable(literal, write_scope, "observations")
 
     async def _visible_knowledge_node_ids(self, conn: Any, bank_id: str, tag_scope: list[TagGroup]) -> set[str]:
         """Ids of the knowledge-tree nodes a caller confined to ``tag_scope`` may see."""

@@ -254,6 +254,31 @@ Pass an explicit list of tag sets. Each inner list is one scope.
 
 **Use when** you know exactly which combinations are meaningful and want to avoid unnecessary passes.
 
+#### Tag globs in custom scopes
+
+A tag containing `*` is a glob, matched against the memory's own tags: `topic:*` stands for whatever `topic:` tags the memory carries. This lets you scope by a tag whose value you don't know when you send the request — typically one added by an [entity label](./memory-banks#entity-labels) with `tag: true` during extraction.
+
+With a memory tagged `["topic:billing", "user:alice", "source:agent-a", "session:7"]`:
+
+| `observation_scopes` | Observations created |
+|---|---|
+| `[["topic:*"]]` | `["topic:billing"]` |
+| `[["topic:*", "user:*"]]` | `["topic:billing", "user:alice"]` |
+| `[["topic:*"], ["user:*"]]` | `["topic:billing"]` · `["user:alice"]` |
+| `[["topic:*", "team:x"]]` | `["team:x", "topic:billing"]` |
+
+- A glob matching several tags puts all of them in the scope.
+- A scope whose globs match nothing is skipped. If every scope is skipped, the memory falls back to `combined` — it never becomes untagged.
+- Tags the scope leaves out (`source:`, `session:` above) stay on the memory for recall filtering; they just don't split observations. So memories about the same topic from different agents or sessions consolidate together — and in the same LLM call, which keeps consolidation cost proportional to the number of subjects rather than the number of memories.
+
+:::caution Tags left out of the scope are not on the observation
+With `[["topic:*"]]`, Alice's and Bob's billing facts build one observation tagged only `topic:billing`. A recall filtered to `user:alice` won't match it, and anyone who can see `topic:billing` reads both. Add `user:*` to the scope to keep users apart.
+:::
+
+#### Bank default
+
+When an item sends no `observation_scopes`, the bank's [`default_observation_scopes`](./memory-banks#default_observation_scopes) applies (`combined` unless set). It accepts any value above, so `[["topic:*"]]` there groups every client's memories by topic without changing any client. The default is stored on each memory at retain, so changing it later doesn't re-scope memories already retained — move those with a [document PATCH](../observations#changing-scopes).
+
 ### Response
 
 The synchronous retain response includes:

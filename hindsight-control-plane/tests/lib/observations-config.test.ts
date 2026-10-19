@@ -5,6 +5,8 @@ import {
   mergeResolvedObservations,
   observationsSlice,
   reconcileObservationsEdits,
+  scopesToText,
+  textToScopes,
   compactStrategy,
   scopesLabel,
   strategyOverridesSomething,
@@ -17,6 +19,18 @@ const STRATEGIES = [
     observations_mission: "Trends only.",
   },
 ];
+
+describe("custom observation scopes text", () => {
+  it("round-trips one scope per line, tags separated by commas", () => {
+    const scopes = [["topic:*", "user:*"], ["team:x"]];
+    expect(scopesToText(scopes)).toBe("topic:*, user:*\nteam:x");
+    expect(textToScopes("topic:*, user:*\nteam:x")).toEqual(scopes);
+  });
+
+  it("never turns a blank or half-typed line into an empty scope", () => {
+    expect(textToScopes("topic:*,\n\n , \n")).toEqual([["topic:*"]]);
+  });
+});
 
 describe("observations config state", () => {
   it.each([true, false])(
@@ -70,6 +84,7 @@ describe("observations config state", () => {
       observations_mission: "Returned resolved state",
       max_observations_per_scope: 8,
       consolidation_strategies: STRATEGIES,
+      default_observation_scopes: null,
     });
   });
 
