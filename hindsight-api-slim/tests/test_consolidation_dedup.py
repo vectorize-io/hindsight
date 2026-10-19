@@ -5,7 +5,6 @@ guard the fix in CI — unlike the real-LLM integration test, which only trigger
 the path stochastically.
 """
 
-from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 import logging
 import types
 import uuid
@@ -30,7 +29,8 @@ from hindsight_api.engine.consolidation.consolidator import (
     _TemporalBounds,
 )
 from hindsight_api.engine.db_utils import acquire_with_retry
-from hindsight_api.engine.memories import RecallArms
+from hindsight_api.engine.memories import RecallArms, get_memories
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 from hindsight_api.engine.search.types import RetrievalResult
 
 #: Dates the skipped CREATE would have been stamped with; the fold must carry them onto the twin.
@@ -806,6 +806,9 @@ async def test_process_batch_embeds_all_actions_in_one_call() -> None:
         patch.object(C, "_dedup_active", return_value=False),
         patch.object(C, "_live_source_ids", new=AsyncMock(side_effect=lambda _pool, _bank, ids: {str(i) for i in ids})),
         patch.object(C.embedding_utils, "generate_embeddings_batch", new=embed),
+        # The write set's up-front lock (#5433) reads the observation's sources, a query this fake
+        # connection does not model; this test is about the embedder call, not the locks.
+        patch.object(get_memories(), "lock_consolidation_write_set", new=AsyncMock()),
         patch.object(C, "_apply_update_action", new=AsyncMock(return_value="updated")) as update_action,
         patch.object(C, "_apply_create_action", new=AsyncMock(return_value="created")) as create_action,
     ):
