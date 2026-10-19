@@ -17,7 +17,12 @@ from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
-from ..llm_interface import PromptCachePrefix, ProviderContentPolicyError, ProviderRateLimitResetError
+from ..llm_interface import (
+    PromptCachePrefix,
+    ProviderAuthError,
+    ProviderContentPolicyError,
+    ProviderRateLimitResetError,
+)
 from ..llm_wrapper import (
     AnyLLMProvider,
     OutputTooLongError,
@@ -26,6 +31,7 @@ from ..llm_wrapper import (
     sanitize_value,
 )
 from ..operation_metadata import RetainExtractionErrors
+from ..remote_retry import status_code_of
 from ..response_models import TokenUsage
 from ..structured_output import provider_json_schema, strict_json_schema
 from . import attachment_content
@@ -2776,6 +2782,17 @@ async def extract_facts_from_text(
                 f"{len(failed_chunks)} failed chunks ({len(chunks)} total) were refused; retrying cannot "
                 f"succeed. First failures: {failed_summary}"
             ) from policy_errors[0]
+
+        # A credential rejection (HTTP 401/403) is just as deterministic: every
+        # replay sends the same key (issue #5644). One is enough — the retain
+        # cannot succeed while the key is rejected.
+        auth_errors = [err for _, err in failed_chunks if status_code_of(err) in (401, 403)]
+        if auth_errors:
+            raise ProviderAuthError(
+                f"Fact extraction rejected by provider authentication: {len(auth_errors)} of "
+                f"{len(failed_chunks)} failed chunks ({len(chunks)} total) got HTTP 401/403; retrying with "
+                f"the same credentials cannot succeed. First failures: {failed_summary}"
+            ) from auth_errors[0]
 
         # Fail the entire retain — partial extraction is not acceptable.
         # All successfully extracted facts are discarded because the transaction

@@ -266,6 +266,49 @@ def keyed_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Itera
     server.stop()
 
 
+#: The schema of the server that retries failed work. Its own, so its worker claims
+#: only its own banks' operations and never replays another story's failure.
+WORKER_RETRY_SCHEMA = "systest_worker_retry"
+
+
+@pytest.fixture(scope="session")
+def worker_retry_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
+    """A server whose worker re-runs a failed operation, as production does.
+
+    ``stub_environment`` pins ``HINDSIGHT_API_WORKER_MAX_RETRIES`` to 0, which makes
+    every failure terminal on the first attempt — so a story about *which* failures
+    are retried cannot be told there at all. Two retries one second apart keep the
+    story fast; its own schema keeps this worker off every other story's work.
+    """
+    server = start_hindsight_server(
+        stub_url=stub_server.url,
+        log_path=tmp_path_factory.mktemp("worker-retry-server") / "server.log",
+        extra_env={
+            "HINDSIGHT_API_DATABASE_SCHEMA": WORKER_RETRY_SCHEMA,
+            "HINDSIGHT_API_WORKER_MAX_RETRIES": "2",
+            "HINDSIGHT_API_WORKER_TASK_RETRY_BACKOFF_SECONDS": "1",
+        },
+    )
+    yield server
+    server.stop()
+
+
+@pytest.fixture
+async def worker_retry_client(worker_retry_server) -> AsyncIterator[Hindsight]:
+    client = Hindsight(base_url=worker_retry_server.url)
+    yield client
+    await client.aclose()
+
+
+@pytest.fixture
+async def worker_retry_bank(worker_retry_client: Hindsight) -> AsyncIterator[str]:
+    """A bank of this test's own on ``worker_retry_server``, deleted when the test ends."""
+    name = f"{BANK_PREFIX}{uuid.uuid4().hex[:12]}"
+    yield name
+    with contextlib.suppress(Exception):
+        await worker_retry_client.banks.delete_bank(name)
+
+
 @pytest.fixture
 async def keyed_client(keyed_server) -> AsyncIterator[Hindsight]:
     client = Hindsight(base_url=keyed_server.url)

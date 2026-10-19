@@ -68,7 +68,7 @@ from .db.ops_postgresql import pg_search_vector_expr
 from .db.postgresql import PostgreSQLBackend
 from .db.postgresql import apply_session_settings as _apply_session_settings
 from .db_budget import budgeted_operation
-from .llm_interface import ProviderContentPolicyError, ProviderRateLimitResetError
+from .llm_interface import ProviderAuthError, ProviderContentPolicyError, ProviderRateLimitResetError
 from .llm_trace import (
     LLMRequestEntry,
     LLMRequestListResponse,
@@ -698,7 +698,7 @@ from .reflect.tools import (
     tool_search_mental_models,
     tool_search_observations,
 )
-from .remote_retry import is_transient_remote_error
+from .remote_retry import is_transient_remote_error, status_code_of
 from .response_models import (
     VALID_RECALL_FACT_TYPES,
     ConsolidationStrategiesPreview,
@@ -1608,6 +1608,11 @@ def _is_non_retryable_task_error(e: Exception) -> bool:
         # the moment: re-running the task feeds the same chunk to the same model
         # and earns the same refusal (issue #3690).
         or isinstance(e, ProviderContentPolicyError)
+        # A credential rejection (401/403) is a function of the configured key:
+        # every replay sends the same key (issue #5644). The status check covers
+        # tasks that let the provider's own error through (consolidation, refresh).
+        or isinstance(e, ProviderAuthError)
+        or status_code_of(e) in (401, 403)
     )
 
 

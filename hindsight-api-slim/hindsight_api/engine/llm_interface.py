@@ -471,6 +471,17 @@ class ProviderContentPolicyError(RuntimeError):
     """
 
 
+class ProviderAuthError(RuntimeError):
+    """Raised when the provider rejected the request's credentials (HTTP 401/403).
+
+    A rejection is a property of the configured credential, not of the moment or
+    the content: every replay sends the same key and earns the same rejection
+    (issue #5644). The providers already refuse to retry it; this type carries
+    that permanence through ``extract_facts_from_text`` to the worker, so the
+    retain fails once instead of replaying every chunk through the retry schedule.
+    """
+
+
 class ProviderRateLimitResetError(Exception):
     """Raised when an upstream provider says quota will reopen at a known time."""
 
