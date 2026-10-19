@@ -2513,8 +2513,8 @@ class _StoreOwnedMemories:
     iter_transfer_documents = MemoriesExtension.iter_transfer_documents
     load_transfer_documents = MemoriesExtension.load_transfer_documents
     load_transfer_observations = MemoriesExtension.load_transfer_observations
-    dump_entity_maintenance_queue = MemoriesExtension.dump_entity_maintenance_queue
-    dump_archived_memories = MemoriesExtension.dump_archived_memories
+    iter_entity_maintenance_queue = MemoriesExtension.iter_entity_maintenance_queue
+    iter_archived_memories = MemoriesExtension.iter_archived_memories
     transfer_document_exists = MemoriesExtension.transfer_document_exists
 
     def store_owned_for(self, bank_id: str) -> bool:
@@ -3504,3 +3504,98 @@ async def test_bank_archive_builds_without_the_connection_that_read_it(memory, r
         assert manifest.document_count == 1
     finally:
         await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_a_big_operation_log_moves_without_being_held_whole(memory, request_context):
+    """Export and import stream the operation log a page at a time (#5737).
+
+    Each table was read as one list and encoded as one string, so the export held the
+    rows, the JSON and its bytes at once — on a large bank that OOM-killed the API —
+    and the import then parsed the whole entry back into one list.
+    """
+    import tracemalloc
+
+    from hindsight_api.engine.transfer import TransferScope, stream_export_bank
+
+    source, target = _unique_bank("big_oplog"), _unique_bank("big_oplog_copy")
+    rows, payload_bytes = 2000, 50_000
+    log_bytes = rows * payload_bytes
+    try:
+        await _retain(memory, source, "Alan moved to Berlin in 2021.", request_context, "doc-1")
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            await conn.executemany(
+                f"INSERT INTO {fq_store_table('async_operations')} "
+                f"(operation_id, bank_id, operation_type, status, task_payload) "
+                f"VALUES ($1, $2, 'retain', 'completed', $3::jsonb)",
+                [(uuid.uuid4(), source, json.dumps({"content": "x" * payload_bytes})) for _ in range(rows)],
+            )
+
+        tracemalloc.start()
+        try:
+            # The payloads compress to almost nothing, so the archive itself barely counts.
+            archive = b"".join(
+                [chunk async for chunk in stream_export_bank(backend, source, scope=TransferScope(data=True))]
+            )
+            _, export_peak = tracemalloc.get_traced_memory()
+            tracemalloc.reset_peak()
+            result = await memory.import_bank_async(io.BytesIO(archive), request_context, target_bank_id=target)
+            _, import_peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
+        assert result.operations_imported >= rows
+        assert export_peak < log_bytes / 2, f"export peaked at {export_peak / 1e6:.0f} MB"
+        assert import_peak < log_bytes / 2, f"import peaked at {import_peak / 1e6:.0f} MB"
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_paged_sections_survive_a_page_boundary(memory, request_context, monkeypatch):
+    """With one row per page, the entity queue and the curation archive still move whole (#5737).
+
+    Each is read a page at a time and written as one JSON array, so a dropped or
+    repeated row at a page boundary — or a stray separator — would show here.
+    """
+    from hindsight_api.engine.transfer import export as export_module
+    from hindsight_api.engine.transfer import stream_export_bank
+
+    monkeypatch.setattr(export_module, "_ROW_PAGE", 1)
+    source, target = _unique_bank("paged_src"), _unique_bank("paged_dst")
+    try:
+        invalidated = []
+        for index, text in enumerate(("Helen owns a red bicycle.", "Marco lives in Rome.", "Ada studies Lisbon.")):
+            unit_ids = await _retain(memory, source, text, request_context, f"doc-{index}")
+            invalidated.append(str(unit_ids[0]))
+        for unit_id in invalidated:
+            await memory.update_memory_unit(
+                source, unit_id, state="invalidated", reason="retired", request_context=request_context
+            )
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            # Seeded directly: nothing in the public API enqueues entity maintenance on demand.
+            await conn.execute(
+                f"INSERT INTO {fq_store_table('entity_maintenance_queue')} (bank_id, entity_id) "
+                f"SELECT bank_id, id FROM {fq_store_table('entities')} WHERE bank_id = $1 ON CONFLICT DO NOTHING",
+                source,
+            )
+            queued = await conn.fetchval(
+                f"SELECT count(*) FROM {fq_store_table('entity_maintenance_queue')} WHERE bank_id = $1", source
+            )
+        assert queued >= 2, "the bank needs entities on more than one page"
+
+        archive = b"".join([chunk async for chunk in stream_export_bank(backend, source)])
+        entries = _archive_entries(archive)
+        assert len(entries["data/invalidated_memory_units.json"]) == len(invalidated)
+        assert entries["manifest.json"]["invalidated_memory_count"] == len(invalidated)
+        assert len(entries["data/entity_maintenance_queue.json"]) == queued
+
+        result = await memory.import_bank_async(io.BytesIO(archive), request_context, target_bank_id=target)
+        assert result.invalidated_memories_imported == len(invalidated)
+        assert result.maintenance_queue_rows_imported >= queued
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)

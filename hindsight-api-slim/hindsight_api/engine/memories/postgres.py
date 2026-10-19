@@ -1676,11 +1676,21 @@ class PostgresMemories(MemoriesExtension):
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_index=unit_index
         )
 
-    async def dump_entity_maintenance_queue(self, *, conn, fq_table, bank_id: str) -> list[dict]:
-        return await pg_transfer.dump_entity_maintenance_queue(conn=conn, fq_table=fq_store_table, bank_id=bank_id)
+    async def iter_entity_maintenance_queue(
+        self, *, backend, fq_table, bank_id: str, page_size: int
+    ) -> AsyncIterator[list[dict]]:
+        async for page in pg_transfer.iter_entity_maintenance_queue(
+            backend=backend, fq_table=fq_store_table, bank_id=bank_id, page_size=page_size
+        ):
+            yield page
 
-    async def dump_archived_memories(self, *, conn, fq_table, bank_id: str) -> list[dict]:
-        return await pg_transfer.dump_archived_memories(conn=conn, fq_table=fq_store_table, bank_id=bank_id)
+    async def iter_archived_memories(
+        self, *, backend, fq_table, bank_id: str, page_size: int
+    ) -> AsyncIterator[list[dict]]:
+        async for page in pg_transfer.iter_archived_memories(
+            backend=backend, fq_table=fq_store_table, bank_id=bank_id, page_size=page_size
+        ):
+            yield page
 
     async def restore_archived_memories(
         self,

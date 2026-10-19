@@ -4194,25 +4194,33 @@ class MemoriesExtension(Extension, ABC):
 
         return await _load_observations_from_store(self, bank_id, unit_index)
 
-    async def dump_entity_maintenance_queue(self, *, conn, fq_table, bank_id: str) -> list[dict]:
-        """The bank's entity-maintenance queue for export, each entity named rather than numbered.
+    async def iter_entity_maintenance_queue(
+        self, *, backend, fq_table, bank_id: str, page_size: int
+    ) -> AsyncIterator[list[dict]]:
+        """The bank's entity-maintenance queue for export, ``page_size`` rows at a time, each entity named
+        rather than numbered.
 
-        Postgres joins the queue to `entities` on ``conn``. Empty here: a store that keeps its own
-        entity registry queues no entity maintenance in Postgres (see
-        :meth:`enqueue_entity_prune_candidates`).
+        ``backend`` is a pool or one connection. Postgres joins the queue to `entities`, each page on a
+        connection it returns before the page is yielded. Empty here: a store that keeps its own entity
+        registry queues no entity maintenance in Postgres (see :meth:`enqueue_entity_prune_candidates`).
         """
-        return []
+        return
+        yield  # unreachable: makes this an async generator that yields no pages
 
-    async def dump_archived_memories(self, *, conn, fq_table, bank_id: str) -> list[dict]:
-        """The curation archive (invalidated, still revertable memories) as portable export rows.
+    async def iter_archived_memories(
+        self, *, backend, fq_table, bank_id: str, page_size: int
+    ) -> AsyncIterator[list[dict]]:
+        """The curation archive (invalidated, still revertable memories) as portable export rows, by page.
 
         One dict per archived memory, keyed like an `invalidated_memory_units` row, except that
         ``entity_ids`` becomes ``entity_names`` (canonical names), ``chunk_id`` becomes
-        ``chunk_index`` (the id embeds the bank), and the surrogate ``id`` is dropped. Postgres
-        reads the archive table on ``conn``. No default: the interface has no way to list an
-        archive, so a store that owns its memories must answer this itself.
+        ``chunk_index`` (the id embeds the bank), and the surrogate ``id`` is dropped. ``backend`` is a
+        pool or one connection; Postgres reads the archive table ``page_size`` rows at a time. No
+        default: the interface has no way to list an archive, so a store that owns its memories must
+        answer this itself — raising before it yields anything.
         """
         raise NotImplementedError("this store cannot list its archived memories")
+        yield  # unreachable: makes this an async generator, so the error is raised on first iteration
 
     async def restore_archived_memories(
         self,
@@ -4225,12 +4233,12 @@ class MemoriesExtension(Extension, ABC):
         document_id_map: dict[str, str],
         bank_rows_json_encoding: str,
     ) -> int:
-        """Write :meth:`dump_archived_memories` rows into this bank's archive; returns how many.
+        """Write one page of :meth:`iter_archived_memories` rows into this bank's archive; returns how many.
 
         ``unit_id_map`` / ``document_id_map`` map the source's unit and document ids to the ones the
         import wrote (a causal-link snapshot whose endpoint did not come back is dropped). Postgres
         re-resolves the entity names and inserts on ``conn``. No default, like
-        :meth:`dump_archived_memories`.
+        :meth:`iter_archived_memories`.
         """
         raise NotImplementedError("this store cannot restore archived memories")
 

@@ -16,7 +16,6 @@ import json
 import logging
 import zipfile
 from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -26,7 +25,7 @@ from uuid import UUID
 import anyio.to_thread
 import pydantic_core
 
-from ..db_utils import acquire_with_retry
+from ..db_utils import as_connection, iter_keyset_pages
 from ..metadata_utils import as_string_metadata
 from ..schema import fq_table
 from .schema import (
@@ -221,21 +220,6 @@ def _resolve_memories(memories: Any) -> Any:
         return PostgresMemories({})
 
 
-@asynccontextmanager
-async def _as_connection(conn_or_backend: Any) -> AsyncIterator[Any]:
-    """A connection for one read: the caller's own, or a short-lived one from a pool.
-
-    The admin CLI hands the export its single raw connection; the engine hands it
-    the backend, so each read borrows a connection and returns it before the
-    archive bytes it produced are streamed on.
-    """
-    if hasattr(conn_or_backend, "acquire"):
-        async with acquire_with_retry(conn_or_backend) as conn:
-            yield conn
-    else:
-        yield conn_or_backend
-
-
 @dataclass
 class _DocumentTally:
     """What streaming the documents learned, for the sections and manifest after them."""
@@ -341,14 +325,14 @@ async def stream_export_documents(
 
     observations: list[TransferObservation] = []
     if include_observations:
-        async with _as_connection(backend) as conn:
+        async with as_connection(backend) as conn:
             observations = await memories.load_transfer_observations(
                 conn=conn, fq_table=fq_table, bank_id=bank_id, unit_index=tally.unit_index
             )
     mental_models: list[dict] = []
     knowledge_pages: list[TransferKnowledgePage] = []
     if include_knowledge_base:
-        async with _as_connection(backend) as conn:
+        async with as_connection(backend) as conn:
             mental_models = await _dump_bank_rows(conn, "mental_models", bank_id)
             knowledge_pages = await _load_knowledge_pages(conn, bank_id)
 
@@ -439,6 +423,36 @@ async def _dump_bank_rows(conn: Any, table: str, bank_id: str) -> list[dict]:
     return [{k: v for k, v in dict(row).items() if k not in _DERIVED_COLUMNS} for row in rows]
 
 
+# The tables that grow with a bank's activity rather than its configuration, and the key — unique
+# within a bank — each is paged by on export. The operation log alone can hold millions of rows,
+# each with its task payload; reading one whole OOM-killed the API on a large bank (#5737).
+_PAGED_ROW_KEYS = {
+    "async_operations": "operation_id",
+    "graph_maintenance_queue": "unit_id",
+    "audit_log": "id",
+    "llm_requests": "id",
+}
+#: Rows per page. Small, because one operation row carries its whole task payload.
+_ROW_PAGE = 100
+
+
+async def _iter_bank_row_pages(conn_or_backend: Any, table: str, bank_id: str) -> AsyncIterator[list[dict]]:
+    """A paged table's rows, derived columns stripped, ``_ROW_PAGE`` at a time in key order."""
+    async for rows in iter_keyset_pages(
+        conn_or_backend,
+        f"SELECT * FROM {fq_table(table)} WHERE bank_id = $1",
+        [bank_id],
+        key=_PAGED_ROW_KEYS[table],
+        page_size=_ROW_PAGE,
+    ):
+        yield [{k: v for k, v in dict(row).items() if k not in _DERIVED_COLUMNS} for row in rows]
+
+
+async def _collect(pages: AsyncIterator[list[dict]]) -> list[dict]:
+    """Paged rows read whole, in the order the streamed export writes them (the clone path)."""
+    return [row async for page in pages for row in page]
+
+
 async def _load_knowledge_pages(conn: Any, bank_id: str) -> list[TransferKnowledgePage]:
     """Load the knowledge-base tree (folders + pages) as typed rows.
 
@@ -511,10 +525,12 @@ async def stream_export_bank(
     entries as :func:`load_bank_export` + :func:`build_bank_archive` (the clone
     path); ``test_streamed_bank_archive_matches_the_built_one`` holds the two to it.
 
-    Memory: documents are read ``batch_size`` at a time and attachment bytes are
-    streamed from file storage, so neither is ever held whole. The index of every
-    fact, the observations, the operation log and the other bank-level sections are
-    still loaded in full before they are written, so memory grows with those.
+    Memory: documents are read ``batch_size`` at a time, attachment bytes are
+    streamed from file storage, and the operation log, the maintenance queues, the
+    curation archive and the history tables are read and written a page at a time,
+    so none is ever held whole (#5737). The index of every fact, the observations
+    and the bank's own rows (config, mental models, knowledge pages) are still
+    loaded in full before they are written.
 
     Consistency: ``conn_or_backend`` is either one connection (the admin CLI, which
     owns it) or a backend that each read borrows a connection from and returns —
@@ -532,8 +548,8 @@ async def stream_export_bank(
     tally = _DocumentTally()
     observations: list[TransferObservation] = []
     attachments: list[TransferAttachment] = []
-    operational_rows: dict[str, list[dict]] = {}
-    invalidated_rows: list[dict] = []
+    # Rows written per entry by `write_row_pages`, for the manifest.
+    row_counts: dict[str, int] = {}
     knowledge_pages: list[TransferKnowledgePage] = []
     bank_rows: dict[str, list[dict]] = {}
 
@@ -541,6 +557,23 @@ async def stream_export_bank(
         async for chunk in streamer.write_file_bytes(
             entry, json.dumps(rows, default=_row_json_default).encode("utf-8")
         ):
+            yield chunk
+
+    async def write_row_pages(entry: str, pages: AsyncIterator[list[dict]]) -> AsyncIterator[bytes]:
+        """Write a JSON array one page of rows at a time, so the entry is never encoded whole."""
+
+        async def encoded() -> AsyncIterator[bytes]:
+            yield b"["
+            separator = b""
+            async for rows in pages:
+                if not rows:  # a page can filter down to nothing, and "[, …]" is not JSON
+                    continue
+                yield separator + json.dumps(rows, default=_row_json_default)[1:-1].encode("utf-8")
+                separator = b", "
+                row_counts[entry] = row_counts.get(entry, 0) + len(rows)
+            yield b"]"
+
+        async for chunk in streamer.write_file_chunks(entry, encoded()):
             yield chunk
 
     if scope.data:
@@ -558,7 +591,7 @@ async def stream_export_bank(
             tally=tally,
         ):
             yield chunk
-        async with _as_connection(conn_or_backend) as conn:
+        async with as_connection(conn_or_backend) as conn:
             observations = await memories.load_transfer_observations(
                 conn=conn, fq_table=fq_table, bank_id=bank_id, unit_index=tally.unit_index
             )
@@ -569,19 +602,28 @@ async def stream_export_bank(
         async for chunk in _stream_attachments(streamer, conn_or_backend, bank_id, file_storage, attachments):
             yield chunk
 
-        async with _as_connection(conn_or_backend) as conn:
-            operational_rows = await _dump_operational_rows(conn, bank_id, memories)
-            invalidated_rows = await _dump_invalidated_units(conn, bank_id, memories)
-        for table, rows in operational_rows.items():
-            async for chunk in write_rows(f"data/{table}.json", rows):
+        # Lazy: each table is read only as its entry is written.
+        data_sections = {
+            "data/async_operations.json": _iter_bank_row_pages(conn_or_backend, "async_operations", bank_id),
+            # Keyed by units the import regenerates: each row's `unit_id` stays the source id,
+            # which the importer maps to the replayed unit (a row whose unit did not come back
+            # is dropped there).
+            "data/graph_maintenance_queue.json": _iter_bank_row_pages(
+                conn_or_backend, "graph_maintenance_queue", bank_id
+            ),
+            "data/entity_maintenance_queue.json": memories.iter_entity_maintenance_queue(
+                backend=conn_or_backend, fq_table=fq_table, bank_id=bank_id, page_size=_ROW_PAGE
+            ),
+            "data/invalidated_memory_units.json": _iter_invalidated_units(conn_or_backend, bank_id, memories),
+        }
+        for entry, row_pages in data_sections.items():
+            async for chunk in write_row_pages(entry, row_pages):
                 yield chunk
-        async for chunk in write_rows("data/invalidated_memory_units.json", invalidated_rows):
-            yield chunk
 
         # Synthesized knowledge travels with the memories it was synthesized from:
         # a mental model reads the bank's facts and cites them by id, and a
         # knowledge page is a view over a mental model.
-        async with _as_connection(conn_or_backend) as conn:
+        async with as_connection(conn_or_backend) as conn:
             for table in _SYNTHESIZED_ROW_TABLES:
                 bank_rows[table] = await _dump_bank_rows(conn, table, bank_id)
             for table in CARRIED_HISTORY_TABLES:
@@ -589,7 +631,7 @@ async def stream_export_bank(
             knowledge_pages = await _load_knowledge_pages(conn, bank_id)
 
     if scope.bank_config:
-        async with _as_connection(conn_or_backend) as conn:
+        async with as_connection(conn_or_backend) as conn:
             for table in _CONFIG_ROW_TABLES:
                 bank_rows[table] = await _dump_bank_rows(conn, table, bank_id)
     for table, rows in bank_rows.items():
@@ -604,9 +646,9 @@ async def stream_export_bank(
 
     if scope.history:
         for table in HISTORY_TABLES:
-            async with _as_connection(conn_or_backend) as conn:
-                rows = await _dump_bank_rows(conn, table, bank_id)
-            async for chunk in write_rows(f"history/{table}.json", rows):
+            async for chunk in write_row_pages(
+                f"history/{table}.json", _iter_bank_row_pages(conn_or_backend, table, bank_id)
+            ):
                 yield chunk
 
     manifest = TransferManifest(
@@ -624,8 +666,8 @@ async def stream_export_bank(
         includes_history=scope.history,
         scope=TransferScopeManifest(data=scope.data, bank_config=scope.bank_config, history=scope.history),
         attachment_count=len(attachments),
-        operation_count=len(operational_rows.get("async_operations", [])),
-        invalidated_memory_count=len(invalidated_rows),
+        operation_count=row_counts.get("data/async_operations.json", 0),
+        invalidated_memory_count=row_counts.get("data/invalidated_memory_units.json", 0),
         bank_rows_json_encoding=bank_rows_json_encoding,
     )
     async for chunk in streamer.write_file_bytes("manifest.json", pydantic_core.to_json(manifest, indent=2)):
@@ -643,7 +685,7 @@ async def stream_export_bank(
         tally.count,
         len(observations),
         len(attachments),
-        len(operational_rows.get("async_operations", [])),
+        row_counts.get("data/async_operations.json", 0),
         len(standalone_mental_models(bank_rows.get("mental_models", []), knowledge_pages)),
         len(knowledge_pages),
         len(bank_rows.get("directives", [])),
@@ -664,7 +706,7 @@ async def _stream_attachments(
     :func:`_dump_attachments`: a bank with attachments and no ``file_storage``
     raises, and an attachment whose bytes are gone is left out with a warning.
     """
-    async with _as_connection(conn_or_backend) as conn:
+    async with as_connection(conn_or_backend) as conn:
         rows = await conn.fetch(
             f"SELECT bank_id, document_id, attachment_hash, short_id, media_type, byte_size, storage_key, kind, "
             f"filename, created_at "
@@ -830,8 +872,14 @@ async def load_bank_export(
         )
         exported_attachments = await _dump_attachments(conn, bank_id, file_storage)
         attachments, blobs = exported_attachments.rows, exported_attachments.blobs
-        data_rows.update(await _dump_operational_rows(conn, bank_id, memories))
-        data_rows["invalidated_memory_units"] = await _dump_invalidated_units(conn, bank_id, memories)
+        for table in ("async_operations", "graph_maintenance_queue"):
+            data_rows[table] = await _collect(_iter_bank_row_pages(conn, table, bank_id))
+        data_rows["entity_maintenance_queue"] = await _collect(
+            memories.iter_entity_maintenance_queue(
+                backend=conn, fq_table=fq_table, bank_id=bank_id, page_size=_ROW_PAGE
+            )
+        )
+        data_rows["invalidated_memory_units"] = await _collect(_iter_invalidated_units(conn, bank_id, memories))
 
     bank_rows: dict[str, list[dict]] = {}
     knowledge_pages: list[TransferKnowledgePage] = []
@@ -850,7 +898,7 @@ async def load_bank_export(
 
     history_rows: dict[str, list[dict]] = {}
     if scope.history:
-        history_rows = {table: await _dump_bank_rows(conn, table, bank_id) for table in HISTORY_TABLES}
+        history_rows = {table: await _collect(_iter_bank_row_pages(conn, table, bank_id)) for table in HISTORY_TABLES}
 
     return BankExportPayload(
         bank_id=bank_id,
@@ -1042,38 +1090,23 @@ async def _dump_attachments(conn: Any, bank_id: str, file_storage: Any) -> _Expo
     return _ExportedAttachments(rows=attachments, blobs=blobs)
 
 
-async def _dump_operational_rows(conn: Any, bank_id: str, memories: Any) -> dict[str, list[dict]]:
-    """Dump the operations log and the maintenance queues.
-
-    The queues are keyed by ids the import regenerates, so each row is annotated
-    with what the target can resolve it by: a unit's ``unit_id`` survives as the
-    source id the importer maps, and an entity is named rather than numbered
-    (entities are re-resolved by canonical name on the target).
-    """
-    rows: dict[str, list[dict]] = {}
-    rows["async_operations"] = await _dump_bank_rows(conn, "async_operations", bank_id)
-    rows["graph_maintenance_queue"] = await _dump_bank_rows(conn, "graph_maintenance_queue", bank_id)
-    rows["entity_maintenance_queue"] = await memories.dump_entity_maintenance_queue(
-        conn=conn, fq_table=fq_table, bank_id=bank_id
-    )
-    return rows
-
-
-async def _dump_invalidated_units(conn: Any, bank_id: str, memories: Any) -> list[dict]:
-    """The curation archive (facts a user invalidated but can still revert), from the store that holds it.
+async def _iter_invalidated_units(conn_or_backend: Any, bank_id: str, memories: Any) -> AsyncIterator[list[dict]]:
+    """The curation archive (facts a user invalidated but can still revert), by page, from the store that holds it.
 
     A store that cannot list its archive exports without it, loudly: the archive used to be read
     from a SQL table a store-owned bank leaves empty, so the export silently carried none (#4969).
     """
     try:
-        return await memories.dump_archived_memories(conn=conn, fq_table=fq_table, bank_id=bank_id)
+        async for page in memories.iter_archived_memories(
+            backend=conn_or_backend, fq_table=fq_table, bank_id=bank_id, page_size=_ROW_PAGE
+        ):
+            yield page
     except NotImplementedError:
         logger.warning(
             "[transfer] The memories store cannot list archived memories; bank %s is exported without "
             "its curation archive",
             bank_id,
         )
-        return []
 
 
 # One page of a store scan/listing. Export is a bulk operation and the store pages server-side,

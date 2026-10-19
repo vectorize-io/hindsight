@@ -856,8 +856,8 @@ class InMemoryMemories(MemoriesExtension):
 
     # -- transfer (#4969): the archive and document provenance an export/import carries ----------
 
-    async def dump_archived_memories(self, *, conn, fq_table, bank_id):
-        return [
+    async def iter_archived_memories(self, *, backend, fq_table, bank_id, page_size):
+        yield [
             {
                 "text": row.text,
                 "fact_type": row.fact_type,
