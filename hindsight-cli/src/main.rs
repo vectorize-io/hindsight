@@ -510,7 +510,7 @@ enum MemoryCommands {
         #[arg(short = 't', long)]
         fact_type: Option<String>,
 
-        /// Full-text search query
+        /// Substring filter on memory text and context (unindexed scan, for browsing; use recall to search)
         #[arg(short = 'q', long)]
         query: Option<String>,
 
