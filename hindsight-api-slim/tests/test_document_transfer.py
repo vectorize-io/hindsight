@@ -21,7 +21,7 @@ from hindsight_api.api import create_app
 from hindsight_api.engine.chunk_ids import build_chunk_id
 from hindsight_api.engine.consolidation.consolidator import (
     _apply_create_observation,
-    _embed_observation_text,
+    _embed_observation_texts,
 )
 from hindsight_api.engine.db_utils import acquire_with_retry
 from hindsight_api.engine.memories.base import MemoriesExtension
@@ -61,7 +61,7 @@ async def _seed_observation(*, pool, memory, bank_id, source_memory_ids, observa
     response into a single transaction (#3876) — so this seeds a fixture observation with the
     same pair of calls.
     """
-    embedding_str = await _embed_observation_text(memory, observation_text)
+    embedding_str = (await _embed_observation_texts(memory, [observation_text]))[observation_text]
     async with acquire_with_retry(pool) as conn:
         async with conn.transaction():
             return await _apply_create_observation(

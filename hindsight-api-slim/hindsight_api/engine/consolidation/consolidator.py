@@ -3288,20 +3288,6 @@ async def _fold_deleted_evidence(
     )
 
 
-async def _embed_observation_text(
-    memory_engine: "MemoryEngine",
-    text: str,
-    perf: ConsolidationPerfLog | None = None,
-) -> str | None:
-    """Embed one observation text into a pgvector literal, with no connection held.
-
-    Every caller is in the prepare phase of a batch (#3876): the embedder is the slowest
-    thing consolidation does per action, and it must finish before the batch's single write
-    transaction opens.
-    """
-    return (await _embed_observation_texts(memory_engine, [text], perf)).get(text)
-
-
 async def _embed_observation_texts(
     memory_engine: "MemoryEngine",
     texts: list[str],
@@ -3309,8 +3295,11 @@ async def _embed_observation_texts(
 ) -> dict[str, str]:
     """Embed observation texts in ONE embedder call, keyed by text to its pgvector literal.
 
-    The embedder batches its input internally, so a batch's N actions cost one round trip
-    instead of N (#5552). Repeated texts are embedded once; an empty list makes no call.
+    Runs in the prepare phase of a batch, with no connection held (#3876): the embedder is the
+    slowest thing consolidation does per action, and it must finish before the batch's single
+    write transaction opens. It used to take one text per action, so a response with N actions
+    paid N round trips to an embedder that batches internally (#5552). Repeated texts are
+    embedded once; an empty list makes no call.
     """
     unique = list(dict.fromkeys(texts))
     if not unique:
