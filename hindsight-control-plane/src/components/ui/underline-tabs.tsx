@@ -3,7 +3,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
-export interface UnderlineTab<T extends string> {
+interface UnderlineTab<T extends string> {
   id: T;
   label: React.ReactNode;
   /** Shows a muted "Off" pill next to the label (feature disabled on this server). */
