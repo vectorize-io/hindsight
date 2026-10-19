@@ -66,6 +66,9 @@ async def test_client_carries_timeout_and_configured_retries(monkeypatch):
     monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
     monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_PROVIDER", "openai")
     monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY", "sk-test")
+    # A known model, so initialize() reads its dimension instead of probing the API.
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL", "text-embedding-3-small")
+    monkeypatch.delenv("HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL", raising=False)
     monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_MAX_RETRIES", "1")
     clear_config_cache()
     try:
