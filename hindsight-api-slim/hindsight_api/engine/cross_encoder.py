@@ -20,6 +20,7 @@ import aiohttp
 from pydantic import BaseModel
 
 from .._cross_loop import CrossLoopSemaphore
+from .._thread_limits import bound_onnx_session, onnx_intra_op_threads
 from ..config import (
     DEFAULT_LITELLM_API_BASE,
     DEFAULT_RERANKER_ALIBABA_MODEL,
@@ -1640,13 +1641,11 @@ class FlashRankCrossEncoder(CrossEncoderModel):
         # Configure ONNX session options before Ranker creates the session.
         # When cpu_mem_arena=False (default), ONNX won't pre-allocate an arena
         # that grows monotonically, keeping RSS bounded after rerank batches.
-        if not self.cpu_mem_arena:
-            import onnxruntime as ort
+        import onnxruntime as ort
 
-            session_options = ort.SessionOptions()
-            session_options.enable_cpu_mem_arena = False
-        else:
-            session_options = None
+        session_options = ort.SessionOptions()
+        session_options.enable_cpu_mem_arena = self.cpu_mem_arena
+        bound_onnx_session(session_options)
 
         # Initialize ranker with optional cache directory
         ranker_kwargs: dict = {"model_name": self.model_name, "max_length": self.max_length}
@@ -1655,12 +1654,9 @@ class FlashRankCrossEncoder(CrossEncoderModel):
 
         self._ranker = Ranker(**ranker_kwargs)
 
-        # Patch the ONNX session options if arena is disabled.
         # FlashRank's Ranker doesn't expose SessionOptions in its API,
         # so we replace the session after initialization.
-        if session_options is not None and hasattr(self._ranker, "session"):
-            import onnxruntime as ort
-
+        if hasattr(self._ranker, "session"):
             model_file = None
             model_dir = getattr(self._ranker, "model_dir", None)
             if model_dir:
@@ -1671,7 +1667,11 @@ class FlashRankCrossEncoder(CrossEncoderModel):
                     break
             if model_file:
                 self._ranker.session = ort.InferenceSession(model_file, sess_options=session_options)
-                logger.info("Reranker: replaced FlashRank ONNX session with cpu_mem_arena=False")
+                logger.info(
+                    "Reranker: replaced FlashRank ONNX session (cpu_mem_arena=%s, threads=%s)",
+                    self.cpu_mem_arena,
+                    session_options.intra_op_num_threads,
+                )
 
         # Initialize shared executor
         if FlashRankCrossEncoder._executor is None:
@@ -1848,7 +1848,7 @@ class OnnxCrossEncoder(CrossEncoderModel):
         logger.info(
             "Reranker: initializing ONNX provider with %s (threads=%s, max_concurrent=%s, batch_size=%s)",
             model_path,
-            self.threads or "ort-default",
+            self.threads or onnx_intra_op_threads(),
             OnnxCrossEncoder._max_concurrent,
             self.batch_size,
         )
@@ -1857,11 +1857,9 @@ class OnnxCrossEncoder(CrossEncoderModel):
         # The arena caches freed activation blocks and never returns them, so RSS would
         # hold the largest batch's high-water mark forever (same as FlashRank/OnnxEmbeddings).
         session_options.enable_cpu_mem_arena = self.cpu_mem_arena
-        if self.threads:
-            session_options.intra_op_num_threads = self.threads
         # Idle worker threads otherwise busy-wait for the next op; measured ~1 core of
         # burn per pass for no latency gain on a 300-candidate rerank.
-        session_options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+        bound_onnx_session(session_options, self.threads)
         self._session = ort.InferenceSession(
             model_path, sess_options=session_options, providers=["CPUExecutionProvider"]
         )

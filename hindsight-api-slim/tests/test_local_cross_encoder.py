@@ -187,6 +187,29 @@ class TestFlashRankCrossEncoder:
     def test_provider_name(self):
         assert FlashRankCrossEncoder().provider_name == "flashrank"
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("arena", [False, True])
+    async def test_initialize_rebuilds_session_with_bounded_threads(self, tmp_path, monkeypatch, arena):
+        """FlashRank builds its own unbounded ONNX session; it is always replaced (#5725)."""
+        (tmp_path / "model.onnx").write_bytes(b"")
+        options = MagicMock()
+        fake_ort = MagicMock()
+        fake_ort.SessionOptions.return_value = options
+        ranker = MagicMock(model_dir=str(tmp_path))
+        fake_flashrank = MagicMock()
+        fake_flashrank.Ranker.return_value = ranker
+        monkeypatch.setenv("OMP_NUM_THREADS", "2")
+        monkeypatch.setattr(FlashRankCrossEncoder, "_executor", None)
+        encoder = FlashRankCrossEncoder(cpu_mem_arena=arena)
+        with patch.dict("sys.modules", {"flashrank": fake_flashrank, "onnxruntime": fake_ort}):
+            await encoder.initialize()
+        fake_ort.InferenceSession.assert_called_once_with(str(tmp_path / "model.onnx"), sess_options=options)
+        assert ranker.session is fake_ort.InferenceSession.return_value
+        assert options.enable_cpu_mem_arena is arena
+        assert (options.intra_op_num_threads, options.inter_op_num_threads) == (2, 1)
+        options.add_session_config_entry.assert_called_once_with("session.intra_op.allow_spinning", "0")
+        FlashRankCrossEncoder._executor.shutdown()
+
     def test_predict_sync_empty_pairs(self):
         encoder = self._make_encoder()
         assert encoder._predict_sync([]) == []

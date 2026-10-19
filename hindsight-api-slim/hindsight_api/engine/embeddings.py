@@ -26,6 +26,7 @@ import aiohttp
 import orjson
 from pydantic import BaseModel
 
+from .._thread_limits import bound_onnx_session
 from ..config import (
     DEFAULT_EMBEDDINGS_COHERE_MODEL,
     DEFAULT_EMBEDDINGS_GEMINI_MODEL,
@@ -629,10 +630,9 @@ class OnnxEmbeddings(Embeddings):
         # never returned to the OS, so RSS ratchets up to the largest batch ever run and
         # holds that plateau for the life of the process. The reranker disables it for
         # the same reason (see FlashRankCrossEncoder).
-        session_options = None
-        if not self.cpu_mem_arena:
-            session_options = ort.SessionOptions()
-            session_options.enable_cpu_mem_arena = False
+        session_options = ort.SessionOptions()
+        session_options.enable_cpu_mem_arena = self.cpu_mem_arena
+        bound_onnx_session(session_options)
         try:
             session = ort.InferenceSession(model_path, sess_options=session_options, providers=providers)
         except Exception as exc:

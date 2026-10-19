@@ -1469,7 +1469,7 @@ DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE = 32
 DEFAULT_RERANKER_ONNX_FILE = "onnx/model.onnx"
 DEFAULT_RERANKER_ONNX_MAX_TOKENS = 512
 DEFAULT_RERANKER_ONNX_BATCH_SIZE = 32  # Pairs per forward pass; bounds peak memory like FlashRank's
-DEFAULT_RERANKER_ONNX_THREADS = 0  # Threads per pass; 0 = ONNX Runtime default (all physical cores)
+DEFAULT_RERANKER_ONNX_THREADS = 0  # Threads per pass; 0 = the native thread cap (OMP_NUM_THREADS)
 # One pass at a time: a pass already spreads over every thread, so a second concurrent
 # one adds contention, not throughput, and the CPU ceiling stays `threads` cores.
 DEFAULT_RERANKER_ONNX_MAX_CONCURRENT = 1
@@ -5837,6 +5837,9 @@ class HindsightConfig:
             logger.info("Reranker: replaced by the decision model in recall")
         else:
             logger.info(f"Reranker: provider={self.reranker_provider}")
+        from ._thread_limits import native_thread_summary
+
+        logger.info(native_thread_summary())
         for operation in DECISION_MODEL_OPERATIONS:
             if decision_model := self.decision_model_config(operation):
                 logger.info(
