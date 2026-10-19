@@ -207,3 +207,11 @@ describe("BanksOverview bulk delete", () => {
     expect(action?.disabled).toBe(false);
   });
 });
+
+describe("BanksOverview keyboard access", () => {
+  it("renders each bank name as a link to the bank", async () => {
+    render(<BanksOverview />);
+    const link = await screen.findByRole("link", { name: "alpha" });
+    expect(link.getAttribute("href")).toBe("/banks/alpha");
+  });
+});

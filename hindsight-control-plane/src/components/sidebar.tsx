@@ -64,34 +64,22 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
     { id: "profile" as NavItem, label: tBank("bankConfiguration"), icon: Settings },
   ];
 
-  // Toggle when the user clicks the aside chrome itself — nav links and the
-  // collapse button stop propagation so clicking an item navigates without
-  // also flipping the collapsed state.
+  // Mouse shortcut: clicking the aside chrome toggles it. Nav links and the
+  // collapse button stop propagation so they don't also flip it. The aside
+  // carries no button role — it wraps the nav, and the bottom button is the
+  // one control assistive tech and the keyboard use to toggle.
   const toggleCollapsed = () => setIsCollapsed((v) => !v);
+  const toggleLabel = isCollapsed ? t("expandSidebar") : t("collapseSidebar");
 
   return (
     <aside
       onClick={toggleCollapsed}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        // Only when the aside itself has focus. Without this guard, pressing
-        // Enter on a focused nav link bubbles up here and collapses the rail
-        // on every keyboard navigation.
-        if (e.target !== e.currentTarget) return;
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          toggleCollapsed();
-        }
-      }}
-      aria-label={isCollapsed ? t("expandSidebar") : t("collapseSidebar")}
-      aria-expanded={!isCollapsed}
       className={cn(
         "bg-card border-r border-border flex flex-col h-full transition-all duration-300 cursor-pointer select-none",
         isCollapsed ? "w-16" : "w-64"
       )}
     >
-      <nav className="flex-1 p-3 pt-4">
+      <nav id="bank-sidebar-nav" className="flex-1 p-3 pt-4">
         <ul className="space-y-1">
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -124,6 +112,8 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
                     isCollapsed && "justify-center px-0"
                   )}
                   title={isCollapsed ? item.label : undefined}
+                  aria-label={item.label}
+                  aria-current={isActive ? "page" : undefined}
                 >
                   <Icon className="w-5 h-5 flex-shrink-0" />
                   {!isCollapsed && <span>{item.label}</span>}
@@ -134,8 +124,7 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
         </ul>
       </nav>
 
-      {/* Collapse/Expand button at bottom — kept as an explicit affordance
-          alongside the ambient click-to-toggle on the aside chrome. */}
+      {/* Collapse/Expand button at bottom — the accessible toggle. */}
       <div className="p-3 border-t border-border">
         {apiVersion && (
           <div
@@ -158,7 +147,10 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
             "w-full flex items-center gap-3 px-4 py-2 rounded-lg text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer",
             isCollapsed && "justify-center px-0"
           )}
-          title={isCollapsed ? t("expandSidebar") : t("collapseSidebar")}
+          aria-expanded={!isCollapsed}
+          aria-controls="bank-sidebar-nav"
+          aria-label={toggleLabel}
+          title={toggleLabel}
         >
           {isCollapsed ? (
             <ChevronRight className="w-5 h-5" />

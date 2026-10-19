@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Trash2, Search, X, Plus } from "lucide-react";
@@ -347,9 +348,18 @@ export function BanksOverview() {
                       />
                     </TableCell>
                     <TableCell>
-                      <div className="font-medium text-card-foreground">
+                      {/* A real link so the row is reachable by keyboard; the
+                          row's own onClick stays as the mouse shortcut. */}
+                      <Link
+                        href={bankRoute(bank.bank_id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCurrentBank(bank.bank_id);
+                        }}
+                        className="font-medium text-card-foreground hover:underline focus-visible:underline"
+                      >
                         {bank.name || bank.bank_id}
-                      </div>
+                      </Link>
                       {bank.name && bank.name !== bank.bank_id && (
                         <div className="truncate text-xs text-muted-foreground">{bank.bank_id}</div>
                       )}
