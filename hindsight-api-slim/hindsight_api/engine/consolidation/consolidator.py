@@ -2443,6 +2443,12 @@ async def _process_memory_batch(
     # When obs_tags_override is set, use it as the observation scope for all facts.
     t0 = time.perf_counter()
     observation_scope_tags = obs_tags_override if obs_tags_override is not None else None
+    # Every recall's query vector in ONE embedder call: each recall embedding its own fact
+    # text cost one round trip per fact, up to batch_size × parallelism at once (#5647).
+    # Same texts, same input type, so the vectors are the ones each recall made itself.
+    query_embeddings = await embedding_utils.generate_embeddings_batch(
+        memory_engine.embeddings, [m["text"] for m in memories], input_type="query"
+    )
     recall_tasks = [
         _find_related_observations(
             memory_engine=memory_engine,
@@ -2451,8 +2457,9 @@ async def _process_memory_batch(
             request_context=request_context,
             tags=observation_scope_tags if observation_scope_tags is not None else (m.get("tags") or []),
             config=config,
+            query_embedding=query_embedding,
         )
-        for m in memories
+        for m, query_embedding in zip(memories, query_embeddings, strict=True)
     ]
     # A failed recall must fail the batch rather than degrade to "no related
     # observations": proceeding with an empty candidate set would hide an
@@ -3318,6 +3325,7 @@ async def _find_related_observations(
     request_context: "RequestContext",
     tags: list[str] | None = None,
     config: Any = None,
+    query_embedding: list[float] | None = None,
 ) -> "RecallResult":
     """
     Find observations related to the given query using optimized recall.
@@ -3330,6 +3338,7 @@ async def _find_related_observations(
 
     Args:
         tags: Optional tags to filter observations (uses all_strict matching for security)
+        query_embedding: ``query`` already embedded with input_type="query"; None embeds it here.
 
     Returns:
         List of related observations with their tags, source memories, and dates
@@ -3382,6 +3391,7 @@ async def _find_related_observations(
             # to the LLM, which then UPDATEs instead of creating a duplicate.
             reranking="interleave",
             _quiet=True,  # Suppress logging
+            _query_embedding=query_embedding,
         )
     finally:
         if recall_span:

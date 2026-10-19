@@ -705,7 +705,9 @@ async def test_dedup_update_all_updated_sources_deleted_skips_fold_and_delete() 
 
 
 def _batch_engine():
-    return types.SimpleNamespace(_consolidation_llm_config=types.SimpleNamespace(with_config=lambda *a, **k: object()))
+    return types.SimpleNamespace(
+        embeddings=object(), _consolidation_llm_config=types.SimpleNamespace(with_config=lambda *a, **k: object())
+    )
 
 
 async def _run_create_batch(create_action_result: str):
@@ -720,6 +722,11 @@ async def _run_create_batch(create_action_result: str):
             C,
             "_find_related_observations",
             new=AsyncMock(return_value=types.SimpleNamespace(results=[], source_facts={})),
+        ),
+        patch.object(
+            C.embedding_utils,
+            "generate_embeddings_batch",
+            new=AsyncMock(side_effect=lambda _backend, texts, **_kw: [[0.1] for _ in texts]),
         ),
         patch.object(C, "_consolidate_batch_with_llm", new=AsyncMock(return_value=llm_result)),
         patch.object(C, "_effective_scope_limit", return_value=-1),
@@ -793,7 +800,7 @@ async def test_process_batch_embeds_all_actions_in_one_call() -> None:
             C._CreateAction(text="Updated.", source_fact_ids=[mem_ids[2]]),
         ],
     )
-    embed = AsyncMock(side_effect=lambda _backend, texts: [[float(i)] for i in range(len(texts))])
+    embed = AsyncMock(side_effect=lambda _backend, texts, **_kw: [[float(i)] for i in range(len(texts))])
     with (
         patch.object(
             C,
@@ -821,7 +828,44 @@ async def test_process_batch_embeds_all_actions_in_one_call() -> None:
             request_context=object(),
             config=object(),
         )
-    embed.assert_awaited_once()
+    # The first call is the recall queries (#5647); the second is every action's text.
+    assert embed.await_count == 2
     assert embed.await_args.args[1] == ["Updated.", "First new.", "Second new."]
     assert update_action.await_args.kwargs["prepared"].embedding_str == "[0.0]"
     assert [c.kwargs["prepared"].embedding_str for c in create_action.await_args_list] == ["[1.0]", "[2.0]"]
+
+
+async def test_process_batch_embeds_recall_queries_in_one_call() -> None:
+    # #5647: the batch's related-observation recalls get their query vectors from ONE
+    # embedder call, made query-side, and each recall gets the vector of its own fact.
+    from hindsight_api.engine.consolidation import consolidator as C
+
+    memories = [{"id": str(uuid.uuid4()), "text": f"fact {i}", "tags": []} for i in range(3)]
+    embed = AsyncMock(side_effect=lambda _backend, texts, **_kw: [[float(i)] for i in range(len(texts))])
+    find = AsyncMock(return_value=types.SimpleNamespace(results=[], source_facts={}))
+    with (
+        patch.object(C, "_find_related_observations", new=find),
+        patch.object(C, "_consolidate_batch_with_llm", new=AsyncMock(return_value=C._BatchLLMResult())),
+        patch.object(C, "_effective_scope_limit", return_value=-1),
+        patch.object(C, "_config_for_scope", side_effect=lambda config, _tags: config),
+        patch.object(C, "_dedup_active", return_value=False),
+        patch.object(C, "_live_source_ids", new=AsyncMock(side_effect=lambda _pool, _bank, ids: {str(i) for i in ids})),
+        patch.object(C.embedding_utils, "generate_embeddings_batch", new=embed),
+    ):
+        await C._process_memory_batch(
+            pool=_DedupBackend(_DedupConn()),
+            memory_engine=_batch_engine(),
+            llm_config=object(),
+            bank_id="bank1",
+            memories=memories,
+            request_context=object(),
+            config=object(),
+        )
+    embed.assert_awaited_once()
+    assert embed.await_args.args[1] == ["fact 0", "fact 1", "fact 2"]
+    assert embed.await_args.kwargs["input_type"] == "query"
+    assert {c.kwargs["query"]: c.kwargs["query_embedding"] for c in find.await_args_list} == {
+        "fact 0": [0.0],
+        "fact 1": [1.0],
+        "fact 2": [2.0],
+    }

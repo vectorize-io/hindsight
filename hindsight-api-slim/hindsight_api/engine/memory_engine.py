@@ -8946,6 +8946,11 @@ class MemoryEngine(MemoryEngineInterface):
         temporal_window: TemporalWindow | None = None,
         _connection_budget: int | None = None,
         _quiet: bool = False,
+        # A vector the caller already embedded from ``query`` with input_type="query", so a
+        # caller recalling many queries at once (consolidation) pays one embedder call for
+        # all of them instead of one each (#5647). It must be the query-side vector of this
+        # exact text: a stored document vector differs on asymmetric models.
+        _query_embedding: list[float] | None = None,
         reranking: RecallReranking = "cross_encoder",
     ) -> RecallResultModel:
         """
@@ -9214,6 +9219,7 @@ class MemoryEngine(MemoryEngineInterface):
                             temporal_window=temporal_window,
                             connection_budget=_connection_budget,
                             quiet=_quiet,
+                            query_embedding=_query_embedding,
                             include_source_facts=include_source_facts,
                             max_source_facts_tokens=max_source_facts_tokens,
                             max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
@@ -9389,6 +9395,7 @@ class MemoryEngine(MemoryEngineInterface):
         temporal_window: TemporalWindow | None = None,
         connection_budget: int | None = None,
         quiet: bool = False,
+        query_embedding: list[float] | None = None,
         include_source_facts: bool = False,
         max_source_facts_tokens: int = 4096,
         max_source_facts_tokens_per_observation: int = -1,
@@ -9486,12 +9493,13 @@ class MemoryEngine(MemoryEngineInterface):
 
             try:
                 get_metrics_collector().record_recall_phase("swr_prelude", time.perf_counter() - backend_acquire_start)
-                query_embeddings = await embedding_utils.generate_embeddings_batch(
-                    self.embeddings,
-                    [query],
-                    input_type="query",
-                )
-                query_embedding = query_embeddings[0]
+                if query_embedding is None:
+                    query_embeddings = await embedding_utils.generate_embeddings_batch(
+                        self.embeddings,
+                        [query],
+                        input_type="query",
+                    )
+                    query_embedding = query_embeddings[0]
                 step_duration = time.perf_counter() - step_start
                 log_buffer.append(f"  [1] Generate query embedding: {step_duration:.3f}s")
             finally:
