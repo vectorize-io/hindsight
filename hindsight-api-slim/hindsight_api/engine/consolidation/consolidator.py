@@ -2600,13 +2600,15 @@ async def _process_memory_batch(
         )
 
     # --- Prepare: updates -----------------------------------------------------
-    # Each action is prepared on its own: a liveness preflight, an embedding and, with semantic
-    # dedup on, a nearest-observation probe and possibly a focused LLM verdict. None of it depends
-    # on another action's preparation — the probes read the state the batch started from, which is
-    # also why two near-twin CREATEs in one response can both land (see below) — so the actions are
-    # prepared concurrently. Done one after another, a response with many actions paid every
-    # round trip and every dedup verdict in sequence. Order is preserved: the lists below keep the
-    # response's order, which the apply step relies on.
+    # Each action is prepared in three steps: cheap in-memory checks (sources resolved, security,
+    # a liveness preflight), an embedding and, with semantic dedup on, a nearest-observation probe
+    # and possibly a focused LLM verdict. The checks run first for every action so that the
+    # embeddings of all the survivors go out in ONE embedder call (#5552) — embedded one action at
+    # a time, a remote embedder cost one round trip per action. The dedup probes then run
+    # concurrently: none depends on another action's preparation — they read the state the batch
+    # started from, which is also why two near-twin CREATEs in one response can both land (see
+    # below). Order is preserved: the lists below keep the response's order, which the apply step
+    # relies on.
     prepare_slots = asyncio.Semaphore(_PREPARE_CONCURRENCY)
 
     # Every action's sources are facts of this batch, so ONE liveness read answers the preflight
@@ -2617,7 +2619,7 @@ async def _process_memory_batch(
         async with prepare_slots:
             return await coro
 
-    async def _prepare_update(update: _UpdateAction) -> _PreparedUpdate | None:
+    def _check_update(update: _UpdateAction) -> _PreparedUpdate | None:
         source_mems = [mem_by_id[fid] for fid in update.source_fact_ids if fid in mem_by_id]
         if not source_mems:
             _log_unresolved_action("update", update.source_fact_ids, update.text, perf)
@@ -2643,36 +2645,35 @@ async def _process_memory_batch(
                 f"{update.observation_id} were deleted before embedding"
             )
             return None
-        embedding_str = await _embed_observation_text(memory_engine, update.text, perf)
-        prepared = _PreparedUpdate(
+        return _PreparedUpdate(
             update=update,
             model=model,
             source_mems=source_mems,
             source_memory_ids=source_memory_ids,
             source_fact_tags=agg.tags,
             source_bounds=_TemporalBounds.of(agg),
-            embedding_str=embedding_str,
+            embedding_str=None,
         )
+
+    async def _adjudicate_update(prepared: _PreparedUpdate) -> _PreparedUpdate:
         # Reconcile the rewritten observation against its neighbours: the re-embed may have
         # drifted it into a near-twin of another existing observation (the residual-duplicate
         # source). Adjudicated here, folded inside the transaction below.
-        if dedup_enabled and embedding_str is not None:
+        if dedup_enabled and prepared.embedding_str is not None:
             prepared.dedup = await _dedup_adjudicate(
                 pool,
                 memory_engine,
                 bank_id,
                 config,
                 dedup_llm_config,
-                update.text,
-                embedding_str,
-                agg.tags,
-                exclude_id=update.observation_id,
+                prepared.update.text,
+                prepared.embedding_str,
+                prepared.source_fact_tags,
+                exclude_id=prepared.update.observation_id,
             )
         return prepared
 
-    prepared_updates: list[_PreparedUpdate] = [
-        p for p in await _gather_or_cancel([_bounded(_prepare_update(u)) for u in llm_result.updates]) if p is not None
-    ]
+    checked_updates = [p for p in map(_check_update, llm_result.updates) if p is not None]
 
     # --- Prepare: creates -----------------------------------------------------
     # Deterministic dedup guard: map the observations the LLM was SHOWN by their
@@ -2686,7 +2687,7 @@ async def _process_memory_batch(
     # response (the model occasionally UPDATEs the twin to text X and also CREATEs X).
     update_texts = {_norm_obs_text(u.text) for u in llm_result.updates if u.text}
 
-    async def _prepare_create(create: _CreateAction) -> _PreparedCreate | None:
+    def _check_create(create: _CreateAction) -> _PreparedCreate | None:
         source_mems = [mem_by_id[fid] for fid in create.source_fact_ids if fid in mem_by_id]
         if not source_mems:
             _log_unresolved_action("create", create.source_fact_ids, create.text, perf)
@@ -2712,15 +2713,16 @@ async def _process_memory_batch(
         if not any(str(mid) in live_before_prepare for mid in create_source_ids):
             logger.debug(f"Create skipped: all {len(create_source_ids)} source memories were deleted before embedding")
             return None
-        embedding_str = await _embed_observation_text(memory_engine, create.text, perf)
-        prepared_create = _PreparedCreate(
+        return _PreparedCreate(
             text=create.text,
             source_mems=source_mems,
             source_memory_ids=create_source_ids,
             source_fact_tags=agg.tags,
             agg=agg,
-            embedding_str=embedding_str,
+            embedding_str=None,
         )
+
+    async def _adjudicate_create(prepared_create: _PreparedCreate) -> _PreparedCreate:
         # Semantic near-duplicate reconciliation: merge this CREATE into an existing
         # near-identical observation (LLM-adjudicated, 1-by-1) instead of inserting a dup.
         # The probe reads the state the batch started from, so two near-twin CREATEs in ONE
@@ -2733,16 +2735,30 @@ async def _process_memory_batch(
                 bank_id,
                 config,
                 dedup_llm_config,
-                create.text,
-                embedding_str,
-                agg.tags,
+                prepared_create.text,
+                prepared_create.embedding_str,
+                prepared_create.source_fact_tags,
                 exclude_id=None,
             )
         return prepared_create
 
-    prepared_creates: list[_PreparedCreate] = [
-        p for p in await _gather_or_cancel([_bounded(_prepare_create(c)) for c in llm_result.creates]) if p is not None
-    ]
+    checked_creates = [p for p in map(_check_create, llm_result.creates) if p is not None]
+
+    # One embedder call for every action that survived its checks.
+    vectors = await _embed_observation_texts(
+        memory_engine, [p.update.text for p in checked_updates] + [p.text for p in checked_creates], perf
+    )
+    for prepared_update in checked_updates:
+        prepared_update.embedding_str = vectors.get(prepared_update.update.text)
+    for prepared_create in checked_creates:
+        prepared_create.embedding_str = vectors.get(prepared_create.text)
+
+    prepared_updates: list[_PreparedUpdate] = await _gather_or_cancel(
+        [_bounded(_adjudicate_update(p)) for p in checked_updates]
+    )
+    prepared_creates: list[_PreparedCreate] = await _gather_or_cancel(
+        [_bounded(_adjudicate_create(p)) for p in checked_creates]
+    )
 
     # --- Apply: one transaction for everything this LLM response decided ------
     deleted_count = 0
@@ -3283,11 +3299,27 @@ async def _embed_observation_text(
     thing consolidation does per action, and it must finish before the batch's single write
     transaction opens.
     """
+    return (await _embed_observation_texts(memory_engine, [text], perf)).get(text)
+
+
+async def _embed_observation_texts(
+    memory_engine: "MemoryEngine",
+    texts: list[str],
+    perf: ConsolidationPerfLog | None = None,
+) -> dict[str, str]:
+    """Embed observation texts in ONE embedder call, keyed by text to its pgvector literal.
+
+    The embedder batches its input internally, so a batch's N actions cost one round trip
+    instead of N (#5552). Repeated texts are embedded once; an empty list makes no call.
+    """
+    unique = list(dict.fromkeys(texts))
+    if not unique:
+        return {}
     t0 = time.perf_counter()
-    embeddings = await embedding_utils.generate_embeddings_batch(memory_engine.embeddings, [text])
+    embeddings = await embedding_utils.generate_embeddings_batch(memory_engine.embeddings, unique)
     if perf:
         perf.record_timing("embedding", time.perf_counter() - t0)
-    return str(embeddings[0]) if embeddings else None
+    return {text: str(embedding) for text, embedding in zip(unique, embeddings, strict=True)}
 
 
 async def _find_related_observations(
