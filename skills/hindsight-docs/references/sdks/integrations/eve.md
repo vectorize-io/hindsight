@@ -20,6 +20,12 @@ Every read and write is partitioned by the locked scope key: one Hindsight bank 
 ## Install
 
 ```bash
+eve add memory/hindsight
+```
+
+That installs `@vectorize-io/hindsight-eve` and writes the memory slot shown below. To wire it up yourself instead:
+
+```bash
 npm install @vectorize-io/hindsight-eve
 ```
 
@@ -27,7 +33,7 @@ npm install @vectorize-io/hindsight-eve
 
 ## Quick Start
 
-Create one file:
+One file, which is what `eve add` writes:
 
 ```ts
 // agent/memory/hindsight.ts
@@ -115,6 +121,12 @@ Run your agent. Tell it a durable preference in one session ("whenever you write
 0.2 wired memory through two authored files (`agent/instructions/hindsight.ts` with `hindsightMemory()` and `agent/hooks/hindsight.ts` with `hindsightRetainHook()`), before Eve had a memory provider contract. Replace both with the single `agent/memory/hindsight.ts` above. The old entrypoints still ship as `hindsightAutoRecall()` and `hindsightRetainHook()` (deprecated, removed in the next release); `hindsightMemory()` now returns the provider.
 
 What changes: recall uses the live user message instead of a fixed broad query, memory is isolated per scope instead of one bank for everyone, and recalled context arrives as a slot-attributed message rather than system instructions.
+
+The registry item moved with it: `eve add extension/hindsight` is now `eve add memory/hindsight`
+([vercel/eve#4963](https://github.com/vercel/eve/pull/4963)). The old path still resolves, but if
+you installed with it before, delete `agent/instructions/hindsight.ts` and
+`agent/hooks/hindsight.ts` first — a leftover 0.2-shaped instructions file fails `eve build` with
+`Unknown key "recall"`.
 
 ## Links
 
