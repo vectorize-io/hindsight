@@ -184,3 +184,21 @@ async def test_bank_default_scopes_observations_by_glob(memory, request_context,
         assert observation_tags <= {("topic:coffee",), ("session:c", "topic:coffee")}, "An explicit value wins"
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_bank_config_rejects_a_malformed_default(memory, request_context):
+    bank_id = f"test_default_scopes_bad_{uuid.uuid4().hex[:8]}"
+    try:
+        with pytest.raises(ValueError, match="default_observation_scopes"):
+            await memory.update_bank_config(
+                bank_id, {"default_observation_scopes": ["topic:*"]}, request_context=request_context
+            )
+        with pytest.raises(ValueError, match="default_observation_scopes"):
+            await memory.update_bank_config(
+                bank_id,
+                {"retain_strategies": {"support": {"default_observation_scopes": "by_topic"}}},
+                request_context=request_context,
+            )
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)

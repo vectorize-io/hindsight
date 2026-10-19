@@ -381,7 +381,7 @@ With a memory tagged `["topic:billing", "user:alice", "source:agent-a", "session
 With `[["topic:*"]]`, Alice's and Bob's billing facts build one observation tagged only `topic:billing`. A recall filtered to `user:alice` won't match it, and anyone who can see `topic:billing` reads both. Add `user:*` to the scope to keep users apart.
 #### Bank default
 
-When an item sends no `observation_scopes`, the bank's [`default_observation_scopes`](./memory-banks.md#default_observation_scopes) applies (`combined` unless set). It accepts any value above, so `[["topic:*"]]` there groups every client's memories by topic without changing any client. The default is stored on each memory at retain, so changing it later doesn't re-scope memories already retained — move those with a [document PATCH](../observations.md#changing-scopes).
+When an item sends no `observation_scopes`, the bank's [`default_observation_scopes`](./memory-banks.md#default_observation_scopes) applies (`combined` unless set). It accepts any value above, so `[["topic:*"]]` there groups every client's memories by topic without changing any client. The default is stored on each memory at retain, so changing it later doesn't re-scope memories already retained (reprocessing a document applies the current default) — move them with a [document PATCH](../observations.md#changing-scopes).
 
 ### Response
 

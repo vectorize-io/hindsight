@@ -2826,7 +2826,7 @@ class UpdateDocumentRequest(BaseModel):
         default=None,
         title="UpdateDocumentObservationScopes",
         description="New observation scoping for the document's memories, with the same values retain "
-        "accepts (send 'combined' to return to the default). Use it to move memories retained under one "
+        "accepts (send 'combined' to scope by each memory's full tag set). Use it to move memories retained under one "
         "scoping to another — e.g. per-session documents to 'shared' — without re-extracting them. "
         "Memories whose resolved scopes change lose their observations and are re-consolidated; the rest "
         "keep theirs. Also becomes the scoping a later reprocess of the document uses.",

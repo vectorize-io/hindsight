@@ -243,7 +243,7 @@ This is useful when you want full control over consolidation timing — for exam
 
 ### default_observation_scopes {#default_observation_scopes}
 
-The [`observation_scopes`](./retain.md#observation_scopes) applied to retained items that send none. Defaults to `combined`, which groups each memory by its full tag set. Set it to `[["topic:*"]]` to group memories by their own `topic:` tags only — e.g. ones added by an [entity label](#entity-labels) with `tag: true` — so memories about the same subject from different agents or sessions consolidate together without changing any client. Stored on each memory at retain, so changing it never re-scopes memories already retained.
+The [`observation_scopes`](./retain.md#observation_scopes) applied to retained items that send none. Defaults to `combined`, which groups each memory by its full tag set. Set it to `[["topic:*"]]` to group memories by their own `topic:` tags only — e.g. ones added by an [entity label](#entity-labels) with `tag: true` — so memories about the same subject from different agents or sessions consolidate together without changing any client. Stored on each memory at retain, so changing it doesn't re-scope memories already retained — until their document is reprocessed, which applies the current default.
 
 ### observations_mission
 

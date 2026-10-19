@@ -602,7 +602,14 @@ class ConfigResolver:
                 if not isinstance(strategy_overrides, dict):
                     raise ValueError(f"Invalid retain strategy {strategy_name!r}: must be an object")
                 try:
-                    _validate_config_value_types(normalize_config_dict(strategy_overrides))
+                    normalized_overrides = normalize_config_dict(strategy_overrides)
+                    _validate_config_value_types(normalized_overrides)
+                    # The type check above only sees "str | list"; a strategy's default scopes are
+                    # stamped onto its items, so they need the same shape check as the top level.
+                    if normalized_overrides.get("default_observation_scopes") is not None:
+                        validate_observation_scopes(
+                            normalized_overrides["default_observation_scopes"], "default_observation_scopes"
+                        )
                 except ValueError as e:
                     raise ValueError(f"Invalid retain strategy {strategy_name!r}: {e}") from e
 
