@@ -174,3 +174,33 @@ async def test_a_failed_async_update_keeps_the_previous_version_until_its_retry(
             break
         await asyncio.sleep(1)
     await _assert_the_revision_landed(client, original)
+
+
+async def _deferred_operation(client, bank: str):
+    for _ in range(60):
+        listing = await client.operations.list_operations(bank, status="pending", limit=100)
+        deferred = [op for op in listing.operations if op.next_retry_at is not None]
+        if deferred:
+            return deferred[0]
+        await asyncio.sleep(1)
+    raise AssertionError("the retain was never deferred to the provider's quota reset")
+
+
+async def test_a_retain_deferred_to_a_quota_reset_runs_now_on_retry(client, llm, chunked_bank, settled):
+    """A provider out of quota says when it resets, and the worker parks the retain
+    until then. Providers overstate that window — days out for a quota that is back
+    in hours (#5684) — so retrying a parked operation runs it now, not at the reset."""
+    llm.on_step("extract_facts", contains="Lisbon").fails_with_status(429, retry_after_seconds=3 * 86400)
+
+    await client.aretain(bank_id=chunked_bank, content=REVISED, document_id=DOCUMENT_ID, retain_async=True)
+    deferred = await _deferred_operation(client, chunked_bank)
+    assert await _fact_texts(client, chunked_bank) == []
+
+    llm.reset()
+    _extracts_the_revision(llm)
+    llm.on_step("extract_facts", contains="drizzle").returns(extracted())
+    llm.on_step("consolidate").returns(consolidation())
+    await client.operations.retry_operation(chunked_bank, deferred.id)
+
+    await settled(chunked_bank)
+    await _assert_the_revision_landed(client, chunked_bank)

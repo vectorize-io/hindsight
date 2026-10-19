@@ -81,7 +81,10 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
 
         if reply.error_status is not None:
             return _provider_error(
-                f"stub provider error {reply.error_status}", code="stub_error", status=reply.error_status
+                f"stub provider error {reply.error_status}",
+                code="stub_error",
+                status=reply.error_status,
+                retry_after_seconds=reply.retry_after_seconds,
             )
 
         return JSONResponse(
@@ -301,11 +304,14 @@ def _usage(
     return usage
 
 
-def _provider_error(message: str, *, code: str, status: int = 400) -> JSONResponse:
+def _provider_error(
+    message: str, *, code: str, status: int = 400, retry_after_seconds: int | None = None
+) -> JSONResponse:
     """The error envelope OpenAI-compatible clients expect, so the SDK parses it."""
     return JSONResponse(
         status_code=status,
         content={"error": {"message": message, "type": "invalid_request_error", "code": code, "param": None}},
+        headers={"retry-after": str(retry_after_seconds)} if retry_after_seconds is not None else None,
     )
 
 

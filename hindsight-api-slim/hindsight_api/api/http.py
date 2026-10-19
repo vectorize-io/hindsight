@@ -8475,7 +8475,10 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/operations/{operation_id}/retry",
         response_model=RetryOperationResponse,
         summary="Retry a failed async operation",
-        description="Re-queue a failed async operation so the worker picks it up again",
+        description=(
+            "Re-queue a failed or cancelled async operation so the worker picks it up again. "
+            "On a deferred operation (pending with a future next_retry_at), runs it now."
+        ),
         operation_id="retry_operation",
         tags=["Operations"],
     )

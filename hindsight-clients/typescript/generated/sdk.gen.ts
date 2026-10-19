@@ -1174,7 +1174,7 @@ export const getOperationStatus = <ThrowOnError extends boolean = false>(
 /**
  * Retry a failed async operation
  *
- * Re-queue a failed async operation so the worker picks it up again
+ * Re-queue a failed or cancelled async operation so the worker picks it up again. On a deferred operation (pending with a future next_retry_at), runs it now.
  */
 export const retryOperation = <ThrowOnError extends boolean = false>(
   options: Options<RetryOperationData, ThrowOnError>

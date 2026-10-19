@@ -441,7 +441,12 @@ export function BankOperationsView() {
     }
   };
 
-  // Retries only the failed operations on the current page, oldest first.
+  // Deferred = still pending but parked until a future time (e.g. a
+  // provider-reported quota reset). Retry runs it now instead of waiting.
+  const isDeferred = (op: { status?: string | null; next_retry_at?: string | null }) =>
+    op.status === "pending" && !!op.next_retry_at && Date.parse(op.next_retry_at) > Date.now();
+
+  // Retries only the failed and deferred operations on the current page, oldest first.
   // Sequential rather than Promise.all so a page of retries doesn't hit the API
   // at once; a failed call is skipped (the client already toasts it) and the
   // rest go on. Workers claim by created_at, which a retry keeps, so the oldest
@@ -449,7 +454,7 @@ export function BankOperationsView() {
   const handleRetryAll = async () => {
     if (!currentBank) return;
     const failed = operations
-      .filter((op) => op.status === "failed")
+      .filter((op) => op.status === "failed" || isDeferred(op))
       .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
     setRetryingAll(true);
     let done = 0;
@@ -466,7 +471,7 @@ export function BankOperationsView() {
     notify(t("retryAllDone", { done, total: failed.length }));
     await loadOperations();
   };
-  const failedOnPage = operations.filter((op) => op.status === "failed").length;
+  const failedOnPage = operations.filter((op) => op.status === "failed" || isDeferred(op)).length;
 
   const handleDeleteOperation = async (operationId: string) => {
     if (!currentBank) return;
@@ -598,7 +603,7 @@ export function BankOperationsView() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {statusFilter === "failed" && failedOnPage > 0 && (
+          {(statusFilter === "failed" || statusFilter === "pending") && failedOnPage > 0 && (
             <Button variant="outline" size="sm" onClick={handleRetryAll} disabled={retryingAll}>
               {retryingAll ? <Spinner size="xs" /> : <RotateCcw className="w-3 h-3 mr-1" />}
               {t("action.retryAll", { count: failedOnPage })}
@@ -717,7 +722,9 @@ export function BankOperationsView() {
                             {cancellingOpId === op.id ? "" : t("action.cancel")}
                           </Button>
                         )}
-                        {(op.status === "failed" || op.status === "cancelled") && (
+                        {(op.status === "failed" ||
+                          op.status === "cancelled" ||
+                          isDeferred(op)) && (
                           <Button
                             variant="ghost"
                             size="sm"
@@ -934,7 +941,8 @@ export function BankOperationsView() {
                         </Button>
                       )}
                       {(selectedOperation.status === "failed" ||
-                        selectedOperation.status === "cancelled") && (
+                        selectedOperation.status === "cancelled" ||
+                        isDeferred(selectedOperation)) && (
                         <Button
                           variant="outline"
                           size="sm"

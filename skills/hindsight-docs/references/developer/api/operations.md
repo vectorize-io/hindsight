@@ -20,7 +20,7 @@ By default, every operation runs in-process: no external queue, no extra process
 
 | Status | Meaning |
 |--------|---------|
-| `pending` | The row is queued. Either no worker has picked it up yet, or an extension has parked it via `next_retry_at` in the future (e.g., for backpressure). |
+| `pending` | The row is queued. Either no worker has picked it up yet, or it is parked via `next_retry_at` in the future (e.g., backpressure, or an LLM provider's reported quota reset). `POST /…/retry` on a parked operation clears `next_retry_at` so it runs now. |
 | `processing` | A worker has claimed the row and is actively running the handler. |
 | `completed` | The handler returned successfully. |
 | `failed` | The handler raised. `error_message` carries the reason; you can re-queue with `POST /…/retry`. |
