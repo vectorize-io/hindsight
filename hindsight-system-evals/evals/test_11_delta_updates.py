@@ -6,10 +6,8 @@ the next refresh starts after it, and nothing but the page shows it happened.
 The decision-model gate in front of the delta makes that a per-memory yes/no,
 so these are the updates a yes/no on one memory finds hardest to see.
 
-Run it with the gate on and off to compare them:
+Run it with the gate on (a decision model set up) and off (no decision model) to compare them:
 
-    HINDSIGHT_EVAL_SET_MENTAL_MODEL_REFRESH_DELTA_GATE=true \\
-    HINDSIGHT_EVAL_SET_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL=true \\
     HINDSIGHT_EVAL_SET_DECISION_MODEL_PROVIDER=typesafe \\
     HINDSIGHT_EVAL_SET_DECISION_MODEL_API_KEY=... uv run pytest evals/test_11_delta_updates.py --full
 """

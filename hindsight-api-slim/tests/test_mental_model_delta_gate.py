@@ -1,9 +1,9 @@
 """The decision-model gate in front of a delta knowledge-page refresh.
 
-With ``mental_model_refresh_delta_gate`` on and a decision model set up, a delta refresh
-reads the memories new since its last run, asks the decision model which could change the
-page, and hands only those to the delta LLM call — reflect never runs. None kept means no
-LLM call at all, and the watermark still moves past them.
+With a decision model set up, a delta refresh reads the memories new since its last run,
+asks the decision model which could change the page, and hands only those to the delta LLM
+call — reflect never runs. None kept means no LLM call at all, and the watermark still moves
+past them.
 """
 
 import uuid
@@ -15,7 +15,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from hindsight_api import MemoryEngine, RequestContext
-from hindsight_api.config import ENV_MENTAL_MODEL_REFRESH_DELTA_GATE, clear_config_cache
 from hindsight_api.engine.memories import get_memories
 from hindsight_api.engine.memory_engine import MentalModelRefreshError, fq_table
 from hindsight_api.engine.reflect.delta_ops import DeltaOperationList
@@ -66,16 +65,10 @@ async def _page_with_new_memories(memory: MemoryEngine, request_context: Request
     return _Page(bank_id=bank_id, mm_id=mm["id"])
 
 
-def _set_gate(monkeypatch, on: bool) -> None:
-    monkeypatch.setenv(ENV_MENTAL_MODEL_REFRESH_DELTA_GATE, str(on).lower())
-    clear_config_cache()
-
-
 @pytest.fixture
 def gated(memory: MemoryEngine, monkeypatch):
-    """Gate on, a decision model that keeps only the memory about preferences, and
-    reflect plus the delta LLM call recorded."""
-    _set_gate(monkeypatch, True)
+    """A decision model that keeps only the memory about preferences, and reflect plus
+    the delta LLM call recorded."""
     memory._reflect_decision_model_client = SimpleNamespace(  # type: ignore[assignment]
         could_change_page=AsyncMock(side_effect=lambda topic, page, text: "prefers" in text)
     )
@@ -96,7 +89,6 @@ def gated(memory: MemoryEngine, monkeypatch):
     monkeypatch.setattr(memory._mental_model_refresh_llm_config, "call", fake_call)
     yield calls
     monkeypatch.undo()
-    clear_config_cache()
 
 
 async def test_only_the_kept_memories_reach_the_llm(memory, request_context, gated):
@@ -143,10 +135,10 @@ async def test_nothing_kept_means_no_llm_call(memory, request_context, gated):
         ), "the watermark moves past memories the gate dropped"
 
 
-@pytest.mark.parametrize("why", ["switched_off", "bank_opted_out", "over_the_cap", "decision_model_failed"])
+@pytest.mark.parametrize("why", ["no_decision_model", "bank_opted_out", "over_the_cap", "decision_model_failed"])
 async def test_falls_back_to_reflect(memory, request_context, gated, monkeypatch, why):
-    if why == "switched_off":
-        _set_gate(monkeypatch, False)
+    if why == "no_decision_model":
+        monkeypatch.setattr(memory, "_reflect_decision_model", lambda: None)
     elif why == "over_the_cap":
         monkeypatch.setattr("hindsight_api.engine.memory_engine._DELTA_GATE_MAX_MEMORIES", 1)
     elif why == "decision_model_failed":

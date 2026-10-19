@@ -1579,6 +1579,15 @@ calls by about 40% at the same pass rate. Turn it off per bank with
 [`HINDSIGHT_API_CONSOLIDATION_USE_DECISION_MODEL`](#observations), or for every bank with
 `HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_PROVIDER=none`.
 
+**Knowledge pages.** With a decision model, a delta refresh of a knowledge page skips reflect.
+It reads the memories added since the page's last refresh and asks the decision model, for each,
+whether it could change the page. Only those reach the LLM that edits the page, together with the
+bank's directives; none of them means no LLM call at all. A memory it drops is not offered again.
+Above 200 new memories, or when the decision model fails, the refresh runs reflect as before. On
+the refresh cost eval this took a 20-memory refresh from 3 LLM calls to 1 and cut its input tokens
+by about 70%. Only the `typesafe` provider is supported, as for reflect. Turn it off per bank with
+[`HINDSIGHT_API_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL`](#reflect).
+
 ### Authentication
 
 By default, Hindsight runs without authentication. For production deployments, enable API key authentication using the built-in tenant extension:
@@ -2464,8 +2473,7 @@ export HINDSIGHT_API_OBSERVATIONS_MISSION="Observations are recurring patterns i
 |----------|-------------|---------|
 | `HINDSIGHT_API_REFLECT_MAX_ITERATIONS` | Max tool call iterations before forcing a response | `10` |
 | `HINDSIGHT_API_REFLECT_USE_DECISION_MODEL` | When a decision model is set up for reflect (see [Decision model](#decision-model)), reflect is decision-orchestrated: one LLM call rewrites the request into a search query (or finds there is nothing to search, and reflect returns an empty answer at once), the layers run in parallel with that query, and the decision model prunes the evidence and judges whether it already answers the request. If it does, the answer is the next LLM call. If not, the LLM writes the next query and another parallel round runs, judged the same way. Fewer LLM calls than agent turns, so it costs less. If the decision model fails, reflect falls back to agent turns. Only the `typesafe` provider is supported here for now: with another provider reflect keeps agent turns and logs a warning. Set `false` to keep agent turns (one LLM turn per retrieval layer, each writing its own query). Hierarchical (per bank). | `true` |
-| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL` | The same, for the reflect that refreshes a knowledge page. Hierarchical (per bank). | `true` |
-| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_DELTA_GATE` | Experimental. A delta knowledge-page refresh reads the memories added since its last run, asks the decision model which could change the page, and edits the page from those alone, without running reflect. No memory kept means no LLM call. The bank's directives still reach the edit; other knowledge pages do not, since a page only changes when its own memories do. A memory the decision model drops is not offered again. Falls back to reflect above 200 new memories or when the decision model fails. Server-wide. | `false` |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL` | The same, for the reflect that refreshes a knowledge page. A delta refresh skips reflect altogether: it asks the decision model which of the memories added since its last run could change the page, and edits the page from those alone (see [Decision model](#decision-model)). Set `false` to refresh with agent turns. Hierarchical (per bank). | `true` |
 | `HINDSIGHT_API_REFLECT_MAX_CONTEXT_TOKENS` | Max accumulated context tokens in the reflect loop before forcing final synthesis. Prevents `context_length_exceeded` errors on large banks. Lower this if your LLM has a context window smaller than 128K. | `100000` |
 | `HINDSIGHT_API_REFLECT_WALL_TIMEOUT` | Wall-clock timeout in seconds for the entire reflect operation. If exceeded, the request returns HTTP 504. Also bounds a whole mental-model refresh in the worker: one that runs past it is cancelled and marked failed instead of holding its worker slot. | `300` |
 | `HINDSIGHT_API_REFLECT_MISSION` | Global reflect mission (identity and reasoning framing). Overridden per bank via config API. | - |

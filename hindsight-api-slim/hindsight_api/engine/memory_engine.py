@@ -17581,15 +17581,13 @@ class MemoryEngine(MemoryEngineInterface):
         decision model is asked, per memory, whether it could change the page, and only
         those reach the delta LLM call. None of them means no LLM call at all.
 
-        None when the gate does not apply (switched off, no decision model, a store that
-        cannot list, more memories than it is worth asking about) or a question failed:
+        None when the gate does not apply (the bank opted out, no decision model, a store
+        that cannot list, more memories than it is worth asking about) or a question failed:
         the refresh then runs reflect as it always has.
 
         Sibling pages are not offered, as reflect would: a sibling changes only when its
         own memories do, and the memories in this page's scope are already here.
         """
-        if not get_config().mental_model_refresh_delta_gate:
-            return None
         resolved = await self._config_resolver.resolve_full_config(bank_id, request_context)
         if not resolved.mental_model_refresh_use_decision_model:
             return None
