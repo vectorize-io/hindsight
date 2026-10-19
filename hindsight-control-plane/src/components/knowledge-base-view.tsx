@@ -517,9 +517,10 @@ export function KnowledgeBaseView() {
 
   return (
     <div>
-      {/* Obsidian-style workspace: one frame, a file-explorer sidebar + editor pane. */}
-      <div className="flex items-stretch overflow-hidden h-[calc(100vh-13rem)] min-h-[520px]">
-        <aside className="w-1/3 flex-shrink-0 bg-muted/30 border-r border-border flex flex-col">
+      {/* Obsidian-style workspace: one frame, a file-explorer sidebar + editor pane.
+          On phones the explorer stacks above the page instead of squeezing beside it. */}
+      <div className="flex flex-col md:flex-row items-stretch overflow-hidden h-[calc(100dvh-13rem)] min-h-[520px]">
+        <aside className="w-full max-h-[45%] md:w-1/3 md:max-h-none flex-shrink-0 bg-muted/30 border-b md:border-b-0 md:border-r border-border flex flex-col">
           {/* One box for both filters: free text runs the hybrid search, `#tag` tokens
               become chips that filter the tree and the search alike. The sliders open
               the same filter against the raw endpoints. */}
@@ -675,9 +676,11 @@ export function KnowledgeBaseView() {
               <Spinner size="lg" variant="jump" />
             </div>
           ) : selected ? (
-            <div className="p-8 max-w-3xl mx-auto">
-              <div className="flex items-start justify-between gap-3">
-                <h1 className="text-2xl font-bold text-foreground">{selected.name}</h1>
+            <div className="p-4 sm:p-8 max-w-3xl mx-auto">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <h1 className="min-w-0 break-words text-2xl font-bold text-foreground">
+                  {selected.name}
+                </h1>
                 <div className="flex gap-2 shrink-0">
                   {selected.body && (
                     <DropdownMenu>

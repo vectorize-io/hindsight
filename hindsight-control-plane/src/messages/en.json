@@ -60,7 +60,8 @@
       "copied": "Copied to clipboard",
       "viaAlias": "via {aliases}"
     },
-    "viewOnGitHub": "View on GitHub"
+    "viewOnGitHub": "View on GitHub",
+    "more": "More"
   },
   "bank": {
     "bankConfiguration": "Bank Configuration",
@@ -147,7 +148,8 @@
       "collapseSidebar": "Collapse sidebar",
       "collapse": "Collapse",
       "knowledge": "Knowledge base",
-      "home": "Home"
+      "home": "Home",
+      "openNavigation": "Open navigation"
     },
     "overviewAndOperations": "Overview statistics and background operations for this memory bank.",
     "operations": "Operations",

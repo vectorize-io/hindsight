@@ -60,7 +60,8 @@
       "copied": "已复制到剪贴板",
       "viaAlias": "通过 {aliases}"
     },
-    "viewOnGitHub": "在 GitHub 查看"
+    "viewOnGitHub": "在 GitHub 查看",
+    "more": "更多"
   },
   "bank": {
     "bankConfiguration": "记忆库配置",
@@ -146,7 +147,8 @@
       "collapseSidebar": "收起侧边栏",
       "collapse": "收起",
       "knowledge": "知识库",
-      "home": "首页"
+      "home": "首页",
+      "openNavigation": "打开导航"
     },
     "overviewAndOperations": "查看此记忆库的概览统计和后台操作。",
     "operations": "操作",

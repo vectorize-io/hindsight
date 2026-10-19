@@ -227,7 +227,7 @@ export function BanksOverview() {
   // A search that matches nothing still shows the table UI, so the query can be edited.
   if (!loading && total === 0 && !search) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-80px)] bg-muted/20">
+      <div className="flex items-center justify-center h-[calc(100dvh-80px)] bg-muted/20">
         <div className="max-w-md rounded-lg border-2 border-border bg-card p-10 text-center shadow-lg">
           {/* Tumbling Hindsight mascot — loops forever as a friendly greeting. */}
           <Spinner size="xl" variant="jump" className="mx-auto mb-4" />

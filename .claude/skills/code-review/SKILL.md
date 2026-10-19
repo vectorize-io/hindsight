@@ -64,6 +64,22 @@ def process(data: UserData) -> str:
 - Next.js App Router for control plane
 - Tailwind CSS with shadcn/ui components
 
+### Control plane on phones (390px wide)
+`globals.css` already covers the page never scrolling sideways, hover-only controls
+showing on touch screens, and form fields not zooming on iOS. The checks below are
+the part a shared rule can't cover:
+- Page sub-tabs use `components/ui/underline-tabs.tsx`, not a hand-rolled button row.
+- Any row of filters, toggles or buttons wraps (`flex-wrap`) or scrolls inside itself
+  (`max-w-full overflow-x-auto` with `shrink-0 whitespace-nowrap` children).
+- No fixed widths above ~340px without a phone fallback (`w-full sm:w-[420px]`,
+  `w-[min(420px,calc(100vw-1rem))]`). Side-by-side panes stack below `md`.
+- Every table goes through `components/ui/table.tsx`: it scrolls inside its own frame
+  and keeps a 40rem floor so columns don't get squashed on a phone.
+- Form sections laid out in a grid need `min-w-0` (the shared `Section` in
+  `form-layout.tsx` has it); side-by-side inputs stack below `sm`.
+- Full-height layouts use `h-dvh`/`100dvh`, not `h-screen`/`100vh` (iOS hides the
+  bottom under the URL bar otherwise).
+
 ### Code Comments
 - **Always comment non-trivial technical decisions** with the reasoning behind the choice. If someone would ask "why is it done this way?", there should be a comment.
 - **Keep comments up to date with history** — when changing an approach, update the comment to explain what was tried before and why it was changed. Comments serve as a tracker of previous implementations that likely had problems.

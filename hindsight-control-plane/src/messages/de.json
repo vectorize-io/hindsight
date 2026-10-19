@@ -60,7 +60,8 @@
       "copied": "In Zwischenablage kopiert",
       "viaAlias": "über {aliases}"
     },
-    "viewOnGitHub": "Auf GitHub ansehen"
+    "viewOnGitHub": "Auf GitHub ansehen",
+    "more": "Mehr"
   },
   "bank": {
     "bankConfiguration": "Bankkonfiguration",
@@ -146,7 +147,8 @@
       "collapseSidebar": "Seitenleiste einklappen",
       "collapse": "Einklappen",
       "knowledge": "Wissensdatenbank",
-      "home": "Startseite"
+      "home": "Startseite",
+      "openNavigation": "Navigation öffnen"
     },
     "overviewAndOperations": "Übersichtsstatistik und Hintergrundoperationen für diesen Speicherbank.",
     "operations": "Operationen",

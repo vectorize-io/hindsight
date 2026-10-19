@@ -60,7 +60,8 @@
       "copied": "Copiado para a área de transferência",
       "viaAlias": "via {aliases}"
     },
-    "viewOnGitHub": "Ver no GitHub"
+    "viewOnGitHub": "Ver no GitHub",
+    "more": "Mais"
   },
   "bank": {
     "bankConfiguration": "Configuração do banco",
@@ -146,7 +147,8 @@
       "collapseSidebar": "Recolher barra lateral",
       "collapse": "Recolher",
       "knowledge": "Base de conhecimento",
-      "home": "Início"
+      "home": "Início",
+      "openNavigation": "Abrir navegação"
     },
     "overviewAndOperations": "Estatísticas gerais e operações em segundo plano para este banco de memória.",
     "operations": "Operações",

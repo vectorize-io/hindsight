@@ -60,7 +60,8 @@
       "copied": "クリップボードにコピーしました",
       "viaAlias": "{aliases} 経由"
     },
-    "viewOnGitHub": "GitHubで表示"
+    "viewOnGitHub": "GitHubで表示",
+    "more": "その他"
   },
   "bank": {
     "bankConfiguration": "バンク設定",
@@ -146,7 +147,8 @@
       "collapseSidebar": "サイドバーを折りたたむ",
       "collapse": "折りたたむ",
       "knowledge": "ナレッジベース",
-      "home": "ホーム"
+      "home": "ホーム",
+      "openNavigation": "ナビゲーションを開く"
     },
     "overviewAndOperations": "このメモリバンクの概要統計とバックグラウンド操作。",
     "operations": "操作",

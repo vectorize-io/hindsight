@@ -60,7 +60,8 @@
       "copied": "已複製到剪貼簿",
       "viaAlias": "透過 {aliases}"
     },
-    "viewOnGitHub": "在 GitHub 上檢視"
+    "viewOnGitHub": "在 GitHub 上檢視",
+    "more": "更多"
   },
   "bank": {
     "bankConfiguration": "記憶庫設定",
@@ -146,7 +147,8 @@
       "collapseSidebar": "收起側邊欄",
       "collapse": "收起",
       "knowledge": "知識庫",
-      "home": "首頁"
+      "home": "首頁",
+      "openNavigation": "開啟導覽"
     },
     "overviewAndOperations": "檢視此記憶庫的概覽統計和背景作業。",
     "operations": "操作",

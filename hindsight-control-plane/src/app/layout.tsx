@@ -6,7 +6,12 @@ export const metadata: Metadata = {
   description: "Control plane for the temporal semantic memory system",
   icons: {
     icon: "/favicon.png",
+    // Square, opaque mark: iOS "Add to Home Screen" and Android use these
+    // instead of a letter tile (favicon.png is non-square and transparent).
+    apple: "/apple-touch-icon.png",
   },
+  manifest: "/manifest.json",
+  appleWebApp: { title: "Hindsight" },
 };
 
 export default function RootLayout({

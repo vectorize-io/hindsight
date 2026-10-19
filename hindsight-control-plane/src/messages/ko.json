@@ -60,7 +60,8 @@
       "copied": "클립보드에 복사됨",
       "viaAlias": "{aliases} 경유"
     },
-    "viewOnGitHub": "GitHub에서 보기"
+    "viewOnGitHub": "GitHub에서 보기",
+    "more": "더 보기"
   },
   "bank": {
     "bankConfiguration": "뱅크 구성",
@@ -146,7 +147,8 @@
       "collapseSidebar": "사이드바 접기",
       "collapse": "접기",
       "knowledge": "지식 베이스",
-      "home": "홈"
+      "home": "홈",
+      "openNavigation": "탐색 열기"
     },
     "overviewAndOperations": "이 메모리 뱅크의 개요 통계 및 백그라운드 작업.",
     "operations": "작업",

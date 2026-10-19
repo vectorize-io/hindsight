@@ -582,7 +582,7 @@ export function BankOperationsView() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <h3 className="text-lg font-semibold">{t("title")}</h3>
@@ -602,7 +602,7 @@ export function BankOperationsView() {
             {statusFilter ? ` (${formatStatus(statusFilter)})` : ""}
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 min-w-0">
           {(statusFilter === "failed" || statusFilter === "pending") && failedOnPage > 0 && (
             <Button variant="outline" size="sm" onClick={handleRetryAll} disabled={retryingAll}>
               {retryingAll ? <Spinner size="xs" /> : <RotateCcw className="w-3 h-3 mr-1" />}
@@ -629,12 +629,12 @@ export function BankOperationsView() {
               ))}
             </SelectContent>
           </Select>
-          <div className="flex gap-1 bg-muted p-1 rounded-lg">
+          <div className="flex max-w-full gap-1 overflow-x-auto bg-muted p-1 rounded-lg">
             {STATUS_FILTER_VALUES.map((filter) => (
               <button
                 key={filter ?? "all"}
                 onClick={() => handleFilterChange(filter)}
-                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                className={`shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
                   statusFilter === filter
                     ? "bg-background shadow-sm"
                     : "text-muted-foreground hover:text-foreground"

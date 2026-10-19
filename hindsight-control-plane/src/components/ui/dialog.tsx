@@ -50,7 +50,7 @@ const DialogContent = React.forwardRef<
         // height to the viewport minus a gutter and let the content scroll
         // inside. Callers that need a different cap can override, since their
         // className is merged last.
-        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-5 bg-card text-card-foreground p-6 rounded-[16px] border border-border shadow-[0_24px_64px_rgba(0,0,0,0.18)] dark:shadow-[0_24px_80px_rgba(0,0,0,0.8),0_0_0_1px_rgba(100,160,255,0.08)] duration-200 max-h-[calc(100vh-4rem)] overflow-y-auto data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
+        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-5 bg-card text-card-foreground p-6 rounded-[16px] border border-border shadow-[0_24px_64px_rgba(0,0,0,0.18)] dark:shadow-[0_24px_80px_rgba(0,0,0,0.8),0_0_0_1px_rgba(100,160,255,0.08)] duration-200 max-h-[calc(100dvh-4rem)] overflow-y-auto data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
         className
       )}
       {...props}

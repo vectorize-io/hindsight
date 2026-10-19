@@ -18,7 +18,19 @@ import {
   type ComposerBlock,
 } from "@/components/content-composer";
 
-import { LanguageSwitcher } from "@/components/language-switcher";
+import { LanguageSwitcher, useSwitchLocale } from "@/components/language-switcher";
+import { SidebarMenuButton } from "@/components/sidebar";
+import { locales, localeNames, type Locale } from "@/i18n/config";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -52,6 +64,8 @@ import {
   ChevronRight,
   LogOut,
   Copy,
+  Globe,
+  MoreHorizontal,
 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "sonner";
@@ -121,6 +135,7 @@ function BankSelectorInner() {
   } = useBank();
   const { theme, toggleTheme } = useTheme();
   const { features } = useFeatures();
+  const { locale, switchLocale } = useSwitchLocale();
   const [open, setOpen] = React.useState(false);
   // One-shot spin of the header logo, fired by sidebar navigation (see the
   // "hindsight:logo-spin" listener below). Reset on animationEnd so it can replay.
@@ -555,9 +570,17 @@ function BankSelectorInner() {
     }
   };
 
+  const logout = async () => {
+    try {
+      await fetch(withBasePath("/api/auth/logout"), { method: "POST" });
+    } finally {
+      window.location.href = withBasePath("/login");
+    }
+  };
+
   return (
-    <div className="bg-card text-card-foreground px-5 py-3 border-b-4 border-primary-gradient">
-      <div className="flex items-center gap-4 text-sm">
+    <div className="bg-card text-card-foreground px-3 sm:px-5 py-3 border-b-4 border-primary-gradient">
+      <div className="flex items-center gap-2 sm:gap-4 text-sm">
         {/* Logo, split so only the mark spins on navigation while the wordmark
             stays put. The mark is the standalone favicon.png (so it can rotate
             freely); the wordmark is the right slice of the full lockup (logo.png)
@@ -566,7 +589,7 @@ function BankSelectorInner() {
         {/* The logo is the way back to the banks overview, as it is in most apps. */}
         <button
           type="button"
-          className="flex items-center h-10 select-none cursor-pointer"
+          className="flex shrink-0 items-center h-10 select-none cursor-pointer"
           aria-label={tNavBank("allBanks")}
           title={tNavBank("allBanks")}
           onClick={() => router.push("/dashboard")}
@@ -577,8 +600,9 @@ function BankSelectorInner() {
             className={cn("h-10 w-auto", logoSpinning && "animate-logo-wiggle")}
             onAnimationEnd={() => setLogoSpinning(false)}
           />
+          {/* The wordmark gives way on phones so the bank picker keeps its room. */}
           <div
-            className="h-10 w-[99px]"
+            className="hidden sm:block h-10 w-[99px]"
             style={{
               backgroundImage: `url(${withBasePath("/logo.png")})`,
               backgroundSize: "auto 100%",
@@ -589,7 +613,9 @@ function BankSelectorInner() {
         </button>
 
         {/* Separator */}
-        <div className="h-8 w-px bg-border" />
+        <div className="hidden sm:block h-8 w-px bg-border" />
+
+        {currentBank && <SidebarMenuButton />}
 
         {/* Memory Bank Selector */}
         <Popover
@@ -609,7 +635,7 @@ function BankSelectorInner() {
               variant="outline"
               role="combobox"
               aria-expanded={open}
-              className="w-[250px] justify-between font-bold border-2 border-primary hover:bg-accent"
+              className="min-w-0 flex-1 sm:flex-none sm:w-[250px] justify-between font-bold border-2 border-primary hover:bg-accent"
             >
               <span className="truncate">
                 {currentBankName || currentBank || tNavBank("select")}
@@ -617,7 +643,7 @@ function BankSelectorInner() {
               <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-[420px] p-0" align="start">
+          <PopoverContent className="w-[min(420px,calc(100vw-1rem))] p-0" align="start">
             {/* shouldFilter={false}: matching is done by the server so search reaches
                 banks that haven't been paged in yet. */}
             <Command shouldFilter={false}>
@@ -799,74 +825,132 @@ function BankSelectorInner() {
         </Popover>
 
         {/* Separator */}
-        <div className="h-8 w-px bg-border" />
+        <div className="hidden sm:block h-8 w-px bg-border" />
 
-        {/* Add Document Button */}
+        {/* Add Document Button — icon only on phones. */}
         {currentBank && (
           <Button
             variant="outline"
             size="sm"
-            className="h-9 gap-1.5"
+            className="h-9 shrink-0 gap-1.5 px-2.5 sm:px-3"
             onClick={() => setDocDialogOpen(true)}
             title={tAddDocument("addDocumentToCurrentBank")}
+            aria-label={tAddDocument("addDocumentButton")}
             data-add-document
           >
             <Plus className="h-4 w-4" />
-            <span>{tAddDocument("addDocumentButton")}</span>
+            <span className="hidden sm:inline">{tAddDocument("addDocumentButton")}</span>
           </Button>
         )}
 
         {/* Spacer */}
-        <div className="flex-1" />
+        <div className="hidden sm:block flex-1" />
 
-        {/* GitHub Link */}
-        <a
-          href="https://github.com/vectorize-io/hindsight"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
-          title={tNav("viewOnGitHub")}
-        >
-          <Github className="h-5 w-5" />
-          <span className="text-sm font-medium">GitHub</span>
-        </a>
-
-        {/* Separator */}
-        <div className="h-8 w-px bg-border" />
-
-        {/* Dark Mode Toggle */}
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={toggleTheme}
-          className="h-9 w-9"
-          title={theme === "light" ? tNav("darkMode") : tNav("lightMode")}
-        >
-          {theme === "light" ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
-        </Button>
-
-        <LanguageSwitcher />
-
-        {features?.access_key_auth && (
-          <>
-            <div className="h-8 w-px bg-border" />
+        {/* Phones: GitHub, theme, language and logout fold into one menu. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
               size="icon"
-              className="h-9 w-9"
-              title="Logout"
-              onClick={async () => {
-                try {
-                  await fetch(withBasePath("/api/auth/logout"), { method: "POST" });
-                } finally {
-                  window.location.href = withBasePath("/login");
-                }
-              }}
+              className="md:hidden h-9 w-9 shrink-0 ml-auto"
+              aria-label={tNav("more")}
+              title={tNav("more")}
             >
-              <LogOut className="h-5 w-5" />
+              <MoreHorizontal className="h-5 w-5" />
             </Button>
-          </>
-        )}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuItem asChild>
+              <a
+                href="https://github.com/vectorize-io/hindsight"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Github className="h-4 w-4 mr-2" />
+                GitHub
+              </a>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={toggleTheme}>
+              {theme === "light" ? (
+                <Moon className="h-4 w-4 mr-2" />
+              ) : (
+                <Sun className="h-4 w-4 mr-2" />
+              )}
+              {theme === "light" ? tNav("darkMode") : tNav("lightMode")}
+            </DropdownMenuItem>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <Globe className="h-4 w-4 mr-2" />
+                {localeNames[locale as Locale] ?? locale}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                {locales.map((l) => (
+                  <DropdownMenuItem
+                    key={l}
+                    onClick={() => switchLocale(l)}
+                    className={l === locale ? "bg-accent" : ""}
+                  >
+                    {localeNames[l]}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            {features?.access_key_auth && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={logout}>
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Logout
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <div className="hidden md:contents">
+          {/* GitHub Link */}
+          <a
+            href="https://github.com/vectorize-io/hindsight"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+            title={tNav("viewOnGitHub")}
+          >
+            <Github className="h-5 w-5" />
+            <span className="text-sm font-medium">GitHub</span>
+          </a>
+
+          {/* Separator */}
+          <div className="h-8 w-px bg-border" />
+
+          {/* Dark Mode Toggle */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={toggleTheme}
+            className="h-9 w-9"
+            title={theme === "light" ? tNav("darkMode") : tNav("lightMode")}
+          >
+            {theme === "light" ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
+          </Button>
+
+          <LanguageSwitcher />
+
+          {features?.access_key_auth && (
+            <>
+              <div className="h-8 w-px bg-border" />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9"
+                title="Logout"
+                onClick={logout}
+              >
+                <LogOut className="h-5 w-5" />
+              </Button>
+            </>
+          )}
+        </div>
 
         <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
           <DialogContent className="sm:max-w-[550px]">
@@ -1578,8 +1662,8 @@ export function BankSelector() {
   return (
     <Suspense
       fallback={
-        <div className="bg-card text-card-foreground px-5 py-3 border-b-4 border-primary-gradient">
-          <div className="flex items-center gap-4 text-sm">
+        <div className="bg-card text-card-foreground px-3 sm:px-5 py-3 border-b-4 border-primary-gradient">
+          <div className="flex items-center gap-2 sm:gap-4 text-sm">
             <Image
               src={withBasePath("/logo.png")}
               alt="Hindsight"
@@ -1588,29 +1672,31 @@ export function BankSelector() {
               className="h-10 w-auto"
               unoptimized
             />
-            <div className="h-8 w-px bg-border" />
+            <div className="hidden sm:block h-8 w-px bg-border" />
             <Button
               variant="outline"
-              className="w-[250px] justify-between font-bold border-2 border-primary"
+              className="min-w-0 flex-1 sm:flex-none sm:w-[250px] justify-between font-bold border-2 border-primary"
               disabled
             >
               Loading...
               <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
             </Button>
-            <div className="flex-1" />
-            <a
-              href="https://github.com/vectorize-io/hindsight"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground"
-            >
-              <Github className="h-5 w-5" />
-              <span className="text-sm font-medium">GitHub</span>
-            </a>
-            <div className="h-8 w-px bg-border" />
-            <Button variant="ghost" size="icon" className="h-9 w-9" disabled>
-              <Moon className="h-5 w-5" />
-            </Button>
+            <div className="hidden md:contents">
+              <div className="flex-1" />
+              <a
+                href="https://github.com/vectorize-io/hindsight"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground"
+              >
+                <Github className="h-5 w-5" />
+                <span className="text-sm font-medium">GitHub</span>
+              </a>
+              <div className="h-8 w-px bg-border" />
+              <Button variant="ghost" size="icon" className="h-9 w-9" disabled>
+                <Moon className="h-5 w-5" />
+              </Button>
+            </div>
           </div>
         </div>
       }

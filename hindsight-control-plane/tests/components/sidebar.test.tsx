@@ -12,7 +12,7 @@ vi.mock("@/lib/api", () => ({
   client: { getVersion: () => Promise.resolve({ api_version: "1.0.0" }) },
 }));
 
-const { Sidebar } = await import("@/components/sidebar");
+const { Sidebar, SidebarMenuButton } = await import("@/components/sidebar");
 
 afterEach(() => cleanup());
 
@@ -39,5 +39,28 @@ describe("Sidebar accessibility", () => {
     fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(toggle.getAttribute("aria-label")).toBe("collapseSidebar");
+  });
+
+  it("opens the phone drawer from the header menu button and closes it on navigation", () => {
+    const onTabChange = vi.fn();
+    render(
+      <>
+        <SidebarMenuButton />
+        <Sidebar currentTab="data" onTabChange={onTabChange} />
+      </>
+    );
+    // Closed: only the rail's links exist.
+    expect(screen.getAllByRole("link")).toHaveLength(8);
+
+    fireEvent.click(screen.getByRole("button", { name: "openNavigation" }));
+    const drawer = screen.getByRole("dialog");
+    expect(drawer.querySelectorAll("a")).toHaveLength(8);
+
+    const recall = Array.from(drawer.querySelectorAll("a")).find(
+      (a) => a.getAttribute("aria-label") === "recall"
+    )!;
+    fireEvent.click(recall);
+    expect(onTabChange).toHaveBeenCalledWith("recall");
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
