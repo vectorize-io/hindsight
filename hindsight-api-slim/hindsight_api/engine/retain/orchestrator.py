@@ -1558,14 +1558,14 @@ async def retain_batch(
 
             # Without sub-batching there is nothing else running these in parallel, so the groups
             # do it themselves. Hardcoded rather than a knob: it is not a capacity dial, it is how
-            # many documents of ONE retain may be in flight, and the retain is already bounded by
-            # the caller's own concurrency and by the session's flush threshold.
+            # many documents of ONE retain may be in flight. Bounded on EVERY path, not only the
+            # store-owned one: a token-cut sub-batch of short documents holds dozens of groups, and
+            # on SQL each in-flight group holds a pool connection while acquiring another, so an
+            # unbounded fan-out wider than the pool deadlocks it (#5442).
             _GROUP_CONCURRENCY = 8
-            _group_sem = asyncio.Semaphore(_GROUP_CONCURRENCY) if retain_session is not None else None
+            _group_sem = asyncio.Semaphore(_GROUP_CONCURRENCY)
 
             async def _run_group(doc_key, group_dicts, group_contents):
-                if _group_sem is None:
-                    return await _one_group(doc_key, group_dicts, group_contents)
                 async with _group_sem:
                     return await _one_group(doc_key, group_dicts, group_contents)
 
