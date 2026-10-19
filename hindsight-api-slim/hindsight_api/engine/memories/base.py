@@ -1380,7 +1380,12 @@ class MemoriesExtension(Extension, ABC):
         """Release resources. Called during engine shutdown."""
 
     async def ensure_bank_storage(self, bank_id: str) -> None:
-        """Ensure per-bank storage exists. Idempotent."""
+        """Ensure per-bank storage exists. Idempotent.
+
+        Called BEFORE the bank row is written (bank creation and bank import), so it must not
+        require the row to exist. A failed create can leave storage behind with no row; the next
+        call for that bank must adopt it.
+        """
 
     def allocate_unit_ids(self, count: int) -> list[str]:
         """Mint unit ids for a batch about to be written.

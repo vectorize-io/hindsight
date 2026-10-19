@@ -1262,6 +1262,17 @@ async def _restore_bank(
         if bank_id != source_bank_id and row.get("name") == source_bank_id:
             row["name"] = bank_id
 
+    # The bank row below bypasses the engine's create path, which is what gives a bank its storage
+    # in a store that owns one. Without it a bank restored with no documents has none, and the
+    # first read or delete of it fails rather than finding an empty bank. A no-op for Postgres.
+    # BEFORE the row, for the same reason as `_ensure_bank_exists`: once the row commits the bank
+    # is readable, and a read landing before its storage exists faults. Outside the transaction
+    # so no connection is held across the store's round trip; idempotent, so ensuring for a bank
+    # that turns out to exist already (refused just below) changes nothing.
+    from ..memories import get_memories
+
+    await get_memories().ensure_bank_storage(bank_id)
+
     async with acquire_with_retry(backend) as conn:
         async with conn.transaction():
             # Refuse to import into an existing bank — this restores a whole bank, it
@@ -1306,13 +1317,6 @@ async def _restore_bank(
             )
             if internal_id is not None:
                 await bank_utils.create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)
-
-    # The bank row above bypasses the engine's create path, which is what gives a bank its storage
-    # in a store that owns one. Without it a bank restored with no documents has none, and the
-    # first read or delete of it fails rather than finding an empty bank. A no-op for Postgres.
-    from ..memories import get_memories
-
-    await get_memories().ensure_bank_storage(bank_id)
 
     # Only now does the bank row — and with it the archive's own config — exist, so
     # this is where the config the documents are replayed with has to come from.
