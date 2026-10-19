@@ -37,6 +37,20 @@ and the options you see — then ask for confirmation with AskUserQuestion. Resu
 
 Everything else (must fix, should fix, nits) is not a blocker: fix it all.
 
+## 0c. Track everything you start (applies at every step)
+
+Whatever you launch to verify the PR — API, worker, control plane, docs server, a pg0 instance —
+you must stop yourself at the end (step 7), without touching anyone else's. Other Hindsight
+worktrees, servers and pytest runs share this machine.
+
+- Start background processes so you know their PID (`run_in_background`, or `cmd & echo $!`) and
+  write each one down. Note the ports you picked.
+- Need a database? Give it a **new, unique pg0 instance name** (e.g.
+  `HINDSIGHT_API_DATABASE_URL=pg0://ship-it-pr-<N>`) and write down that you created it. If you reuse
+  an instance that already existed (check `pg0 list` first), write down that it is **shared**.
+- Never `pkill -f hindsight`, `pkill -f pytest`, `killall`, or kill by port without checking the
+  PID is one of yours. Those hit other sessions.
+
 ## 1. Load the PR
 
 Read the PR — title, body, linked issue, diff — so you know its goal; the blocker rule depends on it.
@@ -78,6 +92,10 @@ Classify each against step 0. Any blocker → stop and ask.
   nits). Don't stop at "only nits left", don't stop because the last pass found fewer things, and
   don't declare done on a pass you didn't actually re-run. The only early exit is a blocker (step 0)
   → stop and ask.
+- **Follow-up work is done here, not later.** If the PR needs more to be complete — a missing
+  piece the review or you found, a doc page, a client regen, a test — do it in this ship-it, on
+  this branch. "Follow-up PR" is not an option for work that belongs to this change. Only work
+  that is truly a different problem goes to an issue (step 7).
 - Commit with a message that lists what was fixed, then push to the PR branch.
 
 Don't post a review comment on a maintainer's PR — findings go in the chat reply and the commit
@@ -125,8 +143,37 @@ gh pr merge <N> --squash --delete-branch
 git push origin --delete ci/pr-<N>-verify   # if you created it
 ```
 
-Report: PR link, the findings fixed (one line each), anything deliberately left, and the CI run
-that gated the merge.
+## 7. Clean up, file issues, report
+
+Do this also when you stop early (blocker, red CI).
+
+**Stop what you started — only that.** Kill each PID you wrote down in step 0c (`kill <pid>`; check
+it's gone, `kill -9 <pid>` only if it hangs). Before killing, confirm with `ps -p <pid> -o command=`
+that it is still your process. For each pg0 instance:
+
+- **Created for this ship-it** → `pg0 drop --name <name> -f` (stops it and deletes its data).
+- **Shared / already existed** → don't touch it. Not stop, not drop.
+
+Then check nothing of yours is left: `lsof -nP -iTCP:<port> -sTCP:LISTEN` for each port you used.
+
+**File issues for real project problems you ran into.** While reviewing, testing or waiting on CI
+you may have hit problems that are *not* this PR's job and *not* your local setup: a flaky test, a
+bug in nearby code, a broken script, wrong docs, a CI job that is always red. For each one:
+
+1. Search first so you don't duplicate: `gh issue list --state open --search "<keywords>"`.
+2. If none exists, create it: `gh issue create --title ... --body ...`. Body: what happens, how to
+   see it (command or steps), what should happen, and where in the code. Keep it short.
+
+Local problems (your env, missing tools, a port in use, a stale `.env`) are not issues — mention
+them in the report only if the user needs to act.
+
+**Report:**
+
+- PR link and the CI run that gated the merge.
+- The findings fixed (one line each), and anything deliberately left, with why.
+- **Issues found on the project** — a clearly marked section listing each issue you created (link +
+  one line), and any existing issue you found instead of creating one. Say "none" if none.
+- What you stopped and dropped, and any shared pg0 instance you left alone.
 
 ## Note on `gh pr edit`
 
