@@ -214,6 +214,51 @@ class TestLocalSTCrossEncoder:
             executor.shutdown(wait=True)
 
 
+# In-process rerankers whose `_predict_sync` loops over batches without honouring a
+# cancel flag, each with the reason that is acceptable.
+_CANCEL_EXEMPT = {
+    # One MLX call per query group, not a batch loop; recall sends a single query.
+    "JinaMLXCrossEncoder",
+}
+
+
+def _all_subclasses(cls: type) -> list[type]:
+    return [sub for direct in cls.__subclasses__() for sub in (direct, *_all_subclasses(direct))]
+
+
+def test_every_batching_reranker_takes_a_cancel_flag():
+    """Family guard for #5722: a new in-process reranker must stop on cancel too."""
+    batching = {
+        cls.__name__
+        for cls in _all_subclasses(ce_module.CrossEncoderModel)
+        if "_predict_sync" in vars(cls) and cls.__name__ not in _CANCEL_EXEMPT
+    }
+    assert batching == {"LocalSTCrossEncoder", "FlashRankCrossEncoder", "OnnxCrossEncoder"}
+    for name in batching:
+        params = inspect.signature(getattr(ce_module, name)._predict_sync).parameters
+        assert "cancelled" in params, name
+
+
+def test_set_cancel_flag_starts_no_batch_in_any_provider():
+    cancelled = threading.Event()
+    cancelled.set()
+
+    local = LocalSTCrossEncoder()
+    local._model = MagicMock()
+    flashrank = FlashRankCrossEncoder()
+    flashrank._ranker = MagicMock()
+    onnx = OnnxCrossEncoder(model_id="test/model")
+    onnx._session, onnx._tokenizer = MagicMock(), MagicMock()
+
+    with patch.dict("sys.modules", {"flashrank": MagicMock()}):
+        for encoder in (local, flashrank, onnx):
+            with pytest.raises(asyncio.CancelledError):
+                encoder._predict_sync([("q", "doc")], cancelled)
+    local._model.predict.assert_not_called()
+    flashrank._ranker.rerank.assert_not_called()
+    onnx._session.run.assert_not_called()
+
+
 class TestFlashRankCrossEncoder:
     """Unit tests for the FlashRank ONNX reranker."""
 
