@@ -213,5 +213,10 @@ describe("BanksOverview keyboard access", () => {
     render(<BanksOverview />);
     const link = await screen.findByRole("link", { name: "alpha" });
     expect(link.getAttribute("href")).toBe("/banks/alpha");
+
+    // The link navigates on its own; the row's click handler must not push a second time.
+    fireEvent.click(link);
+    expect(setCurrentBank).toHaveBeenCalledWith("alpha");
+    expect(push).not.toHaveBeenCalled();
   });
 });
