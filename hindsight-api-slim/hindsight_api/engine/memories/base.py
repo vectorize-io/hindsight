@@ -3471,6 +3471,10 @@ class MemoriesExtension(Extension, ABC):
         """Insert a ``'__pending__'`` document row if none exists, then row-lock it — the
         zero-batch retain's document tracking. A no-op here: there is no row."""
 
+    async def lock_document_row(self, *, conn, fq_table, bank_id: str, document_id: str) -> None:
+        """Row-lock the document before touching its memories — the order every writer of a
+        document's memories takes, consolidation included (#5433). A no-op here: there is no row."""
+
     async def lock_document_hash(self, *, conn, fq_table, bank_id: str, document_id: str) -> str | None:
         """Row-lock the document and read its content_hash (``None`` if absent) — the delta
         write's concurrency gate. Here the stored hash, unlocked (see :meth:`lock_document_for_write`)."""
@@ -3762,6 +3766,16 @@ class MemoriesExtension(Extension, ABC):
     # consolidation batch's transaction, so every write derived from one LLM response commits or
     # rolls back together (#3876). The defaults are what a store that owns its rows does;
     # Postgres overrides them with the SQL in ``pg/consolidation.py``.
+
+    async def lock_consolidation_write_set(
+        self, *, conn, fq_table, bank_id: str, fact_ids: list[str], observation_ids: list[str]
+    ) -> None:
+        """Lock what one consolidation response writes — the batch ``fact_ids``, the
+        ``observation_ids`` it rewrites, deletes or folds into — before it writes any of it, in
+        the order other writers take them, so the two cannot deadlock (#5433).
+
+        A no-op here: a store that keeps memories outside SQL has its own concurrency model.
+        """
 
     async def lock_live_memory_ids(self, *, conn, fq_table, bank_id: str, unit_ids: list[uuid.UUID]) -> set[str]:
         """Which of ``unit_ids`` still exist, held so a concurrent delete cannot remove one before

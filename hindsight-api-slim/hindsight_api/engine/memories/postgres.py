@@ -1195,6 +1195,9 @@ class PostgresMemories(MemoriesExtension):
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, document_id=document_id
         )
 
+    async def lock_document_row(self, *, conn, fq_table, bank_id: str, document_id: str) -> None:
+        await pg_retain.lock_document_hash(conn=conn, fq_table=fq_store_table, bank_id=bank_id, document_id=document_id)
+
     async def lock_document_hash(self, *, conn, fq_table, bank_id: str, document_id: str) -> str | None:
         return await pg_retain.lock_document_hash(
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, document_id=document_id
@@ -1479,6 +1482,13 @@ class PostgresMemories(MemoriesExtension):
     async def lock_live_memory_ids(self, *, conn, fq_table, bank_id: str, unit_ids: list[uuid.UUID]) -> set[str]:
         return await pg_consolidation.lock_live_memory_ids(
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_ids=unit_ids
+        )
+
+    async def lock_consolidation_write_set(
+        self, *, conn, fq_table, bank_id: str, fact_ids: list[str], observation_ids: list[str]
+    ) -> None:
+        await pg_consolidation.lock_consolidation_write_set(
+            conn=conn, fq_table=fq_store_table, bank_id=bank_id, fact_ids=fact_ids, observation_ids=observation_ids
         )
 
     async def lock_observation_tags(self, *, conn, fq_table, bank_id: str, observation_id: str) -> list[str] | None:

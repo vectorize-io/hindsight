@@ -10985,6 +10985,9 @@ class MemoryEngine(MemoryEngineInterface):
                 from .memories import get_memories
 
                 _store = get_memories()
+                # The document before its memories, as retain and consolidation take it (#5433):
+                # the sweep below locks the memories, and the delete then needs this row.
+                await _store.lock_document_row(conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id)
                 _doc_units = await _store.document_source_units(
                     conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
                 )

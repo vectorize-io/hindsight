@@ -2789,6 +2789,19 @@ async def _process_memory_batch(
         try:
             async with acquire_with_retry(pool) as conn:
                 async with conn.transaction():
+                    # Before any other lock: everything this response can write, in the order a
+                    # retain takes it (documents, then memories), so the two cannot deadlock (#5433).
+                    touched: list[str | None] = [d.observation_id for d in prepared_deletes]
+                    touched += [d.merged_into for d in prepared_deletes]
+                    touched += [u.update.observation_id for u in prepared_updates]
+                    touched += [p.dedup.best_id for p in [*prepared_updates, *prepared_creates] if p.dedup]
+                    await get_memories().lock_consolidation_write_set(
+                        conn=conn,
+                        fq_table=fq_table,
+                        bank_id=bank_id,
+                        fact_ids=[str(m["id"]) for m in memories],
+                        observation_ids=[oid for oid in touched if oid],
+                    )
                     changed_ids = await _sources_changed_since_read(conn, bank_id, memories)
                     if changed_ids:
                         # Drop the whole response, stamps included: the facts stay pending and the
