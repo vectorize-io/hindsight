@@ -627,7 +627,7 @@ The strategy JSON supports three modes:
 - `{"mode": "round-robin"}` — rotate the starting member per request to spread load, then fall through the rest on failure. Add `"weights": [3, 1, ...]` (positive ints, one per member, primary first) for an **unbalanced** rotation.
 - `{"mode": "metadata", "routes": [...]}` — **retain only**: pick the member from each retained item's own `metadata`. See [Metadata routing](#metadata-routing) below.
 
-**Cooldown.** In `failover` and `round-robin`, a member that fails (after its own retries) is moved to the back of the order for `cooldown_seconds` (default `60`), so later requests stop waiting on its errors and timeouts — useful when a member has run out of a daily or weekly quota. Each further failure doubles its cooldown, up to one hour, and its next success clears it. A cooling member is only deprioritized, never dropped: if every other member fails too, it is still tried. Set `"cooldown_seconds": 0` to try every member in order on every request. The cooldown is held in memory per process, so a restart clears it.
+**Cooldown.** In `failover` and `round-robin`, a member that fails (after its own retries) is moved to the back of the order for `cooldown_seconds` (default `60`), so later requests stop waiting on its errors and timeouts — useful when a member has run out of a daily or weekly quota. If it fails again once the cooldown is over, the cooldown doubles, up to one hour; its next success clears it. A cooling member is only deprioritized, never dropped: if every other member fails too, it is still tried. Set `"cooldown_seconds": 0` to try every member in order on every request. The cooldown is held in memory per process, so a restart clears it.
 
 ```bash
 # Primary OpenAI, failover to Groq then Anthropic

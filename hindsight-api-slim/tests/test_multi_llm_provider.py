@@ -154,6 +154,31 @@ async def test_cooling_member_is_still_tried_when_the_rest_fail(monkeypatch):
     assert (a.calls, b.calls) == (2, 1)
 
 
+async def test_concurrent_failures_do_not_stack_the_cooldown(monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr("hindsight_api.engine.multi_llm.time.monotonic", lambda: clock[0])
+    release = asyncio.Event()
+
+    class SlowFailing(FakeMember):
+        async def call(self, **kwargs):
+            self.calls += 1
+            await release.wait()
+            raise RuntimeError("down")
+
+    a = SlowFailing("a", None)
+    b = FakeMember("b", "RB")
+    chain = _failover(a, b)
+    # Ten requests in flight on a fail together: still one 60s cooldown, not 60*2^9.
+    pending = [asyncio.create_task(chain.call(messages=[])) for _ in range(10)]
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.gather(*pending)
+    assert a.calls == 10
+    clock[0] += 61
+    await chain.call(messages=[])
+    assert a.calls == 11
+
+
 async def test_cooldown_zero_keeps_trying_every_member():
     a = FakeMember("a", RuntimeError("down"))
     b = FakeMember("b", "RB")

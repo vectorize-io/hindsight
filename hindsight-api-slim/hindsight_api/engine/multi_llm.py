@@ -22,8 +22,8 @@ Strategies:
 
 A member that fails (after its own retries) is cooled down: for
 ``strategy.cooldown_seconds`` it moves to the back of the order, so later requests
-stop paying for its errors and timeouts. Each further failure doubles the cooldown
-(capped at an hour) and a success clears it. A cooling member is only deprioritized,
+stop paying for its errors and timeouts. Failing again once the cooldown is over
+doubles it (capped at an hour); a success clears it. A cooling member is only deprioritized,
 never removed, so a request still reaches it when every other member fails too.
 
 Batch retain runs on the **first batch-capable member** in declared order (see
@@ -165,9 +165,15 @@ class MultiLLMProvider:
         base = self._strategy.cooldown_seconds
         if not base or len(self._members) == 1:
             return 0.0
+        now = time.monotonic()
+        # Already cooling: concurrent in-flight calls (or a last-resort try) failing
+        # together are one outage, not several, so only a failure after the
+        # cooldown ended doubles it. Otherwise a burst would jump straight to the cap.
+        if self._cooldown_until.get(idx, 0.0) > now:
+            return self._cooldown_until[idx] - now
         failures = self._failures[idx] = self._failures.get(idx, 0) + 1
-        delay = min(base * 2 ** min(failures - 1, 16), _MAX_COOLDOWN_SECONDS)
-        self._cooldown_until[idx] = time.monotonic() + delay
+        delay = min(base * 2 ** (failures - 1), _MAX_COOLDOWN_SECONDS)
+        self._cooldown_until[idx] = now + delay
         return delay
 
     def member_for_metadata(self, metadata: dict[str, Any] | None) -> LLMProvider | None:
