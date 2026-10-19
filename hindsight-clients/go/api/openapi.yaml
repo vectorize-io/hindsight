@@ -6537,6 +6537,8 @@ components:
             additionalProperties: {}
           nullable: true
           type: array
+        default_observation_scopes:
+          $ref: '#/components/schemas/Default_Observation_Scopes'
         consolidation_strategies:
           items:
             $ref: '#/components/schemas/ConsolidationStrategySpec'
@@ -13799,6 +13801,24 @@ components:
       - id
       - url
       title: WebhookResponse
+    Default_Observation_Scopes:
+      anyOf:
+      - enum:
+        - per_tag
+        - combined
+        - all_combinations
+        - shared
+        type: string
+      - items:
+          items:
+            type: string
+          type: array
+        type: array
+      description: "observation_scopes applied at retain to items that send none ('combined'\
+        \ when unset). A list of tag lists may use globs, e.g. [['topic:*']] scopes\
+        \ each memory by its own topic tags."
+      nullable: true
+      title: Default Observation Scopes
     Content_anyOf_inner:
       discriminator:
         mapping:

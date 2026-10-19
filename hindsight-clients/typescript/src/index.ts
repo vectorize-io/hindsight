@@ -960,6 +960,13 @@ export class HindsightClient {
       /** Per-scope observation caps, overriding maxObservationsPerScope. */
       observationScopeLimits?: Record<string, unknown>[];
       consolidationStrategies?: Record<string, unknown>[];
+      /** observation_scopes for retained items that send none ("combined" when unset); e.g. [["topic:*"]]. */
+      defaultObservationScopes?:
+        | "combined"
+        | "per_tag"
+        | "all_combinations"
+        | "shared"
+        | string[][];
       /** Consolidate automatically after retain() rather than on demand. */
       enableAutoConsolidation?: boolean;
       /** When the server has a decision model, let it settle restatements, new facts and chatter before the consolidation LLM call. */
@@ -1071,6 +1078,8 @@ export class HindsightClient {
       updates.observation_scope_limits = options.observationScopeLimits;
     if (options.consolidationStrategies !== undefined)
       updates.consolidation_strategies = options.consolidationStrategies;
+    if (options.defaultObservationScopes !== undefined)
+      updates.default_observation_scopes = options.defaultObservationScopes;
     if (options.enableAutoConsolidation !== undefined)
       updates.enable_auto_consolidation = options.enableAutoConsolidation;
     if (options.consolidationUseDecisionModel !== undefined)

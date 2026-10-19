@@ -49,6 +49,7 @@ type BankTemplateConfig struct {
 	ConsolidationSourceFactsMaxTokensPerObservation NullableInt32 `json:"consolidation_source_facts_max_tokens_per_observation,omitempty"`
 	MaxObservationsPerScope NullableInt32 `json:"max_observations_per_scope,omitempty"`
 	ObservationScopeLimits []map[string]interface{} `json:"observation_scope_limits,omitempty"`
+	DefaultObservationScopes NullableDefaultObservationScopes `json:"default_observation_scopes,omitempty"`
 	ConsolidationStrategies []ConsolidationStrategySpec `json:"consolidation_strategies,omitempty"`
 	ReflectSourceFactsMaxTokens NullableInt32 `json:"reflect_source_facts_max_tokens,omitempty"`
 	KnowledgePageDefaultTrigger map[string]interface{} `json:"knowledge_page_default_trigger,omitempty"`
@@ -1318,6 +1319,48 @@ func (o *BankTemplateConfig) SetObservationScopeLimits(v []map[string]interface{
 	o.ObservationScopeLimits = v
 }
 
+// GetDefaultObservationScopes returns the DefaultObservationScopes field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetDefaultObservationScopes() DefaultObservationScopes {
+	if o == nil || IsNil(o.DefaultObservationScopes.Get()) {
+		var ret DefaultObservationScopes
+		return ret
+	}
+	return *o.DefaultObservationScopes.Get()
+}
+
+// GetDefaultObservationScopesOk returns a tuple with the DefaultObservationScopes field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetDefaultObservationScopesOk() (*DefaultObservationScopes, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.DefaultObservationScopes.Get(), o.DefaultObservationScopes.IsSet()
+}
+
+// HasDefaultObservationScopes returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasDefaultObservationScopes() bool {
+	if o != nil && o.DefaultObservationScopes.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetDefaultObservationScopes gets a reference to the given NullableDefaultObservationScopes and assigns it to the DefaultObservationScopes field.
+func (o *BankTemplateConfig) SetDefaultObservationScopes(v DefaultObservationScopes) {
+	o.DefaultObservationScopes.Set(&v)
+}
+// SetDefaultObservationScopesNil sets the value for DefaultObservationScopes to be an explicit nil
+func (o *BankTemplateConfig) SetDefaultObservationScopesNil() {
+	o.DefaultObservationScopes.Set(nil)
+}
+
+// UnsetDefaultObservationScopes ensures that no value is present for DefaultObservationScopes, not even an explicit nil
+func (o *BankTemplateConfig) UnsetDefaultObservationScopes() {
+	o.DefaultObservationScopes.Unset()
+}
+
 // GetConsolidationStrategies returns the ConsolidationStrategies field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *BankTemplateConfig) GetConsolidationStrategies() []ConsolidationStrategySpec {
 	if o == nil {
@@ -2464,6 +2507,9 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.ObservationScopeLimits != nil {
 		toSerialize["observation_scope_limits"] = o.ObservationScopeLimits
+	}
+	if o.DefaultObservationScopes.IsSet() {
+		toSerialize["default_observation_scopes"] = o.DefaultObservationScopes.Get()
 	}
 	if o.ConsolidationStrategies != nil {
 		toSerialize["consolidation_strategies"] = o.ConsolidationStrategies

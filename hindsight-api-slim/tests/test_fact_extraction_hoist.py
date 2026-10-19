@@ -36,6 +36,7 @@ def _minimal_config(**overrides):
         "retain_structured_chunk_size": None,
         "retain_max_attachments_per_chunk": 8,
         "retain_batch_enabled": False,
+        "default_observation_scopes": None,
     }
     cfg.update(overrides)
     return SimpleNamespace(**cfg)

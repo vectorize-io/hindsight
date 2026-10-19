@@ -4034,6 +4034,15 @@ class BankTemplateConfig(BaseModel):
             "matching rule wins; unmatched scopes fall back to max_observations_per_scope."
         ),
     )
+    default_observation_scopes: (
+        Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None
+    ) = Field(
+        default=None,
+        description=(
+            "observation_scopes applied at retain to items that send none ('combined' when unset). "
+            "A list of tag lists may use globs, e.g. [['topic:*']] scopes each memory by its own topic tags."
+        ),
+    )
     consolidation_strategies: list[ConsolidationStrategySpec] | None = Field(
         default=None,
         description=(

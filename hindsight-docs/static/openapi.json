@@ -9569,6 +9569,33 @@
             "title": "Observation Scope Limits",
             "description": "DEPRECATED \u2014 use consolidation_strategies, which carries the mission too. Still honoured, but consulted only after consolidation_strategies. Per-scope overrides of max_observations_per_scope: [{\"scope\": [\"run_*\", \"shared\"], \"limit\": 1}]. Each scope is a list of fnmatch tag-globs; a consolidation scope matches under exact cover (every tag matched by a glob and every glob matched by a tag). The first matching rule wins; unmatched scopes fall back to max_observations_per_scope."
           },
+          "default_observation_scopes": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "per_tag",
+                  "combined",
+                  "all_combinations",
+                  "shared"
+                ]
+              },
+              {
+                "items": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Observation Scopes",
+            "description": "observation_scopes applied at retain to items that send none ('combined' when unset). A list of tag lists may use globs, e.g. [['topic:*']] scopes each memory by its own topic tags."
+          },
           "consolidation_strategies": {
             "anyOf": [
               {

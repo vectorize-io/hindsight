@@ -2908,6 +2908,7 @@ class Hindsight:
         max_observations_per_scope: int | None = None,
         observation_scope_limits: list[dict[str, Any]] | None = None,
         consolidation_strategies: list[dict[str, Any]] | None = None,
+        default_observation_scopes: str | list[list[str]] | None = None,
         enable_auto_consolidation: bool | None = None,
         consolidation_use_decision_model: bool | None = None,
         consolidation_llm_parallelism: int | None = None,
@@ -2978,6 +2979,7 @@ class Hindsight:
                 max_observations_per_scope=max_observations_per_scope,
                 observation_scope_limits=observation_scope_limits,
                 consolidation_strategies=consolidation_strategies,
+                default_observation_scopes=default_observation_scopes,
                 enable_auto_consolidation=enable_auto_consolidation,
                 consolidation_use_decision_model=consolidation_use_decision_model,
                 consolidation_llm_parallelism=consolidation_llm_parallelism,
@@ -3045,6 +3047,7 @@ class Hindsight:
         max_observations_per_scope: int | None = None,
         observation_scope_limits: list[dict[str, Any]] | None = None,
         consolidation_strategies: list[dict[str, Any]] | None = None,
+        default_observation_scopes: str | list[list[str]] | None = None,
         enable_auto_consolidation: bool | None = None,
         consolidation_use_decision_model: bool | None = None,
         consolidation_llm_parallelism: int | None = None,
@@ -3122,6 +3125,8 @@ class Hindsight:
             max_observations_per_scope: Cap on observations retained per scope (-1 for unlimited).
             observation_scope_limits: Deprecated; use consolidation_strategies. Per-scope observation caps.
             consolidation_strategies: Per-scope consolidation settings (mission, observation cap).
+            default_observation_scopes: observation_scopes for retained items that send none
+                ("combined" when unset); e.g. ``[["topic:*"]]`` scopes by each memory's topic tags.
             enable_auto_consolidation: Consolidate automatically after retain() rather than on demand.
             consolidation_use_decision_model: When the server has a decision model, let it settle
                 restatements, new facts and chatter before the consolidation LLM call.
@@ -3199,6 +3204,7 @@ class Hindsight:
                 "max_observations_per_scope": max_observations_per_scope,
                 "observation_scope_limits": observation_scope_limits,
                 "consolidation_strategies": consolidation_strategies,
+                "default_observation_scopes": default_observation_scopes,
                 "enable_auto_consolidation": enable_auto_consolidation,
                 "consolidation_use_decision_model": consolidation_use_decision_model,
                 "consolidation_llm_parallelism": consolidation_llm_parallelism,

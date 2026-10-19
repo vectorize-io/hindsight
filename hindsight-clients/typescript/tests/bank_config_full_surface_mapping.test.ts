@@ -83,6 +83,7 @@ describe("full bank config surface mapping", () => {
       consolidationStrategies: [
         { scopes: [{ tags: ["company:*"] }], observations_mission: "Trends only." },
       ],
+      defaultObservationScopes: [["topic:*", "user:*"]],
       retainDefaultStrategy: "fast",
       retainStrategies: { fast: { retain_extraction_mode: "concise" } },
       retainChunkBatchSize: 64,
@@ -111,6 +112,7 @@ describe("full bank config surface mapping", () => {
       consolidation_strategies: [
         { scopes: [{ tags: ["company:*"] }], observations_mission: "Trends only." },
       ],
+      default_observation_scopes: [["topic:*", "user:*"]],
       retain_default_strategy: "fast",
       retain_strategies: { fast: { retain_extraction_mode: "concise" } },
       retain_chunk_batch_size: 64,

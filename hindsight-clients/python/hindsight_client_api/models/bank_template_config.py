@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, Stri
 from typing import Any, ClassVar, Dict, List, Optional, Union
 from typing_extensions import Annotated
 from hindsight_client_api.models.consolidation_strategy_spec import ConsolidationStrategySpec
+from hindsight_client_api.models.default_observation_scopes import DefaultObservationScopes
 from hindsight_client_api.models.label_group_output import LabelGroupOutput
 from typing import Optional, Set
 from typing_extensions import Self
@@ -59,6 +60,7 @@ class BankTemplateConfig(BaseModel):
     consolidation_source_facts_max_tokens_per_observation: Optional[StrictInt] = None
     max_observations_per_scope: Optional[StrictInt] = None
     observation_scope_limits: Optional[List[Dict[str, Any]]] = None
+    default_observation_scopes: Optional[DefaultObservationScopes] = None
     consolidation_strategies: Optional[List[ConsolidationStrategySpec]] = None
     reflect_source_facts_max_tokens: Optional[StrictInt] = None
     knowledge_page_default_trigger: Optional[Dict[str, Any]] = None
@@ -85,7 +87,7 @@ class BankTemplateConfig(BaseModel):
     recall_max_tokens: Optional[StrictInt] = None
     recall_chunks_max_tokens: Optional[StrictInt] = None
     memory_defense: Optional[Dict[str, Any]] = None
-    __properties: ClassVar[List[str]] = ["reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission", "enable_text_search", "enable_temporal_retrieval", "enable_graph_retrieval", "enable_reranking", "reflect_use_decision_model", "mental_model_refresh_use_decision_model", "mental_model_delta_use_decision_model", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "entity_labels", "entities_allow_free_form", "retain_default_strategy", "retain_strategies", "retain_chunk_batch_size", "retain_max_attachments_per_chunk", "mcp_enabled_tools", "consolidation_llm_batch_size", "consolidation_source_facts_max_tokens", "consolidation_source_facts_max_tokens_per_observation", "max_observations_per_scope", "observation_scope_limits", "consolidation_strategies", "reflect_source_facts_max_tokens", "knowledge_page_default_trigger", "reflect_default_options", "mental_model_min_refresh_interval_seconds", "llm_gemini_safety_settings", "recall_budget_function", "recall_budget_fixed_low", "recall_budget_fixed_mid", "recall_budget_fixed_high", "recall_budget_adaptive_low", "recall_budget_adaptive_mid", "recall_budget_adaptive_high", "recall_budget_min", "recall_budget_max", "audit_log_enabled", "store_document_text", "enable_auto_consolidation", "consolidation_use_decision_model", "consolidation_max_memories_per_round", "consolidation_llm_parallelism", "recall_include_chunks", "recall_prefer_observations", "recall_max_tokens", "recall_chunks_max_tokens", "memory_defense"]
+    __properties: ClassVar[List[str]] = ["reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission", "enable_text_search", "enable_temporal_retrieval", "enable_graph_retrieval", "enable_reranking", "reflect_use_decision_model", "mental_model_refresh_use_decision_model", "mental_model_delta_use_decision_model", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "entity_labels", "entities_allow_free_form", "retain_default_strategy", "retain_strategies", "retain_chunk_batch_size", "retain_max_attachments_per_chunk", "mcp_enabled_tools", "consolidation_llm_batch_size", "consolidation_source_facts_max_tokens", "consolidation_source_facts_max_tokens_per_observation", "max_observations_per_scope", "observation_scope_limits", "default_observation_scopes", "consolidation_strategies", "reflect_source_facts_max_tokens", "knowledge_page_default_trigger", "reflect_default_options", "mental_model_min_refresh_interval_seconds", "llm_gemini_safety_settings", "recall_budget_function", "recall_budget_fixed_low", "recall_budget_fixed_mid", "recall_budget_fixed_high", "recall_budget_adaptive_low", "recall_budget_adaptive_mid", "recall_budget_adaptive_high", "recall_budget_min", "recall_budget_max", "audit_log_enabled", "store_document_text", "enable_auto_consolidation", "consolidation_use_decision_model", "consolidation_max_memories_per_round", "consolidation_llm_parallelism", "recall_include_chunks", "recall_prefer_observations", "recall_max_tokens", "recall_chunks_max_tokens", "memory_defense"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -133,6 +135,9 @@ class BankTemplateConfig(BaseModel):
                 if _item_entity_labels:
                     _items.append(_item_entity_labels.to_dict())
             _dict['entity_labels'] = _items
+        # override the default output from pydantic by calling `to_dict()` of default_observation_scopes
+        if self.default_observation_scopes:
+            _dict['default_observation_scopes'] = self.default_observation_scopes.to_dict()
         # override the default output from pydantic by calling `to_dict()` of each item in consolidation_strategies (list)
         _items = []
         if self.consolidation_strategies:
@@ -289,6 +294,11 @@ class BankTemplateConfig(BaseModel):
         # and model_fields_set contains the field
         if self.observation_scope_limits is None and "observation_scope_limits" in self.model_fields_set:
             _dict['observation_scope_limits'] = None
+
+        # set to None if default_observation_scopes (nullable) is None
+        # and model_fields_set contains the field
+        if self.default_observation_scopes is None and "default_observation_scopes" in self.model_fields_set:
+            _dict['default_observation_scopes'] = None
 
         # set to None if consolidation_strategies (nullable) is None
         # and model_fields_set contains the field
@@ -462,6 +472,7 @@ class BankTemplateConfig(BaseModel):
             "consolidation_source_facts_max_tokens_per_observation": obj.get("consolidation_source_facts_max_tokens_per_observation"),
             "max_observations_per_scope": obj.get("max_observations_per_scope"),
             "observation_scope_limits": obj.get("observation_scope_limits"),
+            "default_observation_scopes": DefaultObservationScopes.from_dict(obj["default_observation_scopes"]) if obj.get("default_observation_scopes") is not None else None,
             "consolidation_strategies": [ConsolidationStrategySpec.from_dict(_item) for _item in obj["consolidation_strategies"]] if obj.get("consolidation_strategies") is not None else None,
             "reflect_source_facts_max_tokens": obj.get("reflect_source_facts_max_tokens"),
             "knowledge_page_default_trigger": obj.get("knowledge_page_default_trigger"),
