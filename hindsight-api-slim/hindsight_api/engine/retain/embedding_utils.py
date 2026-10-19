@@ -6,6 +6,7 @@ import logging
 from typing import Literal, Protocol
 
 from ...config import ENV_EMBEDDINGS_MAX_INPUT_TOKENS, get_config
+from ..llm_interface import ProviderRateLimitResetError
 from ..token_encoding import count_tokens, truncate_many_to_tokens
 
 logger = logging.getLogger(__name__)
@@ -135,8 +136,11 @@ async def generate_embeddings_batch(
 
     try:
         embeddings = await _encode_with_input_type(embeddings_backend, texts, input_type)
+    except ProviderRateLimitResetError:
+        # A control signal, not a failure: the worker parks the operation until then.
+        raise
     except Exception as e:
-        raise Exception(f"Failed to generate batch embeddings: {str(e)}")
+        raise Exception(f"Failed to generate batch embeddings: {str(e)}") from e
 
     # Guarantee 1:1 alignment with input texts. A silent length mismatch here
     # propagates downstream as zip() drops items, eventually surfacing as an
