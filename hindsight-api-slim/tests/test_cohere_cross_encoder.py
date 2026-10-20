@@ -6,6 +6,7 @@ The native API goes through the Cohere SDK's async client (mocked here); a custo
 base_url goes through our aiohttp client, stubbed with a real in-process server.
 """
 
+import asyncio
 import os
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -288,6 +289,33 @@ class TestCohereCrossEncoder:
         assert exc_info.value.status_code == 404
         assert "deployment not found" in exc_info.value.body
 
+    @pytest.mark.asyncio
+    async def test_concurrent_predicts_respect_max_concurrent(self):
+        """Requests beyond the cap wait on the client instead of piling onto the server."""
+        in_flight = 0
+        peak = 0
+
+        async def handler(request: web.Request) -> web.StreamResponse:
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.05)
+            in_flight -= 1
+            docs = (await request.json())["documents"]
+            return web.json_response({"results": [{"index": i, "relevance_score": 1.0} for i in range(len(docs))]})
+
+        async with stub_server(handler) as base_url:
+            encoder = CohereCrossEncoder(api_key="k", model="m", base_url=f"{base_url}/v1/rerank", max_concurrent=2)
+            await encoder.initialize()
+            # Six recalls at once, plus one predict with two queries (one request each).
+            results = await asyncio.gather(
+                *(encoder.predict([(f"q{i}", "doc")]) for i in range(6)),
+                encoder.predict([("a", "doc"), ("b", "doc")]),
+            )
+
+        assert all(scores == [1.0] * len(scores) for scores in results)
+        assert peak == 2
+
 
 class TestFactoryFunction:
     """Test suite for create_cross_encoder_from_env factory function."""
@@ -322,6 +350,7 @@ class TestFactoryFunction:
             "HINDSIGHT_API_RERANKER_COHERE_API_KEY": "test_key",
             "HINDSIGHT_API_RERANKER_COHERE_MODEL": "cohere-rerank-v3-english",
             "HINDSIGHT_API_RERANKER_COHERE_BASE_URL": "https://my-endpoint.inference.ai.azure.com/models/cohere-rerank-v3-english/invoke",
+            "HINDSIGHT_API_RERANKER_COHERE_MAX_CONCURRENT": "3",
         }
 
         with patch.dict(os.environ, env_vars, clear=False):
@@ -339,3 +368,4 @@ class TestFactoryFunction:
                     encoder.base_url
                     == "https://my-endpoint.inference.ai.azure.com/models/cohere-rerank-v3-english/invoke"
                 )
+                assert encoder.max_concurrent == 3

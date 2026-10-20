@@ -26,6 +26,7 @@ from .._thread_limits import bound_onnx_session, onnx_intra_op_threads
 from ..config import (
     DEFAULT_LITELLM_API_BASE,
     DEFAULT_RERANKER_ALIBABA_MODEL,
+    DEFAULT_RERANKER_COHERE_MAX_CONCURRENT,
     DEFAULT_RERANKER_COHERE_MODEL,
     DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE,
     DEFAULT_RERANKER_FLASHRANK_CACHE_DIR,
@@ -823,6 +824,7 @@ class CohereCrossEncoder(CrossEncoderModel):
         model: str = DEFAULT_RERANKER_COHERE_MODEL,
         base_url: str | None = None,
         timeout: float = 60.0,
+        max_concurrent: int = DEFAULT_RERANKER_COHERE_MAX_CONCURRENT,
     ):
         """
         Initialize Cohere cross-encoder client.
@@ -832,11 +834,19 @@ class CohereCrossEncoder(CrossEncoderModel):
             model: Cohere rerank model name (default: rerank-english-v3.0)
             base_url: Custom base URL for Cohere-compatible API (e.g., Azure-hosted endpoint)
             timeout: Request timeout in seconds (default: 60.0)
+            max_concurrent: Rerank requests in flight at once across every recall in the
+                process; the rest wait here before sending.
         """
         self.api_key = api_key
         self.model = model
         self.base_url = base_url
         self.timeout = timeout
+        self.max_concurrent = max_concurrent
+        # Held around the request only, so the timeout covers server time, not the wait
+        # behind other recalls: without it a burst queues at the server, waits there past
+        # the timeout and retries, adding load exactly when it is saturated.
+        # CrossLoopSemaphore for the same reason as TypeSafeCrossEncoder's cap.
+        self._semaphore = CrossLoopSemaphore(max_concurrent or DEFAULT_RERANKER_COHERE_MAX_CONCURRENT)
         self._client = None
         # Used when base_url is set (Azure AI Foundry and other Cohere-compatible hosts).
         # Azure endpoints already include the full invoke path, so rerank_url == base_url
@@ -863,7 +873,10 @@ class CohereCrossEncoder(CrossEncoderModel):
             return
 
         base_url_msg = f" at {self.base_url}" if self.base_url else ""
-        logger.info(f"Reranker: initializing Cohere provider with model {self.model}{base_url_msg}")
+        logger.info(
+            f"Reranker: initializing Cohere provider with model {self.model}{base_url_msg} "
+            f"(max_concurrent={self.max_concurrent})"
+        )
 
         if self._http_client is not None:
             await self._http_client.initialize()
@@ -897,36 +910,37 @@ class CohereCrossEncoder(CrossEncoderModel):
         if not pairs:
             return []
 
-        if self._http_client is not None:
-            return await self._http_client.predict(pairs)
-
-        return await self._predict_sdk(pairs)
-
-    async def _predict_sdk(self, pairs: list[tuple[str, str]]) -> list[float]:
-        """Predict using the native Cohere SDK's async client."""
         query_groups: dict[str, list[tuple[int, str]]] = {}
         for idx, (query, text) in enumerate(pairs):
             query_groups.setdefault(query, []).append((idx, text))
 
+        # One request per query, never split: a server may return ranks rather than
+        # independent scores (hindsight-rerank-1 returns 1 - rank/n), and those only
+        # compare within one request.
+        groups = list(query_groups.items())
+        results = await asyncio.gather(*(self._rerank_group(query, [t for _, t in items]) for query, items in groups))
+
         all_scores = [0.0] * len(pairs)
+        for (_, items), scores in zip(groups, results):
+            for (idx, _), score in zip(items, scores):
+                all_scores[idx] = score
+        return all_scores
 
-        for query, indexed_texts in query_groups.items():
-            texts = [text for _, text in indexed_texts]
-            indices = [idx for idx, _ in indexed_texts]
-
+    async def _rerank_group(self, query: str, texts: list[str]) -> list[float]:
+        """Score ``texts`` against one query in a single request, within the concurrency cap."""
+        async with self._semaphore:
+            if self._http_client is not None:
+                return await self._http_client.predict([(query, text) for text in texts])
             response = await self._client.get().rerank(
                 query=query,
                 documents=texts,
                 model=self.model,
                 return_documents=False,
             )
-
-            for result in response.results:
-                original_idx = result.index
-                score = result.relevance_score
-                all_scores[indices[original_idx]] = score
-
-        return all_scores
+        scores = [0.0] * len(texts)
+        for result in response.results:
+            scores[result.index] = result.relevance_score
+        return scores
 
 
 class ZeroEntropyCrossEncoder(CrossEncoderModel):
@@ -2757,6 +2771,7 @@ def _create_cross_encoder_backend(member: RerankerMemberConfig) -> CrossEncoderM
             model=member.cohere_model,
             base_url=member.cohere_base_url,
             timeout=member.cohere_timeout,
+            max_concurrent=member.cohere_max_concurrent,
         )
     elif provider == "openrouter":
         api_key = member.openrouter_api_key
