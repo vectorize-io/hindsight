@@ -249,9 +249,11 @@ class GeminiCacheManager:
         system_instruction: str,
         contents: list[Any],
         tools: list[dict[str, Any]] | None = None,
+        tool_config: Any = None,
     ) -> str | None:
-        """Create a fresh CachedContent holding ``system + tools + contents`` and
-        track it under ``session_id`` for later teardown.
+        """Create a fresh CachedContent holding ``system + tools + contents`` (and
+        the ``tool_config`` its turns run with) and track it under ``session_id``
+        for later teardown.
 
         Unlike ``get_or_create``, this does NOT deduplicate by fingerprint: each
         step of a reflect grows the conversation prefix, so every call is a
@@ -270,6 +272,7 @@ class GeminiCacheManager:
                 model=model,
                 system_instruction=system_instruction,
                 tools=tools,
+                tool_config=tool_config,
                 contents=contents,
                 ttl_seconds=_DEFAULT_INCREMENTAL_TTL_SECONDS,
             )
@@ -319,6 +322,7 @@ class GeminiCacheManager:
         model: str,
         system_instruction: str,
         tools: list[dict[str, Any]] | None = None,
+        tool_config: Any = None,
         contents: list[Any] | None = None,
         ttl_seconds: int | None = None,
     ) -> str | None:
@@ -369,6 +373,9 @@ class GeminiCacheManager:
                     )
                 )
             config_kwargs["tools"] = gemini_tools
+        if tool_config is not None:
+            # A request that uses the cache may not carry its own tool_config.
+            config_kwargs["tool_config"] = tool_config
 
         try:
             cached = await asyncio.wait_for(

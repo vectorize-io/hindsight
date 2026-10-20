@@ -295,6 +295,21 @@ _TIMEOUT_RETRIES = 2
 _DEFAULT_GEMINI_TIMEOUT = 90.0
 
 
+def _gemini_tool_config(tool_choice: LLMToolChoice) -> "genai_types.ToolConfig | None":
+    """The FunctionCallingConfig for an OpenAI-style tool choice; None for ``auto`` (the default)."""
+    if tool_choice.mode is LLMToolChoiceMode.REQUIRED:
+        return genai_types.ToolConfig(function_calling_config=genai_types.FunctionCallingConfig(mode="ANY"))
+    if tool_choice.mode is LLMToolChoiceMode.NAMED:
+        return genai_types.ToolConfig(
+            function_calling_config=genai_types.FunctionCallingConfig(
+                mode="ANY", allowed_function_names=[tool_choice.selected_function_name]
+            )
+        )
+    if tool_choice.mode is LLMToolChoiceMode.NONE:
+        return genai_types.ToolConfig(function_calling_config=genai_types.FunctionCallingConfig(mode="NONE"))
+    return None
+
+
 class GeminiLLM(LLMInterface):
     """
     LLM provider for Google Gemini and Vertex AI.
@@ -927,11 +942,11 @@ class GeminiLLM(LLMInterface):
         if effective_safety_settings is None:
             effective_safety_settings = self._safety_settings
 
-        # When using a cached prefix, the SDK rejects re-sending system_instruction
-        # or tools alongside ``cached_content`` — the cache IS the prefix.
-        # tool_config (mode / allowed_function_names) is a per-request decision and
-        # stays out of the cache. Built as a closure so we can rebuild it WITHOUT
-        # the cache and retry inline if a stale/invalid cache makes the call fail.
+        # When using a cached prefix, the API rejects re-sending system_instruction,
+        # tools or tool_config alongside ``cached_content`` — the cache IS the
+        # prefix, and holds the tool choice it was created for (see
+        # ``create_incremental_cache``). Built as a closure so we can rebuild it
+        # WITHOUT the cache and retry inline if a stale/invalid cache makes the call fail.
         def _build_tools_config(use_cache: bool) -> "genai_types.GenerateContentConfig":
             # Seed with user-configured extra params; explicit settings below win.
             config_kwargs: dict[str, Any] = dict(self._extra_body)
@@ -949,25 +964,9 @@ class GeminiLLM(LLMInterface):
             if max_completion_tokens is not None:
                 config_kwargs["max_output_tokens"] = max_completion_tokens
 
-            # Map OpenAI-style tool_choice to Gemini FunctionCallingConfig
-            if tool_choice.mode is LLMToolChoiceMode.REQUIRED:
-                config_kwargs["tool_config"] = genai_types.ToolConfig(
-                    function_calling_config=genai_types.FunctionCallingConfig(
-                        mode="ANY",
-                    )
-                )
-            elif tool_choice.mode is LLMToolChoiceMode.NAMED:
-                config_kwargs["tool_config"] = genai_types.ToolConfig(
-                    function_calling_config=genai_types.FunctionCallingConfig(
-                        mode="ANY",
-                        allowed_function_names=[tool_choice.selected_function_name],
-                    )
-                )
-            elif tool_choice.mode is LLMToolChoiceMode.NONE:
-                config_kwargs["tool_config"] = genai_types.ToolConfig(
-                    function_calling_config=genai_types.FunctionCallingConfig(mode="NONE")
-                )
-            # "auto" is the default (no tool_config needed)
+            tool_config = _gemini_tool_config(tool_choice)
+            if tool_config is not None and not use_cache:
+                config_kwargs["tool_config"] = tool_config
 
             if effective_safety_settings is not None:
                 config_kwargs["safety_settings"] = [
@@ -1247,9 +1246,14 @@ class GeminiLLM(LLMInterface):
         session_id: str,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
+        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
     ) -> str | None:
         """Cache ``system + tools + messages`` as a conversation prefix and return
         its resource name (or ``None`` — caller falls back to an uncached call).
+
+        ``tool_choice`` is stored in the cache: Gemini rejects ``tool_config`` on a
+        request that uses ``cached_content`` (400 "CachedContent can not be used
+        with ... tool_config"), so the turns that use this cache get it from here.
 
         The reflect loop calls this once per step with the growing message list so
         each step's cache entirely contains the previous step's input; the next
@@ -1265,6 +1269,7 @@ class GeminiLLM(LLMInterface):
             system_instruction=converted.system_instruction or "",
             contents=converted.contents,
             tools=tools,
+            tool_config=_gemini_tool_config(tool_choice),
         )
 
     async def delete_cached_prefix(self, name: str) -> None:

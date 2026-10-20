@@ -31,9 +31,10 @@ class _ScriptedProvider:
         self.search_query = search_query
         self.distill_prompts: list[str] = []
 
-    async def call_with_tools(self, *, tool_choice, messages, **_):
+    async def call_with_tools(self, *, tool_choice, messages, tools, **_):
         self.tool_choices.append(tool_choice.function_name or tool_choice.mode.value)
         self.last_messages = list(messages)
+        self.tool_names = [t["function"]["name"] for t in tools]
         return self._reply(tool_choice=tool_choice)
 
     async def call(self, *, messages, **_):
@@ -143,7 +144,7 @@ async def test_after_not_enough_the_next_turn_searches_and_its_done_answers():
 
     assert result.text == "A"
     assert functions["recall_fn"].await_args.args[0] == "Alice's new address", "the follow-up round ran"
-    assert provider.tool_choices == ["recall", "auto"], "one forced search, then the free turn's done answers"
+    assert provider.tool_choices == ["recall", "required"], "one forced search, then the free turn's done answers"
 
 
 @pytest.mark.asyncio
@@ -163,7 +164,9 @@ async def test_a_done_that_does_not_parse_is_handed_back_and_re_emitted():
     result = await _reflect(provider, _functions(), AsyncMock(return_value=False))
 
     assert result.text == "A"
-    assert provider.tool_choices == ["recall", "auto", "auto"], "the broken done was refused once, then re-emitted"
+    assert provider.tool_choices == ["recall", "required", "required"], (
+        "the broken done was refused once, then re-emitted"
+    )
 
 
 @pytest.mark.asyncio
@@ -217,7 +220,7 @@ async def test_a_failing_decision_model_falls_back_to_the_agent():
     result = await _reflect(provider, _functions(), AsyncMock(side_effect=RuntimeError("HTTP 403")))
 
     assert result.text == "A"
-    assert provider.tool_choices == ["auto", "done"]
+    assert provider.tool_choices == ["required", "done"]
 
 
 @pytest.mark.asyncio
@@ -488,3 +491,35 @@ async def test_round_recall_is_widened_only_for_the_decision_models_cut(prunes):
 
     expected = _ROUND_RECALL_MAX_TOKENS if prunes else _SHIPPED_DEFAULT_TOOL_LIMITS.recall_max_tokens
     assert expected in functions["recall_fn"].await_args.args
+
+
+@pytest.mark.asyncio
+async def test_the_free_turns_done_answers_so_no_answer_ready_is_offered():
+    """With a decision model the free turn's done is the answer (#5382): nothing to be ready for (#5832)."""
+    provider = _ScriptedProvider([_done()])
+
+    await _reflect(provider, _functions(), AsyncMock(return_value=True))
+
+    assert "answer_ready" not in provider.tool_names
+    assert "answer_ready" not in provider.last_messages[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_a_refresh_still_offers_answer_ready():
+    """A document goes through the closing step even with a decision model, so its free turn only says it is ready."""
+    provider = _ScriptedProvider([_done()])
+
+    await run_reflect_agent(
+        llm_config=provider,
+        bank_id="b",
+        query="where does Alice live?",
+        bank_profile={"name": "T", "mission": "M"},
+        has_mental_models=True,
+        budget="mid",
+        max_iterations=6,
+        evidence_is_sufficient_fn=AsyncMock(return_value=True),
+        answer_as_document=True,
+        **_functions(),
+    )
+
+    assert "answer_ready" in provider.tool_names

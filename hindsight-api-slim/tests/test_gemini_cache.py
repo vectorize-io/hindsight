@@ -524,3 +524,99 @@ async def test_delete_session_swallows_delete_errors():
     await mgr.create_incremental(session_id="reflect:s1", model="m", system_instruction="S", contents=["a"])
     await mgr.delete_session("reflect:s1")  # must not raise
     assert "reflect:s1" not in mgr._sessions
+
+
+# ─── Tool choice under a cache (#5832) ──────────────────────────────────────
+#
+# Gemini rejects a request that sets ``tool_config`` and uses ``cached_content``
+# (400 "CachedContent can not be used with GenerateContent request setting
+# system_instruction, tools or tool_config"). So the choice goes into the cache,
+# and a request that uses the cache leaves it out.
+
+
+@pytest.mark.asyncio
+async def test_create_incremental_stores_the_tool_config():
+    pytest.importorskip("google.genai")
+    from google.genai import types as genai_types
+
+    client, create_mock = _make_client()
+    mgr = GeminiCacheManager(client)
+    tool_config = genai_types.ToolConfig(function_calling_config=genai_types.FunctionCallingConfig(mode="ANY"))
+
+    await mgr.create_incremental(
+        session_id="reflect:s1", model="m", system_instruction="S", contents=["a"], tool_config=tool_config
+    )
+
+    assert create_mock.await_args.kwargs["config"].tool_config == tool_config
+
+
+def _gemini_provider():
+    pytest.importorskip("google.genai")
+    from unittest.mock import patch
+
+    with patch("google.genai.Client") as client_cls:
+        client_cls.return_value = MagicMock()
+        from hindsight_api.engine.providers.gemini_llm import GeminiLLM
+
+        provider = GeminiLLM(
+            provider="gemini", api_key="k", base_url="", model="gemini-2.5-flash", prompt_cache_enabled=True
+        )
+    provider._client = MagicMock()
+    response = MagicMock()
+    response.candidates = [MagicMock(finish_reason="STOP", content=MagicMock(parts=[]))]
+    response.usage_metadata = MagicMock(
+        prompt_token_count=5, candidates_token_count=2, cached_content_token_count=0, thoughts_token_count=0
+    )
+    provider._client.aio.models.generate_content = AsyncMock(return_value=response)
+    return provider
+
+
+_TOOLS = [{"type": "function", "function": {"name": "recall", "description": "d", "parameters": {"type": "object"}}}]
+_MESSAGES = [{"role": "system", "content": "S"}, {"role": "user", "content": "q"}]
+
+
+@pytest.mark.asyncio
+async def test_a_cached_tool_call_leaves_the_tool_choice_to_the_cache():
+    from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_REQUIRED
+
+    provider = _gemini_provider()
+
+    await provider.call_with_tools(
+        messages=_MESSAGES,
+        tools=_TOOLS,
+        tool_choice=LLM_TOOL_CHOICE_REQUIRED,
+        cached_prefix="cachedContents/step",
+        cached_prefix_message_count=1,
+    )
+
+    config = provider._client.aio.models.generate_content.await_args.kwargs["config"]
+    assert config.cached_content == "cachedContents/step"
+    assert config.tool_config is None
+
+
+@pytest.mark.asyncio
+async def test_an_uncached_tool_call_still_sends_the_tool_choice():
+    from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_REQUIRED
+
+    provider = _gemini_provider()
+
+    await provider.call_with_tools(messages=_MESSAGES, tools=_TOOLS, tool_choice=LLM_TOOL_CHOICE_REQUIRED)
+
+    config = provider._client.aio.models.generate_content.await_args.kwargs["config"]
+    assert config.tool_config.function_calling_config.mode == "ANY"
+
+
+@pytest.mark.asyncio
+async def test_the_incremental_cache_holds_the_choice_it_is_made_for():
+    from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_REQUIRED
+
+    provider = _gemini_provider()
+    manager = MagicMock()
+    manager.create_incremental = AsyncMock(return_value="cachedContents/step")
+    provider._cache_manager = manager
+
+    await provider.create_incremental_cache(
+        session_id="reflect:s1", messages=_MESSAGES, tools=_TOOLS, tool_choice=LLM_TOOL_CHOICE_REQUIRED
+    )
+
+    assert manager.create_incremental.await_args.kwargs["tool_config"].function_calling_config.mode == "ANY"

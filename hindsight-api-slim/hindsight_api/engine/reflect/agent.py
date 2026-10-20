@@ -762,7 +762,7 @@ async def _run_reflect_agent_inner(
     # Caching only the static system+tools prefix wins little here: it's dwarfed
     # by the tool results (recall/observations) that get re-sent on every turn.
     # Instead we roll a cache forward one step at a time — after each turn the
-    # cache is extended to cover that turn's FULL input, so the next ``auto`` turn
+    # cache is extended to cover that turn's FULL input, so the next free turn
     # reuses the entire prior conversation at the cached rate and sends only its
     # own new tool results as the delta. Note what this costs on Gemini: a cache
     # CREATE is billed at the full input rate plus storage, and each rolling cache is
@@ -773,7 +773,7 @@ async def _run_reflect_agent_inner(
     # The cache create for turn N+1 covers turn N's input, which is fully known the
     # moment turn N's LLM call returns — so we kick it off as a background task that
     # runs CONCURRENTLY with turn N's tool execution (``_schedule_cache``) and only
-    # await it (``_resolve_pending_cache``) right before the next ``auto`` call,
+    # await it (``_resolve_pending_cache``) right before the next free call,
     # hiding the create latency behind work we'd do anyway.
     #
     # ``rolling_cache_boundary`` is the number of leading ``messages`` baked into
@@ -814,7 +814,11 @@ async def _run_reflect_agent_inner(
         try:
             task = asyncio.ensure_future(
                 provider_impl.create_incremental_cache(
-                    session_id=cache_session_id, messages=messages[:upto], tools=tools
+                    session_id=cache_session_id,
+                    messages=messages[:upto],
+                    tools=tools,
+                    # Only free turns use the cache (see ``next_is_free``).
+                    tool_choice=LLM_TOOL_CHOICE_REQUIRED,
                 )
             )
         except Exception:
@@ -1306,7 +1310,7 @@ async def _run_reflect_agent_inner(
     # When a forced ``search_mental_models`` returns fresh, usable models on a
     # low/mid-budget call, we stop forcing the lower retrieval layers for the
     # rest of the run and let the agent answer (or retrieve deeper itself)
-    # under ``auto`` tool choice. A negative answer still needs recall: see the
+    # on a free turn. A negative answer still needs recall: see the
     # ``answer_found`` gate below.
     forcing_released = False
     # How many forced steps actually produced a tool call. The next forced step
@@ -1348,7 +1352,7 @@ async def _run_reflect_agent_inner(
 
         # After a parallel round: a decision model judges whether
         # that evidence already answers the question. Yes ends retrieval here, so the
-        # only LLM call left is the answer itself; no hands over to ordinary ``auto``
+        # only LLM call left is the answer itself; no hands over to ordinary free
         # turns, where the LLM writes follow-up queries from what it has read.
         if decision_orchestrated and iteration == 1 and pages_answered:
             return await _finish(iteration)
@@ -1361,7 +1365,7 @@ async def _run_reflect_agent_inner(
             follow_up_required = not searched_after_not_enough and not decision_model_failed
 
         # Determine tool_choice for this iteration.
-        # Force the full hierarchical retrieval path (only for enabled tools) before allowing auto.
+        # Force the full hierarchical retrieval path (only for enabled tools) before the free turns.
         # Build the forced sequence from the tools that are actually enabled.
         forced_sequence = []
         if has_mental_models:
@@ -1434,18 +1438,18 @@ async def _run_reflect_agent_inner(
         # Call LLM with tools
         llm_start = time.perf_counter()
 
-        # Will the NEXT turn be an ``auto`` turn (the only kind that references a
+        # Will the NEXT turn be a free turn (the only kind that references a
         # cache)? The cache we schedule this turn covers this turn's input and is
         # used by the next turn, so we only bother building it when the next turn
         # can use it — skipping the wasted creates between two forced turns.
-        next_is_auto = not forced_step_pending or forced_steps_done + 1 >= len(forced_sequence)
+        next_is_free = not forced_step_pending or forced_steps_done + 1 >= len(forced_sequence)
 
-        # Before an ``auto`` turn, adopt the cache that was being built in the
+        # Before a free turn, adopt the cache that was being built in the
         # background during the previous turn's tool execution. It covers that
         # turn's full input, so THIS call reuses the entire prior conversation at
         # the cached rate and sends only the turns appended since. Forced turns
         # can't use a cache (Gemini rejects ``cached_content`` + ``tool_config``),
-        # but the cache still advances underneath them, so the first ``auto`` turn
+        # but the cache still advances underneath them, so the first free turn
         # inherits a cache covering all the forced results.
         if incremental_caching and iter_tool_choice is LLM_TOOL_CHOICE_REQUIRED:
             await _resolve_pending_cache()
@@ -1851,11 +1855,11 @@ async def _run_reflect_agent_inner(
 
             # Kick off the next-turn cache (covering THIS call's input) so it
             # builds concurrently with the tool execution below — hiding the
-            # create latency. Only schedule when the next turn is ``auto`` (the
+            # create latency. Only schedule when the next turn is free (the
             # only kind that references it); the next turn's pre-call resolve then
             # adopts it. Resolve any prior in-flight create first so we don't drop
-            # its handle. Not after compaction: no auto turn follows it.
-            if incremental_caching and next_is_auto and not compacted:
+            # its handle. Not after compaction: no free turn follows it.
+            if incremental_caching and next_is_free and not compacted:
                 await _resolve_pending_cache()
                 _schedule_cache(call_msg_count)
 
@@ -1971,7 +1975,7 @@ async def _run_reflect_agent_inner(
                     # Deterministic short-circuit (no extra LLM call): on a
                     # low/mid-budget call, if every retrieved mental model is
                     # fresh and has usable content, stop forcing the lower
-                    # retrieval layers. The next iteration runs under ``auto``
+                    # retrieval layers. The next iteration is a free turn
                     # tool choice, so the agent can answer directly when the
                     # mental model suffices, or — having just read it — issue a
                     # targeted ``search_observations``/``recall`` itself. Stale,
@@ -1991,7 +1995,7 @@ async def _run_reflect_agent_inner(
                         releases_forcing = True
                         logger.info(
                             f"[REFLECT {reflect_id}] Fresh mental models sufficient on iteration {iteration + 1}; "
-                            "releasing forced lower-level retrieval to auto."
+                            "releasing forced lower-level retrieval to free turns."
                         )
 
                 if normalized_tool_name == "read_mental_models" and isinstance(output, dict):

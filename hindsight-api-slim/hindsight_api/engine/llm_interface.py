@@ -367,11 +367,14 @@ class LLMInterface(ABC):
         session_id: str,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
+        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
     ) -> str | None:
         """Cache ``system + tools + messages`` and return an opaque handle, or None.
 
         The handle is passed back to ``call_with_tools(cached_prefix=...,
-        cached_prefix_message_count=len(messages))``. Caches are grouped under
+        cached_prefix_message_count=len(messages))``, and only for a call with this
+        ``tool_choice``: a provider may store the choice in the cache (Gemini refuses
+        it on a request that uses one). Caches are grouped under
         ``session_id`` for teardown via ``delete_cache_session``. Returns None
         when caching is unavailable or the prefix is too small — caller falls
         back to an uncached call.

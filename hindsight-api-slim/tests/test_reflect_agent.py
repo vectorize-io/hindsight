@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from hindsight_api.cancellation import OperationCancelledError
-from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
+from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_REQUIRED, LLMToolChoice
 from hindsight_api.engine.reflect.agent import (
     ReflectNoAnswerError,
     ReflectToolCallError,
@@ -423,10 +423,10 @@ class TestReflectAgentMocked:
         mock_llm.call.assert_not_called()
         mock_functions["search_observations_fn"].assert_not_called()
         mock_functions["recall_fn"].assert_not_called()
-        # First iteration forced mental models; second was released to auto.
+        # First iteration forced mental models; second was released to a free turn.
         first_choice = mock_llm.call_with_tools.await_args_list[0].kwargs["tool_choice"]
         assert first_choice == LLMToolChoice.named("search_mental_models")
-        assert mock_llm.call_with_tools.await_args_list[1].kwargs["tool_choice"] is LLM_TOOL_CHOICE_AUTO
+        assert mock_llm.call_with_tools.await_args_list[1].kwargs["tool_choice"] is LLM_TOOL_CHOICE_REQUIRED
         tool_result = mock_llm.call_with_tools.await_args_list[1].kwargs["messages"][-1]
         assert tool_result["role"] == "tool"
         assert tool_result["tool_call_id"] == "1"
@@ -791,7 +791,7 @@ class TestReflectAgentMocked:
             (True, True, True, "search_mental_models"),
             (False, True, True, "search_observations"),
             (False, False, True, "recall"),
-            (False, False, False, "auto"),
+            (False, False, False, "required"),
         ],
     )
     @pytest.mark.parametrize(
@@ -846,7 +846,7 @@ class TestReflectAgentMocked:
             function.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_short_circuited_agent_may_still_retrieve_under_auto(self, mock_llm, mock_functions):
+    async def test_short_circuited_agent_may_still_retrieve_on_a_free_turn(self, mock_llm, mock_functions):
         """After release, the agent can still choose to retrieve deeper itself (its own query)."""
         mock_functions["search_mental_models_fn"].return_value = {
             "query": "test query",
@@ -886,9 +886,9 @@ class TestReflectAgentMocked:
         )
 
         assert result.text == "Confirmed."
-        # recall ran because the model chose it under auto, not because it was forced,
+        # recall ran because the model chose it on a free turn, not because it was forced,
         # and it used the model's own targeted query (not a forced override).
-        assert mock_llm.call_with_tools.await_args_list[1].kwargs["tool_choice"] is LLM_TOOL_CHOICE_AUTO
+        assert mock_llm.call_with_tools.await_args_list[1].kwargs["tool_choice"] is LLM_TOOL_CHOICE_REQUIRED
         mock_functions["recall_fn"].assert_called_once()
         assert mock_functions["recall_fn"].await_args.args[0] == "launch completion proof"
         mock_functions["search_observations_fn"].assert_not_called()
@@ -3258,6 +3258,7 @@ class _StepCacheProvider:
         self._provider_impl = self
         self.cache_counter = 0
         self.created: list[tuple[str, int]] = []  # (session_id, #messages covered)
+        self.cache_tool_choices: list = []
         self.deleted_sessions: list[str] = []
         self.calls: list[dict] = []  # per call_with_tools: tool_choice / cached_prefix / count / #messages
 
@@ -3265,7 +3266,8 @@ class _StepCacheProvider:
     def supports_incremental_prompt_cache(self) -> bool:
         return True
 
-    async def create_incremental_cache(self, *, session_id, messages, tools=None):
+    async def create_incremental_cache(self, *, session_id, messages, tools=None, tool_choice=None):
+        self.cache_tool_choices.append(tool_choice)
         self.cache_counter += 1
         self.created.append((session_id, len(messages)))
         return f"cache-{self.cache_counter}"
@@ -3303,11 +3305,11 @@ class _StepCacheProvider:
 
 
 class TestReflectIncrementalCache:
-    """The step-by-step Gemini context cache: each auto turn reuses the previous
+    """The step-by-step Gemini context cache: each free turn reuses the previous
     turn's full input, and every per-reflect cache is deleted at the end."""
 
     @pytest.mark.asyncio
-    async def test_each_auto_turn_reuses_previous_step_cache_and_cleans_up(self, mock_functions):
+    async def test_each_free_turn_reuses_previous_step_cache_and_cleans_up(self, mock_functions):
         functions = {
             **mock_functions,
             "search_observations_fn": AsyncMock(return_value={"observations": [{"id": "obs-1"}]}),
@@ -3321,7 +3323,7 @@ class TestReflectIncrementalCache:
                 tool_calls=[LLMToolCall(id=cid, name=name, arguments={"query": "q"})], finish_reason="tool_calls"
             )
 
-        # Forced obs -> forced recall -> two auto recalls -> done.
+        # Forced obs -> forced recall -> two free recalls -> done.
         provider = _StepCacheProvider(
             scripted=[
                 _tc("0", "search_observations"),
@@ -3350,29 +3352,32 @@ class TestReflectIncrementalCache:
         assert result.text == "A"
 
         calls = provider.calls
-        # 2 forced turns (obs, recall), 3 auto turns (recall, recall, done), then the closing done
+        # 2 forced turns (obs, recall), 3 free turns (recall, recall, done), then the closing done
         # that writes the answer.
-        auto = calls[2:-1]
+        free = calls[2:-1]
         assert [c["tool_choice"] for c in calls[:2]] == [
             LLMToolChoice.named("search_observations"),
             LLMToolChoice.named("recall"),
         ]
-        assert all(c["tool_choice"] is LLM_TOOL_CHOICE_AUTO for c in auto)
+        assert all(c["tool_choice"] is LLM_TOOL_CHOICE_REQUIRED for c in free)
         assert calls[-1]["tool_choice"] == LLMToolChoice.named("done")
 
         # Forced turns never reference a cache (Gemini forbids cache + tool_config).
         assert calls[0]["cached_prefix"] is None
         assert calls[1]["cached_prefix"] is None
 
-        # Every auto turn references a cache, and the count it was handed equals the
+        # Every free turn references a cache, and the count it was handed equals the
         # PREVIOUS turn's full input length — i.e. it reuses the previous step entirely.
-        for i in range(2, 2 + len(auto)):
-            assert calls[i]["cached_prefix"] is not None, f"auto call {i} should use the cache"
+        for i in range(2, 2 + len(free)):
+            assert calls[i]["cached_prefix"] is not None, f"free call {i} should use the cache"
             assert calls[i]["cached_prefix_message_count"] == calls[i - 1]["n_messages"], (
-                f"auto call {i} must cache exactly the previous step's input"
+                f"free call {i} must cache exactly the previous step's input"
             )
+        # Gemini refuses a tool_config on a request that uses a cache, so each cache is
+        # made for the choice of the turns that use it (#5832).
+        assert provider.cache_tool_choices == [LLM_TOOL_CHOICE_REQUIRED] * len(provider.created)
 
-        # Caches are created covering a strictly growing prefix, one per auto turn.
+        # Caches are created covering a strictly growing prefix, one per free turn.
         assert [n for _, n in provider.created] == [
             calls[1]["n_messages"],
             calls[2]["n_messages"],
@@ -3743,6 +3748,115 @@ class TestAnswerAlwaysComesFromTheClosingStep:
         closing = llm.call_with_tools.await_args_list[-1].kwargs
         assert closing["tool_choice"] == LLMToolChoice.named("done")
         assert "## Answer now" in closing["messages"][-1]["content"]
+
+
+class TestFreeTurnsSignalReady:
+    """A free turn that has enough says so with answer_ready, a call with no arguments: the
+    closing step writes the answer, so an answer written in the free turn was written twice
+    (#5832). Free turns are ``required``, so the model cannot stop with that answer as prose."""
+
+    @staticmethod
+    def _call(name: str, cid: str, **arguments) -> LLMToolCallResult:
+        return LLMToolCallResult(
+            tool_calls=[LLMToolCall(id=cid, name=name, arguments=arguments)], finish_reason="tool_calls"
+        )
+
+    @staticmethod
+    def _functions(recall: AsyncMock | None = None) -> dict:
+        return {
+            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "read_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "search_observations_fn": AsyncMock(return_value={"observations": []}),
+            "recall_fn": recall or AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "m"}]}),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+
+    async def _reflect(self, llm, functions: dict, **kwargs):
+        return await run_reflect_agent(
+            llm_config=llm,
+            bank_id="b",
+            query="q",
+            bank_profile={"name": "T", "mission": "M"},
+            has_mental_models=False,
+            include_observations=False,
+            max_iterations=6,
+            **functions,
+            **kwargs,
+        )
+
+    @pytest.mark.asyncio
+    async def test_answer_ready_hands_over_to_the_closing_step(self):
+        llm = MagicMock()
+        llm.call_with_tools = AsyncMock(
+            side_effect=[
+                self._call("recall", "r", query="q"),
+                self._call("answer_ready", "ready"),
+                self._call("done", "d", answer="the answer", memory_ids=["mem-1"]),
+            ]
+        )
+
+        result = await self._reflect(llm, self._functions())
+
+        assert result.text == "the answer"
+        assert result.used_memory_ids == ["mem-1"]
+        free, closing = (c.kwargs for c in llm.call_with_tools.await_args_list[1:])
+        assert free["tool_choice"] is LLM_TOOL_CHOICE_REQUIRED
+        assert closing["tool_choice"] == LLMToolChoice.named("done")
+        # The closing request continues the evidence conversation: the ready call is not
+        # replayed into it, and nothing the free turn wrote is either.
+        assert closing["messages"][:-1] == free["messages"]
+        assert "## Answer now" in closing["messages"][-1]["content"]
+        assert [c.scope for c in result.llm_trace] == ["agent_1", "agent_2", "closing_done"]
+
+    @pytest.mark.asyncio
+    async def test_retrieval_called_with_answer_ready_still_runs(self):
+        recall = AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "m"}]})
+        llm = MagicMock()
+        llm.call_with_tools = AsyncMock(
+            side_effect=[
+                self._call("recall", "r1", query="first"),
+                LLMToolCallResult(
+                    tool_calls=[
+                        LLMToolCall(id="r2", name="recall", arguments={"query": "second"}),
+                        LLMToolCall(id="ready", name="answer_ready", arguments={}),
+                    ],
+                    finish_reason="tool_calls",
+                ),
+                self._call("answer_ready", "ready2"),
+                self._call("done", "d", answer="A", memory_ids=["mem-1"]),
+            ]
+        )
+
+        result = await self._reflect(llm, self._functions(recall))
+
+        assert result.text == "A"
+        assert [c.args[0] for c in recall.await_args_list] == ["first", "second"]
+        # Every tool call sent back has its result; the ready call is never one of them.
+        replayed = [
+            tc["function"]["name"]
+            for m in llm.call_with_tools.await_args_list[-1].kwargs["messages"]
+            for tc in m.get("tool_calls") or []
+        ]
+        assert replayed == ["recall", "recall"]
+
+    @pytest.mark.asyncio
+    async def test_agent_mode_offers_answer_ready_and_the_prompt_asks_for_it(self):
+        llm = MagicMock()
+        llm.call_with_tools = AsyncMock(
+            side_effect=[
+                self._call("recall", "r", query="q"),
+                self._call("answer_ready", "ready"),
+                self._call("done", "d", answer="A"),
+            ]
+        )
+
+        await self._reflect(llm, self._functions())
+
+        first = llm.call_with_tools.await_args_list[0].kwargs
+        tools = {t["function"]["name"]: t["function"] for t in first["tools"]}
+        assert tools["answer_ready"]["parameters"] == {"type": "object", "properties": {}}
+        assert "answer_ready" in tools["done"]["description"]
+        assert "answer_ready" in first["messages"][0]["content"]
 
 
 def test_retrieval_counts_include_expanded_memories():
