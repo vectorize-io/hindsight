@@ -518,7 +518,7 @@
     "llmBatchSizeLabel": "Tamanho do lote LLM",
     "llmBatchSizeDescription": "Número de fatos enviados ao LLM em uma única chamada de consolidação. Valores mais altos reduzem chamadas ao LLM ao custo de prompts maiores. Deixe em branco para usar o padrão do servidor.",
     "defaultObservationScopesLabel": "Escopos de observação padrão",
-    "defaultObservationScopesDescription": "Como as observações são delimitadas para itens retidos que não definem observation_scopes. combined agrupa cada memória pelo conjunto completo de tags; um escopo personalizado como topic:* agrupa apenas pelas próprias tags de tópico, para que memórias sobre o mesmo assunto sejam consolidadas juntas. Aplica-se apenas a novas retenções.",
+    "defaultObservationScopesDescription": "Escopos de observação usados para itens retidos que não definem observation_scopes por conta própria. Aplica-se apenas a novas retenções.",
     "observationScopesCustom": "Escopos personalizados",
     "observationScopesCustomPlaceholder": "Um escopo por linha, tags separadas por vírgulas — ex.: topic:*, user:*",
     "sourceFactsMaxTokensLabel": "Máx. tokens de fatos de origem",

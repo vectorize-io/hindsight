@@ -518,7 +518,7 @@
     "llmBatchSizeLabel": "Tamaño del lote LLM",
     "llmBatchSizeDescription": "Número de hechos enviados al LLM en una sola llamada de consolidación. Valores más altos reducen las llamadas al LLM a costa de prompts más grandes. Deja en blanco para usar el valor predeterminado del servidor.",
     "defaultObservationScopesLabel": "Ámbitos de observación predeterminados",
-    "defaultObservationScopesDescription": "Cómo se delimitan las observaciones de los elementos retenidos que no definen observation_scopes. combined agrupa cada memoria por su conjunto completo de etiquetas; un ámbito personalizado como topic:* la agrupa solo por sus propias etiquetas de tema, para que las memorias sobre el mismo asunto se consoliden juntas. Solo se aplica a nuevas retenciones.",
+    "defaultObservationScopesDescription": "Ámbitos de observación usados para los elementos retenidos que no definen observation_scopes por sí mismos. Solo se aplica a nuevas retenciones.",
     "observationScopesCustom": "Ámbitos personalizados",
     "observationScopesCustomPlaceholder": "Un ámbito por línea, etiquetas separadas por comas — p. ej. topic:*, user:*",
     "sourceFactsMaxTokensLabel": "Máx. tokens de hechos de origen",

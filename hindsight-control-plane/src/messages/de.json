@@ -518,7 +518,7 @@
     "llmBatchSizeLabel": "LLM-Batch-Größe",
     "llmBatchSizeDescription": "Anzahl der Fakten, die in einem einzelnen Konsolidierungsaufruf an das LLM gesendet werden. Höhere Werte reduzieren LLM-Aufrufe, erhöhen aber die Prompt-Größe. Leer lassen, um den Server-Standardwert zu verwenden.",
     "defaultObservationScopesLabel": "Standard-Beobachtungsbereiche",
-    "defaultObservationScopesDescription": "Wie Beobachtungen für gespeicherte Einträge ohne eigene observation_scopes abgegrenzt werden. combined gruppiert jede Erinnerung nach ihrer vollständigen Tag-Menge; ein eigener Bereich wie topic:* gruppiert nur nach ihren Themen-Tags, sodass Erinnerungen zum selben Thema gemeinsam konsolidiert werden. Gilt nur für neue Speichervorgänge.",
+    "defaultObservationScopesDescription": "Beobachtungsbereiche für gespeicherte Einträge, die selbst keine observation_scopes setzen. Gilt nur für neue Speichervorgänge.",
     "observationScopesCustom": "Eigene Bereiche",
     "observationScopesCustomPlaceholder": "Ein Bereich pro Zeile, Tags durch Kommas getrennt — z. B. topic:*, user:*",
     "sourceFactsMaxTokensLabel": "Max. Tokens für Quellfakten",

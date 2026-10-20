@@ -518,7 +518,7 @@
     "llmBatchSizeLabel": "LLM バッチサイズ",
     "llmBatchSizeDescription": "1 回の統合呼び出しで LLM に送信されるファクトの数。値を大きくすると LLM 呼び出しは減りますが、プロンプトが大きくなります。空欄でサーバーのデフォルトを使用します。",
     "defaultObservationScopesLabel": "デフォルトの観察スコープ",
-    "defaultObservationScopesDescription": "observation_scopes を指定しない保存項目の観察スコープ。combined は各メモリをタグ全体でまとめます。topic:* のようなカスタムスコープは自身のトピックタグだけでまとめるため、同じ主題のメモリが一緒に統合されます。新しい保存にのみ適用されます。",
+    "defaultObservationScopesDescription": "observation_scopes を自身で指定しない保存項目に使う観察スコープ。新しい保存にのみ適用されます。",
     "observationScopesCustom": "カスタムスコープ",
     "observationScopesCustomPlaceholder": "1行に1スコープ、タグはカンマ区切り — 例: topic:*, user:*",
     "sourceFactsMaxTokensLabel": "ソースファクトの最大トークン数",

@@ -518,7 +518,7 @@
     "llmBatchSizeLabel": "Taille de lot LLM",
     "llmBatchSizeDescription": "Nombre de faits envoyés au LLM dans un seul appel de consolidation. Des valeurs plus élevées réduisent les appels au LLM au prix de prompts plus grands. Laisser vide pour utiliser la valeur par défaut du serveur.",
     "defaultObservationScopesLabel": "Portées d'observation par défaut",
-    "defaultObservationScopesDescription": "Comment les observations sont délimitées pour les éléments retenus qui ne définissent pas observation_scopes. combined regroupe chaque mémoire selon l'ensemble complet de ses tags ; une portée personnalisée comme topic:* la regroupe uniquement selon ses propres tags de sujet, afin que les mémoires d'un même sujet soient consolidées ensemble. S'applique uniquement aux nouvelles rétentions.",
+    "defaultObservationScopesDescription": "Portées d'observation utilisées pour les éléments retenus qui ne définissent pas observation_scopes eux-mêmes. S'applique uniquement aux nouvelles rétentions.",
     "observationScopesCustom": "Portées personnalisées",
     "observationScopesCustomPlaceholder": "Une portée par ligne, tags séparés par des virgules — ex. topic:*, user:*",
     "sourceFactsMaxTokensLabel": "Tokens max des faits sources",

@@ -518,7 +518,7 @@
     "llmBatchSizeLabel": "LLM 批大小",
     "llmBatchSizeDescription": "单次整合调用发送给 LLM 的事实数量。更大的值会减少 LLM 调用次数，但提示词更长。留空则使用服务器默认值。",
     "defaultObservationScopesLabel": "默认观察范围",
-    "defaultObservationScopesDescription": "未自行设置 observation_scopes 的保存条目如何划分观察范围。combined 按每条记忆的完整标签集分组；topic:* 这样的自定义范围只按其自身的主题标签分组，使同一主题的记忆一起整合。仅适用于新的保存。",
+    "defaultObservationScopesDescription": "用于未自行设置 observation_scopes 的保存条目的观察范围。仅适用于新的保存。",
     "observationScopesCustom": "自定义范围",
     "observationScopesCustomPlaceholder": "每行一个范围，标签用逗号分隔 — 例如 topic:*, user:*",
     "sourceFactsMaxTokensLabel": "来源事实最大 Token 数",

@@ -518,7 +518,7 @@
     "llmBatchSizeLabel": "LLM 배치 크기",
     "llmBatchSizeDescription": "단일 통합 호출에서 LLM에 전송되는 팩트 수. 값이 클수록 LLM 호출은 줄어들지만 프롬프트가 커집니다. 서버 기본값을 사용하려면 비워두세요.",
     "defaultObservationScopesLabel": "기본 관찰 범위",
-    "defaultObservationScopesDescription": "observation_scopes를 지정하지 않은 저장 항목의 관찰 범위입니다. combined는 각 메모리를 전체 태그 집합으로 묶고, topic:* 같은 사용자 지정 범위는 자신의 주제 태그로만 묶어 같은 주제의 메모리가 함께 통합됩니다. 새로 저장하는 항목에만 적용됩니다.",
+    "defaultObservationScopesDescription": "observation_scopes를 직접 지정하지 않은 저장 항목에 사용하는 관찰 범위입니다. 새로 저장하는 항목에만 적용됩니다.",
     "observationScopesCustom": "사용자 지정 범위",
     "observationScopesCustomPlaceholder": "한 줄에 범위 하나, 태그는 쉼표로 구분 — 예: topic:*, user:*",
     "sourceFactsMaxTokensLabel": "소스 팩트 최대 토큰",
