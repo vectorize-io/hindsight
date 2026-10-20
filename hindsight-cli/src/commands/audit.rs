@@ -75,6 +75,24 @@ pub fn list(
     Ok(())
 }
 
+/// Show one audit log entry with its request and response bodies
+pub fn get(
+    client: &ApiClient,
+    bank_id: &str,
+    log_id: &str,
+    verbose: bool,
+    output_format: OutputFormat,
+) -> Result<()> {
+    let entry = client.get_audit_log(bank_id, log_id, verbose)?;
+    if output_format == OutputFormat::Pretty {
+        ui::print_section_header(&format!("Audit entry: {}", entry.id));
+        println!("{}", serde_json::to_string_pretty(&entry)?);
+    } else {
+        output::print_output(&entry, output_format)?;
+    }
+    Ok(())
+}
+
 /// Get audit log statistics for a bank
 pub fn stats(
     client: &ApiClient,

@@ -47,6 +47,7 @@ DEFAULT_USER_AGENT = f"hindsight-client-python/{_CLIENT_VERSION}"
 #: refused with 422 rather than silently dropping the attachments.
 ContentBlock = dict[str, Any]
 from hindsight_client_api.api import (
+    audit_api,
     bank_transfer_api,
     banks_api,
     directives_api,
@@ -314,6 +315,7 @@ class Hindsight:
         self._operations_api = operations_api.OperationsApi(self._api_client)
         self._webhooks_api = webhooks_api.WebhooksApi(self._api_client)
         self._monitoring_api = monitoring_api.MonitoringApi(self._api_client)
+        self._audit_api = audit_api.AuditApi(self._api_client)
         self._document_transfer_api = document_transfer_api.DocumentTransferApi(self._api_client)
         self._bank_transfer_api = bank_transfer_api.BankTransferApi(self._api_client)
 
@@ -410,6 +412,11 @@ class Hindsight:
     def monitoring(self) -> monitoring_api.MonitoringApi:
         """Low-level Monitoring API — health check, version, metrics."""
         return self._monitoring_api
+
+    @property
+    def audit(self) -> audit_api.AuditApi:
+        """Low-level Audit API — list a bank's audit log, get one entry with its bodies."""
+        return self._audit_api
 
     def __enter__(self):
         """Context manager entry."""

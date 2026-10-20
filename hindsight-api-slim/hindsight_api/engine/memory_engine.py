@@ -652,7 +652,7 @@ if TYPE_CHECKING:
 
     from ..webhooks.url_guard import GuardedWebhookClient
     from . import bank_aliases as bank_aliases_mod
-    from .audit import AuditLogEntry, AuditLogListResponse, AuditLogStatsResponse
+    from .audit import AuditLogEntry, AuditLogListResponse, AuditLogStatsResponse, AuditLogSummary
     from .memories import MemoriesExtension, MemoryScopeWatermark
     from .memories.base import AttachmentRef, EntityResolverHandle, StoredMemory
     from .prompt_preview import PromptPreview
@@ -997,20 +997,22 @@ async def validate_retain_batch_support(retain_llm_config: "LLMConfig | MultiLLM
     )
 
 
-def _audit_summary_fields(conn: Any, row: Any) -> dict[str, Any]:
-    """The body-less fields of an audit_log row, shared by the list and the get."""
+def _audit_summary(conn: Any, row: Any) -> "AuditLogSummary":
+    """The body-less part of an audit_log row, shared by the list and the get."""
+    from .audit import AuditLogSummary
+
     started = row["started_at"]
     ended = row["ended_at"]
-    return {
-        "id": str(row["id"]),
-        "action": row["action"],
-        "transport": row["transport"],
-        "bank_id": row["bank_id"],
-        "started_at": started.isoformat() if started else None,
-        "ended_at": ended.isoformat() if ended else None,
-        "duration_ms": int((ended - started).total_seconds() * 1000) if started and ended else None,
-        "metadata": conn.parse_json(row["metadata"]) if row["metadata"] is not None else {},
-    }
+    return AuditLogSummary(
+        id=str(row["id"]),
+        action=row["action"],
+        transport=row["transport"],
+        bank_id=row["bank_id"],
+        started_at=started.isoformat() if started else None,
+        ended_at=ended.isoformat() if ended else None,
+        duration_ms=int((ended - started).total_seconds() * 1000) if started and ended else None,
+        metadata=conn.parse_json(row["metadata"]) if row["metadata"] is not None else {},
+    )
 
 
 def _is_oracledb_connection_error(e: Exception) -> bool:
@@ -14442,7 +14444,7 @@ class MemoryEngine(MemoryEngineInterface):
         ``get_bank_profile`` before any query runs, so the SELECT below is scoped
         to the authenticated tenant's schema.
         """
-        from .audit import AuditLogListResponse, AuditLogSummary
+        from .audit import AuditLogListResponse
 
         if await self.get_bank_profile(bank_id, request_context=request_context) is None:
             return None
@@ -14488,7 +14490,7 @@ class MemoryEngine(MemoryEngineInterface):
                 """,
                 *params,
             )
-            items = [AuditLogSummary(**_audit_summary_fields(conn, row)) for row in rows]
+            items = [_audit_summary(conn, row) for row in rows]
 
         return AuditLogListResponse(bank_id=bank_id, total=total, limit=limit, offset=offset, items=items)
 
@@ -14527,7 +14529,7 @@ class MemoryEngine(MemoryEngineInterface):
             if row is None:
                 return None
             return AuditLogEntry(
-                **_audit_summary_fields(conn, row),
+                **_audit_summary(conn, row).model_dump(),
                 request=conn.parse_json(row["request"]) if row["request"] is not None else None,
                 response=conn.parse_json(row["response"]) if row["response"] is not None else None,
             )

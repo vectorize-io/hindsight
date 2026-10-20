@@ -380,6 +380,8 @@ hindsight audit list my-cli-bank \
 hindsight audit list my-cli-bank --limit 50 --offset 100
 ```
 
+The list shows each entry without its request and response, which can be large. To see them, pass an entry's id from the list to `hindsight audit get <bank_id> <log_id>`.
+
 ## Output Formats
 
 ```bash

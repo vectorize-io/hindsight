@@ -116,7 +116,7 @@ enum Commands {
     #[command(subcommand)]
     Webhook(WebhookCommands),
 
-    /// Inspect audit logs (list, stats)
+    /// Inspect audit logs (list, get, stats)
     #[command(subcommand)]
     Audit(AuditCommands),
 
@@ -1014,6 +1014,15 @@ enum AuditCommands {
         /// Offset for pagination
         #[arg(short = 's', long)]
         offset: Option<u64>,
+    },
+
+    /// Show one audit log entry with its full request and response
+    Get {
+        /// Bank ID
+        bank_id: String,
+
+        /// Audit log entry ID (from `audit list`)
+        log_id: String,
     },
 
     /// Show audit log statistics bucketed over time
@@ -2377,6 +2386,9 @@ fn run() -> Result<()> {
                 verbose,
                 output_format,
             ),
+            AuditCommands::Get { bank_id, log_id } => {
+                commands::audit::get(&client, &bank_id, &log_id, verbose, output_format)
+            }
             AuditCommands::Stats {
                 bank_id,
                 action,

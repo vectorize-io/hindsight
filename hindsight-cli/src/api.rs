@@ -1548,6 +1548,22 @@ impl ApiClient {
         })
     }
 
+    pub fn get_audit_log(
+        &self,
+        bank_id: &str,
+        log_id: &str,
+        _verbose: bool,
+    ) -> Result<types::AuditLogEntry> {
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .get_audit_log(bank_id, log_id, None)
+                .humanized()
+                .await?;
+            Ok(response.into_inner())
+        })
+    }
+
     pub fn audit_log_stats(
         &self,
         bank_id: &str,
