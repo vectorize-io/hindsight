@@ -17,6 +17,8 @@ store — a double that is easier to satisfy than the contract tests the double,
 
 from types import SimpleNamespace
 
+import pytest
+
 import hindsight_api.engine.retain.orchestrator as orch
 from hindsight_api.engine.memories.base import MemoriesExtension
 from hindsight_api.engine.retain.types import ConcurrentAppendConflict
@@ -357,3 +359,66 @@ async def test_a_store_owned_delta_falls_back_when_the_document_moved(monkeypatc
     # running first.
     assert calls == ["store_bodies"], calls
     assert fenced_on == ["planned-hash"], "the fence is conditional on the hash the delta planned against"
+
+
+@pytest.mark.parametrize(
+    ("existing", "changed", "removed", "relabelled"),
+    [
+        # Chunk 0 survived the edit: its facts were not re-written, so they must be relabelled.
+        ({0: "b_d1_0", 1: "b_d1_1"}, [1], [], True),
+        # Every old chunk changed or went: each fact was just written with the current labels.
+        ({0: "b_d1_0", 1: "b_d1_1"}, [0], [1], False),
+    ],
+)
+async def test_a_store_owned_delta_relabels_the_unchanged_chunks(monkeypatch, existing, changed, removed, relabelled):
+    """The facts on UNCHANGED chunks carry the previous retain's tags and metadata until relabelled.
+
+    The SQL delta always relabelled them; the store-owned delta did not, so one document ended a
+    partial re-retain with facts disagreeing on their tags by whether their chunk happened to change.
+    """
+    tracker = _ConnTracker()
+    relabels = []
+
+    class _StoreOwned:
+        async def scan_memories(self, **kw):
+            return SimpleNamespace(memories=[], next_page_token="")
+
+        memory_ids_for_chunks = MemoriesExtension.memory_ids_for_chunks
+
+        async def retain(self, bank_id, unit_ids, facts, **kw):
+            return {"seq": 7, "unit_ids": list(unit_ids), "new_entities": 0}
+
+    async def _relabel(conn, bank_id, document_id, tags, metadata, **kw):
+        relabels.append((document_id, tags, metadata))
+        return 0
+
+    monkeypatch.setattr(orch, "_store_document_bodies", lambda **kw: _async(None))
+    monkeypatch.setattr(orch.fact_storage, "insert_facts_batch", lambda *a, **k: _async(["u1"]))
+    monkeypatch.setattr(orch.fact_storage, "update_memory_units_metadata_and_tags", _relabel)
+    monkeypatch.setattr(orch, "acquire_with_retry", lambda *_a, **_k: tracker.acquire())
+
+    ok, _unit_ids = await orch._delta_store_owned_write(
+        provider=_StoreOwned(),
+        pool=SimpleNamespace(ops=None),
+        bank_id="b",
+        effective_doc_id="d1",
+        config=SimpleNamespace(entity_similarity_threshold=0.0, entity_labels=None),
+        log_buffer=[],
+        entity_resolver=SimpleNamespace(flush_pending_stats=_noop_async),
+        contents_dicts=[{"content": "hello", "metadata": {"source": "crm"}}],
+        delta_contents=[SimpleNamespace(entities=None, resolve_entities=True)],
+        document_tags=["v2"],
+        full_document_body=None,
+        extracted_facts=[SimpleNamespace(chunk_index=changed[0])],
+        processed_facts=[_fact()],
+        new_chunk_metadata=[SimpleNamespace(chunk_index=changed[0])],
+        delta_chunk_map={},
+        new_chunks_with_contents={changed[0]: "hello"},
+        existing_by_index={i: SimpleNamespace(chunk_id=c) for i, c in existing.items()},
+        changed_indices=changed,
+        removed_indices=removed,
+        doc_hash_at_load="planned-hash",
+    )
+
+    assert ok is True
+    assert relabels == ([("d1", ["v2"], {"source": "crm"})] if relabelled else [])

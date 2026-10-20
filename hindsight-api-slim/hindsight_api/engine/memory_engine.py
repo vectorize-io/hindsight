@@ -7079,6 +7079,9 @@ class MemoryEngine(MemoryEngineInterface):
                         execution.usage,
                         execution.processed_content_tokens,
                     )
+                    # The execution has its own between-sub-batch checkpoint; a bank deleted
+                    # while this group ran must stop the loop like the checkpoint above does.
+                    cancelled = execution.cancelled
                 else:
                     group_outcome = await self._retain_batch_async_internal(
                         bank_id=bank_id,
@@ -7104,6 +7107,8 @@ class MemoryEngine(MemoryEngineInterface):
                 total_processed_content_tokens = merge_processed_content_tokens(
                     total_processed_content_tokens, group_processed
                 )
+                if cancelled:
+                    break
 
         # A cancelled run (bank deleted mid-flight) skips the completion side
         # effects, mirroring the pre-grouping early return from the sub-batch loop.
@@ -9849,7 +9854,7 @@ class MemoryEngine(MemoryEngineInterface):
                     ),
                 )
                 step_duration = time.perf_counter() - step_start
-                log_buffer.append(f"  [1] Generate query embedding: {step_duration:.3f}s")
+                log_buffer.append(f"  [1] Generate query embedding + temporal window: {step_duration:.3f}s")
             finally:
                 embedding_span.end()
 
