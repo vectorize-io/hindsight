@@ -490,6 +490,14 @@ class QuotaAwareValidator(OperationValidatorExtension):
 `validate_recall` or `validate_reflect` in synchronous HTTP request
 paths — there is no queue to defer to and it will surface as a 500.
 
+Inside the worker, `ctx.request_context.operation_id` is the id of the
+operation being run (`None` on synchronous requests; for retains folded
+into one execution, the primary operation's id). A hook that decides the
+operation should not run at all, rather than fail, can cancel it with
+`self.context.get_memory_engine().cancel_operation(...)` and
+then raise `DeferOperation`: the row stays `cancelled` and no failure is
+recorded.
+
 ### Example: Custom MCPExtension
 
 ```python
