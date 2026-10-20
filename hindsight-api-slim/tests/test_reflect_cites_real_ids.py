@@ -5,6 +5,9 @@ mean nothing once the reflect ends, so a caller asking for ids — a mental mode
 used as a report that drives ``update_memory`` / ``invalidate_memory`` — must get
 ids it can act on. Which ids the model chooses to cite is its call, so the
 assertions are structural: no alias survives, and every UUID cited is real.
+
+The converse holds too (#5833): a page whose question does not ask for ids must
+cite none. Its provenance is kept in ``based_on``, not in the text.
 """
 
 import re
@@ -65,5 +68,42 @@ async def test_answer_and_mental_model_cite_real_ids(memory_real_llm: MemoryEngi
         )
         assert refreshed is not None
         _assert_cites_real_ids(refreshed["content"], real_ids)
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+async def test_mental_model_that_does_not_ask_for_ids_cites_none(memory_real_llm: MemoryEngine, request_context):
+    memory = memory_real_llm
+    bank_id = f"test-no-ids-{uuid.uuid4().hex[:8]}"
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
+    try:
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {"content": "Alice works at Google as a software engineer.", "event_date": "2025-01-10"},
+                {"content": "Alice left Google and joined Stripe in March 2025.", "event_date": "2025-03-15"},
+                {"content": "Alice works at Stripe on the payments team.", "event_date": "2025-06-01"},
+            ],
+            request_context=request_context,
+        )
+        await memory.wait_for_background_tasks()
+
+        # An evidence-style page is where ids clustered in the report: the model
+        # wants to back each claim, and cites the handle it read.
+        model = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Alice's career",
+            source_query="Where has Alice worked, and what is the evidence for each job?",
+            content="pending",
+            request_context=request_context,
+        )
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=model["id"], request_context=request_context
+        )
+        assert refreshed is not None
+        content = refreshed["content"]
+        assert "Stripe" in content, f"the page did not answer the question:\n{content}"
+        assert not _UUID_RE.findall(content), f"memory ids leaked into the page:\n{content}"
+        assert not _ALIAS_RE.findall(content), f"aliases leaked into the page:\n{content}"
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)

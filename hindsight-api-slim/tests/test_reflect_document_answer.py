@@ -22,6 +22,11 @@ from hindsight_api.engine.reflect.structured_doc import (
     document_from_sections,
     render_document,
 )
+from hindsight_api.engine.reflect.prompts import (
+    NO_IDS_IN_TEXT_RULE,
+    build_final_system_prompt,
+    build_system_prompt_for_tools,
+)
 from hindsight_api.engine.reflect.tools_schema import get_reflect_tools
 
 
@@ -61,8 +66,14 @@ class TestDoneToolSchema:
         """Dropping ``answer`` dropped its no-ids rule, and cited handles resolve to UUIDs in pages (#5833)."""
         document = _done_tool(answer_as_document=True)["function"]["parameters"]["properties"]["document"]
         blocks = document["properties"]["sections"]["items"]["properties"]["blocks"]["description"]
-        assert "NEVER cite memory IDs" in blocks
-        assert "memory_ids" in blocks
+        assert NO_IDS_IN_TEXT_RULE in blocks
+
+    def test_every_text_writing_prompt_keeps_ids_out(self):
+        """Document mode, and forced synthesis in both modes, write text a reader sees (#5833)."""
+        document_prompt = build_system_prompt_for_tools(bank_profile={"name": "B"}, answer_as_document=True)
+        assert NO_IDS_IN_TEXT_RULE in document_prompt
+        assert "IDs ONLY in the memory_ids" not in document_prompt, "document mode has no answer field"
+        assert NO_IDS_IN_TEXT_RULE in build_final_system_prompt()
 
     def test_schema_has_no_union_types(self):
         """A tool schema goes to the provider verbatim, and Gemini rejects ``oneOf``."""
