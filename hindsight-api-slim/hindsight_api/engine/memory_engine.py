@@ -14021,6 +14021,11 @@ class MemoryEngine(MemoryEngineInterface):
         # on the item, so retain_params came back without it and the NEXT reprocess
         # fell back to the bank default again.
         content_dict.update(retain_params)
+        # A document retained before #5820 may carry a year-1/9999 placeholder date, which
+        # retain now refuses; replay it as undated rather than failing every reprocess.
+        stored_date = content_dict.get("event_date")
+        if isinstance(stored_date, str) and is_placeholder_date(datetime.fromisoformat(stored_date)):
+            content_dict["event_date"] = None
         # These are the reprocess's own and must win over anything stored.
         content_dict["content"] = original_text
         content_dict["document_id"] = document_id

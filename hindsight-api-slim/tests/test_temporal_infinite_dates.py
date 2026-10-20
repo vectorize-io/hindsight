@@ -161,3 +161,33 @@ async def test_memory_edit_rejects_placeholder_date(memory, request_context):
         await memory.update_memory_unit(
             bank_id, fact_id, occurred_end="9999-12-31T23:59:59", request_context=request_context
         )
+
+
+@pytest.mark.asyncio
+async def test_reprocess_replays_a_stored_placeholder_date_as_undated(memory, request_context):
+    """A document retained before the fix kept its year-9999 timestamp in retain_params;
+    retain now refuses it, so reprocess must replay it as undated instead of failing."""
+    from unittest.mock import AsyncMock, patch
+
+    bank_id = f"test-placeholder-reprocess-{uuid.uuid4().hex[:8]}"
+    await memory.retain_batch_async(
+        bank_id=bank_id,
+        contents=[{"content": "Alice works at Google.", "document_id": "doc"}],
+        request_context=request_context,
+    )
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        # No API can store this any more, so plant the legacy value directly.
+        await conn.execute(
+            f"""UPDATE {fq_table("documents")}
+                SET retain_params = COALESCE(retain_params, '{{}}'::jsonb) || '{{"event_date": "9999-12-31T23:59:59.999999+00:00"}}'::jsonb
+                WHERE bank_id = $1 AND id = 'doc'""",
+            bank_id,
+        )
+    try:
+        with patch.object(memory, "submit_async_retain", new=AsyncMock(return_value={"operation_id": "x"})) as submit:
+            await memory.reprocess_document(bank_id, "doc", request_context=request_context)
+        (replayed,) = submit.call_args.args[1]
+        assert replayed["event_date"] is None
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
