@@ -468,6 +468,11 @@ export HINDSIGHT_API_LLM_MODEL=qwen/qwen3.5-9b
 # Models that reject temperature (e.g. anthropic/claude-haiku-5.5) then fail with
 # "No endpoints found that can handle the requested parameters". Fix: omit it.
 # export HINDSIGHT_API_LLM_TEMPERATURE=none
+# Reflect forces tool calls: tool_choice "required" after its first searches and a
+# named tool on the forced steps. Some upstreams accept only "auto" and fail those
+# turns with "No endpoints found that support the provided 'tool_choice' value"
+# (reported for several gpt-oss-120b hosts, #5832). Pin ones that support it with
+# HINDSIGHT_API_LLM_EXTRA_BODY='{"provider": {"only": ["deepinfra", "cerebras"]}}'.
 
 # Requesty (OpenAI-compatible gateway)
 export HINDSIGHT_API_LLM_PROVIDER=requesty

@@ -465,7 +465,7 @@ Reflect answers from evidence it gathered, so a run that could not gather it doe
 
 - **A retrieval tool raised.** The database, the embedder or the reranker was unavailable. One failure in a batch fails the run: an answer written around a tool that never returned is indistinguishable from one over a bank that genuinely holds nothing on the topic, and callers store it as a real answer.
 - **The model produced no answer.** The `done` call arrived empty, or the final synthesis returned nothing.
-- **The model or transport cannot drive tool calls.** Reflect is driven entirely by structured tool calls; a transport that silently drops the tool definitions fails loudly so you can switch to a tool-calling-capable model.
+- **The model or transport cannot drive tool calls.** Reflect is driven entirely by structured tool calls, and requires one on every turn (`tool_choice` `required`, or a named tool on the forced searches); without a decision model, a model with enough evidence says so with `answer_ready` and is then asked for the answer, so it is written once. A transport that silently drops the tool definitions fails loudly so you can switch to a tool-calling-capable model; an endpoint that accepts only `tool_choice: "auto"` fails on those turns too (LM Studio and Ollama, which ignore `required`, are sent `auto`).
 - **The provider kept failing.** A non-context-overflow LLM error is retried once inside the loop and then given up on.
 
 A **successful retrieval that returns nothing is not a failure**: the bank genuinely has nothing on the topic, and reflect says so in its answer.
