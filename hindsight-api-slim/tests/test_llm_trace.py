@@ -970,7 +970,8 @@ async def test_real_llm_retain_and_consolidation_traced(memory_real_llm):
         by_op: dict[str, list[dict]] = {}
         for _ in range(30):
             await asyncio.sleep(1.0)
-            data = (await client.get(f"/v1/default/banks/{bank_id}/llm-requests?limit=50")).json()
+            # LLM calls only: the same operations also record their embedding calls now.
+            data = (await client.get(f"/v1/default/banks/{bank_id}/llm-requests?limit=50&call_type=llm")).json()
             by_op = {}
             for item in data["items"]:
                 by_op.setdefault(item["operation"], []).append(item)
