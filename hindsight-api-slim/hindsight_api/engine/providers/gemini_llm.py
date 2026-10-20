@@ -22,7 +22,13 @@ from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 
-from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
+from hindsight_api.engine.llm_interface import (
+    LLM_TOOL_CHOICE_AUTO,
+    LLMInterface,
+    LLMToolChoice,
+    LLMToolChoiceMode,
+    ProviderContentPolicyError,
+)
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
@@ -63,6 +69,26 @@ def _to_int(value: Any) -> int:
         return int(value)
     except (ValueError, TypeError):
         return 0
+
+
+# Reasons Gemini gives when it blocks on content. A block is a function of the
+# prompt, so a retry earns the same block (#5821). Covers both the candidate's
+# ``finish_reason`` and the prompt's ``prompt_feedback.block_reason``.
+_CONTENT_BLOCK_REASONS = frozenset(
+    {"SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "JAILBREAK"}
+)
+
+
+def _raise_if_content_blocked(response: Any) -> None:
+    """Fail fast when Gemini blocked the prompt or the answer on content grounds."""
+    feedback = getattr(response, "prompt_feedback", None)
+    reasons = [getattr(feedback, "block_reason", None)]
+    if response.candidates:
+        reasons.append(getattr(response.candidates[0], "finish_reason", None))
+    for reason in reasons:
+        name = getattr(reason, "value", reason)
+        if name in _CONTENT_BLOCK_REASONS:
+            raise ProviderContentPolicyError(f"Gemini blocked the request ({name}); not retrying")
 
 
 def _usage_from_gemini_response(response: Any) -> LLMResponseUsage:
@@ -572,6 +598,7 @@ class GeminiLLM(LLMInterface):
 
                 # Handle empty response
                 if content is None:
+                    _raise_if_content_blocked(response)
                     block_reason = None
                     if hasattr(response, "candidates") and response.candidates:
                         candidate = response.candidates[0]
@@ -584,7 +611,9 @@ class GeminiLLM(LLMInterface):
                         await asyncio.sleep(backoff)
                         continue
                     else:
-                        raise RuntimeError(f"Gemini returned empty response after {max_retries + 1} attempts")
+                        raise RuntimeError(
+                            f"Gemini returned empty response after {max_retries + 1} attempts (reason: {block_reason})"
+                        )
 
                 # Parse structured output if requested
                 if response_format is not None:
@@ -971,6 +1000,8 @@ class GeminiLLM(LLMInterface):
                         timeout=self._request_timeout,
                     )
                 stash_response_usage(_usage_from_gemini_response(response))
+
+                _raise_if_content_blocked(response)
 
                 # Extract content and tool calls
                 content = None
