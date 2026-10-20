@@ -14812,6 +14812,10 @@ class MemoryEngine(MemoryEngineInterface):
             if created:
                 await self._apply_default_bank_template(bank_id, rc)
 
+        A ``conn`` caller must also run that transaction under ``retry_with_backoff``: a fresh
+        bank's plain CREATE INDEX can lose a deadlock to another bank's CONCURRENTLY index DDL,
+        and only the caller can redo the rolled-back transaction (#5830).
+
         Concurrency:
           An existence probe runs first, so a write to an already-existing bank
           — the overwhelmingly common case — costs one bare SELECT and issues no
