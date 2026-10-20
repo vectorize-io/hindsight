@@ -915,8 +915,7 @@ class CohereCrossEncoder(CrossEncoderModel):
             query_groups.setdefault(query, []).append((idx, text))
 
         # One request per query, never split: a server may return ranks rather than
-        # independent scores (hindsight-rerank-1 returns 1 - rank/n), and those only
-        # compare within one request.
+        # independent scores (e.g. 1 - rank/n), and those only compare within one request.
         groups = list(query_groups.items())
         results = await asyncio.gather(*(self._rerank_group(query, [t for _, t in items]) for query, items in groups))
 
