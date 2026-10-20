@@ -1387,6 +1387,19 @@ class FileRetainMetadata(BaseModel):
         "Strategies are defined in the bank config under 'retain_strategies'.",
     )
 
+    @field_validator("timestamp")
+    @classmethod
+    def _reject_placeholder_timestamp(cls, v: str | None) -> str | None:
+        # Fail at request time rather than mid-retain; the retain parser enforces it too (#5820).
+        if v:
+            try:
+                parsed = datetime.fromisoformat(v.replace("Z", "+00:00"))
+            except ValueError:
+                return v  # format errors keep surfacing where they always have
+            if is_placeholder_date(parsed):
+                raise ValueError(f"timestamp year {parsed.year} is a placeholder, not a date.")
+        return v
+
 
 class FileRetainRequest(BaseModel):
     """Request model for file retain endpoint."""

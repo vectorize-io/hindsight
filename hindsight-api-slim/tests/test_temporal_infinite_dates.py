@@ -108,6 +108,8 @@ async def test_migration_clears_stored_placeholder_dates(memory, monkeypatch):
         try:
             for sql in statements:
                 await conn.execute(sql)
+            # Read back with SQL: the public reads now normalize these dates, so they could not
+            # show whether the stored value itself was cleared.
             rows = {
                 r["id"]: (r["occurred_start"], r["occurred_end"])
                 for r in await conn.fetch(
@@ -130,13 +132,19 @@ def test_retain_and_mcp_reject_placeholder_timestamps(value):
     """A caller that sends year 1 / 9999 gets told so, instead of a memory that breaks recall."""
     from pydantic import ValidationError
 
-    from hindsight_api.api.http import MemoryItem
+    from hindsight_api.api.http import FileRetainMetadata, MemoryItem
+    from hindsight_api.engine.retain.orchestrator import parse_datetime_flexible
     from hindsight_api.mcp_tools import parse_timestamp
 
     with pytest.raises(ValidationError, match="placeholder"):
         MemoryItem(content="x", timestamp=value)
     with pytest.raises(ValueError, match="placeholder"):
         parse_timestamp(value)
+    with pytest.raises(ValidationError, match="placeholder"):
+        FileRetainMetadata(timestamp=value)
+    # Every retain path — JSON, files, MCP, a direct engine call — parses its date here.
+    with pytest.raises(ValueError, match="placeholder"):
+        parse_datetime_flexible(value)
     assert MemoryItem(content="x", timestamp="2025-01-16T00:00:00Z").timestamp == datetime(2025, 1, 16, tzinfo=UTC)
 
 

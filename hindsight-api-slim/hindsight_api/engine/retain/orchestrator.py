@@ -464,28 +464,27 @@ def parse_datetime_flexible(value: Any) -> datetime:
 
     Raises:
         TypeError: If value is neither datetime nor string
-        ValueError: If string is not a valid ISO datetime
+        ValueError: If string is not a valid ISO datetime, or the value is a year-1/9999
+            placeholder (stored, it becomes Postgres infinity — see ``stored_dates``)
     """
+    if isinstance(value, str):
+        # Parse ISO format string (handles both 'Z' and '+00:00' timezone formats)
+        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if isinstance(value, datetime):
+        if is_placeholder_date(value):
+            raise ValueError(f"Date year {value.year} is a placeholder, not a date.")
         # Ensure timezone-aware
         if value.tzinfo is None:
             return value.replace(tzinfo=UTC)
         return value
-    elif isinstance(value, str):
-        # Parse ISO format string (handles both 'Z' and '+00:00' timezone formats)
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        # Ensure timezone-aware
-        if dt.tzinfo is None:
-            return dt.replace(tzinfo=UTC)
-        return dt
-    else:
-        raise TypeError(f"Expected datetime or string, got {type(value).__name__}")
+    raise TypeError(f"Expected datetime or string, got {type(value).__name__}")
 
 
 import asyncpg
 
 from ... import config as config_module
 from ..response_models import TokenUsage
+from ..stored_dates import is_placeholder_date
 from . import (
     chunk_storage,
     embedding_processing,
