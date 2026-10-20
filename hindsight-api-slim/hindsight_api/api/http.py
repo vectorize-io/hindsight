@@ -300,6 +300,7 @@ def _parse_tag_groups_query(raw: str | None, tags: list[str] | None) -> list[Tag
     return groups
 
 
+from hindsight_api.engine.stored_dates import is_placeholder_date
 from hindsight_api.engine.structured_output import validate_response_schema
 from hindsight_api.engine.time_filter import DocumentTimeField, MemoryTimeField
 from hindsight_api.extensions import HttpExtension, OperationValidationError, load_extension
@@ -1297,18 +1298,22 @@ class MemoryItem(BaseModel):
     def validate_timestamp(cls, v):
         if v is None or v == "":
             return None
-        if isinstance(v, datetime):
-            return v
         if isinstance(v, str):
             if v.lower() == "unset":
                 return "unset"
             try:
                 # Try parsing as ISO format
-                return datetime.fromisoformat(v.replace("Z", "+00:00"))
+                v = datetime.fromisoformat(v.replace("Z", "+00:00"))
             except ValueError as e:
                 raise ValueError(
                     f"Invalid timestamp/event_date format: '{v}'. Expected ISO format like '2024-01-15T10:30:00' or '2024-01-15T10:30:00Z', or the special value 'unset' to store without a timestamp."
                 ) from e
+        if isinstance(v, datetime):
+            if is_placeholder_date(v):
+                raise ValueError(
+                    f"timestamp year {v.year} is a placeholder, not a date; send a real date or 'unset' to store without one."
+                )
+            return v
         raise ValueError(f"timestamp must be a string or datetime, got {type(v).__name__}")
 
 

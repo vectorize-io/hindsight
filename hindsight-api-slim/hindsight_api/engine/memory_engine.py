@@ -766,6 +766,7 @@ from .search.tags import (
 from .search.types import ScoredResult
 from .source_facts import select_source_facts_within_budget
 from .source_scope import visible_document_ids
+from .stored_dates import is_placeholder_date
 from .task_backend import TaskBackend
 from .time_filter import DOCUMENT_TIME_FIELDS, validate_time_window
 
@@ -12576,6 +12577,8 @@ class MemoryEngine(MemoryEngineInterface):
             if not value:
                 return None
             dt = datetime.fromisoformat(value)
+            if is_placeholder_date(dt):
+                raise ValueError(f"Date year {dt.year} is a placeholder, not a date; send '' to clear it.")
             return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
         doing_edit = any(

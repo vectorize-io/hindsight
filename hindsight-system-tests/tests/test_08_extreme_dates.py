@@ -86,3 +86,39 @@ async def test_a_distant_past_date_ranks_rather_than_crashes(client, llm, bank_i
     for entry in response.trace["reranked"]:
         recency = entry["score_components"]["recency"]
         assert 0.0 <= recency <= 1.0, f"recency out of range for {entry['text']!r}: {recency}"
+
+
+async def test_an_open_ended_range_still_recalls_and_consolidates(client, llm, bank_id, settled):
+    """#5820. A model writing "still ongoing" as the largest possible date — on the first
+    fact of a batch, which gets no ordering offset — used to be stored as Postgres
+    `infinity`. That reads back without a timezone next to an aware start, so the temporal
+    arm raised on the midpoint and failed every recall whose window reached the fact; the
+    recall consolidation runs failed the same way, on every retry. The placeholder is now an
+    unknown bound: the fact keeps its real start and is found in that window.
+    """
+    llm.on_step("extract_facts").returns(
+        extracted(
+            fact(
+                "Alice started rebuilding the bridge",
+                who="Alice",
+                entities=["Alice"],
+                fact_kind="event",  # a conversation fact's dates are discarded — see test_07
+                occurred_start="2025-01-16T00:00:00Z",
+                occurred_end="9999-12-31T23:59:59.999999Z",
+            ),
+        )
+    )
+    llm.on_step("consolidate").returns(consolidation())
+
+    await client.aretain(bank_id=bank_id, content="Alice started rebuilding the bridge in January 2025; still going.")
+    await settled(bank_id)
+
+    response = await client.arecall(
+        bank_id=bank_id,
+        query=QUERY,
+        temporal_window={"start": "2025-01-01T00:00:00Z", "end": "2025-01-31T23:59:59Z"},
+    )
+
+    assert [r.text for r in response.results] == ["Alice started rebuilding the bridge | Involving: Alice"]
+    stats = await client.banks.get_agent_stats(bank_id)
+    assert stats.failed_consolidation == 0

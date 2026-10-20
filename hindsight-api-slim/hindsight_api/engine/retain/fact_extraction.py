@@ -33,6 +33,7 @@ from ..llm_wrapper import (
 from ..operation_metadata import RetainExtractionErrors
 from ..remote_retry import status_code_of
 from ..response_models import TokenUsage
+from ..stored_dates import is_placeholder_date
 from ..structured_output import provider_json_schema, strict_json_schema
 from . import attachment_content
 
@@ -1311,6 +1312,8 @@ For EVENTS (fact_kind="event") - MUST SET BOTH occurred_start AND occurred_end:
   Do NOT collapse a coarse date to the first day of the period, and do NOT resolve it to the
   Event Date — even when the period is the current year. A year-only date is not a precise
   date; recording it as one makes the memory claim a day it never stated.
+- OPEN-ENDED events (still ongoing, "since forever", no stated end): set only the bound the
+  text gives. NEVER write a placeholder year such as 0001 or 9999 for an unknown bound.
 
 For CONVERSATIONS (fact_kind="conversation"):
 - General info, preferences, ongoing states → NO occurred dates
@@ -3698,13 +3701,18 @@ def _collapse_to_verbatim(facts: list[ExtractedFactType], chunks: list[ChunkMeta
 
 
 def _parse_datetime(date_str: str):
-    """Parse ISO datetime string."""
+    """Parse an ISO datetime string from the LLM; None when unparseable or a placeholder.
+
+    A model sometimes writes an open-ended range as year 1 or 9999 ("since forever", "still
+    ongoing"); that is an unknown bound, not a date (see ``stored_dates``).
+    """
     from dateutil import parser as date_parser
 
     try:
-        return date_parser.isoparse(date_str)
+        parsed = date_parser.isoparse(date_str)
     except Exception:
         return None
+    return None if is_placeholder_date(parsed) else parsed
 
 
 def _convert_causal_relations(

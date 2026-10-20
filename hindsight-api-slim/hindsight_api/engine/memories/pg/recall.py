@@ -20,6 +20,7 @@ from ...search.retrieval import tokenize_query
 from ...search.tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause_simple
 from ...search.types import RetrievalResult
 from ...sql import create_sql_dialect
+from ...stored_dates import finite_utc
 from ..base import GRAPH_SEED_LIMIT, SemanticBm25Result
 
 logger = logging.getLogger(__name__)
@@ -319,7 +320,16 @@ _TEMPORAL_DECAY = 0.7  # per-hop decay on a propagated temporal score
 
 def _coalesce_date(row: Any) -> datetime | None:
     """The unit's effective time — matches COALESCE(occurred_start, mentioned_at, occurred_end)."""
-    return row["occurred_start"] or row["mentioned_at"] or row["occurred_end"]
+    return finite_utc(row["occurred_start"]) or finite_utc(row["mentioned_at"]) or finite_utc(row["occurred_end"])
+
+
+def _best_date(row: Any) -> datetime | None:
+    """The single time a unit is scored at: the midpoint of its occurred range when both ends
+    are known, else whichever end is, else when it was mentioned."""
+    start, end = finite_utc(row["occurred_start"]), finite_utc(row["occurred_end"])
+    if start is not None and end is not None:
+        return start + (end - start) / 2
+    return start or end or finite_utc(row["mentioned_at"])
 
 
 def _select_with_temporal_coverage(
@@ -349,8 +359,6 @@ def _select_with_temporal_coverage(
         d = _coalesce_date(row)
         if d is None or span <= 0:
             return 0
-        if d.tzinfo is None:
-            d = d.replace(tzinfo=UTC)
         frac = (d - start_date).total_seconds() / span
         return max(0, min(int(frac * n_buckets), n_buckets - 1))
 
@@ -553,19 +561,8 @@ async def retrieve_temporal_combined_sql(
             visited.add(unit_id)
 
             # Calculate temporal proximity
-            best_date = None
-            if ep["occurred_start"] is not None and ep["occurred_end"] is not None:
-                best_date = ep["occurred_start"] + (ep["occurred_end"] - ep["occurred_start"]) / 2
-            elif ep["occurred_start"] is not None:
-                best_date = ep["occurred_start"]
-            elif ep["occurred_end"] is not None:
-                best_date = ep["occurred_end"]
-            elif ep["mentioned_at"] is not None:
-                best_date = ep["mentioned_at"]
-
+            best_date = _best_date(ep)
             if best_date:
-                if best_date.tzinfo is None:
-                    best_date = best_date.replace(tzinfo=UTC)
                 days_from_mid = abs((best_date - mid_date).total_seconds() / 86400)
                 temporal_proximity = 1.0 - min(days_from_mid / (total_days / 2), 1.0) if total_days > 0 else 1.0
             else:
@@ -676,19 +673,8 @@ async def retrieve_temporal_combined_sql(
                 visited.add(neighbor_id)
                 budget_remaining -= 1
 
-                neighbor_best_date = None
-                if n["occurred_start"] is not None and n["occurred_end"] is not None:
-                    neighbor_best_date = n["occurred_start"] + (n["occurred_end"] - n["occurred_start"]) / 2
-                elif n["occurred_start"] is not None:
-                    neighbor_best_date = n["occurred_start"]
-                elif n["occurred_end"] is not None:
-                    neighbor_best_date = n["occurred_end"]
-                elif n["mentioned_at"] is not None:
-                    neighbor_best_date = n["mentioned_at"]
-
+                neighbor_best_date = _best_date(n)
                 if neighbor_best_date:
-                    if neighbor_best_date.tzinfo is None:
-                        neighbor_best_date = neighbor_best_date.replace(tzinfo=UTC)
                     days_from_mid = abs((neighbor_best_date - mid_date).total_seconds() / 86400)
                     neighbor_temporal_proximity = (
                         1.0 - min(days_from_mid / (total_days / 2), 1.0) if total_days > 0 else 1.0

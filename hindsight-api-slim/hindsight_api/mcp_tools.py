@@ -26,6 +26,7 @@ from hindsight_api.engine.audit import AuditEntry, AuditLogger
 from hindsight_api.engine.memory_engine import KEEP_PARENT, Budget
 from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES, MinScores, TemporalWindow
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
+from hindsight_api.engine.stored_dates import is_placeholder_date
 from hindsight_api.extensions import OperationValidationError
 from hindsight_api.models import RequestContext
 
@@ -494,12 +495,15 @@ def parse_timestamp(timestamp: str) -> datetime | None:
         ValueError: If timestamp format is invalid
     """
     try:
-        return datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     except ValueError as e:
         raise ValueError(
             f"Invalid timestamp format '{timestamp}'. "
             "Expected ISO format like '2024-01-15T10:30:00' or '2024-01-15T10:30:00Z'"
         ) from e
+    if is_placeholder_date(parsed):
+        raise ValueError(f"Timestamp year {parsed.year} is a placeholder, not a date.")
+    return parsed
 
 
 def build_content_dict(

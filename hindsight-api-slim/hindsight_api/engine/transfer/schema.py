@@ -18,7 +18,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from ..stored_dates import finite_utc
 
 # Bump when the archive layout changes in a backward-incompatible way.
 SCHEMA_VERSION = 1
@@ -169,6 +171,12 @@ class TransferFact(BaseModel):
     consolidated_at: datetime | None = None
     consolidation_failed_at: datetime | None = None
 
+    # An archive from a bank that stored an open bound as infinity carries it as year 1/9999;
+    # import it as unknown rather than recreating the row that breaks recall (#5820).
+    _drop_placeholder_dates = field_validator("event_date", "occurred_start", "occurred_end", "mentioned_at")(
+        finite_utc
+    )
+
 
 class TransferChunk(BaseModel):
     """A raw text chunk of the source document, reused verbatim."""
@@ -211,6 +219,12 @@ class TransferObservation(BaseModel):
     observation_scopes: ObservationScopes | None = None
     proof_count: int = 1
     sources: list[TransferObservationSource] = Field(default_factory=list)
+
+    # An archive from a bank that stored an open bound as infinity carries it as year 1/9999;
+    # import it as unknown rather than recreating the row that breaks recall (#5820).
+    _drop_placeholder_dates = field_validator("event_date", "occurred_start", "occurred_end", "mentioned_at")(
+        finite_utc
+    )
 
 
 class TransferDocument(BaseModel):
