@@ -118,8 +118,10 @@ async def test_capping_keeps_the_exact_match():
 async def test_scoring_loop_keeps_the_event_loop_responsive():
     """A wide resolution batch must not starve other tasks (e.g. the /health handler).
 
-    Asserts on scheduling, not wall time: a concurrent ticker has to keep running
-    while scoring is in flight, and no single stall may approach the whole batch.
+    Asserts on scheduling, not wall time: a concurrent ticker has to get turns
+    while scoring is in flight. It counts turns rather than timing the longest
+    gap, because one machine stall on a busy CI runner (GC, CPU steal) can make a
+    single gap as long as the batch even when the loop yields properly.
     """
     resolver = _make_resolver(max_candidates=2000)
     candidates = _candidates(2000)
@@ -134,15 +136,12 @@ async def test_scoring_loop_keeps_the_event_loop_responsive():
     )
 
     stop = False
-    gaps: list[float] = []
+    ticks: list[float] = []
 
     async def ticker() -> None:
-        last = time.perf_counter()
         while not stop:
             await asyncio.sleep(0.005)
-            now = time.perf_counter()
-            gaps.append(now - last)
-            last = now
+            ticks.append(time.perf_counter())
 
     tick_task = asyncio.create_task(ticker())
     await asyncio.sleep(0.01)
@@ -151,19 +150,15 @@ async def test_scoring_loop_keeps_the_event_loop_responsive():
     await resolver._resolve_from_candidates(
         conn, "bank-1", entities_data, datetime.now(UTC), all_candidates, {}, None, None
     )
-    elapsed = time.perf_counter() - started
+    finished = time.perf_counter()
 
     stop = True
     await tick_task
 
-    during = gaps[1:]
-    assert during, "ticker never ran"
-    # Generous bounds: this asserts the loop is handed back periodically, not that
-    # the machine is fast. Before the fix the ticker got zero turns for the whole
-    # batch and the single stall equalled `elapsed`.
-    assert max(during) < max(elapsed / 2, 0.5), (
-        f"event loop blocked for {max(during):.3f}s during a {elapsed:.3f}s scoring batch"
-    )
+    # Before the fix the ticker got zero turns for the whole batch. Counting turns
+    # inside the batch fails that every time and does not care how long one stall was.
+    during = [t for t in ticks if started < t < finished]
+    assert len(during) >= 3, f"ticker got {len(during)} turns during a {finished - started:.3f}s scoring batch"
 
 
 @pytest.mark.asyncio

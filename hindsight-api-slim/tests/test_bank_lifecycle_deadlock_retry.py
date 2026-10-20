@@ -106,3 +106,44 @@ async def test_metadata_only_re_retain_retries_transient_deadlock(
         assert calls == 2, "expected exactly one retry after the injected deadlock"
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+async def _create_mental_model(memory: MemoryEngine, bank_id: str, rc: RequestContext) -> None:
+    await memory.create_mental_model(bank_id, "Prefs", "what does the user prefer?", "Tea.", request_context=rc)
+
+
+async def _create_knowledge_folder(memory: MemoryEngine, bank_id: str, rc: RequestContext) -> None:
+    await memory.create_knowledge_folder(bank_id, "Notes", request_context=rc)
+
+
+async def _create_knowledge_page(memory: MemoryEngine, bank_id: str, rc: RequestContext) -> None:
+    await memory.create_knowledge_page(bank_id, "Prefs", "what does the user prefer?", "Tea.", request_context=rc)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("create", [_create_mental_model, _create_knowledge_folder, _create_knowledge_page])
+async def test_write_that_creates_its_bank_retries_transient_deadlock(
+    memory: MemoryEngine, request_context: RequestContext, monkeypatch, create
+):
+    """A write that lazily creates its bank on its own tx survives a deadlock in that create (#5830).
+
+    The bank create builds the bank's vector indexes with a plain CREATE INDEX, whose ShareLock
+    on memory_units can deadlock with another bank's CONCURRENTLY index build or drop.
+    """
+    real = bank_utils.create_bank_row_on_conn
+    calls = 0
+
+    async def flaky(conn, bank_id, *, ops):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise DeadlockDetectedError("deadlock detected")
+        return await real(conn, bank_id, ops=ops)
+
+    monkeypatch.setattr(bank_utils, "create_bank_row_on_conn", flaky)
+    bank_id = f"test-deadlock-{uuid.uuid4().hex[:8]}"
+    try:
+        await create(memory, bank_id, request_context)
+        assert calls == 2, "expected exactly one retry after the injected deadlock"
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)

@@ -12181,7 +12181,9 @@ class MemoryEngine(MemoryEngineInterface):
                             result["bank_deleted"] = True
 
                 except Exception as e:
-                    raise Exception(f"Failed to delete agent data: {str(e)}")
+                    # Name the type: a lock-wait timeout or cancellation has an empty str(), and
+                    # the message alone then says nothing about what went wrong (#5805).
+                    raise Exception(f"Failed to delete agent data: {type(e).__name__}: {e}") from e
 
             # Drop per-bank vector indexes AFTER the transaction commits: the
             # drop runs CONCURRENTLY (see ops.drop_bank_vector_indexes), which
@@ -17709,7 +17711,15 @@ class MemoryEngine(MemoryEngineInterface):
         # pinned model creation must do the same. The lazy bank-create runs inside
         # the same transaction as the INSERT below, so a freshly-created bank never
         # outlives a mental-model insert that ultimately fails.
-        try:
+        #
+        # Retried as a whole transaction: creating a bank builds its vector indexes with a plain
+        # CREATE INDEX (ShareLock on the shared memory_units table), which can lose a deadlock to
+        # a concurrent CONCURRENTLY build/drop of another bank's index (#5830). The transaction
+        # rolled back, so a redo is safe.
+        created = False
+
+        async def _write() -> Any:
+            nonlocal created
             async with acquire_with_retry(backend) as conn:
                 async with conn.transaction():
                     created = await self._ensure_bank_exists(
@@ -17717,7 +17727,7 @@ class MemoryEngine(MemoryEngineInterface):
                         request_context,
                         conn=conn,
                     )
-                    row = await self._insert_pinned_mental_model(
+                    return await self._insert_pinned_mental_model(
                         conn,
                         mental_model_id=mental_model_id,
                         bank_id=bank_id,
@@ -17729,9 +17739,13 @@ class MemoryEngine(MemoryEngineInterface):
                         max_tokens=max_tokens,
                         trigger=trigger,
                     )
-                # After the transaction commits: the index is derived from a row that must already
-                # exist, and indexing inside the transaction would publish a page a rollback then
-                # un-creates.
+
+        try:
+            row = await retry_with_backoff(_write)
+            # After the transaction commits: the index is derived from a row that must already
+            # exist, and indexing inside the transaction would publish a page a rollback then
+            # un-creates.
+            async with acquire_with_retry(backend) as conn:
                 await self._index_knowledge_page(conn, bank_id, mental_model_id, embedding=embedding_vec)
         except asyncpg.UniqueViolationError as exc:
             # mental_models_pkey is the table's only unique constraint, so a violation naming
@@ -20062,24 +20076,29 @@ class MemoryEngine(MemoryEngineInterface):
         await self._require_knowledge_nodes_in_tag_scope(bank_id, request_context, [parent_id])
         backend = await self._get_backend()
         folder_id = f"kf-{uuid.uuid4().hex}"
-        async with acquire_with_retry(backend) as conn:
-            async with conn.transaction():
-                await self._ensure_bank_exists(bank_id, request_context, conn=conn)
-                await self._kp_lock_bank(conn, bank_id)
-                await self._kp_assert_folder_parent(conn, bank_id, parent_id)
-                row = await conn.fetchrow(
-                    f"""
-                    INSERT INTO {fq_table("knowledge_pages")} (id, bank_id, parent_id, kind, name, managed)
-                    VALUES ($1, $2, $3, 'folder', $4, $5)
-                    RETURNING {self._KP_COLUMNS}
-                    """,
-                    folder_id,
-                    bank_id,
-                    parent_id,
-                    name,
-                    managed,
-                )
-        return self._row_to_knowledge_node(row)
+
+        # Retried for the same reason as create_mental_model: the lazy bank create can lose a
+        # deadlock to another bank's index DDL (#5830).
+        async def _write() -> Any:
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    await self._ensure_bank_exists(bank_id, request_context, conn=conn)
+                    await self._kp_lock_bank(conn, bank_id)
+                    await self._kp_assert_folder_parent(conn, bank_id, parent_id)
+                    return await conn.fetchrow(
+                        f"""
+                        INSERT INTO {fq_table("knowledge_pages")} (id, bank_id, parent_id, kind, name, managed)
+                        VALUES ($1, $2, $3, 'folder', $4, $5)
+                        RETURNING {self._KP_COLUMNS}
+                        """,
+                        folder_id,
+                        bank_id,
+                        parent_id,
+                        name,
+                        managed,
+                    )
+
+        return self._row_to_knowledge_node(await retry_with_backoff(_write))
 
     async def create_knowledge_page(
         self,
@@ -20134,7 +20153,14 @@ class MemoryEngine(MemoryEngineInterface):
         effective_trigger = _scope_mental_model_trigger(effective_trigger, page_scope)
         backend = await self._get_backend()
         page_id = f"kp-{uuid.uuid4().hex}"
-        try:
+        created = False
+        mm_row: Any = None
+        row: Any = None
+
+        # Retried for the same reason as create_mental_model: the lazy bank create can lose a
+        # deadlock to another bank's index DDL (#5830).
+        async def _write() -> None:
+            nonlocal created, mm_row, row
             async with acquire_with_retry(backend) as conn:
                 # The page row and its backing model have one lifecycle, so they
                 # share a transaction instead of compensating after a partial commit.
@@ -20168,6 +20194,10 @@ class MemoryEngine(MemoryEngineInterface):
                         mental_model_id,
                         managed,
                     )
+
+        try:
+            await retry_with_backoff(_write)
+            async with acquire_with_retry(backend) as conn:
                 await self._index_knowledge_page(conn, bank_id, mental_model_id, embedding=embedding_vec)
         except asyncpg.UniqueViolationError as exc:
             if getattr(exc, "constraint_name", None) != "uq_kp_folder_pagename":

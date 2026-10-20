@@ -344,7 +344,7 @@ async def test_reingest_and_delete_of_linked_documents_both_complete(delete_race
             async with conn.transaction():
                 await handle_document_tracking(conn, bank, "b", "replacement", is_first_batch=True, ops=backend.ops)
 
-    for _ in range(3):
+    async def run_round() -> list:
         # Each round acquires fresh connection wrappers, and CPython may hand a new one the
         # id() of a freed wrapper from the last round. A stale entry would let that side skip
         # the barrier and leave the other waiting alone until its 10s timeout.
@@ -370,7 +370,7 @@ async def test_reingest_and_delete_of_linked_documents_both_complete(delete_race
             [t for _, t in pairs] + [f for f, _ in pairs],
             bank,
         )
-        results = await asyncio.wait_for(
+        return await asyncio.wait_for(
             asyncio.gather(
                 first.delete_document("a", bank, request_context=request_context),
                 reingest_b(),
@@ -378,7 +378,28 @@ async def test_reingest_and_delete_of_linked_documents_both_complete(delete_race
             ),
             30,
         )
-        assert results == [{"document_deleted": 1, "memory_units_deleted": 100}, None]
+
+    for _ in range(3):
+        for _attempt in range(3):
+            results = await run_round()
+            if not any(_is_other_workers_index_ddl_deadlock(r) for r in results):
+                break
+        assert results == [{"document_deleted": 1, "memory_units_deleted": 100}, None], [
+            getattr(r, "detail", None) for r in results
+        ]
+
+
+def _is_other_workers_index_ddl_deadlock(result: object) -> bool:
+    """A deadlock with another xdist worker's CREATE/DROP INDEX CONCURRENTLY, not between the two here.
+
+    Planning any memory_units statement takes AccessShare on every bank's vector index, and a
+    CONCURRENTLY build or drop of one waits for every open transaction's virtual xid. Neither
+    operation under test runs index DDL, so a cycle that names a virtual transaction always has
+    a third party in it (the same deadlock #5752 retries in production) and says nothing about
+    the lock order this test checks. A row-lock cycle between the two shows only tuple and
+    transaction waits, and still fails the test.
+    """
+    return isinstance(result, asyncpg.DeadlockDetectedError) and "virtual transaction" in (result.detail or "")
 
 
 async def test_other_bank_can_delete_while_first_bank_is_paused(delete_race, request_context):
