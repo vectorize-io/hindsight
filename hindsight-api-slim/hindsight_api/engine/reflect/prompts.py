@@ -209,6 +209,7 @@ def build_system_prompt_for_tools(
     budget: str | None = None,
     answer_as_document: bool = False,
     llm_output_language: str | None = None,
+    answer_ready: bool = False,
 ) -> str:
     """
     Build the system prompt for tool-calling reflect agent.
@@ -441,7 +442,12 @@ def build_system_prompt_for_tools(
                 # model has no tool for is how #1724 happened.
                 f"- Stop descending as soon as what you have answers the question — fresh {names[0]} often do.",
                 "- Go deeper when the level above is stale, thin, or silent on what was asked.",
-                "- Call `done` with the answer once you have the evidence. Do not write the answer as plain text.",
+                (
+                    "- Call `answer_ready` once you have the evidence; you are then asked for the answer. "
+                    "Do not write the answer before that."
+                    if answer_ready
+                    else "- Call `done` with the answer once you have the evidence. Do not write the answer as plain text."
+                ),
                 "",
             ]
         )
@@ -548,7 +554,11 @@ def build_system_prompt_for_tools(
     else:
         steps.append("Call recall() to gather raw facts")
     steps.append("Use expand() if you need more context on specific memories")
-    steps.append("When ready, call done() with your answer and supporting IDs")
+    steps.append(
+        "When ready, call answer_ready(); you are then asked for the answer through done()"
+        if answer_ready
+        else "When ready, call done() with your answer and supporting IDs"
+    )
     parts.extend(f"{idx}. {step}" for idx, step in enumerate(steps, 1))
 
     non_conversational_rule = "- CRITICAL: This is a NON-CONVERSATIONAL system. NEVER ask follow-up questions, offer further assistance, or suggest next steps. Your answer must be complete and self-contained. The user cannot reply."

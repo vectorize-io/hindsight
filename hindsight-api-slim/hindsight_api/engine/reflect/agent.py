@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from ...cancellation import OperationCancelledError
 from ...config import DEFAULT_RECALL_CHUNKS_MAX_TOKENS, DEFAULT_RECALL_MAX_TOKENS, get_config
-from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
+from ..llm_interface import LLM_TOOL_CHOICE_REQUIRED, LLMToolChoice
 from ..llm_trace import LLMQueueWait, reset_queue_wait_sink, set_queue_wait_sink
 from ..llm_transport import describe_llm_error
 from ..response_models import LLMToolCall, LLMToolCallResult
@@ -716,6 +716,10 @@ async def _run_reflect_agent_inner(
     # The expand tool only reads back raw source text (chunks/documents), so it is
     # useless and excluded when document text storage is disabled (per bank).
     include_expand = store_document_text
+    # The closing step writes the answer unless a decision model takes the free turn's done
+    # as-is (see the done handling below). Then a free turn only has to say "enough", and
+    # the cheap way to say it is a call with no arguments, not an answer that is discarded.
+    closing_step_answers = evidence_is_sufficient_fn is None or answer_as_document
     tools = get_reflect_tools(
         directive_rules=directive_rules,
         include_mental_models=has_mental_models,
@@ -724,6 +728,7 @@ async def _run_reflect_agent_inner(
         include_expand=include_expand,
         answer_as_document=answer_as_document,
         llm_output_language=llm_output_language,
+        answer_ready=closing_step_answers,
     )
     # Build set of enabled tool names to guard against LLM hallucinating disabled tool calls
     enabled_tools: frozenset[str] = frozenset(t["function"]["name"] for t in tools if t.get("type") == "function")
@@ -738,6 +743,7 @@ async def _run_reflect_agent_inner(
         budget=budget,
         answer_as_document=answer_as_document,
         llm_output_language=llm_output_language,
+        answer_ready=closing_step_answers,
     )
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
@@ -1381,7 +1387,10 @@ async def _run_reflect_agent_inner(
         elif absence_recall_forced and not recall_ran:
             iter_tool_choice = LLMToolChoice.named("recall")
         else:
-            iter_tool_choice = LLM_TOOL_CHOICE_AUTO
+            # ``required``, not ``auto``: left free, most models stopped with the answer as
+            # prose, which is thrown away and written again by the closing step (#5832).
+            # A provider that ignores ``required`` downgrades it to ``auto`` itself.
+            iter_tool_choice = LLM_TOOL_CHOICE_REQUIRED
         follow_up_required = False
 
         is_last = iteration == max_iterations - 1
@@ -1438,7 +1447,7 @@ async def _run_reflect_agent_inner(
         # can't use a cache (Gemini rejects ``cached_content`` + ``tool_config``),
         # but the cache still advances underneath them, so the first ``auto`` turn
         # inherits a cache covering all the forced results.
-        if incremental_caching and iter_tool_choice is LLM_TOOL_CHOICE_AUTO:
+        if incremental_caching and iter_tool_choice is LLM_TOOL_CHOICE_REQUIRED:
             await _resolve_pending_cache()
 
         call_msg_count = len(messages)
@@ -1515,7 +1524,11 @@ async def _run_reflect_agent_inner(
                     # field was written (#4437).
                     max_completion_tokens=synthesis_max_completion_tokens,
                 )
-                if incremental_caching and iter_tool_choice is LLM_TOOL_CHOICE_AUTO and rolling_cache_name is not None:
+                if (
+                    incremental_caching
+                    and iter_tool_choice is LLM_TOOL_CHOICE_REQUIRED
+                    and rolling_cache_name is not None
+                ):
                     ct_kwargs["cached_prefix"] = rolling_cache_name
                     ct_kwargs["cached_prefix_message_count"] = rolling_cache_boundary
                 result = await llm_config.call_with_tools(**ct_kwargs)
@@ -1628,6 +1641,14 @@ async def _run_reflect_agent_inner(
         saw_tool_call = True
         if forced_step_pending:
             forced_steps_done += 1
+
+        # "Enough to answer": the closing step writes the answer. Alongside other calls, those
+        # run and the model is asked again.
+        if any(_normalize_tool_name(tc.name) == "answer_ready" for tc in result.tool_calls):
+            rest = [tc for tc in result.tool_calls if _normalize_tool_name(tc.name) != "answer_ready"]
+            if not rest and searched:
+                return await (_forced_final_synthesis if compacted else _finish)(iteration + 1)
+            result = result.model_copy(update={"tool_calls": rest})
 
         # Check for done tool call (handle various LLM output formats)
         done_call = next((tc for tc in result.tool_calls if _is_done_tool(tc.name)), None)
