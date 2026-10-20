@@ -2106,7 +2106,8 @@
       },
       "auditLogs": {
         "list": "No se pudieron listar los registros de auditoría",
-        "stats": "No se pudieron obtener las estadísticas de registros de auditoría"
+        "stats": "No se pudieron obtener las estadísticas de registros de auditoría",
+        "get": "No se pudo obtener la entrada del registro de auditoría"
       },
       "llmRequests": {
         "list": "No se pudieron listar las solicitudes LLM",

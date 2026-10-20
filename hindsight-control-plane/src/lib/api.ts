@@ -107,16 +107,19 @@ export interface WebhookDelivery {
   updated_at: string | null;
 }
 
-export interface AuditLogEntry {
+export interface AuditLogSummary {
   id: string;
   action: string;
   transport: string;
   bank_id: string | null;
   started_at: string | null;
   ended_at: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface AuditLogEntry extends AuditLogSummary {
   request: Record<string, unknown> | null;
   response: Record<string, unknown> | null;
-  metadata: Record<string, unknown>;
 }
 
 export interface AuditLogsResponse {
@@ -124,7 +127,7 @@ export interface AuditLogsResponse {
   total: number;
   limit: number;
   offset: number;
-  items: AuditLogEntry[];
+  items: AuditLogSummary[];
 }
 
 export interface AuditStatsBucket {
@@ -2507,6 +2510,12 @@ export class ControlPlaneClient {
     const query = params.toString();
     return this.fetchApi<AuditLogsResponse>(
       bankApi(bankId, `/audit-logs${query ? `?${query}` : ""}`)
+    );
+  }
+
+  async getAuditLog(bankId: string, logId: string): Promise<AuditLogEntry> {
+    return this.fetchApi<AuditLogEntry>(
+      bankApi(bankId, `/audit-logs/${encodeURIComponent(logId)}`)
     );
   }
 

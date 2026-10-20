@@ -28,6 +28,7 @@ hindsight_client_api/models/audit_log_entry.py
 hindsight_client_api/models/audit_log_list_response.py
 hindsight_client_api/models/audit_log_stats_bucket.py
 hindsight_client_api/models/audit_log_stats_response.py
+hindsight_client_api/models/audit_log_summary.py
 hindsight_client_api/models/background_response.py
 hindsight_client_api/models/bank_alias_entry.py
 hindsight_client_api/models/bank_aliases_response.py

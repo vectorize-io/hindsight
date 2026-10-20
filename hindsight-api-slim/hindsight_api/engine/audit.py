@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 _DRAIN_TIMEOUT_SECONDS = 5.0
 
 
-class AuditLogEntry(BaseModel):
-    """A single audit log entry."""
+class AuditLogSummary(BaseModel):
+    """An audit log entry without its request/response bodies, as the list returns it."""
 
     id: str
     action: str
@@ -42,9 +42,14 @@ class AuditLogEntry(BaseModel):
         default=None,
         description="Server-computed duration in milliseconds (started_at → ended_at). Null if not yet completed.",
     )
+    metadata: dict[str, Any]
+
+
+class AuditLogEntry(AuditLogSummary):
+    """A single audit log entry with its full request/response bodies."""
+
     request: dict[str, Any] | None
     response: dict[str, Any] | None
-    metadata: dict[str, Any]
 
 
 class AuditLogListResponse(BaseModel):
@@ -54,7 +59,9 @@ class AuditLogListResponse(BaseModel):
     total: int
     limit: int
     offset: int
-    items: list[AuditLogEntry]
+    items: list[AuditLogSummary] = Field(
+        description="Entries without request/response bodies; fetch one entry by id for its bodies."
+    )
 
 
 class AuditLogStatsBucket(BaseModel):

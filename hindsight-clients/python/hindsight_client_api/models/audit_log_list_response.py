@@ -17,9 +17,9 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List
-from hindsight_client_api.models.audit_log_entry import AuditLogEntry
+from hindsight_client_api.models.audit_log_summary import AuditLogSummary
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -31,7 +31,7 @@ class AuditLogListResponse(BaseModel):
     total: StrictInt
     limit: StrictInt
     offset: StrictInt
-    items: List[AuditLogEntry]
+    items: List[AuditLogSummary] = Field(description="Entries without request/response bodies; fetch one entry by id for its bodies.")
     __properties: ClassVar[List[str]] = ["bank_id", "total", "limit", "offset", "items"]
 
     model_config = ConfigDict(
@@ -96,7 +96,7 @@ class AuditLogListResponse(BaseModel):
             "total": obj.get("total"),
             "limit": obj.get("limit"),
             "offset": obj.get("offset"),
-            "items": [AuditLogEntry.from_dict(_item) for _item in obj["items"]] if obj.get("items") is not None else None
+            "items": [AuditLogSummary.from_dict(_item) for _item in obj["items"]] if obj.get("items") is not None else None
         })
         return _obj
 

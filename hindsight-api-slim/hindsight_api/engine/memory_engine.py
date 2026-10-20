@@ -652,7 +652,7 @@ if TYPE_CHECKING:
 
     from ..webhooks.url_guard import GuardedWebhookClient
     from . import bank_aliases as bank_aliases_mod
-    from .audit import AuditLogListResponse, AuditLogStatsResponse
+    from .audit import AuditLogEntry, AuditLogListResponse, AuditLogStatsResponse
     from .memories import MemoriesExtension, MemoryScopeWatermark
     from .memories.base import AttachmentRef, EntityResolverHandle, StoredMemory
     from .prompt_preview import PromptPreview
@@ -995,6 +995,22 @@ async def validate_retain_batch_support(retain_llm_config: "LLMConfig | MultiLLM
         f"Either switch to a provider that supports batch operations "
         f"(e.g. 'openai', 'groq', 'gemini') or set HINDSIGHT_API_RETAIN_BATCH_ENABLED=false."
     )
+
+
+def _audit_summary_fields(conn: Any, row: Any) -> dict[str, Any]:
+    """The body-less fields of an audit_log row, shared by the list and the get."""
+    started = row["started_at"]
+    ended = row["ended_at"]
+    return {
+        "id": str(row["id"]),
+        "action": row["action"],
+        "transport": row["transport"],
+        "bank_id": row["bank_id"],
+        "started_at": started.isoformat() if started else None,
+        "ended_at": ended.isoformat() if ended else None,
+        "duration_ms": int((ended - started).total_seconds() * 1000) if started and ended else None,
+        "metadata": conn.parse_json(row["metadata"]) if row["metadata"] is not None else {},
+    }
 
 
 def _is_oracledb_connection_error(e: Exception) -> bool:
@@ -14426,7 +14442,7 @@ class MemoryEngine(MemoryEngineInterface):
         ``get_bank_profile`` before any query runs, so the SELECT below is scoped
         to the authenticated tenant's schema.
         """
-        from .audit import AuditLogEntry, AuditLogListResponse
+        from .audit import AuditLogListResponse, AuditLogSummary
 
         if await self.get_bank_profile(bank_id, request_context=request_context) is None:
             return None
@@ -14460,10 +14476,11 @@ class MemoryEngine(MemoryEngineInterface):
 
             params.append(limit)
             params.append(offset)
+            # No request/response here: a single body can be megabytes, and a page of
+            # them can exhaust the API process. get_audit_log returns one entry's bodies.
             rows = await conn.fetch(
                 f"""
-                SELECT id, action, transport, bank_id, started_at, ended_at,
-                       request, response, metadata
+                SELECT id, action, transport, bank_id, started_at, ended_at, metadata
                 FROM {table}
                 WHERE {where_sql}
                 ORDER BY started_at DESC
@@ -14471,28 +14488,49 @@ class MemoryEngine(MemoryEngineInterface):
                 """,
                 *params,
             )
-
-            items = []
-            for row in rows:
-                started = row["started_at"]
-                ended = row["ended_at"]
-                duration_ms = int((ended - started).total_seconds() * 1000) if started and ended else None
-                items.append(
-                    AuditLogEntry(
-                        id=str(row["id"]),
-                        action=row["action"],
-                        transport=row["transport"],
-                        bank_id=row["bank_id"],
-                        started_at=started.isoformat() if started else None,
-                        ended_at=ended.isoformat() if ended else None,
-                        duration_ms=duration_ms,
-                        request=conn.parse_json(row["request"]) if row["request"] is not None else None,
-                        response=conn.parse_json(row["response"]) if row["response"] is not None else None,
-                        metadata=conn.parse_json(row["metadata"]) if row["metadata"] is not None else {},
-                    )
-                )
+            items = [AuditLogSummary(**_audit_summary_fields(conn, row)) for row in rows]
 
         return AuditLogListResponse(bank_id=bank_id, total=total, limit=limit, offset=offset, items=items)
+
+    async def get_audit_log(
+        self,
+        bank_id: str,
+        log_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> "AuditLogEntry | None":
+        """One audit log entry with its full request/response bodies.
+
+        Returns None when the bank or the entry does not exist.
+        """
+        from .audit import AuditLogEntry
+
+        try:
+            log_uuid = uuid.UUID(log_id)
+        except ValueError:
+            return None
+        if await self.get_bank_profile(bank_id, request_context=request_context) is None:
+            return None
+        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "read the bank's audit log")
+
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            row = await conn.fetchrow(
+                f"""
+                SELECT id, action, transport, bank_id, started_at, ended_at, request, response, metadata
+                FROM {fq_table("audit_log")}
+                WHERE id = $1 AND bank_id = $2
+                """,
+                log_uuid,
+                bank_id,
+            )
+            if row is None:
+                return None
+            return AuditLogEntry(
+                **_audit_summary_fields(conn, row),
+                request=conn.parse_json(row["request"]) if row["request"] is not None else None,
+                response=conn.parse_json(row["response"]) if row["response"] is not None else None,
+            )
 
     async def audit_log_stats(
         self,

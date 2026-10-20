@@ -25,7 +25,8 @@ type AuditLogListResponse struct {
 	Total int32 `json:"total"`
 	Limit int32 `json:"limit"`
 	Offset int32 `json:"offset"`
-	Items []AuditLogEntry `json:"items"`
+	// Entries without request/response bodies; fetch one entry by id for its bodies.
+	Items []AuditLogSummary `json:"items"`
 }
 
 type _AuditLogListResponse AuditLogListResponse
@@ -34,7 +35,7 @@ type _AuditLogListResponse AuditLogListResponse
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewAuditLogListResponse(bankId string, total int32, limit int32, offset int32, items []AuditLogEntry) *AuditLogListResponse {
+func NewAuditLogListResponse(bankId string, total int32, limit int32, offset int32, items []AuditLogSummary) *AuditLogListResponse {
 	this := AuditLogListResponse{}
 	this.BankId = bankId
 	this.Total = total
@@ -149,9 +150,9 @@ func (o *AuditLogListResponse) SetOffset(v int32) {
 }
 
 // GetItems returns the Items field value
-func (o *AuditLogListResponse) GetItems() []AuditLogEntry {
+func (o *AuditLogListResponse) GetItems() []AuditLogSummary {
 	if o == nil {
-		var ret []AuditLogEntry
+		var ret []AuditLogSummary
 		return ret
 	}
 
@@ -160,7 +161,7 @@ func (o *AuditLogListResponse) GetItems() []AuditLogEntry {
 
 // GetItemsOk returns a tuple with the Items field value
 // and a boolean to check if the value has been set.
-func (o *AuditLogListResponse) GetItemsOk() ([]AuditLogEntry, bool) {
+func (o *AuditLogListResponse) GetItemsOk() ([]AuditLogSummary, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -168,7 +169,7 @@ func (o *AuditLogListResponse) GetItemsOk() ([]AuditLogEntry, bool) {
 }
 
 // SetItems sets field value
-func (o *AuditLogListResponse) SetItems(v []AuditLogEntry) {
+func (o *AuditLogListResponse) SetItems(v []AuditLogSummary) {
 	o.Items = v
 }
 

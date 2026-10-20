@@ -2106,7 +2106,8 @@
       },
       "auditLogs": {
         "list": "Falha ao listar registros de auditoria",
-        "stats": "Falha ao buscar estatísticas dos registros de auditoria"
+        "stats": "Falha ao buscar estatísticas dos registros de auditoria",
+        "get": "Falha ao buscar a entrada do registro de auditoria"
       },
       "llmRequests": {
         "list": "Falha ao listar requisições LLM",

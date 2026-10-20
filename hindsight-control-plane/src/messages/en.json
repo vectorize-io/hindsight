@@ -2106,7 +2106,8 @@
       },
       "auditLogs": {
         "list": "Failed to list audit logs",
-        "stats": "Failed to get audit log stats"
+        "stats": "Failed to get audit log stats",
+        "get": "Failed to get audit log entry"
       },
       "llmRequests": {
         "list": "Failed to list LLM requests",

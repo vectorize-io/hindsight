@@ -19,7 +19,7 @@ import (
 // checks if the AuditLogEntry type satisfies the MappedNullable interface at compile time
 var _ MappedNullable = &AuditLogEntry{}
 
-// AuditLogEntry A single audit log entry.
+// AuditLogEntry A single audit log entry with its full request/response bodies.
 type AuditLogEntry struct {
 	Id string `json:"id"`
 	Action string `json:"action"`
@@ -28,9 +28,9 @@ type AuditLogEntry struct {
 	StartedAt NullableString `json:"started_at"`
 	EndedAt NullableString `json:"ended_at"`
 	DurationMs NullableInt32 `json:"duration_ms,omitempty"`
+	Metadata map[string]interface{} `json:"metadata"`
 	Request map[string]interface{} `json:"request"`
 	Response map[string]interface{} `json:"response"`
-	Metadata map[string]interface{} `json:"metadata"`
 }
 
 type _AuditLogEntry AuditLogEntry
@@ -39,7 +39,7 @@ type _AuditLogEntry AuditLogEntry
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewAuditLogEntry(id string, action string, transport string, bankId NullableString, startedAt NullableString, endedAt NullableString, request map[string]interface{}, response map[string]interface{}, metadata map[string]interface{}) *AuditLogEntry {
+func NewAuditLogEntry(id string, action string, transport string, bankId NullableString, startedAt NullableString, endedAt NullableString, metadata map[string]interface{}, request map[string]interface{}, response map[string]interface{}) *AuditLogEntry {
 	this := AuditLogEntry{}
 	this.Id = id
 	this.Action = action
@@ -47,9 +47,9 @@ func NewAuditLogEntry(id string, action string, transport string, bankId Nullabl
 	this.BankId = bankId
 	this.StartedAt = startedAt
 	this.EndedAt = endedAt
+	this.Metadata = metadata
 	this.Request = request
 	this.Response = response
-	this.Metadata = metadata
 	return &this
 }
 
@@ -253,6 +253,30 @@ func (o *AuditLogEntry) UnsetDurationMs() {
 	o.DurationMs.Unset()
 }
 
+// GetMetadata returns the Metadata field value
+func (o *AuditLogEntry) GetMetadata() map[string]interface{} {
+	if o == nil {
+		var ret map[string]interface{}
+		return ret
+	}
+
+	return o.Metadata
+}
+
+// GetMetadataOk returns a tuple with the Metadata field value
+// and a boolean to check if the value has been set.
+func (o *AuditLogEntry) GetMetadataOk() (map[string]interface{}, bool) {
+	if o == nil {
+		return map[string]interface{}{}, false
+	}
+	return o.Metadata, true
+}
+
+// SetMetadata sets field value
+func (o *AuditLogEntry) SetMetadata(v map[string]interface{}) {
+	o.Metadata = v
+}
+
 // GetRequest returns the Request field value
 // If the value is explicit nil, the zero value for map[string]interface{} will be returned
 func (o *AuditLogEntry) GetRequest() map[string]interface{} {
@@ -305,30 +329,6 @@ func (o *AuditLogEntry) SetResponse(v map[string]interface{}) {
 	o.Response = v
 }
 
-// GetMetadata returns the Metadata field value
-func (o *AuditLogEntry) GetMetadata() map[string]interface{} {
-	if o == nil {
-		var ret map[string]interface{}
-		return ret
-	}
-
-	return o.Metadata
-}
-
-// GetMetadataOk returns a tuple with the Metadata field value
-// and a boolean to check if the value has been set.
-func (o *AuditLogEntry) GetMetadataOk() (map[string]interface{}, bool) {
-	if o == nil {
-		return map[string]interface{}{}, false
-	}
-	return o.Metadata, true
-}
-
-// SetMetadata sets field value
-func (o *AuditLogEntry) SetMetadata(v map[string]interface{}) {
-	o.Metadata = v
-}
-
 func (o AuditLogEntry) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -348,13 +348,13 @@ func (o AuditLogEntry) ToMap() (map[string]interface{}, error) {
 	if o.DurationMs.IsSet() {
 		toSerialize["duration_ms"] = o.DurationMs.Get()
 	}
+	toSerialize["metadata"] = o.Metadata
 	if o.Request != nil {
 		toSerialize["request"] = o.Request
 	}
 	if o.Response != nil {
 		toSerialize["response"] = o.Response
 	}
-	toSerialize["metadata"] = o.Metadata
 	return toSerialize, nil
 }
 
@@ -369,9 +369,9 @@ func (o *AuditLogEntry) UnmarshalJSON(data []byte) (err error) {
 		"bank_id",
 		"started_at",
 		"ended_at",
+		"metadata",
 		"request",
 		"response",
-		"metadata",
 	}
 
 	allProperties := make(map[string]interface{})

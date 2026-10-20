@@ -34,6 +34,7 @@ from hindsight_api.api.unknown_params import UnknownParamsRoute, use_unknown_par
 from hindsight_api.cancellation import OperationCancelledError
 from hindsight_api.engine.audit import (
     AuditEntry,
+    AuditLogEntry,
     AuditLogger,
     AuditLogListResponse,
     AuditLogStatsResponse,
@@ -10887,6 +10888,33 @@ def _register_routes(app: FastAPI):
             raise
         except Exception as e:
             raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/audit-logs/stats")
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/audit-logs/{log_id}",
+        summary="Get audit log entry",
+        description="Get one audit log entry with its full request and response bodies.",
+        operation_id="get_audit_log",
+        tags=["Audit"],
+        response_model=AuditLogEntry,
+        responses={404: {"description": "Bank or audit log entry not found"}},
+    )
+    async def api_get_audit_log(
+        bank_id: str,
+        log_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Get one audit log entry with its request/response bodies."""
+        try:
+            result = await app.state.memory.get_audit_log(bank_id, log_id, request_context=request_context)
+            if result is None:
+                raise HTTPException(status_code=404, detail=f"Audit log entry '{log_id}' not found")
+            return result
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/audit-logs/{log_id}")
 
     @app.get(
         "/v1/default/banks/{bank_id}/llm-requests",

@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useTranslations } from "next-intl";
 import { resolveDateRangePreset } from "@/lib/date-range-preset";
 import { useBank } from "@/lib/bank-context";
-import { client, AuditLogEntry, AuditStatsBucket } from "@/lib/api";
+import { client, AuditLogEntry, AuditLogSummary, AuditStatsBucket } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -250,7 +250,7 @@ export function AuditLogsView() {
   const actionOptions = getActionOptions(t);
   const transportOptions = getTransportOptions(t);
   const { currentBank } = useBank();
-  const [logs, setLogs] = useState<AuditLogEntry[]>([]);
+  const [logs, setLogs] = useState<AuditLogSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [actionFilter, setActionFilter] = useState<string | null>(null);
   const [transportFilter, setTransportFilter] = useState<string | null>(null);
@@ -317,9 +317,17 @@ export function AuditLogsView() {
     loadLogs(actionFilter, transportFilter, dateRange, newOffset);
   };
 
-  const handleLogClick = (log: AuditLogEntry) => {
-    setSelectedLog(log);
+  const handleLogClick = async (log: AuditLogSummary) => {
+    // The list carries no bodies: show the row now, then load its request/response.
+    setSelectedLog({ ...log, request: null, response: null });
     setDialogOpen(true);
+    if (!currentBank) return;
+    try {
+      const full = await client.getAuditLog(currentBank, log.id);
+      setSelectedLog((current) => (current?.id === full.id ? full : current));
+    } catch (error) {
+      console.error("Error loading audit log entry:", error);
+    }
   };
 
   useEffect(() => {

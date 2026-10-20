@@ -5628,6 +5628,53 @@ paths:
       summary: Audit log statistics
       tags:
       - Audit
+  /v1/default/banks/{bank_id}/audit-logs/{log_id}:
+    get:
+      description: Get one audit log entry with its full request and response bodies.
+      operationId: get_audit_log
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: log_id
+        required: true
+        schema:
+          title: Log Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogEntry'
+          description: Successful Response
+        "404":
+          description: Bank or audit log entry not found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get audit log entry
+      tags:
+      - Audit
   /v1/default/banks/{bank_id}/llm-requests:
     get:
       description: "List traced LLM requests for a bank, ordered by most recent first.\
@@ -5885,9 +5932,9 @@ components:
       - status
       title: AsyncOperationSubmitResponse
     AuditLogEntry:
-      description: A single audit log entry.
+      description: A single audit log entry with its full request/response bodies.
       example:
-        duration_ms: 5
+        duration_ms: 0
         request:
           key: ""
         metadata:
@@ -5922,15 +5969,15 @@ components:
         duration_ms:
           nullable: true
           type: integer
+        metadata:
+          additionalProperties: {}
+          title: Metadata
         request:
           additionalProperties: {}
           nullable: true
         response:
           additionalProperties: {}
           nullable: true
-        metadata:
-          additionalProperties: {}
-          title: Metadata
       required:
       - action
       - bank_id
@@ -5951,26 +5998,18 @@ components:
         limit: 6
         items:
         - duration_ms: 5
-          request:
-            key: ""
           metadata:
             key: ""
           bank_id: bank_id
-          response:
-            key: ""
           action: action
           started_at: started_at
           id: id
           transport: transport
           ended_at: ended_at
         - duration_ms: 5
-          request:
-            key: ""
           metadata:
             key: ""
           bank_id: bank_id
-          response:
-            key: ""
           action: action
           started_at: started_at
           id: id
@@ -5990,8 +6029,10 @@ components:
           title: Offset
           type: integer
         items:
+          description: Entries without request/response bodies; fetch one entry by
+            id for its bodies.
           items:
-            $ref: '#/components/schemas/AuditLogEntry'
+            $ref: '#/components/schemas/AuditLogSummary'
           type: array
       required:
       - bank_id
@@ -6063,6 +6104,53 @@ components:
       - start
       - trunc
       title: AuditLogStatsResponse
+    AuditLogSummary:
+      description: "An audit log entry without its request/response bodies, as the\
+        \ list returns it."
+      example:
+        duration_ms: 5
+        metadata:
+          key: ""
+        bank_id: bank_id
+        action: action
+        started_at: started_at
+        id: id
+        transport: transport
+        ended_at: ended_at
+      properties:
+        id:
+          title: Id
+          type: string
+        action:
+          title: Action
+          type: string
+        transport:
+          title: Transport
+          type: string
+        bank_id:
+          nullable: true
+          type: string
+        started_at:
+          nullable: true
+          type: string
+        ended_at:
+          nullable: true
+          type: string
+        duration_ms:
+          nullable: true
+          type: integer
+        metadata:
+          additionalProperties: {}
+          title: Metadata
+      required:
+      - action
+      - bank_id
+      - ended_at
+      - id
+      - metadata
+      - started_at
+      - transport
+      title: AuditLogSummary
     BackgroundResponse:
       description: "Response model for background update. Deprecated: use MissionResponse\
         \ instead."

@@ -2106,7 +2106,8 @@
       },
       "auditLogs": {
         "list": "Impossible de lister les journaux d'audit",
-        "stats": "Impossible de récupérer les statistiques des journaux d'audit"
+        "stats": "Impossible de récupérer les statistiques des journaux d'audit",
+        "get": "Impossible de récupérer l'entrée du journal d'audit"
       },
       "llmRequests": {
         "list": "Impossible de lister les requêtes LLM",

@@ -107,6 +107,9 @@ import type {
   GetAgentStatsData,
   GetAgentStatsErrors,
   GetAgentStatsResponses,
+  GetAuditLogData,
+  GetAuditLogErrors,
+  GetAuditLogResponses,
   GetBankAttachmentData,
   GetBankAttachmentErrors,
   GetBankAttachmentResponses,
@@ -1921,6 +1924,19 @@ export const auditLogStats = <ThrowOnError extends boolean = false>(
 ) =>
   (options.client ?? client).get<AuditLogStatsResponses, AuditLogStatsErrors, ThrowOnError>({
     url: "/v1/default/banks/{bank_id}/audit-logs/stats",
+    ...options,
+  });
+
+/**
+ * Get audit log entry
+ *
+ * Get one audit log entry with its full request and response bodies.
+ */
+export const getAuditLog = <ThrowOnError extends boolean = false>(
+  options: Options<GetAuditLogData, ThrowOnError>
+) =>
+  (options.client ?? client).get<GetAuditLogResponses, GetAuditLogErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/audit-logs/{log_id}",
     ...options,
   });
 

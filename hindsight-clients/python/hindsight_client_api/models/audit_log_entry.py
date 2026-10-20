@@ -24,7 +24,7 @@ from typing_extensions import Self
 
 class AuditLogEntry(BaseModel):
     """
-    A single audit log entry.
+    A single audit log entry with its full request/response bodies.
     """ # noqa: E501
     id: StrictStr
     action: StrictStr
@@ -33,10 +33,10 @@ class AuditLogEntry(BaseModel):
     started_at: Optional[StrictStr]
     ended_at: Optional[StrictStr]
     duration_ms: Optional[StrictInt] = None
+    metadata: Dict[str, Any]
     request: Optional[Dict[str, Any]]
     response: Optional[Dict[str, Any]]
-    metadata: Dict[str, Any]
-    __properties: ClassVar[List[str]] = ["id", "action", "transport", "bank_id", "started_at", "ended_at", "duration_ms", "request", "response", "metadata"]
+    __properties: ClassVar[List[str]] = ["id", "action", "transport", "bank_id", "started_at", "ended_at", "duration_ms", "metadata", "request", "response"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -126,9 +126,9 @@ class AuditLogEntry(BaseModel):
             "started_at": obj.get("started_at"),
             "ended_at": obj.get("ended_at"),
             "duration_ms": obj.get("duration_ms"),
+            "metadata": obj.get("metadata"),
             "request": obj.get("request"),
-            "response": obj.get("response"),
-            "metadata": obj.get("metadata")
+            "response": obj.get("response")
         })
         return _obj
 

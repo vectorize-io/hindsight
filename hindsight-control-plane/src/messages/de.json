@@ -2106,7 +2106,8 @@
       },
       "auditLogs": {
         "list": "Audit-Protokolle konnten nicht aufgelistet werden",
-        "stats": "Audit-Protokollstatistiken konnten nicht abgerufen werden"
+        "stats": "Audit-Protokollstatistiken konnten nicht abgerufen werden",
+        "get": "Audit-Protokolleintrag konnte nicht abgerufen werden"
       },
       "llmRequests": {
         "list": "LLM Requests konnten nicht aufgelistet werden",

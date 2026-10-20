@@ -20,6 +20,7 @@ from hindsight_client_api.models.audit_log_entry import AuditLogEntry
 from hindsight_client_api.models.audit_log_list_response import AuditLogListResponse
 from hindsight_client_api.models.audit_log_stats_bucket import AuditLogStatsBucket
 from hindsight_client_api.models.audit_log_stats_response import AuditLogStatsResponse
+from hindsight_client_api.models.audit_log_summary import AuditLogSummary
 from hindsight_client_api.models.background_response import BackgroundResponse
 from hindsight_client_api.models.bank_alias_entry import BankAliasEntry
 from hindsight_client_api.models.bank_aliases_response import BankAliasesResponse

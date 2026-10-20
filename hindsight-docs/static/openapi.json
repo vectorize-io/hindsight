@@ -8000,6 +8000,77 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/audit-logs/{log_id}": {
+      "get": {
+        "tags": [
+          "Audit"
+        ],
+        "summary": "Get audit log entry",
+        "description": "Get one audit log entry with its full request and response bodies.",
+        "operationId": "get_audit_log",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "log_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Log Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditLogEntry"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Bank or audit log entry not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/llm-requests": {
       "get": {
         "tags": [
@@ -8465,6 +8536,11 @@
             "title": "Duration Ms",
             "description": "Server-computed duration in milliseconds (started_at \u2192 ended_at). Null if not yet completed."
           },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          },
           "request": {
             "anyOf": [
               {
@@ -8488,11 +8564,6 @@
               }
             ],
             "title": "Response"
-          },
-          "metadata": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Metadata"
           }
         },
         "type": "object",
@@ -8503,12 +8574,12 @@
           "bank_id",
           "started_at",
           "ended_at",
+          "metadata",
           "request",
-          "response",
-          "metadata"
+          "response"
         ],
         "title": "AuditLogEntry",
-        "description": "A single audit log entry."
+        "description": "A single audit log entry with its full request/response bodies."
       },
       "AuditLogListResponse": {
         "properties": {
@@ -8530,10 +8601,11 @@
           },
           "items": {
             "items": {
-              "$ref": "#/components/schemas/AuditLogEntry"
+              "$ref": "#/components/schemas/AuditLogSummary"
             },
             "type": "array",
-            "title": "Items"
+            "title": "Items",
+            "description": "Entries without request/response bodies; fetch one entry by id for its bodies."
           }
         },
         "type": "object",
@@ -8610,6 +8682,84 @@
         ],
         "title": "AuditLogStatsResponse",
         "description": "Response model for audit log stats endpoint."
+      },
+      "AuditLogSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "transport": {
+            "type": "string",
+            "title": "Transport"
+          },
+          "bank_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Id"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms",
+            "description": "Server-computed duration in milliseconds (started_at \u2192 ended_at). Null if not yet completed."
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "action",
+          "transport",
+          "bank_id",
+          "started_at",
+          "ended_at",
+          "metadata"
+        ],
+        "title": "AuditLogSummary",
+        "description": "An audit log entry without its request/response bodies, as the list returns it."
       },
       "BackgroundResponse": {
         "properties": {

@@ -43,7 +43,7 @@ export type AsyncOperationSubmitResponse = {
 /**
  * AuditLogEntry
  *
- * A single audit log entry.
+ * A single audit log entry with its full request/response bodies.
  */
 export type AuditLogEntry = {
   /**
@@ -77,6 +77,12 @@ export type AuditLogEntry = {
    */
   duration_ms?: number | null;
   /**
+   * Metadata
+   */
+  metadata: {
+    [key: string]: unknown;
+  };
+  /**
    * Request
    */
   request: {
@@ -88,12 +94,6 @@ export type AuditLogEntry = {
   response: {
     [key: string]: unknown;
   } | null;
-  /**
-   * Metadata
-   */
-  metadata: {
-    [key: string]: unknown;
-  };
 };
 
 /**
@@ -120,8 +120,10 @@ export type AuditLogListResponse = {
   offset: number;
   /**
    * Items
+   *
+   * Entries without request/response bodies; fetch one entry by id for its bodies.
    */
-  items: Array<AuditLogEntry>;
+  items: Array<AuditLogSummary>;
 };
 
 /**
@@ -172,6 +174,50 @@ export type AuditLogStatsResponse = {
    * Buckets
    */
   buckets: Array<AuditLogStatsBucket>;
+};
+
+/**
+ * AuditLogSummary
+ *
+ * An audit log entry without its request/response bodies, as the list returns it.
+ */
+export type AuditLogSummary = {
+  /**
+   * Id
+   */
+  id: string;
+  /**
+   * Action
+   */
+  action: string;
+  /**
+   * Transport
+   */
+  transport: string;
+  /**
+   * Bank Id
+   */
+  bank_id: string | null;
+  /**
+   * Started At
+   */
+  started_at: string | null;
+  /**
+   * Ended At
+   */
+  ended_at: string | null;
+  /**
+   * Duration Ms
+   *
+   * Server-computed duration in milliseconds (started_at → ended_at). Null if not yet completed.
+   */
+  duration_ms?: number | null;
+  /**
+   * Metadata
+   */
+  metadata: {
+    [key: string]: unknown;
+  };
 };
 
 /**
@@ -11677,6 +11723,50 @@ export type AuditLogStatsResponses = {
 };
 
 export type AuditLogStatsResponse2 = AuditLogStatsResponses[keyof AuditLogStatsResponses];
+
+export type GetAuditLogData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Log Id
+     */
+    log_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/audit-logs/{log_id}";
+};
+
+export type GetAuditLogErrors = {
+  /**
+   * Bank or audit log entry not found
+   */
+  404: unknown;
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetAuditLogError = GetAuditLogErrors[keyof GetAuditLogErrors];
+
+export type GetAuditLogResponses = {
+  /**
+   * Successful Response
+   */
+  200: AuditLogEntry;
+};
+
+export type GetAuditLogResponse = GetAuditLogResponses[keyof GetAuditLogResponses];
 
 export type ListLlmRequestsData = {
   body?: never;
