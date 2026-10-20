@@ -8144,6 +8144,30 @@
             "description": "Filter by call scope"
           },
           {
+            "name": "call_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "llm",
+                    "embedding",
+                    "rerank",
+                    "decision"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by kind of model call, told apart by scope: embedding (embedding_*), rerank, decision (decision_*), or llm (every other scope)",
+              "title": "Call Type"
+            },
+            "description": "Filter by kind of model call, told apart by scope: embedding (embedding_*), rerank, decision (decision_*), or llm (every other scope)"
+          },
+          {
             "name": "provider",
             "in": "query",
             "required": false,
@@ -8369,6 +8393,30 @@
               "title": "Operation"
             },
             "description": "Filter by operation"
+          },
+          {
+            "name": "call_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "llm",
+                    "embedding",
+                    "rerank",
+                    "decision"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by kind of model call: llm, embedding, rerank or decision",
+              "title": "Call Type"
+            },
+            "description": "Filter by kind of model call: llm, embedding, rerank or decision"
           },
           {
             "name": "period",

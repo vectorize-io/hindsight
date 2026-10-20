@@ -18,6 +18,7 @@ import pytest
 from aiohttp import web
 
 from hindsight_api.config import DecisionModelConfig
+from hindsight_api.engine import decision_model
 from hindsight_api.engine.consolidation import consolidator, triage
 from hindsight_api.engine.decision_model import DecisionModel, DecisionResponse
 from hindsight_api.tracing import LLMSpanRecorder
@@ -248,7 +249,7 @@ async def test_a_request_is_traced_in_the_shape_every_recorder_takes(monkeypatch
     calls: list[inspect.BoundArguments] = []
     signature = inspect.signature(LLMSpanRecorder.record_llm_call)
     monkeypatch.setattr(
-        triage,
+        decision_model,
         "get_span_recorder",
         lambda: SimpleNamespace(record_llm_call=lambda **kw: calls.append(signature.bind(None, **kw))),
     )
@@ -262,6 +263,7 @@ async def test_a_request_is_traced_in_the_shape_every_recorder_takes(monkeypatch
         await triage._ask(DecisionModel.from_config(_setup(base_url)), _fact("x"), [], "")
 
     [call] = calls
-    assert call.arguments["scope"] == "consolidation_triage"
+    assert call.arguments["scope"] == "decision_consolidation_triage"
     assert call.arguments["input_tokens"] == 7
-    assert isinstance(call.arguments["messages"][0]["content"], str)
+    # The OTel recorder takes it as a forward-compatible extra; the DB recorder stores it as the input.
+    assert "questions" in call.arguments["_extra"]["structured_input"]

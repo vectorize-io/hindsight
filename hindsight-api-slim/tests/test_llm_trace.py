@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -28,6 +29,7 @@ from hindsight_api.engine.llm_trace import (
     LLMRequestRecord,
     LLMTraceContext,
     LLMTraceRecorder,
+    _BufferedRow,
     _safe_json,
     current_trace_context,
     set_trace_context,
@@ -645,7 +647,7 @@ async def test_reasoning_tokens_persist_in_bank_trace_and_stats(trace_api_client
             thoughts_tokens=60,
             duration=0.1,
         )
-        await memory._llm_recorder._writes.drain(trace_id)
+        await memory._llm_recorder.flush()
     finally:
         llm_trace.reset_trace_context(token)
 
@@ -704,7 +706,10 @@ async def test_retain_creates_trace_rows_with_tokens(trace_api_client, bank_id):
     # writes); give the fire-and-forget tasks room under parallel test load.
     await asyncio.sleep(1.5)
 
-    response = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests")
+    # LLM calls only: the embedding calls retain also makes run outside the operation's
+    # LLM trace, so they carry no trace ids (covered by test_embedding_and_rerank_calls_traced).
+    llm_only = {"call_type": "llm"}
+    response = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests", params=llm_only)
     assert response.status_code == 200
     data = response.json()
     assert data["total"] >= 1
@@ -753,7 +758,7 @@ async def test_retain_creates_trace_rows_with_tokens(trace_api_client, bank_id):
 
     # group=true paginates by run: total counts distinct runs (here retain +
     # consolidation = 2), and every traced row is still returned.
-    resp = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests", params={"group": "true"})
+    resp = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests", params={"group": "true", **llm_only})
     assert resp.status_code == 200
     grouped = resp.json()
     distinct_traces = {it["trace_id"] for it in data["items"]}
@@ -1060,7 +1065,7 @@ async def test_write_skipped_while_backend_not_ready(caplog):
     skipped without ever acquiring, so no error can be raised to warn about."""
     backend = _Backend(is_ready=False, error=AssertionError("acquire must not be called"))
     with caplog.at_level(logging.DEBUG, logger="hindsight_api.engine.llm_trace"):
-        await _lifecycle_recorder(backend)._safe_write(_lifecycle_record())
+        await _lifecycle_recorder(backend)._write_batch([_BufferedRow("public", _lifecycle_record())])
     assert not _warnings(caplog)
 
 
@@ -1079,5 +1084,261 @@ async def test_write_failure_on_ready_backend_still_warns(caplog):
     """A ready backend that fails is a real problem — it must stay a WARNING."""
     recorder = _lifecycle_recorder(_Backend(is_ready=True, error=RuntimeError("connection refused")))
     with caplog.at_level(logging.DEBUG, logger="hindsight_api.engine.llm_trace"):
-        await recorder._safe_write(_lifecycle_record())
+        await recorder._write_batch([_BufferedRow("public", _lifecycle_record())])
     assert len(_warnings(caplog)) == 1
+
+
+# ── recorder: buffered batch writes ───────────────────────────────────────────
+
+
+@dataclass
+class _Batch:
+    query: str
+    rows: list[list]
+
+
+class _CollectingBackend(_Backend):
+    """Ready backend whose connection records every ``executemany``."""
+
+    def __init__(self):
+        super().__init__(is_ready=True)
+        self.batches: list[_Batch] = []
+        self.acquires = 0
+
+    @asynccontextmanager
+    async def acquire(self):
+        self.acquires += 1
+        yield SimpleNamespace(executemany=self._executemany)
+
+    async def _executemany(self, query, rows, **_kw):
+        self.batches.append(_Batch(query, rows))
+
+
+@pytest.mark.asyncio
+async def test_rows_are_buffered_and_written_in_one_batch_per_schema():
+    backend = _CollectingBackend()
+    schema = {"value": "tenant_a"}
+    recorder = LLMTraceRecorder(
+        pool_getter=lambda: backend, schema_getter=lambda: schema["value"], enabled=True, allowed_scopes=[]
+    )
+    for i in range(3):
+        recorder.record_llm_call(provider="p", model="m", scope="embedding_query", messages=[], input_count=i)
+    # The schema is the one each call ran under, not the one current when the batch is written.
+    schema["value"] = "tenant_b"
+    recorder.record_llm_call(provider="p", model="m", scope="rerank", messages=[])
+    assert backend.batches == []  # nothing written yet: the rows wait for the timer
+
+    await recorder.flush()
+
+    assert backend.acquires == 1
+    assert [(b.query.split()[2], len(b.rows)) for b in backend.batches] == [
+        ("tenant_a.llm_requests", 3),
+        ("tenant_b.llm_requests", 1),
+    ]
+    assert json.loads(backend.batches[0].rows[2][21]) == {"input_count": 2}  # llm_info column
+
+
+@pytest.mark.asyncio
+async def test_buffered_rows_are_written_by_the_timer(monkeypatch):
+    backend = _CollectingBackend()
+    recorder = _lifecycle_recorder(backend)
+    monkeypatch.setattr(recorder, "FLUSH_INTERVAL_SECONDS", 0.01)
+    recorder.record_llm_call(provider="p", model="m", scope="rerank", messages=[])
+    recorder.record_llm_call(provider="p", model="m", scope="rerank", messages=[])
+    await asyncio.sleep(0.1)
+    assert [len(b.rows) for b in backend.batches] == [2]
+
+
+@pytest.mark.asyncio
+async def test_a_full_buffer_is_written_without_waiting(monkeypatch):
+    backend = _CollectingBackend()
+    recorder = _lifecycle_recorder(backend)
+    monkeypatch.setattr(recorder, "FLUSH_MAX_ROWS", 2)
+    monkeypatch.setattr(recorder, "FLUSH_INTERVAL_SECONDS", 60)
+    for _ in range(2):
+        recorder.record_llm_call(provider="p", model="m", scope="rerank", messages=[])
+    await recorder._writes.drain_all(1)  # the 60s timer is not what writes it
+    assert [len(b.rows) for b in backend.batches] == [2]
+
+
+def test_excluded_scopes_win_and_patterns_match_prefixes():
+    recorder = LLMTraceRecorder(
+        pool_getter=lambda: None,
+        schema_getter=lambda: "public",
+        enabled=True,
+        allowed_scopes=["embedding_*", "rerank"],
+        excluded_scopes=["embedding_query"],
+    )
+    assert recorder.is_enabled("embedding_document")
+    assert not recorder.is_enabled("embedding_query")
+    assert recorder.is_enabled("rerank")
+    assert not recorder.is_enabled("reranking")
+    assert not recorder.is_enabled("retain_extract_facts")
+
+
+def test_call_types_partition_scopes():
+    """Every scope falls in exactly one call_type: the four filters split the table."""
+    import re
+
+    def matches(clause: str, scope: str) -> bool:
+        # The clauses are plain LIKE/= over scope; evaluate them as regexes, honouring the
+        # escaped ``\_`` (a bare ``_`` would be a LIKE wildcard).
+        def one(part: str) -> bool:
+            like = re.fullmatch(r"scope LIKE '(.+)%' ESCAPE '\\'", part)
+            if like:
+                return scope.startswith(like.group(1).replace("\\_", "_"))
+            return scope == re.fullmatch(r"scope = '(.+)'", part).group(1)
+
+        if clause.startswith("NOT ("):
+            parts = clause[5:-1].replace("COALESCE(scope, '')", "scope").split(" OR ")
+            return not any(one(p) for p in parts)
+        return one(clause)
+
+    expected = {
+        "embedding_document": "embedding",
+        "embedding_query": "embedding",
+        "rerank": "rerank",
+        "decision_recall_rerank": "decision",
+        "decision_consolidation_triage": "decision",
+        "retain_extract_facts": "llm",
+        "reflect": "llm",
+        "decisionXfoo": "llm",  # an unescaped ``_`` would let LIKE count this as a decision
+    }
+    for scope, call_type in expected.items():
+        hits = [t for t in ("llm", "embedding", "rerank", "decision") if matches(llm_trace.call_type_clause(t), scope)]
+        assert hits == [call_type], scope
+    with pytest.raises(ValueError):
+        llm_trace.call_type_clause("chat")
+
+
+@pytest.mark.asyncio
+async def test_embedding_and_rerank_calls_traced(trace_api_client, memory, bank_id):
+    """Retain embeds documents, recall embeds the query and reranks: each is a row of its
+    own kind, inside the run of the operation that made it."""
+    await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
+    response = await trace_api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={"items": [{"content": "Alice likes cats", "context": "preferences"}]},
+    )
+    assert response.status_code == 200
+    response = await trace_api_client.post(
+        f"/v1/default/banks/{bank_id}/memories/recall", json={"query": "What does Alice like?"}
+    )
+    assert response.status_code == 200
+    await memory._llm_recorder.flush()
+
+    async def rows(call_type: str) -> list[dict]:
+        resp = await trace_api_client.get(
+            f"/v1/default/banks/{bank_id}/llm-requests", params={"call_type": call_type, "limit": 500}
+        )
+        assert resp.status_code == 200
+        return resp.json()["items"]
+
+    embedding = await rows("embedding")
+    assert {"embedding_document", "embedding_query"} <= {r["scope"] for r in embedding}
+    assert all(r["bank_id"] == bank_id and r["llm_info"]["input_count"] >= 1 for r in embedding)
+    query = next(r for r in embedding if r["scope"] == "embedding_query")
+    assert query["input"] == {"texts": ["What does Alice like?"]}
+    assert query["operation"] == "recall" and query["trace_id"]
+
+    rerank = await rows("rerank")
+    assert rerank and all(r["scope"] == "rerank" and r["llm_info"]["input_count"] >= 1 for r in rerank)
+    [recall_rerank] = [r for r in rerank if r["trace_id"] == query["trace_id"]]  # one recall, one run
+    assert recall_rerank["input"]["queries"] == ["What does Alice like?"]
+    assert len(recall_rerank["output"]["scores"]) == len(recall_rerank["input"]["documents"])
+
+    llm_rows = await rows("llm")
+    assert not {r["scope"] for r in llm_rows} & {"embedding_document", "embedding_query", "rerank"}
+    # The retained text is embedded inside the retain's run, next to its fact extraction.
+    retain_traces = {r["trace_id"] for r in llm_rows if r["operation"] == "retain"}
+    retained = [r for r in embedding if r["scope"] == "embedding_document" and r["operation"] == "retain"]
+    assert retained and all(r["trace_id"] in retain_traces for r in retained)
+    bad = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests", params={"call_type": "chat"})
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_reflect_searches_join_the_reflect_run(trace_api_client, memory, bank_id):
+    """A reflect's search tools recall; those embedding and rerank calls belong to the reflect's
+    run, not to recall runs of their own."""
+    await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
+    await trace_api_client.post(
+        f"/v1/default/banks/{bank_id}/memories", json={"items": [{"content": "Alice likes cats"}]}
+    )
+    response = await trace_api_client.post(
+        f"/v1/default/banks/{bank_id}/reflect", json={"query": "What does Alice like?"}
+    )
+    assert response.status_code == 200
+    await memory._llm_recorder.flush()
+
+    resp = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests", params={"limit": 500})
+    items = resp.json()["items"]
+    reflect_traces = {r["trace_id"] for r in items if r["scope"] == "reflect" or r["operation"] == "reflect"}
+    searches = [r for r in items if r["scope"] in ("embedding_query", "rerank") and r["trace_id"] in reflect_traces]
+    assert searches and all(r["operation"] == "reflect" for r in searches)
+    assert not [r for r in items if r["operation"] == "recall"]  # the reflect made no run of its own for them
+
+
+@pytest.mark.asyncio
+async def test_a_refused_row_does_not_lose_the_rest_of_its_batch():
+    """executemany is all-or-nothing, so a failed batch is retried row by row."""
+    written: list[list] = []
+
+    class _OneBadRow(_Backend):
+        def __init__(self):
+            super().__init__(is_ready=True)
+
+        @asynccontextmanager
+        async def acquire(self):
+            yield SimpleNamespace(executemany=self._executemany, execute=self._execute)
+
+        async def _executemany(self, query, rows, **_kw):
+            raise ValueError("invalid input syntax for type json")
+
+        async def _execute(self, query, *row):
+            if row[3] == "bad":  # scope column
+                raise ValueError("invalid input syntax for type json")
+            written.append(list(row))
+
+    recorder = _lifecycle_recorder(_OneBadRow())
+    for scope in ("rerank", "bad", "embedding_query"):
+        recorder.record_llm_call(provider="p", model="m", scope=scope, messages=[])
+    await recorder.flush()
+    assert [row[3] for row in written] == ["rerank", "embedding_query"]
+
+
+def test_with_config_joins_a_run_the_same_operation_bound():
+    """A mental-model refresh binds its run around the reflect pass AND the page write, so
+    the reflect's with_config must join it rather than open a second run."""
+    from hindsight_api.engine.llm_trace import operation_run, operation_trace_context
+
+    assert operation_trace_context(None, None, None) is None
+    with operation_run("b1", "refresh_mental_model"):
+        bound = current_trace_context()
+        assert operation_trace_context("b1", "refresh_mental_model", None) is bound
+        assert operation_trace_context("b1", "reflect", None) is not bound
+        assert operation_trace_context("b2", "refresh_mental_model", None) is not bound
+        with operation_run("b1", "mental_model_write"):
+            assert current_trace_context() is bound  # an enclosing run wins
+    assert current_trace_context() is None
+    fresh = operation_trace_context("b1", "refresh_mental_model", None)
+    assert fresh is not None and fresh.trace_id
+
+
+@pytest.mark.asyncio
+async def test_page_embedding_outside_a_run_gets_an_operation(trace_api_client, memory, bank_id, request_context):
+    """Creating a page embeds it inside the HTTP request, where nothing else binds a run."""
+    await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
+    await memory.create_mental_model(
+        bank_id=bank_id,
+        name="Alice",
+        source_query="Who is Alice?",
+        content="Alice likes cats",
+        request_context=request_context,
+    )
+    await memory._llm_recorder.flush()
+    resp = await trace_api_client.get(
+        f"/v1/default/banks/{bank_id}/llm-requests", params={"call_type": "embedding", "limit": 500}
+    )
+    [row] = [r for r in resp.json()["items"] if r["input"] == {"texts": ["Alice Alice likes cats"]}]
+    assert row["operation"] == "mental_model_write" and row["trace_id"]

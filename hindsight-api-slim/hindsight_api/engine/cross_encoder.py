@@ -61,7 +61,8 @@ from ..config import (
 )
 from .aiohttp_session import LoopLocal, LoopLocalSession, UpstreamHTTPError, per_phase_timeout, raise_for_status
 from .bank_attribution import reranker_bank_attribution_headers
-from .decision_model import overflowed_window
+from .decision_model import overflowed_window, record_decision_call
+from .llm_trace import RERANK_SCOPE, trace_model_call
 from .local_device import (
     LOCAL_MODEL_BUILD_LOCK,
     align_local_model_weights,
@@ -195,6 +196,11 @@ class CrossEncoderModel(ABC):
     # base class for the same reason as retry_policy, so every provider honors it.
     max_tokens_per_candidate: int | None = None
 
+    # Whether predict() traces itself as one ``rerank`` row. Off for a backend that makes
+    # no model call (rrf), wraps backends that trace themselves (the failover chain), or
+    # traces each decision-model request it makes instead.
+    traces_calls: bool = True
+
     async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
         Score query-document pairs for relevance, retrying transient failures.
@@ -208,6 +214,18 @@ class CrossEncoderModel(ABC):
         if self.max_tokens_per_candidate is not None and pairs:
             docs = _truncate_docs_to_tokens([doc for _, doc in pairs], self.max_tokens_per_candidate)
             pairs = [(query, doc) for (query, _), doc in zip(pairs, docs)]
+        if not self.traces_calls:
+            return await self._predict_with_retry(pairs)
+        return await trace_model_call(
+            self,
+            RERANK_SCOPE,
+            len(pairs),
+            lambda: self._predict_with_retry(pairs),
+            request={"queries": list(dict.fromkeys(q for q, _ in pairs)), "documents": [d for _, d in pairs]},
+            output_of=lambda scores: {"scores": [float(score) for score in scores]},
+        )
+
+    async def _predict_with_retry(self, pairs: list[tuple[str, str]]) -> list[float]:
         if self.retry_policy is None:
             return await self._predict(pairs)
         # One budget per predict(): rerank is one logical call on the synchronous
@@ -1189,6 +1207,9 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
 
     SYSTEMONE_PATH = "/v1/systemone"
 
+    # Each System One request is traced as a decision call; a rerank row would count them twice.
+    traces_calls = False
+
     # A Choice accepts at most 255 options; stay clear of the edge. A pool larger
     # than this or exceeding single-question token limits is ranked in chunks whose
     # winners are then ranked against each other, because probabilities are normalised
@@ -1276,15 +1297,36 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
             f"(prune_candidates={self.prunes_candidates})"
         )
 
-    async def _ask(self, body: dict) -> dict:
-        async with self._semaphore:
-            async with self._session.get().post(
-                f"{self.base_url}{self.SYSTEMONE_PATH}",
-                headers=reranker_bank_attribution_headers(),
-                json=body,
-            ) as response:
-                await raise_for_status(response)
-                return await response.json(content_type=None)
+    async def _ask(self, body: dict, scope: str) -> dict:
+        """One System One request, traced under ``scope`` like any LLM call."""
+        started = time.monotonic()
+        result: dict | None = None
+        error: BaseException | None = None
+        try:
+            async with self._semaphore:
+                async with self._session.get().post(
+                    f"{self.base_url}{self.SYSTEMONE_PATH}",
+                    headers=reranker_bank_attribution_headers(),
+                    json=body,
+                ) as response:
+                    await raise_for_status(response)
+                    result = await response.json(content_type=None)
+                    return result
+        except BaseException as e:
+            error = e
+            raise
+        finally:
+            usage = result.get("usage") if isinstance(result, dict) else None
+            record_decision_call(
+                provider=self.provider_name,
+                model=self.model,
+                scope=scope,
+                request=body,
+                response=result if isinstance(result, dict) else None,
+                input_tokens=(usage.get("input_tokens") or 0) if isinstance(usage, dict) else 0,
+                started=started,
+                error=error,
+            )
 
     async def _within_window(self, build: Callable[[int], Awaitable[_T]]) -> _T:
         """``build(budget)`` at the full question budget, halved each time Jev finds the
@@ -1312,7 +1354,7 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
                 }
             },
         }
-        result = await self._ask(body)
+        result = await self._ask(body, "decision_rank")
         probabilities = result["answers"]["rank"]["probabilities"]
         # Sort the option positions, not the indices themselves: the option key encodes
         # the position, and two candidates can carry the same index-independent text.
@@ -1440,7 +1482,8 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
                             "criteria": self.SUFFICIENCY_LEVELS,
                         }
                     },
-                }
+                },
+                "decision_evidence_sufficiency",
             )
 
         result = await self._within_window(ask)
@@ -1492,7 +1535,10 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
             # A refresh asks this once per new memory, all at once, so a rate limit is the
             # expected failure rather than a rare one: retried, not handed back as "search".
             return await acall_with_retry(
-                lambda: self._ask(body), policy=policy, budget=policy.new_budget(), provider=self.provider_name
+                lambda: self._ask(body, "decision_page_impact"),
+                policy=policy,
+                budget=policy.new_budget(),
+                provider=self.provider_name,
             )
 
         result = await self._within_window(ask)
@@ -1535,7 +1581,7 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
                 }
             },
         }
-        result = await self._ask(body)
+        result = await self._ask(body, "decision_cut")
         level = round(float(result["answers"]["depth"]["score"]))
         depth = self.CUT_DEPTHS[min(len(self.CUT_DEPTHS) - 1, max(0, level))]
         return len(shortlist) if depth is None else min(depth, len(shortlist))
@@ -1589,6 +1635,8 @@ class RRFPassthroughCrossEncoder(CrossEncoderModel):
     - Deployments where reranking latency is unacceptable
     - Debugging to isolate retrieval vs reranking issues
     """
+
+    traces_calls = False  # no model call to trace
 
     def __init__(self):
         """Initialize RRF passthrough cross-encoder."""
@@ -2571,6 +2619,8 @@ class MultiCrossEncoder(CrossEncoderModel):
     whole failover sequence rather than the member that stumbled. A member that fails to initialize is not fatal — that is the point of
     the chain — it is retried lazily on the next request that reaches it.
     """
+
+    traces_calls = False  # each member's predict() traces its own attempt
 
     def __init__(self, members: list[CrossEncoderModel]) -> None:
         if len(members) < 2:

@@ -11802,6 +11802,12 @@ export type ListLlmRequestsData = {
      */
     scope?: string | null;
     /**
+     * Call Type
+     *
+     * Filter by kind of model call, told apart by scope: embedding (embedding_*), rerank, decision (decision_*), or llm (every other scope)
+     */
+    call_type?: "llm" | "embedding" | "rerank" | "decision" | null;
+    /**
      * Provider
      *
      * Filter by LLM provider
@@ -11902,6 +11908,12 @@ export type LlmRequestStatsData = {
      * Filter by operation
      */
     operation?: string | null;
+    /**
+     * Call Type
+     *
+     * Filter by kind of model call: llm, embedding, rerank or decision
+     */
+    call_type?: "llm" | "embedding" | "rerank" | "decision" | null;
     /**
      * Period
      *

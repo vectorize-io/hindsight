@@ -32,10 +32,20 @@ export type ChipSize = "xs" | "sm" | "md";
 // content of it; a point more type and roughly double the vertical padding
 // reads much better at a glance without making rows any taller (the row height
 // is set by the two-line document cell, not by the chips).
+const SIZE_TEXT: Record<ChipSize, string> = {
+  xs: "text-[11px] gap-0.5",
+  sm: "text-[13px] gap-1",
+  md: "text-sm gap-1",
+};
+const SIZE_PAD: Record<ChipSize, string> = {
+  xs: "px-2 py-[3px]",
+  sm: "px-2.5 py-1",
+  md: "px-3 py-1.5",
+};
 const SIZE_CLASS: Record<ChipSize, string> = {
-  xs: "text-[11px] px-2 py-[3px] gap-0.5",
-  sm: "text-[13px] px-2.5 py-1 gap-1",
-  md: "text-sm px-3 py-1.5 gap-1",
+  xs: `${SIZE_TEXT.xs} ${SIZE_PAD.xs}`,
+  sm: `${SIZE_TEXT.sm} ${SIZE_PAD.sm}`,
+  md: `${SIZE_TEXT.md} ${SIZE_PAD.md}`,
 };
 
 // Shape separates the kinds: pills for the name-like facets, a squared badge
@@ -259,5 +269,69 @@ export function TagList({
         ))}
       </div>
     </div>
+  );
+}
+
+/**
+ * A coloured chip, for a closed set of categories where colour is the point —
+ * telling them apart at a glance down a long list (the kinds of model call in
+ * the LLM requests view: LLM, embedding, rerank, decision) — and for a call's
+ * status. The facets above stay neutral; this is the exception, kept here so it
+ * shares their sizes, squared shape and border instead of being styled per view.
+ *
+ * `detail` is an optional second segment split off by a hairline, for what
+ * qualifies the label: a scope ("Embedding | document") or a count ("LLM | 5").
+ */
+export type ChipTone = "blue" | "violet" | "amber" | "emerald" | "red";
+
+// A light tint with a matching border, the same treatment as the status pills
+// elsewhere in the app; follows the chart palette (--chart-1..4).
+const TONE_CLASS: Record<ChipTone, string> = {
+  blue: "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20",
+  violet: "bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-500/20",
+  amber: "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/25",
+  emerald: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20",
+  red: "bg-red-500/10 text-red-700 dark:text-red-300 border-red-500/20",
+};
+
+export function ToneChip({
+  tone,
+  label,
+  detail,
+  icon,
+  monoDetail = false,
+  size = "xs",
+  title,
+  className,
+}: {
+  tone: ChipTone;
+  label: React.ReactNode;
+  detail?: React.ReactNode;
+  icon?: React.ReactNode;
+  /** Render the detail monospace (a literal identifier, like a scope). */
+  monoDetail?: boolean;
+  size?: ChipSize;
+  title?: string;
+  className?: string;
+}) {
+  return (
+    <span
+      title={title}
+      className={`inline-flex min-w-0 max-w-full items-stretch overflow-hidden whitespace-nowrap rounded-md border font-sans font-medium leading-[1.2] ${SIZE_TEXT[size]} ${TONE_CLASS[tone]} ${className ?? ""}`}
+    >
+      <span className={`inline-flex shrink-0 items-center gap-1 ${SIZE_PAD[size]}`}>
+        {icon}
+        {label}
+      </span>
+      {detail != null && detail !== "" && (
+        <span
+          className={`truncate border-l border-inherit bg-background/70 font-normal tabular-nums text-foreground/80 ${SIZE_PAD[size]} ${
+            monoDetail ? "font-mono" : ""
+          }`}
+        >
+          {detail}
+        </span>
+      )}
+    </span>
   );
 }

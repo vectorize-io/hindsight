@@ -136,6 +136,7 @@ async def _drain_traces(mem: MemoryEngine) -> None:
     follow-up write after the first drain.
     """
     await mem.wait_for_background_tasks()
+    await mem._llm_recorder.flush()
     writes = mem._llm_recorder._writes
     for _ in range(10):
         if not writes.in_flight():

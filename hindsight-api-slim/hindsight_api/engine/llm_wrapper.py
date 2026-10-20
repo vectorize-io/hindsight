@@ -7,7 +7,6 @@ import json
 import logging
 import re
 import time
-import uuid
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import TYPE_CHECKING, Any, Union
 
@@ -1772,21 +1771,9 @@ class LLMProvider:
             A ``ConfiguredLLMProvider`` that delegates to this provider with
             the supplied config applied.
         """
-        trace_ctx = None
-        if bank_id is not None or operation is not None or metadata:
-            from .llm_trace import LLMTraceContext
+        from .llm_trace import operation_trace_context
 
-            # One trace + operation span per with_config() call — i.e. per
-            # operation invocation. Every LLM call made through this wrapper
-            # shares them, so a reflect/retain/consolidation run groups its
-            # calls as parent (operation) → children (LLM calls).
-            trace_ctx = LLMTraceContext(
-                bank_id=bank_id,
-                operation=operation,
-                metadata=dict(metadata or {}),
-                trace_id=str(uuid.uuid4()),
-                operation_span_id=str(uuid.uuid4()),
-            )
+        trace_ctx = operation_trace_context(bank_id, operation, metadata)
         return ConfiguredLLMProvider(self, config.llm_gemini_safety_settings, trace_ctx)
 
     async def cleanup(self) -> None:

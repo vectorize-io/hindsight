@@ -1169,6 +1169,7 @@ ENV_FAIL_ON_EXTRACTION_ERRORS = "HINDSIGHT_API_FAIL_ON_EXTRACTION_ERRORS"
 # LLM request tracing settings
 ENV_LLM_TRACE_ENABLED = "HINDSIGHT_API_LLM_TRACE_ENABLED"
 ENV_LLM_TRACE_SCOPES = "HINDSIGHT_API_LLM_TRACE_SCOPES"
+ENV_LLM_TRACE_EXCLUDE_SCOPES = "HINDSIGHT_API_LLM_TRACE_EXCLUDE_SCOPES"
 ENV_LLM_TRACE_RETENTION_DAYS = "HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS"
 ENV_LLM_TRACE_MAX_CHARS = "HINDSIGHT_API_LLM_TRACE_MAX_CHARS"
 
@@ -2170,6 +2171,7 @@ DEFAULT_FAIL_ON_EXTRACTION_ERRORS = (
 # LLM request tracing defaults
 DEFAULT_LLM_TRACE_ENABLED = True  # Enabled by default
 DEFAULT_LLM_TRACE_SCOPES = ""  # Empty = trace all call scopes
+DEFAULT_LLM_TRACE_EXCLUDE_SCOPES = ""  # Empty = exclude nothing
 DEFAULT_LLM_TRACE_RETENTION_DAYS = 1  # Retain trace rows for 1 day by default
 DEFAULT_LLM_TRACE_MAX_CHARS = 50000  # Truncate stored input/output beyond this many chars
 
@@ -3863,6 +3865,7 @@ class HindsightConfig:
     # LLM request tracing configuration (static - server-level only)
     llm_trace_enabled: bool  # Master switch for per-bank LLM request tracing
     llm_trace_scopes: list[str]  # Allowlist of call scopes to trace (empty = all)
+    llm_trace_exclude_scopes: list[str]  # Call scopes never traced; wins over the allowlist
     llm_trace_retention_days: int  # -1 = keep forever, >0 = delete after N days
     llm_trace_max_chars: int  # Truncate stored input/output beyond this many chars
 
@@ -5660,6 +5663,11 @@ class HindsightConfig:
             llm_trace_enabled=os.getenv(ENV_LLM_TRACE_ENABLED, str(DEFAULT_LLM_TRACE_ENABLED)).lower() == "true",
             llm_trace_scopes=[
                 s.strip() for s in os.getenv(ENV_LLM_TRACE_SCOPES, DEFAULT_LLM_TRACE_SCOPES).split(",") if s.strip()
+            ],
+            llm_trace_exclude_scopes=[
+                s.strip()
+                for s in os.getenv(ENV_LLM_TRACE_EXCLUDE_SCOPES, DEFAULT_LLM_TRACE_EXCLUDE_SCOPES).split(",")
+                if s.strip()
             ],
             llm_trace_retention_days=int(
                 os.getenv(ENV_LLM_TRACE_RETENTION_DAYS, str(DEFAULT_LLM_TRACE_RETENTION_DAYS))

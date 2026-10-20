@@ -25,7 +25,7 @@ class _Client:
         self.asked: list[tuple[str, dict]] = []
         self.max_request_tokens = 26_000
 
-    async def ask_all(self, state, questions):
+    async def ask_all(self, state, questions, *, scope):
         self.asked.append((state, questions))
         return {
             key: DecisionAnswer(noul=self.keep.get(question.instructions["memory"], 0.5))
@@ -72,7 +72,7 @@ class TestRanking:
         client = _Client(keep={"b": 0.9})
         reranker = _reranker(client)
 
-        async def partial(state, questions):
+        async def partial(state, questions, *, scope):
             return {"m1": DecisionAnswer(noul=0.9)}
 
         client.ask_all = partial  # type: ignore[method-assign]

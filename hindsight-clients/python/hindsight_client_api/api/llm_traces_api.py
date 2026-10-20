@@ -16,7 +16,7 @@ from pydantic import validate_call, Field, StrictFloat, StrictStr, StrictInt
 from typing import Any, Dict, List, Optional, Tuple, Union
 from typing_extensions import Annotated
 
-from pydantic import Field, StrictBool, StrictStr
+from pydantic import Field, StrictBool, StrictStr, field_validator
 from typing import Optional
 from typing_extensions import Annotated
 from hindsight_client_api.models.llm_request_list_response import LLMRequestListResponse
@@ -47,6 +47,7 @@ class LLMTracesApi:
         status: Annotated[Optional[StrictStr], Field(description="Filter by status (success, error)")] = None,
         operation: Annotated[Optional[StrictStr], Field(description="Filter by operation (retain, reflect, consolidation)")] = None,
         scope: Annotated[Optional[StrictStr], Field(description="Filter by call scope")] = None,
+        call_type: Annotated[Optional[StrictStr], Field(description="Filter by kind of model call, told apart by scope: embedding (embedding_*), rerank, decision (decision_*), or llm (every other scope)")] = None,
         provider: Annotated[Optional[StrictStr], Field(description="Filter by LLM provider")] = None,
         trace_id: Annotated[Optional[StrictStr], Field(description="Filter to one operation run (all LLM calls sharing a trace)")] = None,
         document_id: Annotated[Optional[StrictStr], Field(description="Filter to LLM calls that processed a given document")] = None,
@@ -82,6 +83,8 @@ class LLMTracesApi:
         :type operation: str
         :param scope: Filter by call scope
         :type scope: str
+        :param call_type: Filter by kind of model call, told apart by scope: embedding (embedding_*), rerank, decision (decision_*), or llm (every other scope)
+        :type call_type: str
         :param provider: Filter by LLM provider
         :type provider: str
         :param trace_id: Filter to one operation run (all LLM calls sharing a trace)
@@ -129,6 +132,7 @@ class LLMTracesApi:
             status=status,
             operation=operation,
             scope=scope,
+            call_type=call_type,
             provider=provider,
             trace_id=trace_id,
             document_id=document_id,
@@ -168,6 +172,7 @@ class LLMTracesApi:
         status: Annotated[Optional[StrictStr], Field(description="Filter by status (success, error)")] = None,
         operation: Annotated[Optional[StrictStr], Field(description="Filter by operation (retain, reflect, consolidation)")] = None,
         scope: Annotated[Optional[StrictStr], Field(description="Filter by call scope")] = None,
+        call_type: Annotated[Optional[StrictStr], Field(description="Filter by kind of model call, told apart by scope: embedding (embedding_*), rerank, decision (decision_*), or llm (every other scope)")] = None,
         provider: Annotated[Optional[StrictStr], Field(description="Filter by LLM provider")] = None,
         trace_id: Annotated[Optional[StrictStr], Field(description="Filter to one operation run (all LLM calls sharing a trace)")] = None,
         document_id: Annotated[Optional[StrictStr], Field(description="Filter to LLM calls that processed a given document")] = None,
@@ -203,6 +208,8 @@ class LLMTracesApi:
         :type operation: str
         :param scope: Filter by call scope
         :type scope: str
+        :param call_type: Filter by kind of model call, told apart by scope: embedding (embedding_*), rerank, decision (decision_*), or llm (every other scope)
+        :type call_type: str
         :param provider: Filter by LLM provider
         :type provider: str
         :param trace_id: Filter to one operation run (all LLM calls sharing a trace)
@@ -250,6 +257,7 @@ class LLMTracesApi:
             status=status,
             operation=operation,
             scope=scope,
+            call_type=call_type,
             provider=provider,
             trace_id=trace_id,
             document_id=document_id,
@@ -289,6 +297,7 @@ class LLMTracesApi:
         status: Annotated[Optional[StrictStr], Field(description="Filter by status (success, error)")] = None,
         operation: Annotated[Optional[StrictStr], Field(description="Filter by operation (retain, reflect, consolidation)")] = None,
         scope: Annotated[Optional[StrictStr], Field(description="Filter by call scope")] = None,
+        call_type: Annotated[Optional[StrictStr], Field(description="Filter by kind of model call, told apart by scope: embedding (embedding_*), rerank, decision (decision_*), or llm (every other scope)")] = None,
         provider: Annotated[Optional[StrictStr], Field(description="Filter by LLM provider")] = None,
         trace_id: Annotated[Optional[StrictStr], Field(description="Filter to one operation run (all LLM calls sharing a trace)")] = None,
         document_id: Annotated[Optional[StrictStr], Field(description="Filter to LLM calls that processed a given document")] = None,
@@ -324,6 +333,8 @@ class LLMTracesApi:
         :type operation: str
         :param scope: Filter by call scope
         :type scope: str
+        :param call_type: Filter by kind of model call, told apart by scope: embedding (embedding_*), rerank, decision (decision_*), or llm (every other scope)
+        :type call_type: str
         :param provider: Filter by LLM provider
         :type provider: str
         :param trace_id: Filter to one operation run (all LLM calls sharing a trace)
@@ -371,6 +382,7 @@ class LLMTracesApi:
             status=status,
             operation=operation,
             scope=scope,
+            call_type=call_type,
             provider=provider,
             trace_id=trace_id,
             document_id=document_id,
@@ -405,6 +417,7 @@ class LLMTracesApi:
         status,
         operation,
         scope,
+        call_type,
         provider,
         trace_id,
         document_id,
@@ -450,6 +463,10 @@ class LLMTracesApi:
         if scope is not None:
             
             _query_params.append(('scope', scope))
+            
+        if call_type is not None:
+            
+            _query_params.append(('call_type', call_type))
             
         if provider is not None:
             
@@ -530,6 +547,7 @@ class LLMTracesApi:
         self,
         bank_id: StrictStr,
         operation: Annotated[Optional[StrictStr], Field(description="Filter by operation")] = None,
+        call_type: Annotated[Optional[StrictStr], Field(description="Filter by kind of model call: llm, embedding, rerank or decision")] = None,
         period: Annotated[Optional[StrictStr], Field(description="Time period: 1d, 7d, or 30d")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -553,6 +571,8 @@ class LLMTracesApi:
         :type bank_id: str
         :param operation: Filter by operation
         :type operation: str
+        :param call_type: Filter by kind of model call: llm, embedding, rerank or decision
+        :type call_type: str
         :param period: Time period: 1d, 7d, or 30d
         :type period: str
         :param authorization:
@@ -582,6 +602,7 @@ class LLMTracesApi:
         _param = self._llm_request_stats_serialize(
             bank_id=bank_id,
             operation=operation,
+            call_type=call_type,
             period=period,
             authorization=authorization,
             _request_auth=_request_auth,
@@ -611,6 +632,7 @@ class LLMTracesApi:
         self,
         bank_id: StrictStr,
         operation: Annotated[Optional[StrictStr], Field(description="Filter by operation")] = None,
+        call_type: Annotated[Optional[StrictStr], Field(description="Filter by kind of model call: llm, embedding, rerank or decision")] = None,
         period: Annotated[Optional[StrictStr], Field(description="Time period: 1d, 7d, or 30d")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -634,6 +656,8 @@ class LLMTracesApi:
         :type bank_id: str
         :param operation: Filter by operation
         :type operation: str
+        :param call_type: Filter by kind of model call: llm, embedding, rerank or decision
+        :type call_type: str
         :param period: Time period: 1d, 7d, or 30d
         :type period: str
         :param authorization:
@@ -663,6 +687,7 @@ class LLMTracesApi:
         _param = self._llm_request_stats_serialize(
             bank_id=bank_id,
             operation=operation,
+            call_type=call_type,
             period=period,
             authorization=authorization,
             _request_auth=_request_auth,
@@ -692,6 +717,7 @@ class LLMTracesApi:
         self,
         bank_id: StrictStr,
         operation: Annotated[Optional[StrictStr], Field(description="Filter by operation")] = None,
+        call_type: Annotated[Optional[StrictStr], Field(description="Filter by kind of model call: llm, embedding, rerank or decision")] = None,
         period: Annotated[Optional[StrictStr], Field(description="Time period: 1d, 7d, or 30d")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -715,6 +741,8 @@ class LLMTracesApi:
         :type bank_id: str
         :param operation: Filter by operation
         :type operation: str
+        :param call_type: Filter by kind of model call: llm, embedding, rerank or decision
+        :type call_type: str
         :param period: Time period: 1d, 7d, or 30d
         :type period: str
         :param authorization:
@@ -744,6 +772,7 @@ class LLMTracesApi:
         _param = self._llm_request_stats_serialize(
             bank_id=bank_id,
             operation=operation,
+            call_type=call_type,
             period=period,
             authorization=authorization,
             _request_auth=_request_auth,
@@ -768,6 +797,7 @@ class LLMTracesApi:
         self,
         bank_id,
         operation,
+        call_type,
         period,
         authorization,
         _request_auth,
@@ -797,6 +827,10 @@ class LLMTracesApi:
         if operation is not None:
             
             _query_params.append(('operation', operation))
+            
+        if call_type is not None:
+            
+            _query_params.append(('call_type', call_type))
             
         if period is not None:
             

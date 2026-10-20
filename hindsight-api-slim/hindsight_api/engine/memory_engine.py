@@ -87,6 +87,12 @@ from .llm_trace import (
     LLMRequestStatsResponse,
     LLMRequestTokenSums,
     LLMTraceRecorder,
+    call_type_clause,
+    current_trace_context,
+    new_trace_context,
+    operation_run,
+    reset_trace_context,
+    set_trace_context,
     trace_context_of,
 )
 from .operation_metadata import (
@@ -3357,6 +3363,7 @@ class MemoryEngine(MemoryEngineInterface):
             schema_getter=get_current_schema,
             enabled=config.llm_trace_enabled,
             allowed_scopes=config.llm_trace_scopes,
+            excluded_scopes=config.llm_trace_exclude_scopes,
             max_chars=config.llm_trace_max_chars,
         )
         from ..tracing import register_span_recorder
@@ -6659,6 +6666,8 @@ class MemoryEngine(MemoryEngineInterface):
         # The work that just finished schedules its audit rows as background
         # tasks; let them land before the pool they write through is closed below.
         await self._audit_logger.drain()
+        # Trace rows are buffered and written in batches; write what is left.
+        await self._llm_recorder.flush_on_shutdown()
 
         # Release the memories store's own resources (client/pool). No-op for the
         # default Postgres store; symmetric with init_memories() at startup.
@@ -7959,51 +7968,59 @@ class MemoryEngine(MemoryEngineInterface):
         # Create parent span for retain operation
         with create_operation_span("retain", bank_id):
             retain_llm = self._retain_llm_config.with_config(resolved_config, bank_id=bank_id, operation="retain")
-            result = await self._retain_batch_with_append_retry(
-                pool=self._backend,
-                embeddings_model=self.embeddings,
-                llm_config=retain_llm,
-                vlm_config=self._vlm_config,
-                entity_resolver=self.entity_resolver,
-                format_date_fn=self._format_readable_date,
-                bank_id=bank_id,
-                contents_dicts=contents,
-                document_id=document_id,
-                is_first_batch=is_first_batch,
-                fact_type_override=fact_type_override,
-                document_tags=document_tags,
-                config=resolved_config,
-                operation_id=operation_id,
-                schema=_current_schema.get(),
-                outbox_callback=outbox_callback,
-                outbox_callback_factory=outbox_callback_factory,
-                db_semaphore=self._db_semaphore_for(bank_id),
-                full_document_body=full_document_body,
-                document_body_hash=document_body_hash,
-                chunk_index_offset=chunk_index_offset,
-                body_accum=body_accum,
-                retain_session=retain_session,
-                # Stream chunk-level "storing N/total" progress to the operation row as
-                # the document's chunks commit (more useful than the coarse sub-batch tick).
-                progress_callback=self._write_operation_progress,
-                webhook_manager=self._webhook_manager,
-                memory_defense_extension=self._memory_defense,
-                audit_logger=self._audit_logger,
-                # One loader per retain, so a document that shows the same image in
-                # several sections fetches its bytes once rather than once per chunk.
-                attachment_loader=RetainAttachmentLoader(
-                    self._file_storage,
-                    self._backend,
-                    bank_id,
-                    # The document edge that holds the filenames is written later
-                    # in this same retain, so take them from the request.
-                    filenames={
-                        short_id: name
-                        for item in contents
-                        for short_id, name in (item.get("attachment_filenames") or {}).items()
-                    },
-                ),
-            )
+            # Bound for the whole retain, not only around its LLM calls, so its embedding calls
+            # join the same trace (and read as part of this retain) instead of as unattributed calls.
+            retain_trace = trace_context_of(retain_llm)
+            retain_trace_token = set_trace_context(retain_trace) if retain_trace is not None else None
+            try:
+                result = await self._retain_batch_with_append_retry(
+                    pool=self._backend,
+                    embeddings_model=self.embeddings,
+                    llm_config=retain_llm,
+                    vlm_config=self._vlm_config,
+                    entity_resolver=self.entity_resolver,
+                    format_date_fn=self._format_readable_date,
+                    bank_id=bank_id,
+                    contents_dicts=contents,
+                    document_id=document_id,
+                    is_first_batch=is_first_batch,
+                    fact_type_override=fact_type_override,
+                    document_tags=document_tags,
+                    config=resolved_config,
+                    operation_id=operation_id,
+                    schema=_current_schema.get(),
+                    outbox_callback=outbox_callback,
+                    outbox_callback_factory=outbox_callback_factory,
+                    db_semaphore=self._db_semaphore_for(bank_id),
+                    full_document_body=full_document_body,
+                    document_body_hash=document_body_hash,
+                    chunk_index_offset=chunk_index_offset,
+                    body_accum=body_accum,
+                    retain_session=retain_session,
+                    # Stream chunk-level "storing N/total" progress to the operation row as
+                    # the document's chunks commit (more useful than the coarse sub-batch tick).
+                    progress_callback=self._write_operation_progress,
+                    webhook_manager=self._webhook_manager,
+                    memory_defense_extension=self._memory_defense,
+                    audit_logger=self._audit_logger,
+                    # One loader per retain, so a document that shows the same image in
+                    # several sections fetches its bytes once rather than once per chunk.
+                    attachment_loader=RetainAttachmentLoader(
+                        self._file_storage,
+                        self._backend,
+                        bank_id,
+                        # The document edge that holds the filenames is written later
+                        # in this same retain, so take them from the request.
+                        filenames={
+                            short_id: name
+                            for item in contents
+                            for short_id, name in (item.get("attachment_filenames") or {}).items()
+                        },
+                    ),
+                )
+            finally:
+                if retain_trace_token is not None:
+                    reset_trace_context(retain_trace_token)
             # Map the created facts onto this retain's trace so the trace view can
             # show which memories the ingestion produced.
             created_ids = [uid for group in result.memory_ids for uid in group]
@@ -9540,6 +9557,11 @@ class MemoryEngine(MemoryEngineInterface):
         recall_span.set_attribute("hindsight.fact_types", ",".join(fact_type))
         recall_span.set_attribute("hindsight.thinking_budget", thinking_budget)
         recall_span.set_attribute("hindsight.max_tokens", max_tokens)
+        # A recall makes no LLM call, so nothing else gives its embedding, rerank and decision calls
+        # a run to belong to. Inside a reflect (its search tools recall) they join the reflect's.
+        recall_trace_token = (
+            set_trace_context(new_trace_context(bank_id, "recall")) if current_trace_context() is None else None
+        )
 
         try:
             # Backpressure: limit concurrent recalls to prevent overwhelming the database
@@ -9727,6 +9749,8 @@ class MemoryEngine(MemoryEngineInterface):
 
             return result
         finally:
+            if recall_trace_token is not None:
+                reset_trace_context(recall_trace_token)
             recall_span_context.__exit__(None, None, None)
 
     async def _search_with_retries(
@@ -14198,6 +14222,7 @@ class MemoryEngine(MemoryEngineInterface):
         status: str | None = None,
         operation: str | None = None,
         scope: str | None = None,
+        call_type: str | None = None,
         provider: str | None = None,
         trace_id: str | None = None,
         document_id: str | None = None,
@@ -14248,6 +14273,8 @@ class MemoryEngine(MemoryEngineInterface):
                 where_clauses.append(f"{column} = ${idx}")
                 params.append(value)
                 idx += 1
+        if call_type:
+            where_clauses.append(call_type_clause(call_type))
         if document_id is not None:
             # document_id is carried in per-call metadata (set by the retain
             # extraction path); a document accrues one trace per retain run.
@@ -14336,6 +14363,7 @@ class MemoryEngine(MemoryEngineInterface):
         *,
         request_context: "RequestContext",
         operation: str | None = None,
+        call_type: str | None = None,
         period: str = "7d",
     ) -> LLMRequestStatsResponse | None:
         """LLM request counts and token sums grouped by day, for charting.
@@ -14372,6 +14400,8 @@ class MemoryEngine(MemoryEngineInterface):
             where_clauses.append(f"operation = ${idx}")
             params.append(operation)
             idx += 1
+        if call_type:
+            where_clauses.append(call_type_clause(call_type))
         where_sql = " AND ".join(where_clauses)
         table = fq_table("llm_requests")
 
@@ -16117,6 +16147,12 @@ class MemoryEngine(MemoryEngineInterface):
                 logger.info(f"[REFLECT {reflect_id}] Bank has {mental_model_count} mental models")
         _mark("directives_and_pages")
 
+        # Built before the span opens: nothing between the span's __enter__ and the try that
+        # closes it may raise, or the span is left open.
+        reflect_llm = self._llm_for_reflect_operation(_operation_label).with_config(
+            resolved_reflect_config, bank_id=bank_id, operation=_operation_label
+        )
+
         # Run the agent with parent span for reflect operation (skip if called from another operation)
         if not _skip_span:
             span_context = create_operation_span("reflect", bank_id)
@@ -16124,13 +16160,15 @@ class MemoryEngine(MemoryEngineInterface):
         else:
             span_context = None
 
+        # Bound for the whole run, so the recalls its tools make (embeddings, rerank, decision
+        # calls) group under this reflect rather than as runs of their own.
+        reflect_trace = trace_context_of(reflect_llm)
+        reflect_trace_token = set_trace_context(reflect_trace) if reflect_trace is not None else None
         try:
             try:
                 agent_result = await asyncio.wait_for(
                     run_reflect_agent(
-                        llm_config=self._llm_for_reflect_operation(_operation_label).with_config(
-                            resolved_reflect_config, bank_id=bank_id, operation=_operation_label
-                        ),
+                        llm_config=reflect_llm,
                         bank_id=bank_id,
                         query=query,
                         bank_profile=profile,
@@ -16397,6 +16435,8 @@ class MemoryEngine(MemoryEngineInterface):
             )
             return result
         finally:
+            if reflect_trace_token is not None:
+                reset_trace_context(reflect_trace_token)
             if span_context:
                 span_context.__exit__(None, None, None)
 
@@ -17403,9 +17443,12 @@ class MemoryEngine(MemoryEngineInterface):
                 result.append(entry)
             return result
 
-    async def _mental_model_embedding_vector(self, name: str, content: str) -> list[float] | None:
+    async def _mental_model_embedding_vector(self, bank_id: str, name: str, content: str) -> list[float] | None:
         """The page embedding as a vector. Over name + content, matching what BM25 indexes."""
-        embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [f"{name} {content}"])
+        # A refresh binds its own trace around this; a direct create/edit of a page has none, so
+        # give it one rather than leave the embedding with no operation.
+        with operation_run(bank_id, "mental_model_write"):
+            embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [f"{name} {content}"])
         return list(embedding[0]) if embedding and embedding[0] else None
 
     # -- the knowledge-page index -------------------------------------------
@@ -17555,7 +17598,7 @@ class MemoryEngine(MemoryEngineInterface):
             stale.append(row)
 
         for row in stale:
-            vec = await self._mental_model_embedding_vector(row["name"] or "", row["content"] or "")
+            vec = await self._mental_model_embedding_vector(bank_id, row["name"] or "", row["content"] or "")
             await store.index_knowledge_pages(
                 bank_id,
                 [
@@ -17699,7 +17742,7 @@ class MemoryEngine(MemoryEngineInterface):
         trigger = _scope_mental_model_trigger(trigger, tag_scope)
         backend = await self._get_backend()
 
-        embedding_vec = await self._mental_model_embedding_vector(name, content)
+        embedding_vec = await self._mental_model_embedding_vector(bank_id, name, content)
         embedding = str(embedding_vec) if embedding_vec else None
 
         if not mental_model_id:
@@ -18932,8 +18975,10 @@ class MemoryEngine(MemoryEngineInterface):
             f"mental model '{mental_model_id}'",
         )
 
-        # Create parent span for mental model refresh operation
-        with create_operation_span("mental_model_refresh", bank_id):
+        # Create parent span for mental model refresh operation. The trace is bound for the whole
+        # refresh, not just its reflect pass, so the page write that follows (and its embedding)
+        # groups under the same run; the reflect pass joins it (see operation_trace_context).
+        with create_operation_span("mental_model_refresh", bank_id), operation_run(bank_id, "refresh_mental_model"):
             try:
                 run = await self._execute_mental_model_refresh(
                     bank_id, mental_model, mode=mode, request_context=request_context
@@ -19353,6 +19398,7 @@ class MemoryEngine(MemoryEngineInterface):
                 return None
 
             new_embedding_vec = await self._mental_model_embedding_vector(
+                bank_id,
                 name if name is not None else (current_row["name"] or ""),
                 content if content is not None else (current_row["content"] or ""),
             )
@@ -19401,6 +19447,7 @@ class MemoryEngine(MemoryEngineInterface):
                     or (content is None and locked_row["content"] != current_row["content"])
                 ):
                     new_embedding_vec = await self._mental_model_embedding_vector(
+                        bank_id,
                         name if name is not None else (locked_row["name"] or ""),
                         content if content is not None else (locked_row["content"] or ""),
                     )
@@ -19773,7 +19820,7 @@ class MemoryEngine(MemoryEngineInterface):
         )
         # One embedding, reused for the column and the store's page index below: both describe
         # the same name-only page, and embedding it twice cost a second call per clear.
-        embedding_vec = await self._mental_model_embedding_vector(current_row["name"] or "", "")
+        embedding_vec = await self._mental_model_embedding_vector(bank_id, current_row["name"] or "", "")
         embedding_str = str(embedding_vec) if embedding_vec else None
 
         # Content is cleared to '', so re-tokenize search_vector from the name
@@ -20120,7 +20167,7 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         await self._require_knowledge_nodes_in_tag_scope(bank_id, request_context, [parent_id])
         mental_model_id = mental_model_id or f"mm-{uuid.uuid4().hex}"
-        embedding_vec = await self._mental_model_embedding_vector(name, content)
+        embedding_vec = await self._mental_model_embedding_vector(bank_id, name, content)
         embedding = str(embedding_vec) if embedding_vec else None
         effective_max_tokens = max_tokens if max_tokens is not None else self.KNOWLEDGE_PAGE_DEFAULT_MAX_TOKENS
         # Built-in default <- bank/tenant/global knowledge_page_default_trigger <- request.

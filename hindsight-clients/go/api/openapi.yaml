@@ -5716,6 +5716,21 @@ paths:
           nullable: true
           type: string
         style: form
+      - description: "Filter by kind of model call, told apart by scope: embedding\
+          \ (embedding_*), rerank, decision (decision_*), or llm (every other scope)"
+        explode: true
+        in: query
+        name: call_type
+        required: false
+        schema:
+          enum:
+          - llm
+          - embedding
+          - rerank
+          - decision
+          nullable: true
+          type: string
+        style: form
       - description: Filter by LLM provider
         explode: true
         in: query
@@ -5854,6 +5869,20 @@ paths:
         name: operation
         required: false
         schema:
+          nullable: true
+          type: string
+        style: form
+      - description: "Filter by kind of model call: llm, embedding, rerank or decision"
+        explode: true
+        in: query
+        name: call_type
+        required: false
+        schema:
+          enum:
+          - llm
+          - embedding
+          - rerank
+          - decision
           nullable: true
           type: string
         style: form

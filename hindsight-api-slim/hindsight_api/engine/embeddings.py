@@ -65,6 +65,7 @@ from ..config import (
 from .aiohttp_session import LoopLocal, LoopLocalSession, UpstreamHTTPError, per_phase_timeout, raise_for_status
 from .bank_attribution import apply_bank_attribution
 from .llm_interface import ProviderRateLimitResetError
+from .llm_trace import add_provider_input_tokens
 from .local_device import (
     LOCAL_MODEL_BUILD_LOCK,
     align_local_model_weights,
@@ -1120,6 +1121,9 @@ class OpenAIEmbeddings(Embeddings):
                 message=f"Embeddings quota exhausted ({self.provider_name}/{self.model}); retry at "
                 f"{retry_at.isoformat()}: {e}",
             ) from e
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            add_provider_input_tokens(usage.prompt_tokens)
 
         # Sort by index to ensure correct order
         return [e.embedding for e in sorted(response.data, key=lambda x: x.index)]
@@ -1371,6 +1375,7 @@ class CohereEmbeddings(Embeddings):
                 budget=budget,
                 provider=self.provider_name,
             )
+            _add_cohere_billed_tokens(response)
             return response.embeddings.float_
         response = await acall_with_retry(
             lambda: client.embed(
@@ -1382,7 +1387,15 @@ class CohereEmbeddings(Embeddings):
             budget=budget,
             provider=self.provider_name,
         )
+        _add_cohere_billed_tokens(response)
         return response.embeddings
+
+
+def _add_cohere_billed_tokens(response: Any) -> None:
+    billed = getattr(getattr(response, "meta", None), "billed_units", None)
+    tokens = getattr(billed, "input_tokens", None)
+    if tokens:
+        add_provider_input_tokens(int(tokens))
 
 
 class ZeroEntropyEmbeddings(Embeddings):

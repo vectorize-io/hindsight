@@ -170,6 +170,9 @@ export interface LLMRequestEntry {
   metadata: Record<string, unknown>;
 }
 
+/** Kind of model call, derived server-side from the scope (embedding_*, rerank, decision_*, else llm). */
+export type LLMCallType = "llm" | "embedding" | "rerank" | "decision";
+
 export interface LLMRequestsResponse {
   bank_id: string;
   total: number;
@@ -2541,6 +2544,7 @@ export class ControlPlaneClient {
       status?: string;
       operation?: string;
       scope?: string;
+      call_type?: LLMCallType;
       provider?: string;
       trace_id?: string;
       document_id?: string;
@@ -2556,6 +2560,7 @@ export class ControlPlaneClient {
     if (options?.status) params.append("status", options.status);
     if (options?.operation) params.append("operation", options.operation);
     if (options?.scope) params.append("scope", options.scope);
+    if (options?.call_type) params.append("call_type", options.call_type);
     if (options?.provider) params.append("provider", options.provider);
     if (options?.trace_id) params.append("trace_id", options.trace_id);
     if (options?.document_id) params.append("document_id", options.document_id);
@@ -2573,10 +2578,11 @@ export class ControlPlaneClient {
 
   async getLLMRequestStats(
     bankId: string,
-    options?: { operation?: string; period?: string }
+    options?: { operation?: string; call_type?: LLMCallType; period?: string }
   ): Promise<LLMRequestStatsResponse> {
     const params = new URLSearchParams();
     if (options?.operation) params.append("operation", options.operation);
+    if (options?.call_type) params.append("call_type", options.call_type);
     if (options?.period) params.append("period", options.period);
     const query = params.toString();
     return this.fetchApi<LLMRequestStatsResponse>(

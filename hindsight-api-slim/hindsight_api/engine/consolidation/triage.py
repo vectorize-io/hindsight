@@ -13,7 +13,6 @@ fact whose answers disagree goes there too.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -22,7 +21,6 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 from ...config import DecisionModelConfig, get_config
-from ...tracing import get_span_recorder
 from ..decision_model import DecisionModel, DecisionQuestion, DecisionResponse
 
 if TYPE_CHECKING:
@@ -187,36 +185,8 @@ async def _ask(
     if mission:
         state["mission"] = mission
         questions["keep_as"] = DecisionQuestion(type="choice", instructions=_KEEP_AS, criteria=dict(_KEEP_AS_OPTIONS))
-    started = time.monotonic()
-    answer: DecisionResponse | None = None
-    error: BaseException | None = None
-    try:
-        answer = await model.ask(state, questions)
-        return answer
-    except BaseException as e:
-        error = e
-        raise
-    finally:
-        # Traced like any LLM call, so its cost shows next to the consolidation calls it saves.
-        get_span_recorder().record_llm_call(
-            provider=model.provider,
-            model=model.model,
-            scope="consolidation_triage",
-            # One JSON message, the shape every recorder takes; the request is not a chat.
-            messages=[
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {"state": state, "questions": {k: q.system_one() for k, q in questions.items()}}
-                    ),
-                }
-            ],
-            response_content=answer.model_dump_json() if answer is not None else None,
-            input_tokens=answer.usage.input_tokens if answer is not None else 0,
-            output_tokens=0,
-            duration=time.monotonic() - started,
-            error=error,
-        )
+    # Traced like any LLM call, so its cost shows next to the consolidation calls it saves.
+    return await model.ask(state, questions, scope="decision_consolidation_triage")
 
 
 def _picked(answer: DecisionResponse, question_id: str) -> str | None:

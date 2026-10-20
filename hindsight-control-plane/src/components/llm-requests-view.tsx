@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useTranslations } from "next-intl";
 import { resolveDateRangePreset } from "@/lib/date-range-preset";
 import { useBank } from "@/lib/bank-context";
-import { client, LLMRequestEntry, LLMRequestStatsBucket } from "@/lib/api";
+import { client, LLMCallType, LLMRequestEntry, LLMRequestStatsBucket } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -24,8 +24,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, CheckCircle, RefreshCw, XCircle } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
+import { ToneChip, type ChipTone } from "@/components/ui/facet-chip";
 import { LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
 type TranslateFn = (key: string) => string;
@@ -42,10 +43,96 @@ function getOperationOptions(t: TranslateFn) {
   return [
     { value: "all", label: t("operationAll") },
     { value: "retain", label: t("operationRetain") },
+    { value: "recall", label: t("operationRecall") },
     { value: "reflect", label: t("operationReflect") },
     { value: "consolidation", label: t("operationConsolidation") },
     { value: "refresh_mental_model", label: t("operationRefreshMentalModel") },
+    { value: "mental_model_write", label: t("operationMentalModelWrite") },
   ];
+}
+
+function getCallTypeOptions(t: TranslateFn) {
+  return [
+    { value: "all", label: t("callTypeAll") },
+    { value: "llm", label: t("callTypeLlm") },
+    { value: "embedding", label: t("callTypeEmbedding") },
+    { value: "rerank", label: t("callTypeRerank") },
+    { value: "decision", label: t("callTypeDecision") },
+  ];
+}
+
+// Mirrors the server's call_type rule (llm_trace.py): the kind of a call is read off its scope.
+const CALL_KINDS: LLMCallType[] = ["llm", "embedding", "rerank", "decision"];
+
+function callKind(scope: string | null | undefined): LLMCallType {
+  if (!scope) return "llm";
+  if (scope.startsWith("embedding_")) return "embedding";
+  if (scope === "rerank") return "rerank";
+  if (scope.startsWith("decision_")) return "decision";
+  return "llm";
+}
+
+const KIND_TONES: Record<LLMCallType, ChipTone> = {
+  llm: "blue",
+  embedding: "violet",
+  rerank: "amber",
+  decision: "emerald",
+};
+
+const KIND_LABEL_KEYS: Record<LLMCallType, string> = {
+  llm: "callTypeLlm",
+  embedding: "callTypeEmbedding",
+  rerank: "callTypeRerank",
+  decision: "callTypeDecision",
+};
+
+// The count is the chip's second segment ("LLM | 5"), so the label never needs pluralising.
+function KindBadge({ kind, t, count }: { kind: LLMCallType; t: TranslateFn; count?: number }) {
+  return (
+    <ToneChip
+      tone={KIND_TONES[kind]}
+      label={t(KIND_LABEL_KEYS[kind])}
+      detail={count}
+      className="shrink-0"
+    />
+  );
+}
+
+// One call's kind and scope as a single chip: the kind, then the scope with the kind's
+// prefix dropped ("Embedding | document", not "Embedding embedding_document"). A scope that
+// is nothing but its kind ("rerank") is just the kind. The full scope is the tooltip.
+const KIND_SCOPE_PREFIXES: Partial<Record<LLMCallType, string>> = {
+  embedding: "embedding_",
+  rerank: "rerank",
+  decision: "decision_",
+};
+
+function ScopeBadge({ scope, t }: { scope: string | null | undefined; t: TranslateFn }) {
+  const kind = callKind(scope);
+  const prefix = KIND_SCOPE_PREFIXES[kind];
+  const rest = scope && prefix && scope.startsWith(prefix) ? scope.slice(prefix.length) : scope;
+  return (
+    <ToneChip
+      tone={KIND_TONES[kind]}
+      label={t(KIND_LABEL_KEYS[kind])}
+      detail={rest}
+      monoDetail
+      title={scope ?? undefined}
+    />
+  );
+}
+
+// One badge per kind present in a run, in a fixed order, with its call count.
+function KindBreakdown({ rows, t }: { rows: LLMRequestEntry[]; t: TranslateFn }) {
+  const counts = new Map<LLMCallType, number>();
+  for (const r of rows) counts.set(callKind(r.scope), (counts.get(callKind(r.scope)) ?? 0) + 1);
+  return (
+    <span className="inline-flex flex-wrap gap-1">
+      {CALL_KINDS.filter((k) => counts.has(k)).map((k) => (
+        <KindBadge key={k} kind={k} t={t} count={counts.get(k)} />
+      ))}
+    </span>
+  );
 }
 
 function getPeriodOptions(t: TranslateFn) {
@@ -126,16 +213,14 @@ function formatChartLabel(ts: string, trunc: string): string {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const styles: Record<string, string> = {
-    success: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
-    error: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
-  };
+  const isError = status === "error";
+  const Icon = isError ? XCircle : CheckCircle;
   return (
-    <span
-      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${styles[status] || styles.success}`}
-    >
-      {status}
-    </span>
+    <ToneChip
+      tone={isError ? "red" : "emerald"}
+      label={status}
+      icon={<Icon className="h-3 w-3" aria-hidden />}
+    />
   );
 }
 
@@ -206,12 +291,14 @@ function SpanRow({
   traceSpan,
   selected,
   onClick,
+  t,
 }: {
   span: LLMRequestEntry;
   traceStart: number;
   traceSpan: number;
   selected: boolean;
   onClick: () => void;
+  t: TranslateFn;
 }) {
   const start = span.started_at ? new Date(span.started_at).getTime() : traceStart;
   const end = span.ended_at ? new Date(span.ended_at).getTime() : start;
@@ -232,9 +319,7 @@ function SpanRow({
           <span
             className={`w-1.5 h-1.5 rounded-full shrink-0 ${isError ? "bg-red-500" : "bg-green-500"}`}
           />
-          <span className="text-xs font-mono truncate">
-            {span.scope || span.operation || "call"}
-          </span>
+          <ScopeBadge scope={span.scope || span.operation || "call"} t={t} />
         </span>
         <span className="text-[10px] text-muted-foreground font-mono shrink-0">
           {formatDurationMs(span.duration_ms)}
@@ -253,6 +338,13 @@ function SpanRow({
 
 // Right-hand detail panel for the selected span.
 function SpanDetails({ entry, t }: { entry: LLMRequestEntry; t: TranslateFn }) {
+  // A non-LLM call's input count is already shown as "Texts"/"Documents" above, so it is
+  // dropped here; the box only appears if anything else is left.
+  const isLlm = callKind(entry.scope) === "llm";
+  const llmInfo =
+    entry.llm_info && !isLlm
+      ? Object.fromEntries(Object.entries(entry.llm_info).filter(([k]) => k !== "input_count"))
+      : entry.llm_info;
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
@@ -282,32 +374,51 @@ function SpanDetails({ entry, t }: { entry: LLMRequestEntry; t: TranslateFn }) {
         </div>
       </div>
 
-      {(entry.total_tokens !== null ||
-        entry.input_tokens !== null ||
-        entry.output_tokens !== null ||
-        entry.thoughts_tokens != null) && (
+      {!isLlm ? (
+        // Not a chat completion: no output, reasoning or cache tokens to show. What these
+        // bill by is the input tokens and, for embeddings and rerank, how many texts went in.
         <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm border-t border-border pt-3">
           <div>
             <span className="text-muted-foreground">{t("tokensInput")}:</span>{" "}
             <span className="font-mono">{entry.input_tokens ?? "—"}</span>
           </div>
-          <div>
-            <span className="text-muted-foreground">{t("tokensOutput")}:</span>{" "}
-            <span className="font-mono">{entry.output_tokens ?? "—"}</span>
-          </div>
-          <div>
-            <span className="text-muted-foreground">{t("tokensThoughts")}:</span>{" "}
-            <span className="font-mono">{entry.thoughts_tokens ?? "—"}</span>
-          </div>
-          <div>
-            <span className="text-muted-foreground">{t("tokensCached")}:</span>{" "}
-            <span className="font-mono">{entry.cached_tokens ?? "—"}</span>
-          </div>
-          <div>
-            <span className="text-muted-foreground">{t("tokensTotal")}:</span>{" "}
-            <span className="font-mono font-medium">{totalTokens(entry) ?? "—"}</span>
-          </div>
+          {typeof entry.llm_info?.input_count === "number" && (
+            <div>
+              <span className="text-muted-foreground">
+                {t(callKind(entry.scope) === "rerank" ? "inputCountDocuments" : "inputCountTexts")}:
+              </span>{" "}
+              <span className="font-mono">{entry.llm_info.input_count as number}</span>
+            </div>
+          )}
         </div>
+      ) : (
+        (entry.total_tokens !== null ||
+          entry.input_tokens !== null ||
+          entry.output_tokens !== null ||
+          entry.thoughts_tokens != null) && (
+          <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm border-t border-border pt-3">
+            <div>
+              <span className="text-muted-foreground">{t("tokensInput")}:</span>{" "}
+              <span className="font-mono">{entry.input_tokens ?? "—"}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">{t("tokensOutput")}:</span>{" "}
+              <span className="font-mono">{entry.output_tokens ?? "—"}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">{t("tokensThoughts")}:</span>{" "}
+              <span className="font-mono">{entry.thoughts_tokens ?? "—"}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">{t("tokensCached")}:</span>{" "}
+              <span className="font-mono">{entry.cached_tokens ?? "—"}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">{t("tokensTotal")}:</span>{" "}
+              <span className="font-mono font-medium">{totalTokens(entry) ?? "—"}</span>
+            </div>
+          </div>
+        )
       )}
 
       <div className="border-t border-border pt-3 space-y-1 text-sm">
@@ -342,10 +453,10 @@ function SpanDetails({ entry, t }: { entry: LLMRequestEntry; t: TranslateFn }) {
           <JsonViewer value={entry.output} className="bg-muted max-h-[320px] overflow-y-auto" />
         </div>
       )}
-      {entry.llm_info && Object.keys(entry.llm_info).length > 0 && (
+      {llmInfo && Object.keys(llmInfo).length > 0 && (
         <div>
           <h4 className="text-sm font-semibold mb-2">{t("detailLlmInfo")}</h4>
-          <JsonViewer value={entry.llm_info} />
+          <JsonViewer value={llmInfo} />
         </div>
       )}
       {entry.metadata && Object.keys(entry.metadata).length > 0 && (
@@ -420,9 +531,12 @@ export function TraceDialog({
   const traceStart = startTimes.length ? Math.min(...startTimes) : 0;
   const traceEnd = endTimes.length ? Math.max(...endTimes) : 0;
   const traceSpan = Math.max(1, traceEnd - traceStart);
-  const inputTokens = spans.reduce((sum, r) => sum + (r.input_tokens ?? 0), 0);
-  const outputTokens = spans.reduce((sum, r) => sum + (r.output_tokens ?? 0), 0);
-  const thoughtsTokens = spans.reduce((sum, r) => sum + (r.thoughts_tokens ?? 0), 0);
+  // LLM calls only: an embedding's or decision's input tokens summed into the same "Input"
+  // would read as prompt tokens. Each other call shows its own tokens on its row.
+  const llmSpans = spans.filter((s) => callKind(s.scope) === "llm");
+  const inputTokens = llmSpans.reduce((sum, r) => sum + (r.input_tokens ?? 0), 0);
+  const outputTokens = llmSpans.reduce((sum, r) => sum + (r.output_tokens ?? 0), 0);
+  const thoughtsTokens = llmSpans.reduce((sum, r) => sum + (r.thoughts_tokens ?? 0), 0);
   const anyError = spans.some((s) => s.status === "error");
   const op = entry?.operation ?? spans[0]?.operation ?? "—";
   // memory_ids / source_memory_ids are attached identically to every row of a
@@ -445,21 +559,25 @@ export function TraceDialog({
             <StatusBadge status={anyError ? "error" : "success"} />
           </DialogTitle>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            <span>{t("entryCount", { count: spans.length })}</span>
-            <span>
-              {t("tokensInput")}{" "}
-              <span className="font-mono text-foreground">{formatTokens(inputTokens)}</span>
-              {" · "}
-              {t("tokensOutput")}{" "}
-              <span className="font-mono text-foreground">{formatTokens(outputTokens)}</span>
-              {spans.some((s) => s.thoughts_tokens != null) && (
-                <>
-                  {" · "}
-                  {t("tokensThoughts")}{" "}
-                  <span className="font-mono text-foreground">{formatTokens(thoughtsTokens)}</span>
-                </>
-              )}
-            </span>
+            <KindBreakdown rows={spans} t={t} />
+            {llmSpans.length > 0 && (
+              <span>
+                {t("tokensInput")}{" "}
+                <span className="font-mono text-foreground">{formatTokens(inputTokens)}</span>
+                {" · "}
+                {t("tokensOutput")}{" "}
+                <span className="font-mono text-foreground">{formatTokens(outputTokens)}</span>
+                {spans.some((s) => s.thoughts_tokens != null) && (
+                  <>
+                    {" · "}
+                    {t("tokensThoughts")}{" "}
+                    <span className="font-mono text-foreground">
+                      {formatTokens(thoughtsTokens)}
+                    </span>
+                  </>
+                )}
+              </span>
+            )}
             <span>
               {t("detailDuration")}{" "}
               <span className="font-mono text-foreground">{formatDurationMs(traceSpan)}</span>
@@ -499,6 +617,7 @@ export function TraceDialog({
                   traceSpan={traceSpan}
                   selected={selected?.id === s.id}
                   onClick={() => setSelectedId(s.id)}
+                  t={t}
                 />
               ))
             )}
@@ -520,6 +639,8 @@ function LLMRequestChart({ bankId }: { bankId: string }) {
   const periodOptions = getPeriodOptions(t);
   const [period, setPeriod] = useState("7d");
   const [chartOperation, setChartOperation] = useState<string | null>(null);
+  const [chartCallType, setChartCallType] = useState<LLMCallType | null>(null);
+  const callTypeOptions = getCallTypeOptions(t);
   const [buckets, setBuckets] = useState<LLMRequestStatsBucket[]>([]);
   const [trunc, setTrunc] = useState("day");
   const [loading, setLoading] = useState(false);
@@ -528,12 +649,17 @@ function LLMRequestChart({ bankId }: { bankId: string }) {
   const [cumulative, setCumulative] = useState(false);
 
   const loadStats = useCallback(
-    async (p: string = period, o: string | null = chartOperation) => {
+    async (
+      p: string = period,
+      o: string | null = chartOperation,
+      c: LLMCallType | null = chartCallType
+    ) => {
       setLoading(true);
       try {
         const data = await client.getLLMRequestStats(bankId, {
           period: p,
           operation: o || undefined,
+          call_type: c || undefined,
         });
         setBuckets(data.buckets || []);
         setTrunc(data.trunc || "day");
@@ -543,7 +669,7 @@ function LLMRequestChart({ bankId }: { bankId: string }) {
         setLoading(false);
       }
     },
-    [bankId, period, chartOperation]
+    [bankId, period, chartOperation, chartCallType]
   );
 
   useEffect(() => {
@@ -741,6 +867,25 @@ function LLMRequestChart({ bankId }: { bankId: string }) {
               ))}
             </SelectContent>
           </Select>
+          <Select
+            value={chartCallType || "all"}
+            onValueChange={(v) => {
+              const c = v === "all" ? null : (v as LLMCallType);
+              setChartCallType(c);
+              loadStats(period, chartOperation, c);
+            }}
+          >
+            <SelectTrigger className="w-[150px] h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent position="popper" className="max-h-[300px] overflow-y-auto">
+              {callTypeOptions.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {periodOptions.map((opt) => (
             <Button
               key={opt.value}
@@ -785,11 +930,13 @@ export function LLMRequestsView() {
   const t = useTranslations("llmRequestsView");
   const statusOptions = getStatusOptions(t);
   const operationOptions = getOperationOptions(t);
+  const callTypeOptions = getCallTypeOptions(t);
   const { currentBank } = useBank();
   const [requests, setRequests] = useState<LLMRequestEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [operationFilter, setOperationFilter] = useState<string | null>(null);
+  const [callTypeFilter, setCallTypeFilter] = useState<LLMCallType | null>(null);
   const [dateRange, setDateRange] = useState<string>("all");
   // Group LLM calls by operation run (trace) vs. a flat per-call listing.
   const [grouped, setGrouped] = useState(true);
@@ -805,7 +952,8 @@ export function LLMRequestsView() {
       newOperationFilter: string | null = operationFilter,
       newDateRange: string = dateRange,
       newOffset: number = offset,
-      newGrouped: boolean = grouped
+      newGrouped: boolean = grouped,
+      newCallType: LLMCallType | null = callTypeFilter
     ) => {
       if (!currentBank) return;
 
@@ -815,6 +963,7 @@ export function LLMRequestsView() {
         const data = await client.listLLMRequests(currentBank, {
           status: newStatusFilter || undefined,
           operation: newOperationFilter || undefined,
+          call_type: newCallType || undefined,
           group: newGrouped || undefined,
           start_date: dates.start_date,
           end_date: dates.end_date,
@@ -829,7 +978,7 @@ export function LLMRequestsView() {
         setLoading(false);
       }
     },
-    [currentBank, statusFilter, operationFilter, dateRange, offset, grouped, limit]
+    [currentBank, statusFilter, operationFilter, callTypeFilter, dateRange, offset, grouped, limit]
   );
 
   const handleGroupToggle = () => {
@@ -851,6 +1000,13 @@ export function LLMRequestsView() {
     setOperationFilter(filter);
     setOffset(0);
     loadRequests(statusFilter, filter, dateRange, 0);
+  };
+
+  const handleCallTypeFilterChange = (value: string) => {
+    const filter = value === "all" ? null : (value as LLMCallType);
+    setCallTypeFilter(filter);
+    setOffset(0);
+    loadRequests(statusFilter, operationFilter, dateRange, 0, grouped, filter);
   };
 
   const handleDateRangeChange = (value: string) => {
@@ -878,7 +1034,7 @@ export function LLMRequestsView() {
       <TableCell className="text-sm font-mono">{formatDateTime(entry.started_at)}</TableCell>
       <TableCell className="font-medium">{entry.operation || "—"}</TableCell>
       <TableCell className="text-sm text-muted-foreground font-mono">
-        {entry.scope || "—"}
+        <ScopeBadge scope={entry.scope} t={t} />
       </TableCell>
       <TableCell>
         <StatusBadge status={entry.status} />
@@ -929,6 +1085,19 @@ export function LLMRequestsView() {
           </SelectTrigger>
           <SelectContent position="popper" className="max-h-[300px] overflow-y-auto">
             {operationOptions.map((opt) => (
+              <SelectItem key={opt.value} value={opt.value}>
+                {opt.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={callTypeFilter || "all"} onValueChange={handleCallTypeFilterChange}>
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder={t("callTypeAll")} />
+          </SelectTrigger>
+          <SelectContent position="popper" className="max-h-[300px] overflow-y-auto">
+            {callTypeOptions.map((opt) => (
               <SelectItem key={opt.value} value={opt.value}>
                 {opt.label}
               </SelectItem>
@@ -1015,7 +1184,7 @@ export function LLMRequestsView() {
                   </TableCell>
                   <TableCell className="font-medium">{group.rows[0].operation || "—"}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {t("entryCount", { count: group.rows.length })}
+                    <KindBreakdown rows={group.rows} t={t} />
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={agg.status} />

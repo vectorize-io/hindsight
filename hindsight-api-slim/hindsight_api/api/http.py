@@ -40,7 +40,7 @@ from hindsight_api.engine.audit import (
     AuditLogStatsResponse,
 )
 from hindsight_api.engine.document_history import DocumentHistoryResponse
-from hindsight_api.engine.llm_trace import LLMRequestListResponse, LLMRequestStatsResponse
+from hindsight_api.engine.llm_trace import LLMCallType, LLMRequestListResponse, LLMRequestStatsResponse
 from hindsight_api.extensions import AuthenticationError, BankWriteOperation, PrecheckOperation
 
 
@@ -10949,6 +10949,11 @@ def _register_routes(app: FastAPI):
         status: str | None = Query(None, description="Filter by status (success, error)"),
         operation: str | None = Query(None, description="Filter by operation (retain, reflect, consolidation)"),
         scope: str | None = Query(None, description="Filter by call scope"),
+        call_type: LLMCallType | None = Query(
+            None,
+            description="Filter by kind of model call, told apart by scope: embedding (embedding_*), "
+            "rerank, decision (decision_*), or llm (every other scope)",
+        ),
         provider: str | None = Query(None, description="Filter by LLM provider"),
         trace_id: str | None = Query(None, description="Filter to one operation run (all LLM calls sharing a trace)"),
         document_id: str | None = Query(None, description="Filter to LLM calls that processed a given document"),
@@ -10972,6 +10977,7 @@ def _register_routes(app: FastAPI):
                 status=status,
                 operation=operation,
                 scope=scope,
+                call_type=call_type,
                 provider=provider,
                 trace_id=trace_id,
                 document_id=document_id,
@@ -11004,6 +11010,9 @@ def _register_routes(app: FastAPI):
     async def api_llm_request_stats(
         bank_id: str,
         operation: str | None = Query(None, description="Filter by operation"),
+        call_type: LLMCallType | None = Query(
+            None, description="Filter by kind of model call: llm, embedding, rerank or decision"
+        ),
         period: str = Query("7d", description="Time period: 1d, 7d, or 30d"),
         request_context: RequestContext = Depends(get_request_context),
     ):
@@ -11013,6 +11022,7 @@ def _register_routes(app: FastAPI):
                 bank_id,
                 request_context=request_context,
                 operation=operation,
+                call_type=call_type,
                 period=period,
             )
             if result is None:

@@ -356,7 +356,7 @@ HINDSIGHT_EVAL_SET_CONSOLIDATION_DECISION_MODEL_PROVIDER=typesafe HINDSIGHT_EVAL
   HINDSIGHT_EVAL_CONSOLIDATION_COST=/tmp/triage.jsonl uv run pytest evals/test_09_consolidation.py --full
 ```
 
-Triage requests are traced like LLM calls (scope `consolidation_triage`) and
+Triage requests are traced like LLM calls (scope `decision_consolidation_triage`) and
 reported apart from them, as `triage N calls, M in`. Speaker attribution is decided at
 retain and is out of scope; failure handling and scope mechanics are
 deterministic and live in `hindsight-system-tests`.

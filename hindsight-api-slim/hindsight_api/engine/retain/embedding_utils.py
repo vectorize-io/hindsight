@@ -7,6 +7,7 @@ from typing import Literal, Protocol
 
 from ...config import ENV_EMBEDDINGS_MAX_INPUT_TOKENS, get_config
 from ..llm_interface import ProviderRateLimitResetError
+from ..llm_trace import EMBEDDING_SCOPE_PREFIX, trace_model_call
 from ..token_encoding import count_tokens, truncate_many_to_tokens
 
 logger = logging.getLogger(__name__)
@@ -135,7 +136,13 @@ async def generate_embeddings_batch(
         texts = _truncate_inputs(texts, max_input_tokens, embeddings_backend, input_type)
 
     try:
-        embeddings = await _encode_with_input_type(embeddings_backend, texts, input_type)
+        embeddings = await trace_model_call(
+            embeddings_backend,
+            f"{EMBEDDING_SCOPE_PREFIX}{input_type}",
+            len(texts),
+            lambda: _encode_with_input_type(embeddings_backend, texts, input_type),
+            request={"texts": texts},
+        )
     except ProviderRateLimitResetError:
         # A control signal, not a failure: the worker parks the operation until then.
         raise

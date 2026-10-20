@@ -1,10 +1,18 @@
-"""Per-bank LLM request tracing.
+"""Per-bank model call tracing.
 
-Opt-in, fire-and-forget recording of every LLM call Hindsight makes (both
-successes and failures) into the ``llm_requests`` table, per bank. Each row
-captures the input messages, the model output, token usage (input / visible
-output / cached / thoughts / visible total), finish reason, and caller metadata.
-Disabled by default — controlled by ``HINDSIGHT_API_LLM_TRACE_ENABLED``.
+Fire-and-forget recording of every model call Hindsight makes (both successes
+and failures) into the ``llm_requests`` table, per bank: LLM calls, embeddings,
+reranker calls and decision-model calls. The kind of a call is read off its
+scope (see ``call_type_clause``), so there is no separate column. Each row
+captures the input, the output, token usage (input / visible output / cached /
+thoughts / visible total), finish reason, and caller metadata. Controlled by
+``HINDSIGHT_API_LLM_TRACE_ENABLED``; ``HINDSIGHT_API_LLM_TRACE_SCOPES`` and
+``HINDSIGHT_API_LLM_TRACE_EXCLUDE_SCOPES`` pick which scopes are recorded.
+
+Rows are buffered and written in batches (one ``executemany`` per tenant schema)
+every ``FLUSH_INTERVAL_SECONDS`` or ``FLUSH_MAX_ROWS`` rows, so tracing the much
+more frequent embedding and rerank calls costs one INSERT per batch rather than
+one per call. A crash loses the rows still in the buffer.
 
 This plugs into the OpenTelemetry **GenAI** recording pattern: providers already
 call ``tracing.get_span_recorder().record_llm_call(...)`` on success, so the DB
@@ -12,25 +20,31 @@ tracer is registered as one of those recorders (alongside the OTLP span
 exporter) rather than hooking the call path with custom code. Failures, which
 providers don't report to the recorder, are forwarded from the LLM wrapper.
 
-Bank/operation attribution is carried via a ContextVar set by
-``ConfiguredLLMProvider`` (see ``llm_wrapper.py``); outside a traced context
-``bank_id`` is recorded as NULL.
+Bank/operation attribution is carried via a ContextVar, bound for a whole
+operation run (``operation_run`` / ``operation_trace_context``) so the embedding,
+rerank and decision calls inside it join the run's trace. Outside any run
+``bank_id`` falls back to the request's current bank, else NULL.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import threading
+import time
 import uuid
 from collections import OrderedDict
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel
 
+from ..tracing import get_span_recorder
 from .background_writes import PendingWrites
 from .db_utils import acquire_with_retry
 
@@ -139,6 +153,81 @@ def current_response_usage() -> LLMResponseUsage | None:
 
 
 @dataclass
+class ProviderInputTokens:
+    """Input tokens the provider reported for the embedding or rerank call in flight.
+
+    A mutable sink rather than a value: a backend may fan one call out over several
+    tasks, and each copies the context — they all add to this one object.
+    """
+
+    count: int = 0
+
+
+_input_tokens_ctx: ContextVar[ProviderInputTokens | None] = ContextVar("hindsight_input_tokens_ctx", default=None)
+
+
+def add_provider_input_tokens(count: int) -> None:
+    """Report billed input tokens for the traced call in flight. No-op outside one."""
+    sink = _input_tokens_ctx.get()
+    if sink is not None:
+        sink.count += count
+
+
+_T = TypeVar("_T")
+
+
+async def trace_model_call(
+    owner: Any,
+    scope: str,
+    input_count: int,
+    call: Callable[[], Awaitable[_T]],
+    *,
+    request: Any = None,
+    output_of: Callable[[_T], Any] | None = None,
+) -> _T:
+    """Run an embedding or rerank ``call`` and trace it next to the LLM calls.
+
+    ``owner`` is the backend (its ``provider_name`` and ``model`` / ``model_name``
+    label the row). ``input_count`` is how many texts or documents went in, which is
+    what a provider that does not bill by token bills by. ``request`` is what the row
+    shows as its input and ``output_of`` picks what it shows as output from the result
+    (rerank scores; an embedding's vectors would only be noise, so it shows none).
+    Both are serialized when the row is written, off the caller's path, and cut to
+    ``HINDSIGHT_API_LLM_TRACE_MAX_CHARS`` like any other row.
+    """
+    result: Any = None
+    tokens = ProviderInputTokens()
+    reset = _input_tokens_ctx.set(tokens)
+    started = time.monotonic()
+    error: BaseException | None = None
+    try:
+        result = await call()
+        return result
+    except BaseException as e:
+        error = e
+        raise
+    finally:
+        _input_tokens_ctx.reset(reset)
+        model = getattr(owner, "model", None)
+        if not isinstance(model, str):
+            model = getattr(owner, "model_name", None)
+        get_span_recorder().record_llm_call(
+            # getattr: callers pass any duck-typed backend, and a trace must never fail a call.
+            provider=str(getattr(owner, "provider_name", None) or type(owner).__name__),
+            model=model if isinstance(model, str) else "",
+            scope=scope,
+            messages=[],
+            structured_input=request,
+            response_content=output_of(result) if output_of is not None and error is None else None,
+            input_tokens=tokens.count,
+            output_tokens=0,
+            duration=time.monotonic() - started,
+            error=error,
+            input_count=input_count,
+        )
+
+
+@dataclass
 class LLMQueueWait:
     """Accumulator for time a call spent waiting on LLM concurrency permits."""
 
@@ -223,6 +312,50 @@ def current_trace_context() -> LLMTraceContext | None:
     return _trace_ctx.get()
 
 
+def new_trace_context(
+    bank_id: str | None, operation: str | None, metadata: dict[str, Any] | None = None
+) -> LLMTraceContext:
+    """A fresh operation run: its own trace id and operation span."""
+    return LLMTraceContext(
+        bank_id=bank_id,
+        operation=operation,
+        metadata=dict(metadata or {}),
+        trace_id=str(uuid.uuid4()),
+        operation_span_id=str(uuid.uuid4()),
+    )
+
+
+@contextmanager
+def operation_run(bank_id: str | None, operation: str) -> Iterator[None]:
+    """Bind a fresh run for ``operation`` unless one is already bound (then join it)."""
+    token = _trace_ctx.set(new_trace_context(bank_id, operation)) if _trace_ctx.get() is None else None
+    try:
+        yield
+    finally:
+        if token is not None:
+            _trace_ctx.reset(token)
+
+
+def operation_trace_context(
+    bank_id: str | None, operation: str | None, metadata: dict[str, Any] | None
+) -> LLMTraceContext | None:
+    """The trace a ``with_config`` wrapper attributes its LLM calls to.
+
+    One trace + operation span per ``with_config()`` call — i.e. per operation
+    invocation — so a reflect/retain/consolidation run groups its calls as parent
+    (operation) → children (LLM calls). Except when the same operation already bound
+    a trace for its whole run (a mental-model refresh wraps its reflect pass AND the
+    page write after it): the wrapper joins that run instead of opening a second one,
+    or the page's embedding would land in a run of its own.
+    """
+    if bank_id is None and operation is None and not metadata:
+        return None
+    bound = _trace_ctx.get()
+    if bound is not None and bound.operation == operation and bound.bank_id == bank_id and not metadata:
+        return bound
+    return new_trace_context(bank_id, operation, metadata)
+
+
 def trace_context_of(llm_config: Any) -> LLMTraceContext | None:
     """Return a configured provider's operation trace context, or None.
 
@@ -254,6 +387,13 @@ def record_source_memory_ids(ids: Iterable[str]) -> None:
     ctx = _trace_ctx.get()
     if ctx is not None:
         ctx.source_memory_ids.extend(str(i) for i in ids)
+
+
+def _current_bank_id() -> str | None:
+    # Lazy: memory_engine imports this module.
+    from .memory_engine import get_current_bank_id
+
+    return get_current_bank_id()
 
 
 # ── serialization helpers ─────────────────────────────────────────────────────
@@ -410,15 +550,102 @@ class LLMRequestStatsResponse(BaseModel):
 
 # ── recorder / writer ─────────────────────────────────────────────────────────
 
+# Scopes of the calls that are not chat completions. Every model call Hindsight pays for lands
+# in ``llm_requests``, told apart by scope alone: ``embedding_document`` / ``embedding_query``,
+# ``rerank``, and ``decision_*`` for decision-model questions. Anything else is an LLM call.
+EMBEDDING_SCOPE_PREFIX = "embedding_"
+RERANK_SCOPE = "rerank"
+DECISION_SCOPE_PREFIX = "decision_"
+
+
+def _like_prefix(prefix: str) -> str:
+    return prefix.replace("_", "\\_")
+
+
+# What ``call_type`` filters on, as SQL over ``scope``. Derived rather than stored, so a row
+# needs no second label and an old row is classified the same way as a new one.
+_CALL_TYPE_SQL = {
+    # ``_`` is a LIKE wildcard; escaped so the SQL matches the literal prefix, exactly
+    # like the str.startswith the control plane and genai_operation_name use.
+    "embedding": f"scope LIKE '{_like_prefix(EMBEDDING_SCOPE_PREFIX)}%' ESCAPE '\\'",
+    "rerank": f"scope = '{RERANK_SCOPE}'",
+    "decision": f"scope LIKE '{_like_prefix(DECISION_SCOPE_PREFIX)}%' ESCAPE '\\'",
+}
+# Everything else is an LLM call. COALESCE: a NULL scope would make NOT (...) NULL, dropping
+# the row from every kind, where the control plane counts it as an LLM call.
+_CALL_TYPE_SQL["llm"] = "NOT (" + " OR ".join(_CALL_TYPE_SQL.values()).replace("scope", "COALESCE(scope, '')") + ")"
+LLMCallType = Literal["llm", "embedding", "rerank", "decision"]
+
+
+def genai_operation_name(scope: str | None) -> str:
+    """The OTel GenAI ``gen_ai.operation.name`` for a call, read off its scope like its kind.
+
+    ``embeddings`` and ``chat`` are the semantic-convention values; reranker and
+    decision-model calls have none, so they get their own rather than passing as chat.
+    """
+    if not scope:
+        return "chat"
+    if scope.startswith(EMBEDDING_SCOPE_PREFIX):
+        return "embeddings"
+    if scope == RERANK_SCOPE:
+        return "rerank"
+    if scope.startswith(DECISION_SCOPE_PREFIX):
+        return "decision"
+    return "chat"
+
+
+def call_type_clause(call_type: str) -> str:
+    """SQL condition over ``scope`` selecting one kind of call. Raises ValueError for an unknown kind."""
+    try:
+        return _CALL_TYPE_SQL[call_type]
+    except KeyError:
+        raise ValueError(f"call_type must be one of {', '.join(_CALL_TYPE_SQL)}, got {call_type!r}") from None
+
+
+def _scope_matches(scope: str, patterns: frozenset[str]) -> bool:
+    """Whether ``scope`` is one of ``patterns``; a pattern ending in ``*`` matches a prefix."""
+    return any(scope.startswith(p[:-1]) if p.endswith("*") else scope == p for p in patterns)
+
+
+_INSERT_COLUMNS = """
+    (id, bank_id, operation, scope, trace_id, span_id, parent_span_id,
+     provider, model, status,
+     started_at, ended_at, duration_ms,
+     input_tokens, output_tokens, cached_tokens, thoughts_tokens, total_tokens,
+     input, output, error, llm_info, metadata)
+VALUES
+    ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+     $11, $12, $13, $14, $15, $16, $17, $18,
+     $19::jsonb, $20::jsonb, $21, $22::jsonb, $23::jsonb)
+"""
+
+# Bound on how long shutdown waits for the last trace rows, so a stuck database cannot hang it.
+_SHUTDOWN_DRAIN_SECONDS = 5.0
+
+
+@dataclass(frozen=True)
+class _BufferedRow:
+    """A trace row waiting to be written, with the tenant schema it was recorded under."""
+
+    schema: str
+    record: LLMRequestRecord
+
 
 class LLMTraceRecorder:
-    """GenAI span recorder that writes per-bank LLM traces to ``llm_requests``.
+    """GenAI span recorder that writes per-bank model-call traces to ``llm_requests``.
 
     Implements ``record_llm_call`` so it can be registered with
-    :func:`hindsight_api.tracing.register_span_recorder`. Writes are
-    fire-and-forget and never surface errors into the calling path. Retention of
-    old rows is handled by the background :class:`MaintenanceLoop`.
+    :func:`hindsight_api.tracing.register_span_recorder`. Rows are buffered in
+    memory and written in batches, one connection and one ``executemany`` per
+    batch, so a recall's embedding, rerank and decision calls do not each take a
+    pooled connection. The cost of that: rows still in the buffer when the
+    process dies are lost. Writes never surface errors into the calling path.
+    Retention of old rows is handled by the background :class:`MaintenanceLoop`.
     """
+
+    # How long a row may wait in the buffer, and how many trigger a write at once.
+    FLUSH_INTERVAL_SECONDS = 0.5
+    FLUSH_MAX_ROWS = 500
 
     def __init__(
         self,
@@ -427,24 +654,31 @@ class LLMTraceRecorder:
         enabled: bool,
         allowed_scopes: list[str],
         max_chars: int = 50000,
+        excluded_scopes: list[str] | None = None,
     ) -> None:
         self._pool_getter = pool_getter
         self._schema_getter = schema_getter
         self._enabled = enabled
         self._allowed_scopes: frozenset[str] | None = frozenset(allowed_scopes) if allowed_scopes else None
+        self._excluded_scopes = frozenset(excluded_scopes or ())
         self._max_chars = max_chars
-        # In-flight fire-and-forget write tasks, bucketed by trace_id so
-        # attach_memory_ids can await only *its own* operation's writes before the
-        # post-operation UPDATE (otherwise the UPDATE could race ahead of the
-        # INSERTs it patches — but it must not block on unrelated operations).
+        # Rows waiting to be written, each with the tenant schema it was recorded under: the
+        # write runs on a background task, outside the request that knew the schema. A thread
+        # lock, not an asyncio one: worker threads run their own event loops and record here too.
+        self._buffer: list[_BufferedRow] = []
+        self._buffer_lock = threading.Lock()
+        self._flush_scheduled = False
+        # In-flight background tasks: batch writes and flush timers under the default key,
+        # memory-id patches under their own key (they wait on the default one).
         self._writes = PendingWrites("LLM trace write")
         # Trace ids that have actually produced a row. `_writes` cannot answer this: it is
         # emptied as writes complete, so an absent entry means "nothing in flight", not "nothing
         # was ever written". Without the distinction, `attach_memory_ids` issues an UPDATE for
-        # every operation that created memories -- including a retain in an extraction mode that
-        # makes no LLM call at all, where it matches zero rows and its only effect is to take a
-        # pooled connection per sub-batch. Bounded, and only ever holds ids: a trace id is ~36
-        # bytes and this is capped, so it cannot grow with traffic.
+        # every operation that created memories -- including one with no traced call, where it
+        # matches zero rows and its only effect is to take a pooled connection. (A retain now
+        # always has rows, its embeddings, so this mostly skips runs whose scopes are excluded.)
+        # Bounded, and only ever holds ids: a trace id is ~36 bytes and this is capped, so it
+        # cannot grow with traffic.
         self._rows_written: OrderedDict[str, None] = OrderedDict()
 
     def _writable(self) -> Any | None:
@@ -473,8 +707,10 @@ class LLMTraceRecorder:
             return False
         if not _llm_requests_persistable():
             return False
+        if _scope_matches(scope, self._excluded_scopes):
+            return False
         if self._allowed_scopes is not None:
-            return scope in self._allowed_scopes
+            return _scope_matches(scope, self._allowed_scopes)
         return True
 
     # ── GenAI recorder interface ──────────────────────────────────────────────
@@ -494,6 +730,8 @@ class LLMTraceRecorder:
         tool_calls: list[dict[str, Any]] | None = None,
         cached_tokens: int = 0,
         thoughts_tokens: int | None = None,
+        input_count: int | None = None,
+        structured_input: Any = None,
         **_extra: Any,
     ) -> None:
         """Build a trace record from a GenAI call and schedule a DB write."""
@@ -518,6 +756,8 @@ class LLMTraceRecorder:
             llm_info["finish_reason"] = finish_reason
         if tool_calls:
             llm_info["tool_calls"] = [tc.get("name", "") for tc in tool_calls]
+        if input_count is not None:
+            llm_info["input_count"] = input_count
 
         record = LLMRequestRecord(
             provider=provider,
@@ -526,7 +766,9 @@ class LLMTraceRecorder:
             status="error" if error is not None else "success",
             started_at=started_at,
             ended_at=ended_at,
-            bank_id=ctx.bank_id if ctx else None,
+            # Outside any operation run (a call no operation binds one for) the bank still
+            # comes from the bank-scoped engine call that is running.
+            bank_id=(ctx.bank_id if ctx else None) or _current_bank_id(),
             operation=ctx.operation if ctx else None,
             # OTel-style hierarchy: all calls of one operation invocation share
             # the context's trace_id and point at its operation span; this call
@@ -538,7 +780,15 @@ class LLMTraceRecorder:
             # reflect loop keeps appending to this same list — its own tool call,
             # the tool result — so a reference would record messages sent AFTER
             # this call as if they had been part of its prompt.
-            input=list(messages) if isinstance(messages, list) else messages,
+            # A call that is not a chat (decision, embedding, rerank) hands its request as a
+            # structure; ``messages`` then only carries the string form other recorders need.
+            input=(
+                structured_input
+                if structured_input is not None
+                else list(messages)
+                if isinstance(messages, list)
+                else messages
+            ),
             output=None if error is not None else response_content,
             error=f"{type(error).__name__}: {error}" if error is not None else None,
             input_tokens=input_tokens or None,
@@ -557,10 +807,59 @@ class LLMTraceRecorder:
         self._record_fire_and_forget(record)
 
     def _record_fire_and_forget(self, record: LLMRequestRecord) -> None:
-        """Schedule a trace write as a background task."""
-        key = record.trace_id
-        if self._writes.schedule(self._safe_write(record), key) and key:
-            self._mark_rows_written(key)
+        """Buffer a trace row; a background task writes it within ``FLUSH_INTERVAL_SECONDS``."""
+        entry = _BufferedRow(self._schema_getter(), record)
+        with self._buffer_lock:
+            self._buffer.append(entry)
+            batch = self._take_locked() if len(self._buffer) >= self.FLUSH_MAX_ROWS else None
+            start_timer = batch is None and not self._flush_scheduled
+            if start_timer:
+                self._flush_scheduled = True
+        if record.trace_id:
+            self._mark_rows_written(record.trace_id)
+        if batch:
+            self._writes.schedule(self._write_batch(batch))
+        elif start_timer and not self._writes.schedule(self._flush_later()):
+            with self._buffer_lock:
+                self._flush_scheduled = False
+
+    def _take_locked(self) -> list[_BufferedRow]:
+        batch, self._buffer = self._buffer, []
+        return batch
+
+    async def _flush_later(self) -> None:
+        try:
+            await asyncio.sleep(self.FLUSH_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            # The loop this timer ran on is going away (a worker thread's asyncio.run ending).
+            # The rows stay buffered for the next timer, started by the next recorded call.
+            with self._buffer_lock:
+                self._flush_scheduled = False
+            raise
+        with self._buffer_lock:
+            self._flush_scheduled = False
+            batch = self._take_locked()
+        if batch:
+            await self._write_batch(batch)
+
+    async def flush(self) -> None:
+        """Write every buffered row now, and wait for the batch writes already under way."""
+        with self._buffer_lock:
+            batch = self._take_locked()
+        if batch:
+            await self._write_batch(batch)
+        await self._writes.drain()
+
+    async def flush_on_shutdown(self) -> None:
+        """Write what is buffered and wait for every pending write; call before the pool closes.
+
+        Bounded, so a stuck database cannot hang shutdown.
+        """
+        with self._buffer_lock:
+            batch = self._take_locked()
+        if batch:
+            self._writes.schedule(self._write_batch(batch))
+        await self._writes.drain_all(_SHUTDOWN_DRAIN_SECONDS)
 
     _ROWS_WRITTEN_MAX = 4096
 
@@ -572,55 +871,62 @@ class LLMTraceRecorder:
             # a wrong one -- and the patch is best-effort metadata either way.
             self._rows_written.popitem(last=False)
 
-    async def _safe_write(self, record: LLMRequestRecord) -> None:
-        """Write a trace row. Errors are logged, never raised."""
+    def _row(self, record: LLMRequestRecord) -> list[Any]:
+        """Positional INSERT parameters, in ``_INSERT_COLUMNS`` order."""
+        return [
+            uuid.uuid4(),
+            record.bank_id,
+            record.operation,
+            record.scope,
+            record.trace_id,
+            record.span_id,
+            record.parent_span_id,
+            record.provider,
+            record.model,
+            record.status,
+            record.started_at,
+            record.ended_at,
+            record.duration_ms,
+            record.input_tokens,
+            record.output_tokens,
+            record.cached_tokens,
+            record.thoughts_tokens,
+            record.total_tokens,
+            _safe_json(record.input, self._max_chars),
+            _safe_json(record.output, self._max_chars),
+            record.error,
+            _safe_json(record.llm_info, self._max_chars) or "{}",
+            _safe_json(record.metadata, self._max_chars) or "{}",
+        ]
+
+    async def _write_batch(self, batch: list[_BufferedRow]) -> None:
+        """Write buffered rows, one ``executemany`` per tenant schema. Errors are logged, never raised."""
         pool = self._writable()
         if pool is None:
             logger.debug("LLM trace skipped: pool not available")
             return
+        by_schema: dict[str, list[list[Any]]] = {}
+        for row in batch:
+            by_schema.setdefault(row.schema, []).append(self._row(row.record))
         try:
-            schema = self._schema_getter()
-            table = f"{schema}.llm_requests"
             async with acquire_with_retry(pool, max_retries=1) as conn:
-                await conn.execute(
-                    f"""
-                    INSERT INTO {table}
-                        (id, bank_id, operation, scope, trace_id, span_id, parent_span_id,
-                         provider, model, status,
-                         started_at, ended_at, duration_ms,
-                         input_tokens, output_tokens, cached_tokens, thoughts_tokens, total_tokens,
-                         input, output, error, llm_info, metadata)
-                    VALUES
-                        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                         $11, $12, $13, $14, $15, $16, $17, $18,
-                         $19::jsonb, $20::jsonb, $21, $22::jsonb, $23::jsonb)
-                    """,
-                    uuid.uuid4(),
-                    record.bank_id,
-                    record.operation,
-                    record.scope,
-                    record.trace_id,
-                    record.span_id,
-                    record.parent_span_id,
-                    record.provider,
-                    record.model,
-                    record.status,
-                    record.started_at,
-                    record.ended_at,
-                    record.duration_ms,
-                    record.input_tokens,
-                    record.output_tokens,
-                    record.cached_tokens,
-                    record.thoughts_tokens,
-                    record.total_tokens,
-                    _safe_json(record.input, self._max_chars),
-                    _safe_json(record.output, self._max_chars),
-                    record.error,
-                    _safe_json(record.llm_info, self._max_chars) or "{}",
-                    _safe_json(record.metadata, self._max_chars) or "{}",
-                )
+                for schema, rows in by_schema.items():
+                    query = f"INSERT INTO {schema}.llm_requests {_INSERT_COLUMNS}"
+                    try:
+                        await conn.executemany(query, rows)
+                    except Exception as e:
+                        # executemany is all-or-nothing: one row Postgres refuses (say, a
+                        # payload jsonb rejects) would drop every other bank's rows in the
+                        # batch with it. Retry one by one so only the bad row is lost, as it
+                        # was when each call wrote its own row.
+                        logger.warning(f"LLM trace batch write failed for {len(rows)} row(s) in schema={schema}: {e}")
+                        for row in rows:
+                            try:
+                                await conn.execute(query, *row)
+                            except Exception as row_error:
+                                logger.warning(f"LLM trace write failed in schema={schema}: {row_error}")
         except Exception as e:
-            logger.warning(f"LLM trace write failed for scope={record.scope}: {e}")
+            logger.warning(f"LLM trace write failed for {len(batch)} row(s): {e}")
 
     def attach_memory_ids(
         self,
@@ -653,21 +959,20 @@ class LLMTraceRecorder:
             patch["source_memory_ids"] = source_ids
         if not patch:
             return
-        # Nothing was traced, so there is no row to patch. This is the ordinary case for an
-        # extraction mode that calls no LLM: memories are created, so `patch` is non-empty, but
-        # the UPDATE would match zero rows.
+        # Nothing was traced, so there is no row to patch: memories were created, so `patch` is
+        # non-empty, but every call of the run was excluded by scope and the UPDATE would match
+        # zero rows.
         if trace_ctx.trace_id not in self._rows_written:
             return
-        # Not bucketed under the trace id: this task drains that bucket itself,
-        # and a task in its own bucket would wait on itself forever.
-        self._writes.schedule(self._attach_memory_ids(trace_ctx.bank_id, trace_ctx.trace_id, patch))
+        # Not under the default key: this task drains that key itself, and a task
+        # waiting on its own key would wait on itself forever.
+        self._writes.schedule(self._attach_memory_ids(trace_ctx.bank_id, trace_ctx.trace_id, patch), key="memory_ids")
 
     async def _attach_memory_ids(self, bank_id: str | None, trace_id: str, patch: dict[str, Any]) -> None:
         """Background worker: flush this trace's writes, then patch its rows."""
-        # The trace-row INSERTs are fire-and-forget; flush *this trace's* writes
-        # so the UPDATE patches rows that already exist rather than racing ahead
-        # of them (without blocking on unrelated operations' pending writes).
-        await self._writes.drain(trace_id)
+        # The trace rows are buffered; write them first so the UPDATE patches rows
+        # that already exist rather than racing ahead of them.
+        await self.flush()
         pool = self._writable()
         if pool is None:
             logger.debug("LLM trace memory_id attach skipped: pool not available")

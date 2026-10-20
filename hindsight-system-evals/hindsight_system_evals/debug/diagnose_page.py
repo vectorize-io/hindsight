@@ -46,11 +46,14 @@ def _excerpt(text: str, limit: int = 400) -> str:
 
 
 async def _traces(url: str, bank_id: str) -> LLMRequestListResponse:
-    # Every call, not a scope filter: the refresh's reflect runs under several
+    # Every LLM call, not a scope filter: the refresh's reflect runs under several
     # scopes (tool calls, final synthesis), and the one that misled the model is
-    # not always the one you would guess.
+    # not always the one you would guess. Embedding/rerank/decision rows carry no
+    # prompt, so they are left out rather than crowding the 500-row page.
     async with httpx.AsyncClient(base_url=url, timeout=60) as http:
-        response = await http.get(f"/v1/default/banks/{bank_id}/llm-requests", params={"limit": 500})
+        response = await http.get(
+            f"/v1/default/banks/{bank_id}/llm-requests", params={"limit": 500, "call_type": "llm"}
+        )
         response.raise_for_status()
         return LLMRequestListResponse.from_dict(response.json())
 

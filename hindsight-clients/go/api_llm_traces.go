@@ -30,6 +30,7 @@ type ApiListLlmRequestsRequest struct {
 	status *string
 	operation *string
 	scope *string
+	callType *string
 	provider *string
 	traceId *string
 	documentId *string
@@ -57,6 +58,12 @@ func (r ApiListLlmRequestsRequest) Operation(operation string) ApiListLlmRequest
 // Filter by call scope
 func (r ApiListLlmRequestsRequest) Scope(scope string) ApiListLlmRequestsRequest {
 	r.scope = &scope
+	return r
+}
+
+// Filter by kind of model call, told apart by scope: embedding (embedding_*), rerank, decision (decision_*), or llm (every other scope)
+func (r ApiListLlmRequestsRequest) CallType(callType string) ApiListLlmRequestsRequest {
+	r.callType = &callType
 	return r
 }
 
@@ -171,6 +178,9 @@ func (a *LLMTracesAPIService) ListLlmRequestsExecute(r ApiListLlmRequestsRequest
 	if r.scope != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "scope", r.scope, "form", "")
 	}
+	if r.callType != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "call_type", r.callType, "form", "")
+	}
 	if r.provider != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "provider", r.provider, "form", "")
 	}
@@ -279,6 +289,7 @@ type ApiLlmRequestStatsRequest struct {
 	ApiService *LLMTracesAPIService
 	bankId string
 	operation *string
+	callType *string
 	period *string
 	authorization *string
 }
@@ -286,6 +297,12 @@ type ApiLlmRequestStatsRequest struct {
 // Filter by operation
 func (r ApiLlmRequestStatsRequest) Operation(operation string) ApiLlmRequestStatsRequest {
 	r.operation = &operation
+	return r
+}
+
+// Filter by kind of model call: llm, embedding, rerank or decision
+func (r ApiLlmRequestStatsRequest) CallType(callType string) ApiLlmRequestStatsRequest {
+	r.callType = &callType
 	return r
 }
 
@@ -345,6 +362,9 @@ func (a *LLMTracesAPIService) LlmRequestStatsExecute(r ApiLlmRequestStatsRequest
 
 	if r.operation != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "operation", r.operation, "form", "")
+	}
+	if r.callType != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "call_type", r.callType, "form", "")
 	}
 	if r.period != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "period", r.period, "form", "")

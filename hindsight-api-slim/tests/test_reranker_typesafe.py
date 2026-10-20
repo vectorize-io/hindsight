@@ -181,6 +181,22 @@ class TestRanking:
         assert session.posted == []
 
 
+class TestTracing:
+    @pytest.mark.asyncio
+    async def test_each_request_is_traced_as_a_decision_and_predict_adds_no_rerank_row(self):
+        """The System One requests are the billed calls; one rerank row on top would count them twice."""
+        encoder, _ = _encoder({"c0": 0.9, "c1": 0.1}, prune_candidates=True)
+        calls: list[dict] = []
+        recorder = type("R", (), {"record_llm_call": lambda self, **kw: calls.append(kw)})()
+        with patch("hindsight_api.engine.decision_model.get_span_recorder", return_value=recorder):
+            with patch("hindsight_api.engine.llm_trace.get_span_recorder", return_value=recorder):
+                await encoder.predict([("q", "a"), ("q", "b")])
+
+        assert [c["scope"] for c in calls] == ["decision_rank", "decision_cut"]
+        assert all(c["provider"] == "typesafe" and c["input_tokens"] == 1 for c in calls)
+        assert all("questions" in c["structured_input"] for c in calls)
+
+
 class TestChunking:
     @pytest.mark.asyncio
     async def test_a_pool_over_the_option_cap_is_ranked_in_rounds(self):

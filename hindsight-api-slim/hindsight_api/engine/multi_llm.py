@@ -37,7 +37,6 @@ paths.
 import logging
 import threading
 import time
-import uuid
 from typing import TYPE_CHECKING, Any
 
 from ..config import LLM_STRATEGY_FAILOVER, LLM_STRATEGY_METADATA, LLMStrategyConfig
@@ -325,18 +324,10 @@ class MultiLLMProvider:
         """Mirror ``LLMProvider.with_config`` so the strategy runs inside the
         per-operation configured wrapper (gemini-safety + trace contextvars wrap
         every member call)."""
-        from .llm_trace import LLMTraceContext
+        from .llm_trace import operation_trace_context
         from .llm_wrapper import ConfiguredLLMProvider
 
-        trace_ctx = None
-        if bank_id is not None or operation is not None or metadata:
-            trace_ctx = LLMTraceContext(
-                bank_id=bank_id,
-                operation=operation,
-                metadata=dict(metadata or {}),
-                trace_id=str(uuid.uuid4()),
-                operation_span_id=str(uuid.uuid4()),
-            )
+        trace_ctx = operation_trace_context(bank_id, operation, metadata)
         return ConfiguredLLMProvider(self, config.llm_gemini_safety_settings, trace_ctx)
 
     # ── attribute passthrough ────────────────────────────────────────────────────

@@ -61,6 +61,9 @@ class DecisionModelReranker(CrossEncoderModel):
     order.
     """
 
+    # Its decision-model requests are traced one by one; a rerank row would count them twice.
+    traces_calls = False
+
     def __init__(self, client: DecisionModel):
         self._client = client
 
@@ -96,7 +99,7 @@ class DecisionModelReranker(CrossEncoderModel):
             )
             for slot, index in enumerate(indices)
         }
-        answers = await self._client.ask_all(self._state(query), questions)
+        answers = await self._client.ask_all(self._state(query), questions, scope="decision_recall_rerank")
 
         def answer(slot: int) -> float:
             found = answers.get(f"m{slot}")

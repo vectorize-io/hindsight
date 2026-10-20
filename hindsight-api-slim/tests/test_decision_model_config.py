@@ -220,7 +220,9 @@ def _client(provider: str, base_url: str, model: str) -> DecisionModel:
 async def test_typesafe_speaks_system_one():
     upstream = _Upstream(reply=_SYSTEM_ONE_ANSWERS)
     async with stub_server(upstream.handle) as base_url:
-        answer = await _client("typesafe", base_url + "/", "jev-preview").ask({"fact": "x"}, _QUESTIONS)
+        answer = await _client("typesafe", base_url + "/", "jev-preview").ask(
+            {"fact": "x"}, _QUESTIONS, scope="decision_test"
+        )
 
     assert answer == _EXPECTED
     assert upstream.paths == ["/v1/systemone"]
@@ -233,7 +235,9 @@ async def test_cloudflare_posts_system_one_to_the_workers_ai_model_and_unwraps_t
     upstream = _Upstream(reply={"result": _SYSTEM_ONE_ANSWERS, "success": True, "errors": [], "messages": []})
     async with stub_server(upstream.handle) as base_url:
         account_url = f"{base_url}/client/v4/accounts/acct/ai/run"
-        answer = await _client("cloudflare", account_url, "clef").ask("Checkout is down.", _QUESTIONS)
+        answer = await _client("cloudflare", account_url, "clef").ask(
+            "Checkout is down.", _QUESTIONS, scope="decision_test"
+        )
 
     assert answer == _EXPECTED
     assert upstream.paths == ["/client/v4/accounts/acct/ai/run/@cf/cloudflare/clef"]
@@ -270,7 +274,7 @@ async def test_openai_translates_to_the_decisions_api_and_back():
         }
     )
     async with stub_server(upstream.handle) as base_url:
-        answer = await _client("openai", base_url, "gpt-6-luna").ask({"fact": "x"}, _QUESTIONS)
+        answer = await _client("openai", base_url, "gpt-6-luna").ask({"fact": "x"}, _QUESTIONS, scope="decision_test")
 
     assert answer == _EXPECTED
     assert upstream.paths == ["/v1/decisions"]
@@ -308,7 +312,9 @@ async def test_openai_refusal_raises():
     upstream = _Upstream(reply={"answers": [{"type": "refusal", "name": "urgent"}]})
     async with stub_server(upstream.handle) as base_url:
         with pytest.raises(DecisionRefusedError, match="urgent"):
-            await _client("openai", base_url, "gpt-6-luna").ask("x", {"urgent": _QUESTIONS["urgent"]})
+            await _client("openai", base_url, "gpt-6-luna").ask(
+                "x", {"urgent": _QUESTIONS["urgent"]}, scope="decision_test"
+            )
 
 
 def test_the_default_request_ceiling_fits_a_32k_window(monkeypatch):
@@ -381,7 +387,7 @@ async def test_every_request_fits_the_ceiling_counting_the_whole_body():
     questions = _nouls(60, "memory about the storage layer")
     async with stub_server(upstream.handle) as base_url:
         answers = await _splitting_client(base_url, max_request_tokens=1_500).ask_all(
-            "what did we decide about the storage layer " * 40, questions
+            "what did we decide about the storage layer " * 40, questions, scope="decision_test"
         )
     assert len(upstream.bodies) > 1
     assert all(count_tokens(json.dumps(body)) <= 1_500 for body in upstream.bodies)
@@ -391,7 +397,9 @@ async def test_every_request_fits_the_ceiling_counting_the_whole_body():
 async def test_a_pool_over_the_question_cap_is_split():
     upstream = _Answering()
     async with stub_server(upstream.handle) as base_url:
-        await _splitting_client(base_url).ask_all("q", _nouls(DecisionModel.MAX_QUESTIONS + 5, "x"))
+        await _splitting_client(base_url).ask_all(
+            "q", _nouls(DecisionModel.MAX_QUESTIONS + 5, "x"), scope="decision_test"
+        )
     assert sorted(len(body["questions"]) for body in upstream.bodies) == [5, DecisionModel.MAX_QUESTIONS]
 
 
@@ -399,7 +407,7 @@ async def test_a_rate_limited_request_is_retried():
     """One replica returns 429 as soon as a few recalls overlap; the request must not be lost."""
     upstream = _Answering(limited=1)
     async with stub_server(upstream.handle) as base_url:
-        answers = await _splitting_client(base_url).ask_all("q", _nouls(1, "x"))
+        answers = await _splitting_client(base_url).ask_all("q", _nouls(1, "x"), scope="decision_test")
     assert len(upstream.bodies) == 2
     assert answers["m0"].noul == 0.5
 
@@ -410,7 +418,9 @@ async def test_a_request_that_keeps_failing_raises_instead_of_dropping_its_answe
     upstream = _Answering(down="m0")
     async with stub_server(upstream.handle) as base_url:
         with pytest.raises(Exception, match="503"):
-            await _splitting_client(base_url, max_request_tokens=1_000).ask_all("q", _nouls(4, "word " * 400))
+            await _splitting_client(base_url, max_request_tokens=1_000).ask_all(
+                "q", _nouls(4, "word " * 400), scope="decision_test"
+            )
 
 
 async def test_a_request_over_the_models_own_window_is_asked_in_halves():
@@ -419,7 +429,9 @@ async def test_a_request_over_the_models_own_window_is_asked_in_halves():
     upstream = _Answering(window=4_000)
     questions = _nouls(8, "word " * 200)
     async with stub_server(upstream.handle) as base_url:
-        answers = await _splitting_client(base_url, max_request_tokens=26_000).ask("q", questions)
+        answers = await _splitting_client(base_url, max_request_tokens=26_000).ask(
+            "q", questions, scope="decision_test"
+        )
     assert set(answers.answers) == set(questions)
     answered = [body for body in upstream.bodies if 2 * count_tokens(json.dumps(body)) <= 4_000]
     assert sorted(key for body in answered for key in body["questions"]) == sorted(questions)
@@ -429,4 +441,4 @@ async def test_one_question_over_the_models_window_raises():
     upstream = _Answering(window=1_000)
     async with stub_server(upstream.handle) as base_url:
         with pytest.raises(Exception, match="max_tokens_exceeded"):
-            await _splitting_client(base_url).ask_all("q", _nouls(1, "word " * 1_000))
+            await _splitting_client(base_url).ask_all("q", _nouls(1, "word " * 1_000), scope="decision_test")
