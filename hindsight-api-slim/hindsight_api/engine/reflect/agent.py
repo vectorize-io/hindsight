@@ -1647,10 +1647,30 @@ async def _run_reflect_agent_inner(
             forced_steps_done += 1
 
         # "Enough to answer": the closing step writes the answer. Alongside other calls, those
-        # run and the model is asked again.
-        if any(_normalize_tool_name(tc.name) == "answer_ready" for tc in result.tool_calls):
-            rest = [tc for tc in result.tool_calls if _normalize_tool_name(tc.name) != "answer_ready"]
+        # run and the model is asked again. Only where it was offered: elsewhere it is an
+        # unknown tool, answered as one below.
+        ready_call = (
+            next((tc for tc in result.tool_calls if _normalize_tool_name(tc.name) == "answer_ready"), None)
+            if closing_step_answers
+            else None
+        )
+        if ready_call is not None:
+            rest = [tc for tc in result.tool_calls if tc is not ready_call]
             if not rest and searched:
+                # The same gate as done's: "nothing is known" needs recall first (#4567). A
+                # fresh mental model can release the forced recall, so it may not have run.
+                if (
+                    include_recall
+                    and not recall_ran
+                    and not absence_recall_forced
+                    and iteration < max_iterations - 1
+                    and not _answer_found(ready_call.arguments)
+                ):
+                    absence_recall_forced = True
+                    logger.info(
+                        f"[REFLECT {reflect_id}] answer_ready reported nothing found before recall ran; forcing recall."
+                    )
+                    continue
                 return await (_forced_final_synthesis if compacted else _finish)(iteration + 1)
             result = result.model_copy(update={"tool_calls": rest})
 

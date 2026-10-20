@@ -411,10 +411,16 @@ TOOL_ANSWER_READY = {
     "function": {
         "name": "answer_ready",
         "description": (
-            "Call this, with no arguments, when what you retrieved is enough to answer. You will then be "
-            "asked for the answer through done. Do not write the answer before you are asked for it."
+            "Call this when what you retrieved is enough to answer. You will then be asked for the answer "
+            "through done. Do not write the answer before you are asked for it."
         ),
-        "parameters": {"type": "object", "properties": {}},
+        # The one argument is done's own verdict, so the "nothing is known needs recall first"
+        # gate (#4567) still sees it: the answer itself is only written in the closing step.
+        "parameters": {
+            "type": "object",
+            "properties": {"answer_found": _DONE_ANSWER_FOUND_PROPERTY},
+            "required": ["answer_found"],
+        },
     },
 }
 

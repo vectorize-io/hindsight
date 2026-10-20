@@ -3777,11 +3777,10 @@ class TestFreeTurnsSignalReady:
             bank_id="b",
             query="q",
             bank_profile={"name": "T", "mission": "M"},
-            has_mental_models=False,
             include_observations=False,
             max_iterations=6,
+            **{"has_mental_models": False, **kwargs},
             **functions,
-            **kwargs,
         )
 
     @pytest.mark.asyncio
@@ -3840,6 +3839,32 @@ class TestFreeTurnsSignalReady:
         assert replayed == ["recall", "recall"]
 
     @pytest.mark.asyncio
+    async def test_nothing_found_before_recall_forces_recall(self):
+        """A fresh mental model releases the forced recall; "nothing found" still needs it (#4567)."""
+        llm = MagicMock()
+        llm.call_with_tools = AsyncMock(
+            side_effect=[
+                self._call("search_mental_models", "mm", query="q"),
+                self._call("answer_ready", "ready", answer_found=False),
+                self._call("recall", "r", query="q"),
+                self._call("answer_ready", "ready2", answer_found=False),
+                self._call("done", "d", answer="Nothing is recorded.", answer_found=False),
+            ]
+        )
+        functions = {
+            **self._functions(),
+            "search_mental_models_fn": AsyncMock(
+                return_value={"mental_models": [{"id": "mm-1", "name": "P", "content": "Fresh.", "is_stale": False}]}
+            ),
+        }
+
+        result = await self._reflect(llm, functions, has_mental_models=True, budget="low")
+
+        assert result.text == "Nothing is recorded."
+        assert llm.call_with_tools.await_args_list[2].kwargs["tool_choice"] == LLMToolChoice.named("recall")
+        functions["recall_fn"].assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_agent_mode_offers_answer_ready_and_the_prompt_asks_for_it(self):
         llm = MagicMock()
         llm.call_with_tools = AsyncMock(
@@ -3854,7 +3879,7 @@ class TestFreeTurnsSignalReady:
 
         first = llm.call_with_tools.await_args_list[0].kwargs
         tools = {t["function"]["name"]: t["function"] for t in first["tools"]}
-        assert tools["answer_ready"]["parameters"] == {"type": "object", "properties": {}}
+        assert tools["answer_ready"]["parameters"]["required"] == ["answer_found"]
         assert "answer_ready" in tools["done"]["description"]
         assert "answer_ready" in first["messages"][0]["content"]
 
