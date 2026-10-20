@@ -57,6 +57,13 @@ class TestDoneToolSchema:
             assert params["properties"]["answer_found"]["type"] == "boolean"
             assert "answer_found" in params["required"]
 
+    def test_document_blocks_keep_ids_out_of_the_text(self):
+        """Dropping ``answer`` dropped its no-ids rule, and cited handles resolve to UUIDs in pages (#5833)."""
+        document = _done_tool(answer_as_document=True)["function"]["parameters"]["properties"]["document"]
+        blocks = document["properties"]["sections"]["items"]["properties"]["blocks"]["description"]
+        assert "NEVER cite memory IDs" in blocks
+        assert "memory_ids" in blocks
+
     def test_schema_has_no_union_types(self):
         """A tool schema goes to the provider verbatim, and Gemini rejects ``oneOf``."""
         rendered = repr(_done_tool(answer_as_document=True))

@@ -293,7 +293,9 @@ _DONE_DOCUMENT_PROPERTY = {
                             "paragraphs in one entry, and never put a heading in one — headings are the "
                             "'heading' field. Within an entry, write the content as you would in a "
                             "document: '- one\n- two' for a list, "
-                            "'| a | b |\n| --- | --- |\n| 1 | 2 |' for a table."
+                            "'| a | b |\n| --- | --- |\n| 1 | 2 |' for a table. NEVER cite memory IDs, "
+                            "UUIDs or result handles (f3, o12) in this text - put IDs only in memory_ids. "
+                            "Only include IDs here when the question explicitly asks for them."
                         ),
                         "items": {"type": "string"},
                     },
