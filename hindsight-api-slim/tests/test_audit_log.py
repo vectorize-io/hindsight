@@ -7,7 +7,9 @@ Verifies that audit entries are created for operations when audit logging is ena
 
 import asyncio
 import json
+import re
 import uuid
+from pathlib import Path
 
 import httpx
 import pytest
@@ -494,3 +496,14 @@ async def test_audit_log_ordered_by_most_recent(audit_api_client, bank_id):
     # Check descending order by started_at
     timestamps = [item["started_at"] for item in data["items"] if item["started_at"]]
     assert timestamps == sorted(timestamps, reverse=True), "Audit logs should be ordered most recent first"
+
+
+def test_control_plane_filter_offers_every_audited_action():
+    """The control plane's action filter is a hardcoded list; a new @audited route must join it."""
+    root = Path(__file__).resolve().parents[2]
+    http = (root / "hindsight-api-slim" / "hindsight_api" / "api" / "http.py").read_text()
+    audited = re.findall(r'^\s*@audited\(\s*"([a-z_]+)"', http, re.M)
+    assert len(audited) > 30
+    view = (root / "hindsight-control-plane" / "src" / "components" / "audit-logs-view.tsx").read_text()
+    offered = set(re.findall(r'value: "([a-z_]+)"', view))
+    assert [a for a in audited if a not in offered] == []
