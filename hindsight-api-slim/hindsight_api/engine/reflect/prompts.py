@@ -682,10 +682,12 @@ _GROUNDING_BOUNDARY = (
 #: document mode (which has no ``answer``) and forced synthesis said nothing,
 #: and the handles the model cites inline (``o3``) are resolved to real UUIDs
 #: (#4876), which filled mental-model pages with ids (#5833). The exception
-#: keeps reports that ask for ids, the #4876 use case, working.
+#: keeps reports that ask for ids, the #4876 use case, working. It names no
+#: field to put ids in: forced synthesis has none, and done's id arrays say so
+#: in their own descriptions.
 NO_IDS_IN_TEXT_RULE = (
-    "NEVER cite memory IDs, UUIDs or result handles (f3, o12) in the text - put IDs only in "
-    "memory_ids/mental_model_ids/observation_ids. Only include IDs in the text when the question "
+    "NEVER cite memory IDs, UUIDs or result handles (f3, o12) in the text a reader sees - the "
+    "supporting ids are tracked separately. Only include IDs in the text when the question "
     "explicitly asks for them."
 )
 
