@@ -3881,6 +3881,10 @@ class TestFreeTurnsSignalReady:
         tools = {t["function"]["name"]: t["function"] for t in first["tools"]}
         assert tools["answer_ready"]["parameters"]["required"] == ["answer_found"]
         assert "answer_ready" in tools["done"]["description"]
+        # The "a topic match is not an answer" gate moved with the stop decision but stays on done:
+        # dropping it let the closing answer infer a value nothing stated (system eval hq-absent-2024).
+        assert "do not STATE the answer" in tools["answer_ready"]["description"]
+        assert "do not STATE the answer" in tools["done"]["description"]
         assert "answer_ready" in first["messages"][0]["content"]
 
 

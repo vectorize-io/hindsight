@@ -403,6 +403,9 @@ def _build_done_tool_with_directives(directive_rules: list[str]) -> dict:
     }
 
 
+#: ``_DONE_SUFFICIENCY_GATE`` for the tool that decides to stop when that is answer_ready.
+_READY_SUFFICIENCY_GATE = _DONE_SUFFICIENCY_GATE.replace("call done", "call answer_ready")
+
 #: The stop signal for reflects whose answer is written by the closing step: a turn that
 #: wrote the answer itself (as prose or as ``done``) was thrown away and written again
 #: there, so the model's last free turn cost as much as the answer (#5832).
@@ -410,9 +413,10 @@ TOOL_ANSWER_READY = {
     "type": "function",
     "function": {
         "name": "answer_ready",
+        # The sufficiency gate moves here with the stop decision: done is only called once asked.
         "description": (
             "Call this when what you retrieved is enough to answer. You will then be asked for the answer "
-            "through done. Do not write the answer before you are asked for it."
+            "through done. Do not write the answer before you are asked for it." + _READY_SUFFICIENCY_GATE
         ),
         # The one argument is done's own verdict, so the "nothing is known needs recall first"
         # gate (#4567) still sees it: the answer itself is only written in the closing step.
@@ -489,9 +493,12 @@ def get_reflect_tools(
         done_tool = _done_tool_for_document(done_tool)
     if answer_ready:
         done_tool = copy.deepcopy(done_tool)
+        # Keeps the sufficiency gate: dropping it with the rest of the old description let the
+        # closing answer infer a value the evidence did not state (system eval hq-absent-2024).
         done_tool["function"]["description"] = (
-            "Your final answer. Call this only when you are asked for the answer; until then, call "
-            "answer_ready once you have enough."
+            f"Your final answer{', as a structured document' if answer_as_document else ''}. Call this only when "
+            "you are asked for the answer; until then, call "
+            "answer_ready once you have enough." + _DONE_SUFFICIENCY_GATE
         )
     # After the document and answer_ready swaps: those replace the description this appends to.
     if llm_output_language:
