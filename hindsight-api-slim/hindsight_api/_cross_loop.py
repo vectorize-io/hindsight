@@ -120,6 +120,9 @@ class CrossLoopSemaphore:
     def _hand_on(self) -> None:
         """Give the permit to the longest-waiting task, or return it to the pool.
 
+        Foreground waiters are served first; a background waiter gets the permit only
+        when no foreground one is queued (#5926).
+
         Handing it over directly is what stops a holder that re-acquires without
         suspending from taking its own permit back before any waiter can see it free.
 
