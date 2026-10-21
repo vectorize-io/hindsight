@@ -231,6 +231,9 @@ async def list_memory_units(
         if is_archived
         else "NULL::text AS invalidation_reason, NULL::timestamptz AS invalidated_at"
     )
+    # `id` last makes the order total. Facts written in one batch share their
+    # timestamps, and Postgres may order tied rows differently from one query to
+    # the next, so without it OFFSET pages overlap and skip rows.
     units = await conn.fetch(
         f"""
         SELECT id, text, event_date, context, fact_type, document_id,
@@ -239,7 +242,7 @@ async def list_memory_units(
                updated_at, source_memory_ids, {curation_cols}
         FROM {source_table}
         {where_clause}
-        ORDER BY {window.order_by or "mentioned_at DESC NULLS LAST, created_at DESC"}
+        ORDER BY {window.order_by or "mentioned_at DESC NULLS LAST, created_at DESC, id"}
         LIMIT {limit_param} OFFSET {offset_param}
     """,
         *query_params,
