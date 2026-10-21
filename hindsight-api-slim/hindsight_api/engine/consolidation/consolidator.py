@@ -59,6 +59,7 @@ from ..memories import StoredMemory, get_memories
 from ..memory_engine import Budget, fq_table
 from ..prompt_utils import truncate_context_for_prompt
 from ..retain import embedding_utils
+from ..stored_dates import finite_utc
 from .prompts import (
     build_consolidation_input,
     build_consolidation_system_prompt,
@@ -1373,9 +1374,10 @@ def _log_unresolved_action(kind: str, source_fact_ids: list[str], text: str, per
 
 
 def _as_dt(v: "datetime | str | None") -> "datetime | None":
-    """Coerce an ISO string to a datetime. Recall results can carry timestamps as strings while
-    the store's addressed reads hand back datetimes, so normalise before comparing."""
-    return datetime.fromisoformat(v) if isinstance(v, str) else v
+    """Coerce an ISO string to an aware UTC datetime. Recall results can carry timestamps as strings
+    while the store's addressed reads hand back datetimes, so normalise before comparing. A stored
+    year-1/9999 placeholder comes back naive and would break the comparison, so it reads as unknown."""
+    return finite_utc(datetime.fromisoformat(v) if isinstance(v, str) else v)
 
 
 def _merge_min(a: "datetime | str | None", b: "datetime | str | None") -> "datetime | None":
@@ -2992,13 +2994,13 @@ async def _process_memory_batch(
 
 
 def _min_date(dates: "Any") -> "datetime | None":
-    """Return the minimum non-None datetime from an iterable."""
-    return min((d for d in dates if d is not None), default=None)
+    """Return the minimum known datetime from an iterable (None and placeholders skipped)."""
+    return min((d for d in map(_as_dt, dates) if d is not None), default=None)
 
 
 def _max_date(dates: "Any") -> "datetime | None":
-    """Return the maximum non-None datetime from an iterable."""
-    return max((d for d in dates if d is not None), default=None)
+    """Return the maximum known datetime from an iterable (None and placeholders skipped)."""
+    return max((d for d in map(_as_dt, dates) if d is not None), default=None)
 
 
 @dataclass(frozen=True)
