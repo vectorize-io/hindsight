@@ -52,3 +52,12 @@ dev = [
     "pytest-asyncio>=0.24",
     "ruff>=0.8.0",
 ]
+
+[tool.uv]
+# pipecat-ai declares `Pillow<13` (through the latest release, 1.13.0), but
+# Pillow 13.0.0 is the first release outside several open advisories. pipecat
+# uses only a narrow slice of PIL -- Image.open, Image.frombytes, Image.Image,
+# and the save/convert/resize/tobytes methods -- none of which is removed or
+# changed incompatibly in 13.0.0, so the override is narrow. Revisit when
+# pipecat-ai relaxes the cap itself.
+override-dependencies = ["pillow>=13.0.0"]
