@@ -57,3 +57,11 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "ruff>=0.8.0",
 ]
+
+[tool.uv]
+# Pillow 13 (the first release outside several open advisories) requires
+# Python >= 3.11, so a lock that also resolves for 3.10 keeps a vulnerable
+# Pillow 12.x fork. Restrict the development lockfile to 3.11+, which is what
+# CI runs; the published package metadata (requires-python >= 3.10) is
+# unchanged.
+environments = ["python_version >= '3.11'"]
