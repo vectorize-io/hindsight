@@ -63,7 +63,9 @@ class CrossLoopSemaphore:
     process-wide, which is the contract the surrounding config already implies:
     running ``--workers N`` has always meant N independent caps, one per process.
 
-    Waiters are served in arrival order, as ``asyncio.Semaphore`` serves them.
+    Waiters are served in arrival order, as ``asyncio.Semaphore`` serves them, except
+    that ``acquire(background=True)`` waiters only get a permit when no foreground
+    waiter is queued. That lets live requests jump ahead of background jobs.
     """
 
     def __init__(self, value: int) -> None:
@@ -71,21 +73,29 @@ class CrossLoopSemaphore:
         self._lock = threading.Lock()
         self._free = value
         self._waiters: collections.deque[_Ticket] = collections.deque()
+        self._background_waiters: collections.deque[_Ticket] = collections.deque()
 
     @property
     def capacity(self) -> int:
         """The configured cap. Public so callers and tests need not read a private."""
         return self._capacity
 
-    async def acquire(self) -> None:
+    def locked(self) -> bool:
+        """True when an acquire would wait, as ``asyncio.Semaphore.locked`` reports it."""
         with self._lock:
-            # Fast path: uncontended acquire never yields. Gated on an empty queue,
+            return not self._free or bool(self._waiters or self._background_waiters)
+
+    async def acquire(self, *, background: bool = False) -> None:
+        """Wait for a permit. ``background`` waiters queue behind every foreground one."""
+        queue = self._background_waiters if background else self._waiters
+        with self._lock:
+            # Fast path: uncontended acquire never yields. Gated on empty queues,
             # so an arriving task cannot take a permit an earlier waiter is owed.
-            if not self._waiters and self._free:
+            if not self._waiters and not self._background_waiters and self._free:
                 self._free -= 1
                 return
             ticket = _Ticket()
-            self._waiters.append(ticket)
+            queue.append(ticket)
 
         delay = _MIN_DELAY
         try:
@@ -100,7 +110,7 @@ class CrossLoopSemaphore:
                 if ticket.granted:
                     self._hand_on()
                 else:
-                    self._waiters.remove(ticket)
+                    queue.remove(ticket)
             raise
 
     def release(self) -> None:
@@ -121,6 +131,10 @@ class CrossLoopSemaphore:
         """
         if self._waiters:
             self._waiters.popleft().granted = True
+        elif self._background_waiters:
+            # ponytail: background can starve under constant foreground load; add an
+            # every-N-handoffs fairness rule if that shows up in practice.
+            self._background_waiters.popleft().granted = True
         else:
             self._free += 1
 

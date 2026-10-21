@@ -16,6 +16,7 @@ import httpx
 import pytest
 from openai import APIConnectionError
 
+from hindsight_api._cross_loop import CrossLoopSemaphore
 from hindsight_api.config import clear_config_cache
 from hindsight_api.engine import llm_wrapper
 from hindsight_api.engine.llm_trace import LLMTraceContext, reset_trace_context, set_trace_context
@@ -64,23 +65,23 @@ class TestSemaphoresForScope:
             assert sems == [llm_wrapper._global_llm_semaphore]
 
     def test_per_op_configured_for_matching_scope(self):
-        retain_sem = asyncio.Semaphore(2)
+        retain_sem = CrossLoopSemaphore(2)
         with patch.object(llm_wrapper, "_per_op_llm_semaphores", {"retain": retain_sem}):
             sems = _semaphores_for_scope("retain_extract_facts")
             # Per-op acquired first so contention queues on the narrower cap.
             assert sems == [retain_sem, llm_wrapper._global_llm_semaphore]
 
     def test_per_op_configured_for_other_scope(self):
-        retain_sem = asyncio.Semaphore(2)
+        retain_sem = CrossLoopSemaphore(2)
         with patch.object(llm_wrapper, "_per_op_llm_semaphores", {"retain": retain_sem}):
             sems = _semaphores_for_scope("reflect")
             # Reflect call does not see retain's per-op semaphore.
             assert sems == [llm_wrapper._global_llm_semaphore]
 
     def test_unbucketed_scope_only_global(self):
-        retain_sem = asyncio.Semaphore(2)
-        reflect_sem = asyncio.Semaphore(2)
-        consolidation_sem = asyncio.Semaphore(2)
+        retain_sem = CrossLoopSemaphore(2)
+        reflect_sem = CrossLoopSemaphore(2)
+        consolidation_sem = CrossLoopSemaphore(2)
         with patch.object(
             llm_wrapper,
             "_per_op_llm_semaphores",
@@ -101,8 +102,8 @@ class TestSemaphoresForScope:
     def test_refresh_operation_uses_refresh_bucket_whatever_the_scope(self, operation, scope):
         """The refresh runs the reflect agent, so its calls carry reflect scopes; the
         operation they run under must still put them under the refresh cap (#5027)."""
-        refresh_sem = asyncio.Semaphore(1)
-        reflect_sem = asyncio.Semaphore(1)
+        refresh_sem = CrossLoopSemaphore(1)
+        reflect_sem = CrossLoopSemaphore(1)
         token = set_trace_context(LLMTraceContext(operation=operation))
         try:
             with patch.object(
@@ -115,8 +116,8 @@ class TestSemaphoresForScope:
             reset_trace_context(token)
 
     def test_interactive_reflect_operation_keeps_reflect_bucket(self):
-        refresh_sem = asyncio.Semaphore(1)
-        reflect_sem = asyncio.Semaphore(1)
+        refresh_sem = CrossLoopSemaphore(1)
+        reflect_sem = CrossLoopSemaphore(1)
         token = set_trace_context(LLMTraceContext(operation="reflect"))
         try:
             with patch.object(
@@ -178,9 +179,9 @@ class TestSemaphoreEnforcement:
 
     @pytest.mark.asyncio
     async def test_per_op_cap_limits_concurrency(self):
-        retain_sem = asyncio.Semaphore(2)
+        retain_sem = CrossLoopSemaphore(2)
         # Global is wide-open so we isolate the per-op cap.
-        global_sem = asyncio.Semaphore(100)
+        global_sem = CrossLoopSemaphore(100)
 
         in_flight = 0
         peak = 0
@@ -202,7 +203,7 @@ class TestSemaphoreEnforcement:
 
     @pytest.mark.asyncio
     async def test_global_cap_still_applies_when_per_op_unset(self):
-        global_sem = asyncio.Semaphore(2)
+        global_sem = CrossLoopSemaphore(2)
 
         in_flight = 0
         peak = 0
@@ -242,7 +243,7 @@ class TestSemaphoreEnforcement:
 
         provider._provider_impl.call = slow_mock_call  # type: ignore[assignment]
 
-        retain_sem = asyncio.Semaphore(2)
+        retain_sem = CrossLoopSemaphore(2)
         with patch.object(llm_wrapper, "_per_op_llm_semaphores", {"retain": retain_sem}):
             await asyncio.gather(
                 *[
@@ -325,7 +326,7 @@ class TestSemaphoreEnforcement:
                 return await provider.call_with_tools(**kwargs)
             return await provider.call(**kwargs)
 
-        with patch.object(llm_wrapper, "_global_llm_semaphore", asyncio.Semaphore(1)):
+        with patch.object(llm_wrapper, "_global_llm_semaphore", CrossLoopSemaphore(1)):
             retrying = asyncio.create_task(invoke("retrying"))
             await asyncio.wait_for(entered_backoff.wait(), timeout=1)
             unrelated = asyncio.create_task(invoke("unrelated"))
@@ -342,7 +343,7 @@ class TestSemaphoreEnforcement:
         backoff, an unrelated call takes the global permit; attempt 2 then
         reacquires it before hitting the upstream."""
         provider = LLMProvider(provider="openai", api_key="test", base_url="", model="test-model")
-        global_sem = asyncio.Semaphore(1)
+        global_sem = CrossLoopSemaphore(1)
         events: list[str] = []
         first_attempt_failed = asyncio.Event()
 
@@ -393,8 +394,8 @@ class TestSemaphoreEnforcement:
     async def test_cancel_while_waiting_for_global_releases_per_op_permit(self):
         """Cancelling an attempt that holds the per-op permit but is still
         queued on the global one must release the per-op permit."""
-        retain_sem = asyncio.Semaphore(1)
-        global_sem = asyncio.Semaphore(1)
+        retain_sem = CrossLoopSemaphore(1)
+        global_sem = CrossLoopSemaphore(1)
         with (
             patch.object(llm_wrapper, "_per_op_llm_semaphores", {"retain": retain_sem}),
             patch.object(llm_wrapper, "_global_llm_semaphore", global_sem),
@@ -426,7 +427,7 @@ class TestSemaphoreEnforcement:
         sleeps between attempts without permits."""
         provider = LLMProvider(provider="openai", api_key="test", base_url="", model="test-model")
         holder = StageHolder()
-        global_sem = asyncio.Semaphore(1)
+        global_sem = CrossLoopSemaphore(1)
         first_attempt_failed = asyncio.Event()
 
         async def create(**kwargs):
@@ -475,9 +476,9 @@ class TestSemaphoreEnforcement:
     async def test_per_op_composes_with_global(self):
         """When both caps are set, the tighter one wins on its operation but
         the global cap still constrains the sum across operations."""
-        retain_sem = asyncio.Semaphore(2)
-        reflect_sem = asyncio.Semaphore(10)
-        global_sem = asyncio.Semaphore(3)
+        retain_sem = CrossLoopSemaphore(2)
+        reflect_sem = CrossLoopSemaphore(10)
+        global_sem = CrossLoopSemaphore(3)
 
         retain_in_flight = 0
         retain_peak = 0
@@ -512,3 +513,31 @@ class TestSemaphoreEnforcement:
 
         assert retain_peak <= 2, f"retain cap exceeded: peak={retain_peak}"
         assert total_peak <= 3, f"global cap exceeded: peak={total_peak}"
+
+
+@pytest.mark.asyncio
+async def test_worker_task_llm_calls_queue_as_background():
+    """Calls made inside a worker task (stage holder bound) yield to live requests."""
+    global_sem = CrossLoopSemaphore(1)
+    served: list[str] = []
+    await global_sem.acquire()
+
+    async def call(tag: str, in_worker: bool):
+        if in_worker:
+            bind_holder(StageHolder())
+        async with AsyncExitStack() as stack:
+            await llm_wrapper._acquire_permits(stack, "memory_think")
+            served.append(tag)
+
+    with (
+        patch.object(llm_wrapper, "_global_llm_semaphore", global_sem),
+        patch.object(llm_wrapper, "_per_op_llm_semaphores", {}),
+    ):
+        worker = asyncio.create_task(call("worker", True))
+        await asyncio.sleep(0.005)
+        live = asyncio.create_task(call("live", False))
+        await asyncio.sleep(0.005)
+        global_sem.release()
+        await asyncio.gather(worker, live)
+
+    assert served == ["live", "worker"]

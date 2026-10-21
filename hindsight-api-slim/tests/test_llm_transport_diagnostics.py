@@ -12,6 +12,7 @@ cover the three pieces that make that distinction visible:
   the request was actually in flight.
 """
 
+from hindsight_api._cross_loop import CrossLoopSemaphore
 from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 import asyncio
 import logging
@@ -328,7 +329,7 @@ async def test_permit_wait_is_reported_separately_from_request_time(monkeypatch)
     """
     from hindsight_api.engine import llm_wrapper
 
-    saturated = asyncio.Semaphore(1)
+    saturated = CrossLoopSemaphore(1)
     monkeypatch.setattr(llm_wrapper, "_global_llm_semaphore", saturated)
     monkeypatch.setattr(llm_wrapper, "_per_op_llm_semaphores", {})
 

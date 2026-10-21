@@ -278,3 +278,29 @@ def test_handoff_reaches_a_waiter_on_another_loop():
     assert not errors, f"cross-loop handoff raised: {errors[:1]}"
     assert waited, "waiter never acquired across the loop boundary"
     assert waited[0] < 0.2, f"waited {waited[0] * 1000:.0f} ms behind {sections} critical sections on another loop"
+
+
+@pytest.mark.asyncio
+async def test_foreground_waiter_jumps_ahead_of_background_waiters():
+    """A live request queued after background jobs still gets the next free permit."""
+    sem = CrossLoopSemaphore(1)
+    served: list[str] = []
+    await sem.acquire()
+
+    async def waiter(tag: str, background: bool):
+        await sem.acquire(background=background)
+        served.append(tag)
+        sem.release()
+
+    tasks = [asyncio.create_task(waiter("bg1", True))]
+    await asyncio.sleep(0.005)
+    tasks.append(asyncio.create_task(waiter("bg2", True)))
+    await asyncio.sleep(0.005)
+    tasks.append(asyncio.create_task(waiter("live", False)))
+    await asyncio.sleep(0.005)
+    assert sem.locked()
+
+    sem.release()
+    await asyncio.gather(*tasks)
+
+    assert served == ["live", "bg1", "bg2"]
