@@ -2,7 +2,8 @@
 
 Claude Opus 5.5 and Sonnet 5.5 answer a named or ``any`` tool_choice with a 400. Reflect forces
 tools on its first steps and its closing ``done`` call, so without a fallback every reflect and
-mental-model refresh failed on those models.
+mental-model refresh failed on those models; with HINDSIGHT_API_LLM_STRICT_SCHEMA on, every
+structured call (retain, consolidation) failed the same way.
 """
 
 from dataclasses import dataclass, field
@@ -11,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 from anthropic import BadRequestError
+from pydantic import BaseModel
 
 from hindsight_api.engine.llm_interface import LLMToolChoice, LLMToolChoiceMode
 from hindsight_api.engine.providers.anthropic_llm import AnthropicLLM
@@ -92,3 +94,47 @@ async def test_other_bad_requests_are_not_masked():
             )
 
     assert [c["type"] for c in sent] == ["tool"]
+
+
+class _Decision(BaseModel):
+    action: str
+
+
+def _text_response(text: str):
+    block = MagicMock()
+    block.type = "text"
+    block.text = text
+    response = MagicMock()
+    response.content = [block]
+    response.usage = MagicMock(input_tokens=5, output_tokens=2, cache_read_input_tokens=0)
+    response.stop_reason = "end_turn"
+    return response
+
+
+async def test_strict_structured_output_falls_back_to_schema_in_prompt():
+    """With HINDSIGHT_API_LLM_STRICT_SCHEMA on, structured calls force a tool too; they fall back."""
+    rejection = _bad_request('tool_choice: type "tool" and "any" are not supported for this model.')
+    fake = _provider([rejection, _text_response('{"action": "keep"}'), _text_response('{"action": "skip"}')])
+    requests: list[dict] = []
+    create = fake.provider._client.messages.create
+
+    async def capture(**kwargs):
+        requests.append(kwargs)
+        return await create(**kwargs)
+
+    fake.provider._client.messages.create = capture
+
+    with patch("hindsight_api.engine.providers.anthropic_llm.get_metrics_collector"):
+        first = await fake.provider.call(
+            [{"role": "user", "content": "decide"}], response_format=_Decision, strict_schema=True, max_retries=0
+        )
+        second = await fake.provider.call(
+            [{"role": "user", "content": "decide"}], response_format=_Decision, strict_schema=True, max_retries=0
+        )
+
+    assert (first.content.action, second.content.action) == ("keep", "skip")
+    assert requests[0]["tool_choice"]["type"] == "tool"
+    # The resend and every later call carry the schema in the prompt and force nothing.
+    for request in requests[1:]:
+        assert "tools" not in request and "tool_choice" not in request
+        assert "valid JSON matching this schema" in str(request["system"])

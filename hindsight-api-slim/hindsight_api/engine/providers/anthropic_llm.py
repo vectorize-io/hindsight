@@ -246,7 +246,8 @@ class AnthropicLLM(LLMInterface):
         self._extra_body = extra_body or {}
 
         # Set once the model rejects a forced tool_choice ("tool"/"any"), so later tool calls
-        # ask with "auto" up front instead of paying a 400 each time (#5738).
+        # ask with "auto" and strict structured output puts the schema in the prompt, up front,
+        # instead of paying a 400 each time (#5738).
         self._forced_tool_choice_rejected = False
 
         # Import and initialize Anthropic client
@@ -362,7 +363,9 @@ class AnthropicLLM(LLMInterface):
         _tool_name = "structured_response"
         if response_format is not None and hasattr(response_format, "model_json_schema"):
             schema = provider_json_schema(response_format)
-            if strict_schema:
+            # A model that rejects a forced tool_choice (#5738) gets the schema in the prompt
+            # instead: the same non-strict path, without constrained decoding.
+            if strict_schema and not self._forced_tool_choice_rejected:
                 use_forced_tool = True
             else:
                 schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2, ensure_ascii=False)}"
@@ -529,6 +532,25 @@ class AnthropicLLM(LLMInterface):
                 if isinstance(e, APIStatusError) and e.status_code in (401, 403):
                     logger.error(f"Anthropic auth error (HTTP {e.status_code}), not retrying: {str(e)}")
                     raise
+                if use_forced_tool and isinstance(e, APIStatusError) and _rejects_forced_tool_choice(e):
+                    logger.warning(
+                        f"{self.provider}/{self.model} rejects a forced tool_choice; structured output "
+                        f"falls back to schema-in-prompt from now on: {describe_llm_error(e)}"
+                    )
+                    self._forced_tool_choice_rejected = True
+                    return await self.call(
+                        messages,
+                        response_format=response_format,
+                        max_completion_tokens=max_completion_tokens,
+                        temperature=temperature,
+                        scope=scope,
+                        max_retries=max_retries,
+                        initial_backoff=initial_backoff,
+                        max_backoff=max_backoff,
+                        skip_validation=skip_validation,
+                        strict_schema=strict_schema,
+                        attempt_context=attempt_context,
+                    )
 
                 # Diagnostic dump (opt-in) of the exact request behind any 4xx.
                 dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_params)
