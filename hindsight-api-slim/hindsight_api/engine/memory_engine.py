@@ -16284,7 +16284,12 @@ class MemoryEngine(MemoryEngineInterface):
                             if used_observation_ids_set and obs_id not in used_observation_ids_set:
                                 continue  # Skip observations not actually used by the agent
                             seen_memory_ids.add(obs_id)
-                            based_on["observation"].append(MemoryFact(**obs_data))
+                            # The tool output went through _prune_nulls, which drops empty strings,
+                            # so an observation with empty text arrives with no "text" key and a
+                            # bare MemoryFact(**obs_data) failed the whole reflect with a 500 (#5840).
+                            based_on["observation"].append(
+                                MemoryFact.model_validate({"text": "", "fact_type": "observation", **obs_data})
+                            )
             # One read for every cited memory, whatever its type.
             evidence_types = ("world", "experience", "opinion", "observation")
             stored_evidence = {

@@ -42,6 +42,17 @@ logger = logging.getLogger(__name__)
 _REFUSAL_STOP_REASONS = ("refusal", "content_filter")
 
 
+def _is_forced_tool_choice(call_params: dict[str, Any]) -> bool:
+    """True when the request forces a tool: a named choice or ``any``."""
+    return (call_params.get("tool_choice") or {}).get("type") in ("tool", "any")
+
+
+def _rejects_forced_tool_choice(error: Exception) -> bool:
+    """True for the 400 a model sends when it does not support a forced tool_choice (#5738)."""
+    message = str(error)
+    return "tool_choice" in message and "not supported" in message
+
+
 def _raise_on_refusal(response: Any) -> None:
     """Fail fast when Anthropic refused the request (HTTP 200, empty body).
 
@@ -233,6 +244,10 @@ class AnthropicLLM(LLMInterface):
 
         # User-configured extra body params (merged into every Messages API call)
         self._extra_body = extra_body or {}
+
+        # Set once the model rejects a forced tool_choice ("tool"/"any"), so later tool calls
+        # ask with "auto" up front instead of paying a 400 each time (#5738).
+        self._forced_tool_choice_rejected = False
 
         # Import and initialize Anthropic client
         try:
@@ -665,6 +680,8 @@ class AnthropicLLM(LLMInterface):
             call_params["tool_choice"] = {"type": "any"}
         elif tool_choice.mode is LLMToolChoiceMode.NONE:
             call_params["tool_choice"] = {"type": "none"}
+        if self._forced_tool_choice_rejected and _is_forced_tool_choice(call_params):
+            call_params["tool_choice"] = {"type": "auto"}
         if system_prompt:
             call_params["system"] = _cached_system_blocks(system_prompt)
 
@@ -682,7 +699,7 @@ class AnthropicLLM(LLMInterface):
                     # on every byte, so an upstream trickling keep-alive whitespace never trips it
                     # and the call pins its worker slot forever (#4763).
                     response = await asyncio.wait_for(
-                        self._request_client().messages.create(**call_params),
+                        self._create_with_tool_choice_fallback(call_params),
                         timeout=self.timeout or _DEFAULT_ANTHROPIC_TIMEOUT,
                     )
                 stash_response_usage(_usage_from_anthropic_response(response))
@@ -774,6 +791,32 @@ class AnthropicLLM(LLMInterface):
         if last_exception:
             raise last_exception
         raise RuntimeError("Anthropic tool call failed")
+
+    async def _create_with_tool_choice_fallback(self, call_params: dict[str, Any]) -> Any:
+        """Send a tool-loop request, retrying once with ``auto`` if the model rejects a forced choice.
+
+        Some models (Claude Opus 5.5 and Sonnet 5.5) answer a named or ``any`` tool_choice with
+        400 "tool_choice: type "tool" and "any" are not supported for this model". Before #4470
+        this path always sent ``auto``, so reflect worked on them; since then every reflect
+        failed (#5738). Detected from the error instead of a model list, so a new model that
+        rejects it works too. Reflect already copes with a model that answers in prose where
+        a tool was forced (the closing ``done`` path), the same as for the providers that drop
+        ``required``.
+        """
+        from anthropic import BadRequestError
+
+        try:
+            return await self._request_client().messages.create(**call_params)
+        except BadRequestError as e:
+            if not _is_forced_tool_choice(call_params) or not _rejects_forced_tool_choice(e):
+                raise
+            logger.warning(
+                f"{self.provider}/{self.model} rejects a forced tool_choice; sending tool calls with "
+                f"tool_choice=auto from now on: {describe_llm_error(e)}"
+            )
+            self._forced_tool_choice_rejected = True
+            call_params["tool_choice"] = {"type": "auto"}
+            return await self._request_client().messages.create(**call_params)
 
     def supports_vision(self) -> bool:
         """Every Claude model this provider can reach accepts image blocks."""
