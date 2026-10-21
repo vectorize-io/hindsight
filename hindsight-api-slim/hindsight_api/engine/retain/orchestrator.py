@@ -1230,10 +1230,10 @@ async def _delta_store_owned_write(
         logger.info("\n" + "\n".join(log_buffer) + "\n")
         return False, []
 
-    # Deterministic chunk ids for the new/changed chunks, after the delta remap, so a fact's
-    # chunk_id matches the chunk that carries it.
-    # `cm.chunk_index` is the position inside the delta; key by the document position, the one the
-    # facts are looked up by below (#5919).
+    # Deterministic chunk ids for the new/changed chunks, keyed by DOCUMENT position so a fact's
+    # chunk_id matches the chunk that carries it. `cm.chunk_index` is the position inside the delta;
+    # keyed by that, any changed chunk but the first wrote its facts with no chunk id, which the
+    # next re-send could not replace (#5919).
     chunk_id_by_index = {
         (idx := delta_chunk_map.get(cm.chunk_index, cm.chunk_index)): build_chunk_id(bank_id, effective_doc_id, idx)
         for cm in (new_chunk_metadata or [])
