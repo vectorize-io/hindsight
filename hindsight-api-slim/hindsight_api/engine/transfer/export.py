@@ -1153,7 +1153,9 @@ async def _load_documents_from_store(
         return _LoadedExport()
 
     selected_ids = [it["id"] for it in doc_items]
-    loaded = await _load_facts_from_store(memories, bank_id, selected_ids, include_lifecycle=include_lifecycle)
+    loaded = await _load_facts_from_store(
+        memories, bank_id, selected_ids, include_lifecycle=include_lifecycle, whole_bank=wanted is None
+    )
     await _attach_entities_from_store(memories, bank_id, loaded)
     _attach_causal_relations_from_store(loaded)
 
@@ -1176,8 +1178,10 @@ async def _load_documents_from_store(
     return _LoadedExport(documents=documents, unit_index=loaded.unit_index)
 
 
-async def _scan_all_memories(memories: Any, bank_id: str, fact_types: list[str] | None) -> list[Any]:
-    """Every memory of the given fact types, walked to exhaustion."""
+async def _scan_all_memories(
+    memories: Any, bank_id: str, fact_types: list[str] | None, document_id: str | None = None
+) -> list[Any]:
+    """Every memory of the given fact types (of one document, when named), walked to exhaustion."""
     out: list[Any] = []
     token = ""
     while True:
@@ -1186,6 +1190,7 @@ async def _scan_all_memories(memories: Any, bank_id: str, fact_types: list[str] 
             fq_table=None,
             bank_id=bank_id,
             fact_types=fact_types,
+            document_id=document_id,
             limit=_STORE_PAGE,
             page_token=token,
             include_edges=True,
@@ -1197,13 +1202,19 @@ async def _scan_all_memories(memories: Any, bank_id: str, fact_types: list[str] 
 
 
 async def _load_facts_from_store(
-    memories: Any, bank_id: str, doc_ids: list[str], include_lifecycle: bool = False
+    memories: Any, bank_id: str, doc_ids: list[str], include_lifecycle: bool = False, whole_bank: bool = True
 ) -> _LoadedFacts:
-    """Non-observation facts grouped by document, ordered the way the SQL loader orders them."""
-    wanted = set(doc_ids)
-    stored = [
-        m for m in await _scan_all_memories(memories, bank_id, list(_EXPORTED_FACT_TYPES)) if m.document_id in wanted
-    ]
+    """Non-observation facts grouped by document, ordered the way the SQL loader orders them.
+
+    ``whole_bank`` is False when the caller picked the documents: those are then read one document
+    at a time, a scan a store can answer from the document alone, rather than by walking every
+    memory of the bank to keep the few that belong to them."""
+    fact_types = list(_EXPORTED_FACT_TYPES)
+    if whole_bank:
+        wanted = set(doc_ids)
+        stored = [m for m in await _scan_all_memories(memories, bank_id, fact_types) if m.document_id in wanted]
+    else:
+        stored = [m for d in doc_ids for m in await _scan_all_memories(memories, bank_id, fact_types, document_id=d)]
     stored.sort(key=lambda m: (m.document_id, m.created_at or datetime.min.replace(tzinfo=UTC), m.unit_id))
 
     loaded = _LoadedFacts()

@@ -3836,10 +3836,13 @@ class MemoriesExtension(Extension, ABC):
         return []
 
     async def count_observations_with_tags(self, *, conn, fq_table, bank_id: str, tags: list[str]) -> int:
-        """Observations whose tags contain every one of ``tags``. Postgres runs one ``COUNT``."""
+        """Observations whose tags contain every one of ``tags``. Postgres runs one ``COUNT``.
+
+        Counted to the end: a count cut off at a page budget reads low, and a scope's observation
+        cap compares against it, so a low count lets the scope grow past its cap."""
         total = 0
         page_token = ""
-        for _ in range(100):
+        while True:
             page = await self.scan_memories(
                 conn=conn,
                 fq_table=fq_table,

@@ -2715,6 +2715,38 @@ async def test_export_of_a_store_owned_bank_contains_its_memories():
     assert doc["facts"][1]["causal_relations"] == [{"relation_type": "caused_by", "target_fact_index": 0}]
 
 
+class _CountsItsScans(_FakeStoreOwned):
+    """Records the ``document_id`` every scan names, and answers a document scan with only that
+    document's memories, as a store does."""
+
+    def __init__(self):
+        super().__init__()
+        self.scanned: list[str | None] = []
+
+    async def scan_memories(self, *, bank_id, fact_types=None, page_token="", document_id=None, **_kw):
+        self.scanned.append(document_id)
+        page = await super().scan_memories(bank_id=bank_id, fact_types=fact_types, page_token=page_token)
+        if document_id is not None:
+            page.memories = [m for m in page.memories if m.document_id == document_id]
+        return page
+
+
+@pytest.mark.asyncio
+async def test_a_document_subset_export_reads_only_those_documents():
+    """Exporting named documents reads each of them, never a walk of every memory in the bank
+    that keeps the few belonging to them — on a large bank that walk is the whole export's cost."""
+    from hindsight_api.engine.transfer.export import export_documents
+
+    store = _CountsItsScans()
+    archive = await export_documents(None, "bank-x", [store._DOC_ID], memories=store)
+
+    assert store.scanned and None not in store.scanned, store.scanned
+    with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+        doc = json.loads(zf.read(next(n for n in zf.namelist() if n.startswith("documents/"))))
+    assert [f["text"] for f in doc["facts"]] == ["the cause", "the effect"]
+    assert doc["facts"][1]["causal_relations"] == [{"relation_type": "caused_by", "target_fact_index": 0}]
+
+
 @pytest.mark.asyncio
 async def test_export_bank_of_a_store_owned_bank_carries_its_memories():
     """The whole-bank archive takes memories from the store and everything else from SQL.
