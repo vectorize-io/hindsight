@@ -462,8 +462,8 @@ def get_reflect_tools(
             markdown that gets persisted.
         llm_output_language: Configured output language. Swaps ``done``'s default
             answer-in-the-question's-language rule for a directive to write in it.
-        answer_ready: Offer ``answer_ready``, the no-argument stop signal, for a
-            reflect whose answer the closing step writes.
+        answer_ready: Offer ``answer_ready``, the stop signal (one ``answer_found``
+            bool), for a reflect whose answer the closing step writes.
 
     Returns:
         List of tool definitions in OpenAI format

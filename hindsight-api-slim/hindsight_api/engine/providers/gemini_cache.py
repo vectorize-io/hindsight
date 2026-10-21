@@ -40,7 +40,10 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from google.genai import types as genai_types
 
 logger = logging.getLogger(__name__)
 
@@ -249,7 +252,7 @@ class GeminiCacheManager:
         system_instruction: str,
         contents: list[Any],
         tools: list[dict[str, Any]] | None = None,
-        tool_config: Any = None,
+        tool_config: genai_types.ToolConfig | None = None,
     ) -> str | None:
         """Create a fresh CachedContent holding ``system + tools + contents`` (and
         the ``tool_config`` its turns run with) and track it under ``session_id``
@@ -322,7 +325,7 @@ class GeminiCacheManager:
         model: str,
         system_instruction: str,
         tools: list[dict[str, Any]] | None = None,
-        tool_config: Any = None,
+        tool_config: genai_types.ToolConfig | None = None,
         contents: list[Any] | None = None,
         ttl_seconds: int | None = None,
     ) -> str | None:

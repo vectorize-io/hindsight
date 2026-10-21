@@ -491,6 +491,17 @@ async def test_preview_never_exposes_credentials(api_client, bank_id, memory):
             assert block["field"] not in credentials
 
 
+def test_the_reflect_preview_asks_for_answer_ready_without_a_decision_model():
+    """The preview shows the prompt the engine sends: agent turns say "enough" with answer_ready (#5832)."""
+    config = HindsightConfig.from_env()
+    assert config.decision_model_config("reflect") is None, "this test needs no reflect decision model set up"
+
+    preview = render_prompt_preview("reflect", config, {"name": "b"})
+
+    system = next(m for m in preview.messages if m.role == "system")
+    assert "answer_ready" in system.text
+
+
 def test_the_response_carries_no_display_copy():
     """Nothing identifying a block may be prose: the UI localises those names, and a
     server-side English label would be untranslatable the moment it shipped."""

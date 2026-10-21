@@ -3839,6 +3839,30 @@ class TestFreeTurnsSignalReady:
         assert replayed == ["recall", "recall"]
 
     @pytest.mark.asyncio
+    async def test_answer_ready_before_a_search_returned_is_told_to_search(self):
+        """A search that errored did not run: answer_ready gets the reply done would, not silence."""
+        llm = MagicMock()
+        llm.call_with_tools = AsyncMock(
+            side_effect=[
+                self._call("recall", "r", query="q"),
+                self._call("answer_ready", "ready", answer_found=False),
+                self._call("recall", "r2", query="q"),
+                self._call("answer_ready", "ready2", answer_found=True),
+                self._call("done", "d", answer="A", memory_ids=["mem-1"]),
+            ]
+        )
+        recall = AsyncMock(side_effect=[{"error": "backend down"}, {"memories": [{"id": "mem-1", "content": "m"}]}])
+
+        result = await self._reflect(llm, self._functions(recall))
+
+        assert result.text == "A"
+        # The conversation is one list the agent grows, so read it whole: the early ready call is
+        # in it, answered with the search-first error, and the closing step answered after that.
+        sent = llm.call_with_tools.await_args_list[-1].kwargs["messages"]
+        ready = next(i for i, m in enumerate(sent) if "answer_ready" in str(m.get("tool_calls")))
+        assert "search for information first" in sent[ready + 1]["content"]
+
+    @pytest.mark.asyncio
     async def test_nothing_found_before_recall_forces_recall(self):
         """A fresh mental model releases the forced recall; "nothing found" still needs it (#4567)."""
         llm = MagicMock()

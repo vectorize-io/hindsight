@@ -718,7 +718,7 @@ async def _run_reflect_agent_inner(
     include_expand = store_document_text
     # The closing step writes the answer unless a decision model takes the free turn's done
     # as-is (see the done handling below). Then a free turn only has to say "enough", and
-    # the cheap way to say it is a call with no arguments, not an answer that is discarded.
+    # the cheap way to say it is answer_ready (one bool), not an answer that is discarded.
     closing_step_answers = evidence_is_sufficient_fn is None or answer_as_document
     tools = get_reflect_tools(
         directive_rules=directive_rules,
@@ -1448,7 +1448,8 @@ async def _run_reflect_agent_inner(
         # background during the previous turn's tool execution. It covers that
         # turn's full input, so THIS call reuses the entire prior conversation at
         # the cached rate and sends only the turns appended since. Forced turns
-        # can't use a cache (Gemini rejects ``cached_content`` + ``tool_config``),
+        # can't use a cache: Gemini rejects ``cached_content`` + ``tool_config``, so each
+        # cache holds the free turns' ``required`` and cannot carry a forced turn's choice;
         # but the cache still advances underneath them, so the first free turn
         # inherits a cache covering all the forced results.
         if incremental_caching and iter_tool_choice is LLM_TOOL_CHOICE_REQUIRED:
@@ -1656,7 +1657,19 @@ async def _run_reflect_agent_inner(
         )
         if ready_call is not None:
             rest = [tc for tc in result.tool_calls if tc is not ready_call]
-            if not rest and searched:
+            if not rest and not searched and iteration < max_iterations - 1:
+                # Before any search returned: told so, as done is, rather than dropped unanswered.
+                (ready_wire_id,) = _unique_tool_call_ids([ready_call], emitted_wire_ids)
+                messages.append({"role": "assistant", "tool_calls": [_tool_call_to_dict(ready_call, ready_wire_id)]})
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": ready_wire_id,
+                        "content": json.dumps({"error": _SEARCH_FIRST_ERROR}, ensure_ascii=False),
+                    }
+                )
+                continue
+            if not rest:
                 # The same gate as done's: "nothing is known" needs recall first (#4567). A
                 # fresh mental model can release the forced recall, so it may not have run.
                 if (
@@ -1697,9 +1710,7 @@ async def _run_reflect_agent_inner(
                         "role": "tool",
                         "tool_call_id": done_wire_id,
                         "content": json.dumps(
-                            {
-                                "error": "You must search for information first. Use search_mental_models(), search_observations(), or recall() before providing your final answer."
-                            },
+                            {"error": _SEARCH_FIRST_ERROR},
                             ensure_ascii=False,
                         ),
                     }
@@ -2461,6 +2472,13 @@ def _decode_json_argument(raw: str, finish_reason: str | None, field: str) -> An
         raise DocumentSectionsInvalidError(
             [f"{field}: not valid JSON ({exc.msg} at char {exc.pos} of {len(raw)}); check the closing brackets"]
         ) from exc
+
+
+#: What done (or answer_ready) is told when it comes before any search has returned.
+_SEARCH_FIRST_ERROR = (
+    "You must search for information first. Use search_mental_models(), search_observations(), or recall() "
+    "before providing your final answer."
+)
 
 
 def _answer_found(args: dict[str, Any]) -> bool:
