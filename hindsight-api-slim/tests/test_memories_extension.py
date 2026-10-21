@@ -1441,6 +1441,40 @@ def _stored(unit_id, text, fact_type, **kw):
     return StoredMemory(unit_id=unit_id, text=text, fact_type=fact_type, created_at=datetime.now(timezone.utc), **kw)
 
 
+class _CapsItsPages(InMemoryMemories):
+    """A store that serves at most 1,000 rows a page, whatever ``limit`` asks for, and records
+    every ``limit`` it was asked — the shape of a store with a page cap."""
+
+    def __init__(self, config=None):
+        super().__init__(config)
+        self.asked: list[int] = []
+
+    async def scan_memories(self, *, conn, fq_table, bank_id, limit=100, page_token="", **kwargs):
+        self.asked.append(limit)
+        return await super().scan_memories(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, limit=min(limit, 1000), page_token=page_token, **kwargs
+        )
+
+
+async def test_whole_set_reads_page_to_the_end_without_an_oversized_page():
+    """A default that needs every matching memory pages to the end: one call with a huge limit
+    stops at the store's page cap, and a store that sizes its admission by the limit reserves
+    memory for rows it will never return."""
+    store = _CapsItsPages()
+    for i in range(2500):
+        uid = str(uuid.UUID(int=i + 1))
+        store.rows[uid] = _stored(uid, f"fact {i}", "world")
+
+    scope = await store.bank_memories_of_type(conn=None, fq_table=None, bank_id="b", fact_type="world")
+    assert sorted(scope.unit_ids) == sorted(store.rows)
+    assert store.asked and max(store.asked) <= 1000
+
+    store.asked.clear()
+    requeued = await store.clear_observations_and_requeue(conn=None, fq_table=None, bank_id="b")
+    assert requeued == 0
+    assert len(store.asked) == 3 and max(store.asked) <= 1000
+
+
 async def test_store_document_bodies_carries_retain_params(restore_default_store):
     """A store that owns the whole retain has NO SQL `documents` row, so anything the write path
     does not put in the store record is lost outright.

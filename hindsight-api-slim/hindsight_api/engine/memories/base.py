@@ -65,6 +65,10 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 logger = logging.getLogger(__name__)
 
+#: The page :meth:`MemoriesExtension._scan_all_memories` asks for — no larger than a store's page
+#: cap, so every page is served whole.
+_SCAN_ALL_PAGE = 1000
+
 
 class StoreWriteUnavailable(RuntimeError):
     """The store cannot accept writes for this bank *right now*, but will shortly.
@@ -1930,6 +1934,21 @@ class MemoriesExtension(Extension, ABC):
         returns rather than what it reads.
         """
 
+    async def _scan_all_memories(self, **filters: Any) -> list[StoredMemory]:
+        """Every memory :meth:`scan_memories` matches for ``filters``, paged to the end.
+
+        Never one oversized page: a store caps what one page holds, so a single call with a huge
+        ``limit`` silently stops at the cap, and a store that sizes its admission by the limit
+        asked for reserves memory for rows it will never return."""
+        found: list[StoredMemory] = []
+        page_token = ""
+        while True:
+            page = await self.scan_memories(**filters, limit=_SCAN_ALL_PAGE, page_token=page_token)
+            found.extend(page.memories)
+            page_token = page.next_page_token
+            if not page_token:
+                return found
+
     @abstractmethod
     async def count_memories(self, *, conn, fq_table, bank_id: str) -> dict[str, int]:
         """Live memory count per fact_type."""
@@ -2927,13 +2946,11 @@ class MemoriesExtension(Extension, ABC):
             # take it off, so the payload is the same shape on either backend.
             "attachment_filenames": document_attachment_filenames(_rec),
         }
-        _page = await self.scan_memories(
-            conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, limit=1_000_000
-        )
-        doc["unit_count"] = len(_page.memories)
-        doc["world_count"] = sum(1 for m in _page.memories if m.fact_type == "world")
-        doc["experience_count"] = sum(1 for m in _page.memories if m.fact_type == "experience")
-        _sids = [m.unit_id for m in _page.memories if m.fact_type in ("experience", "world")]
+        _units = await self._scan_all_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id)
+        doc["unit_count"] = len(_units)
+        doc["world_count"] = sum(1 for m in _units if m.fact_type == "world")
+        doc["experience_count"] = sum(1 for m in _units if m.fact_type == "experience")
+        _sids = [m.unit_id for m in _units if m.fact_type in ("experience", "world")]
         _obs = (
             await self.observations_for_sources(conn=conn, ops=ops, fq_table=fq_table, bank_id=bank_id, unit_ids=_sids)
             if _sids
@@ -2948,20 +2965,13 @@ class MemoriesExtension(Extension, ABC):
 
         Default: a scan of the document's memories and :meth:`document_memory_counts`. Postgres
         reads `memory_units`."""
-        src_page = await self.scan_memories(
-            conn=conn,
-            fq_table=fq_table,
-            bank_id=bank_id,
-            document_id=document_id,
-            fact_types=["experience", "world"],
-            limit=1_000_000,
+        sources = await self._scan_all_memories(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, fact_types=["experience", "world"]
         )
         _doc_counts = await self.document_memory_counts(
             conn=conn, fq_table=fq_table, bank_id=bank_id, document_ids=[document_id]
         )
-        return DocumentSourceUnits(
-            unit_ids=[m.unit_id for m in src_page.memories], units_count=_doc_counts.get(document_id, 0)
-        )
+        return DocumentSourceUnits(unit_ids=[m.unit_id for m in sources], units_count=_doc_counts.get(document_id, 0))
 
     async def delete_document_rows(
         self, *, conn, ops, fq_table, bank_id: str, document_id: str, unit_ids: list[str]
@@ -3078,10 +3088,9 @@ class MemoriesExtension(Extension, ABC):
         :meth:`delete_stale_observations` (which requeues surviving co-sources) and
         :meth:`mark_consolidated`. Postgres runs the same cascade as SQL."""
         invalidated_obs = 0
-        _doc_page = await self.scan_memories(
-            conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, limit=1_000_000
+        _doc_units = await self._scan_all_memories(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
         )
-        _doc_units = _doc_page.memories
         from ..consolidation.consolidator import write_scopes_changed
 
         # Only the memories whose observation scopes actually move (#5593). Decided BEFORE the
@@ -3251,10 +3260,12 @@ class MemoriesExtension(Extension, ABC):
         types, which drive the stale-observation sweep) and their count."""
         unit_ids: list[str] = []
         if fact_type in ("experience", "world"):
-            page = await self.scan_memories(
-                conn=conn, fq_table=fq_table, bank_id=bank_id, fact_types=[fact_type], limit=1_000_000
-            )
-            unit_ids = [m.unit_id for m in page.memories]
+            unit_ids = [
+                m.unit_id
+                for m in await self._scan_all_memories(
+                    conn=conn, fq_table=fq_table, bank_id=bank_id, fact_types=[fact_type]
+                )
+            ]
         counts = await self.count_memories(conn=conn, fq_table=fq_table, bank_id=bank_id)
         return TypedMemoryScope(unit_ids=unit_ids, count=int(counts.get(fact_type, 0)))
 
@@ -3308,10 +3319,12 @@ class MemoriesExtension(Extension, ABC):
         ``consolidated_at`` in three statements on the caller's transaction."""
         count = (await self.count_memories(conn=conn, fq_table=fq_table, bank_id=bank_id)).get("observation", 0)
         await self.delete_observations(conn=conn, fq_table=fq_table, bank_id=bank_id)
-        page = await self.scan_memories(
-            conn=conn, fq_table=fq_table, bank_id=bank_id, fact_types=["experience", "world"], limit=1_000_000
-        )
-        src_ids = [m.unit_id for m in page.memories]
+        src_ids = [
+            m.unit_id
+            for m in await self._scan_all_memories(
+                conn=conn, fq_table=fq_table, bank_id=bank_id, fact_types=["experience", "world"]
+            )
+        ]
         if src_ids:
             await self.mark_consolidated(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=src_ids, when=None)
         return count
@@ -3590,9 +3603,7 @@ class MemoriesExtension(Extension, ABC):
         from ..consolidation.consolidator import write_scopes_changed
         from ..metadata_utils import drop_null_values
 
-        page = await self.scan_memories(
-            conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, limit=1_000_000
-        )
+        units = await self._scan_all_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id)
         # Metadata too, not just tags: a survivor left carrying the PREVIOUS retain's metadata is
         # exactly what this exists to prevent — measured on an append, older units still read
         # {"source": "email"} after a retain carrying {"source": "crm"}.
@@ -3606,7 +3617,7 @@ class MemoriesExtension(Extension, ABC):
         #
         # Set in full on every patched memory, mirroring Postgres's `SET metadata = $4`: a document
         # whose metadata was cleared must clear on its survivors too, which an absent key would not do.
-        new_tags_by_unit = {m.unit_id: final_tags(m.tags) for m in page.memories}
+        new_tags_by_unit = {m.unit_id: final_tags(m.tags) for m in units}
         new_metadata = drop_null_values(metadata or {})
         # Only memories whose labels actually differ: a patch moves `updated_at`, the "this
         # fact was edited" signal consolidation discards an in-flight batch on (#5614), so a
@@ -3620,7 +3631,7 @@ class MemoriesExtension(Extension, ABC):
                     META_OBSERVATION_SCOPES: json.dumps(observation_scopes),
                 },
             )
-            for m in page.memories
+            for m in units
             if m.tags != new_tags_by_unit[m.unit_id]
             or (m.metadata or {}) != new_metadata
             or m.observation_scopes != observation_scopes
@@ -3632,7 +3643,7 @@ class MemoriesExtension(Extension, ABC):
         # BEFORE the patch: a store may hand back live records that the patch then rewrites.
         rescoped = [
             m.unit_id
-            for m in page.memories
+            for m in units
             if m.fact_type in ("experience", "world")
             and write_scopes_changed(m.tags, m.observation_scopes, new_tags_by_unit[m.unit_id], observation_scopes)
         ]
