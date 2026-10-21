@@ -46,6 +46,7 @@ def _backpressure_defer_seconds() -> int:
     return get_config().backpressure_defer_seconds
 
 
+from .background import mark_background_task
 from .stage import StageHolder, bind_holder
 
 # How a lost append race backs off. An append that loses is told "the document moved, read it
@@ -1286,6 +1287,10 @@ class WorkerPoller:
         metrics = get_metrics_collector()
         # None = not a terminal outcome (deferred/retried) → no metric.
         terminal_success: bool | None = None
+
+        # Every task the worker runs is background work, whatever its holder. The LLM
+        # semaphore uses this to serve waiting live requests first.
+        mark_background_task()
 
         # Bind the stage holder in this task's own contextvar scope so engine
         # code running under us can update it via stage.set_stage(). If holder

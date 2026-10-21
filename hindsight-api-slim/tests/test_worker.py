@@ -205,6 +205,23 @@ class TestWorkerOperationMetrics:
         return collector
 
     @pytest.mark.asyncio
+    async def test_task_runs_marked_as_background_even_without_stage_holder(self):
+        """Every task the poller runs is marked background, so its LLM calls yield to
+        live requests. Run with no stage holder: the mark must not depend on one."""
+        from hindsight_api.worker.background import in_background_task
+
+        seen: list[bool] = []
+
+        async def executor(_task_dict):
+            seen.append(in_background_task())
+
+        # Own task, as the poller runs it, so the mark stays in that task's scope.
+        await asyncio.create_task(self._run(executor))
+
+        assert seen == [True]
+        assert not in_background_task(), "the mark must not leak out of the task"
+
+    @pytest.mark.asyncio
     async def test_executor_returning_normally_records_success(self):
         """Success is inferred from the executor returning without raising to the
         poller. This deliberately includes deterministic failures that

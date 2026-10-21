@@ -12,6 +12,7 @@ import asyncio
 
 import pytest
 
+from hindsight_api._cross_loop import CrossLoopSemaphore
 from hindsight_api.engine.llm_wrapper import LLMConfig
 from hindsight_api.worker.stage import StageHolder, bind_holder
 
@@ -24,7 +25,7 @@ def _mock_llm() -> LLMConfig:
 async def test_stage_says_queued_while_waiting_for_a_permit(monkeypatch):
     llm = _mock_llm()
     holder = StageHolder()
-    gate = asyncio.Semaphore(0)  # never free: stands in for a saturated cap
+    gate = CrossLoopSemaphore(0)  # never free: stands in for a saturated cap
 
     monkeypatch.setattr("hindsight_api.engine.llm_wrapper._semaphores_for_scope", lambda scope: [gate])
 

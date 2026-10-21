@@ -25,6 +25,7 @@ from hindsight_api.engine.llm_wrapper import (
     _scope_to_operation,
     _semaphores_for_scope,
 )
+from hindsight_api.worker.background import mark_background_task
 from hindsight_api.worker.stage import StageHolder, bind_holder
 
 
@@ -517,14 +518,14 @@ class TestSemaphoreEnforcement:
 
 @pytest.mark.asyncio
 async def test_worker_task_llm_calls_queue_as_background():
-    """Calls made inside a worker task (stage holder bound) yield to live requests."""
+    """Calls made inside a worker task yield to live requests."""
     global_sem = CrossLoopSemaphore(1)
     served: list[str] = []
     await global_sem.acquire()
 
     async def call(tag: str, in_worker: bool):
         if in_worker:
-            bind_holder(StageHolder())
+            mark_background_task()
         async with AsyncExitStack() as stack:
             await llm_wrapper._acquire_permits(stack, "memory_think")
             served.append(tag)
