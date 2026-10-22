@@ -2746,6 +2746,22 @@ async def _execute_tool_with_timing(
             raise
 
 
+def _expand_memory_ids(args: dict[str, Any]) -> list[str]:
+    """``expand``'s memory_ids as a list, whatever shape the model sent.
+
+    The tool schema asks for a list, but the model's arguments are not validated
+    against it. A bare string is one id; anything else that is not a list (e.g.
+    ``true``) is empty, so ``expand`` answers with a tool error instead of the
+    trace summary's ``len()`` failing the whole reflect (#5953).
+    """
+    memory_ids = args.get("memory_ids")
+    if isinstance(memory_ids, str):
+        return [memory_ids]
+    if not isinstance(memory_ids, list):
+        return []
+    return memory_ids
+
+
 async def _execute_tool(
     tool_name: str,
     args: dict[str, Any],
@@ -2841,7 +2857,7 @@ async def _execute_tool(
         return await recall_fn(query, max_tokens, max_chunk_tokens)
 
     elif tool_name == "expand":
-        memory_ids = args.get("memory_ids", [])
+        memory_ids = _expand_memory_ids(args)
         if not memory_ids:
             return {"error": "expand requires memory_ids"}
         depth = args.get("depth", "chunk")
@@ -2959,7 +2975,7 @@ def _summarize_input(
         )
         return f"(query={query_preview}, max_tokens={max_tokens}, max_chunk_tokens={max_chunk_tokens})"
     elif tool_name == "expand":
-        memory_ids = args.get("memory_ids", [])
+        memory_ids = _expand_memory_ids(args)
         depth = args.get("depth", "chunk")
         return f"(memory_ids=[{len(memory_ids)} ids], depth={depth})"
     elif tool_name == "done":
