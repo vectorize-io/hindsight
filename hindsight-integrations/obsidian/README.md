@@ -58,6 +58,7 @@ Open **Settings → Hindsight**:
 | Include / exclude folders | —                                    | Limit which notes sync                                                                         |
 | Sync on edit              | on                                   | Re-ingest notes automatically as you edit                                                      |
 | Observation consolidation | server default                       | Optional named observation scope for newly ingested content                                    |
+| Date facts by             | creation time                        | Last-edit time dates facts by frontmatter `updated`/`modified`, else the file's modified time  |
 | Default chat depth        | low                                  | Reflect budget for chat answers                                                                |
 | Remember conversations    | **off**                              | When on, chat turns are stored in Hindsight (creates memory outside your vault)                |
 | Prefix document IDs       | on                                   | Vault-prefixes ids so shared-bank vaults don't collide; turn off only for a single-vault setup |
@@ -84,7 +85,7 @@ hindsight-obsidian-sync reconcile \
 hindsight-obsidian-sync reconcile --vault ~/Vaults/Brain --bank my-vault --watch
 ```
 
-`--api-url` / `--api-token` fall back to `HINDSIGHT_API_URL` / `HINDSIGHT_API_TOKEN`. Other flags: `--include <folder>` / `--exclude <folder>` (repeatable), `--vault-name <name>` (defaults to the vault dir name), `--prefix-doc-id` (prefix document ids with the vault name for multi-vault banks), `--observation-scopes <combined|shared|per_tag|all_combinations>`, `--index <file>`, and `--help`.
+`--api-url` / `--api-token` fall back to `HINDSIGHT_API_URL` / `HINDSIGHT_API_TOKEN`. Other flags: `--include <folder>` / `--exclude <folder>` (repeatable), `--vault-name <name>` (defaults to the vault dir name), `--prefix-doc-id` (prefix document ids with the vault name for multi-vault banks), `--observation-scopes <combined|shared|per_tag|all_combinations>`, `--timestamp-from <created|updated>` (date facts by the note's creation time, the default, or its last edit — frontmatter `updated`/`modified`, else file mtime; use `updated` for notes you keep editing), `--index <file>`, and `--help`.
 
 Observation consolidation is optional. When unset, the integration omits `observation_scopes` and preserves the Hindsight server's default. Source tags are still retained for filtering and provenance in every mode. Changing this setting affects new ingestion work; it does not automatically move existing memories or observations into the new scope, so historical scope migration requires deliberate document reingestion.
 

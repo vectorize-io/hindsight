@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { HindsightClient } from "../src/client";
+import { HindsightClient } from "../src/client";
 import { SyncEngine, type SyncConfig, type SyncIndex, type SyncVault } from "../src/sync";
 
 interface FileSpec {
@@ -253,5 +253,99 @@ describe("SyncEngine", () => {
     const docIds = client.retain.mock.calls.map((c) => c[1]);
     expect(docIds).toContain("Vault/Notes/keep.md");
     expect(docIds).not.toContain("Vault/Private/secret.md");
+  });
+
+  it("dates facts by creation time by default", async () => {
+    const created = Date.UTC(2026, 0, 11);
+    const edited = Date.UTC(2026, 9, 1);
+    const files = { "a.md": { content: "body", mtime: edited, ctime: created } };
+    const { engine, client, vault } = makeEngine(files);
+    await engine.ingestFile(vault.getMarkdownFiles()[0]);
+    expect(client.retain.mock.calls[0][3]).toMatchObject({
+      timestamp: new Date(created).toISOString(),
+    });
+  });
+
+  it("timestampFrom=updated dates facts by the last edit (#5712)", async () => {
+    const created = Date.UTC(2026, 0, 11);
+    const edited = Date.UTC(2026, 9, 1);
+    const files = {
+      // frontmatter updated/modified wins over mtime; created is ignored.
+      "fm.md": {
+        content: "---\ncreated: 2026-01-11\nmodified: 2026-10-05\n---\nbody",
+        mtime: edited,
+        ctime: created,
+      },
+      // no frontmatter edit date → file mtime, even with a created date.
+      "plain.md": { content: "---\ncreated: 2026-01-11\n---\nbody", mtime: edited, ctime: created },
+    };
+    const { engine, client } = makeEngine(files, {}, { timestampFrom: "updated" });
+    await engine.reconcile();
+    const byDoc = Object.fromEntries(
+      client.retain.mock.calls.map((c) => [c[1], (c[3] as { timestamp: string }).timestamp])
+    );
+    expect(byDoc["fm.md"]).toBe("2026-10-05");
+    expect(byDoc["plain.md"]).toBe(new Date(edited).toISOString());
+  });
+});
+
+// Real client over a fake transport: the exact repro from #5067.
+describe("SyncEngine cleanup when the server document is already gone (#5067)", () => {
+  const gone = {
+    status: 404,
+    text: JSON.stringify({ detail: "Document not found" }),
+    json: { detail: "Document not found" },
+  };
+
+  function engineWith(files: Record<string, FileSpec>, index: SyncIndex, status = gone) {
+    const transport = vi.fn(async (req: { method: string }) =>
+      req.method === "DELETE" ? status : { status: 200, text: "{}", json: {} }
+    );
+    const persist = vi.fn(async () => {});
+    const client = new HindsightClient("https://h", undefined, transport);
+    const engine = new SyncEngine(
+      client,
+      fakeVault(files),
+      BASE_CONFIG,
+      index,
+      persist,
+      () => "T0"
+    );
+    return { engine, index, persist, transport };
+  }
+
+  const stale = (): SyncIndex => ({ "Notes/old.md": { hash: "h", mtime: 1, syncedAt: "T" } });
+
+  it("reconcile drops and persists the stale entry, then converges", async () => {
+    const { engine, index, persist } = engineWith({}, stale());
+    expect((await engine.reconcile()).deleted).toBe(1);
+    expect(index).toEqual({});
+    expect(persist).toHaveBeenCalled();
+    expect((await engine.reconcile()).deleted).toBe(0);
+  });
+
+  it("handleDelete drops the stale entry", async () => {
+    const { engine, index } = engineWith({}, stale());
+    await engine.handleDelete("Notes/old.md");
+    expect(index).toEqual({});
+  });
+
+  it("handleRename drops the old entry and still ingests the new path", async () => {
+    const files = { "Notes/new.md": { content: "body", mtime: 2, ctime: 0 } };
+    const { engine, index, transport } = engineWith(files, stale());
+    await engine.handleRename(fakeVault(files).getMarkdownFiles()[0], "Notes/old.md");
+    expect(Object.keys(index)).toEqual(["Notes/new.md"]);
+    expect(transport.mock.calls.some(([r]) => r.method === "POST")).toBe(true);
+  });
+
+  it("a missing bank still fails and keeps the entry", async () => {
+    const bankGone = {
+      status: 404,
+      text: JSON.stringify({ detail: "Bank 'bank' not found" }),
+      json: { detail: "Bank 'bank' not found" },
+    };
+    const { engine, index } = engineWith({}, stale(), bankGone);
+    await expect(engine.reconcile()).rejects.toThrow("HTTP 404");
+    expect(Object.keys(index)).toEqual(["Notes/old.md"]);
   });
 });

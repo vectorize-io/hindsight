@@ -292,6 +292,7 @@ export default class HindsightPlugin extends Plugin {
       vaultName: this.app.vault.getName(),
       prefixDocId: this.settings.prefixDocId,
       observationScopes: this.settings.observationScopes,
+      timestampFrom: this.settings.timestampFrom,
     };
   }
 
