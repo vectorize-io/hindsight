@@ -1,6 +1,7 @@
 """Markitdown parser implementation."""
 
 import asyncio
+import codecs
 import importlib.util
 import logging
 import tempfile
@@ -252,12 +253,15 @@ class MarkitdownParser(FileParser):
             # a native/Rust-backed buffer object) that has no ``.decode``; coerce
             # through the buffer protocol before the UTF-8 probe. The ``tmp.write``
             # in the caller already relies only on the same buffer protocol.
-            bytes(file_data).decode("utf-8")
+            data = bytes(file_data)
+            data.decode("utf-8")
         except UnicodeDecodeError:
             return None
         from markitdown import StreamInfo
 
-        return StreamInfo(charset="utf-8")
+        # ``utf-8-sig`` drops a leading byte-order mark (Windows Notepad writes one);
+        # plain ``utf-8`` would keep it as U+FEFF at the start of the text.
+        return StreamInfo(charset="utf-8-sig" if data.startswith(codecs.BOM_UTF8) else "utf-8")
 
     @staticmethod
     def _is_image_file(filename: str) -> bool:
