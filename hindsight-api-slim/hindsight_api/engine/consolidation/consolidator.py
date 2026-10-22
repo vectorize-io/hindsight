@@ -804,9 +804,9 @@ class _UpdateAction(BaseModel):
 
     observation_id: str  # UUID of the existing observation to update
     # LLM's one-sentence justification (diagnostic only). Before ``text`` on purpose, opening with
-    # the rule-10 recency comparison: written after ``text`` it only rationalises the edit, and a
-    # small model let an older fact overwrite a newer observation every time (#5938, eval
-    # ``recency-same-day-amendment-arrives-first``).
+    # the time check (``newer_than_input_facts``, see the prompt's TIME section): written after
+    # ``text`` it only rationalised the edit, and a small model let an older fact overwrite a newer
+    # observation every time (#5938, eval ``recency-same-day-amendment-arrives-first``).
     reason: str = ""
     # The observation's text as it stands, copied before ``text`` is written. Not used by the
     # code: field order is generation order, and a small model that copies the old text first

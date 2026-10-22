@@ -37,8 +37,13 @@ When an existing observation is written in a different language from the new fac
 # Time comes before the rules because every UPDATE depends on it. Facts are handed over in
 # processing order, which is not the order things happened: imports and backfills deliver old
 # conversations late and in parallel. Small models read the "New facts" batch as the latest news
-# and let an older rule overwrite its newer amendment (#5938); rule 10 alone did not stop it, this
-# section plus a `reason` written first (see the UPDATE schema) does.
+# and let an older rule overwrite its newer amendment (#5938). Rule 10 alone did not stop it, nor did
+# this section plus a `reason` written first: flash-lite misread the times, or compared them right
+# and let "was updated" win. The code now makes the comparison (`newer_than_input_facts` in
+# consolidator._build_observations_for_llm, every time in one format) and this section says what
+# a marked observation means. Rule 10 still says "compare their `mentioned_at`" on purpose:
+# rewording it to match this section measured worse on flash-lite (noisy-bank evals 2/6, #5938
+# scenario failing), so the measured wording stays.
 _TIME_RULE = """## TIME
 
 Facts are NOT processed in the order they happened. Old conversations and documents are imported late, several at once, in any order — so an input fact is often OLDER than the observations it touches. When a fact reached you means nothing. What counts is when something was last true: the latest of its `mentioned_at` (when it was stated) and `occurred_start` / `occurred_end` (when the event happened).

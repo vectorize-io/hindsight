@@ -1,4 +1,4 @@
-"""#5938: an UPDATE's ``reason`` is generated first, and it and ``current_text`` are advertised as required.
+"""#5938: what the consolidation prompt and schema give the model to decide recency.
 
 Field order is generation order. Written after ``text``, the reason only rationalised the edit and
 gemini-3.1-flash-lite let an older fact overwrite a newer observation every time; written first,
