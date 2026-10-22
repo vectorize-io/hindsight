@@ -41,13 +41,11 @@ When an existing observation is written in a different language from the new fac
 # section plus a `reason` written first (see the UPDATE schema) does.
 _TIME_RULE = """## TIME
 
-Facts are NOT processed in the order they happened. Old conversations and documents are imported late, several at once, in any order — so an input fact is often OLDER than the observations it touches. When a fact reached you means nothing. Only two times matter:
-- `mentioned_at`: when the fact was stated — the message or document was written.
-- `occurred_start` / `occurred_end`: when the event it describes happened, if known.
+Facts are NOT processed in the order they happened. Old conversations and documents are imported late, several at once, in any order — so an input fact is often OLDER than the observations it touches. When a fact reached you means nothing. What counts is when something was last true: the latest of its `mentioned_at` (when it was stated) and `occurred_start` / `occurred_end` (when the event happened).
 
-The current value of anything is the most recently stated one. Never judge that from processing order or from the fact's own wording ("was updated", "now", "new policy"): an older fact that describes a change describes the EARLIER state. Before any UPDATE, compare the fact's `mentioned_at` with the observation's:
-- the fact is LATER → it may change the observation's current value;
-- the fact is EARLIER → the observation's current value stays. The fact may only add history ("the grace allowance is 25 units; before that, no small overage was waived")."""
+The current value of anything is the most recent one. Never judge that from processing order or from the fact's own wording ("was updated", "now", "new policy"): an older fact that describes a change describes the EARLIER state.
+
+An existing observation marked `"newer_than_input_facts": true` is more recent than every input fact. Its current value stays: an input fact may only add history to it ("the grace allowance is 25 units; before that, no small overage was waived"). Without the mark, compare the times as above."""
 
 _PROCESSING_RULES = """## PROCESSING RULES
 
@@ -190,7 +188,7 @@ Expected output:
 - One create or update may reference multiple facts when they jointly support the observation.
 - **AT MOST ONE UPDATE PER `observation_id`**: if several new facts all update the same existing observation, emit a single `updates` entry that lists all contributing `source_fact_ids` and a single consolidated `text`. Never emit two `updates` entries with the same `observation_id` in one response — they would silently overwrite each other.
 - `deletes`: only when an observation is directly superseded or contradicted by new facts. When you delete an observation because its content now lives in another one (a merge), set `merged_into` to that observation's `id`. Every entry MUST carry `observation_id` — the EXACT `id` UUID string of the observation to remove, copied from existing observations, exactly as an UPDATE does. A delete entry without it names no target and is rejected, and rejecting it discards the whole response — the creates and updates alongside it included. Naming the observation in `reason` prose is NOT enough. If you cannot supply the id, emit no delete.
-- `reason`: REQUIRED on every create/update/delete — one sentence explaining the choice. For a CREATE, state which existing observation(s) you considered and why none matched (a near-identical existing observation means you should UPDATE, not CREATE). This is audited to catch duplicate creates. For an UPDATE, `reason` comes first: name the fact's and the observation's `mentioned_at`, which is later, and so what changes (rule 10).
+- `reason`: REQUIRED on every create/update/delete — one sentence explaining the choice. For a CREATE, state which existing observation(s) you considered and why none matched (a near-identical existing observation means you should UPDATE, not CREATE). This is audited to catch duplicate creates. For an UPDATE, `reason` comes first: say whether the observation is `newer_than_input_facts` (or which of their times is later), and so what changes (see TIME).
 - Do NOT include `tags` — handled automatically.
 - Return `{{"creates": [], "updates": [], "deletes": []}}` if nothing durable is found."""
 

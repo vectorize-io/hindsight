@@ -23,6 +23,7 @@ import math
 import time
 import uuid
 from collections import defaultdict
+from collections.abc import Callable
 from contextlib import AsyncExitStack
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -766,7 +767,7 @@ def _unique_source_ids(v: str | list[str]) -> list[str]:
     return list(dict.fromkeys(v))
 
 
-def _advertise_required(*fields: str) -> Any:
+def _advertise_required(*fields: str) -> Callable[[dict[str, Any]], None]:
     """A ``json_schema_extra`` that lists ``fields`` as required while validation keeps their
     defaults. A grammar-constrained model skips optional fields: flash-lite left most update
     reasons empty and filled ``current_text`` on 1 update in 100 (#5938). A provider that ignores
@@ -1398,6 +1399,31 @@ def _as_dt(v: "datetime | str | None") -> "datetime | None":
     while the store's addressed reads hand back datetimes, so normalise before comparing. A stored
     year-1/9999 placeholder comes back naive and would break the comparison, so it reads as unknown."""
     return finite_utc(datetime.fromisoformat(v) if isinstance(v, str) else v)
+
+
+def _prompt_time(v: "datetime | str | None") -> str | None:
+    """Every time the consolidation prompt shows, in ONE format (``2026-10-21T09:48Z``).
+
+    The model decides recency by comparing a fact's ``mentioned_at`` with an observation's, and the
+    two used to reach it in different shapes: ``2026-10-21 09:48:00.010000+00:00`` for a fact,
+    ``2026-10-21T10:48:00+00:00`` for an observation. gemini-3.1-flash-lite then read 09:48 as LATER
+    than 10:48 on half the calls and let the older rule overwrite its amendment (#5938); one format
+    took that call from 5/10 to 10/10. Minute precision: seconds and the sub-second offsets retain
+    adds to order one document's facts carry nothing the model needs.
+    """
+    dt = _as_dt(v)
+    return dt.strftime("%Y-%m-%dT%H:%MZ") if dt else None
+
+
+def _latest_time(*values: "datetime | str | None") -> "datetime | None":
+    """When something was last true: the latest of its ``mentioned_at`` and ``occurred_*``.
+
+    ``mentioned_at`` alone is not enough: a message sent on 07-10 in a session that started on
+    07-01 keeps the session's 07-01 as ``mentioned_at`` and its own time only in ``occurred_*``
+    (#2550). ``max`` over every time the row carries covers both.
+    """
+    times = [t for t in (_as_dt(v) for v in values) if t is not None]
+    return max(times) if times else None
 
 
 def _merge_min(a: "datetime | str | None", b: "datetime | str | None") -> "datetime | None":
@@ -3507,8 +3533,15 @@ async def _find_related_observations(
 def _build_observations_for_llm(
     observations: "list[MemoryFact]",
     source_facts: "dict[str, MemoryFact]",
+    newest_input_fact: "datetime | None" = None,
 ) -> list[dict[str, Any]]:
-    """Serialize MemoryFact observations into dicts for the consolidation LLM prompt."""
+    """Serialize MemoryFact observations into dicts for the consolidation LLM prompt.
+
+    An observation last true after every input fact gets ``newer_than_input_facts: true``: the batch
+    is then older news for it, and the prompt's TIME section says it keeps its current value. The
+    model is told the comparison instead of making it: gemini-3.1-flash-lite read 09:48 as later than
+    10:48, or let a fact worded "was updated" win over the times it had just compared (#5938).
+    """
     obs_list = []
     for obs in observations:
         # Rows written before #4799 may repeat an id thousands of times; show each source once.
@@ -3518,12 +3551,12 @@ def _build_observations_for_llm(
             "text": obs.text,
             "proof_count": len(unique_ids) or 1,
         }
-        if obs.occurred_start:
-            obs_data["occurred_start"] = obs.occurred_start
-        if obs.occurred_end:
-            obs_data["occurred_end"] = obs.occurred_end
-        if obs.mentioned_at:
-            obs_data["mentioned_at"] = obs.mentioned_at
+        for key in ("occurred_start", "occurred_end", "mentioned_at"):
+            if shown := _prompt_time(getattr(obs, key)):
+                obs_data[key] = shown
+        obs_time = _latest_time(obs.occurred_start, obs.occurred_end, obs.mentioned_at)
+        if newest_input_fact and obs_time and obs_time > newest_input_fact:
+            obs_data["newer_than_input_facts"] = True
         source_memories = []
         for sid in unique_ids:
             sf = source_facts.get(sid)
@@ -3532,12 +3565,9 @@ def _build_observations_for_llm(
             sf_data: dict[str, Any] = {"text": sf.text}
             if sf.context:
                 sf_data["context"] = truncate_context_for_prompt(sf.context)
-            if sf.occurred_start:
-                sf_data["occurred_start"] = sf.occurred_start
-            if sf.occurred_end:
-                sf_data["occurred_end"] = sf.occurred_end
-            if sf.mentioned_at:
-                sf_data["mentioned_at"] = sf.mentioned_at
+            for key in ("occurred_start", "occurred_end", "mentioned_at"):
+                if shown := _prompt_time(getattr(sf, key)):
+                    sf_data[key] = shown
             source_memories.append(sf_data)
         if source_memories:
             obs_data["source_memories"] = source_memories
@@ -3659,7 +3689,10 @@ async def _consolidate_batch_with_llm(
     if config is None:
         raise ValueError("config is required for _consolidate_batch_with_llm")
     if union_observations:
-        obs_list = _build_observations_for_llm(union_observations, union_source_facts)
+        newest_input_fact = _latest_time(
+            *(m.get(key) for m in memories for key in ("occurred_start", "occurred_end", "mentioned_at"))
+        )
+        obs_list = _build_observations_for_llm(union_observations, union_source_facts, newest_input_fact)
         # One observation per line, no indentation: the pool is nearly all of a batch's
         # uncached input, and `indent=2` spent a fifth of it on whitespace.
         observations_text = "[\n" + ",\n".join(json.dumps(o, ensure_ascii=False) for o in obs_list) + "\n]"
@@ -3668,13 +3701,11 @@ async def _consolidate_batch_with_llm(
 
     def _fact_line(m: dict[str, Any]) -> str:
         text = f"[{m['id']}] {m['text']}"
-        temporal_parts = []
-        if m.get("occurred_start"):
-            temporal_parts.append(f"occurred_start={m['occurred_start']}")
-        if m.get("occurred_end"):
-            temporal_parts.append(f"occurred_end={m['occurred_end']}")
-        if m.get("mentioned_at"):
-            temporal_parts.append(f"mentioned_at={m['mentioned_at']}")
+        temporal_parts = [
+            f"{key}={shown}"
+            for key in ("occurred_start", "occurred_end", "mentioned_at")
+            if (shown := _prompt_time(m.get(key)))
+        ]
         if temporal_parts:
             text += f" ({', '.join(temporal_parts)})"
         return text
