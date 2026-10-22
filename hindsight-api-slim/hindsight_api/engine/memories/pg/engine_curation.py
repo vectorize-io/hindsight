@@ -162,6 +162,12 @@ async def purge_bank_rows(*, conn, fq_table: Callable[[str], str], bank_id: str)
 
     # Delete entities (cascades to unit_entities, entity_cooccurrences, memory_links with entity_id)
     await conn.execute(f"DELETE FROM {fq_table('entities')} WHERE bank_id = $1", bank_id)
+
+    # The maintenance queues name units and entities by id with no FK to either, so
+    # nothing cascades: the units and entities they point at are gone, and their rows
+    # would otherwise outlive the bank.
+    await conn.execute(f"DELETE FROM {fq_table('graph_maintenance_queue')} WHERE bank_id = $1", bank_id)
+    await conn.execute(f"DELETE FROM {fq_table('entity_maintenance_queue')} WHERE bank_id = $1", bank_id)
     return legacy_files
 
 
