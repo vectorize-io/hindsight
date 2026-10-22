@@ -167,6 +167,8 @@ elif [ -f "$INTEGRATION_DIR/package.json" ]; then
     # was born with (coding-agents still said 0.0.5 at v0.3.2). `npm version` rewrites exactly
     # those two fields and nothing else; `--package-lock-only` was rejected because it re-resolves
     # dependencies, which would smuggle dependency bumps into a release commit.
+    # It also runs the package's own `version` lifecycle script, which obsidian relies on to bump
+    # manifest.json + versions.json (#5969) — so never add --ignore-scripts here.
     if [ -f "$INTEGRATION_DIR/package-lock.json" ]; then
         print_info "Syncing $INTEGRATION_DIR/package-lock.json"
         (cd "$INTEGRATION_DIR" && npm version "$VERSION" --no-git-tag-version --allow-same-version >/dev/null)
