@@ -1343,3 +1343,25 @@ async def test_page_embedding_outside_a_run_gets_an_operation(trace_api_client, 
     )
     [row] = [r for r in resp.json()["items"] if r["input"] == {"texts": ["Alice Alice likes cats"]}]
     assert row["operation"] == "mental_model_write" and row["trace_id"]
+
+
+@pytest.mark.asyncio
+async def test_deleting_bank_deletes_its_request_history(trace_api_client, memory, bank_id):
+    # #5839: a deleted bank's prompts must not outlive it until the retention sweep.
+    other = f"{bank_id}_other"
+    for b in (bank_id, other):
+        await trace_api_client.put(f"/v1/default/banks/{b}", json={"name": "Trace Bank"})
+        token = set_trace_context(LLMTraceContext(bank_id=b, operation="retain", trace_id=f"t-{b}"))
+        try:
+            memory._llm_recorder.record_llm_call(
+                provider="mock", model="mock", scope="memory", messages=[{"role": "user", "content": "x"}], duration=0.1
+            )
+        finally:
+            llm_trace.reset_trace_context(token)
+    await memory._llm_recorder.flush()
+
+    assert (await trace_api_client.delete(f"/v1/default/banks/{bank_id}")).status_code == 200
+    await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
+
+    assert (await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests")).json()["total"] == 0
+    assert (await trace_api_client.get(f"/v1/default/banks/{other}/llm-requests")).json()["total"] == 1

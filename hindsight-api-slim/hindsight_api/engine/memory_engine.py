@@ -12196,6 +12196,15 @@ class MemoryEngine(MemoryEngineInterface):
                         }
 
                         if delete_bank_profile:
+                            # The bank's request history holds its prompts and model output (memory
+                            # text included) and has no FK to banks, so it goes with the bank rather
+                            # than waiting for the retention sweep (#5839). PG-only table.
+                            from .llm_trace import _llm_requests_persistable  # noqa: PLC0415
+
+                            if _llm_requests_persistable():
+                                await conn.execute(
+                                    f"DELETE FROM {fq_table('llm_requests')} WHERE bank_id = $1", bank_id
+                                )
                             # Delete the bank profile and retrieve internal_id for HNSW index cleanup
                             internal_id = await conn.fetchval(
                                 f"DELETE FROM {fq_table('banks')} WHERE bank_id = $1 RETURNING internal_id", bank_id
