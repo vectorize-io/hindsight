@@ -424,9 +424,104 @@ wins. A mental-model refresh is configured separately and does **not** read
 bank's `knowledge_page_default_trigger`, instead (see
 [Mental Models](./mental-models.md)).
 
+### abstain
+
+Allow an empty answer. For a caller that acts on any text it gets back — a memory
+watcher beside a coding agent, asking at every step whether memory holds something
+the agent must hear — "nothing applies" has to be silence, not a sentence. With
+`abstain: true`, when memory holds nothing that answers the query the response has
+an empty `text` and `abstained: true`, instead of reflect searching on or failing.
+
+With a decision model set up for reflect, the check costs no LLM call on most
+requests: after the first search the decision model is asked the query itself,
+about the request's `context`, over the best memories found ("which of these does
+the answer depend on, or none?"). A likely "none" returns at once; otherwise one
+short LLM call answers from only the memories it picked, and may still answer
+nothing. So word the query as the question to decide ("does my change go against
+a recorded decision?") and put what it is about in `context`. Without a decision
+model, reflect runs as usual and a "nothing found" answer comes back empty.
+`based_on` (with `include.facts`) names the memory an answer came from.
+
+### search_queries
+
+What the first retrieval round searches — each query through every retrieval
+layer, at once — instead of an LLM rewriting the query and context into one
+search. Up to 8. Saves that LLM call when the caller already knows what to look
+up, and lets it search several angles (a request's sentences that name code, its
+paragraphs, a diff described in words). Applies when reflect runs with a decision
+model; otherwise the agent writes its own searches.
+
+### Python
+
+```python
+# Ask a question that may need no answer: an empty text means memory has nothing to say.
+response = client.reflect(
+    bank_id="my-bank",
+    query="Does my change go against a recorded decision about Alice's role? If so, say which, briefly.",
+    context="I am updating the team page to list Alice as a junior engineer.",
+    abstain=True,
+    search_queries=["Alice role", "Alice promotion"],
+)
+if response.abstained:
+    print("nothing to say")
+else:
+    print(response.text)
+```
+
+### Node.js
+
+```javascript
+// Ask a question that may need no answer: an empty text means memory has nothing to say.
+const watchResponse = await client.reflect(
+    'my-bank',
+    "Does my change go against a recorded decision about Alice's role? If so, say which, briefly.",
+    {
+        context: 'I am updating the team page to list Alice as a junior engineer.',
+        abstain: true,
+        searchQueries: ['Alice role', 'Alice promotion'],
+    }
+);
+console.log(watchResponse.abstained ? 'nothing to say' : watchResponse.text);
+```
+
+### CLI
+
+```bash
+# Ask a question that may need no answer: with --abstain an empty text means memory has nothing to say.
+hindsight memory reflect my-bank \
+  "Does my change go against a recorded decision about Alice's role? If so, say which, briefly." \
+  --context "I am updating the team page to list Alice as a junior engineer." \
+  --abstain --search-query "Alice role" --search-query "Alice promotion"
+```
+
+### Go
+
+```go
+// Ask a question that may need no answer: an empty text means memory has nothing to say.
+abstain := true
+abstainContext := "I am updating the team page to list Alice as a junior engineer."
+abstainResponse, _, _ := client.MemoryAPI.Reflect(ctx, "my-bank").
+	ReflectRequest(hindsight.ReflectRequest{
+		Query:         "Does my change go against a recorded decision about Alice's role? If so, say which, briefly.",
+		Context:       *hindsight.NewNullableString(&abstainContext),
+		Abstain:       &abstain,
+		SearchQueries: []string{"Alice role", "Alice promotion"},
+	}).Execute()
+if abstainResponse.GetAbstained() {
+	fmt.Println("nothing to say")
+} else {
+	fmt.Println(abstainResponse.GetText())
+}
+```
+
 ---
 
 ## Response
+
+### abstained
+
+`true` when the request set `abstain` and memory held nothing that answers it;
+`text` is then empty. Always `false` otherwise.
 
 ### text
 

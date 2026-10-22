@@ -1547,6 +1547,22 @@ export type Content =
     >;
 
 /**
+ * ContentPart
+ *
+ * A part of a message's content, as in the OpenAI format. Only text parts are read.
+ */
+export type ContentPart = {
+  /**
+   * Type
+   */
+  type: string;
+  /**
+   * Text
+   */
+  text?: string | null;
+};
+
+/**
  * CreateBankAliasRequest
  *
  * Request model for adding an alias to a bank.
@@ -3302,6 +3318,12 @@ export type LlmCallTrace = {
    * Execution time in milliseconds
    */
   duration_ms: number;
+  /**
+   * Detail
+   *
+   * What the call decided, when it is a decision
+   */
+  detail?: string | null;
 };
 
 /**
@@ -6097,6 +6119,12 @@ export type ReflectLlmCall = {
    * Execution time in milliseconds
    */
   duration_ms: number;
+  /**
+   * Detail
+   *
+   * What the call decided, when it is a decision: for an abstain reflect's decision_pick, the decision model's 'none' score, how many memories it kept, and which path follows
+   */
+  detail?: string | null;
 };
 
 /**
@@ -6216,6 +6244,18 @@ export type ReflectRequest = {
    * Exclude specific mental models by ID from the reflect loop.
    */
   exclude_mental_model_ids?: Array<string> | null;
+  /**
+   * Abstain
+   *
+   * Allow an empty answer. When memory holds nothing that answers the query, the response has an empty `text` and `abstained: true`, instead of reflect searching on or failing. With a decision model, it is asked the query itself about the `context` and the best memories found: when it sees nothing the answer depends on, reflect returns with no LLM call; otherwise the answer reads only the memories it picked. Word the query as the question to decide ("does my change go against a recorded decision?"); `context` is what it is about. For callers that act on any text they get back, such as a live session that should speak only when memory has something to say.
+   */
+  abstain?: boolean;
+  /**
+   * Search Queries
+   *
+   * What to search for in the first retrieval round, each query through every retrieval layer, instead of an LLM rewriting the query (and context) into one search. Applies when reflect runs with a decision model; otherwise the agent writes its own searches.
+   */
+  search_queries?: Array<string> | null;
 };
 
 /**
@@ -6230,6 +6270,12 @@ export type ReflectResponse = {
    * The reflect response as well-formatted markdown (headers, lists, bold/italic, code blocks, etc.)
    */
   text: string;
+  /**
+   * Abstained
+   *
+   * True when the request set `abstain` and memory held nothing that answers it: `text` is empty.
+   */
+  abstained?: boolean;
   /**
    * Evidence used to generate the response. Only present when include.facts is set.
    */
@@ -6532,6 +6578,364 @@ export type RunSettingModel = {
    * Whether this bank may override the field via the bank config API.
    */
   editable?: boolean;
+};
+
+/**
+ * SessionAppendRequest
+ */
+export type SessionAppendRequest = {
+  /**
+   * Messages
+   */
+  messages?: Array<SessionMessage>;
+  /**
+   * A snapshot of the work after these messages, said by no one. Never saved into memory.
+   */
+  state?: SessionState | null;
+  /**
+   * Turn End
+   *
+   * The assistant finished its turn after these messages: the turn is saved into memory (with `retain: turns`). Sent again with nothing new in between, it is the same turn end.
+   */
+  turn_end?: boolean;
+  /**
+   * Ack
+   *
+   * The `seq` of the last note this client delivered. The response carries the notes after it. Omit it to get every note the session has not had acknowledged.
+   */
+  ack?: number | null;
+  session?: SessionOptions | null;
+};
+
+/**
+ * SessionAppendResponse
+ */
+export type SessionAppendResponse = {
+  /**
+   * Notes
+   *
+   * Notes after `ack`, oldest first.
+   */
+  notes: Array<SessionNote>;
+  /**
+   * Checking
+   *
+   * A check is queued or running: another note may still come.
+   */
+  checking: boolean;
+};
+
+/**
+ * SessionEvent
+ */
+export type SessionEvent = {
+  /**
+   * Seq
+   */
+  seq: number;
+  /**
+   * Event Id
+   */
+  event_id: string;
+  /**
+   * Source
+   *
+   * `client`: an event the client sent. `hindsight`: Hindsight's own entry: a `check`, a `note`, or a `save` of the conversation into its document.
+   */
+  source: "client" | "hindsight";
+  /**
+   * Kind
+   */
+  kind: string;
+  /**
+   * Created At
+   */
+  created_at: string;
+  /**
+   * Payload
+   */
+  payload: {
+    [key: string]: unknown;
+  };
+};
+
+/**
+ * SessionEventsResponse
+ */
+export type SessionEventsResponse = {
+  /**
+   * Items
+   *
+   * Oldest first: poll again with `after` set to the last `seq`.
+   */
+  items: Array<SessionEvent>;
+  /**
+   * Checking
+   */
+  checking: boolean;
+};
+
+/**
+ * SessionListResponse
+ */
+export type SessionListResponse = {
+  /**
+   * Items
+   */
+  items: Array<SessionSummary>;
+  /**
+   * Total
+   */
+  total: number;
+  /**
+   * Limit
+   */
+  limit: number;
+  /**
+   * Offset
+   */
+  offset: number;
+};
+
+/**
+ * SessionMessage
+ *
+ * One message of the conversation, in the OpenAI chat format most agents already keep, plus the
+ * client's own `id`. Unknown keys (a name, reasoning, ...) are ignored, so a client can send the
+ * messages it already has as they are.
+ */
+export type SessionMessage = {
+  /**
+   * Id
+   *
+   * The client's id for this message, unique in the session. Sending it again is a no-op: an append that is retried after a lost response stores nothing twice.
+   */
+  id: string;
+  /**
+   * Role
+   */
+  role: "user" | "assistant" | "tool" | "system";
+  /**
+   * Content
+   *
+   * What was said: a string, or a list of parts whose text parts are read.
+   */
+  content?: string | Array<ContentPart> | null;
+  /**
+   * Tool Calls
+   *
+   * The tools an assistant message calls.
+   */
+  tool_calls?: Array<ToolCall> | null;
+  /**
+   * Tool Call Id
+   *
+   * On a `tool` message: the call it answers.
+   */
+  tool_call_id?: string | null;
+  /**
+   * Is Error
+   *
+   * On a `tool` message: the tool failed.
+   */
+  is_error?: boolean;
+};
+
+/**
+ * SessionNote
+ *
+ * A note for the agent. What Hindsight checked and the memories it used are in the session's
+ * event log (the note's `note` entry and its `check`).
+ */
+export type SessionNote = {
+  /**
+   * Seq
+   *
+   * Its position in the log: acknowledge it by sending it back as `ack`.
+   */
+  seq: number;
+  /**
+   * Text
+   */
+  text: string;
+  source?: SessionNoteSource | null;
+};
+
+/**
+ * SessionNoteSource
+ *
+ * Where a note comes from, so the agent can check it before acting on it.
+ */
+export type SessionNoteSource = {
+  /**
+   * Document Id
+   */
+  document_id: string;
+  /**
+   * Quote
+   *
+   * The source's own sentence closest to the note, verbatim.
+   */
+  quote?: string;
+  /**
+   * Mentioned At
+   */
+  mentioned_at?: string | null;
+};
+
+/**
+ * SessionOptions
+ *
+ * How the session is set up. Applied when an append creates the session; later appends that
+ * carry options update the fields they set.
+ */
+export type SessionOptions = {
+  /**
+   * Document Id
+   *
+   * The document the conversation is saved into. Defaults to `session:<session_id>`. Fixed once the session exists.
+   */
+  document_id?: string | null;
+  /**
+   * Live
+   *
+   * Hindsight follows the session live and may send notes back when memory records a decision the work goes against. Off by default: the session is only saved.
+   */
+  live?: boolean | null;
+  /**
+   * Retain
+   *
+   * When the conversation is saved into its document: at the end of each turn and when the session goes idle (`turns`, the default), only when the session goes idle (`idle`: one extraction for the whole session), or never (`off`).
+   */
+  retain?: "turns" | "idle" | "off" | null;
+  /**
+   * Tags
+   *
+   * Tags the saved document gets.
+   */
+  tags?: Array<string> | null;
+  /**
+   * Context
+   *
+   * How extraction should read the saved conversation (who is speaking). A generic user/assistant description by default.
+   */
+  context?: string | null;
+  /**
+   * Strategy
+   *
+   * The retain strategy saves use.
+   */
+  strategy?: string | null;
+  /**
+   * Observation Scopes
+   *
+   * How observations built from the saved conversation are scoped, as on retain. The bank's default when unset.
+   */
+  observation_scopes?:
+    | "per_tag"
+    | "combined"
+    | "all_combinations"
+    | "shared"
+    | Array<Array<string>>
+    | null;
+  /**
+   * Metadata
+   *
+   * Free-form labels, merged across appends and copied onto the saved document. `harness` names the client (e.g. `claude-code`): the UI shows its logo.
+   */
+  metadata?: {
+    [key: string]: string;
+  } | null;
+};
+
+/**
+ * SessionState
+ */
+export type SessionState = {
+  /**
+   * Diff
+   *
+   * For a coding agent: the `git diff` of everything it changed so far. An edit is checked against it.
+   */
+  diff?: string | null;
+};
+
+/**
+ * SessionSummary
+ */
+export type SessionSummary = {
+  /**
+   * Session Id
+   */
+  session_id: string;
+  /**
+   * Document Id
+   */
+  document_id: string;
+  /**
+   * Live
+   */
+  live: boolean;
+  /**
+   * Retain
+   */
+  retain: string;
+  /**
+   * Event Count
+   */
+  event_count: number;
+  /**
+   * Check Count
+   */
+  check_count: number;
+  /**
+   * Note Count
+   */
+  note_count: number;
+  /**
+   * Credit Count
+   *
+   * Notes the agent told the user it used, each counted once: assistant lines carrying `From Hindsight memory (live session #<note seq>)`.
+   */
+  credit_count: number;
+  /**
+   * Dismissed Count
+   *
+   * Notes the agent told the user it did not need, each counted once: assistant lines carrying `Hindsight note (live session #<note seq>)`.
+   */
+  dismissed_count: number;
+  /**
+   * Last Seq
+   */
+  last_seq: number;
+  /**
+   * Saved Seq
+   */
+  saved_seq: number;
+  /**
+   * Acked Seq
+   */
+  acked_seq: number;
+  /**
+   * Checking
+   */
+  checking: boolean;
+  /**
+   * Created At
+   */
+  created_at: string;
+  /**
+   * Last Event At
+   *
+   * When the client last sent an event.
+   */
+  last_event_at?: string | null;
+  /**
+   * Metadata
+   */
+  metadata?: {
+    [key: string]: unknown;
+  };
 };
 
 /**
@@ -6853,6 +7257,43 @@ export type TokenUsage = {
    * Reasoning/thinking tokens generated by the model. Billed at the output rate by some providers (e.g. Gemini 2.5+ family) but not surfaced in the visible response.
    */
   thoughts_tokens?: number;
+};
+
+/**
+ * ToolCall
+ */
+export type ToolCall = {
+  /**
+   * Id
+   *
+   * Matched by the `tool` message that answers it.
+   */
+  id: string;
+  /**
+   * Type
+   */
+  type?: "function";
+  function: ToolCallFunction;
+};
+
+/**
+ * ToolCallFunction
+ */
+export type ToolCallFunction = {
+  /**
+   * Name
+   */
+  name: string;
+  /**
+   * Arguments
+   *
+   * The tool's arguments: a JSON object, or the JSON string OpenAI sends.
+   */
+  arguments:
+    | string
+    | {
+        [key: string]: unknown;
+      };
 };
 
 /**
@@ -9439,6 +9880,230 @@ export type ListDocumentChunksResponses = {
 
 export type ListDocumentChunksResponse =
   ListDocumentChunksResponses[keyof ListDocumentChunksResponses];
+
+export type ListSessionEventsData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Session Id
+     */
+    session_id: string;
+  };
+  query?: {
+    /**
+     * After
+     *
+     * Return entries with a seq above this
+     */
+    after?: number;
+    /**
+     * Limit
+     */
+    limit?: number;
+  };
+  url: "/v1/default/banks/{bank_id}/sessions/{session_id}/events";
+};
+
+export type ListSessionEventsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ListSessionEventsError = ListSessionEventsErrors[keyof ListSessionEventsErrors];
+
+export type ListSessionEventsResponses = {
+  /**
+   * Successful Response
+   */
+  200: SessionEventsResponse;
+};
+
+export type ListSessionEventsResponse =
+  ListSessionEventsResponses[keyof ListSessionEventsResponses];
+
+export type AppendSessionEventsData = {
+  body: SessionAppendRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Session Id
+     */
+    session_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/sessions/{session_id}/events";
+};
+
+export type AppendSessionEventsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type AppendSessionEventsError = AppendSessionEventsErrors[keyof AppendSessionEventsErrors];
+
+export type AppendSessionEventsResponses = {
+  /**
+   * Successful Response
+   */
+  200: SessionAppendResponse;
+};
+
+export type AppendSessionEventsResponse =
+  AppendSessionEventsResponses[keyof AppendSessionEventsResponses];
+
+export type ListSessionsData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Q
+     *
+     * Case-insensitive match on the session id
+     */
+    q?: string | null;
+    /**
+     * Limit
+     */
+    limit?: number;
+    /**
+     * Offset
+     */
+    offset?: number;
+  };
+  url: "/v1/default/banks/{bank_id}/sessions";
+};
+
+export type ListSessionsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ListSessionsError = ListSessionsErrors[keyof ListSessionsErrors];
+
+export type ListSessionsResponses = {
+  /**
+   * Successful Response
+   */
+  200: SessionListResponse;
+};
+
+export type ListSessionsResponse = ListSessionsResponses[keyof ListSessionsResponses];
+
+export type DeleteSessionData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Session Id
+     */
+    session_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/sessions/{session_id}";
+};
+
+export type DeleteSessionErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type DeleteSessionError = DeleteSessionErrors[keyof DeleteSessionErrors];
+
+export type DeleteSessionResponses = {
+  /**
+   * Successful Response
+   */
+  200: DeleteResponse;
+};
+
+export type DeleteSessionResponse = DeleteSessionResponses[keyof DeleteSessionResponses];
+
+export type GetSessionData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Session Id
+     */
+    session_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/sessions/{session_id}";
+};
+
+export type GetSessionErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetSessionError = GetSessionErrors[keyof GetSessionErrors];
+
+export type GetSessionResponses = {
+  /**
+   * Successful Response
+   */
+  200: SessionSummary;
+};
+
+export type GetSessionResponse = GetSessionResponses[keyof GetSessionResponses];
 
 export type GetDocumentHistoryData = {
   body?: never;

@@ -1195,6 +1195,65 @@ def build_final_system_prompt(
 FINAL_SYSTEM_PROMPT = build_final_system_prompt()
 
 
+# The answer of an ``abstain`` reflect, written from what the decision model picked. Not the final
+# synthesis prompt: that one asks the model to "be helpful" with related information, and an
+# abstain caller acts on any text it gets back.
+_ABSTAIN_ANSWER_HEAD = """Answer the question from the memories given, and from nothing else.
+
+- Use only what the memories state. Never invent a value, name or rule.
+- The source text, when given, is what was actually said; the memory lines are shorter summaries of it. Where a summary disagrees with it or leaves a rule out, follow the source, and within the source its latest statement."""
+
+_ABSTAIN_ANSWER_DECIDE = """- Write `check` first: hold each rule and value the memories state against what the context shows (its code, command or plan), then decide.
+- `applies` is false when the memories do not state what the question asks for: they only share its topic, or the true answer is no or nothing (nothing conflicts, no decision applies). Then leave `answer` empty.
+- Otherwise `applies` is true and `answer` answers directly, in the form the question asks for, copying exact values and literals verbatim."""
+
+# A settled pick (see ``build_abstain_answer_prompt``) writes only ``answer``: no check, no verdict to read.
+_ABSTAIN_ANSWER_SETTLED = """- `answer` answers directly, in the form the question asks for, copying exact values and literals verbatim.
+- Then `applies`: false only if the answer you wrote says the memories do not apply (nothing conflicts, no decision applies, the answer is no)."""
+
+_ABSTAIN_ANSWER_TAIL = """- No preamble, no reasoning, no follow-up questions: the reader acts on any text you write.
+- Never write memory, document or REF-ID identifiers ("chat:session-01", "git:ab12"): the reader cannot look them up, and the caller shows the sources itself."""
+
+
+def build_abstain_answer_system_prompt(
+    mission: str | None,
+    llm_output_language: str | None,
+    directives: list[dict[str, Any]] | None,
+    *,
+    settled: bool = False,
+) -> str:
+    """System prompt for an ``abstain`` reflect's answer: the bank's mission and directives, then the rules.
+
+    ``settled``: the answer alone is written (``SettledAbstainAnswer``), so the rules for ``check`` and
+    ``applies`` are left out.
+    """
+    parts = [build_directives_section(directives) if directives else ""]
+    parts.append(escape_for_prompt(mission.strip()) if mission else "")
+    middle = _ABSTAIN_ANSWER_SETTLED if settled else _ABSTAIN_ANSWER_DECIDE
+    parts.append(f"{_ABSTAIN_ANSWER_HEAD}\n{middle}\n{_ABSTAIN_ANSWER_TAIL}")
+    parts.append(default_language_section(_FINAL_LANGUAGE_RULE, llm_output_language))
+    parts.append(build_directives_reminder(directives) if directives else "")
+    parts.append(_current_datetime_section())
+    return "\n\n".join(p.strip() for p in parts if p.strip())
+
+
+def build_abstain_answer_prompt(
+    query: str, context: str | None, memories: list[str], llm_output_language: str | None, *, settled: bool = False
+) -> str:
+    """The question, what it is about, and the memories the decision model picked for it.
+
+    ``settled``: the decision model was sure these memories answer, so the answer is to be written.
+    """
+    context_section = f"\n\n## Context\n{context.strip()}" if context and context.strip() else ""
+    settled_note = "\n\nThese memories were already judged to answer the question: write the answer." if settled else ""
+    return (
+        f"## Question\n{query}{context_section}\n\n## Memories\n"
+        + "\n".join(memories)
+        + settled_note
+        + output_language_directive(llm_output_language)
+    )
+
+
 STRUCTURED_DELTA_SYSTEM_PROMPT = """You are integrating *new information* into an existing structured document.
 
 You will be given:

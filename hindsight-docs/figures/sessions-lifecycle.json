@@ -1,0 +1,640 @@
+{
+  "title": "Session Lifecycle",
+  "speed": 2400,
+  "elements": [
+    {
+      "id": "client",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Coding agent"
+        },
+        {
+          "type": "subtitle",
+          "text": "Claude Code · Codex · Hermes"
+        }
+      ],
+      "width": 270,
+      "minCardHeight": 120
+    },
+    {
+      "id": "ui",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Sessions view"
+        },
+        {
+          "type": "subtitle",
+          "text": "control plane"
+        }
+      ],
+      "width": 270,
+      "minCardHeight": 60
+    },
+    {
+      "id": "g-left",
+      "type": "group",
+      "children": [
+        "ui",
+        "client"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 50,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "append",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Append"
+        },
+        {
+          "type": "subtitle",
+          "text": "POST …/sessions/{id}/events"
+        }
+      ],
+      "width": 220
+    },
+    {
+      "id": "log",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Session log"
+        },
+        {
+          "type": "subtitle",
+          "text": "messages · checks · notes · saves"
+        }
+      ],
+      "width": 260,
+      "minCardHeight": 110
+    },
+    {
+      "id": "check",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Memory check"
+        },
+        {
+          "type": "subtitle",
+          "text": "one reflect, may stay silent"
+        }
+      ],
+      "width": 250,
+      "minCardHeight": 60
+    },
+    {
+      "id": "idle",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Idle timer"
+        },
+        {
+          "type": "subtitle",
+          "text": "waits for 10 min of quiet"
+        }
+      ],
+      "width": 220
+    },
+    {
+      "id": "save",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Save"
+        },
+        {
+          "type": "subtitle",
+          "text": "retain the new turns"
+        }
+      ],
+      "width": 250
+    },
+    {
+      "id": "jobs",
+      "type": "group",
+      "label": {
+        "title": "Background jobs"
+      },
+      "children": [
+        "idle",
+        "check",
+        "save"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 60,
+        "align": "start"
+      }
+    },
+    {
+      "id": "bank",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Memory bank"
+        },
+        {
+          "type": "subtitle",
+          "text": "documents · observations"
+        }
+      ],
+      "width": 250,
+      "minCardHeight": 90
+    },
+    {
+      "id": "server",
+      "type": "group",
+      "label": {
+        "title": "Hindsight"
+      },
+      "children": [
+        "top",
+        "jobs"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 60,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "g0",
+      "type": "group",
+      "children": [
+        "g-left",
+        "server"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 70,
+        "align": "center"
+      }
+    },
+    {
+      "id": "send",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "client"
+      },
+      "end": {
+        "id": "append"
+      },
+      "label": {
+        "text": "messages"
+      }
+    },
+    {
+      "id": "store",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "append"
+      },
+      "end": {
+        "id": "log"
+      }
+    },
+    {
+      "id": "q-check",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "append"
+      },
+      "end": {
+        "id": "check"
+      },
+      "quiet": true
+    },
+    {
+      "id": "q-idle",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "append"
+      },
+      "end": {
+        "id": "idle"
+      },
+      "quiet": true
+    },
+    {
+      "id": "q-save",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "append"
+      },
+      "end": {
+        "id": "save"
+      },
+      "quiet": true
+    },
+    {
+      "id": "idle-save",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "idle"
+      },
+      "end": {
+        "id": "save"
+      },
+      "quiet": true,
+      "around": "below"
+    },
+    {
+      "id": "ask",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "check"
+      },
+      "end": {
+        "id": "bank"
+      },
+      "label": {
+        "text": "reflect"
+      }
+    },
+    {
+      "id": "note",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "check"
+      },
+      "end": {
+        "id": "log"
+      },
+      "quiet": true
+    },
+    {
+      "id": "write",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "save"
+      },
+      "end": {
+        "id": "bank"
+      },
+      "label": {
+        "text": "retain"
+      }
+    },
+    {
+      "id": "follow",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "log"
+      },
+      "end": {
+        "id": "ui"
+      },
+      "quiet": true,
+      "around": "above"
+    },
+    {
+      "id": "top",
+      "type": "group",
+      "children": [
+        "append",
+        "log",
+        "bank"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 70,
+        "align": "center"
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "label": "Append & notes",
+      "beats": [
+        {
+          "edges": {
+            "edge": "send",
+            "data": "user · assistant · tool"
+          },
+          "show": {
+            "client": [
+              {
+                "tag": "user",
+                "tone": "gray",
+                "text": "Fix the rounding in pay/"
+              },
+              {
+                "tag": "tool",
+                "tone": "gray",
+                "text": "Read pay/rounding.py",
+                "mono": true
+              }
+            ]
+          },
+          "say": "The agent sends its new messages (user, assistant, tool calls and results), each with its own id. The first append creates the session.",
+          "ms": 3200
+        },
+        {
+          "edges": "store",
+          "show": {
+            "log": [
+              {
+                "tag": "1",
+                "tone": "gray",
+                "text": "user: Fix the rounding…"
+              },
+              {
+                "tag": "2",
+                "tone": "gray",
+                "text": "tool call: Read",
+                "mono": true
+              },
+              {
+                "tag": "3",
+                "tone": "gray",
+                "text": "tool result",
+                "mono": true
+              }
+            ]
+          },
+          "say": "Hindsight writes them to the session log. A message id it already has is skipped, so a retried append stores nothing twice.",
+          "ms": 3200
+        },
+        {
+          "edges": {
+            "edge": "send",
+            "back": true,
+            "data": "notes: [] · checking"
+          },
+          "say": "The reply comes back right away: the notes the agent has not acknowledged yet, and whether a check is still running. The agent never waits.",
+          "ms": 3200
+        },
+        {
+          "edges": {
+            "edge": "follow",
+            "data": "GET …/events?after=3"
+          },
+          "show": {
+            "ui": [
+              {
+                "tone": "gray",
+                "text": "3 entries, live"
+              }
+            ]
+          },
+          "say": "Anyone can read the log from a position. The control plane's Sessions view polls it to follow the session live.",
+          "ms": 3000
+        }
+      ]
+    },
+    {
+      "label": "Watch check",
+      "beats": [
+        {
+          "edges": {
+            "edge": "send",
+            "data": "Edit pay/rounding.py + git diff"
+          },
+          "show": {
+            "client": [
+              {
+                "tag": "edit",
+                "tone": "gray",
+                "text": "Edit pay/rounding.py",
+                "mono": true
+              },
+              {
+                "tag": "state",
+                "tone": "gray",
+                "text": "git diff"
+              }
+            ]
+          },
+          "say": "With watch on, some moments are worth a look: a new request, a plan, a command that changes things, an edit, a failure.",
+          "ms": 3000
+        },
+        {
+          "edges": [
+            {
+              "edge": "q-check",
+              "data": "session_check"
+            },
+            {
+              "edge": "send",
+              "back": true,
+              "data": "checking: true"
+            }
+          ],
+          "show": {
+            "check": [
+              {
+                "tag": "edit",
+                "tone": "blue",
+                "text": "waits for the session to settle"
+              }
+            ]
+          },
+          "say": "The append queues a check and returns at once. The check waits until the session is quiet (1 s, or 3 s at most), so a plan and the command after it are one check.",
+          "ms": 3600
+        },
+        {
+          "edges": {
+            "edge": "ask",
+            "data": "question + search queries"
+          },
+          "say": "A check is one reflect over observations, with search queries and permission to abstain. A decision model settles most moments with no LLM call.",
+          "ms": 3400
+        },
+        {
+          "edges": {
+            "edge": "ask",
+            "back": true,
+            "data": "“Round half-even, decided in March”"
+          },
+          "show": {
+            "check": [
+              {
+                "tag": "edit",
+                "tone": "blue",
+                "text": "memory disagrees with the edit"
+              }
+            ]
+          },
+          "say": "Memory holds a decision this edit goes against.",
+          "ms": 2600
+        },
+        {
+          "edges": "note",
+          "show": {
+            "log": [
+              {
+                "tag": "7",
+                "tone": "blue",
+                "text": "check: note"
+              },
+              {
+                "tag": "8",
+                "tone": "orange",
+                "text": "note: Round half-even…"
+              }
+            ]
+          },
+          "say": "The answer becomes a note in the log. Most checks end silent, and that is logged too. At most three notes per session, never the same memory twice.",
+          "ms": 3400
+        },
+        {
+          "edges": [
+            {
+              "edge": "send",
+              "data": "next messages"
+            },
+            {
+              "edge": "send",
+              "back": true,
+              "data": "note 8"
+            }
+          ],
+          "show": {
+            "client": [
+              {
+                "tag": "note",
+                "tone": "orange",
+                "text": "Round half-even, decided in March"
+              }
+            ]
+          },
+          "say": "The agent gets the note in the reply to its next append, and hands it over.",
+          "ms": 3000
+        },
+        {
+          "edges": {
+            "edge": "send",
+            "data": "ack: 8"
+          },
+          "say": "Then it sends ack = the note's seq, so the note is not sent again.",
+          "ms": 2400
+        }
+      ]
+    },
+    {
+      "label": "Save",
+      "beats": [
+        {
+          "edges": {
+            "edge": "send",
+            "data": "turn_end: true"
+          },
+          "show": {
+            "client": [
+              {
+                "tag": "turn end",
+                "tone": "gray",
+                "text": "the assistant finished"
+              }
+            ]
+          },
+          "say": "The agent says its turn is over.",
+          "ms": 2400
+        },
+        {
+          "edges": {
+            "edge": "q-save",
+            "data": "session_save"
+          },
+          "light": [
+            "save"
+          ],
+          "say": "With retain: turns (the default), a turn end queues a save.",
+          "ms": 2600
+        },
+        {
+          "edges": {
+            "edge": "write",
+            "data": "the new turns"
+          },
+          "show": {
+            "bank": [
+              {
+                "tag": "doc",
+                "tone": "green",
+                "text": "session:<id>",
+                "mono": true
+              },
+              {
+                "tone": "green",
+                "text": "what was said + one line per tool call"
+              }
+            ]
+          },
+          "say": "The save appends the new turns to the session's document. Tool output and the git diff are left out. Memories are extracted as from any retained document.",
+          "ms": 3800
+        },
+        {
+          "edges": {
+            "edge": "q-idle",
+            "data": "session_idle"
+          },
+          "show": {
+            "idle": [
+              {
+                "tone": "blue",
+                "text": "no news for 10 min"
+              }
+            ]
+          },
+          "say": "An append that leaves turns unsaved also starts an idle timer, one per session. When the session has been quiet for 10 minutes, the timer queues a save.",
+          "ms": 3600
+        },
+        {
+          "edges": "idle-save",
+          "light": [
+            "save"
+          ],
+          "say": "There is no close: a session that finished and one that crashed end the same way. With retain: idle the session is saved only here, in one go; with off, never.",
+          "ms": 4000
+        }
+      ]
+    }
+  ],
+  "legend": {
+    "items": [
+      {
+        "tone": "gray",
+        "text": "Sent by the agent"
+      },
+      {
+        "tone": "blue",
+        "text": "Written by Hindsight"
+      },
+      {
+        "tone": "orange",
+        "text": "A note for the agent"
+      },
+      {
+        "tone": "green",
+        "text": "Saved into memory"
+      }
+    ]
+  }
+}

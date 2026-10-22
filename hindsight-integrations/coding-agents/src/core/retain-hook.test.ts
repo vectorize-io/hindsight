@@ -8,6 +8,9 @@ import type { TransportTurn } from "./chat";
 import { type RawConfig, resolveConfig } from "./config";
 import type { HindsightClient } from "./hindsight";
 import { buildRetain, runRetainHook } from "./retain-hook";
+import { NOTE_LEAD } from "./live";
+import { notesKey } from "./live-entry";
+import { takePendingContext } from "./session-cache";
 import { fingerprintTurns, memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
 import { readCodexTranscript } from "./transcript-codex";
 import { dcodeAssistantText } from "./transcript-dcode";
@@ -30,6 +33,14 @@ let rawConfig: RawConfig = {};
 vi.mock("./config", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./config")>();
   return { ...actual, loadConfig: () => actual.resolveConfig(rawConfig) };
+});
+
+/** The session sync the Stop hook runs on Claude Code and Codex: what the server answers, per
+ *  test (null: no sessions, so the plugin writes back itself). */
+let syncAnswer: () => Promise<unknown> = async () => null;
+vi.mock("./live-entry", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./live-entry")>();
+  return { ...actual, syncHarnessSession: vi.fn(() => syncAnswer()) };
 });
 
 let root: string;
@@ -908,5 +919,109 @@ describe("every session write-back path honors retainSessions", () => {
       return !src.includes("cfg.retainSessions") && !src.includes("writeBackEnabled");
     });
     expect(ungated).toEqual([]);
+  });
+});
+
+describe("runRetainHook with the live session on a session", () => {
+  const event = () => ({
+    session_id: `sess-live-${basename(root)}`,
+    transcript_path: file,
+    cwd: root,
+  });
+  const spec = {
+    harness: "claude-code",
+    hostTimeoutSec: 60,
+    parse: (ev: Record<string, unknown>) => ({
+      sessionId: ev.session_id as string,
+      transcriptPath: ev.transcript_path as string,
+      cwd: ev.cwd as string,
+    }),
+    stopShowsNotes: true,
+  };
+  let written: string[];
+
+  beforeEach(() => {
+    vi.stubEnv("HINDSIGHT_DIAG_FILE", join(root, "diag.log"));
+    rawConfig = { autoInject: "live" };
+    writeFileSync(
+      file,
+      JSON.stringify({ type: "user", message: { role: "user", content: "fix it" } })
+    );
+    stdin = JSON.stringify(event());
+    written = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      written.push(String(chunk));
+      return true;
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    syncAnswer = async () => null;
+  });
+
+  const stubClient = () => {
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const makeClient = vi.fn(() => ({
+      retain,
+      supportsAppendRetain: async () => false,
+    })) as unknown as Parameters<typeof runRetainHook>[1];
+    return { retain, makeClient };
+  };
+
+  it("leaves saving to the session; a late note is shown to the user, never as an error, and waits for the next prompt", async () => {
+    const rendered = `${NOTE_LEAD.replace("Note", "Note #7")} K is 1024. Source: git show abc. Tell the user about it: …`;
+    syncAnswer = async () => ({ notes: [rendered], unsupported: false });
+    const { retain, makeClient } = stubClient();
+    await runRetainHook(spec, makeClient);
+    expect(retain).not.toHaveBeenCalled();
+    // No `decision: "block"`: Claude Code labels that "Stop hook error".
+    expect(written.map((w) => JSON.parse(w))).toEqual([
+      {
+        systemMessage:
+          "🧠 Hindsight has a note for the agent (it reads it with your next message):\n- K is 1024.",
+      },
+    ]);
+    expect(takePendingContext(notesKey("claude-code"), `sess-live-${basename(root)}`)).toBe(
+      rendered
+    );
+  });
+
+  it("never writes back itself when the session sync failed: the session saves the turn later", async () => {
+    syncAnswer = async () => Promise.reject(new Error("down"));
+    const { retain, makeClient } = stubClient();
+    await runRetainHook(spec, makeClient);
+    expect(retain).not.toHaveBeenCalled();
+    expect(written).toEqual([]);
+  });
+
+  it("streams to the session without the live session too: the session saves, no note is handed over", async () => {
+    rawConfig = { autoInject: "reflect" };
+    syncAnswer = async () => ({ notes: ["K is 1024."], unsupported: false });
+    const { retain, makeClient } = stubClient();
+    await runRetainHook(spec, makeClient);
+    expect(retain).not.toHaveBeenCalled();
+    expect(written).toEqual([]);
+  });
+
+  it("opens no session when there is neither a live session nor saving", async () => {
+    rawConfig = { autoInject: "reflect", retainSessions: false };
+    let synced = 0;
+    syncAnswer = async () => {
+      synced++;
+      return null;
+    };
+    const { retain, makeClient } = stubClient();
+    await runRetainHook(spec, makeClient);
+    expect(synced).toBe(0);
+    expect(retain).not.toHaveBeenCalled();
+  });
+
+  it("writes back as before on a server without sessions", async () => {
+    syncAnswer = async () => null;
+    const { retain, makeClient } = stubClient();
+    await runRetainHook(spec, makeClient);
+    expect(retain).toHaveBeenCalledTimes(1);
   });
 });

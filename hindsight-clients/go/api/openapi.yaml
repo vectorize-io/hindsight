@@ -2757,6 +2757,289 @@ paths:
       summary: List document chunks
       tags:
       - Documents
+  /v1/default/banks/{bank_id}/sessions/{session_id}/events:
+    get:
+      description: "The session's log after position `after`, oldest first: the client's\
+        \ messages and Hindsight's checks, notes, handoffs and saves, in one order.\
+        \ Poll with `after` set to the last `seq` you saw to follow the session live."
+      operationId: list_session_events
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: session_id
+        required: true
+        schema:
+          title: Session Id
+          type: string
+        style: simple
+      - description: Return entries with a seq above this
+        explode: true
+        in: query
+        name: after
+        required: false
+        schema:
+          default: 0
+          description: Return entries with a seq above this
+          minimum: 0
+          title: After
+          type: integer
+        style: form
+      - explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 200
+          maximum: 1000
+          minimum: 1
+          title: Limit
+          type: integer
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionEventsResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Read a session's log
+      tags:
+      - Sessions
+    post:
+      description: |-
+        Send the messages of a live session since the last append, and get back Hindsight's notes. The session is created on its first append.
+
+        Safe to retry: each message carries the client's own `id`, and a message already stored is skipped. Messages are stored in the order sent, after the session's earlier ones.
+
+        With `live` on, each moment worth a check (a request, a plan, a command that changes things, an edit, a failure) queues one reflect in the background. The append never waits for it: its note comes back with a later append, or from `GET .../events`. `ack` is the `seq` of the last note this client delivered; the response carries the notes after it.
+      operationId: append_session_events
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: session_id
+        required: true
+        schema:
+          maxLength: 256
+          minLength: 1
+          title: Session Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionAppendRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionAppendResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Append to a live session
+      tags:
+      - Sessions
+  /v1/default/banks/{bank_id}/sessions:
+    get:
+      description: "The bank's sessions, most recently active first."
+      operationId: list_sessions
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - description: Case-insensitive match on the session id
+        explode: true
+        in: query
+        name: q
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 50
+          maximum: 500
+          minimum: 0
+          title: Limit
+          type: integer
+        style: form
+      - explode: true
+        in: query
+        name: offset
+        required: false
+        schema:
+          default: 0
+          minimum: 0
+          title: Offset
+          type: integer
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionListResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: List sessions
+      tags:
+      - Sessions
+  /v1/default/banks/{bank_id}/sessions/{session_id}:
+    delete:
+      description: Delete the session and its log. The document it saved into the
+        bank stays (delete it as a document); memories extracted from it are not touched.
+      operationId: delete_session
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: session_id
+        required: true
+        schema:
+          title: Session Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Delete a session
+      tags:
+      - Sessions
+    get:
+      operationId: get_session
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: session_id
+        required: true
+        schema:
+          title: Session Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionSummary'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get a session
+      tags:
+      - Sessions
   /v1/default/banks/{bank_id}/documents/{document_id}/history:
     get:
       description: |-
@@ -7455,6 +7738,19 @@ components:
       description: The raw content to retain or extract from. Either a plain string
         or an ordered list of content blocks.
       title: Content
+    ContentPart:
+      description: "A part of a message's content, as in the OpenAI format. Only text\
+        \ parts are read."
+      properties:
+        type:
+          title: Type
+          type: string
+        text:
+          nullable: true
+          type: string
+      required:
+      - type
+      title: ContentPart
     CreateBankAliasRequest:
       description: Request model for adding an alias to a bank.
       example:
@@ -9532,6 +9828,9 @@ components:
           description: Execution time in milliseconds
           title: Duration Ms
           type: integer
+        detail:
+          nullable: true
+          type: string
       required:
       - duration_ms
       - scope
@@ -12542,6 +12841,9 @@ components:
           description: Execution time in milliseconds
           title: Duration Ms
           type: integer
+        detail:
+          nullable: true
+          type: string
       required:
       - duration_ms
       - scope
@@ -12665,6 +12967,26 @@ components:
             type: string
           nullable: true
           type: array
+        abstain:
+          default: false
+          description: "Allow an empty answer. When memory holds nothing that answers\
+            \ the query, the response has an empty `text` and `abstained: true`, instead\
+            \ of reflect searching on or failing. With a decision model, it is asked\
+            \ the query itself about the `context` and the best memories found: when\
+            \ it sees nothing the answer depends on, reflect returns with no LLM call;\
+            \ otherwise the answer reads only the memories it picked. Word the query\
+            \ as the question to decide (\"does my change go against a recorded decision?\"\
+            ); `context` is what it is about. For callers that act on any text they\
+            \ get back, such as a live session that should speak only when memory\
+            \ has something to say."
+          title: Abstain
+          type: boolean
+        search_queries:
+          items:
+            type: string
+          maxItems: 8
+          nullable: true
+          type: array
       required:
       - query
       title: ReflectRequest
@@ -12716,6 +13038,12 @@ components:
             \ lists, bold/italic, code blocks, etc.)"
           title: Text
           type: string
+        abstained:
+          default: false
+          description: "True when the request set `abstain` and memory held nothing\
+            \ that answers it: `text` is empty."
+          title: Abstained
+          type: boolean
         based_on:
           $ref: '#/components/schemas/ReflectBasedOn'
         structured_output:
@@ -12991,6 +13319,550 @@ components:
       - field
       - kind
       title: RunSettingModel
+    SessionAppendRequest:
+      example:
+        session:
+          metadata:
+            key: metadata
+          retain: turns
+          context: context
+          observation_scopes: per_tag
+          document_id: document_id
+          strategy: strategy
+          live: true
+          tags:
+          - tags
+          - tags
+        ack: 0
+        messages:
+        - role: user
+          tool_call_id: tool_call_id
+          tool_calls:
+          - function:
+              name: name
+              arguments: Arguments
+            id: id
+            type: function
+          - function:
+              name: name
+              arguments: Arguments
+            id: id
+            type: function
+          is_error: false
+          id: id
+          content: Content_1
+        - role: user
+          tool_call_id: tool_call_id
+          tool_calls:
+          - function:
+              name: name
+              arguments: Arguments
+            id: id
+            type: function
+          - function:
+              name: name
+              arguments: Arguments
+            id: id
+            type: function
+          is_error: false
+          id: id
+          content: Content_1
+        - role: user
+          tool_call_id: tool_call_id
+          tool_calls:
+          - function:
+              name: name
+              arguments: Arguments
+            id: id
+            type: function
+          - function:
+              name: name
+              arguments: Arguments
+            id: id
+            type: function
+          is_error: false
+          id: id
+          content: Content_1
+        - role: user
+          tool_call_id: tool_call_id
+          tool_calls:
+          - function:
+              name: name
+              arguments: Arguments
+            id: id
+            type: function
+          - function:
+              name: name
+              arguments: Arguments
+            id: id
+            type: function
+          is_error: false
+          id: id
+          content: Content_1
+        - role: user
+          tool_call_id: tool_call_id
+          tool_calls:
+          - function:
+              name: name
+              arguments: Arguments
+            id: id
+            type: function
+          - function:
+              name: name
+              arguments: Arguments
+            id: id
+            type: function
+          is_error: false
+          id: id
+          content: Content_1
+        state:
+          diff: diff
+        turn_end: false
+      properties:
+        messages:
+          items:
+            $ref: '#/components/schemas/SessionMessage'
+          maxItems: 500
+          type: array
+        state:
+          $ref: '#/components/schemas/SessionState'
+        turn_end:
+          default: false
+          description: "The assistant finished its turn after these messages: the\
+            \ turn is saved into memory (with `retain: turns`). Sent again with nothing\
+            \ new in between, it is the same turn end."
+          title: Turn End
+          type: boolean
+        ack:
+          minimum: 0.0
+          nullable: true
+          type: integer
+        session:
+          $ref: '#/components/schemas/SessionOptions'
+      title: SessionAppendRequest
+    SessionAppendResponse:
+      example:
+        checking: true
+        notes:
+        - text: text
+          source:
+            quote: ""
+            mentioned_at: 2000-01-23T04:56:07.000+00:00
+            document_id: document_id
+          seq: 0
+        - text: text
+          source:
+            quote: ""
+            mentioned_at: 2000-01-23T04:56:07.000+00:00
+            document_id: document_id
+          seq: 0
+      properties:
+        notes:
+          description: "Notes after `ack`, oldest first."
+          items:
+            $ref: '#/components/schemas/SessionNote'
+          type: array
+        checking:
+          description: "A check is queued or running: another note may still come."
+          title: Checking
+          type: boolean
+      required:
+      - checking
+      - notes
+      title: SessionAppendResponse
+    SessionEvent:
+      example:
+        event_id: event_id
+        payload:
+          key: ""
+        kind: kind
+        created_at: 2000-01-23T04:56:07.000+00:00
+        source: client
+        seq: 0
+      properties:
+        seq:
+          title: Seq
+          type: integer
+        event_id:
+          title: Event Id
+          type: string
+        source:
+          description: "`client`: an event the client sent. `hindsight`: Hindsight's\
+            \ own entry: a `check`, a `note`, or a `save` of the conversation into\
+            \ its document."
+          enum:
+          - client
+          - hindsight
+          title: Source
+          type: string
+        kind:
+          title: Kind
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        payload:
+          additionalProperties: {}
+          title: Payload
+      required:
+      - created_at
+      - event_id
+      - kind
+      - payload
+      - seq
+      - source
+      title: SessionEvent
+    SessionEventsResponse:
+      example:
+        checking: true
+        items:
+        - event_id: event_id
+          payload:
+            key: ""
+          kind: kind
+          created_at: 2000-01-23T04:56:07.000+00:00
+          source: client
+          seq: 0
+        - event_id: event_id
+          payload:
+            key: ""
+          kind: kind
+          created_at: 2000-01-23T04:56:07.000+00:00
+          source: client
+          seq: 0
+      properties:
+        items:
+          description: "Oldest first: poll again with `after` set to the last `seq`."
+          items:
+            $ref: '#/components/schemas/SessionEvent'
+          type: array
+        checking:
+          title: Checking
+          type: boolean
+      required:
+      - checking
+      - items
+      title: SessionEventsResponse
+    SessionListResponse:
+      example:
+        total: 3
+        offset: 4
+        limit: 2
+        items:
+        - check_count: 6
+          checking: true
+          metadata:
+            key: ""
+          event_count: 0
+          dismissed_count: 5
+          retain: retain
+          session_id: session_id
+          created_at: 2000-01-23T04:56:07.000+00:00
+          document_id: document_id
+          acked_seq: 9
+          saved_seq: 7
+          last_event_at: 2000-01-23T04:56:07.000+00:00
+          credit_count: 5
+          live: true
+          note_count: 1
+          last_seq: 2
+        - check_count: 6
+          checking: true
+          metadata:
+            key: ""
+          event_count: 0
+          dismissed_count: 5
+          retain: retain
+          session_id: session_id
+          created_at: 2000-01-23T04:56:07.000+00:00
+          document_id: document_id
+          acked_seq: 9
+          saved_seq: 7
+          last_event_at: 2000-01-23T04:56:07.000+00:00
+          credit_count: 5
+          live: true
+          note_count: 1
+          last_seq: 2
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/SessionSummary'
+          type: array
+        total:
+          title: Total
+          type: integer
+        limit:
+          title: Limit
+          type: integer
+        offset:
+          title: Offset
+          type: integer
+      required:
+      - items
+      - limit
+      - offset
+      - total
+      title: SessionListResponse
+    SessionMessage:
+      description: |-
+        One message of the conversation, in the OpenAI chat format most agents already keep, plus the
+        client's own `id`. Unknown keys (a name, reasoning, ...) are ignored, so a client can send the
+        messages it already has as they are.
+      example:
+        role: user
+        tool_call_id: tool_call_id
+        tool_calls:
+        - function:
+            name: name
+            arguments: Arguments
+          id: id
+          type: function
+        - function:
+            name: name
+            arguments: Arguments
+          id: id
+          type: function
+        is_error: false
+        id: id
+        content: Content_1
+      properties:
+        id:
+          description: "The client's id for this message, unique in the session. Sending\
+            \ it again is a no-op: an append that is retried after a lost response\
+            \ stores nothing twice."
+          maxLength: 256
+          minLength: 1
+          title: Id
+          type: string
+        role:
+          enum:
+          - user
+          - assistant
+          - tool
+          - system
+          title: Role
+          type: string
+        content:
+          $ref: '#/components/schemas/Content_1'
+        tool_calls:
+          items:
+            $ref: '#/components/schemas/ToolCall'
+          nullable: true
+          type: array
+        tool_call_id:
+          maxLength: 256
+          nullable: true
+          type: string
+        is_error:
+          default: false
+          description: "On a `tool` message: the tool failed."
+          title: Is Error
+          type: boolean
+      required:
+      - id
+      - role
+      title: SessionMessage
+    SessionNote:
+      description: |-
+        A note for the agent. What Hindsight checked and the memories it used are in the session's
+        event log (the note's `note` entry and its `check`).
+      example:
+        text: text
+        source:
+          quote: ""
+          mentioned_at: 2000-01-23T04:56:07.000+00:00
+          document_id: document_id
+        seq: 0
+      properties:
+        seq:
+          description: "Its position in the log: acknowledge it by sending it back\
+            \ as `ack`."
+          title: Seq
+          type: integer
+        text:
+          title: Text
+          type: string
+        source:
+          $ref: '#/components/schemas/SessionNoteSource'
+      required:
+      - seq
+      - text
+      title: SessionNote
+    SessionNoteSource:
+      description: "Where a note comes from, so the agent can check it before acting\
+        \ on it."
+      example:
+        quote: ""
+        mentioned_at: 2000-01-23T04:56:07.000+00:00
+        document_id: document_id
+      properties:
+        document_id:
+          title: Document Id
+          type: string
+        quote:
+          default: ""
+          description: "The source's own sentence closest to the note, verbatim."
+          title: Quote
+          type: string
+        mentioned_at:
+          format: date-time
+          nullable: true
+          type: string
+      required:
+      - document_id
+      title: SessionNoteSource
+    SessionOptions:
+      description: |-
+        How the session is set up. Applied when an append creates the session; later appends that
+        carry options update the fields they set.
+      example:
+        metadata:
+          key: metadata
+        retain: turns
+        context: context
+        observation_scopes: per_tag
+        document_id: document_id
+        strategy: strategy
+        live: true
+        tags:
+        - tags
+        - tags
+      properties:
+        document_id:
+          maxLength: 512
+          nullable: true
+          type: string
+        live:
+          nullable: true
+          type: boolean
+        retain:
+          enum:
+          - turns
+          - idle
+          - "off"
+          nullable: true
+          type: string
+        tags:
+          items:
+            type: string
+          nullable: true
+          type: array
+        context:
+          maxLength: 2000
+          nullable: true
+          type: string
+        strategy:
+          maxLength: 256
+          nullable: true
+          type: string
+        observation_scopes:
+          $ref: '#/components/schemas/Observation_Scopes_1'
+        metadata:
+          additionalProperties:
+            type: string
+          nullable: true
+      title: SessionOptions
+    SessionState:
+      example:
+        diff: diff
+      properties:
+        diff:
+          nullable: true
+          type: string
+      title: SessionState
+    SessionSummary:
+      example:
+        check_count: 6
+        checking: true
+        metadata:
+          key: ""
+        event_count: 0
+        dismissed_count: 5
+        retain: retain
+        session_id: session_id
+        created_at: 2000-01-23T04:56:07.000+00:00
+        document_id: document_id
+        acked_seq: 9
+        saved_seq: 7
+        last_event_at: 2000-01-23T04:56:07.000+00:00
+        credit_count: 5
+        live: true
+        note_count: 1
+        last_seq: 2
+      properties:
+        session_id:
+          title: Session Id
+          type: string
+        document_id:
+          title: Document Id
+          type: string
+        live:
+          title: Live
+          type: boolean
+        retain:
+          title: Retain
+          type: string
+        event_count:
+          title: Event Count
+          type: integer
+        check_count:
+          title: Check Count
+          type: integer
+        note_count:
+          title: Note Count
+          type: integer
+        credit_count:
+          description: "Notes the agent told the user it used, each counted once:\
+            \ assistant lines carrying `From Hindsight memory (live session #<note\
+            \ seq>)`."
+          title: Credit Count
+          type: integer
+        dismissed_count:
+          description: "Notes the agent told the user it did not need, each counted\
+            \ once: assistant lines carrying `Hindsight note (live session #<note\
+            \ seq>)`."
+          title: Dismissed Count
+          type: integer
+        last_seq:
+          title: Last Seq
+          type: integer
+        saved_seq:
+          title: Saved Seq
+          type: integer
+        acked_seq:
+          title: Acked Seq
+          type: integer
+        checking:
+          title: Checking
+          type: boolean
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        last_event_at:
+          format: date-time
+          nullable: true
+          type: string
+        metadata:
+          additionalProperties: {}
+          title: Metadata
+      required:
+      - acked_seq
+      - check_count
+      - checking
+      - created_at
+      - credit_count
+      - dismissed_count
+      - document_id
+      - event_count
+      - last_seq
+      - live
+      - note_count
+      - retain
+      - saved_seq
+      - session_id
+      title: SessionSummary
     SetBankAliasPrimaryRequest:
       description: Request model for showing (or no longer showing) an alias in place
         of the bank id.
@@ -13335,6 +14207,47 @@ components:
           title: Thoughts Tokens
           type: integer
       title: TokenUsage
+    ToolCall:
+      example:
+        function:
+          name: name
+          arguments: Arguments
+        id: id
+        type: function
+      properties:
+        id:
+          description: Matched by the `tool` message that answers it.
+          maxLength: 256
+          minLength: 1
+          title: Id
+          type: string
+        type:
+          default: function
+          enum:
+          - function
+          title: Type
+          type: string
+        function:
+          $ref: '#/components/schemas/ToolCallFunction'
+      required:
+      - function
+      - id
+      title: ToolCall
+    ToolCallFunction:
+      example:
+        name: name
+        arguments: Arguments
+      properties:
+        name:
+          maxLength: 256
+          title: Name
+          type: string
+        arguments:
+          $ref: '#/components/schemas/Arguments'
+      required:
+      - arguments
+      - name
+      title: ToolCallFunction
     ToolCallsIncludeOptions:
       description: Options for including tool calls in reflect results.
       properties:
@@ -14012,6 +14925,33 @@ components:
       - $ref: '#/components/schemas/TagGroupAnd-Input'
       - $ref: '#/components/schemas/TagGroupOr-Input'
       - $ref: '#/components/schemas/TagGroupNot-Input'
+    Content_1:
+      anyOf:
+      - type: string
+      - items:
+          $ref: '#/components/schemas/ContentPart'
+        type: array
+      description: "What was said: a string, or a list of parts whose text parts are\
+        \ read."
+      nullable: true
+      title: Content
+    Observation_Scopes_1:
+      anyOf:
+      - enum:
+        - per_tag
+        - combined
+        - all_combinations
+        - shared
+        type: string
+      - items:
+          items:
+            type: string
+          type: array
+        type: array
+      description: "How observations built from the saved conversation are scoped,\
+        \ as on retain. The bank's default when unset."
+      nullable: true
+      title: Observation Scopes
     Not:
       anyOf:
       - $ref: '#/components/schemas/TagGroupLeaf'
@@ -14026,6 +14966,13 @@ components:
       - $ref: '#/components/schemas/TagGroupOr-Output'
       - $ref: '#/components/schemas/TagGroupNot-Output'
       title: Not
+    Arguments:
+      anyOf:
+      - type: string
+      - additionalProperties: {}
+      description: "The tool's arguments: a JSON object, or the JSON string OpenAI\
+        \ sends."
+      title: Arguments
     UpdateDocumentObservationScopes:
       anyOf:
       - enum:

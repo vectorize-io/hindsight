@@ -1,3 +1,4 @@
+import { LIVE_DECLARATION } from "./live";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -98,6 +99,24 @@ describe("buildSessionStartContext", () => {
     expect(out.additionalContext).not.toContain("memory bank");
     expect(out.additionalContext).not.toContain("is learning this repo");
     expect(out.deferInitialReflect).toBe(true);
+  });
+
+  it("a live session gets only the live declaration — no tool guide, no page roster", async () => {
+    const listPages = vi.fn(listPagesOk);
+    const out = await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig({ harness: "claude-code", autoInject: "live" }),
+      client: {
+        listDocumentIds: async () => new Set<string>(["x"]),
+        listPages,
+        hasDocuments: async () => true,
+      },
+      hasGit: () => false,
+      detectLegacyPlugin: () => undefined,
+    });
+    expect(out.additionalContext).toBe(LIVE_DECLARATION);
+    expect(listPages).not.toHaveBeenCalled();
   });
 
   it("threads the ASKING harness to the background seed (not the config loader's default) — #3247", async () => {

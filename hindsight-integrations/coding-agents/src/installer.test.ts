@@ -128,7 +128,12 @@ describe("claude-code installer", () => {
     expect(run(["install", "claude-code"], ctx)).toBe(0);
     const settings = readJson(settingsPath(ctx));
     const hooks = settings.hooks;
-    expect(Object.keys(hooks).sort()).toEqual(["SessionStart", "Stop", "UserPromptSubmit"]);
+    expect(Object.keys(hooks).sort()).toEqual([
+      "PostToolUse",
+      "SessionStart",
+      "Stop",
+      "UserPromptSubmit",
+    ]);
     const inner = (ev: string) => hooks[ev][0].hooks[0];
     expect(inner("SessionStart").command).toContain(join(ctx.dist, "claude-sessionstart-hook.js"));
     expect(inner("UserPromptSubmit").command).toContain(join(ctx.dist, "claude-hook.js"));
@@ -139,6 +144,18 @@ describe("claude-code installer", () => {
     for (const ev of ["SessionStart", "UserPromptSubmit", "Stop"]) {
       expect(inner(ev).type).toBe("command");
     }
+  });
+
+  it("registers the live session as a short PostToolUse hook on every tool", () => {
+    // Not Claude Code's `async`: its context never arrives mid-task. The hook hands over a ready note
+    // and detaches the review. No matcher: a heads-up rides the first read, before any edit.
+    const ctx = makeCtx();
+    expect(run(["install", "claude-code"], ctx)).toBe(0);
+    const [group] = readJson(settingsPath(ctx)).hooks.PostToolUse;
+    expect(group.matcher).toBeUndefined();
+    expect(group.hooks[0]).toMatchObject({ type: "command", timeout: 10 });
+    expect(group.hooks[0].async).toBeUndefined();
+    expect(group.hooks[0].command).toContain(join(ctx.dist, "claude-live-hook.js"));
   });
 
   it("preserves pre-existing foreign hook entries and appends ours", () => {
@@ -1302,11 +1319,17 @@ describe("codebuddy installer MCP file chain", () => {
 describe("codex installer", () => {
   const hooksPath = (ctx: InstallCtx) => join(ctx.home, ".codex", "hooks.json");
   const tomlPath = (ctx: InstallCtx) => join(ctx.home, ".codex", "config.toml");
-  it("install writes the 3 hook events into hooks.json", () => {
+  it("install writes the 3 hook events and the live session's PostToolUse into hooks.json", () => {
     const ctx = makeCtx();
     expect(run(["install", "codex"], ctx)).toBe(0);
     const hooks = readJson(hooksPath(ctx)).hooks;
-    expect(Object.keys(hooks).sort()).toEqual(["SessionStart", "Stop", "UserPromptSubmit"]);
+    expect(Object.keys(hooks).sort()).toEqual([
+      "PostToolUse",
+      "SessionStart",
+      "Stop",
+      "UserPromptSubmit",
+    ]);
+    expect(hooks.PostToolUse[0].hooks[0].command).toContain("codex-live-hook.js");
     expect(hooks.SessionStart[0].hooks[0].command).toContain("codex-sessionstart-hook.js");
     expect(hooks.UserPromptSubmit[0].hooks[0].command).toContain("codex-hook.js");
     expect(hooks.Stop[0].hooks[0].command).toContain("codex-stop-hook.js");

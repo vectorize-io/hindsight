@@ -11,6 +11,9 @@ import type {
   AddBankBackgroundData,
   AddBankBackgroundErrors,
   AddBankBackgroundResponses,
+  AppendSessionEventsData,
+  AppendSessionEventsErrors,
+  AppendSessionEventsResponses,
   AuditLogStatsData,
   AuditLogStatsErrors,
   AuditLogStatsResponses,
@@ -74,6 +77,9 @@ import type {
   DeleteOperationData,
   DeleteOperationErrors,
   DeleteOperationResponses,
+  DeleteSessionData,
+  DeleteSessionErrors,
+  DeleteSessionResponses,
   DeleteWebhookData,
   DeleteWebhookErrors,
   DeleteWebhookResponses,
@@ -170,6 +176,9 @@ import type {
   GetOperationStatusResponses,
   GetReadinessData,
   GetReadinessResponses,
+  GetSessionData,
+  GetSessionErrors,
+  GetSessionResponses,
   GetVersionData,
   GetVersionResponses,
   HealthEndpointHealthGetData,
@@ -219,6 +228,12 @@ import type {
   ListOperationsData,
   ListOperationsErrors,
   ListOperationsResponses,
+  ListSessionEventsData,
+  ListSessionEventsErrors,
+  ListSessionEventsResponses,
+  ListSessionsData,
+  ListSessionsErrors,
+  ListSessionsResponses,
   ListTagsData,
   ListTagsErrors,
   ListTagsResponses,
@@ -1036,6 +1051,80 @@ export const listDocumentChunks = <ThrowOnError extends boolean = false>(
     ListDocumentChunksErrors,
     ThrowOnError
   >({ url: "/v1/default/banks/{bank_id}/documents/{document_id}/chunks", ...options });
+
+/**
+ * Read a session's log
+ *
+ * The session's log after position `after`, oldest first: the client's messages and Hindsight's checks, notes, handoffs and saves, in one order. Poll with `after` set to the last `seq` you saw to follow the session live.
+ */
+export const listSessionEvents = <ThrowOnError extends boolean = false>(
+  options: Options<ListSessionEventsData, ThrowOnError>
+) =>
+  (options.client ?? client).get<ListSessionEventsResponses, ListSessionEventsErrors, ThrowOnError>(
+    { url: "/v1/default/banks/{bank_id}/sessions/{session_id}/events", ...options }
+  );
+
+/**
+ * Append to a live session
+ *
+ * Send the messages of a live session since the last append, and get back Hindsight's notes. The session is created on its first append.
+ *
+ * Safe to retry: each message carries the client's own `id`, and a message already stored is skipped. Messages are stored in the order sent, after the session's earlier ones.
+ *
+ * With `live` on, each moment worth a check (a request, a plan, a command that changes things, an edit, a failure) queues one reflect in the background. The append never waits for it: its note comes back with a later append, or from `GET .../events`. `ack` is the `seq` of the last note this client delivered; the response carries the notes after it.
+ */
+export const appendSessionEvents = <ThrowOnError extends boolean = false>(
+  options: Options<AppendSessionEventsData, ThrowOnError>
+) =>
+  (options.client ?? client).post<
+    AppendSessionEventsResponses,
+    AppendSessionEventsErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/sessions/{session_id}/events",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
+ * List sessions
+ *
+ * The bank's sessions, most recently active first.
+ */
+export const listSessions = <ThrowOnError extends boolean = false>(
+  options: Options<ListSessionsData, ThrowOnError>
+) =>
+  (options.client ?? client).get<ListSessionsResponses, ListSessionsErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/sessions",
+    ...options,
+  });
+
+/**
+ * Delete a session
+ *
+ * Delete the session and its log. The document it saved into the bank stays (delete it as a document); memories extracted from it are not touched.
+ */
+export const deleteSession = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteSessionData, ThrowOnError>
+) =>
+  (options.client ?? client).delete<DeleteSessionResponses, DeleteSessionErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/sessions/{session_id}",
+    ...options,
+  });
+
+/**
+ * Get a session
+ */
+export const getSession = <ThrowOnError extends boolean = false>(
+  options: Options<GetSessionData, ThrowOnError>
+) =>
+  (options.client ?? client).get<GetSessionResponses, GetSessionErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/sessions/{session_id}",
+    ...options,
+  });
 
 /**
  * Get document change history

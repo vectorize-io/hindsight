@@ -34,6 +34,8 @@ export async function POST(request: NextRequest) {
     response_schema,
     reflect_search_observations_max_tokens,
     reflect_search_observations_include_entities,
+    abstain,
+    search_queries,
   } = body;
 
   const requestBody: any = {
@@ -51,6 +53,8 @@ export async function POST(request: NextRequest) {
     reflect_search_observations_max_tokens: reflect_search_observations_max_tokens || undefined,
     reflect_search_observations_include_entities:
       reflect_search_observations_include_entities ?? undefined,
+    abstain: abstain || undefined,
+    search_queries: search_queries || undefined,
   };
 
   // Add include options if specified

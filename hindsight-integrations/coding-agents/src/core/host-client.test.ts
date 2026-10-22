@@ -162,6 +162,7 @@ describe("long-lived hosts build their client through the shared factory", () =>
     "core/hook.ts": "one-shot hook process — re-reads config on every invocation",
     "core/retain-hook.ts": "one-shot hook process, same",
     "core/session-start.ts": "one-shot hook process, same",
+    "core/live-entry.ts": "one-shot hook process, same",
     "status.ts": "one-shot CLI resolving config from --config/--harness, not from a workspace",
     "deepen.ts": "one-shot CLI, same",
   };

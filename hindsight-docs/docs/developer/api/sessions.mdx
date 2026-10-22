@@ -1,0 +1,248 @@
+---
+sidebar_position: 4
+---
+
+# Live sessions
+
+A **live session** is one conversation that your client streams into a bank while it happens: a
+coding agent's run, a support chat, an assistant's day. Hindsight keeps it as a log, saves it into
+memory at the end of each turn, and, with `live` on, follows it and sends notes back when memory
+holds something the agent must hear right now.
+
+It turns retain and reflect into a three-way conversation: the user, your agent, and Hindsight
+following along.
+
+import Figure from '@site/src/components/Figure';
+import sessionsFigure from '@site/figures/sessions-lifecycle.json';
+
+<Figure doc={sessionsFigure} />
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import CodeSnippet from '@site/src/components/CodeSnippet';
+
+{/* Import raw source files */}
+import sessionsPy from '!!raw-loader!@site/examples/api/sessions.py';
+import sessionsMjs from '!!raw-loader!@site/examples/api/sessions.mjs';
+import sessionsSh from '!!raw-loader!@site/examples/api/sessions.sh';
+import sessionsGo from '!!raw-loader!@site/examples/api/sessions.go';
+
+:::tip Prerequisites
+Make sure you've completed the [Quick Start](./quickstart) to install the client and start the server.
+:::
+
+## How it works
+
+Your client does one thing: after something happens, it sends the new messages.
+
+- **Append.** `POST /v1/default/banks/{bank_id}/sessions/{session_id}/events` with the messages since
+  your last append. The first append creates the session. The response comes back in milliseconds
+  and carries any notes waiting for you.
+- **Follow.** With `live` on, each moment worth a look (a new request, a plan, a command that changes
+  things, a file edit, a failure) queues one memory check in the background. Your append never waits
+  for it. A check runs one [reflect](./reflect) with `abstain`: most moments end silently, and a note is
+  written only when memory records a decision the moment does not state or goes against.
+- **Save.** At the end of a turn (and every 300 events of a turn that keeps going), and when the session goes idle, the new turns are appended to the
+  session's document, and memories are extracted from it like from any [retained](./retain) document.
+  There is no "close": a session is idle once it has been quiet for a while (10 minutes by default),
+  so a client that finishes and a client that crashes mid-turn end the same way, with nothing lost.
+- **Read.** `GET .../events?after=N` returns the session's log from position `N`: your messages (one entry per text, tool call and tool result) and
+  Hindsight's own entries (each check, each note, each save) in one order. Poll it to follow a
+  session live; the control plane's **Sessions** view does exactly that.
+
+### Safe to retry, any server
+
+The protocol is plain request and response, so any server instance can take any request, and every
+call is safe to repeat:
+
+- Each message carries **your own id**, unique in the session. An append that is retried after a lost
+  response stores nothing twice.
+- **Notes are delivered until you acknowledge them.** Send `ack` = the `seq` of the last note you
+  handed to your agent; the response carries only the notes after it.
+- Checks and saves are queued jobs. A server that dies in the middle of one leaves it to the next
+  worker, and a save that is retried writes the same turns once.
+
+## Sending messages
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={sessionsPy} section="sessions-append" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={sessionsMjs} section="sessions-append" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={sessionsSh} section="sessions-append" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={sessionsGo} section="sessions-append" language="go" />
+</TabItem>
+</Tabs>
+
+Messages are in the OpenAI chat format most agents already keep, plus your own `id` per message
+(unknown keys are ignored, so you can send the messages you have as they are):
+
+| Message | Fields |
+|---|---|
+| Something said | `role` (`user`, `assistant`, `system`), `content` (a string, or a list of parts whose text parts are read) |
+| The assistant calling tools | `role: assistant`, `tool_calls`: `[{id, type: "function", function: {name, arguments}}]` (`arguments` a JSON string or object) |
+| What a tool returned | `role: tool`, `tool_call_id`, `content`, `is_error` |
+
+Up to 500 messages per append. Two more fields of the append:
+
+- `state`: a snapshot of the work, said by no one: `{"diff": "..."}`, the `git diff` of everything a
+  coding agent changed so far. An edit is checked against the whole change. Never saved into memory.
+- `turn_end: true`: the assistant finished its turn. Sent again with nothing new in between, it is
+  the same turn end.
+
+Hindsight recognizes tools by what their names say, whichever agent named them: an edit (`Edit`,
+`apply_patch`, `write_file`, `patch`), a command (`Bash`, `shell`, `terminal`), or anything else.
+
+### Session options
+
+Sent with an append (`session`), applied when the append creates the session; later appends that
+carry options update what they set.
+
+| Option | Meaning | Default |
+|---|---|---|
+| `live` | Hindsight follows the session and may send notes back; off, the session is only saved | `false` |
+| `retain` | When the conversation is saved: `turns` (each turn end, every 300 events of a turn that keeps going, and when idle), `idle` (only when idle: one extraction for the whole session), or `off` | `turns` |
+| `document_id` | The document it is saved into; fixed once the session exists | `session:<session_id>` |
+| `metadata` | Labels, copied onto the saved document. `harness` names the client (e.g. `claude-code`) and the Control Plane shows its logo | — |
+| `tags`, `context`, `strategy`, `observation_scopes` | Passed to the save's retain, as on [retain](./retain) | the bank's |
+
+## Getting notes back
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={sessionsPy} section="sessions-notes" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={sessionsMjs} section="sessions-notes" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={sessionsSh} section="sessions-notes" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={sessionsGo} section="sessions-notes" language="go" />
+</TabItem>
+</Tabs>
+
+Every append answers with just two fields: `notes` (the notes after your `ack`) and `checking`. A
+note has its `seq` (send it back as `ack` once delivered), its `text`, and its `source`: the document
+it comes from and that document's own sentence closest to the note (`quote`), so your agent can check
+it. What caused a note and the memories it used are in the session's log (its `check` entry).
+`checking` is `true` while a check is queued or running: another note may still come, so a client at
+the end of a turn can poll a little longer.
+
+The rules for notes: Hindsight waits for the session to settle before checking (a plan and the command
+right after it are one check), never says the same memory twice, judges the same situation once,
+and sends at most three notes per session.
+
+Ask your agent to tell the user about every note, in its reply, with one of two lines naming the note
+by its `seq`: a note it used starts with `🧠 **From Hindsight memory (live session #12)**`, and a note
+it did not need with `🧠 **Hindsight note (live session #12)**`. Hindsight reads both in the agent's
+messages as they stream in and counts each note of the session once: the session's `credit_count`
+(notes used) and `dismissed_count` (notes shown but not needed).
+
+## Saving into memory
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={sessionsPy} section="sessions-turn-end" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={sessionsMjs} section="sessions-turn-end" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={sessionsSh} section="sessions-turn-end" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={sessionsGo} section="sessions-turn-end" language="go" />
+</TabItem>
+</Tabs>
+
+What is saved: what the user and the assistant said, and one short line per tool call (the tool and
+its main target, such as `Edit pay/rounding.py`). Tool output and `state` snapshots are not saved.
+Each save appends to the document, so its memories are extracted from the new turns only.
+
+## Following a session
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={sessionsPy} section="sessions-follow" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={sessionsMjs} section="sessions-follow" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={sessionsSh} section="sessions-follow" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={sessionsGo} section="sessions-follow" language="go" />
+</TabItem>
+</Tabs>
+
+Each log entry has a `seq`, a `source` (`client` or `hindsight`), a `kind` and a `payload`.
+Hindsight's entries:
+
+- `check`: one check of a moment: the `trigger`, the `outcome` (`note`, `silent`, `repeat` when the
+  memory was already told, `skipped`, `error`), how long it took, and everything sent to reflect
+  (`question`, `context`, `search_queries`) with its decision path (`llm_calls`) and tokens.
+- `note`: a note sent back, with `check_seq` pointing at its check.
+- `handoff`: the moment a note first went back to the client, in the reply to an append:
+  `note_seq` is the note and `with_seqs` the events that append logged (empty for a poll).
+- `save`: the log range saved into the document.
+
+## Listing and deleting
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={sessionsPy} section="sessions-list" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={sessionsMjs} section="sessions-list" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={sessionsSh} section="sessions-list" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={sessionsGo} section="sessions-list" language="go" />
+</TabItem>
+</Tabs>
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={sessionsPy} section="sessions-delete" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={sessionsMjs} section="sessions-delete" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={sessionsSh} section="sessions-delete" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={sessionsGo} section="sessions-delete" language="go" />
+</TabItem>
+</Tabs>
+
+## Access
+
+Sessions go through the same extension hooks as other bank reads and writes
+(`append_session_events`, `delete_session`; `list_sessions`, `get_session`,
+`list_session_events`). A caller confined to a tag scope is refused (`403`): the checks search the
+whole bank, so the notes could carry memories outside the caller's tags.
+
+## Configuration
+
+| Variable | What it does | Default |
+|---|---|---|
+| `HINDSIGHT_API_SESSION_CHECK_QUIET_MS` | A moment is checked once the session has been quiet this long | `1000` |
+| `HINDSIGHT_API_SESSION_CHECK_MAX_WAIT_MS` | ...or at the latest this long after the moment appeared | `3000` |
+| `HINDSIGHT_API_SESSION_IDLE_MS` | A session quiet this long is idle: its turns not saved yet are saved | `600000` |
+
+The checks use reflect's [decision model](../configuration#decision-model) when one is set: most
+moments are then settled without an LLM call.
+
+The coding-agents plugin streams every Claude Code and Codex session into a live session (see
+[Coding Agents](/sdks/integrations/coding-agents)).

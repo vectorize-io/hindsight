@@ -22,6 +22,7 @@ import { MentalModelsView } from "@/components/mental-models-view";
 import { WebhooksView } from "@/components/webhooks-view";
 import { AuditLogsView } from "@/components/audit-logs-view";
 import { LLMRequestsView } from "@/components/llm-requests-view";
+import { SessionsView } from "@/components/sessions-view";
 import { FeatureNotEnabled } from "@/components/feature-not-enabled";
 import { useFeatures } from "@/lib/features-context";
 import { useBank } from "@/lib/bank-context";
@@ -76,6 +77,7 @@ type NavItem =
   | "reflect"
   | "data"
   | "documents"
+  | "sessions"
   | "entities"
   | "knowledge"
   | "profile";
@@ -121,6 +123,8 @@ export default function BankPage() {
   const subTabReady = urlSubTab !== null || lastSubTab !== undefined;
   const knowledgeTab = (searchParams.get("knowledgeTab") || "pages") as KnowledgeTab;
   const bankConfigTab = (searchParams.get("bankConfigTab") || "general") as BankConfigTab;
+  // The session open in the Sessions tab, in the URL so a link to it can be shared.
+  const sessionParam = searchParams.get("session");
   const bankConfigEnabled = features?.bank_config_api ?? false;
   const llmTraceEnabled = features?.llm_trace ?? false;
   const llmHealthEnabled = features?.bank_llm_health ?? false;
@@ -192,6 +196,16 @@ export default function BankPage() {
   const handleTabChange = (tab: NavItem) => {
     if (!bankId) return;
     router.push(bankRoute(bankId, `?view=${tab}`));
+  };
+
+  const handleOpenSession = (sessionId: string | null) => {
+    if (!bankId) return;
+    router.push(
+      bankRoute(
+        bankId,
+        sessionId ? `?view=sessions&session=${encodeURIComponent(sessionId)}` : "?view=sessions"
+      )
+    );
   };
 
   const handleDataSubTabChange = (newSubTab: DataSubTab) => {
@@ -674,6 +688,16 @@ export default function BankPage() {
                 <div>
                   <DocumentsView />
                 </div>
+              )}
+
+              {/* Sessions Tab — live conversations a client streams into the bank.
+                  Keyed by bank so a bank switch drops the open session's state. */}
+              {view === "sessions" && (
+                <SessionsView
+                  key={bankId ?? "no-bank"}
+                  sessionId={sessionParam}
+                  onOpenSession={handleOpenSession}
+                />
               )}
 
               {/* Entities Tab */}

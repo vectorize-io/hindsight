@@ -67,6 +67,7 @@ class LLMCall(BaseModel):
     duration_ms: int = Field(description="Execution time in milliseconds")
     input_tokens: int = Field(default=0, description="Input tokens used")
     output_tokens: int = Field(default=0, description="Output tokens used")
+    detail: str | None = Field(default=None, description="What the call decided, when it is a decision")
 
 
 class DirectiveInfo(BaseModel):
@@ -135,10 +136,47 @@ class LengthRewrite(BaseModel):
     thoughts_tokens: int = Field(default=0, description="Reasoning/thinking tokens, when reported by the provider")
 
 
+class AbstainAnswer(BaseModel):
+    """An abstain reflect's answer, written from the memories the decision model picked.
+
+    ``check`` comes first so the model compares before it decides: with ``applies`` as the first field
+    it committed to "nothing conflicts" before reading the code against the rule, and missed a change
+    that broke a recorded rule (an exact-name check where the decision said "ends with").
+    """
+
+    check: str = Field(
+        default="",
+        description="One or two short sentences: what the memories state, held against the context. Never shown.",
+    )
+    applies: bool = Field(
+        description="True only if the memories state what the question asks for; false when the true answer is no or nothing."
+    )
+    answer: str = Field(default="", description="The answer, when it applies; empty otherwise.")
+
+
+class SettledAbstainAnswer(BaseModel):
+    """The answer, for a pick the decision model was sure of (``settled``), then whether it applies.
+
+    No ``check``: writing it first delayed the watcher's heads-up. ``applies`` comes after the answer,
+    so it labels what was written instead of deciding it: without it a settled writer could answer
+    "Nothing conflicts." and the watcher delivered that as a note.
+    """
+
+    answer: str = Field(description="The answer.")
+    applies: bool = Field(
+        default=True,
+        description="False when the answer you wrote says the memories do not apply: nothing conflicts, "
+        "no decision applies, or the answer is no.",
+    )
+
+
 class ReflectAgentResult(BaseModel):
     """Result from the reflect agent."""
 
     text: str = Field(description="Final answer text")
+    abstained: bool = Field(
+        default=False, description="The caller allowed no answer, and what was retrieved did not answer it"
+    )
     document: StructuredDocument | None = Field(
         default=None,
         description=(

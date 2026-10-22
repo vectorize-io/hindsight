@@ -24,7 +24,7 @@
 import { existsSync } from "node:fs";
 import { deriveBankIdOrSkip } from "./bank";
 import type { Config } from "./config";
-import { applyBankConfig, loadConfig } from "./config";
+import { applyBankConfig, loadConfig, isLive } from "./config";
 import { diag, diagFilePath, readHookEvent } from "./diag";
 import { describeError, log, setLogLevel } from "./log";
 import { startBackgroundSeed } from "./seed";
@@ -51,6 +51,7 @@ import {
   type SessionCache,
 } from "./session-cache";
 import { appendJournalTurn, journalPath } from "./turn-journal";
+import { notesKey, startSync } from "./live-entry";
 
 export interface HookEventFields {
   prompt?: string;
@@ -346,8 +347,10 @@ export async function buildHookOutput(args: {
   }
 
   // ── knowledge-page roster (ids + titles only): refreshed on the cadence ────────
+  // A live session has no memory tools (see mcp-server.ts): no roster or tool guide to refresh.
+  const live = isLive(cfg, harness);
   const cadence = cfg.pageRefreshEveryTurns;
-  const stale = !cached.pages || (cadence > 0 && turns - cached.pages.atTurn >= cadence);
+  const stale = !live && (!cached.pages || (cadence > 0 && turns - cached.pages.atTurn >= cadence));
   let pages = cached.pages?.list ?? [];
   if (stale) {
     const t0 = Date.now();
@@ -384,7 +387,7 @@ export async function buildHookOutput(args: {
   // hindsight_search_knowledge_pages when a question warrants it — an unprompted injection on
   // every turn (even a plain "yes") read as phantom research. The roster below keeps the tool
   // and the page names in front of the agent.
-  if (cadence > 0 && turns % cadence === 0) {
+  if (!live && cadence > 0 && turns % cadence === 0) {
     blocks.push(
       buildRosterRefresh(pages, {
         reflectOnNewGoals: cfg.autoInject !== "reflect",
@@ -475,6 +478,20 @@ export async function runHook(
     log.debug(spec.harness, "hook skipped: bank disabled via banks override", { bank: bankId });
     return;
   }
+  // The live session on a session: the request goes to the session at once, so its heads-up
+  // check starts while the agent reads its first files rather than at its first tool call; and a
+  // note still waiting (written after the last tool call of the previous turn) goes out with it.
+  let liveNotes: string | undefined;
+  if (isLive(cfg, spec.harness) && sessionId) {
+    const transcriptPath = (ev as { transcript_path?: unknown }).transcript_path;
+    startSync(spec.harness, {
+      session_id: sessionId,
+      transcript_path: typeof transcriptPath === "string" ? transcriptPath : undefined,
+      cwd,
+      prompt,
+    });
+    liveNotes = takePendingContext(notesKey(spec.harness), sessionId);
+  }
   const client = makeClient({
     apiUrl: cfg.apiUrl,
     apiToken: cfg.apiToken,
@@ -505,7 +522,7 @@ export async function runHook(
   ) {
     startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
   }
-  let context = output.context;
+  let context = [liveNotes, output.context].filter(Boolean).join("\n\n") || undefined;
   if (context && spec.toolHook && sessionId) {
     stashPendingContext(spec.harness, sessionId, context);
     context = undefined;

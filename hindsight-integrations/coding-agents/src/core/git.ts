@@ -20,11 +20,21 @@ const GITLOG_FORMAT = `--format=%h${US}%ad${US}%an${US}%s${US}%b${RS}`;
 const GITLOG_DIVIDER = "\n\n---\n\n"; // between two commit records in the git-log document
 
 function git(repo: string, ...args: string[]): string {
+  return gitWithTimeout(repo, undefined, ...args);
+}
+
+/** `git` that gives up after `timeoutMs` (none when undefined). Throws on failure, like `git`. */
+export function gitWithTimeout(
+  repo: string,
+  timeoutMs: number | undefined,
+  ...args: string[]
+): string {
   // `log.showSignature=true` in the user's config makes `git log`/`git show` print signature
   // checks to stdout ahead of the formatted output, which we parse as data (#5269).
   return execFileSync("git", ["-C", repo, "-c", "log.showSignature=false", ...args], {
     encoding: "utf8",
     maxBuffer: 1 << 28,
+    timeout: timeoutMs,
     windowsHide: true,
     // execFileSync otherwise forwards failed git stderr into the host's TUI,
     // even when callers catch the error. Keep diagnostics on the error instead.

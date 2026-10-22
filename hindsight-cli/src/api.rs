@@ -897,6 +897,91 @@ impl ApiClient {
         })
     }
 
+    // --- Session Methods ---
+
+    pub fn list_sessions(
+        &self,
+        bank_id: &str,
+        q: Option<&str>,
+        limit: i64,
+        offset: u64,
+    ) -> Result<types::SessionListResponse> {
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .list_sessions(bank_id, Some(limit), Some(offset), q, None)
+                .humanized()
+                .await?;
+            Ok(response.into_inner())
+        })
+    }
+
+    pub fn get_session(&self, bank_id: &str, session_id: &str) -> Result<types::SessionSummary> {
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .get_session(bank_id, session_id, None)
+                .humanized()
+                .await?;
+            Ok(response.into_inner())
+        })
+    }
+
+    /// `body` is the request as JSON (events and options): the events come from the command line or a file.
+    pub fn append_session_events(
+        &self,
+        bank_id: &str,
+        session_id: &str,
+        body: serde_json::Value,
+    ) -> Result<types::SessionAppendResponse> {
+        let request: types::SessionAppendRequest = serde_json::from_value(body)?;
+        let session: types::SessionId = session_id
+            .parse()
+            .map_err(|e| anyhow::anyhow!("invalid session id '{}': {}", session_id, e))?;
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .append_session_events(bank_id, &session, None, &request)
+                .humanized()
+                .await?;
+            Ok(response.into_inner())
+        })
+    }
+
+    pub fn list_session_events(
+        &self,
+        bank_id: &str,
+        session_id: &str,
+        after: u64,
+        limit: u64,
+    ) -> Result<types::SessionEventsResponse> {
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .list_session_events(
+                    bank_id,
+                    session_id,
+                    Some(after),
+                    std::num::NonZeroU64::new(limit.max(1)),
+                    None,
+                )
+                .humanized()
+                .await?;
+            Ok(response.into_inner())
+        })
+    }
+
+    pub fn delete_session(&self, bank_id: &str, session_id: &str) -> Result<types::DeleteResponse> {
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .delete_session(bank_id, session_id, None)
+                .humanized()
+                .await?;
+            Ok(response.into_inner())
+        })
+    }
+
     // --- Chunk Methods ---
 
     pub fn get_chunk(&self, chunk_id: &str, _verbose: bool) -> Result<types::ChunkResponse> {

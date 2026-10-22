@@ -43,7 +43,10 @@ export const CONVERSATION_MISSION =
   "times keep only the LAST, and make unmistakably clear which choice WON. Do NOT emit one fact per " +
   "message, per intermediate proposal, or per action turn. Keep issue/PR references (#123, GH-123) " +
   "VERBATIM and emit each as an ENTITY. Preserve the 'REF-ID: <token>' marker " +
-  "verbatim in every fact. Do not invent; capture only what was actually settled.";
+  "verbatim in every fact. Do not invent; capture only what was actually settled. NOT project facts: which " +
+  "folder, checkout or branch the session worked in, the commands it ran, and the status of work at that " +
+  "moment ('not shipped yet', 'no new article this run'): they describe one session. A choice made for one " +
+  "task or run is not a rule for the project unless the user says it should hold from then on.";
 
 export const REFLECT_MISSION =
   "You are a debugging assistant with the project's past decisions in memory (git rationale and " +
@@ -68,7 +71,8 @@ export const OBSERVATIONS_MISSION =
   "Favor stable structural understanding over one-off details. When a new fact contradicts or " +
   "supersedes an existing observation, UPDATE that observation to reflect the current state rather " +
   "than creating a sibling alongside it; note that the rule was revised and when, so the superseded " +
-  "version is visible as history rather than as a competing claim.";
+  "version is visible as history rather than as a competing claim. Never turn what one session did or " +
+  "chose for itself (where it ran, a per-run choice, a work-in-progress status) into a rule for the project.";
 
 /** Extraction modes the plugin can run its own strategies under (`custom` needs instructions the
  *  plugin does not have, so it is not offered). */

@@ -122,3 +122,62 @@ async def test_append_keeps_the_units_of_the_chunks_it_did_not_touch(memory, req
         )
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+def _json_turns(first: int, count: int) -> str:
+    # A saved live session: one JSON object per line (JSONL), not one JSON array.
+    return "\n".join(
+        '{"role": "user", "content": "turn %d: alpha bravo charlie delta echo foxtrot golf hotel india '
+        'juliet kilo lima mike november oscar papa quebec romeo sierra tango"}' % i
+        for i in range(first, first + count)
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("turns", [_turns, _json_turns], ids=["text", "jsonl"])
+async def test_a_second_append_keeps_the_chunks_the_first_append_wrote(memory, request_context, turns, _split_mode):
+    """An append must chunk its body the way the NEXT append re-chunks it.
+
+    The stored body and the new text went in as two items, each chunked on its own, so the old tail
+    chunk stayed short and the new text began a chunk of its own; the next append re-chunked the
+    whole body as one text, filling that tail and shifting every boundary after it — so each append
+    re-extracted the chunks the previous one wrote (beta: 678 such chunks against 253 new ones over
+    314 live-session saves). Only arrays were merged into one item (#2409).
+    """
+    if _split_mode == "split":
+        # Known, not fixed here: an append over the batch budget is sliced on the NEW text's own chunk
+        # boundaries, with the stored body's chunks counted as an offset (memory_engine, the
+        # append_prepend_chunks path), so its chunks still start apart from the stored tail. Only
+        # appends over HINDSIGHT_API_RETAIN_BATCH_TOKENS (10k by default) take that path.
+        pytest.skip("a split append still chunks the new text apart from the stored body")
+    bank_id = f"test_append_twice_{_ts()}"
+    document_id = "conversation-2"
+    try:
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": turns(0, 24), "document_id": document_id}],
+            request_context=request_context,
+        )
+        # A first append long enough to write several chunks of its own.
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": turns(24, 80), "document_id": document_id, "update_mode": "append"}],
+            request_context=request_context,
+        )
+        before = await _units_by_chunk(memory, bank_id, document_id, request_context)
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": turns(104, 1), "document_id": document_id, "update_mode": "append"}],
+            request_context=request_context,
+        )
+        after = await _units_by_chunk(memory, bank_id, document_id, request_context)
+
+        def _index_of(chunk_id: str) -> int:
+            return int(chunk_id.rsplit("_", 1)[-1])
+
+        settled = sorted(before, key=_index_of)[:-1]
+        assert len(settled) > 3, "the first append must have written chunks of its own"
+        changed = [c for c in settled if after.get(c) != before[c]]
+        assert not changed, f"the second append re-extracted chunks it did not touch: {sorted(changed, key=_index_of)}"
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)

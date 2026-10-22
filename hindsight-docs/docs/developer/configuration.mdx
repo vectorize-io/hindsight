@@ -770,6 +770,7 @@ Different memory operations have different requirements. **Retain** (fact extrac
 | `HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT` | Reasoning effort for reflect operations | Falls back to `HINDSIGHT_API_LLM_REASONING_EFFORT` |
 | `HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY` | Extra request-body params (JSON dict) for reflect operations | Falls back to `HINDSIGHT_API_LLM_EXTRA_BODY` |
 | `HINDSIGHT_API_REFLECT_LLM_CACHE_AFFINITY` | Prompt-cache affinity mode for reflect operations | Falls back to `HINDSIGHT_API_LLM_CACHE_AFFINITY` |
+| `HINDSIGHT_API_REFLECT_ABSTAIN_WRITER_LLM_MODEL` | Model that writes an `abstain` reflect's answer once the decision model is sure the picked memories answer. It only words the answer, so a small, fast model fits; borderline picks are still judged and answered by the reflect model. Same provider, key and base URL as reflect. Server-level only. | Unset (the reflect model writes it) |
 | `HINDSIGHT_API_REFLECT_MAX_COMPLETION_TOKENS` | Transport-level output cap (`max_completion_tokens`) for reflect's final synthesis call. Unset means uncapped: the model runs to a natural stop and the reflect/mental-model `max_tokens` governs *visible* length via a prompt directive plus a post-hoc rewrite, not by truncating the provider call. On thinking models the raw provider budget is consumed by reasoning tokens, so a hard cap here would cut pages off mid-word. Set an integer only to enforce a hard cost ceiling on the synthesis call. | Unset (uncapped) |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_PROVIDER` | LLM provider for observation consolidation | Falls back to `HINDSIGHT_API_LLM_PROVIDER` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_API_KEY` | API key for consolidation LLM | Falls back to `HINDSIGHT_API_LLM_API_KEY` |
@@ -2603,6 +2604,16 @@ Clients must then include the token in the `Authorization` header. See [MCP Serv
 # Example: instruct MCP to also store assistant actions
 export HINDSIGHT_API_MCP_INSTRUCTIONS="Also store every action you take, including tool calls and decisions made."
 ```
+
+### Sessions
+
+How Hindsight paces its checks on a [live session](./api/sessions). Static (server-level).
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_SESSION_CHECK_QUIET_MS` | A session's moment is checked once the session has been quiet this long, so an agent's plan and the command right after it are one check, not two. The check waits in the queue meanwhile (no worker held). Measured by the database's clock, so it holds whichever server took the append and whichever worker runs the check. | `1000` |
+| `HINDSIGHT_API_SESSION_CHECK_MAX_WAIT_MS` | ...and at the latest this long after the moment appeared, so a session that never pauses is still checked. | `3000` |
+| `HINDSIGHT_API_SESSION_IDLE_MS` | A session that has been quiet this long is idle: the turns not yet saved are saved into its document. This covers a client that stops mid-turn, and is the only save for `retain: idle`. Also measured by the database's clock. | `600000` |
 
 ### Distributed Workers
 

@@ -84,6 +84,9 @@ BACKUP_TABLES = [
     "llm_requests",
     "graph_maintenance_queue",
     "entity_maintenance_queue",
+    # Parent before child: session_events FKs to sessions.
+    "sessions",
+    "session_events",
 ]
 
 MANIFEST_VERSION = "2"

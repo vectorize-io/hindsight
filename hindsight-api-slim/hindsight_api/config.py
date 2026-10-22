@@ -488,6 +488,8 @@ ENV_REFLECT_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_REFLECT_LLM_LITELLMROUTER_
 ENV_REFLECT_LLM_REASONING_EFFORT = "HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT"
 ENV_REFLECT_LLM_EXTRA_BODY = "HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY"
 ENV_REFLECT_LLM_CACHE_AFFINITY = "HINDSIGHT_API_REFLECT_LLM_CACHE_AFFINITY"
+# An abstain reflect's answer once the decision model already picked its memories (see MemoryEngine).
+ENV_REFLECT_ABSTAIN_WRITER_LLM_MODEL = "HINDSIGHT_API_REFLECT_ABSTAIN_WRITER_LLM_MODEL"
 
 ENV_CONSOLIDATION_LLM_PROVIDER = "HINDSIGHT_API_CONSOLIDATION_LLM_PROVIDER"
 ENV_CONSOLIDATION_LLM_API_KEY = "HINDSIGHT_API_CONSOLIDATION_LLM_API_KEY"
@@ -1025,6 +1027,11 @@ ENV_WORKER_MAX_RETRIES = "HINDSIGHT_API_WORKER_MAX_RETRIES"
 ENV_WORKER_TASK_RETRY_BACKOFF_SECONDS = "HINDSIGHT_API_WORKER_TASK_RETRY_BACKOFF_SECONDS"
 ENV_WORKER_HTTP_PORT = "HINDSIGHT_API_WORKER_HTTP_PORT"
 ENV_WORKER_MAX_SLOTS = "HINDSIGHT_API_WORKER_MAX_SLOTS"
+
+# Live sessions: how long Hindsight lets a session settle before it checks a moment
+ENV_SESSION_CHECK_QUIET_MS = "HINDSIGHT_API_SESSION_CHECK_QUIET_MS"
+ENV_SESSION_CHECK_MAX_WAIT_MS = "HINDSIGHT_API_SESSION_CHECK_MAX_WAIT_MS"
+ENV_SESSION_IDLE_MS = "HINDSIGHT_API_SESSION_IDLE_MS"
 # How long a task shed for store backpressure is held before it is retried.
 ENV_BACKPRESSURE_DEFER_SECONDS = "HINDSIGHT_API_BACKPRESSURE_DEFER_SECONDS"
 ENV_OPERATION_RETENTION_DAYS = "HINDSIGHT_API_OPERATION_RETENTION_DAYS"
@@ -2042,6 +2049,14 @@ DEFAULT_WORKER_POLL_INTERVAL_MS = 500  # Poll database every 500ms
 DEFAULT_WORKER_MAX_RETRIES = 3  # Max retries before marking task failed
 DEFAULT_WORKER_TASK_RETRY_BACKOFF_SECONDS = 60  # Seconds between retries on transient task failure
 DEFAULT_WORKER_HTTP_PORT = 8889  # HTTP port for worker metrics/health
+
+# A moment is checked once its session has been quiet this long, or at the latest this long after
+# it appeared: an agent's plan and the command right after it are one check, not two. The values
+# the sde-bench client watcher used (1s quiet, 3s at most).
+DEFAULT_SESSION_CHECK_QUIET_MS = 1000
+DEFAULT_SESSION_CHECK_MAX_WAIT_MS = 3000
+# A session quiet this long is idle: its unsaved turns are saved (a client that stopped mid-turn).
+DEFAULT_SESSION_IDLE_MS = 600_000
 DEFAULT_WORKER_MAX_SLOTS = 10  # Total concurrent tasks per worker
 # Terminal rows keep their payload and metadata for one coherent debug/retry TTL.
 # Zero retention days disables automatic pruning entirely, and is the default:
@@ -3815,6 +3830,9 @@ class HindsightConfig:
     worker_enabled: bool
     worker_id: str | None
     worker_poll_interval_ms: int
+    session_check_quiet_ms: int
+    session_check_max_wait_ms: int
+    session_idle_ms: int
     worker_max_retries: int
     worker_task_retry_backoff_seconds: int
     worker_http_port: int
@@ -3999,6 +4017,7 @@ class HindsightConfig:
     reflect_decision_model_api_key: str | None = None
     reflect_decision_model_model: str | None = None
     reflect_decision_model_base_url: str | None = None
+    reflect_abstain_writer_llm_model: str | None = None
     consolidation_decision_model_provider: str | None = None
     consolidation_decision_model_api_key: str | None = None
     consolidation_decision_model_model: str | None = None
@@ -5167,6 +5186,7 @@ class HindsightConfig:
                 for operation in DECISION_MODEL_OPERATIONS
                 for setting in ("PROVIDER", "API_KEY", "MODEL", "BASE_URL")
             },
+            reflect_abstain_writer_llm_model=os.getenv(ENV_REFLECT_ABSTAIN_WRITER_LLM_MODEL) or None,
             # Server
             host=os.getenv(ENV_HOST) or None,
             port=int(os.getenv(ENV_PORT, DEFAULT_PORT)),
@@ -5526,6 +5546,11 @@ class HindsightConfig:
             worker_enabled=os.getenv(ENV_WORKER_ENABLED, str(DEFAULT_WORKER_ENABLED)).lower() == "true",
             worker_id=os.getenv(ENV_WORKER_ID) or DEFAULT_WORKER_ID,
             worker_poll_interval_ms=int(os.getenv(ENV_WORKER_POLL_INTERVAL_MS, str(DEFAULT_WORKER_POLL_INTERVAL_MS))),
+            session_check_quiet_ms=int(os.getenv(ENV_SESSION_CHECK_QUIET_MS, str(DEFAULT_SESSION_CHECK_QUIET_MS))),
+            session_check_max_wait_ms=int(
+                os.getenv(ENV_SESSION_CHECK_MAX_WAIT_MS, str(DEFAULT_SESSION_CHECK_MAX_WAIT_MS))
+            ),
+            session_idle_ms=int(os.getenv(ENV_SESSION_IDLE_MS, str(DEFAULT_SESSION_IDLE_MS))),
             worker_max_retries=int(os.getenv(ENV_WORKER_MAX_RETRIES, str(DEFAULT_WORKER_MAX_RETRIES))),
             worker_task_retry_backoff_seconds=int(
                 os.getenv(

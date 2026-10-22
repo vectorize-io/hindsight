@@ -34,7 +34,7 @@ describe("Sidebar accessibility", () => {
     // Collapsed links are icon-only but still named, and the active one is marked.
     const memories = screen.getByRole("link", { name: "memories" });
     expect(memories.getAttribute("aria-current")).toBe("page");
-    expect(screen.getAllByRole("link")).toHaveLength(8);
+    expect(screen.getAllByRole("link")).toHaveLength(9);
 
     fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
@@ -50,11 +50,11 @@ describe("Sidebar accessibility", () => {
       </>
     );
     // Closed: only the rail's links exist.
-    expect(screen.getAllByRole("link")).toHaveLength(8);
+    expect(screen.getAllByRole("link")).toHaveLength(9);
 
     fireEvent.click(screen.getByRole("button", { name: "openNavigation" }));
     const drawer = screen.getByRole("dialog");
-    expect(drawer.querySelectorAll("a")).toHaveLength(8);
+    expect(drawer.querySelectorAll("a")).toHaveLength(9);
 
     const recall = Array.from(drawer.querySelectorAll("a")).find(
       (a) => a.getAttribute("aria-label") === "recall"

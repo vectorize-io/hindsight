@@ -397,6 +397,7 @@ class BankReadOperation(StrEnum):
     GET_MENTAL_MODEL_HISTORY = "get_mental_model_history"
     GET_OBSERVATION_HISTORY = "get_observation_history"
     GET_OPERATION_STATUS = "get_operation_status"
+    GET_SESSION = "get_session"
     LIST_BANK_ALIASES = "list_bank_aliases"
     LIST_DIRECTIVES = "list_directives"
     LIST_DOCUMENT_CHUNKS = "list_document_chunks"
@@ -407,6 +408,8 @@ class BankReadOperation(StrEnum):
     LIST_MENTAL_MODELS = "list_mental_models"
     LIST_OBSERVATION_SCOPES = "list_observation_scopes"
     LIST_OPERATIONS = "list_operations"
+    LIST_SESSION_EVENTS = "list_session_events"
+    LIST_SESSIONS = "list_sessions"
     LIST_TAGS = "list_tags"
     LIST_WEBHOOK_DELIVERIES = "list_webhook_deliveries"
     LIST_WEBHOOKS = "list_webhooks"
@@ -416,6 +419,7 @@ class BankReadOperation(StrEnum):
 class BankWriteOperation(StrEnum):
     """Bank-scoped write operation names passed to validate_bank_write."""
 
+    APPEND_SESSION_EVENTS = "append_session_events"
     CANCEL_OPERATION = "cancel_operation"
     CLEAR_MENTAL_MODEL = "clear_mental_model"
     CLEAR_OBSERVATIONS = "clear_observations"
@@ -433,6 +437,7 @@ class BankWriteOperation(StrEnum):
     DELETE_KNOWLEDGE_NODE = "delete_knowledge_node"
     DELETE_MENTAL_MODEL = "delete_mental_model"
     DELETE_OPERATION = "delete_operation"
+    DELETE_SESSION = "delete_session"
     DELETE_WEBHOOK = "delete_webhook"
     IMPORT_DOCUMENTS = "import_documents"
     MERGE_BANK_MISSION = "merge_bank_mission"

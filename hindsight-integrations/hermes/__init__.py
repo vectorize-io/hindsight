@@ -49,6 +49,7 @@ from .embedded import (
     _start_daemon,
     _stop_daemon,
 )
+from .sessions import SessionLink, SessionOptions, notes_block, tool_call_messages, turn_messages
 from .settings import (
     _DEFAULT_API_URL,
     _DEFAULT_IDLE_TIMEOUT,
@@ -402,6 +403,8 @@ def _load_config() -> dict:
         "retain_indicator": _scoped_flag("HINDSIGHT_RETAIN_INDICATOR", True),
         "recall_indicator": _scoped_flag("HINDSIGHT_RECALL_INDICATOR", True),
         "recall_sync": _scoped_flag("HINDSIGHT_RECALL_SYNC", False),
+        "live_session": _scoped_flag("HINDSIGHT_LIVE_SESSION", False),
+        "live_note_wait": _parse_float_setting(os.environ.get("HINDSIGHT_LIVE_NOTE_WAIT"), 0.0),
         "banks": {
             "hermes": {
                 "bankId": get_secret("HINDSIGHT_BANK_ID", "") or "hermes",
@@ -521,6 +524,12 @@ class HindsightMemoryProvider(MemoryProvider):
         self._retain_tags: List[str] = []
         self._tags: list[str] | None = None
         self._observation_scopes: Any = None
+        # Live session mode (see _apply_retain_policy); set here so a disabled provider reads it too.
+        self._live_session, self._live_note_wait = False, 0.0
+        self._session_link: SessionLink | None = None
+        self._session_turn = 0
+        self._turn_started = False
+        self._sent_calls: set[str] = set()  # tool calls this turn already sent live
         self._retain_source = _DEFAULT_RETAIN_SOURCE
         self._retain_strategy = _DEFAULT_RETAIN_STRATEGY
         self._retain_user_prefix, self._retain_assistant_prefix = "User", "Assistant"
@@ -771,6 +780,16 @@ class HindsightMemoryProvider(MemoryProvider):
                 "key": "recall_sync",
                 "description": "Recall synchronously against the current message before each turn (higher relevance, adds recall latency to the turn). Default off: recall runs in the background and is injected on the next turn.",
                 "default": False,
+            },
+            {
+                "key": "live_session",
+                "description": "Stream the conversation into a live Hindsight session: it saves each turn and sends notes when the agent goes against what memory records (injected before the next turn)",
+                "default": False,
+            },
+            {
+                "key": "live_note_wait",
+                "description": "Seconds a turn waits for the live session's heads-up on the new prompt (0 never delays a reply; the note then arrives next turn)",
+                "default": 0,
             },
             {
                 "key": "recall_indicator",
@@ -1393,6 +1412,12 @@ class HindsightMemoryProvider(MemoryProvider):
         # for the queue to drain AND the server-side op(s) to complete.
         self._prefetch_waits_for_retain = cfg.get("prefetch_waits_for_retain", True)
         self._prefetch_retain_drain_timeout = _parse_float_setting(cfg.get("prefetch_retain_drain_timeout"), 10.0)
+        # Live session: the conversation streams into a Hindsight session, which saves each turn and
+        # sends notes back (handed over before the next turn). Off by default.
+        self._live_session = bool(cfg.get("live_session", False))
+        # How long the turn-start context waits for the live session's check of the prompt: a heads-up found
+        # in time reaches the agent in this turn instead of the next. 0 never delays a reply.
+        self._live_note_wait = _parse_float_setting(cfg.get("live_note_wait"), 0.0)
 
     def _apply_recall_settings(self, cfg: dict) -> None:
         """Recall knobs are pure config too (``{}`` yields the defaults)."""
@@ -1638,17 +1663,110 @@ class HindsightMemoryProvider(MemoryProvider):
         self._prefetch_thread.join(timeout=timeout)
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
+        notes = self._session_notes()
         # Opt-in: recall synchronously against the *current* message so the
         # injected memories match this turn's query, not the previous turn's.
         # See NousResearch/hermes-agent#5820.
         if self._recall_sync:
-            return self._finish_prefetch(*(("", 0) if self._recall_disabled() else self._do_recall(query)))
+            block = self._finish_prefetch(*(("", 0) if self._recall_disabled() else self._do_recall(query)))
+            return "\n\n".join(b for b in (notes, block) if b)
         # Default: the background worker's result for the previous turn (capped join).
         self._join_prefetch(3.0, log=True)
         with self._prefetch_lock:
             result, count = self._prefetch_result, self._prefetch_count
             self._prefetch_result, self._prefetch_count = "", 0
-        return self._finish_prefetch(result, count)
+        return "\n\n".join(b for b in (notes, self._finish_prefetch(result, count)) if b)
+
+    # -- live session --------------------------------------------------------------
+
+    def _session(self) -> SessionLink | None:
+        """The live session link, when session mode is on and the server has sessions."""
+        if not self._live_session or self._mode == "disabled" or not self._session_id:
+            return None
+        if self._session_link is None:
+            options = SessionOptions(
+                document_id=self._document_id,
+                live=True,
+                retain="turns" if self._auto_retain else "off",
+                metadata={"harness": "hermes", "session_id": self._session_id},
+                context=self._retain_context,
+                strategy=self._retain_strategy or None,
+                tags=self._tags or None,
+                observation_scopes=self._observation_scopes or None,
+            )
+            self._session_link = SessionLink(
+                api_url=self._api_url,
+                api_key=self._api_key or "",
+                bank_id=self._bank_id,
+                session_id=self._session_id,
+                options=options,
+                timeout=float(self._timeout),
+            )
+        return self._session_link if self._session_link.supported else None
+
+    def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
+        """The prompt goes into the session as soon as the turn starts, so the live session's heads-up check
+        runs while the agent reads it (and, with ``live_note_wait``, can land in this turn)."""
+        link = self._session()
+        if link is None or not message:
+            return
+        self._session_turn += 1
+        self._turn_started = True
+        try:
+            link.append([{"id": f"t{self._session_turn}:0", "role": "user", "content": message}])
+        except Exception as exc:
+            logger.warning("Hindsight session: prompt not sent: %s", exc)
+
+    def _session_notes(self) -> str:
+        link = self._session()
+        if link is None:
+            return ""
+        try:
+            notes = link.take_notes(self._live_note_wait if self._turn_started else 0.0)
+        except Exception as exc:
+            logger.warning("Hindsight session: notes not fetched: %s", exc)
+            return ""
+        return notes_block(notes) if notes else ""
+
+    def _sync_session_turn(
+        self, user_content: str, assistant_content: str, messages: list[dict[str, Any]] | None
+    ) -> bool:
+        """Send the finished turn into the session; False when there is no session to send it to."""
+        link = self._session()
+        if link is None:
+            return False
+        if not self._turn_started:  # an older Hermes, without on_turn_start
+            self._session_turn += 1
+        self._turn_started = False
+        turn = messages or [
+            {"role": "user", "content": user_content},
+            {"role": "assistant", "content": assistant_content},
+        ]
+        try:
+            link.append(turn_messages(turn, self._session_turn, self._sent_calls), turn_end=True)
+        except Exception as exc:
+            logger.warning("Hindsight session: turn not sent: %s", exc)
+        self._sent_calls = set()
+        # A server without sessions said so on this append: the turn is retained the old way.
+        return link.supported
+
+    def on_tool_result(
+        self, tool_name: str = "", args: Any = None, result: Any = None, tool_call_id: str = "", **_: Any
+    ) -> str | None:
+        """Hermes' ``transform_tool_result`` hook: the call goes into the session as soon as the tool
+        returns, so the live session checks it mid-turn, and any note already back rides on this result. Never
+        waits for a check: a note that is not back yet reaches the agent on a later tool result."""
+        link = self._session() if self._live_session and self._turn_started else None
+        if link is None or not tool_call_id:
+            return None
+        try:
+            link.append(tool_call_messages(self._session_turn, tool_call_id, tool_name, args, result))
+            self._sent_calls.add(tool_call_id)
+            notes = link.pop_notes()
+        except Exception as exc:
+            logger.warning("Hindsight session: tool call not sent: %s", exc)
+            return None
+        return f"{result}\n\n{notes_block(notes)}" if notes else None
 
     def recall_status(self) -> Optional[RecallStatus]:
         """Count injected by the last prefetch; None if nothing injected or ``recall_indicator=false``."""
@@ -1795,9 +1913,22 @@ class HindsightMemoryProvider(MemoryProvider):
 
         return _job
 
-    def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "") -> None:
+    def sync_turn(
+        self,
+        user_content: str,
+        assistant_content: str,
+        *,
+        session_id: str = "",
+        messages: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
         """Enqueue a retain for the current turn (non-blocking; writer thread). Dropped
-        once shutdown() fired so post-exit retains never reach aiohttp during teardown."""
+        once shutdown() fired so post-exit retains never reach aiohttp during teardown.
+        In session mode the turn goes to the live session instead, which saves it (or not,
+        with auto_retain off: the session then only checks)."""
+        if session_id:
+            self._session_id = str(session_id).strip()
+        if not self._shutting_down.is_set() and self._sync_session_turn(user_content, assistant_content, messages):
+            return
         why = (
             "auto_retain disabled"
             if not self._auto_retain
@@ -1808,8 +1939,6 @@ class HindsightMemoryProvider(MemoryProvider):
         if why:
             logger.debug("sync_turn: skipped (%s)", why)
             return
-        if session_id:
-            self._session_id = str(session_id).strip()
 
         self._session_turns.append(
             json.dumps(self._build_turn_messages(user_content, assistant_content), ensure_ascii=False)
@@ -2012,6 +2141,9 @@ class HindsightMemoryProvider(MemoryProvider):
             self._write_bank_ids = self._build_write_bank_ids()
         self._session_turns = []
         self._turn_counter = self._turn_index = self._last_retained_turn_count = 0
+        # The new Hermes session is a new Hindsight session; the old one goes idle and saves itself.
+        self._session_link, self._session_turn, self._turn_started = None, 0, False
+        self._sent_calls = set()
         logger.debug(
             "Hindsight on_session_switch: new_session=%s parent=%s reset=%s doc=%s",
             self._session_id,
@@ -2074,4 +2206,8 @@ class HindsightMemoryProvider(MemoryProvider):
 # happens via self._client.aclose() above.
 def register(ctx) -> None:
     """Register Hindsight as a memory provider plugin."""
-    ctx.register_memory_provider(HindsightMemoryProvider())
+    provider = HindsightMemoryProvider()
+    ctx.register_memory_provider(provider)
+    # Notes from the live session reach the agent on tool results, mid-turn. Older Hermes: no hooks.
+    if hasattr(ctx, "register_hook"):
+        ctx.register_hook("transform_tool_result", provider.on_tool_result)

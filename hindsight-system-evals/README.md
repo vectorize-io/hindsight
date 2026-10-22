@@ -199,6 +199,18 @@ on-topic memories without a sign anywhere but the page. Run it with the gate on 
 (`HINDSIGHT_EVAL_SET_MENTAL_MODEL_DELTA_USE_DECISION_MODEL=false`, same decision model);
 the gate is only worth its savings if this stays level.
 
+**`test_12` — a live session's note carries the project's decisions, and only them.** A live
+session checks the request and each action against memory and may send the agent a note. Every
+case is a kind of note seen in real use, rewritten in neutral terms, and the file is meant to
+grow: add a case when real use shows a new kind, diversified rather than fitted to one wording.
+Six traps where something local to one past session must not come back as a project rule (one
+run's own choice, the folder a session ran in, a past status, where one task's work lived, the
+agent's own earlier choice, the user's previous request), and four decisions the agent must hear
+(a decided value, a house rule from a commit message, who bumps versions, an amended rule in its
+amended form). Each case performs the agent's action too, since the conflict check it triggers is
+where the wrong notes came from. Expect the occasional red on a positive case (three runs: 9, 8
+and 10 of 10); re-run before reading it as a regression.
+
 **`test_08` — ranked retrieval on BEIR.** The only suite graded against labels
 nobody here wrote, and the only one that makes **no model call**. It records a
 *baseline*: what this pipeline scores on a public IR benchmark, and on what.

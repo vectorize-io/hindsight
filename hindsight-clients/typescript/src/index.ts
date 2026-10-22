@@ -663,6 +663,10 @@ export class HindsightClient {
       reflectSearchObservationsMaxTokens?: number;
       /** Whether search_observations attaches resolved entity names, which can be over half the tool payload. Omit to use the bank default (enabled). */
       reflectSearchObservationsIncludeEntities?: boolean;
+      /** Allow an empty answer: when memory holds nothing that answers the query, the response has an empty `text` and `abstained: true` instead of reflect searching on or failing. */
+      abstain?: boolean;
+      /** What the first retrieval round searches, each query through every layer, instead of an LLM rewriting the query into one search. Applies on a server with a decision model. */
+      searchQueries?: string[];
       /** If true, the response includes a 'based_on' field listing the memories, mental models, and directives used. */
       includeFacts?: boolean;
       /** If true, the response includes a 'trace' field with the tool calls and LLM calls made during reflection (trace.tool_calls / trace.llm_calls). */
@@ -701,6 +705,8 @@ export class HindsightClient {
             reflect_search_observations_max_tokens: options?.reflectSearchObservationsMaxTokens,
             reflect_search_observations_include_entities:
               options?.reflectSearchObservationsIncludeEntities,
+            abstain: options?.abstain,
+            search_queries: options?.searchQueries,
             include,
           },
           signal: options?.signal,

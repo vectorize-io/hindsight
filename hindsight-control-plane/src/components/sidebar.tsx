@@ -18,6 +18,7 @@ import {
   Settings,
   Menu,
   X,
+  MessagesSquare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -29,6 +30,7 @@ type NavItem =
   | "reflect"
   | "data"
   | "documents"
+  | "sessions"
   | "entities"
   | "knowledge"
   | "profile";
@@ -91,6 +93,7 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
     { id: "recall" as NavItem, label: t("recall"), icon: Search },
     { id: "reflect" as NavItem, label: t("reflect"), icon: Sparkles },
     { id: "documents" as NavItem, label: t("documents"), icon: FileText },
+    { id: "sessions" as NavItem, label: t("sessions"), icon: MessagesSquare },
     { id: "entities" as NavItem, label: t("entities"), icon: Users },
     { id: "profile" as NavItem, label: tBank("bankConfiguration"), icon: Settings },
   ];

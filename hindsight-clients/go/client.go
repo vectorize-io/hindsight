@@ -79,6 +79,8 @@ type APIClient struct {
 
 	OperationsAPI *OperationsAPIService
 
+	SessionsAPI *SessionsAPIService
+
 	WebhooksAPI *WebhooksAPIService
 }
 
@@ -113,6 +115,7 @@ func NewAPIClient(cfg *Configuration) *APIClient {
 	c.MentalModelsAPI = (*MentalModelsAPIService)(&c.common)
 	c.MonitoringAPI = (*MonitoringAPIService)(&c.common)
 	c.OperationsAPI = (*OperationsAPIService)(&c.common)
+	c.SessionsAPI = (*SessionsAPIService)(&c.common)
 	c.WebhooksAPI = (*WebhooksAPIService)(&c.common)
 
 	return c

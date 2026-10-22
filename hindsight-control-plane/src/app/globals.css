@@ -27,35 +27,37 @@
   /* Hindsight design system palette — light mode. Replaces the shadcn oklch
      defaults so every bg-card / text-foreground / border-border utility across
      the whole site picks up the design system without per-component edits. */
-  --background: #F3F5F9;
-  --foreground: #0D1117;
-  --card: #FFFFFF;
-  --card-foreground: #0D1117;
-  --popover: #FFFFFF;
-  --popover-foreground: #0D1117;
-  --primary: #0074D9;
-  --primary-foreground: #FFFFFF;
+  --background: #f3f5f9;
+  --foreground: #0d1117;
+  --card: #ffffff;
+  --card-foreground: #0d1117;
+  --popover: #ffffff;
+  --popover-foreground: #0d1117;
+  --primary: #0074d9;
+  /* Sessions view: the agent's side, as --primary is Hindsight's. */
+  --agent: #c96442;
+  --primary-foreground: #ffffff;
   --primary-gradient: linear-gradient(135deg, #0074d9 0%, #009296 100%);
-  --secondary: #EDF0F6;
-  --secondary-foreground: #0D1117;
-  --muted: #EDF0F6;
+  --secondary: #edf0f6;
+  --secondary-foreground: #0d1117;
+  --muted: #edf0f6;
   /* #525866 is 5.3:1 against the page bg and 7.1:1 against card white, which
      hits WCAG AA for body text at every size we use. The lighter #6C7586 used
      elsewhere in the palette is only 4.4:1 against the page and fails AA, so
      light mode keeps this darker value for body copy. */
   --muted-foreground: #525866;
-  --accent: #EDF0F6;
-  --accent-foreground: #0D1117;
-  --destructive: #D4183D;
-  --destructive-foreground: #FFFFFF;
+  --accent: #edf0f6;
+  --accent-foreground: #0d1117;
+  --destructive: #d4183d;
+  --destructive-foreground: #ffffff;
   --border: rgba(0, 0, 0, 0.08);
   --input: rgba(0, 0, 0, 0.08);
-  --ring: #0074D9;
-  --chart-1: #2C82F5;
-  --chart-2: #10B981;
-  --chart-3: #8B5CF6;
-  --chart-4: #F59E0B;
-  --chart-5: #EC4899;
+  --ring: #0074d9;
+  --chart-1: #2c82f5;
+  --chart-2: #10b981;
+  --chart-3: #8b5cf6;
+  --chart-4: #f59e0b;
+  --chart-5: #ec4899;
 
   /* Chip treatment — used by components/ui/facet-chip.tsx, the only place tags,
      entities and metadata are rendered.
@@ -88,19 +90,20 @@
   --chip-meta-border: #e7ebef;
   --chip-fg: #55677d;
   --chip-accent: #0e7f8c; /* brand cyan, darkened for the light surface */
-  --sidebar: #FFFFFF;
-  --sidebar-foreground: #6C7586;
-  --sidebar-primary: #0074D9;
-  --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: #EDF0F6;
-  --sidebar-accent-foreground: #0D1117;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #6c7586;
+  --sidebar-primary: #0074d9;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #edf0f6;
+  --sidebar-accent-foreground: #0d1117;
   --sidebar-border: rgba(0, 0, 0, 0.05);
-  --sidebar-ring: #0074D9;
+  --sidebar-ring: #0074d9;
   /* --font-sans and --font-mono are set on <html> by next/font/google in
      [locale]/layout.tsx. :root inherits them; we intentionally do NOT
      redeclare them here so the next/font value is what utilities resolve to.
      A separate --font-fallback chain is provided for any future use. */
-  --font-fallback: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-fallback:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --radius: 0.5rem;
   --shadow-x: 0px;
   --shadow-y: 1px;
@@ -126,15 +129,15 @@
      palette. The brand gradient stays as the pre-existing --primary-gradient
      above. These are namespaced with --hs- to avoid colliding with the shadcn
      token set. */
-  --hs-surface-page: #F3F5F9;
-  --hs-surface-card: #FFFFFF;
-  --hs-surface-sidebar: #FFFFFF;
-  --hs-surface-hover: #EDF0F6;
-  --hs-surface-muted: #EDF0F6;
+  --hs-surface-page: #f3f5f9;
+  --hs-surface-card: #ffffff;
+  --hs-surface-sidebar: #ffffff;
+  --hs-surface-hover: #edf0f6;
+  --hs-surface-muted: #edf0f6;
 
-  --hs-fg-primary: #0D1117;
-  --hs-fg-muted: #6C7586;
-  --hs-fg-on-accent: #FFFFFF;
+  --hs-fg-primary: #0d1117;
+  --hs-fg-muted: #6c7586;
+  --hs-fg-on-accent: #ffffff;
 
   --hs-border-default: rgba(0, 0, 0, 0.08);
   --hs-border-subtle: rgba(0, 0, 0, 0.05);
@@ -142,50 +145,51 @@
   /* #00BC7D is the success accent across light mode (progress %, "done"
      values, operation dots). Distinct from #10B981, which is the Experience
      chart series — different token, don't conflate them. */
-  --hs-success: #00BC7D;
-  --hs-warning: #F59E0B;
-  --hs-danger: #D4183D;
-  --hs-info: #0074D9;
-  --hs-neutral: #6C7586;
+  --hs-success: #00bc7d;
+  --hs-warning: #f59e0b;
+  --hs-danger: #d4183d;
+  --hs-info: #0074d9;
+  --hs-neutral: #6c7586;
 
-  --hs-brand-blue: #0074D9;
+  --hs-brand-blue: #0074d9;
   --hs-brand-teal: #009296;
 
-  --hs-chart-world: #2C82F5;
-  --hs-chart-experience: #10B981;
-  --hs-chart-observations: #8B5CF6;
-  --hs-chart-temporal: #F59E0B;
+  --hs-chart-world: #2c82f5;
+  --hs-chart-experience: #10b981;
+  --hs-chart-observations: #8b5cf6;
+  --hs-chart-temporal: #f59e0b;
   --hs-chart-semantic: #009296;
-  --hs-chart-entity: #EC4899;
+  --hs-chart-entity: #ec4899;
 }
 
 .dark {
   /* Hindsight design system palette — dark mode. */
-  --background: #080C17;
-  --foreground: #DCE8FF;
-  --card: #0F1724;
-  --card-foreground: #DCE8FF;
-  --popover: #0F1724;
-  --popover-foreground: #DCE8FF;
-  --primary: #5BB0FF;
-  --primary-foreground: #080C17;
+  --background: #080c17;
+  --foreground: #dce8ff;
+  --card: #0f1724;
+  --card-foreground: #dce8ff;
+  --popover: #0f1724;
+  --popover-foreground: #dce8ff;
+  --primary: #5bb0ff;
+  --agent: #e08a6d;
+  --primary-foreground: #080c17;
   --primary-gradient: linear-gradient(135deg, #0074d9 0%, #009296 100%);
   --secondary: #172036;
-  --secondary-foreground: #DCE8FF;
+  --secondary-foreground: #dce8ff;
   --muted: #172036;
-  --muted-foreground: #94A8C9;
+  --muted-foreground: #94a8c9;
   --accent: #172036;
-  --accent-foreground: #DCE8FF;
-  --destructive: #C0183A;
-  --destructive-foreground: #FFFFFF;
-  --border: rgba(100, 160, 255, 0.10);
-  --input: rgba(100, 160, 255, 0.10);
-  --ring: #5BB0FF;
-  --chart-1: #2C82F5;
-  --chart-2: #10B981;
-  --chart-3: #8B5CF6;
-  --chart-4: #F59E0B;
-  --chart-5: #EC4899;
+  --accent-foreground: #dce8ff;
+  --destructive: #c0183a;
+  --destructive-foreground: #ffffff;
+  --border: rgba(100, 160, 255, 0.1);
+  --input: rgba(100, 160, 255, 0.1);
+  --ring: #5bb0ff;
+  --chart-1: #2c82f5;
+  --chart-2: #10b981;
+  --chart-3: #8b5cf6;
+  --chart-4: #f59e0b;
+  --chart-5: #ec4899;
 
   /* Chip treatment on the dark surface (see :root for rationale). */
   --chip-tag: #1c2836; /* slate */
@@ -196,36 +200,36 @@
   --chip-meta-border: #232d3a;
   --chip-fg: #94a8bc;
   --chip-accent: #4dd8e6; /* logo cyan */
-  --sidebar: #0A1020;
-  --sidebar-foreground: #6E8AAF;
-  --sidebar-primary: #5BB0FF;
-  --sidebar-primary-foreground: #080C17;
+  --sidebar: #0a1020;
+  --sidebar-foreground: #6e8aaf;
+  --sidebar-primary: #5bb0ff;
+  --sidebar-primary-foreground: #080c17;
   --sidebar-accent: #172036;
-  --sidebar-accent-foreground: #DCE8FF;
+  --sidebar-accent-foreground: #dce8ff;
   --sidebar-border: rgba(100, 160, 255, 0.07);
-  --sidebar-ring: #5BB0FF;
+  --sidebar-ring: #5bb0ff;
 
   /* Hindsight design tokens (dark) — see the :root block above for rationale. */
-  --hs-surface-page: #080C17;
-  --hs-surface-card: #0F1724;
-  --hs-surface-sidebar: #0A1020;
+  --hs-surface-page: #080c17;
+  --hs-surface-card: #0f1724;
+  --hs-surface-sidebar: #0a1020;
   --hs-surface-hover: #172036;
   --hs-surface-muted: #172036;
 
-  --hs-fg-primary: #DCE8FF;
-  --hs-fg-muted: #94A8C9;
-  --hs-fg-on-accent: #FFFFFF;
+  --hs-fg-primary: #dce8ff;
+  --hs-fg-muted: #94a8c9;
+  --hs-fg-on-accent: #ffffff;
 
-  --hs-border-default: rgba(100, 160, 255, 0.10);
+  --hs-border-default: rgba(100, 160, 255, 0.1);
   --hs-border-subtle: rgba(100, 160, 255, 0.07);
 
   /* Dark mode uses the more vivid #00D492 as the primary success — it reads
      better against the deep navy page than the light-mode #00BC7D. */
-  --hs-success: #00D492;
-  --hs-warning: #FBB040;
-  --hs-danger: #C0183A;
-  --hs-info: #5BB0FF;
-  --hs-neutral: #6E8AAF;
+  --hs-success: #00d492;
+  --hs-warning: #fbb040;
+  --hs-danger: #c0183a;
+  --hs-info: #5bb0ff;
+  --hs-neutral: #6e8aaf;
 
   /* Brand stops are mode-invariant; the gradient stays as --primary-gradient. */
 }
@@ -238,6 +242,7 @@
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
+  --color-agent: var(--agent);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
@@ -334,9 +339,24 @@
 /* Force the Inter chain on the document AND on form elements, which don't
    inherit font-family from body. Without this they fall back to the browser
    default and render visibly off against the rest of the page. */
-html, body, button, input, select, textarea, optgroup {
-  font-family: var(--font-sans), 'Inter', -apple-system, BlinkMacSystemFont,
-    system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+html,
+body,
+button,
+input,
+select,
+textarea,
+optgroup {
+  font-family:
+    var(--font-sans),
+    "Inter",
+    -apple-system,
+    BlinkMacSystemFont,
+    system-ui,
+    "Segoe UI",
+    Roboto,
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
 }
 
 body {
@@ -349,11 +369,17 @@ body {
    every heading in this app carries an explicit weight utility yet. Keep the
    600 default so those headings stay headings; the font-family override is
    gone because everything is Inter now. 600 is the ceiling for UI text. */
-h1, h2, h3, h4, h5, h6 {
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
   font-weight: 600;
 }
 
-code, pre {
+code,
+pre {
   font-family: var(--font-mono);
 }
 
@@ -363,7 +389,8 @@ code, pre {
 
 /* The page itself never scrolls sideways: anything wider than the screen has
    to scroll inside its own container (tables, tab rows) instead. */
-html, body {
+html,
+body {
   overflow-x: clip;
 }
 
@@ -388,7 +415,10 @@ input[type="datetime-local"] {
 /* iOS zooms the page in on any focused field whose text is under 16px, and
    leaves it zoomed. Fields here use 13-14px, so bump them on touch screens. */
 @media (pointer: coarse) {
-  input, textarea, select, [contenteditable="true"] {
+  input,
+  textarea,
+  select,
+  [contenteditable="true"] {
     font-size: max(16px, 1em);
   }
 }
@@ -573,6 +603,66 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   animation: list-row-enter 200ms ease-out both;
 }
 
+/* Sessions view: a new row slides in from its own side (client left, Hindsight right). */
+@keyframes lane-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes lane-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ...and a new note lights up for a moment, so it is seen arriving. */
+@keyframes note-glow {
+  0%,
+  30% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 35%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.animate-lane-in-left {
+  animation: lane-in-left 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-lane-in-right {
+  animation: lane-in-right 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* A note handed to the agent: the arrow draws across the lanes, right to left. */
+@keyframes handoff-line {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.animate-handoff-line {
+  animation: handoff-line 220ms ease-out both;
+}
+
+.animate-note-glow {
+  animation: note-glow 1.6s ease-out 200ms backwards;
+}
+
 @keyframes soft-fade-in {
   from {
     opacity: 0;
@@ -602,6 +692,10 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator {
 
 @media (prefers-reduced-motion: reduce) {
   .animate-list-row-enter,
+  .animate-lane-in-left,
+  .animate-lane-in-right,
+  .animate-note-glow,
+  .animate-handoff-line,
   .animate-soft-fade-in,
   .animate-drawer-in {
     animation: none;

@@ -41,6 +41,9 @@ type ReflectRequest struct {
 	// If true, exclude all mental models from the reflect loop (skip search_mental_models tool).
 	ExcludeMentalModels *bool `json:"exclude_mental_models,omitempty"`
 	ExcludeMentalModelIds []string `json:"exclude_mental_model_ids,omitempty"`
+	// Allow an empty answer. When memory holds nothing that answers the query, the response has an empty `text` and `abstained: true`, instead of reflect searching on or failing. With a decision model, it is asked the query itself about the `context` and the best memories found: when it sees nothing the answer depends on, reflect returns with no LLM call; otherwise the answer reads only the memories it picked. Word the query as the question to decide (\"does my change go against a recorded decision?\"); `context` is what it is about. For callers that act on any text they get back, such as a live session that should speak only when memory has something to say.
+	Abstain *bool `json:"abstain,omitempty"`
+	SearchQueries []string `json:"search_queries,omitempty"`
 }
 
 type _ReflectRequest ReflectRequest
@@ -60,6 +63,8 @@ func NewReflectRequest(query string) *ReflectRequest {
 	this.ApplyAllDirectives = &applyAllDirectives
 	var excludeMentalModels bool = false
 	this.ExcludeMentalModels = &excludeMentalModels
+	var abstain bool = false
+	this.Abstain = &abstain
 	return &this
 }
 
@@ -76,6 +81,8 @@ func NewReflectRequestWithDefaults() *ReflectRequest {
 	this.ApplyAllDirectives = &applyAllDirectives
 	var excludeMentalModels bool = false
 	this.ExcludeMentalModels = &excludeMentalModels
+	var abstain bool = false
+	this.Abstain = &abstain
 	return &this
 }
 
@@ -586,6 +593,71 @@ func (o *ReflectRequest) SetExcludeMentalModelIds(v []string) {
 	o.ExcludeMentalModelIds = v
 }
 
+// GetAbstain returns the Abstain field value if set, zero value otherwise.
+func (o *ReflectRequest) GetAbstain() bool {
+	if o == nil || IsNil(o.Abstain) {
+		var ret bool
+		return ret
+	}
+	return *o.Abstain
+}
+
+// GetAbstainOk returns a tuple with the Abstain field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *ReflectRequest) GetAbstainOk() (*bool, bool) {
+	if o == nil || IsNil(o.Abstain) {
+		return nil, false
+	}
+	return o.Abstain, true
+}
+
+// HasAbstain returns a boolean if a field has been set.
+func (o *ReflectRequest) HasAbstain() bool {
+	if o != nil && !IsNil(o.Abstain) {
+		return true
+	}
+
+	return false
+}
+
+// SetAbstain gets a reference to the given bool and assigns it to the Abstain field.
+func (o *ReflectRequest) SetAbstain(v bool) {
+	o.Abstain = &v
+}
+
+// GetSearchQueries returns the SearchQueries field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *ReflectRequest) GetSearchQueries() []string {
+	if o == nil {
+		var ret []string
+		return ret
+	}
+	return o.SearchQueries
+}
+
+// GetSearchQueriesOk returns a tuple with the SearchQueries field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *ReflectRequest) GetSearchQueriesOk() ([]string, bool) {
+	if o == nil || IsNil(o.SearchQueries) {
+		return nil, false
+	}
+	return o.SearchQueries, true
+}
+
+// HasSearchQueries returns a boolean if a field has been set.
+func (o *ReflectRequest) HasSearchQueries() bool {
+	if o != nil && !IsNil(o.SearchQueries) {
+		return true
+	}
+
+	return false
+}
+
+// SetSearchQueries gets a reference to the given []string and assigns it to the SearchQueries field.
+func (o *ReflectRequest) SetSearchQueries(v []string) {
+	o.SearchQueries = v
+}
+
 func (o ReflectRequest) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -638,6 +710,12 @@ func (o ReflectRequest) ToMap() (map[string]interface{}, error) {
 	}
 	if o.ExcludeMentalModelIds != nil {
 		toSerialize["exclude_mental_model_ids"] = o.ExcludeMentalModelIds
+	}
+	if !IsNil(o.Abstain) {
+		toSerialize["abstain"] = o.Abstain
+	}
+	if o.SearchQueries != nil {
+		toSerialize["search_queries"] = o.SearchQueries
 	}
 	return toSerialize, nil
 }

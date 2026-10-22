@@ -34,6 +34,7 @@ from .schema import (
     HISTORY_TABLES,
     OPERATIONAL_TABLES,
     SCHEMA_VERSION,
+    SESSION_TABLES,
     BankRowsJSONEncoding,
     TransferAttachment,
     TransferCausalRelation,
@@ -103,7 +104,7 @@ _BANK_ROW_TABLES = (*_CONFIG_ROW_TABLES, *_SYNTHESIZED_ROW_TABLES)
 # attachment rows (whose bytes ride in ``blobs/``). These are keyed by globally
 # unique ids, or reference ids the replay regenerates, so the importer remaps
 # them rather than inserting them as they stand.
-_DATA_ROW_TABLES = (*OPERATIONAL_TABLES, *ATTACHMENT_TABLES, "invalidated_memory_units")
+_DATA_ROW_TABLES = (*OPERATIONAL_TABLES, *ATTACHMENT_TABLES, "invalidated_memory_units", *SESSION_TABLES)
 # Intentionally never exported.
 _SKIP_TABLES = frozenset(
     {
@@ -431,6 +432,7 @@ _PAGED_ROW_KEYS = {
     "graph_maintenance_queue": "unit_id",
     "audit_log": "id",
     "llm_requests": "id",
+    "sessions": "session_id",
 }
 #: Rows per page. Small, because one operation row carries its whole task payload.
 _ROW_PAGE = 100
@@ -446,6 +448,30 @@ async def _iter_bank_row_pages(conn_or_backend: Any, table: str, bank_id: str) -
         page_size=_ROW_PAGE,
     ):
         yield [{k: v for k, v in dict(row).items() if k not in _DERIVED_COLUMNS} for row in rows]
+
+
+async def _iter_session_event_pages(conn_or_backend: Any, bank_id: str) -> AsyncIterator[list[dict]]:
+    """Every session's log, session by session in id order, each one paged by ``seq``.
+
+    The key is ``(session_id, seq)``, which a single-column keyset can't page, so the sessions are
+    paged by id and each one's events by ``seq`` within it; neither list is held whole.
+    """
+    async for sessions in iter_keyset_pages(
+        conn_or_backend,
+        f"SELECT session_id FROM {fq_table('sessions')} WHERE bank_id = $1",
+        [bank_id],
+        key="session_id",
+        page_size=_ROW_PAGE,
+    ):
+        for session in sessions:
+            async for rows in iter_keyset_pages(
+                conn_or_backend,
+                f"SELECT * FROM {fq_table('session_events')} WHERE bank_id = $1 AND session_id = $2",
+                [bank_id, session["session_id"]],
+                key="seq",
+                page_size=_ROW_PAGE,
+            ):
+                yield [dict(row) for row in rows]
 
 
 async def _collect(pages: AsyncIterator[list[dict]]) -> list[dict]:
@@ -615,6 +641,8 @@ async def stream_export_bank(
                 backend=conn_or_backend, fq_table=fq_table, bank_id=bank_id, page_size=_ROW_PAGE
             ),
             "data/invalidated_memory_units.json": _iter_invalidated_units(conn_or_backend, bank_id, memories),
+            "data/sessions.json": _iter_bank_row_pages(conn_or_backend, "sessions", bank_id),
+            "data/session_events.json": _iter_session_event_pages(conn_or_backend, bank_id),
         }
         for entry, row_pages in data_sections.items():
             async for chunk in write_row_pages(entry, row_pages):
@@ -880,6 +908,8 @@ async def load_bank_export(
             )
         )
         data_rows["invalidated_memory_units"] = await _collect(_iter_invalidated_units(conn, bank_id, memories))
+        data_rows["sessions"] = await _collect(_iter_bank_row_pages(conn, "sessions", bank_id))
+        data_rows["session_events"] = await _collect(_iter_session_event_pages(conn, bank_id))
 
     bank_rows: dict[str, list[dict]] = {}
     knowledge_pages: list[TransferKnowledgePage] = []

@@ -3100,6 +3100,7 @@ async def test_streamed_bank_archive_matches_the_built_one(memory, request_conte
         await _retain(memory, bank, "Grace shared a diagram of the Paris office.", request_context, "doc-1")
         await _retain(memory, bank, "Alan moved to Berlin in 2021.", request_context, "doc-2")
         await _seed_attachment(memory, bank, b"\x89PNG-parity", "b" * 64)
+        await _seed_session(memory, bank, "s1", "doc-1")
         backend = await memory._get_backend()
         scope = TransferScope(data=True, bank_config=True, history=True)
         streamed = b"".join(
@@ -3119,6 +3120,7 @@ async def test_streamed_bank_archive_matches_the_built_one(memory, request_conte
         assert streamed_entries["manifest.json"]["document_count"] == 2
         assert streamed_entries["manifest.json"]["attachment_count"] == 1
         assert streamed_entries["blobs/000000.bin"] == b"\x89PNG-parity"
+        assert [e["seq"] for e in streamed_entries["data/session_events.json"]] == [1, 2, 3]
     finally:
         await memory.delete_bank(bank, request_context=request_context)
 
@@ -3211,6 +3213,148 @@ async def test_invalidated_facts_survive_a_bank_copy(memory, request_context):
     finally:
         await memory.delete_bank(source, request_context=request_context)
         await memory.delete_bank(target, request_context=request_context)
+
+
+async def _seed_session(memory, bank_id: str, session_id: str, document_id: str) -> None:
+    """A session mid-flight: three events (the last a watcher note), two saved, a save and a check running."""
+    from hindsight_api.engine.schema import fq_table
+
+    backend = await memory._get_backend()
+    async with acquire_with_retry(backend) as conn:
+        await conn.execute(
+            f"""
+            INSERT INTO {fq_table("sessions")}
+                (bank_id, session_id, document_id, next_seq, saved_seq, event_count, note_count,
+                 save_plan, checking_since, pending_since)
+            VALUES ($1, $2, $3, 4, 2, 3, 1, $4::jsonb, now(), now())
+            """,
+            bank_id,
+            session_id,
+            document_id,
+            json.dumps({"from_seq": 2, "upto_seq": 3, "operation_id": str(uuid.uuid4())}),
+        )
+        events = [
+            (1, "client", "message", {"role": "user", "content": "Plan the Lisbon trip."}),
+            (2, "client", "message", {"role": "assistant", "content": "Booked the flight."}),
+            (3, "hindsight", "note", {"text": "Ivan prefers aisle seats."}),
+        ]
+        for seq, source, kind, payload in events:
+            await conn.execute(
+                f"""
+                INSERT INTO {fq_table("session_events")} (bank_id, session_id, seq, event_id, source, kind, payload)
+                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+                """,
+                bank_id,
+                session_id,
+                seq,
+                f"e{seq}",
+                source,
+                kind,
+                json.dumps(payload),
+            )
+
+
+async def _session_row(memory, bank_id: str, session_id: str) -> Any:
+    from hindsight_api.engine.schema import fq_table
+
+    async with acquire_with_retry(await memory._get_backend()) as conn:
+        return await conn.fetchrow(
+            f"SELECT * FROM {fq_table('sessions')} WHERE bank_id = $1 AND session_id = $2", bank_id, session_id
+        )
+
+
+async def _session_events(memory, bank_id: str, session_id: str) -> list[Any]:
+    from hindsight_api.engine.schema import fq_table
+
+    async with acquire_with_retry(await memory._get_backend()) as conn:
+        return list(
+            await conn.fetch(
+                f"SELECT * FROM {fq_table('session_events')} WHERE bank_id = $1 AND session_id = $2 ORDER BY seq",
+                bank_id,
+                session_id,
+            )
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("same_id", [True, False])
+async def test_sessions_survive_a_bank_copy_without_their_work_in_flight(memory, request_context, same_id):
+    """A session and its log travel with the data; its planned save and running check stay behind."""
+    from hindsight_api.engine.transfer import export_bank
+
+    source = _unique_bank("sess_src")
+    target = source if same_id else _unique_bank("sess_dst")
+    try:
+        await _retain(memory, source, "Ivan is flying to Lisbon.", request_context, "conversation:s1")
+        await _seed_session(memory, source, "s1", "conversation:s1")
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            archive = await export_bank(conn, source, file_storage=memory._file_storage)
+        if same_id:
+            await memory.delete_bank(source, request_context=request_context)
+
+        result = await memory.import_bank_async(archive, request_context, target_bank_id=target)
+        assert (result.sessions_imported, result.session_events_imported) == (1, 3)
+
+        session = await _session_row(memory, target, "s1")
+        events = await _session_events(memory, target, "s1")
+        assert session["document_id"] == "conversation:s1"
+        assert (session["next_seq"], session["saved_seq"], session["note_count"]) == (4, 2, 1)
+        assert session["save_plan"] is None
+        assert session["checking_since"] is None and session["pending_since"] is None
+        assert [(e["seq"], e["source"], e["kind"]) for e in events] == [
+            (1, "client", "message"),
+            (2, "client", "message"),
+            (3, "hindsight", "note"),
+        ]
+        assert json.loads(events[2]["payload"]) == {"text": "Ivan prefers aisle seats."}
+        assert {e["bank_id"] for e in events} == {target}
+        if not same_id:
+            # The source is untouched: still mid-save.
+            source_session = await _session_row(memory, source, "s1")
+            assert source_session["save_plan"] is not None
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        if not same_id:
+            await memory.delete_bank(target, request_context=request_context)
+
+
+def test_imported_sessions_follow_a_renamed_document_and_drop_work_in_flight():
+    from hindsight_api.engine.transfer.importer import _imported_sessions
+
+    rows = [
+        {"session_id": "s1", "document_id": "doc-a", "save_plan": "{}", "checking_since": "x", "pending_since": "y"},
+        {"session_id": "s2", "document_id": "doc-b", "save_plan": None, "checking_since": None, "pending_since": None},
+    ]
+    out = list(_imported_sessions(rows, {"doc-a": "doc-a-2"}))
+    assert [r["document_id"] for r in out] == ["doc-a-2", "doc-b"]
+    assert all(r["save_plan"] is r["checking_since"] is r["pending_since"] is None for r in out)
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_sessions_document_or_clearing_the_bank_restarts_its_saves(memory, request_context):
+    """With its document gone, the next save rewrites the whole conversation, not just the tail."""
+    bank = _unique_bank("sess_del")
+    try:
+        await _retain(memory, bank, "Ivan is flying to Lisbon.", request_context, "conversation:s1")
+        await _retain(memory, bank, "Grace is flying to Oslo.", request_context, "conversation:s2")
+        await _seed_session(memory, bank, "s1", "conversation:s1")
+        await _seed_session(memory, bank, "s2", "conversation:s2")
+
+        await memory.delete_document("conversation:s1", bank, request_context=request_context)
+        s1 = await _session_row(memory, bank, "s1")
+        s2 = await _session_row(memory, bank, "s2")
+        assert (s1["saved_seq"], s1["save_plan"]) == (0, None)
+        assert s2["saved_seq"] == 2 and s2["save_plan"] is not None
+
+        await memory.delete_bank(bank, delete_bank_profile=False, request_context=request_context)
+        s2 = await _session_row(memory, bank, "s2")
+        assert (s2["saved_seq"], s2["save_plan"]) == (0, None)
+        assert (
+            len(await _session_events(memory, bank, "s2")) == 3
+        )  # the log is the session's, not the document's: it stays
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
 
 
 @pytest.mark.asyncio

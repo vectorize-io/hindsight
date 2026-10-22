@@ -268,8 +268,14 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
                     key: stubs.rerank.score(body["state"], text if isinstance(text, str) else str(text))
                     for key, text in criteria.items()
                 }
+                pick_none = stubs.rerank.pick_none if "none" in criteria else None
+                if pick_none is not None:
+                    scores.pop("none")
                 total = sum(scores.values()) or 1.0
-                probabilities = {key: value / total for key, value in scores.items()}
+                share = 1.0 if pick_none is None else 1.0 - pick_none
+                probabilities = {key: share * value / total for key, value in scores.items()}
+                if pick_none is not None:
+                    probabilities["none"] = pick_none
                 best = max(probabilities, key=lambda key: probabilities[key])
                 answers[question_id] = {
                     "type": "choice",

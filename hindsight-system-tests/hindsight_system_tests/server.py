@@ -34,6 +34,10 @@ API_DIR = REPO_ROOT / "hindsight-api-slim"
 # tests at that one would both see their leftovers and block on their locks.
 PG0_INSTANCE = "hindsight-systest"
 PG0_PORT = 15499
+#: Another database instead, e.g. ``postgresql://...``: for a machine where that pg0 instance
+#: belongs to another checkout (its migrations ahead of this branch's) or where starting one
+#: more embedded Postgres runs out of shared memory.
+DATABASE_URL = os.environ.get("HINDSIGHT_SYSTEST_DATABASE_URL") or f"pg0://{PG0_INSTANCE}:{PG0_PORT}"
 
 SERVER_STARTUP_TIMEOUT = 180.0
 
@@ -225,7 +229,7 @@ def _server_env(stub_url: str, extra_env: dict[str, str] | None) -> dict[str, st
 
     env.update(
         {
-            "HINDSIGHT_API_DATABASE_URL": f"pg0://{PG0_INSTANCE}:{PG0_PORT}",
+            "HINDSIGHT_API_DATABASE_URL": DATABASE_URL,
             "HINDSIGHT_API_LOG_LEVEL": "info",
             # Everything the server does by default stays on, background work
             # included. A retain enqueues observation extraction and can trigger

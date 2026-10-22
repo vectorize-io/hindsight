@@ -54,6 +54,54 @@ export type RetainContentBlock =
   | { type: "image"; source: RetainAttachmentSource }
   | { type: "file"; source: RetainAttachmentSource; filename?: string };
 
+/** One live conversation a client streams into a bank (see components/sessions-view.tsx). */
+export interface SessionSummary {
+  session_id: string;
+  document_id: string;
+  /** Hindsight follows the session live and may write notes to the agent. */
+  live: boolean;
+  retain: "turns" | "idle" | "off";
+  event_count: number;
+  check_count: number;
+  note_count: number;
+  /** Notes the agent told the user it used ("From Hindsight memory (live session)" lines). */
+  credit_count: number;
+  /** Notes the agent told the user it did not need ("Hindsight note (live session)" lines). */
+  dismissed_count: number;
+  last_seq: number;
+  /** Log position saved into the session's document so far. */
+  saved_seq: number;
+  /** Seq of the last note the client confirmed delivered: a note is delivered iff seq <= acked_seq. */
+  acked_seq: number;
+  /** A live-session check is queued or running right now. */
+  checking: boolean;
+  created_at: string;
+  last_event_at: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface SessionEvent {
+  seq: number;
+  event_id: string;
+  source: "client" | "hindsight";
+  kind: string;
+  created_at: string;
+  /** Shape depends on `source` + `kind`; lib/session-timeline.ts types and reads it. */
+  payload: Record<string, unknown>;
+}
+
+interface SessionListResponse {
+  items: SessionSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+interface SessionEventsResponse {
+  items: SessionEvent[];
+  checking: boolean;
+}
+
 export interface WebhookHttpConfig {
   method: string;
   timeout_seconds: number;
@@ -694,6 +742,8 @@ export class ControlPlaneClient {
     response_schema?: Record<string, unknown>;
     reflect_search_observations_max_tokens?: number;
     reflect_search_observations_include_entities?: boolean;
+    abstain?: boolean;
+    search_queries?: string[];
   }) {
     return this.fetchApi("/api/reflect", {
       method: "POST",
@@ -1182,6 +1232,44 @@ export class ControlPlaneClient {
   async getDocumentHistory(documentId: string, bankId: string, offset = 0, limit = 100) {
     return this.fetchApi<DocumentHistoryResponse>(
       `${documentApi(documentId, bankId, "/history")}&limit=${limit}&offset=${offset}`
+    );
+  }
+
+  /** A bank's sessions, most recently active first; `q` matches the id. */
+  async listSessions(
+    bankId: string,
+    options: { q?: string; limit?: number; offset?: number } = {}
+  ) {
+    const params = new URLSearchParams();
+    if (options.q) params.append("q", options.q);
+    if (options.limit) params.append("limit", options.limit.toString());
+    if (options.offset) params.append("offset", options.offset.toString());
+    const query = params.toString();
+    return this.fetchApi<SessionListResponse>(
+      bankApi(bankId, `/sessions${query ? `?${query}` : ""}`),
+      undefined,
+      // Polled every few seconds: a blip must not stack up toasts.
+      { suppressErrorToast: true }
+    );
+  }
+
+  async getSession(bankId: string, sessionId: string) {
+    return this.fetchApi<SessionSummary>(
+      bankApi(bankId, `/sessions/${encodeURIComponent(sessionId)}`),
+      undefined,
+      { suppressErrorToast: true }
+    );
+  }
+
+  /** The session log after position `after`, oldest first — poll it to follow live. */
+  async getSessionEvents(bankId: string, sessionId: string, after = 0, limit = 1000) {
+    return this.fetchApi<SessionEventsResponse>(
+      bankApi(
+        bankId,
+        `/sessions/${encodeURIComponent(sessionId)}/events?after=${after}&limit=${limit}`
+      ),
+      undefined,
+      { suppressErrorToast: true }
     );
   }
 

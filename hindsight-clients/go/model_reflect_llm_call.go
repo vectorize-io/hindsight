@@ -25,6 +25,7 @@ type ReflectLLMCall struct {
 	Scope string `json:"scope"`
 	// Execution time in milliseconds
 	DurationMs int32 `json:"duration_ms"`
+	Detail NullableString `json:"detail,omitempty"`
 }
 
 type _ReflectLLMCall ReflectLLMCall
@@ -96,6 +97,48 @@ func (o *ReflectLLMCall) SetDurationMs(v int32) {
 	o.DurationMs = v
 }
 
+// GetDetail returns the Detail field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *ReflectLLMCall) GetDetail() string {
+	if o == nil || IsNil(o.Detail.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.Detail.Get()
+}
+
+// GetDetailOk returns a tuple with the Detail field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *ReflectLLMCall) GetDetailOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.Detail.Get(), o.Detail.IsSet()
+}
+
+// HasDetail returns a boolean if a field has been set.
+func (o *ReflectLLMCall) HasDetail() bool {
+	if o != nil && o.Detail.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetDetail gets a reference to the given NullableString and assigns it to the Detail field.
+func (o *ReflectLLMCall) SetDetail(v string) {
+	o.Detail.Set(&v)
+}
+// SetDetailNil sets the value for Detail to be an explicit nil
+func (o *ReflectLLMCall) SetDetailNil() {
+	o.Detail.Set(nil)
+}
+
+// UnsetDetail ensures that no value is present for Detail, not even an explicit nil
+func (o *ReflectLLMCall) UnsetDetail() {
+	o.Detail.Unset()
+}
+
 func (o ReflectLLMCall) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -108,6 +151,9 @@ func (o ReflectLLMCall) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	toSerialize["scope"] = o.Scope
 	toSerialize["duration_ms"] = o.DurationMs
+	if o.Detail.IsSet() {
+		toSerialize["detail"] = o.Detail.Get()
+	}
 	return toSerialize, nil
 }
 

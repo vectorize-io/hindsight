@@ -577,7 +577,10 @@ pub fn alias_add(
     let result = client.create_bank_alias(bank_id, alias, verbose)?;
 
     if output_format == OutputFormat::Pretty {
-        ui::print_success(&format!("'{}' now reaches bank '{}'", alias, result.bank_id));
+        ui::print_success(&format!(
+            "'{}' now reaches bank '{}'",
+            alias, result.bank_id
+        ));
     } else {
         output::print_output(&result, output_format)?;
     }
@@ -605,7 +608,10 @@ pub fn alias_primary(
                 result.bank_id, alias, result.bank_id
             ));
         } else {
-            ui::print_success(&format!("Bank '{}' is shown under its own id again", result.bank_id));
+            ui::print_success(&format!(
+                "Bank '{}' is shown under its own id again",
+                result.bank_id
+            ));
         }
     } else {
         output::print_output(&result, output_format)?;

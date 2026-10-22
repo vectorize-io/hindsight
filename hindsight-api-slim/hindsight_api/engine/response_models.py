@@ -66,6 +66,7 @@ class LLMCallTrace(BaseModel):
 
     scope: str = Field(description="Call scope: agent_1, agent_2, final, etc.")
     duration_ms: int = Field(description="Execution time in milliseconds")
+    detail: str | None = Field(default=None, description="What the call decided, when it is a decision")
 
 
 class ObservationRef(BaseModel):
@@ -556,6 +557,10 @@ class ReflectResult(BaseModel):
     )
 
     text: str = Field(description="The formulated answer text")
+    abstained: bool = Field(
+        default=False,
+        description="True when the request allowed no answer and memory held nothing that answers it; text is empty.",
+    )
     document: Any | None = Field(
         default=None,
         exclude=True,

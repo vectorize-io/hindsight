@@ -43,6 +43,9 @@ OPERATIONAL_TABLES = ("async_operations", "graph_maintenance_queue", "entity_mai
 # Attachment bytes live in file storage, not in a column, so the rows travel with
 # the blobs they point at (``blobs/``) rather than on their own.
 ATTACHMENT_TABLES = ("attachments",)
+# Live conversations and their logs: carried with ``data`` (``data/<table>.json``), because a
+# session's ``saved_seq`` only means something next to the document it saved into. Parent first.
+SESSION_TABLES = ("sessions", "session_events")
 
 
 @dataclass(frozen=True)
@@ -58,7 +61,8 @@ class TransferScope:
         their bytes, the curation archive (``invalidated_memory_units``), the
         async operations log, the graph/entity maintenance queues, and the
         knowledge the bank synthesized from all of it — mental models, their
-        refresh history, and the knowledge-page tree over them.
+        refresh history, and the knowledge-page tree over them — plus the
+        sessions saved into those documents and their event logs.
     ``bank_config`` — how the bank is set up:
         the ``banks`` row (per-bank config overrides), directives and webhooks.
     ``history`` — operational history: ``audit_log`` and ``llm_requests``.

@@ -90,6 +90,9 @@ export const HARNESS_LOGO_REGISTRY: Record<string, HarnessLogoEntry> = {
   // emits this id any more. The entry stays because documents retained while it
   // did are still in people's banks, and they should keep their logo.
   gemini: { id: "gemini", label: "Gemini", src: "/img/harness/gemini.svg" },
+  // Written by the Hermes integration (hindsight-integrations/hermes), not coding-agents: its
+  // live sessions carry `metadata.harness = "hermes"`.
+  hermes: { id: "hermes", label: "Hermes", src: "/img/harness/hermes.png" },
   // Not inverted: unlike the other monochrome marks this one is a filled black
   // tile with a white glyph, so it stays legible on dark — inverting it would
   // burn a white square into the row.
