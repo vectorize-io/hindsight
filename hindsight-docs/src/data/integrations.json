@@ -679,6 +679,16 @@
       "category": "tool",
       "link": "https://github.com/Nyrest/notion-to-hindsight-sync",
       "icon": "/img/icons/notion.svg"
+    },
+    {
+      "id": "hindsight-ingestion",
+      "name": "Hindsight Ingestion",
+      "description": "Sync multi-source to Hindsight with incremental, multimodal support, including Notion, S3, SQL, Google Drive, OneDrive, Siyuan, Filesystem, etc",
+      "type": "community",
+      "by": "Nyrest",
+      "category": "tool",
+      "link": "https://github.com/Nyrest/hindsight-ingestion",
+      "icon": "/img/icons/hindsight-ingestion.svg"
     }
   ]
 }
