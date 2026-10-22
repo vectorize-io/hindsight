@@ -24,6 +24,7 @@ implementation's dependencies. Extensions distributed outside the server live in
 from hindsight_api.extensions.bank_tables import BankScopedTable
 from hindsight_api.extensions.base import Extension
 from hindsight_api.extensions.context import DefaultExtensionContext, ExtensionContext
+from hindsight_api.extensions.embeddings import EmbeddingsExtension
 from hindsight_api.extensions.http import HttpExtension
 from hindsight_api.extensions.llm_request import (
     LLMRequestExtension,
@@ -111,6 +112,8 @@ __all__ = [
     "LLMRequestOverrides",
     "LLMRequestRefused",
     "LLMRequestTarget",
+    # Embeddings Extension
+    "EmbeddingsExtension",
     # Operation Validator - Core
     "DeferOperation",
     "OperationValidationError",

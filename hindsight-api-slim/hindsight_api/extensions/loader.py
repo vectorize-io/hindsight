@@ -175,6 +175,7 @@ EXTENSION_KINDS: tuple[ExtensionKind, ...] = (
     ExtensionKind("OPERATION_VALIDATOR", "hindsight_api.extensions.operation_validator", "OperationValidatorExtension"),
     ExtensionKind("MEMORY_DEFENSE", "hindsight_api.extensions.memory_defense", "MemoryDefenseExtension"),
     ExtensionKind("LLM_REQUEST", "hindsight_api.extensions.llm_request", "LLMRequestExtension"),
+    ExtensionKind("EMBEDDINGS", "hindsight_api.extensions.embeddings", "EmbeddingsExtension"),
     ExtensionKind("HTTP", "hindsight_api.extensions.http", "HttpExtension"),
     ExtensionKind("MCP", "hindsight_api.extensions.mcp", "MCPExtension"),
 )

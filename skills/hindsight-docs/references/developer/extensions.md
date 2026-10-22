@@ -124,6 +124,78 @@ The [`bank-llm-routing`](https://github.com/vectorize-io/hindsight/tree/main/hin
 
 ---
 
+### EmbeddingsExtension
+
+Supplies the embeddings model the engine stores and searches with, in place of the one the server's `HINDSIGHT_API_EMBEDDINGS_*` settings describe. Use it to:
+
+- **Use a provider Hindsight does not ship**, or a client with your own auth, pooling or telemetry.
+- **Choose the model per tenant.** Route each call by the current tenant schema, for example to put new tenants on a new model while existing tenants keep the one their vectors were made with.
+
+It is asked once, when the engine is built, and returns an `Embeddings`. Its argument builds the server's own model, so the extension can wrap it, fall back to it, or ignore it (it is only built if called).
+
+```bash
+HINDSIGHT_API_EMBEDDINGS_EXTENSION=mypackage.embeddings:MyEmbeddings
+```
+
+Things to know:
+
+- **One dimension.** `dimension` sizes every schema's vector columns at startup. A routing model must only route to models of that dimension; each vector is checked against it, so a model of another dimension fails the call rather than storing a vector of the wrong size.
+- **Vectors only compare within one model.** Give each tenant the same model for its whole life, or re-embed it. Refuse a call you cannot route instead of falling back to a default: a vector from the wrong model raises nothing, it just makes that tenant's recall worse.
+- **Pass optional capabilities through.** Callers read `batch_size`, `max_concurrent_requests`, `tokenizer_encoding`, `query_prefix` and `passage_prefix` when present; a wrapper should expose its delegate's.
+- **Configuration** comes from `HINDSIGHT_API_EMBEDDINGS_*`, the same prefix as the server's embeddings settings, so `config` holds those too. Give your own options names the server does not use.
+- **Lifecycle:** the engine calls `initialize()` on the returned model at startup (a wrapper initializes the models it holds); the extension's `on_startup()` runs just before, and `on_shutdown()` when the engine closes.
+
+Load the same extension in the API and in every worker: a worker without it embeds with the server's own model.
+
+#### Example: a model per tenant
+
+```python
+from hindsight_api.engine.embeddings import Embeddings
+from hindsight_api.engine.memory_engine import get_current_schema
+from hindsight_api.extensions import EmbeddingsExtension
+
+
+class PerTenantEmbeddings(Embeddings):
+    def __init__(self, default: Embeddings, new: Embeddings, new_tenants: set[str]) -> None:
+        self.default, self.new, self.new_tenants = default, new, new_tenants
+
+    @property
+    def provider_name(self) -> str:
+        return "per-tenant"
+
+    @property
+    def dimension(self) -> int:
+        return self.default.dimension
+
+    async def initialize(self) -> None:
+        await self.default.initialize()
+        await self.new.initialize()
+        if self.new.dimension != self.default.dimension:
+            raise RuntimeError("both models must have the same dimension")
+
+    def _model(self) -> Embeddings:
+        return self.new if get_current_schema() in self.new_tenants else self.default
+
+    async def encode(self, texts: list[str]) -> list[list[float]]:
+        return await self._model().encode(texts)
+
+    async def encode_query(self, texts: list[str]) -> list[list[float]]:
+        return await self._model().encode_query(texts)
+
+    async def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        return await self._model().encode_documents(texts)
+
+
+class NewTenantsOnNewModel(EmbeddingsExtension):
+    def create_embeddings(self, build_default):
+        new = build_my_model(self.config["new_model_url"])  # HINDSIGHT_API_EMBEDDINGS_NEW_MODEL_URL
+        return PerTenantEmbeddings(build_default(), new, load_new_tenants())
+```
+
+`get_current_schema()` is the tenant schema of the request or worker task being served (the configured default schema when there is none). Resolve the tenant's model from state you control and cache it: `encode` runs on every retain, recall and consolidation.
+
+---
+
 ## Writing Custom Extensions
 
 ### Extension Basics
