@@ -16,6 +16,9 @@
       ]
     }
   },
+  "contracts": {
+    "tools": ["hindsight_retain", "hindsight_recall", "hindsight_reflect"]
+  },
   "configSchema": {
     "type": "object",
     "properties": {
@@ -155,6 +158,12 @@
         "type": "boolean",
         "description": "Automatically recall memories on every prompt and inject them as context. Set to false when agent has its own recall tool.",
         "default": true
+      },
+      "memoryMode": {
+        "type": "string",
+        "enum": ["hybrid", "context", "tools"],
+        "description": "Same as Hermes's memory_mode. 'hybrid': auto-recall plus the hindsight_retain, hindsight_recall and hindsight_reflect tools; 'context': auto-recall only, no tools; 'tools': the tools only, no auto-recall. The tools always use the agent's own bank.",
+        "default": "hybrid"
       },
       "excludeProviders": {
         "type": "array",
@@ -479,6 +488,10 @@
     "autoRecall": {
       "label": "Auto-Recall",
       "placeholder": "true (inject memories on every prompt)"
+    },
+    "memoryMode": {
+      "label": "Memory Mode",
+      "placeholder": "hybrid (default), context (no tools), or tools (no auto-recall)"
     },
     "excludeProviders": {
       "label": "Excluded Providers",

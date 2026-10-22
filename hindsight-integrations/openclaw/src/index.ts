@@ -14,6 +14,7 @@ import {
 } from "@vectorize-io/hindsight-client";
 import { RetainQueue } from "./retain-queue.js";
 import { createMemoryProviderRuntime } from "./memory-provider.js";
+import { createHindsightTools, HINDSIGHT_TOOL_NAMES } from "./tools.js";
 import { compileSessionPatterns, matchesSessionPattern } from "./session-patterns.js";
 import { parseSessionFile } from "./session-file.js";
 import { createHash, randomUUID } from "crypto";
@@ -2181,7 +2182,12 @@ export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
           ])
         )
       : ["heartbeat"],
-    autoRecall: config.autoRecall !== false, // Default: true (on) — backward compatible
+    // "tools" is Hermes's tools-only mode: the agent recalls through hindsight_recall instead.
+    autoRecall: config.autoRecall !== false && config.memoryMode !== "tools", // Default: true (on)
+    memoryMode:
+      config.memoryMode === "context" || config.memoryMode === "tools"
+        ? config.memoryMode
+        : "hybrid",
     dynamicBankGranularity: Array.isArray(config.dynamicBankGranularity)
       ? config.dynamicBankGranularity
       : DEFAULT_DYNAMIC_BANK_GRANULARITY,
@@ -3393,6 +3399,41 @@ ${memoriesFormatted}
         },
       }),
     });
+
+    // Hermes's agent tools on this session's own bank. (#5635)
+    api.registerTool?.(
+      (toolCtx) =>
+        createHindsightTools(
+          {
+            bankFor: (ctx) => {
+              const config = currentPluginConfig || pluginConfig;
+              // The same identity resolution auto-recall runs, so the tools land on its bank.
+              const { resolvedCtx, skipReason } = resolveAndCacheIdentity({
+                sessionKey: ctx.sessionKey,
+                ctx: {
+                  agentId: ctx.agentId,
+                  sessionKey: ctx.sessionKey,
+                  workspaceDir: ctx.workspaceDir,
+                },
+                senderIdHint: ctx.requesterSenderId,
+                pluginConfig: config,
+              });
+              return skipReason
+                ? { error: skipReason.detail }
+                : { bankId: deriveBankId(resolvedCtx, config) };
+            },
+            clientFor: async (bankId) => {
+              const live = await readyClient();
+              if (!live) throw new Error("Hindsight client is not initialized");
+              await ensureBankDefaultsApplied(bankId, currentPluginConfig || pluginConfig);
+              return live.client;
+            },
+            config: () => currentPluginConfig || pluginConfig,
+          },
+          toolCtx
+        ),
+      { names: HINDSIGHT_TOOL_NAMES }
+    );
   } catch (error) {
     log.error("plugin loading error", error);
     if (error instanceof Error) {

@@ -107,6 +107,7 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `dynamicBankGranularity`   | `["agent", "channel", "user"]` | Fields used to derive bank ID. Options: `agent`, `channel`, `user`, `provider`                                                                                                                                                                                                                                   |
 | `excludeProviders`         | `["heartbeat"]`                | Message providers to skip for recall/retain (e.g. `heartbeat`, `slack`, `telegram`, `discord`)                                                                                                                                                                                                                   |
 | `autoRecall`               | `true`                         | Auto-inject memories before each turn. Set to `false` when the agent has its own recall tool.                                                                                                                                                                                                                    |
+| `memoryMode`               | `"hybrid"`                     | `hybrid`: auto-recall plus the `hindsight_retain` / `hindsight_recall` / `hindsight_reflect` tools. `context`: auto-recall only. `tools`: tools only, no auto-recall. See [Agent tools](#agent-tools).                                                                                                           |
 | `autoRetain`               | `true`                         | Auto-retain conversations after each turn                                                                                                                                                                                                                                                                        |
 | `retainRoles`              | `["user", "assistant"]`        | Which message roles to retain. Options: `user`, `assistant`, `system`, `tool`                                                                                                                                                                                                                                    |
 | `retainFormat`             | `"json"`                       | Serialization format for retained conversation content. `"json"` emits a structured array of `{role, content}` messages (matches Claude Code). `"text"` emits legacy `[role: x] … [x:end]` markers.                                                                                                              |
@@ -238,6 +239,26 @@ Two expected (non-error) messages on 2026.8.1+:
 - `openclaw plugins doctor` then reports `memory-core` is not selected for the memory slot — that is OpenClaw noting its built-in memory stepped aside.
 
 Upgrading from 0.11.1 or earlier: installs could fail with `npm error Cannot read properties of null (reading 'edgesOut')`. That was a packaging problem in the plugin, fixed in 0.12.0 — retry with the new version.
+
+## Agent tools
+
+The plugin gives the agent the same three tools the Hermes integration does:
+
+- `hindsight_retain` stores something the agent wants remembered (`content`, plus optional `context`, `tags` and `occurred_at`). Configured `retainTags` are added to its tags.
+- `hindsight_recall` searches memory with the same settings as auto-recall (`recallBudget`, `recallMaxTokens`, `recallTypes`, `preferObservations`, `recallMinScores`).
+- `hindsight_reflect` answers a question by reasoning over the memories.
+
+No tool takes a bank. Each call uses the bank this session's auto-recall and auto-retain use, so `agentBankMap` and per-agent, per-channel and per-user banks all apply, and an agent can't reach another agent's or user's memory. A session that auto-recall would skip (for example one with no stable sender when banks are keyed by user) gets an error instead of a guessed bank.
+
+`memoryMode` decides what the agent gets, like Hermes's `memory_mode`:
+
+- `hybrid` (default): auto-recall and the tools.
+- `context`: auto-recall only, no tools.
+- `tools`: the tools only, no auto-recall.
+
+```bash
+openclaw config set plugins.entries.hindsight-openclaw.config.memoryMode tools
+```
 
 ## OpenClaw's memory page, status and search
 

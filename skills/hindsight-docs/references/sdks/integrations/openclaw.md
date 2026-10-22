@@ -130,6 +130,7 @@ Optional settings in `~/.openclaw/openclaw.json`:
 - `dynamicBankGranularity` - Fields used to derive bank ID: `agent`, `channel`, `user`, `provider` (default: `["agent", "channel", "user"]`)
 - `excludeProviders` - Message providers to skip for recall/retain (e.g. `["slack"]`, `["telegram"]`, `["discord"]`)
 - `autoRecall` - Auto-inject memories before each turn (default: `true`). Set to `false` when the agent has its own recall tool.
+- `memoryMode` - `hybrid` (default): auto-recall plus the `hindsight_retain` / `hindsight_recall` / `hindsight_reflect` tools. `context`: auto-recall only. `tools`: tools only, no auto-recall. See [Agent tools](#agent-tools).
 - `autoRetain` - Auto-retain conversations after each turn (default: `true`)
 - `retainRoles` - Which message roles to retain (default: `["user", "assistant"]`). Options: `user`, `assistant`, `system`, `tool`
 - `recallBudget` - Recall effort: `"low"`, `"mid"`, or `"high"` (default: `"mid"`). Higher budgets use more retrieval strategies for better results.
@@ -521,6 +522,26 @@ openclaw config get plugins.entries.hindsight-openclaw.config.llmProvider
 
 If you used `--ref-source env`, double-check that the referenced env var
 (e.g. `OPENAI_API_KEY`) is exported in the shell that runs `openclaw gateway`.
+
+## Agent tools
+
+The plugin gives the agent the same three tools the Hermes integration does:
+
+- `hindsight_retain` stores something the agent wants remembered (`content`, plus optional `context`, `tags` and `occurred_at`). Configured `retainTags` are added to its tags.
+- `hindsight_recall` searches memory with the same settings as auto-recall (`recallBudget`, `recallMaxTokens`, `recallTypes`, `preferObservations`, `recallMinScores`).
+- `hindsight_reflect` answers a question by reasoning over the memories.
+
+No tool takes a bank. Each call uses the bank this session's auto-recall and auto-retain use, so `agentBankMap` and per-agent, per-channel and per-user banks all apply, and an agent can't reach another agent's or user's memory. A session that auto-recall would skip (for example one with no stable sender when banks are keyed by user) gets an error instead of a guessed bank.
+
+`memoryMode` decides what the agent gets, like Hermes's `memory_mode`:
+
+- `hybrid` (default): auto-recall and the tools.
+- `context`: auto-recall only, no tools.
+- `tools`: the tools only, no auto-recall.
+
+```bash
+openclaw config set plugins.entries.hindsight-openclaw.config.memoryMode tools
+```
 
 ## OpenClaw's memory page, status and search
 
