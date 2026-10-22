@@ -136,6 +136,8 @@ To try it in a real vault, copy `main.js`, `manifest.json`, and `styles.css` int
 ./scripts/release-integration.sh obsidian <version>
 ```
 
+Its `npm version` step runs `version-bump.mjs`, which copies the new version into `manifest.json` and adds it to `versions.json` (the files Obsidian, BRAT and the community store read). Don't bump them by hand.
+
 The `Release Integration` workflow then automatically (see `.github/workflows/release-integration.yml` → "Mirror Obsidian plugin"):
 
 1. publishes the npm package `@vectorize-io/hindsight-obsidian`,

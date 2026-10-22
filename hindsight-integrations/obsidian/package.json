@@ -29,7 +29,8 @@
     "dev": "node esbuild.config.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "version": "node version-bump.mjs"
   },
   "dependencies": {
     "chokidar": "^4.0.3"
