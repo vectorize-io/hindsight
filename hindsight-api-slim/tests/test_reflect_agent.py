@@ -29,8 +29,11 @@ from hindsight_api.engine.reflect.agent import (
     _is_context_overflow_error,
     _is_done_tool,
     _normalize_tool_name,
+    _process_done_tool,
     run_reflect_agent,
 )
+from hindsight_api.engine.reflect.models import TokenUsageSummary
+from hindsight_api.engine.reflect.presentation import ToolResultPresenter
 from hindsight_api.engine.reflect.structured_doc import DocumentSectionsInvalidError
 from hindsight_api.engine.response_models import LLMCallResult, LLMToolCall, LLMToolCallResult, TokenUsage
 from tests.llm_judge import assert_meets_criteria
@@ -3939,3 +3942,37 @@ def test_retrieval_counts_include_expanded_memories():
     ]
 
     assert _count_retrieved_facts(trace) == {"world": 1, "experience": 1}
+
+
+@pytest.mark.asyncio
+async def test_done_with_malformed_id_fields_keeps_the_answer():
+    """A cited-ids field that isn't a list is treated as empty, not a failed reflect (#5927)."""
+    result = await _process_done_tool(
+        LLMToolCall(
+            id="1",
+            name="done",
+            arguments={
+                "answer": "The answer.",
+                "observation_ids": True,
+                "memory_ids": "mem-1",
+                "mental_model_ids": None,
+            },
+        ),
+        available_memory_ids={"mem-1"},
+        available_mental_model_ids={"mm-1"},
+        available_observation_ids={"obs-1"},
+        iterations=1,
+        total_tools_called=1,
+        tool_trace=[],
+        llm_trace=[],
+        usage=TokenUsageSummary(),
+        log_completion=lambda *_: None,
+        reflect_id="r",
+        directives_applied=[],
+        presenter=ToolResultPresenter(),
+    )
+
+    assert result.text == "The answer."
+    assert result.used_memory_ids == []
+    assert result.used_mental_model_ids == []
+    assert result.used_observation_ids == []
