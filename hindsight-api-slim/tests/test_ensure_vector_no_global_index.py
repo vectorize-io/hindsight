@@ -243,6 +243,7 @@ def test_embedding_dimension_resize_does_not_create_global_index(vec_db_url):
 
 
 @pytest.mark.xdist_group("vecidx_pg0")
+@pytest.mark.memory_backend_incompatible
 def test_migration_drops_global_index_by_any_name(vec_db_url):
     """#5707: the resize path left ``idx_memory_units_embedding_hnsw`` behind, which
     f2a6d8c4b1e9 never matched. e8c1a4f7b2d9 drops every global vector index found in
