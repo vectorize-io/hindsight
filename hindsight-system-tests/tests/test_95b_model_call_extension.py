@@ -97,7 +97,7 @@ async def test_every_model_call_reaches_the_extension(deployment: Deployment, ll
         # Worker: async retain extracts and embeds there; consolidation always runs there.
         await client.aretain(bank_id=bank, content="Theodora lives in Reykjavík.", retain_async=True)
         await wait_until_settled(client, bank)
-        # HTTP process: recall embeds the query and reranks; reflect walks its tool loop.
+        # HTTP process: recall embeds the query (and reranks); reflect walks its tool loop.
         await client.arecall(bank_id=bank, query=QUERY)
         reflected = await client.areflect(bank_id=bank, query=QUERY)
         assert reflected.text.strip() == ANSWER
@@ -121,9 +121,13 @@ async def test_every_model_call_reaches_the_extension(deployment: Deployment, ll
 
     query = next(c for c in api_calls if c["scope"] == "embedding_query" and c["operation"] == "recall")
     assert query["input"] == {"texts": [QUERY]} and query["input_count"] == 1
-    [rerank] = [c for c in api_calls if c["scope"] == "rerank" and c["trace_id"] == query["trace_id"]]
-    assert rerank["input"]["queries"] == [QUERY]
-    assert len(rerank["output"]["scores"]) == len(rerank["input"]["documents"])
+    # At most one rerank per recall. None when the memories store ranks the results itself and
+    # the engine's reranker never runs; when it does run, it is recorded in full.
+    reranks = [c for c in api_calls if c["scope"] == "rerank" and c["trace_id"] == query["trace_id"]]
+    assert len(reranks) <= 1
+    for rerank in reranks:
+        assert rerank["input"]["queries"] == [QUERY]
+        assert len(rerank["output"]["scores"]) == len(rerank["input"]["documents"])
 
     reflect = [c for c in api_calls if c["operation"] == "reflect" and c["call_type"] == "chat"]
     assert len({c["trace_id"] for c in reflect}) == 1, "one reflect, one trace"
