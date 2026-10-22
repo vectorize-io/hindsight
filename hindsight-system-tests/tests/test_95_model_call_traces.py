@@ -61,3 +61,27 @@ async def test_embedding_and_rerank_calls_are_in_request_history(client, llm, ba
 
     stats = await traces.llm_request_stats(bank_id, call_type="embedding", period="1d")
     assert sum(bucket.total for bucket in stats.buckets) == len(embedding)
+
+
+async def test_deleting_a_bank_deletes_its_request_history(client, llm, bank_id, settled):
+    # The history holds the bank's prompts and memory text: it must not outlive the bank,
+    # nor reappear when a bank with the same id is created again (#5839).
+    llm.on_step("extract_facts").returns(extracted(fact("Alice lives in Lisbon")))
+    llm.on_step("consolidate").returns(consolidation())
+
+    await client.aretain(bank_id=bank_id, content="Alice lives in Lisbon.")
+    await settled(bank_id)
+
+    traces = LLMTracesApi(client._api_client)
+    for _ in range(50):
+        if (await traces.list_llm_requests(bank_id, limit=1)).total:
+            break
+        await asyncio.sleep(0.1)
+    else:
+        raise AssertionError("retain left no request history")
+
+    await client.adelete_bank(bank_id)
+    await client.acreate_bank(bank_id=bank_id, name="Alice")
+
+    history = await traces.list_llm_requests(bank_id, limit=500)
+    assert history.total == 0 and history.items == []

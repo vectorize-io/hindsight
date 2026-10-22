@@ -12052,6 +12052,7 @@ class MemoryEngine(MemoryEngineInterface):
         - All memory units for this bank (optionally filtered by fact_type)
         - All entities for this bank (if deleting all memory units)
         - All associated links, unit-entity associations, and co-occurrences
+        - The bank's LLM request history (when the bank itself is deleted)
 
         Args:
             bank_id: bank ID to delete
