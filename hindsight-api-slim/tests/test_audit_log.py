@@ -507,3 +507,27 @@ def test_control_plane_filter_offers_every_audited_action():
     view = (root / "hindsight-control-plane" / "src" / "components" / "audit-logs-view.tsx").read_text()
     offered = set(re.findall(r'value: "([a-z_]+)"', view))
     assert [a for a in audited if a not in offered] == []
+
+
+@pytest.mark.asyncio
+async def test_destructive_ops_are_logged_with_audit_disabled(memory, caplog):
+    """#5960: a delete leaves a log line naming action and bank even when audit is off."""
+    memory._audit_logger._enabled = False
+    enable_audit_default(memory, False)
+
+    app = create_app(memory, initialize_memory=False)
+    transport = httpx.ASGITransport(app=app)
+    bid = f"audit_destructive_{uuid.uuid4().hex[:8]}"
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.put(f"/v1/default/banks/{bid}", json={"name": "Destructive"})
+        with caplog.at_level("INFO", logger="hindsight_api.engine.audit"):
+            await client.delete(f"/v1/default/banks/{bid}/memories")
+            await client.delete(f"/v1/default/banks/{bid}/documents/missing-doc")
+            await client.delete(f"/v1/default/banks/{bid}")
+
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("destructive_op ")]
+    for action, status in [("clear_memories", "ok"), ("delete_document", "error"), ("delete_bank", "ok")]:
+        assert any(
+            f"action={action} bank={bid} transport=http" in line and f"status={status}" in line for line in lines
+        ), (action, lines)
+    assert all("schema=" in line and "tenant=" in line for line in lines)

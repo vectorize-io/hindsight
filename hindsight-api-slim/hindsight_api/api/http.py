@@ -5179,9 +5179,15 @@ def _make_audited_http(audit_logger_getter: Callable[[], AuditLogger | None]):
             @wraps(func)
             async def wrapper(*args, **kwargs):
                 al = audit_logger_getter()
+                if al is None:
+                    return await func(*args, **kwargs)
+                with al.destructive_op(action, "http", kwargs.get("bank_id"), kwargs.get("request_context")):
+                    return await _audited(al, *args, **kwargs)
+
+            async def _audited(al: AuditLogger, *args, **kwargs):
                 # Cheap bank-independent pre-filter first, then the per-bank
                 # decision (audit_log_enabled is overridable per bank).
-                if al is None or not al.action_allowed(action):
+                if not al.action_allowed(action):
                     return await func(*args, **kwargs)
 
                 bank_id = kwargs.get("bank_id")
