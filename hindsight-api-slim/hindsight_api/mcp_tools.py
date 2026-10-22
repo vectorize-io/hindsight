@@ -921,7 +921,7 @@ def _apply_audit_logging(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
     audit_logger: AuditLogger = memory.audit_logger
     original_call_tool = mcp.call_tool
 
-    async def _call_tool(name, arguments=None, **kwargs):
+    async def _call_tool(name: str, arguments: dict[str, Any] | None = None, **kwargs: Any) -> Any:
         bank_id = None
         if isinstance(arguments, dict):
             bank_id = arguments.get("bank_id") or (config.bank_id_resolver() if config.bank_id_resolver else None)
@@ -944,7 +944,7 @@ def _apply_audit_logging(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
                 "mcp tool=%s bank=%s status=%s duration_ms=%d", name, bank_id, status, (time.monotonic() - start) * 1000
             )
 
-    async def _audited(name, bank_id, arguments, **kwargs):
+    async def _audited(name: str, bank_id: str | None, arguments: dict[str, Any] | None, **kwargs: Any) -> Any:
         # Cheap bank-independent pre-filter, then the per-bank decision.
         if (
             name in _UNAUDITED_MCP_TOOLS

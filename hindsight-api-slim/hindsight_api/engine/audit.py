@@ -238,7 +238,8 @@ class AuditLogger:
             status = "ok"
         finally:
             logger.info(
-                "destructive_op action=%s bank=%s transport=%s tenant=%s schema=%s api_key_id=%s status=%s duration_ms=%d",
+                "destructive_op action=%s bank=%s transport=%s tenant=%s schema=%s api_key_id=%s "
+                "status=%s duration_ms=%d",
                 action,
                 bank_id,
                 transport,

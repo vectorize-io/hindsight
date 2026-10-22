@@ -2722,6 +2722,8 @@ Audit logging captures mutating operations (retain, recall, reflect, bank config
 
 The actions allowlist and retention window stay server-level: retention is a global sweep across all tenants with no bank in scope.
 
+**Destructive operations are always logged, whatever the audit setting.** Deleting or clearing a bank, its memories, documents, mental models, directives, aliases, webhooks or observations, and importing into a bank, writes one INFO line to the API's application log over both HTTP and MCP — `destructive_op action=delete_bank bank=… transport=mcp tenant=… schema=… api_key_id=… status=ok duration_ms=…`. It records who removed what, and when, even with the `audit_log` table off. Every MCP tool call also logs one `mcp tool=… bank=… status=… duration_ms=…` line.
+
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_AUDIT_LOG_ENABLED` | Whether audit events are written. Hierarchical — can be overridden per bank via the config API. | `false` |

@@ -85,6 +85,12 @@ function getActionOptions(t: TranslateFn) {
     { value: "graph_maintenance", label: t("actionGraphMaintenance") },
     { value: "vector_index_maintenance", label: t("actionVectorIndexMaintenance") },
     { value: "memory_defense", label: t("actionMemoryDefense") },
+    { value: "sync_retain", label: t("actionSyncRetain") },
+    { value: "invalidate_memory", label: t("actionInvalidateMemory") },
+    { value: "create_knowledge_folder", label: t("actionCreateKnowledgeFolder") },
+    { value: "create_knowledge_page", label: t("actionCreateKnowledgePage") },
+    { value: "update_knowledge_node", label: t("actionUpdateKnowledgeNode") },
+    { value: "delete_knowledge_node", label: t("actionDeleteKnowledgeNode") },
   ];
 }
 
