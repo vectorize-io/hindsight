@@ -539,6 +539,8 @@ The plugin gives the agent the same three tools the Hermes integration does:
 
 No tool takes a bank. Each call uses the bank this session's auto-recall and auto-retain use, so `agentBankMap` and per-agent, per-channel and per-user banks all apply, and an agent can't reach another agent's or user's memory. A session that auto-recall would skip (for example one with no stable sender when banks are keyed by user) gets an error instead of a guessed bank.
 
+The session filters apply too: a session matching `ignoreSessionPatterns` gets no tools, and one matching `statelessSessionPatterns` gets no tools while `skipStatelessSessions` is on, and only `hindsight_recall` / `hindsight_reflect` when it is off.
+
 `memoryMode` decides what the agent gets, like Hermes's `memory_mode`:
 
 - `hybrid` (default): auto-recall and the tools.

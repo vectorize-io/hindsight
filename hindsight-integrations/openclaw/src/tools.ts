@@ -9,6 +9,7 @@
  * a model cannot read or write another agent's or user's memory.
  */
 import { HindsightError, type HindsightClient } from "@vectorize-io/hindsight-client";
+import { compileSessionPatterns, matchesSessionPattern } from "./session-patterns.js";
 import type { PluginConfig, PluginTool, PluginToolContext, PluginToolResult } from "./types.js";
 
 export const HINDSIGHT_TOOL_NAMES = ["hindsight_retain", "hindsight_recall", "hindsight_reflect"];
@@ -43,7 +44,29 @@ export function createHindsightTools(
   deps: HindsightToolDeps,
   ctx: PluginToolContext
 ): PluginTool[] | null {
-  if (deps.config().memoryMode === "context") return null;
+  const config = deps.config();
+  if (config.memoryMode === "context") return null;
+  // The session filters auto-recall and auto-retain honour apply here too: an
+  // ignored session gets no tools, and a stateless one never writes (no
+  // hindsight_retain) and reads only when skipStatelessSessions is false.
+  let readOnly = false;
+  const sessionKey = ctx.sessionKey;
+  if (sessionKey) {
+    if (
+      matchesSessionPattern(sessionKey, compileSessionPatterns(config.ignoreSessionPatterns ?? []))
+    ) {
+      return null;
+    }
+    if (
+      matchesSessionPattern(
+        sessionKey,
+        compileSessionPatterns(config.statelessSessionPatterns ?? [])
+      )
+    ) {
+      if (config.skipStatelessSessions !== false) return null;
+      readOnly = true;
+    }
+  }
 
   // Resolved per call, not when the tools are built, so each call reads the session
   // identity the hooks cached most recently, exactly as auto-recall does.
@@ -55,7 +78,7 @@ export function createHindsightTools(
     return { bankId: resolved.bankId, client: await deps.clientFor(resolved.bankId) };
   }
 
-  return [
+  const tools: PluginTool[] = [
     {
       name: "hindsight_retain",
       label: "Hindsight Retain",
@@ -173,4 +196,5 @@ export function createHindsightTools(
       },
     },
   ];
+  return readOnly ? tools.filter((tool) => tool.name !== "hindsight_retain") : tools;
 }

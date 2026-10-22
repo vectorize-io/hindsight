@@ -192,6 +192,23 @@ describe("Hermes's tools in OpenClaw (#5635)", () => {
     expect(factory({ agentId: "main", sessionKey: "agent:main:main" })).toBeNull();
   });
 
+  it("honours the session filters auto-recall and auto-retain use", async () => {
+    const { factory } = await load({
+      ignoreSessionPatterns: ["agent:*:ignored:**"],
+      statelessSessionPatterns: ["agent:*:readonly:**"],
+      skipStatelessSessions: false,
+    });
+    expect(factory({ agentId: "main", sessionKey: "agent:main:ignored:x" })).toBeNull();
+    expect(
+      factory({ agentId: "main", sessionKey: "agent:main:readonly:x" })?.map((t) => t.name)
+    ).toEqual(["hindsight_recall", "hindsight_reflect"]);
+  });
+
+  it("offers no tools to a stateless session while skipStatelessSessions is on", async () => {
+    const { factory } = await load({ statelessSessionPatterns: ["agent:*:readonly:**"] });
+    expect(factory({ agentId: "main", sessionKey: "agent:main:readonly:x" })).toBeNull();
+  });
+
   it("drops auto-recall but keeps the tools in memoryMode 'tools'", async () => {
     const client = mockClient();
     const { hooks, factory } = await load({
