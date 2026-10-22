@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from hindsight_api.engine.providers.openai_compatible_headers import OPENAI_COMPATIBLE_USER_AGENT
 from hindsight_api.extensions import FileConvertResult, OperationValidatorExtension, ValidationResult
 from hindsight_api.extensions.operation_validator import (
     RecallContext,
@@ -562,16 +563,16 @@ def test_markitdown_converter_can_enable_ocr(monkeypatch):
         {
             "api_key": "parser-key",
             "base_url": "https://vision.example/v1",
+            "default_headers": {"User-Agent": OPENAI_COMPATIBLE_USER_AGENT},
         }
     ]
-    assert "default_headers" not in openai_calls[0]
     assert markitdown_calls[0]["llm_client"].__class__ is FakeOpenAI
     assert markitdown_calls[0]["llm_model"] == "vision-model"
     assert markitdown_calls[0]["llm_prompt"] == DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT
 
 
 def test_markitdown_converter_passes_default_headers_when_configured(monkeypatch):
-    """Custom OCR headers should be forwarded to the OpenAI client only when set."""
+    """Custom OCR headers are forwarded to the OpenAI client alongside the hindsight User-Agent."""
     import markitdown
     import openai
 
@@ -605,7 +606,7 @@ def test_markitdown_converter_passes_default_headers_when_configured(monkeypatch
         {
             "api_key": "parser-key",
             "base_url": "https://vision.example/v1",
-            "default_headers": headers,
+            "default_headers": {**headers, "User-Agent": OPENAI_COMPATIBLE_USER_AGENT},
         }
     ]
 

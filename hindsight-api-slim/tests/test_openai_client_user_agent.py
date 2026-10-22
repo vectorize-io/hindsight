@@ -20,20 +20,3 @@ def test_every_openai_client_module_applies_the_user_agent_helper():
     assert sites, "no OpenAI client construction found; the pattern has gone stale"
     missing = [str(p.relative_to(package)) for p in sites if "with_openai_compatible_user_agent(" not in p.read_text()]
     assert missing == []
-
-
-def test_markitdown_ocr_client_keeps_operator_headers_and_adds_user_agent():
-    from hindsight_api.engine.parsers.markitdown import MarkitdownParser
-    from hindsight_api.engine.providers.openai_compatible_headers import OPENAI_COMPATIBLE_USER_AGENT
-
-    parser = MarkitdownParser()
-    options = parser._build_ocr_options(
-        api_key="sk-test",
-        base_url="http://gw.local/v1",
-        model="gpt-4o-mini",
-        prompt=None,
-        default_headers={"X-Trace-Id": "abc"},
-    )
-    headers = options.llm_client.default_headers
-    assert headers["User-Agent"] == OPENAI_COMPATIBLE_USER_AGENT
-    assert headers["X-Trace-Id"] == "abc"
