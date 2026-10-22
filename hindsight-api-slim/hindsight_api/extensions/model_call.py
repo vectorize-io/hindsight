@@ -13,7 +13,8 @@ recorders), whether or not that table is written.
 **``record`` runs on the call path, synchronously.** It must only buffer: no I/O, no
 blocking, nothing slow. Send from a background task, and flush in ``on_shutdown``, which is
 awaited when the server stops, after the workers and before the database pools close. An
-exception it raises is logged and swallowed; it never fails the call.
+exception it raises never fails the call; it is swallowed and logged at DEBUG only, so
+catch and report your own errors.
 
 Load it with::
 
@@ -31,6 +32,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from hindsight_api.engine.response_models import LLMToolCall
 from hindsight_api.extensions.base import Extension
 
 logger = logging.getLogger(__name__)
@@ -77,6 +79,8 @@ class ModelCall(BaseModel):
     input: Any
     #: What came back; ``None`` when the call failed.
     output: Any
+    #: The tools the model asked to call (the reflect agent's turns); ``None`` when it asked none.
+    tool_calls: list[LLMToolCall] | None
 
 
 class ModelCallExtension(Extension, ABC):
@@ -115,6 +119,7 @@ class ModelCallRecorder:
         served_by: str | None = None,
         input_count: int | None = None,
         structured_input: Any = None,
+        tool_calls: list[dict[str, Any]] | None = None,
         **_extra: Any,
     ) -> None:
         # Lazy: the engine imports this module.
@@ -159,5 +164,6 @@ class ModelCallRecorder:
             # call, and the extension may serialize it later, off the call path.
             input=structured_input if structured_input is not None else list(messages or []),
             output=None if error is not None else response_content,
+            tool_calls=[LLMToolCall.model_validate(tc) for tc in tool_calls] if tool_calls else None,
         )
         self.extension.record(call)

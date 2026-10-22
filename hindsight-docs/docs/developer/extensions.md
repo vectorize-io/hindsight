@@ -126,7 +126,7 @@ The [`bank-llm-routing`](https://github.com/vectorize-io/hindsight/tree/main/hin
 
 ### ModelCallExtension
 
-Receives every model call the server makes — LLM, embedding, rerank and decision-model calls, successes and failures — once it finishes, as a `ModelCall`: the tenant schema, bank, operation and trace it ran for, scope, provider and model, input / cached / output / thoughts tokens, duration, and the request and response themselves. Use it to keep a per-call record of model spend and content outside the `llm_requests` table: object storage, a warehouse, an observability product.
+Receives every model call the server makes — LLM, embedding, rerank and decision-model calls, successes and failures — once it finishes, as a `ModelCall`: the tenant schema, bank, operation and trace it ran for, scope, provider and model, input / cached / output / thoughts tokens, duration, and the request and response themselves (plus the tool calls, when the model asked for tools). Use it to keep a per-call record of model spend and content outside the `llm_requests` table: object storage, a warehouse, an observability product.
 
 ```bash
 HINDSIGHT_API_MODEL_CALL_EXTENSION=mypackage.calls:MyRecorder
@@ -134,7 +134,7 @@ HINDSIGHT_API_MODEL_CALL_EXTENSION=mypackage.calls:MyRecorder
 
 Things to know:
 
-- **`record()` runs on the call path, synchronously.** Only buffer there: no I/O, nothing that blocks. Send from a background task. An exception it raises is logged and swallowed; it never fails the call.
+- **`record()` runs on the call path, synchronously.** Only buffer there: no I/O, nothing that blocks. Send from a background task. An exception it raises never fails the call; it is swallowed and logged at DEBUG only, so catch and report your own errors.
 - **Lifecycle:** `on_startup()` runs when the memory engine initializes, before any model call; `on_shutdown()` when it closes, after the workers have stopped, so a buffer can be written out completely.
 - **It sees the same calls `llm_requests` tracing sees**, whether or not that table is written, and in the API and the worker alike. Load it in both.
 - **`input` and `output` are the call's content** (prompts and memories included). Treat what you store accordingly.

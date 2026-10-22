@@ -80,6 +80,19 @@ async def test_the_input_is_what_was_sent_not_what_the_list_became(ext):
     assert ext.calls[0].input == [{"role": "user", "content": "first"}]
 
 
+async def test_a_tool_call_turn_records_the_tools_it_asked_for(ext):
+    """The reflect agent's turns answer with tool calls, not text; those are the output."""
+    llm = LLMProvider(provider="mock", api_key="", base_url="", model="mock")
+    llm.set_mock_response([{"name": "recall", "arguments": {"query": "cats"}}])
+    tools = [{"type": "function", "function": {"name": "recall", "parameters": {"type": "object"}}}]
+    await llm.call_with_tools(messages=[{"role": "user", "content": "q"}], tools=tools, scope="reflect")
+
+    [call] = ext.calls
+    assert call.tool_calls is not None
+    assert [(tc.name, tc.arguments) for tc in call.tool_calls] == [("recall", {"query": "cats"})]
+    assert call.finish_reason == "tool_calls"
+
+
 def test_a_failed_call(ext):
     tracing.get_span_recorder().record_llm_call(
         provider="openai",
@@ -95,6 +108,7 @@ def test_a_failed_call(ext):
         input_count=2,
     )
     [call] = ext.calls
+    assert call.tool_calls is None
     assert (call.success, call.error, call.call_type, call.input_count, call.duration_ms) == (
         False,
         "TimeoutError: slow",
@@ -112,7 +126,7 @@ class _Loadable(_Collect):
     pass
 
 
-def test_the_engine_loads_registers_and_unregisters_it():
+async def test_the_engine_loads_registers_and_unregisters_it():
     from hindsight_api.engine.memory_engine import MemoryEngine
 
     embeddings = MagicMock()
@@ -129,9 +143,13 @@ def test_the_engine_loads_registers_and_unregisters_it():
             engine = MemoryEngine(db_url="postgresql://localhost/hindsight_test", embeddings=embeddings)
     finally:
         clear_config_cache()
+    extension = engine._model_call_extension
     try:
-        assert isinstance(engine._model_call_extension, _Loadable)
+        assert isinstance(extension, _Loadable)
         assert engine._model_call_recorder in tracing.get_span_recorder()._recorders
+        await engine.close()
+        assert engine._model_call_recorder not in tracing.get_span_recorder()._recorders
+        assert extension.stopped, "on_shutdown runs on close, so a buffer can be written out"
     finally:
         tracing.unregister_span_recorder(engine._model_call_recorder)
         tracing.unregister_span_recorder(engine._llm_recorder)

@@ -3454,18 +3454,6 @@ class MemoryEngine(MemoryEngineInterface):
         )
 
         self._llm_request_extension = load_extension("LLM_REQUEST", LLMRequestExtension, context=self._ext_ctx)
-
-        # Every model call, with its input and output, handed to an extension that keeps a
-        # per-call record somewhere of its own. Fed by the same GenAI recorders as llm_requests.
-        from ..extensions.model_call import ModelCallExtension, ModelCallRecorder  # noqa: PLC0415
-        from ..tracing import register_span_recorder as _register_span_recorder  # noqa: PLC0415
-
-        self._model_call_extension = load_extension("MODEL_CALL", ModelCallExtension, context=self._ext_ctx)
-        self._model_call_recorder = (
-            ModelCallRecorder(self._model_call_extension) if self._model_call_extension is not None else None
-        )
-        if self._model_call_recorder is not None:
-            _register_span_recorder(self._model_call_recorder)
         if self._llm_request_extension is not None:
             if config.retain_batch_enabled:
                 # A batch job is submitted once, on the server's account, for every item
@@ -3477,6 +3465,17 @@ class MemoryEngine(MemoryEngineInterface):
                     "HINDSIGHT_API_RETAIN_BATCH_ENABLED=false."
                 )
             install_llm_request_extension(self._llm_request_extension)
+
+        # Every model call, with its input and output, handed to an extension that keeps a
+        # per-call record somewhere of its own. Fed by the same GenAI recorders as llm_requests.
+        from ..extensions.model_call import ModelCallExtension, ModelCallRecorder  # noqa: PLC0415
+
+        self._model_call_extension = load_extension("MODEL_CALL", ModelCallExtension, context=self._ext_ctx)
+        self._model_call_recorder = (
+            ModelCallRecorder(self._model_call_extension) if self._model_call_extension is not None else None
+        )
+        if self._model_call_recorder is not None:
+            register_span_recorder(self._model_call_recorder)
 
         loaded = load_extension("MEMORY_DEFENSE", MemoryDefenseExtension, context=self._ext_ctx)
         if loaded is not None:
