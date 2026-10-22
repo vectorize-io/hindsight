@@ -1545,9 +1545,12 @@ export function getIdentitySkipReason(
   const mappedBanking =
     pluginConfig !== undefined && mappedBankIdForAgent(resolvedCtx, pluginConfig) !== undefined;
   const allowCliSessions = agentBanking || staticBanking || mappedBanking;
+  // Cron, heartbeat and subagent sessions are skipped unless the operator opts
+  // them in; then ignoreSessionPatterns / statelessSessionPatterns decide (#5915).
+  const allowOperationalSessions = pluginConfig?.skipOperationalSessions === false;
 
   if (typeof sessionKey === "string") {
-    if (/^agent:[^:]+:(cron|heartbeat|subagent):/.test(sessionKey)) {
+    if (!allowOperationalSessions && /^agent:[^:]+:(cron|heartbeat|subagent):/.test(sessionKey)) {
       return { resolvedCtx, reason: finalSkipReason(`operational session ${sessionKey}`) };
     }
     if (!allowCliSessions && /^agent:[^:]+:main$/.test(sessionKey)) {
@@ -1558,9 +1561,10 @@ export function getIdentitySkipReason(
     }
   }
 
-  const operationalProviders = allowCliSessions
-    ? ["cron", "heartbeat", "subagent"]
-    : ["cron", "heartbeat", "subagent", "main"];
+  const operationalProviders = [
+    ...(allowOperationalSessions ? [] : ["cron", "heartbeat", "subagent"]),
+    ...(allowCliSessions ? [] : ["main"]),
+  ];
   if (resolvedCtx?.messageProvider && operationalProviders.includes(resolvedCtx.messageProvider)) {
     return {
       resolvedCtx,
@@ -2229,6 +2233,7 @@ export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
       ? config.statelessSessionPatterns
       : [],
     skipStatelessSessions: config.skipStatelessSessions !== false,
+    skipOperationalSessions: config.skipOperationalSessions !== false,
     debug: config.debug ?? false,
     debugPerfTiming: config.debugPerfTiming === true,
     // Both were missing from this whitelist, so the logger always ran at

@@ -344,6 +344,11 @@
         "description": "When true (default), sessions matching statelessSessionPatterns also skip recall. When false, they can recall but never retain.",
         "default": true
       },
+      "skipOperationalSessions": {
+        "type": "boolean",
+        "description": "When true (default), cron, heartbeat and subagent sessions skip recall and retain. When false, they recall and retain like any other session, and ignoreSessionPatterns / statelessSessionPatterns apply to them.",
+        "default": true
+      },
       "enableKnowledgeTools": {
         "type": "boolean",
         "description": "Deprecated and ignored: the agent_knowledge_* tools were removed",
@@ -595,6 +600,10 @@
     },
     "skipStatelessSessions": {
       "label": "Skip Stateless Sessions",
+      "placeholder": "true (default)"
+    },
+    "skipOperationalSessions": {
+      "label": "Skip Operational Sessions",
       "placeholder": "true (default)"
     },
     "senderPrefixPattern": {

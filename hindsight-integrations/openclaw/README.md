@@ -130,6 +130,7 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `ignoreSessionPatterns`    | `[]`                           | Session key glob patterns to skip entirely — no recall, no retain (e.g. `["agent:*:cron:**"]`)                                                                                                                                                                                                                   |
 | `statelessSessionPatterns` | `[]`                           | Session key glob patterns for read-only sessions — retain is always skipped; recall is skipped when `skipStatelessSessions` is `true` (e.g. `["agent:*:subagent:**", "agent:*:heartbeat:**"]`)                                                                                                                   |
 | `skipStatelessSessions`    | `true`                         | When `true`, sessions matching `statelessSessionPatterns` also skip recall. Set to `false` to allow recall but still skip retain.                                                                                                                                                                                |
+| `skipOperationalSessions`  | `true`                         | When `true`, cron, heartbeat and subagent sessions skip recall and retain. Set to `false` to treat them like any other session; `ignoreSessionPatterns` and `statelessSessionPatterns` then decide what each kind does.                                                                                          |
 | `debugPerfTiming`          | `false`                        | Emit one info-level perf line per `before_prompt_build` (recall path) and `agent_end` (retain path) so you can spot whether latency is in the plugin or upstream. Off by default. Format: `perf: <hook> hook_total=Xms <hook-specific fields>`. Safe in production — uses the existing logger.                   |
 
 ### Per-agent bank mapping
@@ -207,12 +208,14 @@ Glob syntax:
 | Retain | Skipped                 | Always skipped                                  |
 | Recall | Skipped                 | Skipped only when `skipStatelessSessions: true` |
 
-**Example config** — exclude cron jobs from memory entirely, allow subagents to read but not write memories:
+Cron, heartbeat and subagent sessions are skipped entirely by default, whatever these patterns say. Set `skipOperationalSessions: false` to let the patterns decide for them too.
+
+**Example config** — give cron jobs full memory, and let heartbeats and subagents read but not write memories:
 
 ```json
 {
-  "ignoreSessionPatterns": ["agent:*:cron:**"],
-  "statelessSessionPatterns": ["agent:*:subagent:**"],
+  "skipOperationalSessions": false,
+  "statelessSessionPatterns": ["agent:*:heartbeat:**", "agent:*:subagent:**"],
   "skipStatelessSessions": false
 }
 ```
