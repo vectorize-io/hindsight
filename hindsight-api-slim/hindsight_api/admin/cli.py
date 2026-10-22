@@ -712,6 +712,11 @@ class RepairSweep:
 
     banks: list[BankIndexResult]
     skipped_schemas: list[str]
+    # Observations removed because a source memory they cite no longer exists (#5937);
+    # in a dry run, how many would be.
+    orphan_observations: int = 0
+    # Counted apart from ``banks``, which stays empty on a backend without per-bank indexes.
+    banks_scanned: int = 0
 
 
 async def _run_repair_bank(
@@ -722,23 +727,26 @@ async def _run_repair_bank(
     bank_id: str | None,
     dry_run: bool,
 ) -> RepairSweep:
-    """Reconcile per-(bank, fact_type) vector index coverage over a raw connection.
+    """Reconcile per-(bank, fact_type) vector index coverage, and remove orphan observations.
 
     A single autocommit connection is used because ``CREATE INDEX CONCURRENTLY``
-    cannot run inside a transaction block.
+    cannot run inside a transaction block. The index step is skipped on a backend
+    without per-bank indexes; the observation sweep runs everywhere.
 
     Deliberately unbudgeted, unlike the background operation: this is an operator
     asking for convergence now, across as many banks as they named.
     """
     schemas = [schema] if schema else await _resolve_schemas(base_schema)
     index_clause = _vector_index_clause()
-    # Guarded by the command, but assert so this helper is never called for a
-    # backend without per-bank indexes.
-    assert index_clause is not None
+    # sql_memories(), not get_memories(): the sweep reads this Postgres schema's own rows. A
+    # bank a custom store owns has none here, so it finds nothing to remove.
+    pg_store = sql_memories()
 
     conn = await _admin_connect(db_url)
     results: list[BankIndexResult] = []
     skipped_schemas: list[str] = []
+    orphan_observations = 0
+    banks_scanned = 0
     try:
         for target_schema in schemas:
             # The whole schema is inside the guard, not just list_bank_ids. Planning a
@@ -755,15 +763,24 @@ async def _run_repair_bank(
             # the two lists.
             bank_ids: list[str] = []
             schema_results: list[BankIndexResult] = []
+            schema_orphans = 0
+            schema_banks_done = 0
             try:
                 bank_ids = [bank_id] if bank_id else await list_bank_ids(conn, target_schema)
                 for bid in bank_ids:
-                    schema_results.append(
-                        await reconcile_bank_vector_indexes(conn, target_schema, bid, index_clause, dry_run=dry_run)
+                    if index_clause is not None:
+                        schema_results.append(
+                            await reconcile_bank_vector_indexes(conn, target_schema, bid, index_clause, dry_run=dry_run)
+                        )
+                    schema_orphans += await pg_store.admin_sweep_orphan_observations(
+                        conn=conn, schema=target_schema, bank_id=bid, dry_run=dry_run
                     )
+                    schema_banks_done += 1
             except Exception as exc:  # noqa: BLE001 — one bad schema must not abort the sweep
                 results.extend(schema_results)
-                done = f", {len(schema_results)} of {len(bank_ids)} bank(s) done" if schema_results else ""
+                orphan_observations += schema_orphans
+                banks_scanned += schema_banks_done
+                done = f", {schema_banks_done} of {len(bank_ids)} bank(s) done" if schema_banks_done else ""
                 typer.echo(f"  schema '{target_schema}': skipped ({exc}){done}", err=True)
                 skipped_schemas.append(target_schema)
                 if isinstance(exc, asyncpg.PostgresConnectionError | asyncpg.InterfaceError):
@@ -784,6 +801,8 @@ async def _run_repair_bank(
                     break
                 continue
             results.extend(schema_results)
+            orphan_observations += schema_orphans
+            banks_scanned += schema_banks_done
             # Only in --all mode: an index whose bank row is gone is unreachable
             # from every bank-scoped path, so this is the one place that can collect
             # it. Normally finds nothing — delete_bank drops a bank's indexes while it
@@ -796,7 +815,7 @@ async def _run_repair_bank(
             # handled inside drop_orphaned_bank_indexes; this catches only the catalog
             # read behind it.
             orphans: list[str] = []
-            if not bank_id:
+            if not bank_id and index_clause is not None:
                 try:
                     orphans = await drop_orphaned_bank_indexes(conn, target_schema, dry_run=dry_run)
                 except Exception as exc:  # noqa: BLE001 — the banks were repaired; orphan collection is a nicety
@@ -815,9 +834,15 @@ async def _run_repair_bank(
                 f"{sum(r.dropped for r in schema_results)} dropped, "
                 f"{sum(r.skipped for r in schema_results)} to-create (dry-run), "
                 f"{sum(r.would_drop for r in schema_results)} to-drop (dry-run), "
-                f"{sum(r.failed for r in schema_results)} failed"
+                f"{sum(r.failed for r in schema_results)} failed, "
+                f"{schema_orphans} orphan observation(s) {'to remove (dry-run)' if dry_run else 'removed'}"
             )
-        return RepairSweep(banks=results, skipped_schemas=skipped_schemas)
+        return RepairSweep(
+            banks=results,
+            skipped_schemas=skipped_schemas,
+            orphan_observations=orphan_observations,
+            banks_scanned=banks_scanned,
+        )
     finally:
         await conn.close()
 
@@ -844,10 +869,16 @@ def repair_bank(
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
-        help="Report what would be repaired without creating or dropping any index.",
+        help="Report what would be repaired without creating, dropping or deleting anything.",
     ),
 ):
-    """Reconcile per-(bank, fact_type) vector index coverage.
+    """Repair a bank's derived state: vector index coverage, and orphan observations.
+
+    Orphan observations cite a source memory that no longer exists. Every delete
+    path removes them today, but older releases leaked some (#5937); they stay
+    recallable and export skips them. Each one is deleted and its surviving
+    sources are requeued, the same rule a live delete applies; they are
+    re-consolidated on the bank's next consolidation run.
 
     With HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS at its default of 0 every bank is
     owed all three indexes from the moment it exists, and this rebuilds whatever
@@ -886,17 +917,20 @@ def repair_bank(
         typer.echo("Set HINDSIGHT_API_DATABASE_URL environment variable.", err=True)
         raise typer.Exit(1)
 
-    # Backend guard: backends with a single global vector index (AlloyDB ScaNN,
-    # Oracle) have no per-bank indexes to repair.
+    if is_oracle_url(config.database_url):
+        typer.echo("Error: repair-bank is PostgreSQL-only; Oracle backends are not supported.", err=True)
+        raise typer.Exit(1)
+
+    # Backends with a single global vector index (AlloyDB ScaNN) have no per-bank
+    # indexes to repair; the observation sweep still runs.
     if _vector_index_clause() is None:
-        typer.echo("Configured vector backend does not use per-bank vector indexes — nothing to repair.")
-        return
+        typer.echo("Configured vector backend does not use per-bank vector indexes — skipping index repair.")
 
     target = f"bank '{bank_id}'" if bank_id else "all banks"
     scope = f"schema '{schema}'" if schema else "base schema and all discovered tenant schemas"
-    typer.echo(f"Repairing per-bank vector indexes for {target} across {scope}...")
+    typer.echo(f"Repairing {target} across {scope}...")
     if dry_run:
-        typer.echo("Dry run: no indexes will be created or dropped.")
+        typer.echo("Dry run: nothing will be created, dropped or deleted.")
 
     sweep = asyncio.run(
         _run_repair_bank(
@@ -909,7 +943,7 @@ def repair_bank(
     )
     results = sweep.banks
 
-    total_banks = len(results)
+    total_banks = sweep.banks_scanned
     total_present = sum(r.already_present for r in results)
     total_created = sum(r.created for r in results)
     total_dropped = sum(r.dropped for r in results)
@@ -920,7 +954,8 @@ def repair_bank(
         f"Done: {total_banks} bank(s) scanned, "
         f"{total_present} already present, {total_created} created, {total_dropped} dropped, "
         f"{total_skipped} to-create (dry-run), {total_would_drop} to-drop (dry-run), "
-        f"{total_failed} failed"
+        f"{total_failed} failed, "
+        f"{sweep.orphan_observations} orphan observation(s) {'to remove (dry-run)' if dry_run else 'removed'}"
     )
     # Both are reported before either exits. They are independent — a sweep can have
     # failed builds in one schema and be unable to look at another — and raising on

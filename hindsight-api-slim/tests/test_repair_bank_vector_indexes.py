@@ -754,21 +754,37 @@ class TestRepairBankCommand:
         assert both.exit_code == 2, both.output
 
     @pytest.mark.asyncio
-    async def test_backend_without_per_bank_indexes_is_noop(
-        self, memory: MemoryEngine, request_context: RequestContext, monkeypatch, low_threshold
+    async def test_backend_without_per_bank_indexes_skips_index_repair(
+        self, memory: MemoryEngine, request_context: RequestContext, monkeypatch, low_threshold, pg0_db_url: str
     ):
-        """AlloyDB ScaNN / Oracle keep a single global index — nothing to reconcile."""
+        """AlloyDB ScaNN keeps a single global index — nothing to reconcile, but the
+        orphan observation sweep still runs."""
         bank_id = await _seed_bank(memory, request_context, _BUILD_AT)
         backend = await memory._get_backend()
         try:
+            async with acquire_with_retry(backend) as conn:
+                # An observation citing a fact that no longer exists, as a delete that
+                # skipped the observation sweep would leave behind (#5937).
+                await conn.execute(
+                    """
+                    INSERT INTO memory_units (id, bank_id, text, fact_type, event_date, source_memory_ids,
+                                              created_at, updated_at)
+                    VALUES ($1, $2, 'orphan', 'observation', NOW(), $3, NOW(), NOW())
+                    """,
+                    uuid.uuid4(),
+                    bank_id,
+                    [uuid.uuid4()],
+                )
             monkeypatch.setattr(cli, "_vector_index_clause", lambda: None)
 
-            from typer.testing import CliRunner
+            sweep = await _run_repair_bank(
+                pg0_db_url, base_schema=_TEST_SCHEMA, schema=_TEST_SCHEMA, bank_id=bank_id, dry_run=False
+            )
 
-            runner = CliRunner()
-            result = runner.invoke(cli.app, ["repair-bank", "--all"])
-            assert result.exit_code == 0, result.output
-            assert "does not use per-bank vector indexes" in result.output
+            assert sweep.skipped_schemas == []
+            assert sweep.banks == []
+            assert sweep.banks_scanned == 1
+            assert sweep.orphan_observations == 1
 
             async with acquire_with_retry(backend) as conn:
                 for name in await _expected_index_names(conn, bank_id):

@@ -3,14 +3,17 @@
 None of this serves a request. The consolidation gauges count every bank of a schema
 at once, the vector-index policy sizes one bank's partitions, and the admin CLI's
 backup / restore / rename-bank walk every table of a schema — store tables
-included — on one raw connection. Each statement is lifted verbatim from the caller
-that used to carry it; the schema-qualified resolver is a parameter.
+included — on one raw connection. Each of those statements is lifted verbatim from
+the caller that used to carry it; the schema-qualified resolver is a parameter.
+repair-bank's orphan observation sweep runs on the same connection.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+
+from .writes import delete_stale_observations
 
 # --------------------------------------------------------------- consolidation gauges
 
@@ -181,3 +184,38 @@ async def repoint_file_key(
         bank_id,
         old_key,
     )
+
+
+async def sweep_orphan_observations(
+    *, conn: Any, ops: Any, fq_table_explicit: Callable[..., str], schema: str, bank_id: str, dry_run: bool
+) -> int:
+    """Delete one bank's observations that cite a source memory which no longer exists (#5937).
+
+    Every live delete path runs ``writes.delete_stale_observations`` before a fact goes, but
+    older releases leaked some (delta retain before #3384), and nothing revisits them: recall
+    keeps serving their text and export skips them. This finds the missing source ids and hands
+    them to that same sweep, so the rule is the live one — the observation goes and its
+    surviving sources are requeued for consolidation. Returns how many went (would go, dry run).
+    """
+    mu = fq_table_explicit("memory_units", schema)
+    rows = await conn.fetch(
+        f"""
+        SELECT o.id, array_agg(src) AS missing
+        FROM {mu} o CROSS JOIN LATERAL unnest(o.source_memory_ids) AS src
+        WHERE o.bank_id = $1 AND o.fact_type = 'observation'
+          AND NOT EXISTS (SELECT 1 FROM {mu} s WHERE s.id = src AND s.bank_id = $1)
+        GROUP BY o.id
+        """,  # noqa: S608 — schema is a quoted identifier
+        bank_id,
+    )
+    if dry_run or not rows:
+        return len(rows)
+    missing = sorted({src for row in rows for src in row["missing"]})
+    async with conn.transaction():
+        return await delete_stale_observations(
+            conn=conn,
+            ops=ops,
+            fq_table=lambda table: fq_table_explicit(table, schema),
+            bank_id=bank_id,
+            fact_ids=missing,
+        )

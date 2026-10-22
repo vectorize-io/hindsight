@@ -28,6 +28,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequenc
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from ..db.ops_postgresql import PostgreSQLOps
 from ..retain.types import EmbeddingLike, EntityResolutionResult
 from ..schema import fq_store_table, fq_store_table_explicit
 from ..search.tags import TagGroup, TagsMatch
@@ -1821,6 +1822,17 @@ class PostgresMemories(MemoriesExtension):
             bank_id=bank_id,
             old_key=old_key,
             new_key=new_key,
+        )
+
+    async def admin_sweep_orphan_observations(self, *, conn, schema: str, bank_id: str, dry_run: bool) -> int:
+        """Delete the bank's observations citing a missing source (repair-bank); how many."""
+        return await pg_admin.sweep_orphan_observations(
+            conn=conn,
+            ops=PostgreSQLOps(),
+            fq_table_explicit=fq_store_table_explicit,
+            schema=schema,
+            bank_id=bank_id,
+            dry_run=dry_run,
         )
 
 
