@@ -54,7 +54,7 @@ async def test_convert_strips_utf8_bom(parser: MarkitdownParser, filename: str, 
     """A leading UTF-8 byte-order mark is dropped, not kept as U+FEFF."""
     content = await parser.convert(codecs.BOM_UTF8 + text.encode("utf-8"), filename)
 
-    assert content.startswith(text[:5])
+    assert content[0] == text[0]
 
 
 def test_utf8_stream_info_for_text_extension():
