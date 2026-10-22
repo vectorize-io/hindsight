@@ -166,10 +166,14 @@ class ProviderInputTokens:
 _input_tokens_ctx: ContextVar[ProviderInputTokens | None] = ContextVar("hindsight_input_tokens_ctx", default=None)
 
 
-def add_provider_input_tokens(count: int) -> None:
-    """Report billed input tokens for the traced call in flight. No-op outside one."""
+def add_provider_input_tokens(count: int | None) -> None:
+    """Report billed input tokens for the traced call in flight. No-op outside one.
+
+    ``None`` (a provider that did not report the count) adds nothing: a trace must
+    never fail the call it traces (#5941).
+    """
     sink = _input_tokens_ctx.get()
-    if sink is not None:
+    if sink is not None and count:
         sink.count += count
 
 

@@ -1123,7 +1123,9 @@ class OpenAIEmbeddings(Embeddings):
             ) from e
         usage = getattr(response, "usage", None)
         if usage is not None:
-            add_provider_input_tokens(usage.prompt_tokens)
+            # OpenAI-compatible gateways such as Voyage report only total_tokens (#5941);
+            # for an embedding that is the same number.
+            add_provider_input_tokens(usage.prompt_tokens or getattr(usage, "total_tokens", None))
 
         # Sort by index to ensure correct order
         return [e.embedding for e in sorted(response.data, key=lambda x: x.index)]
