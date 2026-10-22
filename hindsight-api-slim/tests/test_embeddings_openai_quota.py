@@ -1,4 +1,4 @@
-"""OpenAI embeddings out of credits defers the operation instead of failing it (#5588)."""
+"""OpenAI embeddings: no credits defers the operation (#5588); partial usage never fails it (#5941)."""
 
 from datetime import UTC, datetime, timedelta
 
