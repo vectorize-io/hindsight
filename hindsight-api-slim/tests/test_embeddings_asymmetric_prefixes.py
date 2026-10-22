@@ -289,3 +289,14 @@ async def test_tei_sends_prefixed_inputs_to_the_embed_endpoint():
         await emb.encode_documents(["here."])
 
     assert sent == [["query: where?"], ["passage: here."]]
+
+
+@pytest.mark.asyncio
+async def test_openai_embeddings_send_hindsight_user_agent():
+    """Embedding requests carry the same transport identity as LLM requests (#5942)."""
+    from hindsight_api.engine.embeddings import OpenAIEmbeddings
+    from hindsight_api.engine.providers.openai_compatible_headers import OPENAI_COMPATIBLE_USER_AGENT
+
+    emb = OpenAIEmbeddings(api_key="sk-test", model="text-embedding-3-small", base_url="http://gw.local/v1")
+    await emb.initialize()
+    assert emb._loop_client().default_headers["User-Agent"] == OPENAI_COMPATIBLE_USER_AGENT

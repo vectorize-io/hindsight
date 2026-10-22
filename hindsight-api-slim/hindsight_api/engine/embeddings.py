@@ -75,6 +75,7 @@ from .local_device import (
     resolve_model_device_type,
     select_local_device,
 )
+from .providers.openai_compatible_headers import with_openai_compatible_user_agent
 from .remote_retry import (
     RetryBudget,
     RetryPolicy,
@@ -1049,6 +1050,9 @@ class OpenAIEmbeddings(Embeddings):
             "api_key": self.api_key,
             "max_retries": self.max_retries,
             "timeout": self.timeout,
+            # Same transport identity as the LLM calls, so a gateway can attribute
+            # embedding traffic to Hindsight (#5942).
+            "default_headers": with_openai_compatible_user_agent(None),
         }
         if self.base_url:
             parsed = urlparse(self.base_url)

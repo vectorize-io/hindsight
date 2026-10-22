@@ -31,6 +31,7 @@ from hindsight_api.engine.providers.nous_auth import (
     NousNotLoggedInError,
     NousRefreshExpiredError,
 )
+from hindsight_api.engine.providers.openai_compatible_headers import with_openai_compatible_user_agent
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
 
 from ..response_models import LLMCallResult
@@ -99,6 +100,7 @@ class NousLLM(OpenAICompatibleLLM):
             base_url=self.base_url,
             max_retries=0,
             timeout=self.timeout,
+            default_headers=with_openai_compatible_user_agent(None),
         )
 
     async def _ensure_fresh_token(self) -> None:
