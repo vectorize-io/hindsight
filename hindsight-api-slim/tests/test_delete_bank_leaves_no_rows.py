@@ -7,11 +7,14 @@ the new table is seeded too (an empty table proves nothing about the delete).
 
 import json
 import uuid
+from dataclasses import dataclass
 
 import asyncpg
 import pytest
+import pytest_asyncio
 
 from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.migrations import run_migrations
 from hindsight_api.models import RequestContext
 
 # Seeds the memory tables with raw SQL, so it only holds for the default Postgres store.
@@ -23,6 +26,51 @@ KEPT_AFTER_DELETE = {
     # outlives the bank and is trimmed by HINDSIGHT_API_AUDIT_LOG_RETENTION_DAYS instead.
     "audit_log",
 }
+
+# Tables with no bank_id column, and how a bank's rows in them are reached. A new one
+# must be added here (and to _counts when it holds bank rows), or the test fails.
+NO_BANK_ID_COLUMN = {
+    "alembic_version": "not bank data",
+    "file_storage": "keyed by storage path; the bank delete sweeps its prefix after the commit",
+    "unit_entities": "through the bank's unit and entity ids",
+    "entity_cooccurrences": "through the bank's entity ids",
+}
+
+
+@dataclass
+class SchemaTables:
+    """The tables the migrations create, split by whether they carry a bank_id column."""
+
+    with_bank_id: list[str]
+    without_bank_id: list[str]
+
+
+@pytest_asyncio.fixture
+async def schema_tables(pg0_db_url) -> SchemaTables:
+    # Read from a freshly migrated schema, not the shared one: other tests create their own
+    # tables there (extension tables with a bank_id, retention probes), which would make the
+    # list depend on test order.
+    schema = f"delete_bank_tables_{uuid.uuid4().hex[:8]}"
+    conn = await asyncpg.connect(pg0_db_url)
+    try:
+        await conn.execute(f"CREATE SCHEMA {schema}")
+        run_migrations(pg0_db_url, schema=schema)
+        rows = await conn.fetch(
+            """SELECT t.table_name, EXISTS (
+                   SELECT 1 FROM information_schema.columns c
+                   WHERE c.table_schema = t.table_schema AND c.table_name = t.table_name
+                     AND c.column_name = 'bank_id') AS has_bank_id
+               FROM information_schema.tables t
+               WHERE t.table_schema = $1 AND t.table_type = 'BASE TABLE'""",
+            schema,
+        )
+    finally:
+        await conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+        await conn.close()
+    return SchemaTables(
+        with_bank_id=sorted(r["table_name"] for r in rows if r["has_bank_id"]),
+        without_bank_id=sorted(r["table_name"] for r in rows if not r["has_bank_id"]),
+    )
 
 
 async def _seed_bank(conn: asyncpg.Connection, bank_id: str) -> list[uuid.UUID]:
@@ -126,17 +174,12 @@ async def _seed_bank(conn: asyncpg.Connection, bank_id: str) -> list[uuid.UUID]:
     return [unit_a, unit_b, entity_a, entity_b]
 
 
-async def _counts(conn: asyncpg.Connection, bank_id: str, ids: list[uuid.UUID]) -> dict[str, int]:
+async def _counts(conn: asyncpg.Connection, tables: SchemaTables, bank_id: str, ids: list[uuid.UUID]) -> dict[str, int]:
     # Raw SQL on purpose: the property under test is that no table keeps a row of the
     # bank, which no engine read API can enumerate.
-    tables = await conn.fetch(
-        """SELECT c.table_name FROM information_schema.columns c
-           JOIN information_schema.tables t USING (table_schema, table_name)
-           WHERE c.table_schema = current_schema() AND c.column_name = 'bank_id' AND t.table_type = 'BASE TABLE'"""
-    )
     counts = {
-        r["table_name"]: await conn.fetchval(f"SELECT count(*) FROM {r['table_name']} WHERE bank_id = $1", bank_id)
-        for r in tables
+        table: await conn.fetchval(f"SELECT count(*) FROM {table} WHERE bank_id = $1", bank_id)
+        for table in tables.with_bank_id
     }
     # The junction tables carry no bank_id: reach them through the bank's own ids.
     counts["unit_entities"] = await conn.fetchval(
@@ -149,15 +192,20 @@ async def _counts(conn: asyncpg.Connection, bank_id: str, ids: list[uuid.UUID]) 
 
 
 @pytest.mark.asyncio
-async def test_deleting_a_bank_leaves_no_row_in_any_table(memory: MemoryEngine, request_context: RequestContext):
+async def test_deleting_a_bank_leaves_no_row_in_any_table(
+    memory: MemoryEngine, request_context: RequestContext, schema_tables: SchemaTables
+):
     bank_id = f"test-delete-all-{uuid.uuid4().hex[:8]}"
     bystander = f"test-delete-bystander-{uuid.uuid4().hex[:8]}"
     pool = await memory._get_pool()
     async with pool.acquire() as conn:
         ids = await _seed_bank(conn, bank_id)
         bystander_ids = await _seed_bank(conn, bystander)
-        before = await _counts(conn, bank_id, ids)
-        bystander_before = await _counts(conn, bystander, bystander_ids)
+        before = await _counts(conn, schema_tables, bank_id, ids)
+        bystander_before = await _counts(conn, schema_tables, bystander, bystander_ids)
+
+    unknown_tables = sorted(set(schema_tables.without_bank_id) - NO_BANK_ID_COLUMN.keys())
+    assert not unknown_tables, f"say in NO_BANK_ID_COLUMN how a bank's rows in these are reached: {unknown_tables}"
 
     unseeded = sorted(t for t, n in before.items() if not n)
     assert not unseeded, f"seed these tables in _seed_bank, or the delete is not checked for them: {unseeded}"
@@ -165,8 +213,31 @@ async def test_deleting_a_bank_leaves_no_row_in_any_table(memory: MemoryEngine, 
     await memory.delete_bank(bank_id, request_context=request_context)
 
     async with pool.acquire() as conn:
-        left = {t: n for t, n in (await _counts(conn, bank_id, ids)).items() if n and t not in KEPT_AFTER_DELETE}
+        left = {
+            t: n
+            for t, n in (await _counts(conn, schema_tables, bank_id, ids)).items()
+            if n and t not in KEPT_AFTER_DELETE
+        }
         assert not left, f"rows of the deleted bank left behind: {left}"
-        assert await _counts(conn, bystander, bystander_ids) == bystander_before
+        assert await _counts(conn, schema_tables, bystander, bystander_ids) == bystander_before
 
     await memory.delete_bank(bystander, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_clearing_a_bank_drops_its_maintenance_queue_rows(memory: MemoryEngine, request_context: RequestContext):
+    # Clearing keeps the bank but drops every memory and entity, so the queue rows that
+    # point at them are stale too.
+    bank_id = f"test-clear-queues-{uuid.uuid4().hex[:8]}"
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        await _seed_bank(conn, bank_id)
+
+    await memory.delete_bank(bank_id, delete_bank_profile=False, request_context=request_context)
+
+    async with pool.acquire() as conn:
+        for table in ("graph_maintenance_queue", "entity_maintenance_queue"):
+            assert await conn.fetchval(f"SELECT count(*) FROM {table} WHERE bank_id = $1", bank_id) == 0, table
+        assert await conn.fetchval("SELECT count(*) FROM banks WHERE bank_id = $1", bank_id) == 1
+
+    await memory.delete_bank(bank_id, request_context=request_context)
