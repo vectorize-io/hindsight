@@ -30,6 +30,7 @@ Runs via: uv run pytest tests/test_hnsw_indexes_store_owned.py -v
 
 import asyncio
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
@@ -592,6 +593,12 @@ async def test_a_dead_connection_stops_the_sweep_instead_of_repeating_itself(mon
     monkeypatch.setattr(cli, "list_bank_ids", _dies_on_the_second_schema)
     monkeypatch.setattr(cli, "reconcile_bank_vector_indexes", _ok_reconcile)
     monkeypatch.setattr(cli, "drop_orphaned_bank_indexes", lambda conn, schema, dry_run=False: _returns([]))
+    # s1..s4 are not real schemas, so the orphan observation sweep has no tables to read.
+    monkeypatch.setattr(
+        cli,
+        "sql_memories",
+        lambda: SimpleNamespace(admin_sweep_orphan_observations=lambda **kwargs: _returns(0)),
+    )
 
     sweep = await cli._run_repair_bank(pg0_db_url, base_schema=_TEST_SCHEMA, schema=None, bank_id=None, dry_run=False)
 
