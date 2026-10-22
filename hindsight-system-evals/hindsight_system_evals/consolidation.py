@@ -49,7 +49,8 @@ from hindsight_system_evals.pages import SettleFn
 @dataclass(frozen=True)
 class Fact:
     text: str
-    #: When the statement was made (ISO date). Becomes the fact's ``mentioned_at``,
+    #: When the statement was made: an ISO date (read as noon UTC), or a full ISO
+    #: timestamp when the time of day matters. Becomes the fact's ``mentioned_at``,
     #: which is what consolidation is told to read as recency.
     on: str
     entities: tuple[str, ...] = ()
@@ -345,7 +346,7 @@ async def run_scenario(client: Hindsight, bank_id: str, settled: SettleFn, scena
         for j, fact in enumerate(wave.facts):
             item: dict[str, Any] = {
                 "content": fact.text,
-                "timestamp": f"{fact.on}T12:00:00Z",
+                "timestamp": fact.on if "T" in fact.on else f"{fact.on}T12:00:00Z",
                 "document_id": f"{scenario.id}-w{wave_no}-{j}",
                 "entities": [{"text": e} for e in fact.entities],
             }

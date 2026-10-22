@@ -13,7 +13,8 @@ actually shipped or been asked about, or a rule the prompt promises
 * a newer fact supersedes the older belief, and the change reaches every
   observation it affects — #1151, #3248 (fnm -> nub), #3475 (retired facts stated
   as current), rules 4-5;
-* recency is when a fact was *stated*, not when it was retained — #2550;
+* recency is when a fact was *stated*, not when it was retained — #2550, and
+  #5938 (same-day amendment retained before the rule it amends);
 * a correction retires the false belief — #3509 (KeePass);
 * one facet per observation, matched by entity, no arithmetic — #814 (the horse
   farm, ``tests/test_horse_observations.py``), rules 2, 3, 8;
@@ -197,6 +198,38 @@ _SCENARIOS: dict[str, Scenario] = {
             traps=(
                 "Some observation presents React as the user's current favorite, or says the user moved from "
                 "Svelte to React.",
+            ),
+        ),
+        Scenario(
+            id="recency-same-day-amendment-arrives-first",
+            origin="#5938: an amendment and the rule it amends, stated an hour apart, retained newest first; "
+            "the older rule is worded 'was updated'",
+            waves=(
+                _wave(
+                    Fact(
+                        "Amended overage policy: overage now includes a 25-unit monthly grace allowance applied "
+                        "before block rounding: billable = max(0, overage - 25), then rounded up into 50-unit blocks.",
+                        "2026-10-21T10:48:00Z",
+                        ("grace allowance", "25"),
+                    )
+                ),
+                _wave(
+                    Fact(
+                        "The metering policy for overage_charge was updated to use prorated quotas and block-based "
+                        "billing: overage bills in 50-unit blocks rounded up. No waivers for small overages are "
+                        "permitted.",
+                        "2026-10-21T09:48:00Z",
+                        ("overage_charge", "50-unit blocks"),
+                    )
+                ),
+            ),
+            must=(
+                "The observations say the first 25 overage units each month are free (a grace allowance applied "
+                "before block rounding) as the current rule.",
+            ),
+            traps=(
+                "Some observation says the 25-unit grace allowance was removed or replaced, or that no free "
+                "overage units are allowed as the current rule.",
             ),
         ),
         Scenario(

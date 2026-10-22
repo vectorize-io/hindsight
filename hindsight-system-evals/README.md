@@ -321,7 +321,7 @@ shipped or a rule the consolidation prompt promises:
 
 - restatements update one observation, never grow siblings (#1566, #3249);
 - a newer fact supersedes the old belief everywhere it appears (#1151, #3248, #3475);
-- recency is when a fact was *stated*, not when it was retained (#2550);
+- recency is when a fact was *stated*, not when it was retained, even an hour apart on the same day (#2550, #5938);
 - a correction retires the false belief (#3509);
 - one facet per observation, matched by entity, no arithmetic (#814, the horse farm);
 - a member leaving a list updates the list too; a vague reference gets resolved;
@@ -378,7 +378,7 @@ issue/PR history — and what grades it. "eval" = a `test_09` scenario (real mod
 - Significant events are history, never deleted (rule 7; #814) — eval `horse-farm`
 - No arithmetic or deduction on counts (rule 8) — eval `no-arithmetic`, `horse-farm`
 - Different people, entities and numbers stay apart, lookalike names included (rule 9; #5497, #1725) — eval `distinct-entities-stay-apart`, `noisy-service-catalogue`
-- Recency is `mentioned_at`, not arrival order; older news never overwrites (rule 10; #2550) — eval `recency-is-when-stated`
+- Recency is `mentioned_at`, not arrival order; older news never overwrites (rule 10; #2550) — eval `recency-is-when-stated`, `recency-same-day-amendment-arrives-first` (#5938)
 - Chatter is skipped under the default mission (rule 11) — eval `default-drops-chatter`
 - An update keeps everything the observation said (rule 12) — eval `noisy-service-catalogue` (neighbours, coverage)
 - Every durable fact lands in an observation (#5054) — eval coverage check on every wave

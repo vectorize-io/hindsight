@@ -766,7 +766,21 @@ def _unique_source_ids(v: str | list[str]) -> list[str]:
     return list(dict.fromkeys(v))
 
 
+def _advertise_required(*fields: str) -> Any:
+    """A ``json_schema_extra`` that lists ``fields`` as required while validation keeps their
+    defaults. A grammar-constrained model skips optional fields: flash-lite left most update
+    reasons empty and filled ``current_text`` on 1 update in 100 (#5938). A provider that ignores
+    the hint, or a response without them, still validates."""
+
+    def extra(schema: dict[str, Any]) -> None:
+        schema["required"] = list(dict.fromkeys([*schema.get("required", []), *fields]))
+
+    return extra
+
+
 class _CreateAction(BaseModel):
+    model_config = ConfigDict(json_schema_extra=_advertise_required("reason"))
+
     text: str
     source_fact_ids: list[str]  # memory UUIDs from the NEW FACTS list
     # One-sentence justification from the LLM (why CREATE vs UPDATE). Diagnostic
@@ -785,16 +799,22 @@ class _CreateAction(BaseModel):
 
 
 class _UpdateAction(BaseModel):
+    model_config = ConfigDict(json_schema_extra=_advertise_required("reason", "current_text"))
+
     observation_id: str  # UUID of the existing observation to update
+    # LLM's one-sentence justification (diagnostic only). Before ``text`` on purpose, opening with
+    # the rule-10 recency comparison: written after ``text`` it only rationalises the edit, and a
+    # small model let an older fact overwrite a newer observation every time (#5938, eval
+    # ``recency-same-day-amendment-arrives-first``).
+    reason: str = ""
     # The observation's text as it stands, copied before ``text`` is written. Not used by the
     # code: field order is generation order, and a small model that copies the old text first
     # edits it, where one writing ``text`` cold tends to emit just the new fact and erase the
-    # rest of the observation (eval ``noisy-service-catalogue-mission``). Optional, so a
-    # response without it still validates.
+    # rest of the observation (eval ``noisy-service-catalogue-mission``). Advertised as required:
+    # optional, it was skipped, and once ``reason`` came first the updates erased 4x more values.
     current_text: str = ""
     text: str
     source_fact_ids: list[str]  # memory UUIDs from the NEW FACTS list
-    reason: str = ""  # LLM's one-sentence justification (diagnostic only)
 
     @field_validator("text", mode="before")
     @classmethod
