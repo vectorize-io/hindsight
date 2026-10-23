@@ -24,7 +24,7 @@ By default, every operation runs in-process: no external queue, no extra process
 | `processing` | A worker has claimed the row and is actively running the handler. |
 | `completed` | The handler returned successfully. |
 | `failed` | The handler raised. `error_message` carries the reason; you can re-queue with `POST /…/retry`. |
-| `cancelled` | The operation was cancelled via `DELETE /…/operations/{id}`. Works on `pending` and `processing` operations alike. |
+| `cancelled` | The operation was cancelled via `DELETE /…/operations/{id}`. Works on `pending` and `processing` operations alike. A consolidation also ends here when it hits a temporary error while another consolidation is already waiting for the same bank: that one does the same work, so this one is not retried. Its `result_metadata.superseded_by` names the waiting operation, and `error_message` keeps the error it hit. |
 
 The worker retries failed operations up to `HINDSIGHT_API_WORKER_MAX_RETRIES` times before settling on `failed`. Deterministic failures (e.g., invalid embedding dimensions, integrity violations, a provider content-policy refusal, or the LLM rejecting the configured key with HTTP 401/403) skip retries — they won't succeed by re-running. Fix the cause, then retry the operation.
 
