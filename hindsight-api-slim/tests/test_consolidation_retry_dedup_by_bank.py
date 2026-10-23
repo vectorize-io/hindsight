@@ -10,7 +10,8 @@ path raises ``RetryTaskAt`` to re-queue the operation (memory_engine.py, see
    Without dedup, each op independently consumes its own retry budget,
    multiplying load on the broken dependency. The guard: if another
    consolidation op is already ``pending`` for the same bank when the retry
-   decision is made, skip the retry and let the other op cover the work.
+   decision is made, skip the retry and let the other op cover the work. The
+   skipped op ends 'cancelled' with ``superseded_by``, not 'failed' (#5434).
 
 2. **Indefinite retry with capped exponential backoff** (60s, 120, 240, 480,
    960, 1800-cap). Distinct from the generic 60s × 3 used by other task
@@ -101,13 +102,26 @@ async def test_retry_skipped_when_other_pending_consolidation_exists(memory):
     }
 
     transient = RuntimeError("upstream LLM 503")
-    with patch.object(memory, "_handle_consolidation", side_effect=transient):
-        # The original exception must propagate as-is (the poller catches it
-        # and calls _mark_failed). The point of the test is that it is NOT
-        # converted to RetryTaskAt — pytest.raises(RuntimeError) asserts that
-        # implicitly, since RetryTaskAt is not a RuntimeError subclass.
-        with pytest.raises(RuntimeError, match="upstream LLM 503"):
-            await memory.execute_task(task_dict)
+    with (
+        patch.object(memory, "_handle_consolidation", side_effect=transient),
+        patch.object(memory, "_fire_consolidation_webhook") as webhook,
+    ):
+        # Returns normally: no RetryTaskAt, and no raise for the poller to turn into 'failed'.
+        await memory.execute_task(task_dict)
+
+    # Closed as superseded, not failed (#5434): monitors on failed ops must not fire
+    # for work the peer op covers, and the row names that peer plus the error seen.
+    row = await pool.fetchrow(
+        "SELECT status, error_message, result_metadata FROM async_operations WHERE operation_id = $1",
+        running_op_id,
+    )
+    assert row["status"] == "cancelled"
+    assert "upstream LLM 503" in row["error_message"]
+    metadata = row["result_metadata"]
+    if isinstance(metadata, str):
+        metadata = json.loads(metadata)
+    assert metadata["superseded_by"] == str(peer_pending_op_id)
+    webhook.assert_not_called()
 
     # Peer pending op must be untouched by the dedup guard.
     peer_row = await pool.fetchrow(

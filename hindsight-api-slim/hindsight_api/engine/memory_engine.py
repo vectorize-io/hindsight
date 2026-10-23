@@ -5160,8 +5160,34 @@ class MemoryEngine(MemoryEngineInterface):
                         await self._mark_operation_failed(operation_id, error_message, error_traceback)
                 else:
                     if task_type == "consolidation" and operation_id:
+                        # When another consolidation is already pending for the same
+                        # bank, skip the retry. The pending op will process the same
+                        # unconsolidated rows when it runs, so retrying ours just
+                        # multiplies retry budgets during a long transient outage
+                        # (every retain enqueues a fresh op, each independently
+                        # consuming `_retry_count` slots — a retry storm). The op is
+                        # closed as superseded, not failed: nothing was lost, so
+                        # neither the failure webhook nor a 'failed' row (#5434).
+                        bank_id_for_dedup = task_dict.get("bank_id", "")
+                        superseded_by = (
+                            await self._find_other_pending_consolidation(
+                                bank_id=bank_id_for_dedup,
+                                operation_id=operation_id,
+                            )
+                            if bank_id_for_dedup
+                            else None
+                        )
+                        if superseded_by:
+                            logger.info(
+                                f"Consolidation {operation_id} for bank {bank_id_for_dedup} hit "
+                                f"transient error; consolidation {superseded_by} is already pending for "
+                                f"this bank — skipping retry, marking superseded."
+                            )
+                            await self._mark_operation_superseded(operation_id, superseded_by, error_message)
+                            return
+
                         # Fire failure webhook (non-transactional — operation not yet marked failed;
-                        # poller will mark it failed after this raise)
+                        # poller will reschedule it after this raise)
                         await self._fire_consolidation_webhook(
                             bank_id=task_dict.get("bank_id", ""),
                             operation_id=operation_id,
@@ -5170,24 +5196,6 @@ class MemoryEngine(MemoryEngineInterface):
                             error_message=error_message,
                             schema=schema,
                         )
-
-                        # When another consolidation is already pending for the same
-                        # bank, skip the retry. The pending op will process the same
-                        # unconsolidated rows when it runs, so retrying ours just
-                        # multiplies retry budgets during a long transient outage
-                        # (every retain enqueues a fresh op, each independently
-                        # consuming `_retry_count` slots — a retry storm).
-                        bank_id_for_dedup = task_dict.get("bank_id", "")
-                        if bank_id_for_dedup and await self._has_other_pending_consolidation(
-                            bank_id=bank_id_for_dedup,
-                            operation_id=operation_id,
-                        ):
-                            logger.info(
-                                f"Consolidation {operation_id} for bank {bank_id_for_dedup} hit "
-                                f"transient error; another consolidation is already pending for "
-                                f"this bank — skipping retry."
-                            )
-                            raise
 
                         # Indefinite retry with capped exponential backoff.
                         # Transient outages (LLM provider down, DB flapping) must
@@ -22908,20 +22916,20 @@ class MemoryEngine(MemoryEngineInterface):
             )
         return [dict(row) for row in rows]
 
-    async def _has_other_pending_consolidation(
+    async def _find_other_pending_consolidation(
         self,
         *,
         bank_id: str,
         operation_id: str,
-    ) -> bool:
-        """Return True if any consolidation op other than ``operation_id`` is
-        ``pending`` for ``bank_id``.
+    ) -> str | None:
+        """Return the id of a consolidation op other than ``operation_id`` that is
+        ``pending`` for ``bank_id``, or None.
 
         Used by the task-retry path to skip retrying a transient consolidation
         failure when another pending op already covers the same bank — the other
         op will process the same unconsolidated rows when it runs.
 
-        A check failure (DB hiccup) returns ``False`` so the caller proceeds
+        A check failure (DB hiccup) returns None so the caller proceeds
         with the normal retry path rather than swallowing a real failure.
         """
         backend = await self._get_backend()
@@ -22929,7 +22937,7 @@ class MemoryEngine(MemoryEngineInterface):
             async with acquire_with_retry(backend) as conn:
                 existing = await conn.fetchval(
                     f"""
-                    SELECT 1 FROM {fq_table("async_operations")}
+                    SELECT operation_id FROM {fq_table("async_operations")}
                     WHERE bank_id = $1
                       AND operation_type = 'consolidation'
                       AND status = 'pending'
@@ -22939,10 +22947,29 @@ class MemoryEngine(MemoryEngineInterface):
                     bank_id,
                     uuid.UUID(operation_id),
                 )
-            return existing is not None
+            return str(existing) if existing is not None else None
         except Exception as e:
             logger.warning(f"Failed to check for other pending consolidation ops for bank {bank_id}: {e}")
-            return False
+            return None
+
+    async def _mark_operation_superseded(self, operation_id: str, superseded_by: str, error_message: str) -> None:
+        """Close an op whose work another pending op will do, without calling it a failure.
+
+        Ends as 'cancelled' (not 'failed') so monitors on failed operations stay quiet,
+        with ``result_metadata.superseded_by`` naming the op that covers it and the
+        transient error kept for diagnosis (issue #5434). Never overwrites a terminal row.
+        """
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            await conn.execute(
+                f"UPDATE {fq_table('async_operations')} "
+                f"SET status = 'cancelled', error_message = $2, updated_at = NOW(), completed_at = NOW(), "
+                f"result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $3::jsonb "
+                f"WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')",
+                uuid.UUID(operation_id),
+                error_message[:5000],
+                json.dumps({"superseded_by": superseded_by}),
+            )
 
     async def _submit_async_operation(
         self,
