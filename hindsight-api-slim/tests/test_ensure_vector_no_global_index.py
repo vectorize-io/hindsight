@@ -15,7 +15,6 @@ Contract under test:
   e8c1a4f7b2d9 removes any global vector index it left behind, whatever its name (#5707).
 """
 
-import asyncio
 from pathlib import Path
 
 import pytest
@@ -36,16 +35,9 @@ from hindsight_api.migrations import (
 
 
 @pytest.fixture(scope="module")
-def vec_db_url():
-    """A dedicated pg0 instance so the test owns its schema/index state."""
-    from hindsight_api.pg0 import EmbeddedPostgres
-
-    pg0 = EmbeddedPostgres(name="hindsight-vecidx-test", port=5570)
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(pg0.ensure_running())
-    finally:
-        loop.close()
+def vec_db_url(fresh_db_url):
+    """A database of its own so the test owns its schema/index state."""
+    return fresh_db_url
 
 
 def _skip_unless_per_bank_backend() -> str:

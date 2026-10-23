@@ -17,7 +17,6 @@ path (``o0j1k2l3m4n5``) and does not exist at head, so the migration must not
 touch it.
 """
 
-import asyncio
 import uuid
 from pathlib import Path
 
@@ -56,16 +55,9 @@ def _col_type(conn, table: str) -> str:
 
 
 @pytest.fixture(scope="module")
-def head_db_url():
+def head_db_url(fresh_db_url):
     """pg0 instance migrated to head (includes the widen migration)."""
-    from hindsight_api.pg0 import EmbeddedPostgres
-
-    pg0 = EmbeddedPostgres(name="hindsight-remaining-bankid-test", port=5568)
-    loop = asyncio.new_event_loop()
-    try:
-        url = loop.run_until_complete(pg0.ensure_running())
-    finally:
-        loop.close()
+    url = fresh_db_url
 
     command.upgrade(_alembic_cfg(url), "heads")
     return url

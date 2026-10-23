@@ -6,10 +6,9 @@ row, and what the #3034 locking upsert conflicts on), and that the upgrade does
 NOT backfill existing entities — a backfill would write a row per entity inside
 a migration that runs at API startup and charge a prune check for each.
 
-Uses a dedicated pg0 instance so the test controls which migrations have run.
+Uses a database of its own (the ``fresh_db_url`` fixture) so the test controls which migrations have run.
 """
 
-import asyncio
 import uuid
 from pathlib import Path
 
@@ -38,29 +37,10 @@ def _upgrade(db_url: str, revision: str) -> None:
     command.upgrade(_alembic_cfg(db_url), revision)
 
 
-def _reset_public_schema(db_url: str) -> None:
-    engine = create_engine(db_url, isolation_level="AUTOCOMMIT")
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
-            conn.execute(text("CREATE SCHEMA public"))
-    finally:
-        engine.dispose()
-
-
 @pytest.fixture(scope="module")
-def pre_queue_db_url() -> str:
+def pre_queue_db_url(fresh_db_url) -> str:
     """A dedicated database migrated to the revision just before the queue."""
-    from hindsight_api.pg0 import EmbeddedPostgres
-
-    pg0 = EmbeddedPostgres(name="hindsight-entity-queue-test", port=5563)
-    loop = asyncio.new_event_loop()
-    try:
-        url = loop.run_until_complete(pg0.ensure_running())
-    finally:
-        loop.close()
-
-    _reset_public_schema(url)
+    url = fresh_db_url
     _upgrade(url, _PRE_REVISION)
     return url
 

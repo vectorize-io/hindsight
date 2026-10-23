@@ -1,10 +1,9 @@
 """Tests for migration g7h8i9j0k1l2 (backsweep orphaned memory_units).
 
-Uses a dedicated pg0 instance (port 5562) so the test can control exactly
+Uses a database of its own (the ``fresh_db_url`` fixture) so the test can control exactly
 which migrations have run before inserting the orphan seed data.
 """
 
-import asyncio
 import uuid
 from pathlib import Path
 
@@ -33,46 +32,18 @@ def _upgrade(db_url: str, revision: str) -> None:
     command.upgrade(_alembic_cfg(db_url), revision)
 
 
-def _reset_public_schema(db_url: str) -> None:
-    engine = create_engine(db_url, isolation_level="AUTOCOMMIT")
-    try:
-        with engine.connect() as conn:
-            # This test rewinds/replays migration history against a persistent
-            # pg0 instance. Rebuild only its dedicated public schema so a
-            # previous run cannot leave alembic_version ahead of the real DDL.
-            conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
-            conn.execute(text("CREATE SCHEMA public"))
-    finally:
-        engine.dispose()
-
-
 # ---------------------------------------------------------------------------
 # Fixture: fresh database at the revision just before the backsweep
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
-def pre_backsweep_db_url() -> str:
+def pre_backsweep_db_url(fresh_db_url) -> str:
     """
-    Spin up a dedicated pg0 instance and ensure schema is at the revision
-    just before the backsweep so each test can seed orphan data and then
-    apply the backsweep itself.
-
-    Because pg0 data directories persist across test runs, the DB may already
-    have schema from a previous test run. Reset this test's dedicated schema
-    first, then migrate to the real pre-backsweep revision instead of stamping
-    a head schema backward.
+    A database of its own at the revision just before the backsweep, so each
+    test can seed orphan data and then apply the backsweep itself.
     """
-    from hindsight_api.pg0 import EmbeddedPostgres
-
-    pg0 = EmbeddedPostgres(name="hindsight-backsweep-test", port=5562)
-    loop = asyncio.new_event_loop()
-    try:
-        url = loop.run_until_complete(pg0.ensure_running())
-    finally:
-        loop.close()
-
-    _reset_public_schema(url)
+    url = fresh_db_url
     _upgrade(url, "f6g7h8i9j0k1")
     return url
 

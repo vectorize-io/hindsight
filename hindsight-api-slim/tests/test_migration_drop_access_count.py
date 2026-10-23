@@ -14,12 +14,10 @@ column list is read from the catalog at runtime
 would break on a column mismatch, so this test pins the lockstep invariant as
 well as the drop itself.
 
-Uses a dedicated pg0 instance (mirrors test_migration_observation_search_vector_backfill)
-so it controls exactly which migrations have run and never stamps the shared test
-instance.
+Uses a database of its own (the ``fresh_db_url`` fixture) so it controls exactly
+which migrations have run and never stamps the shared test database.
 """
 
-import asyncio
 from pathlib import Path
 
 import pytest
@@ -27,10 +25,10 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, text
 
-# All three tests share one module-scoped pg0 instance. CI runs with
+# All three tests share one module-scoped database. CI runs with
 # `--dist loadgroup`, which, absent an xdist_group, scatters them across workers
-# that then each instantiate the module fixture and race to provision the SAME
-# named instance. Pinning the module to a single worker serialises that — and
+# that then each instantiate the module fixture and race on the SAME
+# database. Pinning the module to a single worker serialises that — and
 # keeps the downgrade test from re-migrating a DB another worker is reading.
 pytestmark = pytest.mark.xdist_group("migration-drop-access-count-pg0")
 
@@ -75,17 +73,9 @@ def _index_exists(conn, name: str) -> bool:
 
 
 @pytest.fixture(scope="module")
-def head_db_url():
-    """pg0 instance migrated to head (includes the drop migration)."""
-    from hindsight_api.pg0 import EmbeddedPostgres
-
-    # port=None lets pg0 auto-assign a free port; a hardcoded port is not xdist-safe.
-    pg0 = EmbeddedPostgres(name="hindsight-drop-access-count-test", port=None)
-    loop = asyncio.new_event_loop()
-    try:
-        url = loop.run_until_complete(pg0.ensure_running())
-    finally:
-        loop.close()
+def head_db_url(fresh_db_url):
+    """A database of its own migrated to head (includes the drop migration)."""
+    url = fresh_db_url
 
     command.upgrade(_alembic_cfg(url), "heads")
     return url

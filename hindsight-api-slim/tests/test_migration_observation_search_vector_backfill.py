@@ -13,7 +13,6 @@ it controls exactly which migrations have run and never stamps the shared test
 instance.
 """
 
-import asyncio
 import uuid
 from pathlib import Path
 
@@ -43,26 +42,12 @@ def _alembic_cfg(db_url: str) -> Config:
 
 
 @pytest.fixture(scope="module")
-def pre_backfill_db_url():
-    """pg0 instance brought to the revision just before the backfill so the
+def pre_backfill_db_url(fresh_db_url):
+    """A database of its own brought to the revision just before the backfill so the
     migration's UPDATE runs against seeded NULL-search_vector observations."""
-    from hindsight_api.pg0 import EmbeddedPostgres
+    url = fresh_db_url
 
-    # port=None lets pg0 auto-assign a free port. A hardcoded port is not
-    # xdist-safe: under `-n` the fixed port collides with a concurrent or
-    # left-over postgres ("could not bind 127.0.0.1: Address already in use"),
-    # which the retry loop then reports as "Failed to start embedded PostgreSQL
-    # after 5 attempts". The connection URL from ensure_running() carries the
-    # assigned port, so nothing downstream needs to know it.
-    pg0 = EmbeddedPostgres(name="hindsight-obs-sv-backfill-test", port=None)
-    loop = asyncio.new_event_loop()
-    try:
-        url = loop.run_until_complete(pg0.ensure_running())
-    finally:
-        loop.close()
-
-    # pg0 data dirs persist across runs, so normalise: go to head, then down to
-    # just before the backfill.
+    # Go to head, then down to just before the backfill.
     command.upgrade(_alembic_cfg(url), "heads")
     command.downgrade(_alembic_cfg(url), _PRE_BACKFILL_REVISION)
     return url
