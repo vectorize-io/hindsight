@@ -9,11 +9,15 @@ Example:
 
 import logging
 from abc import abstractmethod
-
-from fastmcp import FastMCP
+from typing import TYPE_CHECKING
 
 from hindsight_api import MemoryEngine
 from hindsight_api.extensions.base import Extension
+
+if TYPE_CHECKING:
+    # Type-only: fastmcp loads when the MCP server starts, so a broken MCP
+    # install can't stop a server that doesn't use it (#5453).
+    from fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +36,7 @@ class MCPExtension(Extension):
     """
 
     @abstractmethod
-    def register_tools(self, mcp: FastMCP, memory: MemoryEngine) -> None:
+    def register_tools(self, mcp: "FastMCP", memory: MemoryEngine) -> None:
         """Register additional MCP tools.
 
         Args:
