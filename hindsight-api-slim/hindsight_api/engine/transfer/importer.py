@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import IO, TYPE_CHECKING, Any, Literal, cast
 
+from ...schema_context import get_current_schema
 from ..causal_links import CANONICAL_CAUSAL_LINK_TYPE, LEGACY_CAUSAL_LINK_TYPES
 from ..db.ops_postgresql import pg_search_vector_expr
 from ..db_utils import acquire_with_retry
@@ -665,7 +666,6 @@ async def _restore_rows(
     first = next(rows, None)
     if first is None:
         return 0
-    from ..memory_engine import get_current_schema
     from ..schema import _is_oracle
 
     oracle = _is_oracle()

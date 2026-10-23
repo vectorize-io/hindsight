@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from urllib.parse import quote
 
+from ...schema_context import get_current_schema
 from .base import FileStorage
 from .postgresql import PostgreSQLFileStorage
 
@@ -21,8 +22,6 @@ def bank_storage_prefix(bank_id: str, schema: str | None = None) -> str:
     have no current schema to read — the admin CLI's rename, which re-keys a
     bank's files and so must spell both the old prefix and the new one.
     """
-    from ..memory_engine import get_current_schema
-
     return f"tenants/{key_segment(schema or get_current_schema())}/banks/{key_segment(bank_id)}/"
 
 

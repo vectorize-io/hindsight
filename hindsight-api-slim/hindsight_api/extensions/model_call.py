@@ -34,6 +34,7 @@ from pydantic import BaseModel
 
 from hindsight_api.engine.response_models import LLMToolCall
 from hindsight_api.extensions.base import Extension
+from hindsight_api.schema_context import get_current_bank_id, get_current_schema
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +130,6 @@ class ModelCallRecorder:
             current_trace_context,
             genai_operation_name,
         )
-        from hindsight_api.engine.memory_engine import get_current_bank_id, get_current_schema
 
         ctx = current_trace_context()
         ended_at = datetime.now(timezone.utc)

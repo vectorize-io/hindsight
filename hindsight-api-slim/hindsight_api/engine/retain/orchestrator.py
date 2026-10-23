@@ -35,7 +35,8 @@ from ..document_history import (
     append_operation_events,
     track_observation_changes,
 )
-from ..memory_engine import count_tokens, fq_table
+from ..memory_engine import count_tokens
+from ..schema import fq_table
 
 if TYPE_CHECKING:
     from .attachment_store import RetainAttachmentLoader

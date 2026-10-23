@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any
 
 from hindsight_api.config import LLMMemberConfig
 from hindsight_api.extensions.base import Extension
+from hindsight_api.schema_context import get_current_bank_id, get_current_schema
 
 if TYPE_CHECKING:
     from hindsight_api.engine.llm_wrapper import LLMProvider
@@ -217,7 +218,6 @@ async def bind_llm_request(provider: LLMProvider) -> BoundLLMRequest:
 
     # Lazy: memory_engine imports the provider modules that import this one.
     from hindsight_api.engine.llm_trace import current_trace_context
-    from hindsight_api.engine.memory_engine import get_current_bank_id, get_current_schema
 
     trace = current_trace_context()
     target = LLMRequestTarget(

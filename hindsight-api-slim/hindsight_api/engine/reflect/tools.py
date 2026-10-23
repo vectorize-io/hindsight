@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from ..prompt_utils import truncate_context_for_prompt
 from ..response_models import MemoryFact
+from ..schema import fq_table
 from ..search.tags import TagGroup, TagsMatch, tag_filter_active, tags_satisfy_groups
 from ..source_scope import ids_passing, visible_document_ids
 from .tokenization import count_prompt_tokens
@@ -24,7 +25,7 @@ if TYPE_CHECKING:
     # The engine's own connection abstraction, which is what every caller passes. This said
     # `asyncpg.Connection` -- the concrete driver type -- which predates that abstraction and
     # was never what arrived here; only `.fetch()` is used, and both provide it.
-    from ...api.http import RequestContext
+    from ...models import RequestContext
     from ..db.base import DatabaseConnection
     from ..memory_engine import MemoryEngine
 
@@ -153,7 +154,7 @@ async def tool_search_mental_models(
     Returns:
         Dict with matching mental models including content and freshness info
     """
-    from ..memory_engine import _knowledge_snippet, _mental_model_stale_scope_from_row, fq_table
+    from ..memory_engine import _knowledge_snippet, _mental_model_stale_scope_from_row
     from ..search.tags import build_tag_groups_where_clause, build_tags_where_clause
 
     # Build filters dynamically
@@ -326,7 +327,6 @@ async def tool_read_mental_models(
     ``tag_scope`` is the caller's forced tag scope: a page outside it reads as missing,
     even when the model asks for it by id.
     """
-    from ..memory_engine import fq_table
 
     if not mental_model_ids:
         return {"error": "read_mental_models requires mental_model_ids"}
@@ -600,7 +600,6 @@ async def tool_expand(
     Returns:
         Dict with results array, each containing memory, chunk, and optionally document data
     """
-    from ..memory_engine import fq_table
 
     if not memory_ids:
         return {"error": "memory_ids is required and must not be empty"}

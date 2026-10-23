@@ -57,9 +57,10 @@ from ..llm_trace import (
 )
 from ..llm_wrapper import sanitize_llm_output
 from ..memories import StoredMemory, get_memories
-from ..memory_engine import Budget, fq_table
 from ..prompt_utils import truncate_context_for_prompt
+from ..response_models import Budget
 from ..retain import embedding_utils
+from ..schema import fq_table
 from ..stored_dates import finite_utc
 from .prompts import (
     build_consolidation_input,
@@ -70,7 +71,7 @@ from .triage import TriageResult, triage_facts, triage_model
 if TYPE_CHECKING:
     # The engine's connection abstraction, which is what every caller passes; the annotations
     # below named asyncpg's concrete type, which predates it.
-    from ...api.http import RequestContext
+    from ...models import RequestContext
     from ..db.base import DatabaseConnection
     from ..memories.base import StoredMemory
     from ..memory_engine import MemoryEngine

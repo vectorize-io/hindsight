@@ -6,6 +6,7 @@ that respect both the active schema context and the database backend.
 """
 
 from ..config import get_config
+from ..schema_context import get_current_schema
 
 #: Tables the memories store owns. For a bank whose store is not Postgres these are
 #: empty, so SQL against them from outside the store reads nothing, and writes rows
@@ -57,8 +58,6 @@ def fq_store_table(table_name: str) -> str:
     """:func:`fq_table` without the guard. Only the Postgres memories store may call it."""
     if _is_oracle():
         return table_name
-    from .memory_engine import get_current_schema
-
     return f"{get_current_schema()}.{table_name}"
 
 

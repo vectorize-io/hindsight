@@ -30,7 +30,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Union
 
-from ..memory_engine import fq_table
+from ..schema import fq_table
 from .attachment_content import LoadedAttachment, RetainAttachment, short_attachment_id
 
 logger = logging.getLogger(__name__)

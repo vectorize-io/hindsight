@@ -2309,8 +2309,8 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
         }
 
-        # Lazy import to avoid circular dependency (engine imports from config).
-        from hindsight_api.engine.memory_engine import _current_schema
+        # Imported here because schema_context reads the config default.
+        from hindsight_api.schema_context import _current_schema
 
         tenant = _current_schema.get()
         if tenant:

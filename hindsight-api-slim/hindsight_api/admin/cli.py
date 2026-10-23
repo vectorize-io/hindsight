@@ -23,7 +23,6 @@ import typer
 from ..config import DEFAULT_DATABASE_SCHEMA, HindsightConfig, load_dotenv_for_entrypoint
 from ..db_url import is_oracle_url
 from ..engine.memories import get_memories, sql_memories
-from ..engine.memory_engine import _current_schema
 from ..engine.retain.bank_utils import _vector_index_clause, bank_indexes_are_store_owned
 from ..engine.schema import fq_table_explicit as _fq_table
 from ..engine.storage import bank_storage_prefix, create_file_storage
@@ -36,6 +35,7 @@ from ..engine.vector_index_health import (
 )
 from ..extensions import TenantExtension, load_extension
 from ..pg0 import parse_pg0_url, resolve_database_url
+from ..schema_context import _current_schema
 
 # Setup logging
 logging.basicConfig(

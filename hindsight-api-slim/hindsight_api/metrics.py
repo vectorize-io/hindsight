@@ -30,15 +30,14 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation, View
 from opentelemetry.sdk.resources import Resource
 
+from hindsight_api.schema_context import _current_schema, get_current_schema
+
 if TYPE_CHECKING:
     import asyncpg
 
 
 def _get_tenant() -> str:
     """Get current tenant (schema) from context for metrics labeling."""
-    # Import here to avoid circular imports
-    from hindsight_api.engine.memory_engine import get_current_schema
-
     return get_current_schema()
 
 
@@ -1239,7 +1238,6 @@ class MetricsCollector(MetricsCollectorBase):
         per_bank = self._include_bank_id
         bank_sel = "bank_id, " if per_bank else ""
         from .engine.memories import get_memories
-        from .engine.memory_engine import _current_schema
 
         async with self._db_pool.acquire() as conn:
             # memory_units is the central per-tenant table; its presence marks a

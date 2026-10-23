@@ -20,6 +20,7 @@ import time
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from ..schema_context import get_current_schema
 from .db_utils import acquire_with_retry
 
 if TYPE_CHECKING:
@@ -265,8 +266,6 @@ class DistributedBankStatsCache:
         """Drop all cached rows in the current schema (best-effort)."""
         if not self.enabled:
             return
-        from .memory_engine import get_current_schema
-
         try:
             async with acquire_with_retry(self._backend) as conn:
                 await conn.execute(f"DELETE FROM {self._qualified(get_current_schema())}")

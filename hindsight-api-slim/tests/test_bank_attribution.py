@@ -21,15 +21,11 @@ from hindsight_api.engine.aiohttp_session import LoopLocal
 from hindsight_api.engine.bank_attribution import apply_bank_attribution
 from hindsight_api.engine.cross_encoder import LiteLLMCrossEncoder
 from hindsight_api.engine.embeddings import OpenAIEmbeddings
-from hindsight_api.engine.memory_engine import (
-    MemoryEngine,
-    _bind_bank_id,
-    _current_bank_id,
-    get_current_bank_id,
-)
+from hindsight_api.engine.memory_engine import MemoryEngine, _bind_bank_id
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
 from hindsight_api.engine.retain.embedding_utils import generate_embeddings_batch
 from hindsight_api.models import RequestContext
+from hindsight_api.schema_context import _current_bank_id, get_current_bank_id
 from tests.aiohttp_stub import stub_server
 
 

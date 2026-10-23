@@ -66,6 +66,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..config import ConfigLike, get_config
 from ..models import RequestContext
+from ..schema_context import _current_schema
 from .db_utils import acquire_with_retry
 from .schema import _is_oracle, fq_routine, fq_table, fq_table_explicit
 
@@ -386,8 +387,6 @@ class MaintenanceLoop:
             return
         known = {t.schema for t in tenants} | {get_config().database_schema}
 
-        from .memory_engine import _current_schema
-
         cutoff = datetime.now(timezone.utc) - timedelta(days=cfg.operation_retention_days)
         pruned = 0
         for row in rows:
@@ -464,8 +463,6 @@ class MaintenanceLoop:
         if not targets:
             return
 
-        from .memory_engine import _current_schema
-
         submitted = 0
         skipped_unknown = 0
         for target in targets:
@@ -505,8 +502,6 @@ class MaintenanceLoop:
         The schema is set for each, as a request would set it: a store derives where a bank's
         memories live from it.
         """
-        from .memory_engine import _current_schema
-
         engine = self._engine
         found: list[_ReconcileTarget] = []
         for schema in sorted(schemas):
@@ -607,8 +602,6 @@ class MaintenanceLoop:
             return
         tenant_by_schema = {t.schema: t for t in tenants}
         default_schema = get_config().database_schema
-
-        from .memory_engine import _current_schema
 
         submitted = 0
         skipped_unknown = 0

@@ -11,8 +11,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from hindsight_api.engine.memory_engine import BankLlmHealthInfo, Budget
-    from hindsight_api.engine.response_models import RecallResult, ReflectResult
+    from hindsight_api.engine.memory_engine import BankLlmHealthInfo
+    from hindsight_api.engine.response_models import Budget, RecallResult, ReflectResult
     from hindsight_api.engine.search.tags import TagGroup, TagsMatch
     from hindsight_api.extensions import BankWriteOperation
     from hindsight_api.models import RequestContext

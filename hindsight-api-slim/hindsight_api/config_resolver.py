@@ -27,7 +27,8 @@ from hindsight_api.config import (
     validate_retain_completion_token_budget,
     validate_retain_image_chunking_config,
 )
-from hindsight_api.engine.memory_engine import fq_table
+from hindsight_api.engine.response_models import MentalModelTrigger, ReflectDefaultOptions
+from hindsight_api.engine.schema import fq_table
 from hindsight_api.extensions.tenant import TenantExtension
 from hindsight_api.models import RequestContext
 
@@ -835,15 +836,11 @@ def _validate_against_model(key: str, value: dict[str, Any], model: "type[BaseMo
 
 def _validate_knowledge_page_default_trigger(value: dict[str, Any]) -> None:
     """Reject unknown trigger fields and values ``MentalModelTrigger`` refuses."""
-    from hindsight_api.api.http import MentalModelTrigger
-
     _validate_against_model("knowledge_page_default_trigger", value, MentalModelTrigger, "trigger")
 
 
 def _validate_reflect_default_options(value: dict[str, Any]) -> None:
     """Reject unknown option fields and values ``ReflectDefaultOptions`` refuses."""
-    from hindsight_api.api.http import ReflectDefaultOptions
-
     _validate_against_model("reflect_default_options", value, ReflectDefaultOptions, "options")
 
 

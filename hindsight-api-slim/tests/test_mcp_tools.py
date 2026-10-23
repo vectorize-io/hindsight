@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import ValidationError
 
-from hindsight_api.api import page_markdown
+from hindsight_api.engine import page_markdown
 from hindsight_api.engine.memory_engine import KEEP_PARENT, DirectivePage, MentalModelPage
 from hindsight_api.engine.response_models import MemoryFact, RecallResult
 from hindsight_api.mcp_tools import (
