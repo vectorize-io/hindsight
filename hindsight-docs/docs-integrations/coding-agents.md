@@ -1159,7 +1159,9 @@ npx @vectorize-io/hindsight-coding-agents stats
 that: `"synced": true` means the seeded memory is queryable. It also reports gitlog freshness, how
 far per-commit deepening has got, the codebase survey's state (`surveyBaseline` is the HEAD the last
 survey started from, `surveyDocs` counts the findings documents that have landed, 0–4 — a baseline
-with no findings retries automatically), and the extraction operations still in flight.
+with no findings retries automatically, at most three times per commit), and the extraction
+operations still in flight. Each survey agent that could not be found, failed to launch or exited
+with an error leaves one `[survey]` line in the plugin log.
 
 ### Resetting a repo's memory
 

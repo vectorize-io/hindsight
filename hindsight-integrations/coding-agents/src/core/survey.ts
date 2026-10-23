@@ -38,10 +38,12 @@
  */
 import { execFileSync, spawn as realSpawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { stringify as tomlStringify } from "smol-toml";
+import { describeError, log } from "./log";
 import { binOnPath } from "./util";
 import { resolveHostConfig } from "./host-client";
 import {
@@ -113,7 +115,7 @@ export const SURVEY_AGENT_CONFIG = {
 } as const;
 
 /** Resolve a harness's agent CLI binary: explicit `claudeBin` (claude only) -> `HINDSIGHT_<AGENT>_BIN`
- *  env override -> the bare command name (resolved on PATH at spawn time). */
+ *  env override -> the bare command name (resolved on PATH by the caller). */
 function resolveAgentBin(harness: SurveyHarness, claudeBin?: string): string {
   switch (harness) {
     case "claude-code":
@@ -194,6 +196,12 @@ const SURVEY_DISALLOWED_TOOLS = [
   "Task",
 ];
 
+/** A TOML value for a codex `-c key=value` override. Interpolating a Windows path raw put
+ *  `C:\Users\…` into a TOML basic string, where `\U` is an invalid escape, so codex refused its
+ *  config and exited before surveying anything (#5710). */
+const tomlValue = (value: string | string[]): string =>
+  tomlStringify({ v: value }).slice("v = ".length).trim();
+
 interface SpawnPlan {
   bin: string;
   args: string[];
@@ -271,9 +279,9 @@ function buildSurveyPlan(
           "-c",
           `mcp_servers.hindsight.command="node"`,
           "-c",
-          `mcp_servers.hindsight.args=["${opts.mcpServerPath}"]`,
+          `mcp_servers.hindsight.args=${tomlValue([opts.mcpServerPath])}`,
           "-c",
-          `mcp_servers.hindsight.env.HINDSIGHT_MCP_PROJECT_CWD="${repoDir}"`,
+          `mcp_servers.hindsight.env.HINDSIGHT_MCP_PROJECT_CWD=${tomlValue(repoDir)}`,
           "-c",
           `mcp_servers.hindsight.env.HINDSIGHT_MCP_HARNESS="codex"`,
           SURVEY_PROMPT,
@@ -308,14 +316,33 @@ function buildSurveyPlan(
   }
 }
 
+/** At most this many surveys are launched per commit (#5623): one that keeps failing (no usable
+ *  agent CLI, a budget kill, an extraction outage) would otherwise re-run in full every session. */
+export const SURVEY_MAX_ATTEMPTS = 3;
+
+/**
+ * Surveys launched so far at `sha`, kept next to the lease in one small file per destination +
+ * repo that holds only the latest commit — a new sha starts the count over, so it cannot grow.
+ * Local, not in the bank: what fails here is often the server's extraction, which would drop a
+ * bank-side counter along with the findings. Unreadable = none.
+ */
+function surveyAttempts(file: string, sha: string): number {
+  try {
+    const state = JSON.parse(readFileSync(file, "utf8")) as { sha?: string; attempts?: number };
+    return state.sha === sha && typeof state.attempts === "number" ? state.attempts : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /**
  * Spawn a DETACHED headless agent to survey `repoDir` and ingest structural findings via the
  * `hindsight_ingest_document` tool. Runs the survey under the current harness's own CLI when
  * available, else falls back to any available agent (claude → codex → antigravity → opencode — claude and
  * codex first because their inline-MCP recipes are self-contained). The agent runs under the
  * detached lease supervisor (survey-supervisor.ts), so only one survey per destination runs at a
- * time (#4255). Resolves once launched, not when the survey finishes; false means no launch.
- * Never throws.
+ * time (#4255). With `sha`, a commit that already had SURVEY_MAX_ATTEMPTS launches is skipped.
+ * Resolves once launched, not when the survey finishes; false means no launch. Never throws.
  */
 export async function startCodebaseSurvey(
   repoDir: string,
@@ -325,8 +352,10 @@ export async function startCodebaseSurvey(
     budgetUsd?: number;
     mcpServerPath?: string;
     claudeBin?: string;
+    /** HEAD commit — the attempt limit counts launches per commit. */
+    sha?: string;
     spawn?: typeof realSpawn;
-    exists?: (bin: string) => boolean; // seam for tests
+    resolveBin?: (bin: string) => string | undefined; // seam for tests
     opencodeDefinesAgent?: (bin: string) => boolean; // seam for tests
     supervisorPath?: string;
     lease?: { dir?: string; staleMs?: number; heartbeatMs?: number }; // seam for tests
@@ -334,7 +363,8 @@ export async function startCodebaseSurvey(
 ): Promise<boolean> {
   try {
     const spawnFn = opts.spawn ?? realSpawn;
-    const exists = opts.exists ?? binOnPath;
+    // Spawned without a shell, so on Windows only a native `.exe` can run (#5710).
+    const resolveBin = opts.resolveBin ?? ((bin: string) => binOnPath(bin, { exts: [".exe"] }));
     const mcpServerPath =
       opts.mcpServerPath ?? join(dirname(fileURLToPath(import.meta.url)), "mcp-server.js");
 
@@ -352,14 +382,20 @@ export async function startCodebaseSurvey(
     for (const harness of order) {
       if (seen.has(harness)) continue;
       seen.add(harness);
-      const bin = resolveAgentBin(harness, opts.claudeBin);
-      if (!exists(bin)) continue;
+      const name = resolveAgentBin(harness, opts.claudeBin);
+      const bin = resolveBin(name);
+      if (!bin) {
+        log.info("survey", `${harness}: ${name} not found, trying the next agent`);
+        continue;
+      }
       // A runner that cannot have the survey agent would only fail after the lease is taken.
       if (
         harness === "opencode" &&
         !(opts.opencodeDefinesAgent ?? opencodeCanDefineSurveyAgent)(bin)
-      )
+      ) {
+        log.info("survey", `${harness}: ${bin} cannot define the survey agent, trying the next`);
         continue;
+      }
 
       const plan = buildSurveyPlan(harness, bin, repoDir, {
         model: opts.model,
@@ -374,12 +410,21 @@ export async function startCodebaseSurvey(
       const key = createHash("sha256")
         .update(JSON.stringify([cfg.apiUrl.replace(/\/+$/, ""), cfg.apiToken ?? "", bankId]))
         .digest("hex");
-      const lease = acquireLease(
-        opts.lease?.dir ?? join(tmpdir(), "hindsight-coding-agent", "surveys"),
-        key,
-        opts.lease?.staleMs ?? LEASE_STALE_MS
-      );
+      const leaseDir = opts.lease?.dir ?? join(tmpdir(), "hindsight-coding-agent", "surveys");
+      const lease = acquireLease(leaseDir, key, opts.lease?.staleMs ?? LEASE_STALE_MS);
       if (!lease) return false;
+      const attemptsFile = join(
+        leaseDir,
+        `attempts-${createHash("sha256")
+          .update(JSON.stringify([key, repoDir]))
+          .digest("hex")}.json`
+      );
+      const attempts = opts.sha ? surveyAttempts(attemptsFile, opts.sha) : 0;
+      if (attempts >= SURVEY_MAX_ATTEMPTS) {
+        log.info("survey", `${attempts} surveys already launched at ${opts.sha}, skipping`);
+        releaseLease(lease);
+        return false;
+      }
       const spec: SurveySupervisorSpec = {
         lease,
         bin: plan.bin,
@@ -403,17 +448,30 @@ export async function startCodebaseSurvey(
           let spawned = false;
           // spawn() failures (node not found, EACCES, sandboxes) arrive as an async 'error' event;
           // unhandled, it would crash the caller.
-          child.on("error", () => {
+          child.on("error", (e) => {
             if (spawned) return; // the supervisor owns the lease now
+            log.warn("survey", `survey supervisor failed to launch: ${describeError(e)}`);
             releaseLease(lease);
             resolve(false);
           });
           child.once("spawn", () => {
             spawned = true;
             child.unref();
+            if (opts.sha) {
+              try {
+                writeFileSync(
+                  attemptsFile,
+                  JSON.stringify({ sha: opts.sha, attempts: attempts + 1 }),
+                  { mode: 0o600 }
+                );
+              } catch {
+                /* best-effort: an unwritable count only loses the limit */
+              }
+            }
             resolve(true);
           });
-        } catch {
+        } catch (e) {
+          log.warn("survey", `survey supervisor failed to launch: ${describeError(e)}`);
           releaseLease(lease);
           resolve(false);
         }

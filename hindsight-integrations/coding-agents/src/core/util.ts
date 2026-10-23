@@ -1,32 +1,50 @@
 /** Small shared helpers (no harness coupling). */
-import { accessSync, constants } from "node:fs";
-import { delimiter, join } from "node:path";
+import { accessSync, constants, statSync } from "node:fs";
+import { delimiter, extname, isAbsolute, join, resolve } from "node:path";
 
 /**
- * Is `bin` runnable? A path (contains "/") -> exists + executable; a bare name -> found on PATH.
+ * Where `bin` runs from, or undefined when it is not runnable. A path (contains a slash or
+ * backslash) -> that file; a bare name -> the first match on PATH. Returns the full path so the
+ * caller spawns exactly what was found.
+ *
+ * On Windows a bare name resolves through PATHEXT (`codex` -> `codex.exe`), never as itself: the
+ * extensionless file npm drops next to its shims is a `#!/bin/sh` script spawn cannot run (#5710).
+ * `exts` narrows the extensions tried — a caller that spawns without a shell passes [".exe"],
+ * since `.cmd`/`.bat` only run through one. A directory is never a match (X_OK accepts those).
  *
  * Resolved by hand rather than by spawning: the callers use this to DECIDE whether to spawn, and
  * `which`/`where` is itself a process launch on a path where the answer is usually "no".
  */
-export function binOnPath(bin: string): boolean {
-  try {
-    if (bin.includes("/")) {
-      accessSync(bin, constants.X_OK);
+export function binOnPath(
+  bin: string,
+  opts: { exts?: string[]; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv } = {}
+): string | undefined {
+  const platform = opts.platform ?? process.platform;
+  const env = opts.env ?? process.env;
+  const runnable = (file: string): boolean => {
+    try {
+      if (!statSync(file).isFile()) return false;
+      if (platform !== "win32") accessSync(file, constants.X_OK); // Windows has no exec bit
       return true;
+    } catch {
+      return false;
     }
-    for (const dir of (process.env.PATH || "").split(delimiter)) {
-      if (!dir) continue;
-      try {
-        accessSync(join(dir, bin), constants.X_OK);
-        return true;
-      } catch {
-        /* keep scanning PATH */
-      }
+  };
+  if (isAbsolute(bin) || /[\\/]/.test(bin)) return runnable(bin) ? resolve(bin) : undefined;
+  const names =
+    platform !== "win32" || extname(bin)
+      ? [bin]
+      : (opts.exts ?? (env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";"))
+          .filter(Boolean)
+          .map((ext) => bin + ext.toLowerCase());
+  for (const dir of (env.PATH || "").split(delimiter)) {
+    if (!dir) continue;
+    for (const name of names) {
+      const file = join(dir, name);
+      if (runnable(file)) return resolve(file);
     }
-    return false;
-  } catch {
-    return false;
   }
+  return undefined;
 }
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

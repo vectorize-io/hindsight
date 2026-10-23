@@ -4,6 +4,7 @@ import {
   startCodebaseSurvey as startSurvey,
   SURVEY_AGENT,
   SURVEY_AGENT_CONFIG,
+  SURVEY_MAX_ATTEMPTS,
   SURVEY_PROMPT,
 } from "./survey";
 import { releaseLease, SURVEY_SPEC_ENV, type SurveySupervisorSpec } from "./survey-lease";
@@ -16,6 +17,7 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import { buildSync } from "esbuild";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse as parseToml } from "smol-toml";
 import { resolveHostConfig } from "./host-client";
 import { resolveConfig } from "./config";
 
@@ -79,7 +81,7 @@ describe("startCodebaseSurvey", () => {
       return child;
     });
   }
-  const yes = () => true;
+  const yes = (b: string) => b;
   /** The survey agent is launched through the lease supervisor: decode the agent's bin + argv
    *  from the supervisor's spec; the options are the real spawn's (the agent inherits them). */
   function launched(spawn: ReturnType<typeof fakeSpawn>, i = 0) {
@@ -99,7 +101,7 @@ describe("startCodebaseSurvey", () => {
       mcpServerPath: "/x/mcp-server.js",
       claudeBin: "/bin/claude",
       spawn,
-      exists: yes,
+      resolveBin: yes,
     });
 
     expect(spawn).toHaveBeenCalledTimes(1);
@@ -145,7 +147,7 @@ describe("startCodebaseSurvey", () => {
 
   it("claude: defaults model to 'haiku' and --max-budget-usd to 2", async () => {
     const spawn = fakeSpawn();
-    await startCodebaseSurvey("/repo", { claudeBin: "/bin/claude", spawn, exists: yes });
+    await startCodebaseSurvey("/repo", { claudeBin: "/bin/claude", spawn, resolveBin: yes });
     const argv = launched(spawn)[1];
     expect(argv[argv.indexOf("--model") + 1]).toBe("haiku");
     expect(argv[argv.indexOf("--max-budget-usd") + 1]).toBe("2");
@@ -158,14 +160,14 @@ describe("startCodebaseSurvey", () => {
       harness: "codex",
       mcpServerPath: "/x/mcp-server.js",
       spawn,
-      exists: (b) => b === "codex",
+      resolveBin: (b) => (b === "codex" ? b : undefined),
     });
     const [bin, argv, options] = launched(spawn);
     expect(bin).toBe("codex");
     expect(argv.slice(0, 3)).toEqual(["exec", "--sandbox", "read-only"]);
     expect(argv).toContain(SURVEY_PROMPT);
     expect(argv).toContain(`mcp_servers.hindsight.command="node"`);
-    expect(argv).toContain(`mcp_servers.hindsight.args=["/x/mcp-server.js"]`);
+    expect(argv).toContain(`mcp_servers.hindsight.args=[ "/x/mcp-server.js" ]`);
     // Without this the survey's findings were stamped harness:claude-code and landed in Claude
     // Code's bank even though Codex ran the survey (#3603).
     expect(argv).toContain(`mcp_servers.hindsight.env.HINDSIGHT_MCP_HARNESS="codex"`);
@@ -182,7 +184,7 @@ describe("startCodebaseSurvey", () => {
     await startCodebaseSurvey("/repo", {
       harness: "antigravity-cli",
       spawn,
-      exists: (b) => b === "agy",
+      resolveBin: (b) => (b === "agy" ? b : undefined),
     });
     const [bin, argv, options] = launched(spawn);
     expect(bin).toBe("agy");
@@ -196,7 +198,7 @@ describe("startCodebaseSurvey", () => {
     await startCodebaseSurvey("/repo", {
       harness: "opencode",
       spawn,
-      exists: (b) => b === "opencode",
+      resolveBin: (b) => (b === "opencode" ? b : undefined),
       opencodeDefinesAgent: () => true,
     });
     const [bin, argv, options] = launched(spawn);
@@ -215,7 +217,7 @@ describe("startCodebaseSurvey", () => {
     const ok = await startCodebaseSurvey("/repo", {
       harness: "opencode2" as never,
       spawn,
-      exists: (b) => b === "opencode",
+      resolveBin: (b) => (b === "opencode" ? b : undefined),
       opencodeDefinesAgent: () => false,
     });
     expect(ok).toBe(false);
@@ -232,7 +234,11 @@ describe("startCodebaseSurvey", () => {
     const spawn = fakeSpawn();
     process.env.HINDSIGHT_OPENCODE_BIN = bin;
     try {
-      await startCodebaseSurvey("/repo", { harness: "opencode", spawn, exists: (b) => b === bin });
+      await startCodebaseSurvey("/repo", {
+        harness: "opencode",
+        spawn,
+        resolveBin: (b) => (b === bin ? b : undefined),
+      });
     } finally {
       delete process.env.HINDSIGHT_OPENCODE_BIN;
     }
@@ -254,6 +260,25 @@ describe("startCodebaseSurvey", () => {
       expect(SURVEY_AGENT_CONFIG.permission).not.toHaveProperty(escape, "allow");
   });
 
+  it("codex: escapes Windows paths in the -c overrides as TOML strings (#5710)", async () => {
+    const spawn = fakeSpawn();
+    await startCodebaseSurvey('C:\\Users\\me\\re"po', {
+      harness: "codex",
+      mcpServerPath: "C:\\Users\\me\\dist\\mcp-server.js",
+      spawn,
+      resolveBin: (b) => (b === "codex" ? b : undefined),
+    });
+    const argv = launched(spawn)[1];
+    const value = (key: string) => argv.find((a) => a.startsWith(`${key}=`))!.slice(key.length + 1);
+    // codex parses each override value as TOML: what it reads back must be the original path.
+    expect(parseToml(`v = ${value("mcp_servers.hindsight.args")}`).v).toEqual([
+      "C:\\Users\\me\\dist\\mcp-server.js",
+    ]);
+    expect(parseToml(`v = ${value("mcp_servers.hindsight.env.HINDSIGHT_MCP_PROJECT_CWD")}`).v).toBe(
+      'C:\\Users\\me\\re"po'
+    );
+  });
+
   // ── agent selection + fallback ─────────────────────────────────────────────────────────────────
   it("honors the HINDSIGHT_CODEX_BIN override for the codex binary", async () => {
     const spawn = fakeSpawn();
@@ -262,7 +287,7 @@ describe("startCodebaseSurvey", () => {
       await startCodebaseSurvey("/repo", {
         harness: "codex",
         spawn,
-        exists: (b) => b === "/opt/codex",
+        resolveBin: (b) => (b === "/opt/codex" ? b : undefined),
       });
     } finally {
       delete process.env.HINDSIGHT_CODEX_BIN;
@@ -277,7 +302,7 @@ describe("startCodebaseSurvey", () => {
       harness: "antigravity-cli",
       mcpServerPath: "/x/mcp-server.js",
       spawn,
-      exists: (b) => b === "codex",
+      resolveBin: (b) => (b === "codex" ? b : undefined),
     });
     const [bin, argv] = launched(spawn);
     expect(bin).toBe("codex");
@@ -286,7 +311,11 @@ describe("startCodebaseSurvey", () => {
 
   it("no capable agent found → no spawn (fail open; the git-log seed still ran)", async () => {
     const spawn = fakeSpawn();
-    await startCodebaseSurvey("/repo", { harness: "antigravity-cli", spawn, exists: () => false });
+    await startCodebaseSurvey("/repo", {
+      harness: "antigravity-cli",
+      spawn,
+      resolveBin: () => undefined,
+    });
     expect(spawn).not.toHaveBeenCalled();
   });
 
@@ -296,7 +325,7 @@ describe("startCodebaseSurvey", () => {
       throw new Error("spawn EMFILE");
     });
     await expect(
-      startCodebaseSurvey("/repo", { claudeBin: "/bin/claude", spawn, exists: yes })
+      startCodebaseSurvey("/repo", { claudeBin: "/bin/claude", spawn, resolveBin: yes })
     ).resolves.toBe(false);
   });
 
@@ -305,18 +334,22 @@ describe("startCodebaseSurvey", () => {
     const child = new EventEmitter() as InstanceType<typeof EventEmitter> & { unref: () => void };
     child.unref = vi.fn();
     const spawn = vi.fn().mockReturnValue(child);
-    const launched = startCodebaseSurvey("/repo", { claudeBin: "/bin/claude", spawn, exists: yes });
+    const launched = startCodebaseSurvey("/repo", {
+      claudeBin: "/bin/claude",
+      spawn,
+      resolveBin: yes,
+    });
     expect(() => child.emit("error", new Error("ENOENT"))).not.toThrow();
     await expect(launched).resolves.toBe(false);
-    await expect(startCodebaseSurvey("/repo", { spawn: fakeSpawn(), exists: yes })).resolves.toBe(
-      true
-    );
+    await expect(
+      startCodebaseSurvey("/repo", { spawn: fakeSpawn(), resolveBin: yes })
+    ).resolves.toBe(true);
   });
 
   it("launches the agent under the detached lease supervisor, which owns the lease", async () => {
     const spawn = fakeSpawn();
     await expect(
-      startCodebaseSurvey("/repo", { claudeBin: "/bin/claude", spawn, exists: yes })
+      startCodebaseSurvey("/repo", { claudeBin: "/bin/claude", spawn, resolveBin: yes })
     ).resolves.toBe(true);
     const [bin, , options, spec] = launched(spawn);
     expect(bin).toBe("/bin/claude");
@@ -328,32 +361,50 @@ describe("startCodebaseSurvey", () => {
   it("admits one concurrent survey and permits retry once the lease is released", async () => {
     const spawn = fakeSpawn();
     const results = await Promise.all(
-      Array.from({ length: 6 }, () => startCodebaseSurvey("/repo", { spawn, exists: yes }))
+      Array.from({ length: 6 }, () => startCodebaseSurvey("/repo", { spawn, resolveBin: yes }))
     );
     expect(spawn).toHaveBeenCalledTimes(1);
     expect(results.filter(Boolean)).toHaveLength(1);
     releaseLease(launched(spawn)[3].lease); // what the supervisor does when the agent exits
-    await expect(startCodebaseSurvey("/repo", { spawn, exists: yes })).resolves.toBe(true);
+    await expect(startCodebaseSurvey("/repo", { spawn, resolveBin: yes })).resolves.toBe(true);
     expect(spawn).toHaveBeenCalledTimes(2);
+  });
+
+  // #5623: a survey that keeps failing re-ran in full on every session.
+  it("launches at most SURVEY_MAX_ATTEMPTS surveys per commit; a new commit starts over", async () => {
+    const spawn = fakeSpawn();
+    const run = async (repo: string, sha: string) => {
+      const before = spawn.mock.calls.length;
+      const started = await startCodebaseSurvey(repo, { spawn, resolveBin: yes, sha });
+      if (spawn.mock.calls.length > before) releaseLease(launched(spawn, before)[3].lease);
+      return started;
+    };
+    for (let i = 0; i < SURVEY_MAX_ATTEMPTS; i++) expect(await run("/repo", "aaa")).toBe(true);
+    expect(await run("/repo", "aaa")).toBe(false);
+    expect(await run("/other-repo", "aaa")).toBe(true); // counted per repository
+    expect(await run("/repo", "bbb")).toBe(true);
+    // Only the latest commit is kept, so going back to an old one counts afresh.
+    expect(await run("/repo", "aaa")).toBe(true);
+    expect(readdirSync(lockDir).filter((f) => f.startsWith("attempts-"))).toHaveLength(2);
   });
 
   it("releases the lease when the supervisor cannot be spawned", async () => {
     const child = Object.assign(new EventEmitter(), { unref: vi.fn() });
     const failing = vi.fn().mockReturnValue(child);
-    const launch = startCodebaseSurvey("/repo", { spawn: failing, exists: yes });
+    const launch = startCodebaseSurvey("/repo", { spawn: failing, resolveBin: yes });
     child.emit("error", Object.assign(new Error("spawn node ENOENT"), { code: "ENOENT" }));
     await expect(launch).resolves.toBe(false);
-    await expect(startCodebaseSurvey("/repo", { spawn: fakeSpawn(), exists: yes })).resolves.toBe(
-      true
-    );
+    await expect(
+      startCodebaseSurvey("/repo", { spawn: fakeSpawn(), resolveBin: yes })
+    ).resolves.toBe(true);
   });
 
   it("keys admission by the resolved API, credential and bank, not repository or asking harness", async () => {
     const spawn = fakeSpawn();
-    await expect(startCodebaseSurvey("/repo-a", { spawn, exists: yes })).resolves.toBe(true);
+    await expect(startCodebaseSurvey("/repo-a", { spawn, resolveBin: yes })).resolves.toBe(true);
     // A second directory / fallback harness can write the same destination.
     await expect(
-      startCodebaseSurvey("/repo-b", { harness: "codex", spawn, exists: yes })
+      startCodebaseSurvey("/repo-b", { harness: "codex", spawn, resolveBin: yes })
     ).resolves.toBe(false);
     for (const [apiUrl, apiToken, bankId] of [
       ["https://other.example.test", "test-token", "bank-1"],
@@ -364,7 +415,7 @@ describe("startCodebaseSurvey", () => {
         cfg: resolveConfig({ apiUrl, apiToken }),
         bankId,
       });
-      await expect(startCodebaseSurvey("/repo-a", { spawn, exists: yes })).resolves.toBe(true);
+      await expect(startCodebaseSurvey("/repo-a", { spawn, resolveBin: yes })).resolves.toBe(true);
     }
     expect(spawn).toHaveBeenCalledTimes(4);
   });
@@ -375,7 +426,7 @@ describe("startCodebaseSurvey", () => {
       bankId: "",
     });
     const spawn = fakeSpawn();
-    await expect(startCodebaseSurvey("/repo", { spawn, exists: yes })).resolves.toBe(false);
+    await expect(startCodebaseSurvey("/repo", { spawn, resolveBin: yes })).resolves.toBe(false);
     expect(spawn).not.toHaveBeenCalled();
   });
 
@@ -408,7 +459,7 @@ describe("startCodebaseSurvey", () => {
       import { startCodebaseSurvey } from ${JSON.stringify(pathToFileURL(bundle).href)};
       import { spawn } from 'node:child_process';
       const started = await startCodebaseSurvey(${JSON.stringify(lockDir)}, {
-        exists: () => true,
+        resolveBin: (b) => b,
         mcpServerPath: '/unused-mcp-server.js',
         supervisorPath: ${JSON.stringify(supervisor)},
         lease: { dir: ${JSON.stringify(join(lockDir, "locks"))}, staleMs: ${staleMs}, heartbeatMs: 200 },

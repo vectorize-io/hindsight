@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { log } from "./log";
 import {
   acquireLease,
   heartbeatLease,
@@ -175,6 +176,32 @@ describe("superviseSurvey", () => {
     });
     await superviseSurvey({ lease: acquireLease(root, "k")!, bin: "a", args: [] }, throwing).done;
     expect(readdirSync(root)).toEqual([]);
+  });
+
+  // The agent's output is ignored, so a survey that never ran left no trace at all (#5710).
+  it("logs one line per failed launch: spawn error or non-zero exit, never a clean exit", async () => {
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      for (const [event, arg] of [
+        ["error", new Error("spawn codex ENOENT")],
+        ["exit", 1],
+        ["exit", 0],
+      ] as const) {
+        const { child, spawn } = fakeAgent();
+        const run = superviseSurvey(
+          { lease: acquireLease(root, "k")!, bin: "codex", args: [] },
+          spawn
+        );
+        child.emit(event, arg);
+        await run.done;
+      }
+      expect(warn.mock.calls.map(([, msg]) => msg)).toEqual([
+        "codex failed to launch: spawn codex ENOENT",
+        "codex exited with code 1",
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("stop() kills the agent and releases", async () => {

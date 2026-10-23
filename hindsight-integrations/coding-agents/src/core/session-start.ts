@@ -279,12 +279,13 @@ export async function buildSessionStartContext(args: {
           if (cold) {
             if (cfg.codebaseSurvey !== false) {
               // Run the survey under the current harness's own CLI (falls back to any available agent).
+              const sha = resolveHeadSha(cwd);
               const started = await startSurvey(cwd, {
                 harness: harness as SurveyHarness,
                 model: cfg.surveyModel,
                 budgetUsd: cfg.surveyBudgetUsd,
+                sha: sha ?? undefined,
               });
-              const sha = resolveHeadSha(cwd);
               if (started && sha) recordSurveyBaseline(sha);
             }
             diag(harness, "seed_started", { bank: bankId });
@@ -321,6 +322,7 @@ export async function buildSessionStartContext(args: {
                   harness: harness as SurveyHarness,
                   model: cfg.surveyModel,
                   budgetUsd: cfg.surveyBudgetUsd,
+                  sha,
                 });
                 if (started) {
                   recordSurveyBaseline(sha);
