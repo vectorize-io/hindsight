@@ -804,6 +804,7 @@ async def test_process_batch_reports_created_when_create_created() -> None:
 async def test_process_batch_embeds_all_actions_in_one_call() -> None:
     # #5552: a response's actions are embedded in ONE embedder call, not one call per action.
     # A create that copies an update's text is dropped before the call, so it is not embedded.
+    # So is an action with blank text: embedders that reject empty input would fail the batch.
     from hindsight_api.engine.consolidation import consolidator as C
 
     mem_ids = [str(uuid.uuid4()) for _ in range(3)]
@@ -811,11 +812,15 @@ async def test_process_batch_embeds_all_actions_in_one_call() -> None:
     obs_id = uuid.uuid4()
     observation = types.SimpleNamespace(id=obs_id, text="Old observation.")
     llm_result = C._BatchLLMResult(
-        updates=[C._UpdateAction(observation_id=str(obs_id), text="Updated.", source_fact_ids=[mem_ids[0]])],
+        updates=[
+            C._UpdateAction(observation_id=str(obs_id), text="Updated.", source_fact_ids=[mem_ids[0]]),
+            C._UpdateAction(observation_id=str(obs_id), text="  ", source_fact_ids=[mem_ids[1]]),
+        ],
         creates=[
             C._CreateAction(text="First new.", source_fact_ids=[mem_ids[1]]),
             C._CreateAction(text="Second new.", source_fact_ids=[mem_ids[2]]),
             C._CreateAction(text="Updated.", source_fact_ids=[mem_ids[2]]),
+            C._CreateAction(text="", source_fact_ids=[mem_ids[2]]),
         ],
     )
     embed = AsyncMock(side_effect=lambda _backend, texts, **_kw: [[float(i)] for i in range(len(texts))])
@@ -852,6 +857,7 @@ async def test_process_batch_embeds_all_actions_in_one_call() -> None:
     # The first call is the recall queries (#5647); the second is every action's text.
     assert embed.await_count == 2
     assert embed.await_args.args[1] == ["Updated.", "First new.", "Second new."]
+    assert update_action.await_count == 1
     assert update_action.await_args.kwargs["prepared"].embedding_str == "[0.0]"
     assert [c.kwargs["prepared"].embedding_str for c in create_action.await_args_list] == ["[1.0]", "[2.0]"]
 
