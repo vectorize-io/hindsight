@@ -12,7 +12,30 @@ import { HindsightError, type HindsightClient } from "@vectorize-io/hindsight-cl
 import { compileSessionPatterns, matchesSessionPattern } from "./session-patterns.js";
 import type { PluginConfig, PluginTool, PluginToolContext, PluginToolResult } from "./types.js";
 
-export const HINDSIGHT_TOOL_NAMES = ["hindsight_retain", "hindsight_recall", "hindsight_reflect"];
+// The knowledge-base tools mirror Hindsight's own MCP tools of the same names
+// (hindsight_api/mcp_tools.py), on the session's bank. Deleting needs
+// allowKnowledgeDelete: it removes a whole subtree and cannot be undone.
+export const HINDSIGHT_TOOL_NAMES = [
+  "hindsight_retain",
+  "hindsight_recall",
+  "hindsight_reflect",
+  "hindsight_get_knowledge_base_tree",
+  "hindsight_search_knowledge_base",
+  "hindsight_get_knowledge_page",
+  "hindsight_create_knowledge_folder",
+  "hindsight_create_knowledge_page",
+  "hindsight_update_knowledge_node",
+  "hindsight_delete_knowledge_node",
+];
+
+// What a read-only (stateless) session must not get.
+const WRITE_TOOLS = new Set([
+  "hindsight_retain",
+  "hindsight_create_knowledge_folder",
+  "hindsight_create_knowledge_page",
+  "hindsight_update_knowledge_node",
+  "hindsight_delete_knowledge_node",
+]);
 
 /** What the tools need from the plugin; index.ts supplies the live implementations. */
 export interface HindsightToolDeps {
@@ -27,6 +50,26 @@ const NOTHING_FOUND = "No relevant memories found.";
 
 function text(value: string): PluginToolResult {
   return { content: [{ type: "text", text: value }], details: { result: value } };
+}
+
+function json(value: unknown): PluginToolResult {
+  return text(JSON.stringify(value, null, 2));
+}
+
+function optionalString(params: Record<string, unknown>, name: string): string | undefined {
+  const value = params[name];
+  return typeof value === "string" && value ? value : undefined;
+}
+
+function optionalTags(params: Record<string, unknown>): string[] | undefined {
+  return Array.isArray(params.tags)
+    ? params.tags.filter((t): t is string => typeof t === "string")
+    : undefined;
+}
+
+function optionalNumber(params: Record<string, unknown>, name: string): number | undefined {
+  const value = params[name];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function requiredString(params: Record<string, unknown>, name: string): string {
@@ -195,6 +238,224 @@ export function createHindsightTools(
         }
       },
     },
+    {
+      name: "hindsight_get_knowledge_base_tree",
+      label: "Hindsight Knowledge Base Tree",
+      description:
+        "Browse the knowledge base as a nested tree of folders and pages. Each page is a " +
+        "living markdown document synthesized from memories; folders group them. Start here " +
+        "to discover what is documented, then read a page with hindsight_get_knowledge_page. " +
+        "Pages report `is_stale`: true means something was written since the last refresh.",
+      parameters: { type: "object", properties: {} },
+      async execute(_id, _params, signal) {
+        const { bankId, client } = await bank();
+        try {
+          return json(await client.getKnowledgeBaseTree(bankId, { signal }));
+        } catch (error) {
+          if (bankNotWrittenYet(error)) return json({ roots: [] });
+          throw error;
+        }
+      },
+    },
+    {
+      name: "hindsight_search_knowledge_base",
+      label: "Hindsight Knowledge Base Search",
+      description:
+        "Find knowledge pages by relevance (keyword + semantic search over page names and " +
+        "content), with a short snippet each. Read a hit in full with " +
+        "hindsight_get_knowledge_page. Use hindsight_recall to search raw memories instead.",
+      parameters: {
+        type: "object",
+        required: ["query"],
+        properties: {
+          query: { type: "string", description: "What to search for." },
+          limit: { type: "number", description: "Maximum pages to return (1-50, default 10)." },
+        },
+      },
+      async execute(_id, params, signal) {
+        const query = requiredString(params, "query");
+        const limit = optionalNumber(params, "limit");
+        const { bankId, client } = await bank();
+        try {
+          return json(
+            await client.searchKnowledgeBase(bankId, query, {
+              // Clamped like the MCP tool: an agent asking for 500 pages wants results.
+              limit: limit === undefined ? undefined : Math.max(1, Math.min(Math.trunc(limit), 50)),
+              signal,
+            })
+          );
+        } catch (error) {
+          if (bankNotWrittenYet(error)) return json({ results: [], total: 0 });
+          throw error;
+        }
+      },
+    },
+    {
+      name: "hindsight_get_knowledge_page",
+      label: "Hindsight Knowledge Page",
+      description:
+        "Read a knowledge page as a markdown document: YAML frontmatter (id, type, title, " +
+        "description, tags, timestamp) followed by its synthesized body. Find page ids with " +
+        "hindsight_get_knowledge_base_tree or hindsight_search_knowledge_base.",
+      parameters: {
+        type: "object",
+        required: ["page_id"],
+        properties: {
+          page_id: { type: "string", description: "The page to read (a `kp-...` node id)." },
+        },
+      },
+      async execute(_id, params, signal) {
+        const pageId = requiredString(params, "page_id");
+        const { bankId, client } = await bank();
+        return json(await client.getKnowledgePage(bankId, pageId, { signal }));
+      },
+    },
+    {
+      name: "hindsight_create_knowledge_folder",
+      label: "Hindsight Create Knowledge Folder",
+      description:
+        "Create a folder in the knowledge base. Folders group pages and hold no content.",
+      parameters: {
+        type: "object",
+        required: ["name"],
+        properties: {
+          name: { type: "string", description: "Folder name." },
+          parent_id: {
+            type: "string",
+            description: "Parent folder (a `kf-...` node id). Omit for the top level.",
+          },
+        },
+      },
+      async execute(_id, params, signal) {
+        const name = requiredString(params, "name");
+        const { bankId, client } = await bank();
+        return json(
+          await client.createKnowledgeFolder(bankId, name, {
+            parentId: optionalString(params, "parent_id"),
+            signal,
+          })
+        );
+      },
+    },
+    {
+      name: "hindsight_create_knowledge_page",
+      label: "Hindsight Create Knowledge Page",
+      description:
+        "Create a knowledge page: a living document Hindsight writes and keeps up to date " +
+        "from memories, answering `source_query`. Content is generated in the background " +
+        "after this returns.",
+      parameters: {
+        type: "object",
+        required: ["name", "source_query"],
+        properties: {
+          name: { type: "string", description: "Page title." },
+          source_query: {
+            type: "string",
+            description:
+              "The question the page answers, e.g. 'What are the user's food preferences?'.",
+          },
+          parent_id: {
+            type: "string",
+            description: "Folder to put it in (a `kf-...` node id). Omit for the top level.",
+          },
+          tags: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Only build the page from memories carrying ALL these tags. Tags the memories " +
+              "don't carry build an empty page.",
+          },
+          max_tokens: { type: "number", description: "Maximum length of the page body." },
+        },
+      },
+      async execute(_id, params, signal) {
+        const name = requiredString(params, "name");
+        const sourceQuery = requiredString(params, "source_query");
+        const { bankId, client } = await bank();
+        return json(
+          await client.createKnowledgePage(bankId, name, sourceQuery, {
+            parentId: optionalString(params, "parent_id"),
+            tags: optionalTags(params),
+            maxTokens: optionalNumber(params, "max_tokens"),
+            signal,
+          })
+        );
+      },
+    },
+    {
+      name: "hindsight_update_knowledge_node",
+      label: "Hindsight Update Knowledge Node",
+      description:
+        "Rename or move a knowledge folder or page, or change a page's question, tags or " +
+        "length. Only the fields you pass change. A new `source_query` rebuilds the page.",
+      parameters: {
+        type: "object",
+        required: ["node_id"],
+        properties: {
+          node_id: {
+            type: "string",
+            description: "The folder (`kf-...`) or page (`kp-...`) to update.",
+          },
+          name: { type: "string", description: "New name." },
+          parent_id: {
+            type: "string",
+            description: "New parent folder (a `kf-...` node id), or `root` for the top level.",
+          },
+          source_query: { type: "string", description: "Pages only: the new question." },
+          tags: {
+            type: "array",
+            items: { type: "string" },
+            description: "Pages only: replaces the page's tags ([] clears them).",
+          },
+          max_tokens: { type: "number", description: "Pages only: maximum body length." },
+        },
+      },
+      async execute(_id, params, signal) {
+        const nodeId = requiredString(params, "node_id");
+        const parentId = optionalString(params, "parent_id");
+        const update = {
+          name: optionalString(params, "name"),
+          // The client sends only the keys present, and `null` moves to the root.
+          ...(parentId === undefined ? {} : { parentId: parentId === "root" ? null : parentId }),
+          sourceQuery: optionalString(params, "source_query"),
+          tags: optionalTags(params),
+          maxTokens: optionalNumber(params, "max_tokens"),
+        };
+        if (Object.values(update).every((value) => value === undefined)) {
+          throw new Error(
+            "Provide name, parent_id, source_query, tags and/or max_tokens to update"
+          );
+        }
+        const { bankId, client } = await bank();
+        return json(await client.updateKnowledgeNode(bankId, nodeId, { ...update, signal }));
+      },
+    },
+    {
+      name: "hindsight_delete_knowledge_node",
+      label: "Hindsight Delete Knowledge Node",
+      description:
+        "Delete a knowledge folder or page and everything under it. This cannot be undone.",
+      parameters: {
+        type: "object",
+        required: ["node_id"],
+        properties: {
+          node_id: {
+            type: "string",
+            description: "The folder (`kf-...`) or page (`kp-...`) to delete.",
+          },
+        },
+      },
+      async execute(_id, params, signal) {
+        const nodeId = requiredString(params, "node_id");
+        const { bankId, client } = await bank();
+        await client.deleteKnowledgeNode(bankId, nodeId, { signal });
+        return json({ status: "deleted", node_id: nodeId });
+      },
+    },
   ];
-  return readOnly ? tools.filter((tool) => tool.name !== "hindsight_retain") : tools;
+  return tools.filter(
+    (tool) =>
+      !(readOnly && WRITE_TOOLS.has(tool.name)) &&
+      (tool.name !== "hindsight_delete_knowledge_node" || config.allowKnowledgeDelete === true)
+  );
 }

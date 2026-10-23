@@ -160,6 +160,7 @@ export interface PluginConfig {
   excludeProviders?: string[]; // Message providers to exclude from recall/retain (e.g. ['telegram', 'discord'])
   autoRecall?: boolean; // Auto-recall memories on every prompt (default: true). Set to false when agent has its own recall tool.
   memoryMode?: "hybrid" | "context" | "tools"; // Same as Hermes's memory_mode. 'hybrid' (default): auto-recall plus the hindsight_retain/recall/reflect tools; 'context': auto-recall only, no tools; 'tools': tools only, no auto-recall.
+  allowKnowledgeDelete?: boolean; // Offer hindsight_delete_knowledge_node (default: false). It deletes a whole subtree and cannot be undone.
   dynamicBankGranularity?: Array<"agent" | "provider" | "channel" | "user">; // Fields for bank ID derivation. Default: ['agent', 'channel', 'user']
   autoRetain?: boolean; // Default: true
   retainRoles?: Array<"user" | "assistant" | "system" | "tool">; // Roles to include in retained transcript. Default: ['user', 'assistant']

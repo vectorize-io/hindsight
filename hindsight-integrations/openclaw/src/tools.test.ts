@@ -94,8 +94,15 @@ describe("Hermes's tools in OpenClaw (#5635)", () => {
   it("offers Hermes's three tools, none of which takes a bank", async () => {
     const { factory, names } = await load({});
     const tools = factory({ agentId: "main", sessionKey: "agent:main:main" });
-    expect(names).toEqual(["hindsight_retain", "hindsight_recall", "hindsight_reflect"]);
-    expect(tools?.map((t) => t.name)).toEqual(names);
+    expect(names?.slice(0, 3)).toEqual([
+      "hindsight_retain",
+      "hindsight_recall",
+      "hindsight_reflect",
+    ]);
+    // Deleting knowledge is opt-in; everything else is offered.
+    expect(tools?.map((t) => t.name)).toEqual(
+      names?.filter((n) => n !== "hindsight_delete_knowledge_node")
+    );
     for (const t of tools ?? []) {
       expect(Object.keys(t.parameters.properties as object)).not.toContain("bank_id");
     }
@@ -201,7 +208,13 @@ describe("Hermes's tools in OpenClaw (#5635)", () => {
     expect(factory({ agentId: "main", sessionKey: "agent:main:ignored:x" })).toBeNull();
     expect(
       factory({ agentId: "main", sessionKey: "agent:main:readonly:x" })?.map((t) => t.name)
-    ).toEqual(["hindsight_recall", "hindsight_reflect"]);
+    ).toEqual([
+      "hindsight_recall",
+      "hindsight_reflect",
+      "hindsight_get_knowledge_base_tree",
+      "hindsight_search_knowledge_base",
+      "hindsight_get_knowledge_page",
+    ]);
   });
 
   it("offers no tools to a stateless session while skipStatelessSessions is on", async () => {
@@ -225,5 +238,110 @@ describe("Hermes's tools in OpenClaw (#5635)", () => {
     const tools = factory({ agentId: "main", sessionKey: "agent:main:main" });
     await tool(tools, "hindsight_recall").execute("c1", { query: "fruit" });
     expect(client.recall).toHaveBeenCalledWith("solo", "fruit", expect.anything());
+  });
+});
+
+describe("knowledge-base tools", () => {
+  function mockKnowledge() {
+    const p = HindsightClient.prototype;
+    return {
+      tree: vi.spyOn(p, "getKnowledgeBaseTree").mockResolvedValue({ roots: [] } as never),
+      search: vi
+        .spyOn(p, "searchKnowledgeBase")
+        .mockResolvedValue({ results: [{ id: "kp-1" }], total: 1 } as never),
+      page: vi.spyOn(p, "getKnowledgePage").mockResolvedValue({ id: "kp-1" } as never),
+      folder: vi.spyOn(p, "createKnowledgeFolder").mockResolvedValue({ id: "kf-1" } as never),
+      create: vi.spyOn(p, "createKnowledgePage").mockResolvedValue({ page_id: "kp-2" } as never),
+      update: vi.spyOn(p, "updateKnowledgeNode").mockResolvedValue({ id: "kp-2" } as never),
+      remove: vi.spyOn(p, "deleteKnowledgeNode").mockResolvedValue({} as never),
+    };
+  }
+  const session = { agentId: "support", sessionKey: "agent:support:main" };
+
+  it("reads and writes the agent's own bank", async () => {
+    const kb = mockKnowledge();
+    const { factory } = await load({ agentBankMap: { support: "team-bank" } });
+    const tools = factory(session);
+
+    await tool(tools, "hindsight_get_knowledge_base_tree").execute("c1", {});
+    expect(kb.tree).toHaveBeenCalledWith("team-bank", expect.anything());
+
+    await tool(tools, "hindsight_search_knowledge_base").execute("c2", { query: "q", limit: 500 });
+    expect(kb.search).toHaveBeenCalledWith(
+      "team-bank",
+      "q",
+      expect.objectContaining({ limit: 50 })
+    );
+
+    const page = await tool(tools, "hindsight_get_knowledge_page").execute("c3", {
+      page_id: "kp-1",
+    });
+    expect(kb.page).toHaveBeenCalledWith("team-bank", "kp-1", expect.anything());
+    expect(JSON.parse(page.content[0].text)).toEqual({ id: "kp-1" });
+
+    await tool(tools, "hindsight_create_knowledge_folder").execute("c4", { name: "People" });
+    expect(kb.folder).toHaveBeenCalledWith("team-bank", "People", expect.anything());
+
+    await tool(tools, "hindsight_create_knowledge_page").execute("c5", {
+      name: "Food",
+      source_query: "What does the user like to eat?",
+      parent_id: "kf-1",
+      tags: ["user:alice"],
+    });
+    expect(kb.create).toHaveBeenCalledWith(
+      "team-bank",
+      "Food",
+      "What does the user like to eat?",
+      expect.objectContaining({ parentId: "kf-1", tags: ["user:alice"] })
+    );
+
+    await tool(tools, "hindsight_update_knowledge_node").execute("c6", {
+      node_id: "kp-2",
+      parent_id: "root",
+    });
+    expect(kb.update).toHaveBeenCalledWith(
+      "team-bank",
+      "kp-2",
+      expect.objectContaining({ parentId: null })
+    );
+  });
+
+  it("refuses an update that changes nothing", async () => {
+    const kb = mockKnowledge();
+    const { factory } = await load({ bankId: "b", dynamicBankId: false });
+    await expect(
+      tool(factory(session), "hindsight_update_knowledge_node").execute("c1", { node_id: "kp-1" })
+    ).rejects.toThrow(/Provide name/);
+    expect(kb.update).not.toHaveBeenCalled();
+  });
+
+  it("offers delete only with allowKnowledgeDelete", async () => {
+    const kb = mockKnowledge();
+    const { factory } = await load({
+      bankId: "b",
+      dynamicBankId: false,
+      allowKnowledgeDelete: true,
+    });
+    await tool(factory(session), "hindsight_delete_knowledge_node").execute("c1", {
+      node_id: "kf-1",
+    });
+    expect(kb.remove).toHaveBeenCalledWith("b", "kf-1", expect.anything());
+  });
+
+  it("gives a read-only session the reading tools only", async () => {
+    const { factory } = await load({
+      statelessSessionPatterns: ["agent:*:readonly:**"],
+      skipStatelessSessions: false,
+      allowKnowledgeDelete: true,
+    });
+    expect(
+      factory({ agentId: "main", sessionKey: "agent:main:readonly:x" })?.map((t) => t.name)
+    ).toEqual([
+      "hindsight_recall",
+      "hindsight_reflect",
+      "hindsight_get_knowledge_base_tree",
+      "hindsight_search_knowledge_base",
+      "hindsight_get_knowledge_page",
+    ]);
   });
 });

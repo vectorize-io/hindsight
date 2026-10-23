@@ -2191,6 +2191,7 @@ export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
       config.memoryMode === "context" || config.memoryMode === "tools"
         ? config.memoryMode
         : "hybrid",
+    allowKnowledgeDelete: config.allowKnowledgeDelete === true,
     dynamicBankGranularity: Array.isArray(config.dynamicBankGranularity)
       ? config.dynamicBankGranularity
       : DEFAULT_DYNAMIC_BANK_GRANULARITY,
