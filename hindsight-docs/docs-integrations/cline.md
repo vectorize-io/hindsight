@@ -11,7 +11,7 @@ description: "Add persistent memory to the Cline VS Code coding agent with Hinds
 package covering Claude Code, Codex, opencode, Kilo, Cursor, Copilot, Grok, Antigravity, Devin and Cline and other CLI agents, with a per-repo memory bank they all share instead
 of one bank per agent.
 
-This integration is retired: it is no longer maintained, and its published package is deprecated. To switch:
+This integration is retired: it is no longer maintained and its published package gets no further updates. To switch:
 
 ```bash
 cd /path/to/your/repo

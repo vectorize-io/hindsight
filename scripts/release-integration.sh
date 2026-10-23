@@ -13,7 +13,7 @@ print_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 print_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-VALID_INTEGRATIONS=("ag2" "agent-framework" "agent-plugin" "agentcore" "agno" "aider" "ai-sdk" "autogen" "chat" "claude-agent-sdk" "cloudflare-oauth-proxy" "coding-agents" "composio" "continue" "crewai" "cursor" "devin-desktop" "dify" "eliza" "eve" "flowise" "gemini-spark" "github-copilot" "google-adk" "grok-bot" "haystack" "hermes" "langgraph" "litellm" "llamaindex" "meta-muse" "n8n" "nemoclaw" "obsidian" "omo" "openai-agents" "openclaw" "openhands" "paperclip" "pipecat" "pydantic-ai" "roo-code" "smolagents" "strands" "superagent" "vapi" "zcode" "zed")
+VALID_INTEGRATIONS=("ag2" "agent-framework" "agent-plugin" "agentcore" "agno" "aider" "ai-sdk" "autogen" "chat" "claude-agent-sdk" "cloudflare-oauth-proxy" "coding-agents" "composio" "continue" "crewai" "cursor" "devin-desktop" "dify" "eliza" "eve" "flowise" "gemini-spark" "github-copilot" "google-adk" "grok-bot" "haystack" "hermes" "langgraph" "litellm" "llamaindex" "meta-muse" "n8n" "nemoclaw" "obsidian" "omo" "openai-agents" "openclaw" "openhands" "paperclip" "pipecat" "pydantic-ai" "roo-code" "smolagents" "strands" "superagent" "vapi" "zed")
 
 usage() {
     print_error "Usage: $0 <integration> <version>"

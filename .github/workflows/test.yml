@@ -42,7 +42,6 @@ jobs:
       integrations-coding-agents: ${{ steps.filter.outputs.integrations-coding-agents }}
       integrations-github-copilot: ${{ steps.filter.outputs.integrations-github-copilot }}
       integrations-continue: ${{ steps.filter.outputs.integrations-continue }}
-      integrations-zcode: ${{ steps.filter.outputs.integrations-zcode }}
       integrations-agent-plugin: ${{ steps.filter.outputs.integrations-agent-plugin }}
       extensions-supabase-tenant: ${{ steps.filter.outputs.extensions-supabase-tenant }}
       extensions-static-keys-tenant: ${{ steps.filter.outputs.extensions-static-keys-tenant }}
@@ -232,8 +231,6 @@ jobs:
             - 'hindsight-integrations/cursor/**'
           integrations-zed:
             - 'hindsight-integrations/zed/**'
-          integrations-zcode:
-            - 'hindsight-integrations/zcode/**'
           integrations-agent-plugin:
             - 'hindsight-integrations/agent-plugin/**'
           integrations-n8n:
@@ -736,43 +733,6 @@ jobs:
       # PR CI runs only the deterministic bucket; the real-LLM E2E bucket
       # (requires_real_llm) needs a live Hindsight server and runs separately.
       run: uv run pytest tests -v -m "not requires_real_llm"
-
-  test-zcode-integration:
-    needs: [detect-changes]
-    if: >-
-      (github.event_name == 'workflow_dispatch' ||
-      needs.detect-changes.outputs.integrations-zcode == 'true' ||
-      needs.detect-changes.outputs.ci == 'true')
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-    - uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha || '' }}
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@v7
-      with:
-        enable-cache: true
-        prune-cache: false
-
-    - name: Set up Python
-      uses: actions/setup-python@v6
-      with:
-        python-version-file: ".python-version"
-
-    - name: Build zcode integration
-      working-directory: ./hindsight-integrations/zcode
-      run: uv build
-
-    - name: Install dependencies
-      working-directory: ./hindsight-integrations/zcode
-      run: uv sync --frozen
-
-    - name: Run tests
-      working-directory: ./hindsight-integrations/zcode
-      run: uv run pytest tests -v
 
   test-agent-plugin-integration:
     needs: [detect-changes]
@@ -5649,7 +5609,6 @@ jobs:
       - smoke-openclaw-install
       - test-cursor-integration
       - test-github-copilot-integration
-      - test-zcode-integration
       - test-agent-plugin-integration
       - build-ai-sdk-integration
       - test-ai-sdk-integration-deno

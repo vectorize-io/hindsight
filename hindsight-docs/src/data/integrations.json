@@ -176,7 +176,7 @@
       "description": "No-MCP long-term memory for ZCode (Z.ai's GLM desktop coding agent) via Hindsight hooks. Recalls relevant context before each prompt and retains conversations after each turn.",
       "type": "official",
       "by": "hindsight",
-      "category": "coding-agent",
+      "category": "legacy",
       "link": "/sdks/integrations/zcode",
       "icon": "/img/icons/zcode.svg"
     },

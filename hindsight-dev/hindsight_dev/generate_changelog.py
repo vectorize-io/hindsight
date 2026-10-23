@@ -136,7 +136,6 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     # Git-distributed plugin bundle (Agent Plugins standard), not a registry
     # package — its changelog links to the source tree (see _package_url).
     "agent-plugin": IntegrationMeta("hindsight-agent-plugin", "Agent Plugins"),
-    "zcode": IntegrationMeta("hindsight-zcode", "ZCode"),
     "claude-agent-sdk": IntegrationMeta("hindsight-claude-agent-sdk", "Claude Agent SDK"),
     "llamaindex": IntegrationMeta("hindsight-llamaindex", "LlamaIndex"),
     # npm-published under the @vectorize-io scope, unlike the PyPI integrations above.
