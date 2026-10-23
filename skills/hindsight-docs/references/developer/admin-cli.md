@@ -116,6 +116,8 @@ touches `memory_units`. Drop them with `DROP INDEX CONCURRENTLY` when you are re
 
 **Orphan observations.** An observation summarises the facts it was built from, so when one of those facts is deleted the observation is deleted too, and its other source facts are queued for consolidation again. Older releases missed this on some delete paths, leaving observations behind that cite facts that no longer exist. They keep showing up in recall and reflect, and `export-bank` skips them. `repair-bank` removes them using the same rule a normal delete uses. The surviving facts are consolidated again on the bank's next consolidation run. Use `--dry-run` to only count them.
 
+**Observation keyword index (VectorChord only).** With `HINDSIGHT_API_TEXT_SEARCH_EXTENSION=vchord`, older releases did not update an observation's keyword index when consolidation rewrote or merged its text, so keyword recall kept matching the old wording. `repair-bank` rebuilds the keyword index of every observation in the bank from its current text. A stale one cannot be told apart from an up-to-date one, so all of them are rebuilt. Other text-search backends have nothing to rebuild here. Use `--dry-run` to only count them.
+
 **Exit code.** `0` when every schema was reconciled. `1` when an index failed to build
 (the names are printed, and a re-run retries them), or when a schema was not fully
 reconciled — for example because the memories store could not say which banks it
