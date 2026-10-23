@@ -8,8 +8,8 @@ retrieval ladder is exercised.
 
 It exists because that layer changed: ``search_mental_models`` used to hand back
 five pages whole — 8.7-19k tokens, the largest single item in a reflect's floor
-(#4533) — and now returns a snippet per page, with ``read_mental_models`` pulling
-the full text of the ones the model chooses. That trade is only safe if the model
+(#4533) — and now returns whole pages up to a token budget and a snippet of the
+rest, with ``read_mental_models`` pulling the full text of the ones the model chooses. That trade is only safe if the model
 still *reads* the page it needs, so the assertions are: the answer is right, it
 does not assert the bait, and the evidence names the page.
 """

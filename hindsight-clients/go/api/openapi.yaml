@@ -12595,6 +12595,10 @@ components:
         reflect_search_observations_include_entities:
           nullable: true
           type: boolean
+        reflect_search_mental_models_max_tokens:
+          minimum: 1.0
+          nullable: true
+          type: integer
         query:
           title: Query
           type: string

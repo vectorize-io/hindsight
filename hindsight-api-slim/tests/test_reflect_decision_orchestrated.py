@@ -341,6 +341,27 @@ async def test_fresh_pages_that_answer_hide_the_lower_layers():
 
 
 @pytest.mark.asyncio
+async def test_the_pages_verdict_reads_only_the_pages_that_came_back_whole():
+    """A snippet is the page opening: judging it as an answer would end retrieval before
+    the page that holds it was ever read (#5787)."""
+    functions = _functions()
+    functions["search_mental_models_fn"] = AsyncMock(
+        return_value={
+            "mental_models": [
+                {"id": "mm-1", "content": "the page", "is_stale": False},
+                {"id": "mm-2", "snippet": "the opening", "content_chars": 90000, "is_stale": False},
+            ]
+        }
+    )
+    sufficient = AsyncMock(return_value=False)
+
+    await _reflect(_ScriptedProvider([_done()]), functions, sufficient)
+
+    pages_only = sufficient.await_args_list[0].args[1]
+    assert "the page" in pages_only and "the opening" not in pages_only
+
+
+@pytest.mark.asyncio
 async def test_fresh_pages_that_do_not_answer_keep_the_facts():
     """Fresh is not on topic: pages about the code must not hide a decision in the facts."""
     provider = _ScriptedProvider([_done()])

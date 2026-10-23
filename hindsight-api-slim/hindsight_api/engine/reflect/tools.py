@@ -35,6 +35,20 @@ logger = logging.getLogger(__name__)
 #: API's own ``LEFT(content, 280)`` so both surfaces show a page the same way.
 _SNIPPET_CHARS = 280
 
+#: Default token budget for the pages ``search_mental_models`` returns whole. Pages are
+#: packed in rank order until it is spent; a page that does not fit comes back as a
+#: snippet. One page whole under a fixed 4,000-token limit (#4716) left a bank whose
+#: pages are all larger with no page at all, and the answer is not always in the top
+#: hit (#5787). A bank or a request can change it through
+#: ``reflect_default_options.reflect_search_mental_models_max_tokens``.
+DEFAULT_MENTAL_MODELS_SEARCH_MAX_TOKENS = 16000
+
+#: The budget a mental-model refresh searches pages with: the best page whole, the rest
+#: snippets. At the reflect default, test_05_refresh_cost's refreshes (sibling pages
+#: included) cost ~50% more input (79k -> 120k full, 69k -> 100k delta), mostly sibling
+#: pages a refresh does not need.
+REFRESH_MENTAL_MODELS_SEARCH_MAX_TOKENS = 1
+
 
 #: Retrieval plumbing that the reflect agent never reads, dropped from tool
 #: results before they reach the model.
@@ -124,7 +138,7 @@ async def tool_search_mental_models(
     query: str,
     query_embedding: list[float],
     max_results: int = 5,
-    top_result_max_tokens: int = 4000,
+    full_pages_max_tokens: int = DEFAULT_MENTAL_MODELS_SEARCH_MAX_TOKENS,
     tags: list[str] | None = None,
     tags_match: TagsMatch = "any",
     tag_groups: "list | None" = None,
@@ -143,8 +157,9 @@ async def tool_search_mental_models(
         query: Search query (for logging/tracing)
         query_embedding: Pre-computed embedding for semantic search
         max_results: Maximum number of mental models to return
-        top_result_max_tokens: Size limit for returning the best-ranked page in full; above it
-            every result is a snippet and the model reads what it wants with read_mental_models
+        full_pages_max_tokens: Budget for the pages returned whole, packed in rank order; a page
+            that does not fit is a snippet the model can read with read_mental_models. The
+            best-ranked page is always whole, as in read_mental_models
         tags: Optional tags to filter mental models
         tags_match: How to match tags - "any", "all", "any_strict", "all_strict", or "exact"
         exclude_ids: Optional list of mental model IDs to exclude (e.g., when refreshing a mental model)
@@ -254,6 +269,7 @@ async def tool_search_mental_models(
     )
 
     mental_models = []
+    full_pages_spent = 0
 
     for row in rows:
         last_refreshed_at = row["last_refreshed_at"]
@@ -264,23 +280,27 @@ async def tool_search_mental_models(
         staleness_reason = "new in-scope memories ingested since last refresh" if is_stale else None
 
         content = row["content"] or ""
-        # The top-ranked page comes back whole, the rest as snippets. A model that
-        # answers from a snippet without reading the page is a measured failure
-        # (test_06), and the best hit is the one it is most likely to need; the
-        # cost is one page instead of five.
-        top_hit = not mental_models and count_prompt_tokens(content) <= top_result_max_tokens
+        # Whole pages in rank order, up to the budget, the rest as snippets. A model that
+        # answers from a snippet without reading the page is a measured failure (test_06),
+        # so the best hit is always whole, even alone over the budget: a snippet of it
+        # would leave the search with no page at all (#5787). A lower page that does not
+        # fit is skipped, not the end of packing, so a smaller one after it still can.
+        cost = count_prompt_tokens(content)
+        whole = not mental_models or full_pages_spent + cost <= full_pages_max_tokens
+        if whole:
+            full_pages_spent += cost
         mental_models.append(
             {
                 "id": str(row["id"]),
                 "name": row["name"],
-                # A snippet, like the knowledge-page search this mirrors — not the whole
-                # page. Five whole pages measured 8.7-19k tokens and were re-sent on
+                # Past the budget, a snippet like the knowledge-page search this mirrors:
+                # five unbounded whole pages measured 8.7-19k tokens and were re-sent on
                 # every later turn of the loop, the largest single item in a reflect's
                 # floor (#4533). The model reads the ones it wants with
                 # ``read_mental_models``.
                 **(
                     {"content": content}
-                    if top_hit
+                    if whole
                     # ``_knowledge_snippet`` so a page with no body reads as
                     # empty-on-purpose rather than as a blank match — the same
                     # wording the knowledge-page search gives for the same state.

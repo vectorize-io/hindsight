@@ -126,10 +126,10 @@ page says (judged against the page, not the corpus gold — whether the page its
 converged is `test_01`'s grade).
 
 It exists because that layer changed: `search_mental_models` used to return five
-pages whole, and now returns the best hit whole plus a snippet of the others, with
-`read_mental_models` for the rest. It is what showed that snippets *alone* let the
-model answer from a snippet without ever reading the page, which is why the best
-hit still arrives in full.
+pages whole with no bound, and now returns whole pages in rank order up to a token
+budget plus a snippet of the others, with `read_mental_models` for the rest. It is
+what showed that snippets *alone* let the model answer from a snippet without ever
+reading the page, which is why the best hit always arrives in full.
 
 **`test_07` — source priority.** One bank holding a handbook AND the
 conversations about it, which is what a bank someone has actually used looks

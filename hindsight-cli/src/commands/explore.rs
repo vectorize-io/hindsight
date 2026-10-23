@@ -362,6 +362,7 @@ impl App {
                         // See memory.rs: set per bank, not per CLI call.
                         reflect_search_observations_max_tokens: None,
                         reflect_search_observations_include_entities: None,
+                        reflect_search_mental_models_max_tokens: None,
                     };
 
                     let result = client

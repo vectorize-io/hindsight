@@ -694,6 +694,7 @@ export class ControlPlaneClient {
     response_schema?: Record<string, unknown>;
     reflect_search_observations_max_tokens?: number;
     reflect_search_observations_include_entities?: boolean;
+    reflect_search_mental_models_max_tokens?: number;
   }) {
     return this.fetchApi("/api/reflect", {
       method: "POST",

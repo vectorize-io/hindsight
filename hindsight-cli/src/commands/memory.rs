@@ -463,6 +463,7 @@ pub fn reflect(
         // expose them (operators set them once per bank), so the bank default applies.
         reflect_search_observations_max_tokens: None,
         reflect_search_observations_include_entities: None,
+        reflect_search_mental_models_max_tokens: None,
     };
 
     let response = client.reflect(agent_id, &request, verbose);

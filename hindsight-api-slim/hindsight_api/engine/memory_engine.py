@@ -711,6 +711,8 @@ from .reflect.retractions import (
 )
 from .reflect.structured_doc import StructuredDocument
 from .reflect.tools import (
+    DEFAULT_MENTAL_MODELS_SEARCH_MAX_TOKENS,
+    REFRESH_MENTAL_MODELS_SEARCH_MAX_TOKENS,
     returned_memories,
     tool_expand,
     tool_read_mental_models,
@@ -15650,6 +15652,7 @@ class MemoryEngine(MemoryEngineInterface):
         recall_chunks_max_tokens_override: int | None = None,
         reflect_search_observations_max_tokens_override: int | None = None,
         reflect_search_observations_include_entities_override: bool | None = None,
+        reflect_search_mental_models_max_tokens_override: int | None = None,
         created_after: datetime | None = None,
         created_before: datetime | None = None,
         answer_as_document: bool = False,
@@ -15835,6 +15838,7 @@ class MemoryEngine(MemoryEngineInterface):
                     q,
                     query_embedding,
                     max_results=max_results,
+                    full_pages_max_tokens=effective_mental_models_search_max_tokens,
                     tags=tags,
                     tags_match=tags_match,
                     tag_groups=tag_groups,
@@ -15887,6 +15891,11 @@ class MemoryEngine(MemoryEngineInterface):
             reflect_search_observations_include_entities_override,
             "reflect_search_observations_include_entities",
             True,
+        )
+        effective_mental_models_search_max_tokens = _reflect_option(
+            reflect_search_mental_models_max_tokens_override,
+            "reflect_search_mental_models_max_tokens",
+            DEFAULT_MENTAL_MODELS_SEARCH_MAX_TOKENS,
         )
 
         # Resolve recall overrides: caller arg (e.g. mental model trigger) → bank config → env default
@@ -16169,7 +16178,7 @@ class MemoryEngine(MemoryEngineInterface):
             )
             based_on["mental-models"] = []
             seen_model_ids: set[str] = set()
-            # A search now returns the best-ranked page whole and the others as a
+            # A search returns whole pages up to its budget and the others as a
             # snippet, so a citation built from the search output alone would carry
             # the truncated text (or, for the pages the model then read, nothing at
             # all). Collect what `read_mental_models` returned first and prefer it.
@@ -18043,6 +18052,7 @@ class MemoryEngine(MemoryEngineInterface):
             recall_chunks_max_tokens_override=recall_chunks_max_tokens_override,
             reflect_search_observations_max_tokens_override=reflect_search_observations_max_tokens_override,
             reflect_search_observations_include_entities_override=reflect_search_observations_include_entities_override,
+            reflect_search_mental_models_max_tokens_override=REFRESH_MENTAL_MODELS_SEARCH_MAX_TOKENS,
             budget=refresh_budget,
             # The refresh stores a document, so the agent states its structure and
             # the markdown is rendered from it. The model never writes the markdown

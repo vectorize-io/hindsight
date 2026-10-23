@@ -746,6 +746,7 @@ class Hindsight:
         exclude_mental_model_ids: list[str] | None = None,
         reflect_search_observations_max_tokens: int | None = None,
         reflect_search_observations_include_entities: bool | None = None,
+        reflect_search_mental_models_max_tokens: int | None = None,
     ) -> ReflectResponse:
         """
         Generate a contextual answer based on bank identity and memories (sync wrapper — prefer :meth:`areflect` in async code).
@@ -783,6 +784,10 @@ class Hindsight:
             reflect_search_observations_include_entities: Whether search_observations attaches
                 resolved entity names, which can be over half the tool payload. None uses the
                 bank default (enabled).
+            reflect_search_mental_models_max_tokens: Token budget for the mental models the
+                agent's search_mental_models calls return in full. The best-ranked one is always in
+                full; the rest that do not fit come back as a snippet. None uses the bank's
+                reflect_default_options, then the shipped default.
 
         Returns:
             ReflectResponse with answer text, optionally facts used, optionally a 'trace' with
@@ -809,6 +814,7 @@ class Hindsight:
                 exclude_mental_model_ids=exclude_mental_model_ids,
                 reflect_search_observations_max_tokens=reflect_search_observations_max_tokens,
                 reflect_search_observations_include_entities=reflect_search_observations_include_entities,
+                reflect_search_mental_models_max_tokens=reflect_search_mental_models_max_tokens,
             )
         )
 
@@ -1476,6 +1482,7 @@ class Hindsight:
         exclude_mental_model_ids: list[str] | None = None,
         reflect_search_observations_max_tokens: int | None = None,
         reflect_search_observations_include_entities: bool | None = None,
+        reflect_search_mental_models_max_tokens: int | None = None,
     ) -> ReflectResponse:
         """
         Generate a contextual answer based on bank identity and memories (async — preferred over :meth:`reflect`).
@@ -1513,6 +1520,10 @@ class Hindsight:
             reflect_search_observations_include_entities: Whether search_observations attaches
                 resolved entity names, which can be over half the tool payload. None uses the
                 bank default (enabled).
+            reflect_search_mental_models_max_tokens: Token budget for the mental models the
+                agent's search_mental_models calls return in full. The best-ranked one is always in
+                full; the rest that do not fit come back as a snippet. None uses the bank's
+                reflect_default_options, then the shipped default.
 
         Returns:
             ReflectResponse with answer text, optionally facts used, optionally a 'trace' with
@@ -1553,6 +1564,7 @@ class Hindsight:
             exclude_mental_model_ids=exclude_mental_model_ids,
             reflect_search_observations_max_tokens=reflect_search_observations_max_tokens,
             reflect_search_observations_include_entities=reflect_search_observations_include_entities,
+            reflect_search_mental_models_max_tokens=reflect_search_mental_models_max_tokens,
         )
 
         return await _retry_on_capacity(
@@ -3142,8 +3154,9 @@ class Hindsight:
             mental_model_min_refresh_interval_seconds: Debounce between mental-model refreshes.
             reflect_default_options: Default reflect options for this bank, applied whenever a
                 reflect request (or a mental model's trigger) leaves the option unset:
-                reflect_search_observations_max_tokens and
-                reflect_search_observations_include_entities.
+                reflect_search_observations_max_tokens,
+                reflect_search_observations_include_entities and
+                reflect_search_mental_models_max_tokens.
             reflect_use_decision_model: When the server has a decision model, reflect lets it
                 prune the evidence and decide when to stop (fewer LLM calls). False keeps agent turns.
             mental_model_refresh_use_decision_model: The same, for knowledge-page refreshes.

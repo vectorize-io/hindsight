@@ -96,7 +96,7 @@ def test_an_item_already_shown_is_referenced_not_repeated():
 def test_reading_a_page_seen_as_a_snippet_returns_its_text():
     """The dedupe keys on the shape, not the id alone.
 
-    `search_mental_models` shows the best hit whole and the rest as snippets, so
+    `search_mental_models` shows the best hits whole and the rest as snippets, so
     the SAME page id legitimately comes back twice: once truncated, once in full
     from the `read_mental_models` the model then issues. Keying on the id alone
     answered that read with `already_shown` and an empty list — the model asked

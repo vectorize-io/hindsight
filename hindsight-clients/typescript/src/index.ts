@@ -663,6 +663,8 @@ export class HindsightClient {
       reflectSearchObservationsMaxTokens?: number;
       /** Whether search_observations attaches resolved entity names, which can be over half the tool payload. Omit to use the bank default (enabled). */
       reflectSearchObservationsIncludeEntities?: boolean;
+      /** Token budget for the mental models the agent's search_mental_models calls return in full (the best-ranked one is always in full; the rest that do not fit come back as a snippet). Omit to use the bank's reflect_default_options, then the shipped default. */
+      reflectSearchMentalModelsMaxTokens?: number;
       /** If true, the response includes a 'based_on' field listing the memories, mental models, and directives used. */
       includeFacts?: boolean;
       /** If true, the response includes a 'trace' field with the tool calls and LLM calls made during reflection (trace.tool_calls / trace.llm_calls). */
@@ -701,6 +703,7 @@ export class HindsightClient {
             reflect_search_observations_max_tokens: options?.reflectSearchObservationsMaxTokens,
             reflect_search_observations_include_entities:
               options?.reflectSearchObservationsIncludeEntities,
+            reflect_search_mental_models_max_tokens: options?.reflectSearchMentalModelsMaxTokens,
             include,
           },
           signal: options?.signal,
@@ -985,7 +988,7 @@ export class HindsightClient {
       mentalModelMinRefreshIntervalSeconds?: number;
       /** Trigger fields merged over the built-in default for new knowledge pages. */
       knowledgePageDefaultTrigger?: Record<string, unknown>;
-      /** Default reflect options for this bank, applied whenever a reflect request (or a mental model's trigger) leaves the option unset: reflect_search_observations_max_tokens, reflect_search_observations_include_entities. */
+      /** Default reflect options for this bank, applied whenever a reflect request (or a mental model's trigger) leaves the option unset: reflect_search_observations_max_tokens, reflect_search_observations_include_entities, reflect_search_mental_models_max_tokens. */
       reflectDefaultOptions?: Record<string, unknown>;
       /** When the server has a decision model, reflect lets it prune the evidence and decide when to stop (fewer LLM calls). False keeps agent turns. */
       reflectUseDecisionModel?: boolean;

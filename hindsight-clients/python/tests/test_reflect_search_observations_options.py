@@ -1,4 +1,4 @@
-"""The wrapper forwards the search_observations budget options into ReflectRequest.
+"""The wrapper forwards the search_observations and search_mental_models budget options into ReflectRequest.
 
 These are per-call overrides of the bank's ``reflect_default_options`` (#4483). A
 wrapper that silently dropped them would leave every Python consumer stuck with the
@@ -26,6 +26,7 @@ async def test_options_default_to_none_so_the_bank_decides():
     request = _captured_request(client._memory_api.reflect)
     assert request.reflect_search_observations_max_tokens is None
     assert request.reflect_search_observations_include_entities is None
+    assert request.reflect_search_mental_models_max_tokens is None
 
 
 async def test_options_reach_the_request():
@@ -37,7 +38,9 @@ async def test_options_reach_the_request():
         "query",
         reflect_search_observations_max_tokens=3000,
         reflect_search_observations_include_entities=False,
+        reflect_search_mental_models_max_tokens=8000,
     )
     request = _captured_request(client._memory_api.reflect)
     assert request.reflect_search_observations_max_tokens == 3000
     assert request.reflect_search_observations_include_entities is False
+    assert request.reflect_search_mental_models_max_tokens == 8000

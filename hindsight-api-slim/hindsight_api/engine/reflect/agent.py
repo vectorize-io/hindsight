@@ -2102,7 +2102,11 @@ async def _run_reflect_agent_inner(
 
 
 def _fresh_usable_pages(tool_calls: list["LLMToolCall"], tool_results: list[Any]) -> dict[str, Any] | None:
-    """The page search's output when every page in it is fresh and has text, else None."""
+    """The page search's whole pages when every hit in it is fresh and has text, else None.
+
+    Only the pages that came back whole: a snippet is the page opening, and a verdict that
+    it answers the question ends retrieval before the page is ever read (#5787).
+    """
     pages = next(
         (
             result[0]
@@ -2112,7 +2116,7 @@ def _fresh_usable_pages(tool_calls: list["LLMToolCall"], tool_results: list[Any]
         None,
     )
     if isinstance(pages, dict) and pages.get("mental_models") and _all_mental_models_are_usable_and_fresh(pages):
-        return pages
+        return {**pages, "mental_models": [m for m in pages["mental_models"] if "content" in m]}
     return None
 
 

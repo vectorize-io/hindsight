@@ -339,7 +339,7 @@ def build_system_prompt_for_tools(
                 [
                     "- User-curated summaries about specific topics",
                     "- HIGHEST quality - manually created and maintained",
-                    "- Search returns the best match in full and a SNIPPET of the others; call "
+                    "- Search returns the best matches in full (`content`) and a SNIPPET of the others (`snippet`, only the page opening); call "
                     "read_mental_models on any id whose snippet looks like it answers the question, and read it "
                     "before answering from it",
                     "- A FRESH mental model may fully answer the question — but only if it actually STATES the "

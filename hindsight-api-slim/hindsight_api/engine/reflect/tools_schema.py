@@ -21,9 +21,10 @@ TOOL_SEARCH_MENTAL_MODELS = {
         "description": (
             "Search user-curated mental models (stored reflect responses). These are high-quality, manually created "
             "summaries about specific topics. Use FIRST when the question might be covered by an "
-            "existing mental model. Returns the best-matching page IN FULL, and a SNIPPET of each other hit "
-            "with its size and last refresh time — call read_mental_models to read in full any of those that "
-            "look like they answer the question."
+            "existing mental model. Returns the best-matching pages IN FULL (`content`) as far as a token budget "
+            "allows, and only a SNIPPET (`snippet`, the page opening) of each other hit with its size and last "
+            "refresh time — call read_mental_models to read in full any of those that look like they answer "
+            "the question."
         ),
         "parameters": {
             "type": "object",
@@ -135,8 +136,8 @@ TOOL_READ_MENTAL_MODELS = {
                 },
                 "max_tokens": {
                     "type": "integer",
-                    "description": "Token budget for the pages returned (default 6000). Reading stops at the "
-                    "first page that would cross it; the rest come back under not_read.",
+                    "description": "Token budget for the pages returned (default 6000). A page that would "
+                    "cross it is not read and comes back under not_read; the first page is always read.",
                 },
             },
             "required": ["reason", "mental_model_ids"],

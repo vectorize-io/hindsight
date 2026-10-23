@@ -144,11 +144,12 @@ type MentalModelsEdits = {
 };
 
 // The bank's default reflect options (reflect_default_options). Stored as one
-// object, edited as two fields; null means "not set", so reflect falls back to
+// object, edited as three fields; null means "not set", so reflect falls back to
 // the shipped default.
 type ReflectOptionsEdits = {
   reflect_search_observations_max_tokens: number | null;
   reflect_search_observations_include_entities: boolean | null;
+  reflect_search_mental_models_max_tokens: number | null;
 };
 
 // The server's built-in knowledge-page trigger (MemoryEngine.KNOWLEDGE_PAGE_DEFAULT_TRIGGER).
@@ -408,6 +409,11 @@ function ReflectOptionsSummary({ options }: { options: ReflectOptionsEdits }) {
     options.reflect_search_observations_include_entities === false
       ? t("reflectObservationsEntitiesOff")
       : t("reflectObservationsEntitiesOn"),
+    options.reflect_search_mental_models_max_tokens != null
+      ? t("reflectMentalModelsMaxTokensChip", {
+          tokens: options.reflect_search_mental_models_max_tokens,
+        })
+      : t("reflectMentalModelsMaxTokensChipDefault"),
   ];
   return (
     <div className="flex flex-wrap gap-1.5">
@@ -429,6 +435,7 @@ function reflectOptionsSlice(overrides: Record<string, any>): ReflectOptionsEdit
     reflect_search_observations_max_tokens: opts.reflect_search_observations_max_tokens ?? null,
     reflect_search_observations_include_entities:
       opts.reflect_search_observations_include_entities ?? null,
+    reflect_search_mental_models_max_tokens: opts.reflect_search_mental_models_max_tokens ?? null,
   };
 }
 
@@ -1094,6 +1101,28 @@ export function BankConfigView() {
                       <SelectItem value="false">{t("reflectObservationsEntitiesOff")}</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+                <div className="space-y-2">
+                  <div>
+                    <p className="text-sm font-medium">{t("reflectMentalModelsMaxTokensLabel")}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {t("reflectMentalModelsMaxTokensDescription")}
+                    </p>
+                  </div>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={reflectOptionsForm.reflect_search_mental_models_max_tokens ?? ""}
+                    onChange={(e) =>
+                      setReflectOptionsForm((prev) => ({
+                        ...prev,
+                        reflect_search_mental_models_max_tokens: e.target.value
+                          ? parseInt(e.target.value, 10)
+                          : null,
+                      }))
+                    }
+                    placeholder={t("serverDefault")}
+                  />
                 </div>
               </div>
               {reflectOptionsError && (

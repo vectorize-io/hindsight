@@ -5623,6 +5623,7 @@ def _register_routes(app: FastAPI):
                         exclude_mental_model_ids=request.exclude_mental_model_ids,
                         reflect_search_observations_max_tokens_override=request.reflect_search_observations_max_tokens,
                         reflect_search_observations_include_entities_override=request.reflect_search_observations_include_entities,
+                        reflect_search_mental_models_max_tokens_override=request.reflect_search_mental_models_max_tokens,
                     ),
                     operation="reflect",
                     bank_id=bank_id,

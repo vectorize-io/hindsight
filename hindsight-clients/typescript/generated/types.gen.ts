@@ -6144,6 +6144,12 @@ export type ReflectRequest = {
    */
   reflect_search_observations_include_entities?: boolean | null;
   /**
+   * Reflect Search Mental Models Max Tokens
+   *
+   * Token budget for the mental models search_mental_models returns in full, packed in rank order. The best-ranked one is always in full; the others that do not fit come back as a snippet the model can read with read_mental_models. Raise it for banks with long pages or answers spread across pages; lower it to cut the reflect context. None means use the shipped default (16000).
+   */
+  reflect_search_mental_models_max_tokens?: number | null;
+  /**
    * Query
    */
   query: string;
