@@ -14,11 +14,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from hindsight_api.api.http import MentalModelTrigger
 from hindsight_api.engine.llm_interface import ProviderContentPolicyError, ProviderRateLimitResetError
 from hindsight_api.engine.maintenance import MaintenanceLoop
 from hindsight_api.engine.memories import get_memories
 from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.response_models import MentalModelTrigger
 from tests.store_seed import store_write_facts
 
 

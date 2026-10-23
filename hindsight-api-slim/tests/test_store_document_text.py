@@ -16,8 +16,8 @@ import pytest_asyncio
 
 from hindsight_api import config as config_module
 from hindsight_api.api import create_app
-from hindsight_api.engine.memory_engine import Budget
 from hindsight_api.engine.reflect.tools_schema import get_reflect_tools
+from hindsight_api.engine.response_models import Budget
 
 
 @pytest_asyncio.fixture

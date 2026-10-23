@@ -41,7 +41,7 @@ from hindsight_api.engine.audit import (
 )
 from hindsight_api.engine.document_history import DocumentHistoryResponse
 from hindsight_api.engine.llm_trace import LLMCallType, LLMRequestListResponse, LLMRequestStatsResponse
-from hindsight_api.extensions import AuthenticationError, PrecheckOperation
+from hindsight_api.extensions import AuthenticationError, PrecheckContext, PrecheckOperation
 
 
 def _parse_metadata(metadata: Any) -> dict[str, Any]:
@@ -195,7 +195,6 @@ from hindsight_api.engine.memory_engine import (
     KnowledgeTagFilter,
     RetainOperationConflictError,
     VisionNotSupportedError,
-    _current_schema,
 )
 from hindsight_api.engine.mental_model_refresh import (
     MentalModelDryRunRefreshResult,
@@ -279,6 +278,7 @@ from hindsight_api.metrics import (
     reset_metrics_collector,
 )
 from hindsight_api.models import RequestContext
+from hindsight_api.schema_context import _current_schema
 
 logger = logging.getLogger(__name__)
 
@@ -4727,7 +4727,6 @@ def _register_routes(app: FastAPI):
             validator = getattr(app.state.memory, "_operation_validator", None)
             if validator is None:
                 return
-            from hindsight_api.extensions import PrecheckContext
 
             _t0_dep_auth = time.perf_counter()
             await app.state.memory._authenticate_tenant(request_context)

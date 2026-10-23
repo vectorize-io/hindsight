@@ -221,8 +221,8 @@ async def test_file_retain_batch_generates_unique_storage_keys(memory_no_llm_ver
     shared document_id must now yield three distinct keys, all still resolving
     under ``banks/<bank>/files/``.
     """
-    from hindsight_api.engine.memory_engine import get_current_schema
     from hindsight_api.models import RequestContext
+    from hindsight_api.schema_context import get_current_schema
 
     bank_id = "test_file_unique_key_bank"
     context = RequestContext(internal=True)
@@ -646,6 +646,7 @@ def test_markitdown_converter_requires_base_url_when_ocr_enabled(monkeypatch):
 def test_markitdown_converter_reports_missing_openai_when_ocr_enabled(monkeypatch):
     """Missing OpenAI SDK should not be reported as missing MarkItDown."""
     import builtins
+
     import markitdown
 
     from hindsight_api.engine.parsers import MarkitdownParser
@@ -757,7 +758,7 @@ async def test_file_conversion_creates_separate_retain_operation(memory_no_llm_v
     await asyncio.sleep(0.1)
 
     pool = await memory_no_llm_verify._get_pool()
-    from hindsight_api.engine.memory_engine import get_current_schema
+    from hindsight_api.schema_context import get_current_schema
 
     schema = get_current_schema()
 
@@ -921,7 +922,7 @@ async def test_async_file_retain_serializes_datetime_timestamp(memory_no_llm_ver
 
     operation_id = result["operation_ids"][0]
     pool = await memory_no_llm_verify._get_pool()
-    from hindsight_api.engine.memory_engine import get_current_schema
+    from hindsight_api.schema_context import get_current_schema
 
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -1201,7 +1202,7 @@ async def test_file_conversion_failure_sets_status_to_failed(memory_no_llm_verif
 
     # Check operation status - should be 'failed' not 'completed'
     pool = await memory_no_llm_verify._get_pool()
-    from hindsight_api.engine.memory_engine import get_current_schema
+    from hindsight_api.schema_context import get_current_schema
 
     async with pool.acquire() as conn:
         operation = await conn.fetchrow(

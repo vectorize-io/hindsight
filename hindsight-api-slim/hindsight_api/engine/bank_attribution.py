@@ -13,7 +13,8 @@ but operators should opt in with that in mind.
 
 from typing import Any
 
-from hindsight_api.schema_context import get_current_bank_id
+from .. import config
+from ..schema_context import get_current_bank_id
 
 RERANKER_BANK_ID_HEADER = "X-Hindsight-Bank-Id"
 
@@ -26,9 +27,7 @@ def apply_bank_attribution(request: dict[str, Any]) -> None:
     """
     if "user" in request:
         return
-    from ..config import get_config
-
-    if not get_config().llm_send_bank_as_user:
+    if not config.get_config().llm_send_bank_as_user:
         return
     bank_id = get_current_bank_id()
     if bank_id:
@@ -37,9 +36,7 @@ def apply_bank_attribution(request: dict[str, Any]) -> None:
 
 def reranker_bank_attribution_headers() -> dict[str, str]:
     """Return the fixed per-bank header for trusted remote reranker endpoints."""
-    from ..config import get_config
-
-    if not get_config().reranker_send_bank_as_header:
+    if not config.get_config().reranker_send_bank_as_header:
         return {}
     bank_id = get_current_bank_id()
     return {RERANKER_BANK_ID_HEADER: bank_id} if bank_id else {}

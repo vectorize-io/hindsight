@@ -5721,7 +5721,7 @@ class TestTerminalOperationRetention:
     @pytest.mark.asyncio
     async def test_oracle_backend_resets_default_schema_on_pooled_connection(self):
         from hindsight_api.engine.db.oracle import OracleBackend
-        from hindsight_api.engine.memory_engine import _current_schema
+        from hindsight_api.schema_context import _current_schema
 
         backend = OracleBackend()
         backend._default_schema = "APP_USER"
@@ -5749,7 +5749,7 @@ class TestTerminalOperationRetention:
     @pytest.mark.asyncio
     async def test_oracle_backend_discovers_session_user_before_first_schema_switch(self):
         from hindsight_api.engine.db.oracle import OracleBackend
-        from hindsight_api.engine.memory_engine import _current_schema
+        from hindsight_api.schema_context import _current_schema
 
         backend = OracleBackend()
         cursor = MagicMock()

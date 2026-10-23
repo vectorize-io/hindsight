@@ -14,9 +14,9 @@ from pathlib import Path
 import pytest
 
 from hindsight_api.engine.memories import MemoryPatch, get_memories
-from hindsight_api.engine.memory_engine import _resolve_refresh_tag_filtering, _scope_mental_model_trigger, fq_table
+from hindsight_api.engine.memory_engine import _resolve_refresh_tag_filtering, _scope_mental_model_trigger
 from hindsight_api.engine.reflect.tools import tool_expand, tool_read_mental_models
-from hindsight_api.engine.schema import fq_store_table_explicit
+from hindsight_api.engine.schema import fq_store_table_explicit, fq_table
 from hindsight_api.engine.search.tags import TagGroupLeaf, tags_satisfy_groups, tags_writable
 from hindsight_api.extensions import (
     BankReadOperation,

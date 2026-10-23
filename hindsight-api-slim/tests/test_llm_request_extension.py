@@ -20,10 +20,8 @@ from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 
 from hindsight_api.config import LLM_STRATEGY_FAILOVER, LLMMemberConfig, LLMStrategyConfig
-
 from hindsight_api.engine.llm_interface import PromptCachePrefix
 from hindsight_api.engine.llm_wrapper import LLMProvider
-from hindsight_api.engine.memory_engine import _current_schema
 from hindsight_api.engine.multi_llm import MultiLLMProvider
 from hindsight_api.engine.providers.litellm_llm import LiteLLMLLM
 from hindsight_api.engine.providers.llm_debug import _serialize_config
@@ -35,6 +33,7 @@ from hindsight_api.extensions.llm_request import (
     bind_llm_request,
     install_llm_request_extension,
 )
+from hindsight_api.schema_context import _current_schema
 from tests.aiohttp_stub import stub_server
 
 

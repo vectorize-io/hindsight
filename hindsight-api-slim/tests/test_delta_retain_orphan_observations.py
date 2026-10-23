@@ -27,7 +27,8 @@ import pytest
 from hindsight_api import RequestContext
 from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.memories import FactRecord, get_memories
-from hindsight_api.engine.memory_engine import MemoryEngine, fq_table
+from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.schema import fq_table
 
 # Delta retain works per chunk, so the document has to be big enough to produce several
 # (chunk size is 3000 chars) and at least one of them must come out unchanged — with no

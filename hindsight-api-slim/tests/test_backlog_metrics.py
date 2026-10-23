@@ -271,7 +271,7 @@ async def test_refresh_backlog_counts_each_schema_under_its_own_schema():
     """A store-owned backend derives where a bank's memories live from the request schema, so
     the gauge must set it per schema: left unset, every schema's banks resolve against the
     default schema and the store cannot find them."""
-    from hindsight_api.engine.memory_engine import get_current_schema
+    from hindsight_api.schema_context import get_current_schema
 
     # Each schema holds one bank with a backlog; the store only finds a bank under its own schema.
     banks = {"tenant_a": "bank_a", "tenant_b": "bank_b"}

@@ -612,7 +612,7 @@ async def _bulk_populate_stats_bank(
     FK triggers on memory_links/unit_entities are disabled during the load (this
     is a throwaway perf bank), so COPY doesn't validate ~35M edge endpoints.
     """
-    from hindsight_api.engine.memory_engine import get_current_schema
+    from hindsight_api.schema_context import get_current_schema
 
     pool = await engine._get_pool()
     schema = get_current_schema()
@@ -806,7 +806,7 @@ async def run_retain_suite(scale_cfg: dict[str, int]) -> SuiteResult:
 
 async def run_recall_suite(scale_cfg: dict[str, int]) -> SuiteResult:
     """Measure recall latency/throughput with pre-populated bank."""
-    from hindsight_api.engine.memory_engine import Budget
+    from hindsight_api.engine.response_models import Budget
     from hindsight_api.models import RequestContext
 
     bank_size = scale_cfg["recall_bank_size"]
@@ -927,7 +927,7 @@ async def run_recall_suite(scale_cfg: dict[str, int]) -> SuiteResult:
 
 async def run_recall_with_observations_suite(scale_cfg: dict[str, int]) -> SuiteResult:
     """Measure recall latency/throughput with pre-populated bank including synthetic observations."""
-    from hindsight_api.engine.memory_engine import Budget
+    from hindsight_api.engine.response_models import Budget
     from hindsight_api.models import RequestContext
 
     bank_size = scale_cfg["recall_bank_size"]
@@ -1076,7 +1076,7 @@ RECALL_TEMPORAL_EVENT_DATE = "2025-01-15"
 
 async def run_recall_temporal_suite(scale_cfg: dict[str, int]) -> SuiteResult:
     """Measure recall latency/throughput while forcing the temporal retrieval arm."""
-    from hindsight_api.engine.memory_engine import Budget
+    from hindsight_api.engine.response_models import Budget
     from hindsight_api.models import RequestContext
 
     bank_size = scale_cfg["recall_bank_size"]
@@ -2127,7 +2127,7 @@ async def _bulk_populate_obs_hub_bank(engine: Any, bank_id: str, fraction: float
     reported bank did. Each observation cites a long-tailed number of nearby
     facts (mean ~3.5), like consolidation clustering one topic.
     """
-    from hindsight_api.engine.memory_engine import get_current_schema
+    from hindsight_api.schema_context import get_current_schema
 
     schema = get_current_schema()
     pool = await engine._get_pool()

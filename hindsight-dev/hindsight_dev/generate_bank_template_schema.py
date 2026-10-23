@@ -10,7 +10,7 @@ import json
 import sys
 from pathlib import Path
 
-from hindsight_api.api.http import BankTemplateManifest
+from hindsight_api.engine.bank_templates import BankTemplateManifest
 
 
 def generate_bank_template_schema(output_path: str | None = None) -> None:

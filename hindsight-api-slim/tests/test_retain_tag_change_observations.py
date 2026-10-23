@@ -32,7 +32,8 @@ from hindsight_api import RequestContext
 from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.consolidation.consolidator import write_scopes_changed
 from hindsight_api.engine.memories import FactRecord, get_memories
-from hindsight_api.engine.memory_engine import MemoryEngine, _renamed_scopes, fq_table
+from hindsight_api.engine.memory_engine import MemoryEngine, _renamed_scopes
+from hindsight_api.engine.schema import fq_table
 
 # Two chunk-sized blocks (chunk size is 3000 chars). Keeping BLOCK_A byte-identical
 # across a re-ingest is what keeps the second retain on the delta path: chunking is

@@ -513,7 +513,7 @@ def test_llm_provider_from_env_carries_affinity(clean_llm_env):
 
 async def test_bank_attribution_and_affinity_coexist(clean_llm_env):
     from hindsight_api.config import clear_config_cache
-    from hindsight_api.engine.memory_engine import _current_bank_id
+    from hindsight_api.schema_context import _current_bank_id
 
     clean_llm_env.setenv("HINDSIGHT_API_LLM_SEND_BANK_AS_USER", "true")
     clear_config_cache()

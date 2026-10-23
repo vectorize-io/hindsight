@@ -19,13 +19,9 @@ import pytest_asyncio
 import hindsight_api.engine.memory_engine as memory_engine_module
 from hindsight_api.engine import page_markdown
 from hindsight_api.engine.db import DatabaseConnection
-from hindsight_api.engine.memory_engine import (
-    KnowledgeTagFilter,
-    MemoryEngine,
-    _may_need_refresh,
-    fq_table,
-)
+from hindsight_api.engine.memory_engine import KnowledgeTagFilter, MemoryEngine, _may_need_refresh
 from hindsight_api.engine.retain import embedding_utils
+from hindsight_api.engine.schema import fq_table
 from hindsight_api.extensions import (
     BankReadContext,
     BankReadOperation,

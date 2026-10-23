@@ -15,7 +15,7 @@ import pytest
 # behaviour is covered by the extension's own recall suite instead.
 pytestmark = pytest.mark.memory_backend_incompatible
 
-from hindsight_api.engine.memory_engine import Budget
+from hindsight_api.engine.response_models import Budget
 from hindsight_api.engine.search.tracer import SearchTracer
 
 

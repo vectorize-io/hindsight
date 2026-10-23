@@ -25,7 +25,7 @@ import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
-from hindsight_api.api.http import BankTemplateConfig
+from hindsight_api.engine.bank_templates import BankTemplateConfig
 
 # Each tuple is (field_name, applied_value). Values chosen to differ
 # visibly from defaults so round-trip bugs surface.

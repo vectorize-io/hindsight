@@ -364,7 +364,7 @@ export function pagesFor(
 // per-initiative pages `captureInitiative` adds.
 export const PAGE_MAX_TOKENS = 4096;
 
-/** A page's `trigger`, in the API's own shape (see MentalModelTrigger in api/http.py). */
+/** A page's `trigger`, in the API's own shape (see MentalModelTrigger in engine/response_models.py). */
 export interface PageTrigger {
   fact_types: string[];
   /** How the page's own `tags` filter the memories a refresh reads. See `PAGE_TAGS_MATCH`. */

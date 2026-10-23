@@ -20,9 +20,9 @@ import pytest_asyncio
 from hindsight_api import LLMConfig, LocalSTEmbeddings, MemoryEngine, RequestContext
 from hindsight_api.api import create_app
 from hindsight_api.engine.cross_encoder import LocalSTCrossEncoder
-from hindsight_api.engine.memory_engine import Budget
 from hindsight_api.engine.providers.none_llm import LLMNotAvailableError, NoneLLM
 from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
+from hindsight_api.engine.response_models import Budget
 from hindsight_api.engine.task_backend import SyncTaskBackend
 
 

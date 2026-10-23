@@ -327,7 +327,6 @@ async def tool_read_mental_models(
     ``tag_scope`` is the caller's forced tag scope: a page outside it reads as missing,
     even when the model asks for it by id.
     """
-
     if not mental_model_ids:
         return {"error": "read_mental_models requires mental_model_ids"}
 
@@ -600,7 +599,6 @@ async def tool_expand(
     Returns:
         Dict with results array, each containing memory, chunk, and optionally document data
     """
-
     if not memory_ids:
         return {"error": "memory_ids is required and must not be empty"}
 

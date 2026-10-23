@@ -138,7 +138,7 @@ class TestMentalModelTriggerRecallFields:
     """MentalModelTrigger Pydantic model accepts the new override fields."""
 
     def test_trigger_accepts_new_fields(self):
-        from hindsight_api.api.http import MentalModelTrigger
+        from hindsight_api.engine.response_models import MentalModelTrigger
 
         trigger = MentalModelTrigger(
             include_chunks=False,
@@ -150,7 +150,7 @@ class TestMentalModelTriggerRecallFields:
         assert trigger.recall_chunks_max_tokens == 0
 
     def test_trigger_defaults_are_none(self):
-        from hindsight_api.api.http import MentalModelTrigger
+        from hindsight_api.engine.response_models import MentalModelTrigger
 
         trigger = MentalModelTrigger()
         assert trigger.include_chunks is None

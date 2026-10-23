@@ -5,12 +5,14 @@ Tests that the system correctly handles non-English input and produces
 output in the same language as the input.
 """
 
-import pytest
 import logging
 from datetime import datetime, timezone
-from hindsight_api.engine.memory_engine import Budget
+
+import pytest
+
 from hindsight_api import LLMConfig, RequestContext
 from hindsight_api.config import _get_raw_config
+from hindsight_api.engine.response_models import Budget
 from hindsight_api.engine.retain.fact_extraction import extract_facts_from_text
 from tests.llm_judge import assert_meets_criteria
 

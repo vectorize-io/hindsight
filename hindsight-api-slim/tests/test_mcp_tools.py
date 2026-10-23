@@ -1259,7 +1259,7 @@ class TestRecallNewParams:
 
     async def test_recall_default_budget_high(self, mock_memory):
         """Default budget should be HIGH (backward compat)."""
-        from hindsight_api.engine.memory_engine import Budget
+        from hindsight_api.engine.response_models import Budget
 
         mcp = _make_mcp_server(mock_memory, {"recall"})
         await _tools(mcp)["recall"].fn(query="test")
@@ -1267,7 +1267,7 @@ class TestRecallNewParams:
         assert call_kwargs["budget"] == Budget.HIGH
 
     async def test_recall_budget_low(self, mock_memory):
-        from hindsight_api.engine.memory_engine import Budget
+        from hindsight_api.engine.response_models import Budget
 
         mcp = _make_mcp_server(mock_memory, {"recall"})
         await _tools(mcp)["recall"].fn(query="test", budget="low")
@@ -2747,7 +2747,7 @@ class TestMentalModelTriggerInput:
         ``MentalModelTrigger`` has and this one lacks is not "not exposed yet" — it is
         a hard validation error on a request the HTTP API would have accepted.
         """
-        from hindsight_api.api.http import MentalModelTrigger
+        from hindsight_api.engine.response_models import MentalModelTrigger
 
         assert set(MentalModelTrigger.model_fields) == set(MentalModelTriggerInput.model_fields)
 

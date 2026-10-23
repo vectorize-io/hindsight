@@ -16,9 +16,10 @@ import pytest
 
 from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.engine.memories import get_memories
-from hindsight_api.engine.memory_engine import MentalModelRefreshError, fq_table
+from hindsight_api.engine.memory_engine import MentalModelRefreshError
 from hindsight_api.engine.reflect.delta_ops import DeltaOperationList
 from hindsight_api.engine.response_models import LLMCallResult, ReflectResult, TokenUsage
+from hindsight_api.engine.schema import fq_table
 
 TOPIC = "What are the user's durable collaboration preferences?"
 RELEVANT = "The user prefers bullet points over prose."

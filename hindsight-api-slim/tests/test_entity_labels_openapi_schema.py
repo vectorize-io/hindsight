@@ -7,7 +7,8 @@ now references the ``LabelGroup`` schema, still accepts the legacy ``free_values
 shape, and round-trips back to plain dicts for the storage path.
 """
 
-from hindsight_api.api.http import BankTemplateConfig, DryRunExtractRequest
+from hindsight_api.api.http import DryRunExtractRequest
+from hindsight_api.engine.bank_templates import BankTemplateConfig
 from hindsight_api.engine.retain.entity_labels import LabelGroup
 
 

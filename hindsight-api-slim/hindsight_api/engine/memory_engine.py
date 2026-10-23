@@ -644,6 +644,7 @@ from .bank_templates import apply_default_bank_template_resources, load_default_
 from .cross_encoder import RANK_SCORE_PROVIDERS, CrossEncoderModel, TypeSafeCrossEncoder
 from .embeddings import Embeddings, create_embeddings_from_env
 from .interface import BankConfigState, BankTemplateImportWrite, MemoryEngineInterface
+from .memories import sql_memories
 from .page_markdown import EMPTY_PAGE_NOTICE
 from .schema import _is_oracle, fq_table
 from .search.decision_reranker import PROVIDER_NAME as DECISION_MODEL_RERANKER
@@ -3387,7 +3388,6 @@ class MemoryEngine(MemoryEngineInterface):
         # validator runs outside the operation's own timer, so nothing else can see what it costs.
         # Done here, once, rather than at each call site -- the interface has nineteen hooks and a
         # hand-instrumented one is a hook that silently loses its timing the next time one is added.
-
         self._operation_validator = instrument_operation_validator(operation_validator)
 
         # Store tenant extension (always set, use default if none provided)
@@ -3419,7 +3419,6 @@ class MemoryEngine(MemoryEngineInterface):
         # process, so it is installed process-wide rather than handed to each LLM the
         # engine builds below — a provider that missed the handle would bill the
         # server's key without anyone noticing.
-
         self._llm_request_extension = load_extension("LLM_REQUEST", LLMRequestExtension, context=self._ext_ctx)
         if self._llm_request_extension is not None:
             if config.retain_batch_enabled:
@@ -3435,6 +3434,8 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Every model call, with its input and output, handed to an extension that keeps a
         # per-call record somewhere of its own. Fed by the same GenAI recorders as llm_requests.
+        # Imported here, unlike the other extensions: model_call imports engine.response_models,
+        # which loads the engine package and so this module.
         from ..extensions.model_call import ModelCallExtension, ModelCallRecorder  # noqa: PLC0415
 
         self._model_call_extension = load_extension("MODEL_CALL", ModelCallExtension, context=self._ext_ctx)
@@ -6383,10 +6384,6 @@ class MemoryEngine(MemoryEngineInterface):
         # ever runs for a bank whose memories are SQL rows (a store that owns its memories resolves
         # names in its own write), and it is built once here, not per bank — so building it from
         # the configured store handed a router's SQL-backed banks a resolver that resolves nothing.
-        # Imported here: the memories package imports the extensions package, which imports
-        # this module.
-        from .memories import sql_memories
-
         self.entity_resolver = sql_memories().create_entity_resolver(
             backend=self._backend,
             entity_lookup=self._retain_entity_lookup,

@@ -469,7 +469,7 @@ def test_recall_async_wires_stage2_and_keeps_interleave(monkeypatch):
     from unittest.mock import AsyncMock
 
     from hindsight_api.engine import memory_engine
-    from hindsight_api.engine.memory_engine import Budget
+    from hindsight_api.engine.response_models import Budget
     from hindsight_api.engine.search.retrieval import MultiFactTypeRetrievalResult, ParallelRetrievalResult
     from hindsight_api.engine.search.types import RetrievalResult, ScoredResult
     from hindsight_api.models import RequestContext

@@ -6,11 +6,13 @@ not as separate memory_units. The observations list in EntityState is
 populated from the summary for backwards compatibility.
 """
 
+from datetime import datetime, timezone
+
 import pytest
-from hindsight_api.engine.memory_engine import Budget
+
 from hindsight_api import RequestContext
 from hindsight_api.config import _get_raw_config
-from datetime import datetime, timezone
+from hindsight_api.engine.response_models import Budget
 
 
 @pytest.fixture

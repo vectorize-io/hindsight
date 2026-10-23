@@ -13,7 +13,8 @@ import uuid
 
 import pytest
 
-from hindsight_api.engine.memory_engine import Budget, MemoryEngine
+from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.response_models import Budget
 from tests.llm_judge import assert_meets_criteria
 
 
