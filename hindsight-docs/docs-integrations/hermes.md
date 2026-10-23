@@ -307,7 +307,7 @@ The lookup stops at the repository root. Only `bank_id` is read.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `auto_retain` | `true` | Automatically retain conversation turns |
+| `auto_retain` | `true` | Automatically retain conversation turns. Sub-agent (`delegate_task`) runs and kanban workers are never auto-retained; their parent session keeps its own turns. |
 | `retain_cron` | `false` | Also auto-retain scheduled (cron) runs. Off by default, so job output stays out of the user's memory; the `hindsight_retain` tool still works in cron runs. |
 | `retain_async` | `true` | Process retain asynchronously on the Hindsight server |
 | `retain_every_n_turns` | `1` | Retain every N turns (1 = every turn) |

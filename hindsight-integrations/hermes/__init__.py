@@ -91,8 +91,9 @@ _RETAIN_CONTEXT_DEFAULT = "conversation between Hermes Agent and the User"
 def _plugin_version() -> str:
     """Read the version from plugin.yaml — Hermes loads this directory, not a pip package."""
     try:
-        text = (Path(__file__).resolve().parent / "plugin.yaml").read_text()
-    except OSError:
+        # Explicit utf-8: the locale default (cp936, cp932...) can't decode it on Windows (#5704).
+        text = (Path(__file__).resolve().parent / "plugin.yaml").read_text(encoding="utf-8")
+    except (OSError, ValueError):
         return "0.0.0"
     for line in text.splitlines():
         if line.startswith("version:"):
@@ -205,7 +206,7 @@ def _fetch_hindsight_api_version(api_url: str, api_key: str | None = None, timeo
         url = api_url.rstrip("/") + path
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as resp:  # noqa: S310
-                data = json.loads(resp.read().decode("utf-8", errors="replace"))
+                data = json.loads(resp.read(65536).decode("utf-8", errors="replace"))  # capped (#5598)
         except urllib.error.HTTPError as exc:
             unanswered = unanswered or exc.code >= 500  # a 4xx is an answer: this path is not served
             logger.debug("Hindsight version probe %s answered %s", url, exc.code)
@@ -1131,6 +1132,9 @@ class HindsightMemoryProvider(MemoryProvider):
         self._parent_session_id = str(kwargs.get("parent_session_id", "") or "").strip()
         # "primary" | "subagent" | "cron" | "flush"; read by _apply_retain_policy (#4945).
         self._agent_context = str(kwargs.get("agent_context") or "primary")
+        # Kanban workers start as plain "primary" CLI sessions; Hermes marks them only in the env (#5555).
+        if self._agent_context == "primary" and os.environ.get("HERMES_KANBAN_TASK"):
+            self._agent_context = "kanban"
         # Status channel for the retain indicator (recall reports via recall_status()).
         if callable(kwargs.get("status_callback")):
             self._status_callback = kwargs["status_callback"]
@@ -1379,9 +1383,11 @@ class HindsightMemoryProvider(MemoryProvider):
 
     def _apply_retain_policy(self, cfg: dict) -> None:
         """Pure-config retain knobs (no env/secret reads; ``{}`` yields the defaults)."""
-        # Hermes' provider contract: skip automatic writes for scheduled runs. retain_cron opts back in.
-        is_cron = getattr(self, "_agent_context", "primary") == "cron"
-        self._auto_retain = cfg.get("auto_retain", True) and (not is_cron or bool(cfg.get("retain_cron", False)))
+        # Hermes' provider contract: skip automatic writes for non-primary runs (#5555). retain_cron opts
+        # scheduled runs back in; sub-agents and kanban workers report to a parent that retains its own turns.
+        context = getattr(self, "_agent_context", "primary")
+        skip = context in ("subagent", "kanban") or (context == "cron" and not cfg.get("retain_cron", False))
+        self._auto_retain = bool(cfg.get("auto_retain", True)) and not skip
         self._retain_every_n_turns = max(1, _parse_int_setting(cfg.get("retain_every_n_turns"), 1))
         self._retain_context = cfg.get("retain_context", _RETAIN_CONTEXT_DEFAULT)
         self._retain_async = cfg.get("retain_async", True)
@@ -1659,6 +1665,9 @@ class HindsightMemoryProvider(MemoryProvider):
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         # Sync mode recalls live each turn — nothing to prime in the background.
         if self._recall_sync or self._recall_disabled():
+            return
+        # A late call for a session we already left must not prime (or bump the generation of) this one (#5628).
+        if session_id and session_id != self._session_id:
             return
 
         with self._prefetch_lock:
