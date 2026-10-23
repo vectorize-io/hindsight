@@ -75,11 +75,10 @@ def test_remaining_bank_id_columns_are_text(head_db_url):
 
 def test_long_bank_id_round_trips_through_widened_tables(head_db_url):
     # bank_id matching the shape reported in the issue, well over the old 64-char
-    # cap. Unique suffixes keep the test idempotent against pg0 data dirs that
-    # persist across runs (otherwise a re-run collides on the banks PK).
+    # cap.
     long_bank = f"tenantA::ou_{uuid.uuid4().hex}::ou_{uuid.uuid4().hex}"
     assert len(long_bank) > 64
-    mm_id = f"mm-{uuid.uuid4().hex}"  # explicit id keeps re-runs from colliding
+    mm_id = f"mm-{uuid.uuid4().hex}"
 
     engine = create_engine(head_db_url)
     try:

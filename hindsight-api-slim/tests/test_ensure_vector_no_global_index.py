@@ -34,12 +34,6 @@ from hindsight_api.migrations import (
 )
 
 
-@pytest.fixture(scope="module")
-def vec_db_url(fresh_db_url):
-    """A database of its own so the test owns its schema/index state."""
-    return fresh_db_url
-
-
 def _skip_unless_per_bank_backend() -> str:
     vec = HindsightConfig.from_env().vector_extension
     if not uses_per_bank_vector_indexes(vec):
@@ -100,18 +94,18 @@ def _alembic_config(db_url: str, schema: str) -> Config:
 
 
 @pytest.mark.xdist_group("vecidx_pg0")
-def test_per_bank_backend_does_not_create_global_memory_units_index(vec_db_url):
+def test_per_bank_backend_does_not_create_global_memory_units_index(fresh_db_url):
     vec = _skip_unless_per_bank_backend()
 
     schema = "vecidx_fresh"
-    _reset_schema(vec_db_url, schema)
+    _reset_schema(fresh_db_url, schema)
 
-    run_migrations(vec_db_url, schema=schema)
+    run_migrations(fresh_db_url, schema=schema)
     # Fresh, empty schema (no banks yet) → the reconcile must be a no-op for the
     # global index, not recreate it.
-    ensure_vector_extension(vec_db_url, vector_extension=vec, schema=schema)
+    ensure_vector_extension(fresh_db_url, vector_extension=vec, schema=schema)
 
-    engine = create_engine(vec_db_url)
+    engine = create_engine(fresh_db_url)
     try:
         with engine.connect() as conn:
             global_index_count = _global_index_count(conn, schema)
@@ -124,17 +118,17 @@ def test_per_bank_backend_does_not_create_global_memory_units_index(vec_db_url):
 
 
 @pytest.mark.xdist_group("vecidx_pg0")
-def test_reconcile_leaves_stale_global_index_untouched(vec_db_url):
+def test_reconcile_leaves_stale_global_index_untouched(fresh_db_url):
     """The reconcile must not perform runtime index DDL: a leftover global index
     stays until the migration removes it (no surprise ACCESS EXCLUSIVE locks at
     startup/provisioning time)."""
     vec = _skip_unless_per_bank_backend()
 
     schema = "vecidx_stale_global"
-    _reset_schema(vec_db_url, schema)
-    run_migrations(vec_db_url, schema=schema)
+    _reset_schema(fresh_db_url, schema)
+    run_migrations(fresh_db_url, schema=schema)
 
-    engine = create_engine(vec_db_url)
+    engine = create_engine(fresh_db_url)
     try:
         # Simulate the legacy state: an older reconcile recreated the global
         # index after migration d5e6f7a8b9c0 dropped it.
@@ -148,7 +142,7 @@ def test_reconcile_leaves_stale_global_index_untouched(vec_db_url):
             conn.commit()
             assert _global_index_count(conn, schema) == 1
 
-        ensure_vector_extension(vec_db_url, vector_extension=vec, schema=schema)
+        ensure_vector_extension(fresh_db_url, vector_extension=vec, schema=schema)
 
         with engine.connect() as conn:
             count_after = _global_index_count(conn, schema)
@@ -162,15 +156,15 @@ def test_reconcile_leaves_stale_global_index_untouched(vec_db_url):
 
 @pytest.mark.xdist_group("vecidx_pg0")
 @pytest.mark.memory_backend_incompatible
-def test_migration_drops_stale_global_index(vec_db_url):
+def test_migration_drops_stale_global_index(fresh_db_url):
     """Upgrading from the pre-repair revision removes a leftover global index."""
     _skip_unless_per_bank_backend()
 
     schema = "vecidx_migration_repair"
-    _reset_schema(vec_db_url, schema)
-    run_migrations(vec_db_url, schema=schema)
+    _reset_schema(fresh_db_url, schema)
+    run_migrations(fresh_db_url, schema=schema)
 
-    cfg = _alembic_config(vec_db_url, schema)
+    cfg = _alembic_config(fresh_db_url, schema)
     # Step back below the repair migration, then plant the legacy index the
     # way an older reconcile would have left it.
     #
@@ -186,7 +180,7 @@ def test_migration_drops_stale_global_index(vec_db_url):
     assert isinstance(parent, str), f"expected a single parent for {_REPAIR_REVISION}, got {parent!r}"
     command.downgrade(cfg, parent)
 
-    engine = create_engine(vec_db_url)
+    engine = create_engine(fresh_db_url)
     try:
         with engine.connect() as conn:
             conn.execute(
@@ -211,18 +205,18 @@ def test_migration_drops_stale_global_index(vec_db_url):
 
 
 @pytest.mark.xdist_group("vecidx_pg0")
-def test_embedding_dimension_resize_does_not_create_global_index(vec_db_url):
+def test_embedding_dimension_resize_does_not_create_global_index(fresh_db_url):
     """#5707: a fresh schema whose model dimension differs from the column default
     goes through the resize path, which must not build a global memory_units index."""
     vec = _skip_unless_per_bank_backend()
 
     schema = "vecidx_resize"
-    _reset_schema(vec_db_url, schema)
-    run_migrations(vec_db_url, schema=schema)
-    ensure_embedding_dimension(vec_db_url, 1024, schema=schema, vector_extension=vec)
-    ensure_vector_extension(vec_db_url, vector_extension=vec, schema=schema)
+    _reset_schema(fresh_db_url, schema)
+    run_migrations(fresh_db_url, schema=schema)
+    ensure_embedding_dimension(fresh_db_url, 1024, schema=schema, vector_extension=vec)
+    ensure_vector_extension(fresh_db_url, vector_extension=vec, schema=schema)
 
-    engine = create_engine(vec_db_url)
+    engine = create_engine(fresh_db_url)
     try:
         with engine.connect() as conn:
             leftover = _non_partial_vector_index_names(conn, schema)
@@ -236,22 +230,22 @@ def test_embedding_dimension_resize_does_not_create_global_index(vec_db_url):
 
 @pytest.mark.xdist_group("vecidx_pg0")
 @pytest.mark.memory_backend_incompatible
-def test_migration_drops_global_index_by_any_name(vec_db_url):
+def test_migration_drops_global_index_by_any_name(fresh_db_url):
     """#5707: the resize path left ``idx_memory_units_embedding_hnsw`` behind, which
     f2a6d8c4b1e9 never matched. e8c1a4f7b2d9 drops every global vector index found in
     the catalog, and keeps the per-bank partial ones."""
     _skip_unless_per_bank_backend()
 
     schema = "vecidx_migration_any_name"
-    _reset_schema(vec_db_url, schema)
-    run_migrations(vec_db_url, schema=schema)
+    _reset_schema(fresh_db_url, schema)
+    run_migrations(fresh_db_url, schema=schema)
 
-    cfg = _alembic_config(vec_db_url, schema)
+    cfg = _alembic_config(fresh_db_url, schema)
     parent = ScriptDirectory.from_config(cfg).get_revision("e8c1a4f7b2d9").down_revision
     assert isinstance(parent, str)
     command.downgrade(cfg, parent)
 
-    engine = create_engine(vec_db_url)
+    engine = create_engine(fresh_db_url)
     try:
         with engine.connect() as conn:
             conn.execute(

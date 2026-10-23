@@ -88,10 +88,9 @@ def migrated_db_url(fresh_db_url):
     try:
         with engine.begin() as conn:
             conn.execute(
-                text("INSERT INTO banks (bank_id) VALUES (:b) ON CONFLICT DO NOTHING"),
+                text("INSERT INTO banks (bank_id) VALUES (:b)"),
                 {"b": _BANK_ID},
             )
-            conn.execute(text("DELETE FROM mental_models WHERE bank_id = :b"), {"b": _BANK_ID})
             for mm_id, blob in (
                 ("mm-v1", _V1_BLOB),
                 ("mm-v2", _V2_BLOB),

@@ -61,9 +61,7 @@ def _col_type(conn, table: str) -> str:
 def test_split_history_backfills_long_bank_id(pre_split_db_url):
     db_url = pre_split_db_url
     # bank_id matching the shape reported in the issue:
-    # <scope>::ou_<32hex>::ou_<32hex> — well over the old 64-char cap. A unique
-    # suffix keeps the test idempotent against pg0 data dirs that persist across
-    # runs (otherwise a re-run collides on the banks PK).
+    # <scope>::ou_<32hex>::ou_<32hex> — well over the old 64-char cap.
     long_bank = f"tenantA::ou_{uuid.uuid4().hex}::ou_{uuid.uuid4().hex}"
     assert len(long_bank) > 64
 

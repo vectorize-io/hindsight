@@ -51,8 +51,6 @@ def test_repair_widens_mental_model_id_refs(head_db_url):
     # Recreate the narrow columns an already-migrated deployment still has.
     command.downgrade(_alembic_cfg(head_db_url), _PRE_REPAIR_REVISION)
     with engine.connect() as conn:
-        # pg0 data persists across runs: drop long ids a previous run left (cascades to both tables).
-        conn.execute(text("DELETE FROM mental_models WHERE length(id) > 64"))
         for table, column in _COLUMNS:
             conn.execute(text(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE VARCHAR(64)"))
         conn.commit()
