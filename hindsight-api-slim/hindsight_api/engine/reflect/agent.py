@@ -150,10 +150,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# What the round's query rewrite replies when the request asks for nothing a memory bank could
-# answer ("yes", "thanks", "go ahead"): reflect then returns an empty answer without searching.
-_NOTHING_TO_SEARCH = "NONE"
-
 # A parallel round's recall, when the decision model will prune it: wide enough that a decision
 # the fused order ranks low still reaches the decision model, which re-ranks and cuts it.
 _ROUND_RECALL_MAX_TOKENS = 8192
@@ -1464,8 +1460,9 @@ async def _run_reflect_agent_inner(
             # Every request is rewritten into one search query first. It used to be only the
             # long ones (over 80 tokens): a plugin wraps the developer's goal in ~2k characters
             # of rendering rules, and searching with all of it found nothing (sde-bench
-            # boltons-budget). The same call now also spots a request with nothing to look up
-            # ("yes", "thanks"), which then returns at once instead of paying for a retrieval.
+            # boltons-budget). It never ends reflect: it used to answer NONE for "nothing to look
+            # up", and a local model said NONE to real questions, which came back empty. A "thanks"
+            # now pays for one retrieval round instead.
             #
             # The caller's context goes with it: "should I go ahead with it?" names nothing without
             # the plan it came with. The temperature is the mechanical passes' one, which stays
@@ -1494,20 +1491,7 @@ async def _run_reflect_agent_inner(
                     f"{describe_llm_error(exc)}"
                 )
                 distilled = ""
-            # A document is never "nothing": a refresh must not store an empty page.
-            if distilled == _NOTHING_TO_SEARCH and not answer_as_document:
-                logger.info(f"[REFLECT {reflect_id}] Decision-orchestrated: nothing to search for; empty answer.")
-                return ReflectAgentResult(
-                    text="",
-                    iterations=0,
-                    tools_called=0,
-                    tool_trace=tool_trace,
-                    llm_trace=_get_llm_trace(),
-                    usage=_get_usage(),
-                    directives_applied=directives_applied,
-                )
-            # NONE on a document (a refresh) searches the request itself, never the word "NONE".
-            result = _parallel_round(query if distilled in ("", _NOTHING_TO_SEARCH) else distilled, "round_")
+            result = _parallel_round(distilled or query, "round_")
             parallel_round = True
             forced_steps_done = len(forced_sequence) - 1  # the increment below completes the sequence
         else:

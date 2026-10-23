@@ -1005,9 +1005,7 @@ ROUND_SEARCH_QUERY_SYSTEM_PROMPT = (
     "about it: a decision and why it was made, a value or limit, a policy or rule, an event. Never add words like 'implementation', 'code' or 'logic' unless the "
     "request asks how the code works. Leave out instructions about formatting the answer. "
     "Reply with the query only, no quotes. "
-    "A '## Context' section, when present, says what the request refers to: use it to name the subject. "
-    "If the request asks for nothing a memory bank could answer (an acknowledgement, a greeting, "
-    "a bare yes/no or 'go ahead' with no subject), reply exactly NONE."
+    "A '## Context' section, when present, says what the request refers to: use it to name the subject."
 )
 
 

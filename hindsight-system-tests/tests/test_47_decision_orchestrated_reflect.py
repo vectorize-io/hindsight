@@ -84,17 +84,17 @@ async def test_enough_evidence_answers_after_one_parallel_retrieval(typesafe_cli
     assert _reflect_turns(llm) == 1, "the answer is the only reflect turn"
 
 
-async def test_a_request_with_nothing_to_search_returns_empty_at_once(typesafe_client, llm, stubs, decision_bank):
-    """An acknowledgement ("yes, go ahead") costs one small call, not a retrieval."""
+async def test_the_query_rewrite_never_answers_empty(typesafe_client, llm, stubs, decision_bank):
+    """The rewrite used to end reflect on NONE, and a local model said it to real questions."""
     stubs.rerank.cut_level = ENOUGH
     llm.on_step("reflect_round_query").returns_text("NONE")
+    llm.on_step("reflect", tool="done").returns_tool_call("done", answer=ANSWER)
     llm.calls.clear()
 
-    response = await typesafe_client.areflect(bank_id=decision_bank, query="yes, go ahead", include_tool_calls=True)
+    response = await typesafe_client.areflect(bank_id=decision_bank, query=QUERY, include_tool_calls=True)
 
-    assert response.text == ""
-    assert not (response.trace.tool_calls if response.trace else None), "nothing was searched"
-    assert _reflect_turns(llm) == 0
+    assert response.text == ANSWER
+    assert response.trace and response.trace.tool_calls, "the request was searched"
 
 
 async def test_a_bank_that_opts_out_runs_agent_turns(typesafe_client, llm, stubs, decision_bank):

@@ -370,42 +370,15 @@ async def test_every_request_is_searched_with_a_rewritten_query():
 
 
 @pytest.mark.asyncio
-async def test_a_request_with_nothing_to_search_returns_empty_at_once():
-    provider = _ScriptedProvider([], search_query="NONE")
-    functions = _functions()
-    sufficient = AsyncMock(return_value=True)
-
-    result = await _reflect(provider, functions, sufficient)
-
-    assert result.text == ""
-    assert provider.tool_choices == [], "no agent turn and no answer call"
-    for fn in functions.values():
-        assert fn.await_count == 0
-    assert sufficient.await_count == 0
-    assert [c.scope for c in result.llm_trace] == ["round_query"]
-
-
-@pytest.mark.asyncio
-async def test_a_document_is_never_answered_empty():
-    """A refresh writes a page; "nothing to search" there would store an empty one."""
+async def test_the_query_rewrite_never_answers_empty():
+    """The rewrite used to end reflect on NONE, and a local model said it to real questions."""
     provider = _ScriptedProvider([_done()], search_query="NONE")
     functions = _functions()
 
-    await run_reflect_agent(
-        llm_config=provider,
-        bank_id="b",
-        query="yes",
-        bank_profile={"name": "T", "mission": "M"},
-        has_mental_models=True,
-        budget="mid",
-        max_iterations=6,
-        evidence_is_sufficient_fn=AsyncMock(return_value=True),
-        answer_as_document=True,
-        **functions,
-    )
+    result = await _reflect(provider, functions, AsyncMock(return_value=True))
 
+    assert result.text == "A"
     assert functions["recall_fn"].await_count == 1
-    assert functions["recall_fn"].await_args.args[0] == "yes", "the request is searched, never the word NONE"
 
 
 @pytest.mark.asyncio
