@@ -1,4 +1,6 @@
-"""Model call extension: every model call the server makes, with what went in and came out.
+"""Model call extension: every model call the server makes, with what went in and came out, and
+every operation run (a retain, recall, reflect, consolidation or mental-model refresh) with its wall
+time and where it went.
 
 Every LLM, embedding, rerank and decision-model call -- in the API and in the worker alike,
 successes and failures -- is handed to the extension once it finishes, as a
@@ -9,6 +11,10 @@ warehouse, an observability product.
 
 It sees exactly the calls ``llm_requests`` tracing sees (it is fed by the same GenAI
 recorders), whether or not that table is written.
+
+``record_operation`` (optional) receives an :class:`OperationRun` when each operation ends. Every
+:class:`ModelCall` made inside a run carries its ``operation_id``, so the two join. The same rules
+apply: it runs on the operation's path, so buffer and return.
 
 **``record`` runs on the call path, synchronously.** It must only buffer: no I/O, no
 blocking, nothing slow. Send from a background task, and flush in ``on_shutdown``, which is
@@ -54,6 +60,8 @@ class ModelCall(BaseModel):
     operation: str | None
     #: Shared by every call of one operation run.
     trace_id: str | None
+    #: The :class:`OperationRun` the call was made in; ``None`` outside one.
+    operation_id: str | None = None
     #: What the call was for: ``retain_extract_facts``, ``embedding_query``, ``rerank``, ...
     scope: str
     #: ``chat``, ``embeddings``, ``rerank`` or ``decision``.
@@ -84,6 +92,41 @@ class ModelCall(BaseModel):
     tool_calls: list[LLMToolCall] | None
 
 
+class OperationRun(BaseModel):
+    """One finished operation run: its wall time, and where the time went."""
+
+    #: Unique per run; every :class:`ModelCall` made in it carries it as ``operation_id``.
+    id: str
+    #: The run this one was opened in (a mental-model refresh's reflect pass), if any. A run's
+    #: figures exclude its children's, so a parent and its children add up without overlap.
+    parent_id: str | None
+    #: ``retain``, ``recall``, ``reflect``, ``consolidation``, ``mental_model_refresh``, ...
+    operation: str
+    tenant: str
+    bank_id: str | None
+    #: The queued task the run executed in, when it ran in a worker.
+    task_id: str | None
+    #: When that task was queued (top-level runs of a task only): ``started_at - queued_at`` is
+    #: the time it waited.
+    queued_at: datetime | None
+    started_at: datetime
+    ended_at: datetime
+    duration_ms: int
+    success: bool
+    #: ``ExceptionType: message`` when it failed.
+    error: str | None
+    #: Model calls made in the run, their summed time (concurrent calls overlap) and tokens.
+    model_calls: int
+    model_ms: int
+    input_tokens: int
+    output_tokens: int
+    #: Calls into the memories store and their summed time, measured at its interface.
+    store_calls: int
+    store_ms: int
+    #: The engine's own timed phases (``retain.extract``, ``recall.retrieve``, ...), in ms.
+    phases_ms: dict[str, float]
+
+
 class ModelCallExtension(Extension, ABC):
     """Receive every model call the server makes. ``record`` must only buffer (see module docs)."""
 
@@ -91,6 +134,9 @@ class ModelCallExtension(Extension, ABC):
     def record(self, call: ModelCall) -> None:
         """Take one finished call. Synchronous and on the call path: buffer it, return."""
         ...
+
+    def record_operation(self, run: OperationRun) -> None:  # noqa: B027 - optional hook
+        """Take one finished operation run. Synchronous: buffer it, return. Optional."""
 
 
 # ── runtime plumbing (used by the engine, not by extensions) ────────────────────
@@ -130,6 +176,7 @@ class ModelCallRecorder:
             current_trace_context,
             genai_operation_name,
         )
+        from hindsight_api.operation_runs import add_model_call, current_operation_id
 
         ctx = current_trace_context()
         ended_at = datetime.now(timezone.utc)
@@ -145,6 +192,7 @@ class ModelCallRecorder:
             bank_id=(ctx.bank_id if ctx else None) or get_current_bank_id(),
             operation=ctx.operation if ctx else None,
             trace_id=ctx.trace_id if ctx else None,
+            operation_id=current_operation_id(),
             scope=scope,
             call_type=genai_operation_name(scope),
             provider=provider,
@@ -166,4 +214,5 @@ class ModelCallRecorder:
             output=None if error is not None else response_content,
             tool_calls=[LLMToolCall.model_validate(tc) for tc in tool_calls] if tool_calls else None,
         )
+        add_model_call(duration, call.input_tokens, call.output_tokens + call.thoughts_tokens)
         self.extension.record(call)

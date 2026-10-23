@@ -10,22 +10,26 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from hindsight_api import tracing
+from hindsight_api import operation_runs, tracing
 from hindsight_api.config import clear_config_cache
 from hindsight_api.engine.llm_trace import operation_run
 from hindsight_api.engine.llm_wrapper import LLMProvider
 from hindsight_api.extensions import ModelCall, ModelCallExtension
-from hindsight_api.extensions.model_call import ModelCallRecorder
+from hindsight_api.extensions.model_call import ModelCallRecorder, OperationRun
 
 
 class _Collect(ModelCallExtension):
     def __init__(self, config: dict[str, str] | None = None) -> None:
         super().__init__(config or {})
         self.calls: list[ModelCall] = []
+        self.runs: list[OperationRun] = []
         self.started = self.stopped = False
 
     def record(self, call: ModelCall) -> None:
         self.calls.append(call)
+
+    def record_operation(self, run: OperationRun) -> None:
+        self.runs.append(run)
 
     async def on_startup(self) -> None:
         self.started = True
@@ -40,7 +44,9 @@ def ext(monkeypatch):
     extension = _Collect()
     recorder = ModelCallRecorder(extension)
     tracing.register_span_recorder(recorder)
+    operation_runs.set_sink(extension.record_operation)
     yield extension
+    operation_runs.set_sink(None)
     tracing.unregister_span_recorder(recorder)
     clear_config_cache()
 
@@ -192,6 +198,10 @@ async def test_a_retain_and_a_recall_record_every_model_call_they_make(ext, memo
             f"/v1/default/banks/{bank_id}/memories/recall", json={"query": "What does Alice like?"}
         )
         assert recall.status_code == 200
+        reflect = await client.post(
+            f"/v1/default/banks/{bank_id}/reflect", json={"query": "What does Alice like?", "budget": "low"}
+        )
+        assert reflect.status_code == 200
 
     calls = [c for c in ext.calls if c.bank_id == bank_id]
     seen = {(c.operation, c.scope) for c in calls}
@@ -199,6 +209,31 @@ async def test_a_retain_and_a_recall_record_every_model_call_they_make(ext, memo
     assert any(c.operation == "retain" and c.call_type == "chat" for c in calls)
     query = next(c for c in calls if c.scope == "embedding_query" and c.operation == "recall")
     assert query.input == {"texts": ["What does Alice like?"]}
+
+    # Each operation is one run, and every call it made names it.
+    runs = {r.id: r for r in ext.runs if r.bank_id == bank_id}
+    by_op = {r.operation: r for r in runs.values()}
+    assert {"retain", "recall"} <= set(by_op)
+    for c in calls:
+        assert c.operation_id in runs, (
+            f"{c.scope}/{c.operation} call names no run: {[(x.scope, x.operation, x.operation_id is None) for x in calls]}"
+        )
+    recall_run = by_op["recall"]
+    recall_calls = [c for c in calls if c.operation_id == recall_run.id]
+    assert recall_run.model_calls == len(recall_calls) > 0
+    assert recall_run.success and recall_run.duration_ms >= max(c.duration_ms for c in recall_calls)
+    assert recall_run.store_calls > 0, "recall reads the memories store"
+    assert any(k.startswith("recall.") for k in recall_run.phases_ms)
+    retain_run = by_op["retain"]
+    assert retain_run.input_tokens == sum(c.input_tokens for c in calls if c.operation_id == retain_run.id)
+    assert retain_run.store_calls > 0 and any(k.startswith("retain.") for k in retain_run.phases_ms)
+    # A reflect answered by the API, never queued, is a run all the same: its wall time and calls.
+    reflect_run = by_op["reflect"]
+    assert reflect_run.task_id is None and reflect_run.queued_at is None and reflect_run.success
+    reflect_calls = [c for c in calls if c.operation_id == reflect_run.id]
+    assert reflect_calls and all(c.operation == "reflect" for c in reflect_calls if c.call_type == "chat")
+    assert reflect_run.model_calls == len(reflect_calls)
+    assert reflect_run.model_ms == pytest.approx(sum(c.duration_ms for c in reflect_calls), abs=len(reflect_calls))
 
 
 async def test_a_decision_call_with_its_request_and_answers(ext):

@@ -37,6 +37,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 
 from ...config import get_config
 from ...metrics import get_metrics_collector
+from ...operation_runs import timed_operation
 from ...worker.stage import set_stage
 from ..db import DatabaseBackend
 from ..db_utils import acquire_with_retry
@@ -1643,7 +1644,8 @@ async def run_consolidation_job(
     # trace — flushed onto every trace row on exit by attach_memory_ids.
     trace_ctx = trace_context_of(llm_config)
     trace_token = set_trace_context(trace_ctx) if trace_ctx is not None else None
-    with track_observation_changes() as observation_changes:
+    # One run per consolidation, whichever way it started: a queued task, or run inline.
+    with timed_operation("consolidation", bank_id), track_observation_changes() as observation_changes:
         try:
             return await _run_consolidation_job(
                 memory_engine,

@@ -30,6 +30,7 @@ from ..config import (
 )
 from ..engine.schema import fq_table_explicit as fq_table
 from ..metrics import get_metrics_collector
+from ..operation_runs import worker_task
 from .backpressure import is_append_conflict, is_store_backpressure
 from .exceptions import DeferOperation, RetryTaskAt, format_task_error
 
@@ -312,6 +313,8 @@ class ClaimedTask:
     task_dict: dict[str, Any]
     schema: str | None
     folded_operation_ids: list[str] = field(default_factory=list)
+    #: When the task was queued (its row's ``created_at``), for the operation runs it executes.
+    queued_at: datetime | None = None
     """Peers coalesced into this execution (see ``engine.retain.fold``).
 
     They were claimed by the same transaction that claimed ``operation_id`` and
@@ -790,6 +793,7 @@ class WorkerPoller:
                         task_dict=task_dict,
                         schema=schema,
                         folded_operation_ids=folded,
+                        queued_at=row.get("created_at"),
                     )
                 )
             return result
@@ -1305,7 +1309,8 @@ class WorkerPoller:
             logger.debug(f"Executing task {task.operation_id} (type={task_type}, bank={bank_id}{schema_info})")
             if task.schema:
                 task.task_dict["_schema"] = task.schema
-            await self._run_executor(task, task_type, holder)
+            with worker_task(task.operation_id, task.queued_at):
+                await self._run_executor(task, task_type, holder)
             logger.debug(f"Task {task.operation_id} execution finished")
         except _WallTimeoutExceeded as e:
             # The executor has already been cancelled; all that's left is to say so

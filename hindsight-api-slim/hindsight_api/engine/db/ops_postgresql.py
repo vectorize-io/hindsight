@@ -1640,7 +1640,7 @@ class PostgreSQLOps(DataAccessOps):
         if claimed_ids:
             return await conn.fetch(
                 f"""
-                SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+                SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id, o.created_at
                 FROM {table} o
                 WHERE o.status = 'pending'
                   AND o.task_payload IS NOT NULL
@@ -1657,7 +1657,7 @@ class PostgreSQLOps(DataAccessOps):
             )
         return await conn.fetch(
             f"""
-            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id, o.created_at
             FROM {table} o
             WHERE o.status = 'pending'
               AND o.task_payload IS NOT NULL
@@ -1698,7 +1698,7 @@ class PostgreSQLOps(DataAccessOps):
         extra = " AND ".join(conditions)
         return await conn.fetch(
             f"""
-            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id, o.created_at
             FROM {table} o
             WHERE o.status = 'pending'
               AND o.task_payload IS NOT NULL
@@ -1740,7 +1740,7 @@ class PostgreSQLOps(DataAccessOps):
         extra_clause = (" AND " + " AND ".join(conditions)) if conditions else ""
         return await conn.fetch(
             f"""
-            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id, o.created_at
             FROM {table} o
             WHERE o.status = 'pending'
               AND o.task_payload IS NOT NULL
@@ -1766,7 +1766,7 @@ class PostgreSQLOps(DataAccessOps):
         """
         return await conn.fetch(
             f"""
-            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id, o.created_at
             FROM {table} o
             WHERE o.status = 'pending'
               AND o.task_payload IS NOT NULL
@@ -1866,7 +1866,7 @@ class PostgreSQLOps(DataAccessOps):
                 SELECT * FROM rot UNION ALL SELECT * FROM fifo
             )
             SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count,
-                   o.serialization_key, o.bank_id, c.tier
+                   o.serialization_key, o.bank_id, o.created_at, c.tier
             FROM cand c
             JOIN {table} o ON o.operation_id = c.operation_id
             WHERE {claimable}

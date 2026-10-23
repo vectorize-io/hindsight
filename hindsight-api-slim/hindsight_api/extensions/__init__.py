@@ -42,7 +42,7 @@ from hindsight_api.extensions.memory_defense import (
     apply_redaction,
     parse_policy,
 )
-from hindsight_api.extensions.model_call import ModelCall, ModelCallExtension
+from hindsight_api.extensions.model_call import ModelCall, ModelCallExtension, OperationRun
 from hindsight_api.extensions.operation_validator import (
     # Bank Management operations
     BankListContext,
@@ -115,6 +115,7 @@ __all__ = [
     # Model Call Extension
     "ModelCall",
     "ModelCallExtension",
+    "OperationRun",
     # Operation Validator - Core
     "DeferOperation",
     "OperationValidationError",

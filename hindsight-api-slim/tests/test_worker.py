@@ -545,6 +545,8 @@ class TestWorkerPoller:
         for task in my_claims:
             assert task.operation_id is not None
             assert task.task_dict is not None
+            # When it was queued: the operation runs it executes report their wait from it.
+            assert task.queued_at is not None and task.queued_at.tzinfo is not None
 
         # Verify tasks are marked as processing with worker_id
         rows = await pool.fetch(
@@ -554,6 +556,28 @@ class TestWorkerPoller:
         for row in rows:
             assert row["status"] == "processing"
             assert row["worker_id"] == "test-worker-1"
+
+        # Runs opened by the executor carry the task's id and queue time.
+        from hindsight_api import operation_runs
+
+        runs = []
+        operation_runs.set_sink(runs.append)
+
+        async def run_one(task_dict):
+            with operation_runs.timed_operation("retain", bank_id):
+                pass
+
+        poller._executor = run_one
+        try:
+            await poller.execute_task(my_claims[0])  # runs in the background
+            for _ in range(100):
+                if runs:
+                    break
+                await asyncio.sleep(0.05)
+        finally:
+            operation_runs.set_sink(None)
+        [run] = runs
+        assert run.task_id == my_claims[0].operation_id and run.queued_at == my_claims[0].queued_at
 
     @pytest.mark.asyncio
     async def test_claim_batch_cannot_see_rows_outside_this_files_schema(self, pool, clean_operations):

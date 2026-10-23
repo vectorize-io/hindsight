@@ -138,6 +138,8 @@ Things to know:
 - **Lifecycle:** `on_startup()` runs when the memory engine initializes, before any model call; `on_shutdown()` when it closes, after the workers have stopped, so a buffer can be written out completely.
 - **It sees the same calls `llm_requests` tracing sees**, whether or not that table is written, and in the API and the worker alike. Load it in both.
 - **`input` and `output` are the call's content** (prompts and memories included). Treat what you store accordingly.
+- **Operation runs (optional):** override `record_operation(run)` to also receive an `OperationRun` when each retain, recall, reflect, consolidation or mental-model refresh ends, wherever it started (HTTP, MCP or a queued task). It carries the run's wall time, its success or error, the model calls it made (count, summed time and tokens), its calls into the memories store (count and summed time, measured at the store's interface), the engine's timed phases, and for a queued task its id and when it was queued. Every `ModelCall` made inside a run carries the run's id as `operation_id`, so the two join. A run opened inside another (a mental-model refresh's reflect pass) is its own run with `parent_id` set, and keeps only its own figures. Same rule as `record()`: buffer and return.
+- **`current_operation_id()`** (`hindsight_api.operation_runs`) returns the run in progress, for a memories store that wants to tag its own requests with it.
 
 ---
 
