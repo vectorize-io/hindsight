@@ -683,7 +683,7 @@
     {
       "id": "hindsight-ingestion",
       "name": "Hindsight Ingestion",
-      "description": "Sync multi-source to Hindsight with incremental, multimodal support, including Notion, S3, SQL, Google Drive, OneDrive, Siyuan, Filesystem, etc",
+      "description": "Syncs documents from Notion, SiYuan, S3, WebDAV, Google Drive, OneDrive, email, SQL, the file system and more into Hindsight. Self-hosted with Docker, with incremental and multimodal sync.",
       "type": "community",
       "by": "Nyrest",
       "category": "tool",
