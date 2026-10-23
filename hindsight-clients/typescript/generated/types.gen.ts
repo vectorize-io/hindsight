@@ -752,7 +752,12 @@ export type BankTemplateConfig = {
    * observation_scopes applied at retain to items that send none ('combined' when unset). A list of tag lists may use globs, e.g. [['topic:*']] scopes each memory by its own topic tags.
    */
   default_observation_scopes?:
-    "per_tag" | "combined" | "all_combinations" | "shared" | Array<Array<string>> | null;
+    | "per_tag"
+    | "combined"
+    | "all_combinations"
+    | "shared"
+    | Array<Array<string>>
+    | null;
   /**
    * Consolidation Strategies
    *
@@ -4132,7 +4137,12 @@ export type MemoryItem = {
    * How to scope observations during consolidation. 'per_tag' runs one consolidation pass per individual tag, creating separate observations for each tag. 'combined' (default) runs a single pass with all tags together. 'shared' runs a single pass over one global, untagged scope, so memories consolidate together regardless of their tags — useful for deduplicating across volatile per-call provenance tags (e.g. per-session ids) while keeping those tags on the source facts. A list of tag lists runs one pass per inner list, giving full control over which combinations to use. An entry containing '*' is a glob matched against the memory's own tags — e.g. [['topic:*', 'user:*']] scopes by the memory's topic and user tags (including tags added by entity labels at retain) and ignores the rest; a scope whose globs match nothing is skipped. When omitted, the bank's default_observation_scopes applies ('combined' unless configured).
    */
   observation_scopes?:
-    "per_tag" | "combined" | "all_combinations" | "shared" | Array<Array<string>> | null;
+    | "per_tag"
+    | "combined"
+    | "all_combinations"
+    | "shared"
+    | Array<Array<string>>
+    | null;
   /**
    * Strategy
    *
@@ -6924,7 +6934,12 @@ export type UpdateDocumentRequest = {
    * New observation scoping for the document's memories, with the same values retain accepts (send 'combined' to scope by each memory's full tag set). Use it to move memories retained under one scoping to another — e.g. per-session documents to 'shared' — without re-extracting them. Memories whose resolved scopes change lose their observations and are re-consolidated; the rest keep theirs. Also becomes the scoping a later reprocess of the document uses.
    */
   observation_scopes?:
-    "per_tag" | "combined" | "all_combinations" | "shared" | Array<Array<string>> | null;
+    | "per_tag"
+    | "combined"
+    | "all_combinations"
+    | "shared"
+    | Array<Array<string>>
+    | null;
 };
 
 /**
@@ -7554,7 +7569,12 @@ export type ListMemoriesData = {
      * Time axis to filter and order by. `created_at` / `updated_at` = ingest and last-write time; `mentioned_at` / `occurred_start` / `occurred_end` = event time. Defaults to `created_at` when only `start_date`/`end_date` are given. Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.
      */
     time_field?:
-      "created_at" | "updated_at" | "mentioned_at" | "occurred_start" | "occurred_end" | null;
+      | "created_at"
+      | "updated_at"
+      | "mentioned_at"
+      | "occurred_start"
+      | "occurred_end"
+      | null;
     /**
      * Start Date
      *
