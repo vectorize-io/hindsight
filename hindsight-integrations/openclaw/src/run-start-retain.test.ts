@@ -120,6 +120,29 @@ describe("retain saves the whole run (#5569)", () => {
     expect(retained[0]).not.toContain("Old question");
   });
 
+  it("keeps the request when the run used tools (tool results are user-role messages)", async () => {
+    const { hooks, retained } = await loadPlugin();
+    const toolCall = {
+      role: "assistant",
+      content: [{ type: "tool_use", id: "t1", name: "exec", input: { cmd: "ls" } }],
+    };
+    const toolResult = {
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: "t1", content: "flights.txt" }],
+    };
+    await hooks.get("before_prompt_build")!(
+      { messages: [first], currentUserMessage: first.content },
+      ctx
+    );
+    await hooks.get("agent_end")!(
+      { success: true, messages: [first, toolCall, toolResult, answer] },
+      ctx
+    );
+
+    expect(retained).toHaveLength(1);
+    expect(retained[0]).toContain("Research flights to Lisbon");
+  });
+
   it("starts the next run where the previous one ended", async () => {
     const { hooks, retained } = await loadPlugin();
     const run1 = [first, progress];
