@@ -16,7 +16,7 @@
     "build": "NODE_ENV=production next build && npm run build:standalone",
     "build:standalone": "rm -rf standalone && SERVER_JS=$(find .next/standalone -path '*/node_modules' -prune -o -name 'server.js' -print | head -1) && test -n \"$SERVER_JS\" || (echo 'Error: server.js not found in .next/standalone - standalone build failed' && exit 1) && STANDALONE_ROOT=$(dirname \"$SERVER_JS\") && cp -r \"$STANDALONE_ROOT\" standalone && cp -r .next/standalone/node_modules standalone/node_modules && mkdir -p standalone/.next && cp -r .next/static standalone/.next/static && mkdir -p standalone/public && (cp -r public/* standalone/public/ 2>/dev/null || true)",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
     "i18n:check": "tsx scripts/find-untranslated.ts",
@@ -75,16 +75,12 @@
     "typescript": "^5.9.3"
   },
   "devDependencies": {
-    "@eslint/eslintrc": "^3.3.3",
     "@eslint/js": "^9.39.2",
     "@testing-library/react": "^16.3.2",
     "@vectorize-io/hindsight-client": "file:../hindsight-clients/typescript",
-    "eslint-plugin-react": "^7.37.5",
-    "eslint-plugin-react-hooks": "^7.0.1",
     "jsdom": "^27.4.0",
     "prettier": "^3.7.4",
     "tsx": "^4.22.3",
-    "typescript-eslint": "^8.50.0",
     "vitest": "^4.1.12"
   }
 }

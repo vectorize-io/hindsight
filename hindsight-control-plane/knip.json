@@ -9,8 +9,6 @@
   "project": ["src/**/*.{ts,tsx}"],
   "ignoreDependencies": [
     "eslint",
-    "eslint-config-next",
-    "@eslint/eslintrc",
     "autoprefixer",
     "tailwindcss-animate",
     "postcss-load-config",

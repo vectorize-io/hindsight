@@ -55,10 +55,10 @@ declare module 'cytoscape' {
   interface Core {
     add(elements: any): void;
     layout(options: any): any;
-    on(event: string, selector: string, handler: Function): void;
-    on(event: string, handler: Function): void;
-    off(event: string, handler?: Function): void;
-    removeListener(event: string, handler?: Function): void;
+    on(event: string, selector: string, handler: (...args: never[]) => unknown): void;
+    on(event: string, handler: (...args: never[]) => unknown): void;
+    off(event: string, handler?: (...args: never[]) => unknown): void;
+    removeListener(event: string, handler?: (...args: never[]) => unknown): void;
     destroy(): void;
     nodes(): any;
     edges(): any;
