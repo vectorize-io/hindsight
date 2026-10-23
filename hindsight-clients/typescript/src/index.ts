@@ -962,7 +962,11 @@ export class HindsightClient {
       consolidationStrategies?: Record<string, unknown>[];
       /** observation_scopes for retained items that send none ("combined" when unset); e.g. [["topic:*"]]. */
       defaultObservationScopes?:
-        "combined" | "per_tag" | "all_combinations" | "shared" | string[][];
+        | "combined"
+        | "per_tag"
+        | "all_combinations"
+        | "shared"
+        | string[][];
       /** Consolidate automatically after retain() rather than on demand. */
       enableAutoConsolidation?: boolean;
       /** When the server has a decision model, let it settle restatements, new facts and chatter before the consolidation LLM call. */
