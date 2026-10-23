@@ -90,8 +90,7 @@ _OBSERVATION_FIELDS = """- `id`: unique identifier — copy this exactly when is
 - `proof_count`: how many source facts this observation has already merged
 - `occurred_start` / `occurred_end`: the span of the events behind the observation — earliest start and latest end across its source facts
 - `mentioned_at`: the latest of the `mentioned_at` values of its source facts — the most recent point at which this observation was stated
-- `source_memories`: the supporting facts behind this observation. May be partial or absent for large observations — the count above remains the true total. Each entry carries the same `text` and temporal fields as a new fact, plus:
-  - `context`: optional surrounding context for that fact"""
+- `source_memories`: the supporting facts behind this observation. May be partial or absent for large observations — the count above remains the true total. Each entry carries the same `text` and temporal fields as a new fact."""
 
 # Stable description of the input shape. For the cached split path this lives in
 # the system prefix (build_consolidation_system_prompt) so it is not re-sent on
