@@ -12,6 +12,10 @@ spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.api.replicaCount }}
   {{- end }}
+  {{- with .Values.api.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "hindsight.api.selectorLabels" . | nindent 6 }}
@@ -30,6 +34,9 @@ spec:
       {{- if .Values.serviceAccount.create }}
       serviceAccountName: {{ include "hindsight.serviceAccountName" . }}
       {{- end }}
+      {{- if kindIs "bool" .Values.api.automountServiceAccountToken }}
+      automountServiceAccountToken: {{ .Values.api.automountServiceAccountToken }}
+      {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       {{- with .Values.api.extraInitContainers }}
@@ -42,6 +49,10 @@ spec:
           {{- toYaml .Values.securityContext | nindent 10 }}
         image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag | default .Values.version | default .Chart.AppVersion }}"
         imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+        {{- with .Values.api.command }}
+        command:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
         ports:
         - name: http
           containerPort: {{ .Values.api.service.targetPort }}
@@ -95,6 +106,10 @@ spec:
               name: {{ include "hindsight.secretName" $ }}
               key: {{ $key }}
         {{- end }}
+        {{- end }}
+        {{- with .Values.api.startupProbe }}
+        startupProbe:
+          {{- toYaml . | nindent 10 }}
         {{- end }}
         livenessProbe:
           {{- toYaml .Values.api.livenessProbe | nindent 10 }}

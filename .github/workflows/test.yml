@@ -1800,6 +1800,21 @@ jobs:
         # Enabled without a Gateway to attach to is a render error.
         if helm template rel helm/hindsight --set gatewayApi.enabled=true >/dev/null 2>&1; then exit 1; fi
 
+    - name: Render api command, startupProbe, strategy and automountServiceAccountToken
+      run: |
+        # Unset by default: the default render has none of them.
+        out=$(helm template rel helm/hindsight -s templates/api-deployment.yaml)
+        if grep -qE '^ +(command|startupProbe|strategy|automountServiceAccountToken):' <<<"$out"; then exit 1; fi
+        out=$(helm template rel helm/hindsight -s templates/api-deployment.yaml \
+          --set api.strategy.type=Recreate --set api.automountServiceAccountToken=false \
+          --set-json 'api.command=["sh","-c","/app/start-all.sh"]' \
+          --set-json 'api.startupProbe={"httpGet":{"path":"/health/live","port":8888}}')
+        echo "$out"
+        grep -q 'type: Recreate' <<<"$out"
+        grep -q 'automountServiceAccountToken: false' <<<"$out"
+        grep -q '/app/start-all.sh' <<<"$out"
+        grep -q 'startupProbe:' <<<"$out"
+
   test-standalone-start-script:
     needs: [detect-changes]
     if: >-

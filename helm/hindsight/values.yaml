@@ -62,6 +62,34 @@ api:
     timeoutSeconds: 3
     failureThreshold: 3
 
+  # Startup probe, unset by default. Liveness and readiness wait until it
+  # passes, so a slow first start (model download, migrations) is not killed.
+  # e.g.
+  # startupProbe:
+  #   httpGet:
+  #     path: /health/live
+  #     port: 8888
+  #   periodSeconds: 10
+  #   failureThreshold: 60
+  startupProbe: {}
+
+  # Container command, unset by default (the image's own start script runs).
+  # e.g. pipe the server output through a log filter:
+  # command: ["sh", "-c", "/app/start-all.sh 2>&1 | my-log-filter"]
+  command: []
+
+  # Deployment strategy, unset by default (Kubernetes RollingUpdate).
+  # Use Recreate for a single replica that must never overlap with its
+  # replacement, e.g. one that mounts a ReadWriteOnce volume.
+  # strategy:
+  #   type: Recreate
+  strategy: {}
+
+  # Mount the service account token in the api pod. Unset by default
+  # (Kubernetes mounts it). The api never calls the Kubernetes API, so
+  # hardened clusters can set false.
+  # automountServiceAccountToken: false
+
   # Pod disruption budget
   podDisruptionBudget:
     enabled: false
