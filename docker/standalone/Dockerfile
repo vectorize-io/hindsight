@@ -119,7 +119,18 @@ COPY package.json package-lock.json ./
 COPY hindsight-control-plane/package.json ./hindsight-control-plane/
 # Only the SDK manifest here, so an SDK code change doesn't rerun the install.
 COPY hindsight-clients/typescript/package.json ./hindsight-clients/typescript/
-RUN npm ci --ignore-scripts -w @vectorize-io/hindsight-control-plane
+# npm skips an optional dependency it fails to download without failing the
+# install, so a network blip can leave out a platform native binding and
+# `next build` dies with "Failed to load native binding" (#5975). Load the
+# bindings the build needs and reinstall if one is missing. (next fetches its
+# own @next/swc binary when it is missing, so it isn't listed.)
+RUN for attempt in 1 2 3; do \
+      npm ci --ignore-scripts -w @vectorize-io/hindsight-control-plane \
+      && node -e 'for (const m of ["lightningcss", "@tailwindcss/oxide"]) require(m); require(require.resolve("@swc/core", { paths: ["node_modules/next-intl"] }))' \
+      && break; \
+      [ "$attempt" -lt 3 ] || exit 1; \
+      echo "native bindings missing after npm ci, retrying ($attempt)"; \
+    done
 
 # Built SDK (the workspace symlink in node_modules points here), then the
 # Control Plane source (excluding node_modules via .dockerignore)

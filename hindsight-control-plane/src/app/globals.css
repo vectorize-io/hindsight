@@ -1,4 +1,4 @@
-/* Inter and JetBrains Mono are loaded via next/font/google in
+/* Inter and JetBrains Mono are loaded via next/font/local in
    src/app/[locale]/layout.tsx. The CSS variables --font-sans and
    --font-mono are set on <html> and consumed below in :root. */
 @import "tailwindcss";
@@ -96,7 +96,7 @@
   --sidebar-accent-foreground: #0D1117;
   --sidebar-border: rgba(0, 0, 0, 0.05);
   --sidebar-ring: #0074D9;
-  /* --font-sans and --font-mono are set on <html> by next/font/google in
+  /* --font-sans and --font-mono are set on <html> by next/font/local in
      [locale]/layout.tsx. :root inherits them; we intentionally do NOT
      redeclare them here so the next/font value is what utilities resolve to.
      A separate --font-fallback chain is provided for any future use. */

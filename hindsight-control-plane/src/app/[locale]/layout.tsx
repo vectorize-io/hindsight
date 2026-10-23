@@ -1,4 +1,4 @@
-import { Inter, JetBrains_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import { NextIntlClientProvider, hasLocale } from "next-intl";
 import { setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
@@ -12,16 +12,19 @@ import { Toaster } from "@/components/ui/sonner";
 // before paint. The Google Fonts @import this replaces loaded weights lazily,
 // which made semibold headings render in the system fallback until the weight
 // arrived. --font-sans / --font-mono are consumed by globals.css.
-const inter = Inter({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+// The files are the Google Fonts latin variable subsets, checked in so the
+// build never downloads them (next/font/google did, and failed CI when the
+// fetch flaked, #5765).
+const inter = localFont({
+  src: "../fonts/inter-latin.woff2",
+  weight: "400 700",
   variable: "--font-sans",
   display: "swap",
 });
 
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500"],
+const jetbrainsMono = localFont({
+  src: "../fonts/jetbrains-mono-latin.woff2",
+  weight: "400 500",
   variable: "--font-mono",
   display: "swap",
 });
