@@ -39,16 +39,11 @@ jobs:
       integrations-agent-framework: ${{ steps.filter.outputs.integrations-agent-framework }}
       integrations-composio: ${{ steps.filter.outputs.integrations-composio }}
       integrations-chat: ${{ steps.filter.outputs.integrations-chat }}
-      integrations-claude-code: ${{ steps.filter.outputs.integrations-claude-code }}
       integrations-coding-agents: ${{ steps.filter.outputs.integrations-coding-agents }}
-      integrations-cline: ${{ steps.filter.outputs.integrations-cline }}
-      integrations-codex: ${{ steps.filter.outputs.integrations-codex }}
       integrations-github-copilot: ${{ steps.filter.outputs.integrations-github-copilot }}
       integrations-continue: ${{ steps.filter.outputs.integrations-continue }}
-      integrations-cursor-cli: ${{ steps.filter.outputs.integrations-cursor-cli }}
       integrations-zcode: ${{ steps.filter.outputs.integrations-zcode }}
       integrations-agent-plugin: ${{ steps.filter.outputs.integrations-agent-plugin }}
-      integrations-copilot-cli: ${{ steps.filter.outputs.integrations-copilot-cli }}
       extensions-supabase-tenant: ${{ steps.filter.outputs.extensions-supabase-tenant }}
       extensions-static-keys-tenant: ${{ steps.filter.outputs.extensions-static-keys-tenant }}
       extensions-bank-llm-routing: ${{ steps.filter.outputs.extensions-bank-llm-routing }}
@@ -62,7 +57,6 @@ jobs:
       integrations-langgraph: ${{ steps.filter.outputs.integrations-langgraph }}
       integrations-llamaindex: ${{ steps.filter.outputs.integrations-llamaindex }}
       integrations-paperclip: ${{ steps.filter.outputs.integrations-paperclip }}
-      integrations-opencode: ${{ steps.filter.outputs.integrations-opencode }}
       integrations-eve: ${{ steps.filter.outputs.integrations-eve }}
       integrations-cursor: ${{ steps.filter.outputs.integrations-cursor }}
       integrations-zed: ${{ steps.filter.outputs.integrations-zed }}
@@ -198,22 +192,12 @@ jobs:
             - 'hindsight-integrations/composio/**'
           integrations-chat:
             - 'hindsight-integrations/chat/**'
-          integrations-claude-code:
-            - 'hindsight-integrations/claude-code/**'
           integrations-coding-agents:
             - 'hindsight-integrations/coding-agents/**'
-          integrations-cline:
-            - 'hindsight-integrations/cline/**'
-          integrations-codex:
-            - 'hindsight-integrations/codex/**'
           integrations-github-copilot:
             - 'hindsight-integrations/github-copilot/**'
           integrations-continue:
             - 'hindsight-integrations/continue/**'
-          integrations-cursor-cli:
-            - 'hindsight-integrations/cursor-cli/**'
-          integrations-copilot-cli:
-            - 'hindsight-integrations/copilot-cli/**'
           extensions-supabase-tenant:
             - 'hindsight-extensions/supabase-tenant/**'
           extensions-static-keys-tenant:
@@ -242,8 +226,6 @@ jobs:
             - 'hindsight-integrations/haystack/**'
           integrations-paperclip:
             - 'hindsight-integrations/paperclip/**'
-          integrations-opencode:
-            - 'hindsight-integrations/opencode/**'
           integrations-eve:
             - 'hindsight-integrations/eve/**'
           integrations-cursor:
@@ -638,32 +620,6 @@ jobs:
       working-directory: ./hindsight-integrations/coding-agents
       run: npm run build
 
-  test-claude-code-integration:
-    needs: [detect-changes]
-    if: >-
-      (github.event_name == 'workflow_dispatch' ||
-      needs.detect-changes.outputs.integrations-claude-code == 'true' ||
-      needs.detect-changes.outputs.ci == 'true')
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-    - uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha || '' }}
-
-    - name: Set up Python
-      uses: actions/setup-python@v6
-      with:
-        python-version: '3.11'
-
-    - name: Install pytest
-      run: pip install pytest
-
-    - name: Run tests
-      working-directory: ./hindsight-integrations/claude-code
-      run: python -m pytest tests/ -v
-
   test-cursor-integration:
     needs: [detect-changes]
     if: >-
@@ -742,43 +698,6 @@ jobs:
       working-directory: ./hindsight-integrations/omo
       run: python -m pytest tests/ -v
 
-  test-cline-integration:
-    needs: [detect-changes]
-    if: >-
-      (github.event_name == 'workflow_dispatch' ||
-      needs.detect-changes.outputs.integrations-cline == 'true' ||
-      needs.detect-changes.outputs.ci == 'true')
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-    - uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha || '' }}
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@v7
-      with:
-        enable-cache: true
-        prune-cache: false
-
-    - name: Set up Python
-      uses: actions/setup-python@v6
-      with:
-        python-version-file: ".python-version"
-
-    - name: Build cline integration
-      working-directory: ./hindsight-integrations/cline
-      run: uv build
-
-    - name: Install dependencies
-      working-directory: ./hindsight-integrations/cline
-      run: uv sync --frozen
-
-    - name: Run tests
-      working-directory: ./hindsight-integrations/cline
-      run: uv run pytest tests -v
-
   test-github-copilot-integration:
     needs: [detect-changes]
     if: >-
@@ -817,69 +736,6 @@ jobs:
       # PR CI runs only the deterministic bucket; the real-LLM E2E bucket
       # (requires_real_llm) needs a live Hindsight server and runs separately.
       run: uv run pytest tests -v -m "not requires_real_llm"
-
-  test-codex-integration:
-    needs: [detect-changes]
-    if: >-
-      (github.event_name == 'workflow_dispatch' ||
-      needs.detect-changes.outputs.integrations-codex == 'true' ||
-      needs.detect-changes.outputs.ci == 'true')
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-    - uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha || '' }}
-
-    - name: Set up Python
-      uses: actions/setup-python@v6
-      with:
-        python-version: '3.11'
-
-    - name: Install pytest
-      run: pip install pytest
-
-    - name: Run tests
-      working-directory: ./hindsight-integrations/codex
-      run: python -m pytest tests/ -v
-
-  test-cursor-cli-integration:
-    needs: [detect-changes]
-    if: >-
-      (github.event_name == 'workflow_dispatch' ||
-      needs.detect-changes.outputs.integrations-cursor-cli == 'true' ||
-      needs.detect-changes.outputs.ci == 'true')
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-    - uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha || '' }}
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@v7
-      with:
-        enable-cache: true
-        prune-cache: false
-
-    - name: Set up Python
-      uses: actions/setup-python@v6
-      with:
-        python-version-file: ".python-version"
-
-    - name: Build cursor-cli integration
-      working-directory: ./hindsight-integrations/cursor-cli
-      run: uv build
-
-    - name: Install dependencies
-      working-directory: ./hindsight-integrations/cursor-cli
-      run: uv sync --frozen
-
-    - name: Run tests
-      working-directory: ./hindsight-integrations/cursor-cli
-      run: uv run pytest tests -v
 
   test-zcode-integration:
     needs: [detect-changes]
@@ -1033,37 +889,6 @@ jobs:
 
     - name: Build
       working-directory: ./hindsight-integrations/eliza
-      run: npm run build
-
-  test-opencode-integration:
-    needs: [detect-changes]
-    if: >-
-      (github.event_name == 'workflow_dispatch' ||
-      needs.detect-changes.outputs.integrations-opencode == 'true' ||
-      needs.detect-changes.outputs.ci == 'true')
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-    - uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha || '' }}
-
-    - name: Set up Node.js
-      uses: actions/setup-node@v6
-      with:
-        node-version: '22'
-
-    - name: Install dependencies
-      working-directory: ./hindsight-integrations/opencode
-      run: npm ci
-
-    - name: Run tests
-      working-directory: ./hindsight-integrations/opencode
-      run: npm test
-
-    - name: Build
-      working-directory: ./hindsight-integrations/opencode
       run: npm run build
 
   test-eve-integration:
@@ -1411,7 +1236,7 @@ jobs:
       with:
         python-version-file: ".python-version"
 
-    # The plugin is manifests and skills — no Python package of its own, like claude-code.
+    # The plugin is manifests and skills — no Python package of its own.
     - name: Install pytest
       run: pip install pytest pydantic
 
@@ -4055,43 +3880,6 @@ jobs:
       # (requires_real_llm) needs a live Hindsight server and runs separately.
       run: uv run pytest tests -v -m "not requires_real_llm"
 
-  test-copilot-cli-integration:
-    needs: [detect-changes]
-    if: >-
-      (github.event_name == 'workflow_dispatch' ||
-      needs.detect-changes.outputs.integrations-copilot-cli == 'true' ||
-      needs.detect-changes.outputs.ci == 'true')
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-    - uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha || '' }}
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@v7
-      with:
-        enable-cache: true
-        prune-cache: false
-
-    - name: Set up Python
-      uses: actions/setup-python@v6
-      with:
-        python-version-file: ".python-version"
-
-    - name: Build copilot-cli integration
-      working-directory: ./hindsight-integrations/copilot-cli
-      run: uv build
-
-    - name: Install dependencies
-      working-directory: ./hindsight-integrations/copilot-cli
-      run: uv sync --frozen
-
-    - name: Run tests
-      working-directory: ./hindsight-integrations/copilot-cli
-      run: uv run pytest tests -v
-
   test-extension-supabase-tenant:
     needs: [detect-changes]
     if: >-
@@ -5859,17 +5647,12 @@ jobs:
       - build-typescript-client
       - build-openclaw-integration
       - smoke-openclaw-install
-      - test-claude-code-integration
       - test-cursor-integration
-      - test-cline-integration
       - test-github-copilot-integration
-      - test-codex-integration
-      - test-cursor-cli-integration
       - test-zcode-integration
       - test-agent-plugin-integration
       - build-ai-sdk-integration
       - test-ai-sdk-integration-deno
-      - test-opencode-integration
       - test-eve-integration
       - test-omo-integration
       - test-cloudflare-oauth-proxy-integration
