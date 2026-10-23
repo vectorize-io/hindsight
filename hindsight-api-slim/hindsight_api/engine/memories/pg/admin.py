@@ -219,3 +219,34 @@ async def sweep_orphan_observations(
             bank_id=bank_id,
             fact_ids=missing,
         )
+
+
+async def rebuild_observation_search_vectors(
+    *, conn: Any, fq_table_explicit: Callable[..., str], schema: str, bank_id: str, dry_run: bool
+) -> int:
+    """Re-tokenize one bank's observation ``search_vector`` from its current text (#5299).
+
+    Under VectorChord that column is a plain ``bm25vector`` nothing refreshes on its own, and
+    before #5299 an observation rewrite or dedup fold changed the text without re-tokenizing
+    it, so keyword search kept matching the old wording. Every other backend either rebuilt it
+    inline all along (native) or keeps no such column, so this is VectorChord-only. A
+    ``bm25vector`` cannot be compared, so the rows that went stale cannot be told apart from
+    the rest: every observation is rebuilt. Returns how many were (would be, dry run).
+    """
+    from ....config import get_config  # noqa: PLC0415
+    from .consolidation import observation_search_vector_expr  # noqa: PLC0415
+
+    if get_config().text_search_extension != "vchord":
+        return 0
+    mu = fq_table_explicit("memory_units", schema)
+    if dry_run:
+        return await conn.fetchval(
+            f"SELECT count(*) FROM {mu} WHERE bank_id = $1 AND fact_type = 'observation'",  # noqa: S608
+            bank_id,
+        )
+    result = await conn.execute(
+        f"UPDATE {mu} SET search_vector = {observation_search_vector_expr('text')} "  # noqa: S608
+        "WHERE bank_id = $1 AND fact_type = 'observation'",
+        bank_id,
+    )
+    return int(result.split()[-1])

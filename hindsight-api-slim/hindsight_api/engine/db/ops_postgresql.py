@@ -26,7 +26,7 @@ def pg_search_vector_expr(
     config,
     *,
     text_col: str = "text",
-    context_col: str = "context",
+    context_col: str | None = "context",
     signals_col: str | None = "text_signals",
     native_inline: bool = True,
 ) -> str | None:
@@ -41,8 +41,9 @@ def pg_search_vector_expr(
     nothing to build.
 
     The ``*_col`` arguments are the SQL for each text source (a column name or a
-    bind placeholder); pass ``signals_col=None`` for a two-column table like
-    ``mental_models`` (name + content). Pass ``native_inline=False`` when the
+    bind placeholder); pass ``None`` to leave a source out — ``signals_col=None`` for a
+    two-column table like ``mental_models`` (name + content), both for an observation,
+    whose ``search_vector`` covers its text alone. Pass ``native_inline=False`` when the
     table's native ``search_vector`` is a GENERATED column that populates itself
     (``mental_models``) — writing it inline would fail; only vchord's plain
     bm25vector column then needs an explicit value.
@@ -50,7 +51,7 @@ def pg_search_vector_expr(
     ``text_search_extension_native_language`` is validated as a PG identifier in
     ``HindsightConfig.validate()``, so embedding it as a SQL literal is safe.
     """
-    cols = [text_col, context_col] + ([signals_col] if signals_col is not None else [])
+    cols = [c for c in (text_col, context_col, signals_col) if c is not None]
     combined = " || ' ' || ".join(f"COALESCE({c}, '')" for c in cols)
     if config.text_search_extension == "vchord":
         return f"tokenize({combined}, 'llmlingua2')::bm25_catalog.bm25vector"

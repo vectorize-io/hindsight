@@ -19,23 +19,32 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from ...consolidation.consolidator import _TemporalBounds
 
 
-def _native_search_vector_update(config, param: str) -> str:
-    """UPDATE-clause fragment that repopulates ``search_vector`` inline, or ''
-    when the backend does not maintain a native tsvector column that way.
+def _search_vector_clause(param: str) -> str:
+    """UPDATE-clause fragment that rebuilds ``search_vector`` from the text bound at ``param``,
+    or '' when the backend keeps no inline column to rebuild.
 
-    ``to_tsvector(...)::regconfig`` is PostgreSQL-only. On Oracle ``search_vector``
-    is a CLOB maintained by Oracle's own text index rather than an inline
-    tsvector, so emit nothing there (mirrors the insert path, which gates
-    ``search_vector`` on the PG-only ``pg_search_vector_expr``). Without this
-    guard the PG expression reaches Oracle and fails with DPY-4010 (the
-    ``::regconfig`` cast becomes an unbound ``:REGCONFIG`` placeholder).
+    Every observation write that changes the text must rebuild it the way the insert built it,
+    or keyword search keeps matching the old wording (#5299 — VectorChord's ``bm25vector`` is a
+    plain column nothing refreshes on its own). The per-backend expression comes from
+    ``pg_search_vector_expr``, the one the ``memory_units`` and ``mental_models`` writes use.
+    On Oracle ``search_vector`` is a CLOB kept by Oracle's own text index, and the PG-only
+    ``::regconfig`` cast would reach it as an unbound placeholder (DPY-4010, #3021).
     """
+    expr = observation_search_vector_expr(param)
+    return f",\n            search_vector = {expr}" if expr else ""
+
+
+def observation_search_vector_expr(param: str) -> str | None:
+    """The ``search_vector`` value for an observation whose text is ``param``; None to leave it out.
+
+    Shared with repair-bank's rebuild (pg/admin.py), so the repair builds exactly what the writes do.
+    """
+    from ...db.ops_postgresql import pg_search_vector_expr  # noqa: PLC0415
     from ...schema import _is_oracle  # noqa: PLC0415
 
-    if config.text_search_extension != "native" or _is_oracle():
-        return ""
-    lang = config.text_search_extension_native_language
-    return f",\n            search_vector = to_tsvector('{lang}'::regconfig, COALESCE({param}, ''))"
+    if _is_oracle():
+        return None
+    return pg_search_vector_expr(get_config(), text_col=param, context_col=None, signals_col=None)
 
 
 async def lock_live_memory_ids(
@@ -154,11 +163,9 @@ async def fold_sources_into_observation(
     stays representative and avoids a re-embed + a dialect-specific vector UPDATE). False when
     the row vanished or was rewritten since ``expected_text`` was read.
     """
-    # Oracle-safe: _native_search_vector_update emits the to_tsvector clause only for a
-    # native PG tsvector column, "" otherwise (see #3021 — the raw ::regconfig cast
-    # breaks Oracle). RETURNING-gate on the twin's probe-time text so a concurrent
+    # RETURNING-gate on the twin's probe-time text so a concurrent
     # survivor rewrite during the connection-free LLM window can't be clobbered.
-    search_vector_clause = _native_search_vector_update(get_config(), "$1")
+    search_vector_clause = _search_vector_clause("$1")
     folded = await conn.fetchval(
         f"""
             UPDATE {fq_table("memory_units")}
@@ -225,10 +232,9 @@ async def fold_observation_into_twin(
     live_u_sources = [mid for mid in sources if str(mid) in live]
     if not live_u_sources:
         return False
-    # Oracle-safe search_vector clause (#3021): "" unless a native PG tsvector column.
     # RETURNING-gate on both rows' probe-time text so a survivor/updated rewrite during
     # the connection-free LLM window can't be clobbered or fold a stale row.
-    search_vector_clause = _native_search_vector_update(get_config(), "$1")
+    search_vector_clause = _search_vector_clause("$1")
     folded = await conn.fetchval(
         f"""
             UPDATE {fq_table("memory_units")} t
@@ -272,7 +278,7 @@ async def rewrite_observation(
     bounds: _TemporalBounds,
 ) -> bool:
     """Rewrite an observation in place, widening its dates by ``bounds``. False if the row is gone."""
-    search_vector_clause = _native_search_vector_update(get_config(), "$1")
+    search_vector_clause = _search_vector_clause("$1")
     # Unlike the dedup folds this statement also runs on Oracle, where LEAST/GREATEST
     # return NULL as soon as ANY argument is NULL (PostgreSQL ignores NULL arguments).
     # The inner COALESCE covers a NULL *parameter*; the outer one covers a NULL
@@ -328,45 +334,17 @@ async def insert_observation(
     mentioned_at: datetime | None,
 ) -> str:
     """Insert a new observation as a `memory_units` row (and its Oracle source postings)."""
-    # Query varies based on text search backend.
-    from ...schema import _is_oracle  # noqa: PLC0415
-
-    config = get_config()
-    if config.text_search_extension == "vchord":
-        # VectorChord: manually tokenize and insert search_vector
-        query = f"""
-                INSERT INTO {fq_table("memory_units")} (
-                    id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids,
-                    tags, event_date, occurred_start, occurred_end, mentioned_at, search_vector
-                )
-                VALUES ($1, $2, $3, 'observation', $4::vector, $11, $5, $6, $7, $8, $9, $10,
-                        tokenize($3, 'llmlingua2')::bm25_catalog.bm25vector)
-                RETURNING id
-            """
-    elif config.text_search_extension == "native" and not _is_oracle():
-        # Native (PostgreSQL): search_vector is populated with to_tsvector()
-        # using the configured native language dictionary, matching the batch
-        # insert path in ops_postgresql.insert_facts_batch. On Oracle this falls
-        # through to the no-search_vector branch below (Oracle maintains its text
-        # index separately; to_tsvector/::regconfig is PG-only — see #3021).
-        query = f"""
-                INSERT INTO {fq_table("memory_units")} (
-                    id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids,
-                    tags, event_date, occurred_start, occurred_end, mentioned_at, search_vector
-                )
-                VALUES ($1, $2, $3, 'observation', $4::vector, $11, $5, $6, $7, $8, $9, $10,
-                        to_tsvector('{config.text_search_extension_native_language}'::regconfig, COALESCE($3, '')))
-                RETURNING id
-            """
-    else:  # pg_textsearch, pgroonga, pg_search, and Oracle: base text columns / separate index
-        query = f"""
-                INSERT INTO {fq_table("memory_units")} (
-                    id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids,
-                    tags, event_date, occurred_start, occurred_end, mentioned_at
-                )
-                VALUES ($1, $2, $3, 'observation', $4::vector, $11, $5, $6, $7, $8, $9, $10)
-                RETURNING id
-            """
+    # pg_textsearch, pgroonga, pg_search and Oracle index the text column itself: no search_vector.
+    sv_expr = observation_search_vector_expr("$3")
+    sv_col, sv_val = (", search_vector", f", {sv_expr}") if sv_expr else ("", "")
+    query = f"""
+            INSERT INTO {fq_table("memory_units")} (
+                id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids,
+                tags, event_date, occurred_start, occurred_end, mentioned_at{sv_col}
+            )
+            VALUES ($1, $2, $3, 'observation', $4::vector, $11, $5, $6, $7, $8, $9, $10{sv_val})
+            RETURNING id
+        """
 
     row = await conn.fetchrow(
         query,

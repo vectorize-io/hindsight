@@ -715,6 +715,9 @@ class RepairSweep:
     # Observations removed because a source memory they cite no longer exists (#5937);
     # in a dry run, how many would be.
     orphan_observations: int = 0
+    # Observations whose keyword index was re-tokenized from their text (#5299, VectorChord only);
+    # in a dry run, how many would be.
+    rebuilt_search_vectors: int = 0
     # Counted apart from ``banks``, which stays empty on a backend without per-bank indexes.
     banks_scanned: int = 0
 
@@ -746,6 +749,7 @@ async def _run_repair_bank(
     results: list[BankIndexResult] = []
     skipped_schemas: list[str] = []
     orphan_observations = 0
+    rebuilt_search_vectors = 0
     banks_scanned = 0
     try:
         for target_schema in schemas:
@@ -764,6 +768,7 @@ async def _run_repair_bank(
             bank_ids: list[str] = []
             schema_results: list[BankIndexResult] = []
             schema_orphans = 0
+            schema_rebuilt = 0
             schema_banks_done = 0
             try:
                 bank_ids = [bank_id] if bank_id else await list_bank_ids(conn, target_schema)
@@ -775,10 +780,15 @@ async def _run_repair_bank(
                     schema_orphans += await pg_store.admin_sweep_orphan_observations(
                         conn=conn, schema=target_schema, bank_id=bid, dry_run=dry_run
                     )
+                    # After the sweep, so observations it just removed are not re-tokenized.
+                    schema_rebuilt += await pg_store.admin_rebuild_observation_search_vectors(
+                        conn=conn, schema=target_schema, bank_id=bid, dry_run=dry_run
+                    )
                     schema_banks_done += 1
             except Exception as exc:  # noqa: BLE001 — one bad schema must not abort the sweep
                 results.extend(schema_results)
                 orphan_observations += schema_orphans
+                rebuilt_search_vectors += schema_rebuilt
                 banks_scanned += schema_banks_done
                 done = f", {schema_banks_done} of {len(bank_ids)} bank(s) done" if schema_banks_done else ""
                 typer.echo(f"  schema '{target_schema}': skipped ({exc}){done}", err=True)
@@ -802,6 +812,7 @@ async def _run_repair_bank(
                 continue
             results.extend(schema_results)
             orphan_observations += schema_orphans
+            rebuilt_search_vectors += schema_rebuilt
             banks_scanned += schema_banks_done
             # Only in --all mode: an index whose bank row is gone is unreachable
             # from every bank-scoped path, so this is the one place that can collect
@@ -835,12 +846,14 @@ async def _run_repair_bank(
                 f"{sum(r.skipped for r in schema_results)} to-create (dry-run), "
                 f"{sum(r.would_drop for r in schema_results)} to-drop (dry-run), "
                 f"{sum(r.failed for r in schema_results)} failed, "
-                f"{schema_orphans} orphan observation(s) {'to remove (dry-run)' if dry_run else 'removed'}"
+                f"{schema_orphans} orphan observation(s) {'to remove (dry-run)' if dry_run else 'removed'}, "
+                f"{schema_rebuilt} observation keyword index(es) {'to rebuild (dry-run)' if dry_run else 'rebuilt'}"
             )
         return RepairSweep(
             banks=results,
             skipped_schemas=skipped_schemas,
             orphan_observations=orphan_observations,
+            rebuilt_search_vectors=rebuilt_search_vectors,
             banks_scanned=banks_scanned,
         )
     finally:
@@ -872,13 +885,19 @@ def repair_bank(
         help="Report what would be repaired without creating, dropping or deleting anything.",
     ),
 ):
-    """Repair a bank's derived state: vector index coverage, and orphan observations.
+    """Repair a bank's derived state: vector index coverage, orphan observations, and (under
+    VectorChord) the observations' keyword index.
 
     Orphan observations cite a source memory that no longer exists. Every delete
     path removes them today, but older releases leaked some (#5937); they stay
     recallable and export skips them. Each one is deleted and its surviving
     sources are requeued, the same rule a live delete applies; they are
     re-consolidated on the bank's next consolidation run.
+
+    Under VectorChord, an observation's keyword index is re-tokenized from its
+    current text. Before #5299 a consolidation rewrite or merge changed the text
+    without it, so keyword recall kept matching the old wording. Every
+    observation is rebuilt, since a stale one cannot be told apart from the rest.
 
     With HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS at its default of 0 every bank is
     owed all three indexes from the moment it exists, and this rebuilds whatever
@@ -955,7 +974,9 @@ def repair_bank(
         f"{total_present} already present, {total_created} created, {total_dropped} dropped, "
         f"{total_skipped} to-create (dry-run), {total_would_drop} to-drop (dry-run), "
         f"{total_failed} failed, "
-        f"{sweep.orphan_observations} orphan observation(s) {'to remove (dry-run)' if dry_run else 'removed'}"
+        f"{sweep.orphan_observations} orphan observation(s) {'to remove (dry-run)' if dry_run else 'removed'}, "
+        f"{sweep.rebuilt_search_vectors} observation keyword index(es) "
+        f"{'to rebuild (dry-run)' if dry_run else 'rebuilt'}"
     )
     # Both are reported before either exits. They are independent — a sweep can have
     # failed builds in one schema and be unable to look at another — and raising on

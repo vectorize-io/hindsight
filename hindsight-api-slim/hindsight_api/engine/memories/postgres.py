@@ -1835,5 +1835,11 @@ class PostgresMemories(MemoriesExtension):
             dry_run=dry_run,
         )
 
+    async def admin_rebuild_observation_search_vectors(self, *, conn, schema: str, bank_id: str, dry_run: bool) -> int:
+        """Re-tokenize the bank's observation keyword index from its text (repair-bank); how many."""
+        return await pg_admin.rebuild_observation_search_vectors(
+            conn=conn, fq_table_explicit=fq_store_table_explicit, schema=schema, bank_id=bank_id, dry_run=dry_run
+        )
+
 
 __all__ = ["PostgresMemories"]
