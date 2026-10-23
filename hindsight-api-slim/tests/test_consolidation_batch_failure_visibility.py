@@ -335,3 +335,53 @@ async def test_action_citing_no_batch_fact_is_counted_not_silent(memory: MemoryE
     finally:
         memory._consolidation_llm_config = original_llm
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_action_with_empty_text_is_dropped_not_embedded(memory: MemoryEngine, request_context):
+    """A create or update whose text is empty is dropped. Sent to the embedder, it fails the
+    whole batch on providers that reject empty input (OpenAI-compatible ones do)."""
+    bank_id = f"test-empty-obs-{uuid.uuid4().hex[:8]}"
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+    original_llm = memory._consolidation_llm_config
+    try:
+        async with memory._pool.acquire() as conn:
+            for text in ("Erin likes tea", "Erin bikes daily"):
+                await _insert_memory(conn, bank_id, text, ["user:erin"])
+
+        def callback(messages, scope):
+            if scope != "consolidation":
+                return _ConsolidationBatchResponse()
+            prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
+            fact_ids = re.findall(r"\[([0-9a-f-]{36})\]", prompt)
+            return _ConsolidationBatchResponse(
+                creates=[
+                    _CreateAction(text="Erin likes tea", source_fact_ids=[fact_ids[0]]),
+                    _CreateAction(text="  ", source_fact_ids=[fact_ids[-1]]),
+                ]
+            )
+
+        embedded: list[str] = []
+        real_embed = consolidator_module.embedding_utils.generate_embeddings_batch
+
+        async def strict_embed(backend, texts, *args, **kwargs):
+            embedded.extend(texts)
+            if any(not t.strip() for t in texts):
+                raise RuntimeError("input must be a non-empty string")
+            return await real_embed(backend, texts, *args, **kwargs)
+
+        _install_llm(memory, callback)
+        with (
+            _override_config(memory, consolidation_llm_batch_size=2, consolidation_llm_parallelism=1),
+            patch.object(memory, "submit_async_consolidation"),
+            patch.object(consolidator_module.embedding_utils, "generate_embeddings_batch", strict_embed),
+        ):
+            result = await run_consolidation_job(memory_engine=memory, bank_id=bank_id, request_context=request_context)
+
+        assert result["observations_created"] == 1
+        assert result["llm_batch_failures"] == 0
+        assert all(t.strip() for t in embedded)
+    finally:
+        memory._consolidation_llm_config = original_llm
+        await memory.delete_bank(bank_id, request_context=request_context)
