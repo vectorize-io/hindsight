@@ -356,7 +356,9 @@ A Cordis plugin row in `$DSH_HOME/cordis.patch.yml` (`~/.dsh` by default), which
 composes — native tools, no MCP needed. Two dsh-specific notes: one dsh process serves **several
 repositories** (its Web UI opens each session in whatever directory you pick), so the bank is
 resolved per session workspace rather than once per process; and dsh has no plugin-facing notice
-channel, so the seed line goes to the plugin log rather than the UI. Everything model-facing —
+channel, so the seed line goes to the plugin log rather than the UI. A **forked** session saves only
+the turns it adds after the fork — the part it inherited is already in the parent's conversation.
+Everything model-facing —
 recalled memory, the knowledge preamble, the `hindsight_*` tools — is unaffected. If you prefer the
 published-package route, `dsh plugin --profile web add @vectorize-io/hindsight-coding-agents` works
 too: the package ships the profile patch layer, so nothing else needs editing. Either route gets the
@@ -1009,6 +1011,12 @@ Coding memory is **per repository**. Resolution order for the working directory:
 
 The default `"coding-agent::{gitProject}"` is **harness-neutral**, so opencode, Claude Code, and Codex
 all share one memory per repo — use `"{harness}-{gitProject}"` to split per agent instead.
+
+The bank is resolved on every turn from where the agent is working. A session that moves into a
+directory with a different bank (say, `cd` across a `mapPathToBank` prefix) **follows the folder from
+that turn on**: the new bank gets the turns from the move onward, never the ones already saved
+elsewhere, and going back appends to the conversation the first bank already holds. Each move is
+logged as a warning in `plugin.log`.
 
 ### Recording where a memory came from
 

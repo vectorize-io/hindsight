@@ -561,6 +561,12 @@ Coding memory is **per repository**. Resolution order for the working directory:
 The default `"coding-agent::{gitProject}"` is **harness-neutral**, so opencode, Claude Code, and Codex
 all share one memory per repo — use `"{harness}-{gitProject}"` to split per agent instead.
 
+The bank is resolved on every turn from where the agent is working. A session that moves into a
+directory with a different bank (say, `cd` across a `mapPathToBank` prefix) **follows the folder from
+that turn on**: the new bank gets the turns from the move onward, never the ones already saved
+elsewhere, and going back appends to the conversation the first bank already holds. Each move is
+logged as a warning in `plugin.log`.
+
 ### Recording where a memory came from
 
 With a bank per repo, the bank _is_ the answer to "where did this come from". On a deliberately

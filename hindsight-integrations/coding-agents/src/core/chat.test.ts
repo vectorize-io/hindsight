@@ -10,6 +10,7 @@ import {
   retainLiveSession,
   type TransportTurn,
 } from "./chat";
+import { log } from "./log";
 import { PENDING_MAX_AGE_MS, memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
 
 describe("renderSessionJsonl", () => {
@@ -568,24 +569,80 @@ describe("retainLiveSession — incremental write-back", () => {
     expect(cursors.read("sess-b")?.turns).toBe(4);
   });
 
-  it("replaces rather than appends when the session moved to another bank", async () => {
-    const sent: { bank: string; mode: string }[] = [];
+  /** Clients per bank recording what each one was sent: the mode and the turns it carried. */
+  const bankClients = () => {
+    const sent: { bank: string; mode: string; contents: string[] }[] = [];
     const mk = (bank: string) =>
       ({
         bank,
         supportsAppendRetain: async () => true,
-        retain: vi.fn(async (_c: string, ...rest: unknown[]) => {
-          sent.push({ bank, mode: (rest[4] as { updateMode?: string }).updateMode ?? "replace" });
+        retain: vi.fn(async (content: string, ...rest: unknown[]) => {
+          sent.push({
+            bank,
+            mode: (rest[4] as { updateMode?: string }).updateMode ?? "replace",
+            contents: content
+              .split("\n")
+              .map((line) => (JSON.parse(line) as TransportTurn).content)
+              .filter((c) => c.startsWith("turn")),
+          });
         }),
       }) as unknown as HindsightClient;
+    return { sent, mk };
+  };
+
+  it("starts the new bank's document at the move, not at the session's first turn (#5812)", async () => {
+    const { sent, mk } = bankClients();
     const cursors = memoryCursorStore();
+
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => {});
 
     await write(mk("repo-a"), turns(5), cursors);
     await write(mk("repo-b"), turns(8), cursors); // user cd'd into another repo mid-session
+    await write(mk("repo-b"), turns(9), cursors);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][2]).toMatchObject({ from: "repo-a", to: "repo-b", atTurn: 5 });
+    warn.mockRestore();
     expect(sent).toEqual([
-      { bank: "repo-a", mode: "replace" },
-      { bank: "repo-b", mode: "replace" },
+      {
+        bank: "repo-a",
+        mode: "replace",
+        contents: ["turn 0", "turn 1", "turn 2", "turn 3", "turn 4"],
+      },
+      // A fresh document in repo-b, holding only what happened since the move.
+      { bank: "repo-b", mode: "replace", contents: ["turn 5", "turn 6", "turn 7"] },
+      { bank: "repo-b", mode: "append", contents: ["turn 8"] },
     ]);
+  });
+
+  it("appends onto the old bank's document when the session comes back, and replaces from its own stretches only", async () => {
+    const { sent, mk } = bankClients();
+    const cursors = memoryCursorStore();
+
+    await write(mk("repo-a"), turns(2), cursors);
+    await write(mk("repo-b"), turns(4), cursors);
+    await write(mk("repo-a"), turns(6), cursors); // back: repo-a already holds turns 0-1
+    expect(sent.at(-1)).toEqual({ bank: "repo-a", mode: "append", contents: ["turn 4", "turn 5"] });
+
+    // A replace (here: the previous write was never confirmed) rebuilds repo-a from ITS stretches.
+    cursors.write("s1", { ...cursors.read("s1")!, dirty: true });
+    await write(mk("repo-a"), turns(7), cursors);
+    expect(sent.at(-1)).toEqual({
+      bank: "repo-a",
+      mode: "replace",
+      contents: ["turn 0", "turn 1", "turn 4", "turn 5", "turn 6"],
+    });
+  });
+
+  it("never replays the old bank's buffered appends into the new bank", async () => {
+    const { sent, mk } = bankClients();
+    const cursors = memoryCursorStore();
+    await write(mk("repo-a"), turns(2), cursors);
+    const pending = { content: JSON.stringify(turn(1)), operationId: "op-a", at: Date.now() };
+    cursors.write("s1", { ...cursors.read("s1")!, pending: [pending] });
+
+    await write(mk("repo-b"), turns(3), cursors);
+    expect(sent.at(-1)).toEqual({ bank: "repo-b", mode: "replace", contents: ["turn 2"] });
+    expect(cursors.read("s1")?.pending).toBeUndefined();
   });
 
   it("stamps configured tags and metadata onto the write-back", async () => {
