@@ -2424,6 +2424,54 @@ class TestTaskReleaseOnStop:
         assert row["worker_id"] == "other-worker"
 
     @pytest.mark.asyncio
+    async def test_shutdown_release_visits_only_schemas_it_claimed_in(self, pool, backend, clean_operations):
+        """With many tenant schemas, shutdown must not walk them all.
+
+        One reclaim per schema across thousands of tenants outlasts a typical
+        termination grace period, so the process is killed before the release
+        (and the rest of the teardown) finishes. The worker can only own rows
+        where it claimed, so those schemas are the only ones it visits.
+        """
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        op_id = await self._insert_pending(pool, bank_id)
+
+        started = asyncio.Event()
+        block = asyncio.Event()
+
+        async def blocking_executor(task_dict):
+            started.set()
+            await block.wait()
+
+        poller = WorkerPoller(backend=backend, worker_id="release-worker", executor=blocking_executor)
+        task = await self._claim_ours(poller, op_id)
+        await poller.execute_task(task)
+        await asyncio.wait_for(started.wait(), timeout=5)
+
+        # From here on the deployment has thousands of tenants.
+        async def many_schemas():
+            return [None] + [f"tenant_{i}" for i in range(5000)]
+
+        poller._get_schemas = many_schemas
+        visited: list[str | None] = []
+        real_reclaim = poller._reclaim_own_processing_tasks
+
+        async def spy_reclaim(schema, **kwargs):
+            visited.append(schema)
+            return await real_reclaim(schema, **kwargs)
+
+        poller._reclaim_own_processing_tasks = spy_reclaim
+
+        await poller.shutdown_graceful(timeout=0.1)
+
+        assert visited == [task.schema], "shutdown must visit only the schemas this worker claimed in"
+        row = await pool.fetchrow("SELECT status, worker_id FROM async_operations WHERE operation_id = $1", op_id)
+        assert row["status"] == "pending", "the claimed row must still be handed back"
+        assert row["worker_id"] is None
+
+    @pytest.mark.asyncio
     async def test_failed_terminal_write_is_retried_until_it_lands(self, pool, backend, clean_operations):
         """A 'failed' write that hits a dropped connection is retried, not abandoned (#3228, #5377)."""
         from hindsight_api.worker import WorkerPoller
