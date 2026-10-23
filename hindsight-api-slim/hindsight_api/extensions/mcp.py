@@ -37,11 +37,7 @@ class MCPExtension(Extension):
     """
 
     @abstractmethod
-<<<<<<< HEAD
-    def register_tools(self, mcp: "FastMCP", memory: MemoryEngine) -> None:
-=======
     def register_tools(self, mcp: "FastMCP", memory: "MemoryEngine") -> None:
->>>>>>> 3419560fe (refactor(engine): stop the engine importing the API layer and untangle import cycles (#5964))
         """Register additional MCP tools.
 
         Args:
