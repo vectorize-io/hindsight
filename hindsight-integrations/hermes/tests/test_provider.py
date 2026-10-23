@@ -520,6 +520,30 @@ def test_version_probe_sends_plugin_user_agent(monkeypatch):
     assert plugin._USER_AGENT != "hindsight-hermes/0.0.0"
 
 
+def test_version_probe_reads_a_bounded_body(monkeypatch):
+    """#5598: a misconfigured URL serving a huge page must not be read whole."""
+    import io
+    import urllib.request
+
+    body = io.BytesIO(b'{"version": "0.10.3"}' + b" " * 200_000)
+    reads = []
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, size=-1):
+            reads.append(size)
+            return body.read(size)
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout: _Resp())
+    plugin._fetch_hindsight_api_version("http://hs.test")
+    assert reads and all(0 < size <= 65536 for size in reads)
+
+
 class _VersionServer:
     """urlopen stand-in: maps a path to a JSON body, an HTTP status, or an exception."""
 

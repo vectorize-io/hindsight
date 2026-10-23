@@ -1130,7 +1130,8 @@ class HindsightMemoryProvider(MemoryProvider):
     def initialize(self, session_id: str, **kwargs) -> None:
         self._session_id = str(session_id or "").strip()
         self._parent_session_id = str(kwargs.get("parent_session_id", "") or "").strip()
-        # "primary" | "subagent" | "cron" | "flush"; read by _apply_retain_policy (#4945).
+        # "primary" | "subagent" | "cron" | "flush" from Hermes, plus our own "kanban" below;
+        # read by _apply_retain_policy (#4945).
         self._agent_context = str(kwargs.get("agent_context") or "primary")
         # Kanban workers start as plain "primary" CLI sessions; Hermes marks them only in the env (#5555).
         if self._agent_context == "primary" and os.environ.get("HERMES_KANBAN_TASK"):

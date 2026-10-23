@@ -157,8 +157,9 @@ def _managed_uvx_dir(path: str) -> str | None:
     PATH (#5192). Only the helper's env gets it; the parent's PATH is left alone."""
     if shutil.which("uvx", path=path):
         return None
-    # The Docker image keeps them under its install root instead (/opt/hermes/tools, next to the
-    # /opt/hermes/.venv this interpreter runs from) while HOME is /opt/data (#5580).
+    # The Docker image keeps its uv under the install root instead (/opt/hermes/tools, next to the
+    # /opt/hermes/.venv this interpreter runs from) while HOME is /opt/data (#5580). Hermes' own
+    # pm.install.uv_launcher would name it directly, but the plugin must not import pm.
     for tools in (Path.home() / ".hermes" / "tools", Path(sys.prefix).parent / "tools"):
         for candidate in sorted(tools.glob("uv-*"), reverse=True):
             if shutil.which("uvx", path=str(candidate)):
