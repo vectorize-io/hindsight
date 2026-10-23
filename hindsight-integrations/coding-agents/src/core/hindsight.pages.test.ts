@@ -95,6 +95,24 @@ describe("HindsightClient append capability", () => {
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual(["http://x/v1/version"]);
   });
 
+  it("re-probes after a no, so a server back from a restart enables append (#5735)", async () => {
+    let up = false;
+    const fetchMock = vi.fn(async () =>
+      up
+        ? ({ ok: true, status: 200, json: async () => ({ api_version: "0.10.3" }) } as any)
+        : ({ ok: false, status: 503, json: async () => ({}) } as any)
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await expect(c.supportsIdempotentRetain()).resolves.toBe(false);
+    up = true;
+    await expect(c.supportsIdempotentRetain()).resolves.toBe(true);
+    const probes = fetchMock.mock.calls.length;
+    // A yes is kept: no further version calls.
+    await expect(c.supportsIdempotentRetain()).resolves.toBe(true);
+    expect(fetchMock.mock.calls.length).toBe(probes);
+  });
+
   it("falls back to /version on a server that predates the /v1 alias", async () => {
     const fetchMock = vi.fn(async (url: string) =>
       url === "http://x/v1/version"

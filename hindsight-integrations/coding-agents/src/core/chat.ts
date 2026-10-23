@@ -420,8 +420,12 @@ async function writeSession(
     // Nothing to buffer: replace is idempotent by construction, so a later one re-establishes the
     // same truth from the same transcript. Claim the position unconfirmed so an outcome we never
     // learn resolves to another replace rather than an append onto an unknown state.
+    // The id also names what the document held before, from the cursor: content alone repeats
+    // when a session returns to an earlier branch (A → B → A), and the server acknowledges a
+    // completed id without applying it, leaving B stored (#5845). A retry still has the same base.
+    const base = cursor ? `${cursor.turns}\n${cursor.fingerprint}` : "";
     cursors?.write(sessionId, { ...next, dirty: true });
-    const operationId = opId("replace", content);
+    const operationId = opId("replace", `${base}\n${content}`);
     await submitWithRetry(() => submit(content, operationId, false), stillOurs, retryUntil);
     ops = []; // the replace re-sends every turn, so nothing older can still lose any
     cursors?.write(sessionId, accepted(operationId));

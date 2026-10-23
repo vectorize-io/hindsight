@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -114,6 +114,20 @@ describe("ingestGitLog", () => {
     expect(tags).toContain("source:git-log");
     expect(strategy).toBe("gitlog");
     expect(content).toContain("feat: thing one");
+  });
+
+  it("says how many old commits a full write leaves out (#5708)", async () => {
+    for (let i = 0; i < 5; i++) commit(dir, `feat: ${i}`);
+    const client = { retain: vi.fn().mockResolvedValue(undefined), opIds: [] };
+    const lines: string[] = [];
+    await ingestGitLog(client as unknown as HindsightClient, dir, {
+      limit: 4,
+      log: (l) => lines.push(l),
+    });
+    // limit 4 moves the window in steps of 2: five commits keep the newest three.
+    expect(lines).toContain(
+      "[gitlog] dropping the 2 oldest commit(s): the document holds at most seedLimit (4)"
+    );
   });
 
   it("does not call retain for a repo with no commits, and returns 0", async () => {
@@ -483,5 +497,23 @@ describe("commitsSince", () => {
     // `--output=<path>..HEAD` creates that file before git rejects the command.
     expect(commitsSince(dir, `--output=${planted}`)).toBeNull();
     expect(existsSync(`${planted}..HEAD`)).toBe(false);
+  });
+
+  // A partial clone would fetch an unknown sha from its remote, seconds per run to fail (#5606).
+  it.skipIf(process.platform === "win32")("never lets git fetch a missing sha", () => {
+    const bin = join(dir, "bin");
+    execFileSync("mkdir", [bin]);
+    writeFileSync(
+      join(bin, "git"),
+      `#!/bin/sh\necho "$GIT_NO_LAZY_FETCH" > "${bin}/env"\necho 0\n`
+    );
+    chmodSync(join(bin, "git"), 0o755);
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH}`);
+    try {
+      expect(commitsSince(dir, "a".repeat(40))).toBe(0);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(readFileSync(join(bin, "env"), "utf8").trim()).toBe("1");
   });
 });

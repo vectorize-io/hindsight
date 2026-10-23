@@ -302,6 +302,8 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
         sessionId: ev.session_id as string | undefined,
         transcriptPath: ev.transcript_path as string | undefined,
         cwd: ev.cwd as string | undefined,
+        // The transcript may not hold the final reply yet when Stop fires after a tool call (#5790).
+        lastAssistantMessage: ev.last_assistant_message as string | undefined,
       }),
     },
   },

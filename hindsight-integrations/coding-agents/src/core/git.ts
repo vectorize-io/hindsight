@@ -19,17 +19,28 @@ const GITLOG_HEAD = "gitlog-head:"; // tag naming the commit the git-log documen
 const GITLOG_FORMAT = `--format=%h${US}%ad${US}%an${US}%s${US}%b${RS}`;
 const GITLOG_DIVIDER = "\n\n---\n\n"; // between two commit records in the git-log document
 
-function git(repo: string, ...args: string[]): string {
+function runGit(repo: string, args: string[], env?: NodeJS.ProcessEnv): string {
   // `log.showSignature=true` in the user's config makes `git log`/`git show` print signature
   // checks to stdout ahead of the formatted output, which we parse as data (#5269).
   return execFileSync("git", ["-C", repo, "-c", "log.showSignature=false", ...args], {
     encoding: "utf8",
     maxBuffer: 1 << 28,
     windowsHide: true,
+    env,
     // execFileSync otherwise forwards failed git stderr into the host's TUI,
     // even when callers catch the error. Keep diagnostics on the error instead.
     stdio: ["ignore", "pipe", "pipe"],
   });
+}
+
+function git(repo: string, ...args: string[]): string {
+  return runGit(repo, args);
+}
+
+/** For a sha read back from the bank, which may name a commit this clone never had: a partial
+ *  clone would otherwise ask its remote for it, taking seconds on every run to fail (#5606). */
+function gitLocal(repo: string, ...args: string[]): string {
+  return runGit(repo, args, { ...process.env, GIT_NO_LAZY_FETCH: "1" });
 }
 
 /** The bank-facing name for a repo — WORKTREE-AWARE (all worktrees produce the main checkout's
@@ -62,7 +73,7 @@ export function gitHeadSha(dir: string): string | null {
 export function commitsSince(dir: string, sinceSha: string): number | null {
   if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(sinceSha)) return null;
   try {
-    const n = Number.parseInt(git(dir, "rev-list", "--count", `${sinceSha}..HEAD`).trim(), 10);
+    const n = Number.parseInt(gitLocal(dir, "rev-list", "--count", `${sinceSha}..HEAD`).trim(), 10);
     return Number.isFinite(n) ? n : null;
   } catch {
     return null;
@@ -230,7 +241,7 @@ function gitLogRecords(raw: string): string[] {
 function gitLogRecordsSince(repo: string, baseSha: string, head: string): string[] | null {
   if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(baseSha)) return null;
   try {
-    git(repo, "merge-base", "--is-ancestor", baseSha, head);
+    gitLocal(repo, "merge-base", "--is-ancestor", baseSha, head);
   } catch {
     return null; // exit 1 = not an ancestor; anything else (unknown object) is no better
   }
@@ -338,6 +349,14 @@ export async function ingestGitLog(
   const repoName = repoNameOf(repo);
   const n = text.split(GITLOG_DIVIDER).length;
   log(`[gitlog] ingesting last ${n} commit messages for ${repoName} as ONE document …`);
+  // A full write replaces the stored document, so commits that fell out of the window lose their
+  // facts. Say so instead of leaving it to be noticed in the bank (#5708).
+  const total = Number(git(repo, "rev-list", "--count", "--no-merges", "HEAD").trim());
+  if (total > n) {
+    log(
+      `[gitlog] dropping the ${total - n} oldest commit(s): the document holds at most seedLimit (${opts.limit})`
+    );
+  }
   try {
     await retainGitLog(client, repo, text, opts, head);
     log(`[gitlog] done: ${n} commit messages ingested as 1 document under strategy 'gitlog'`);

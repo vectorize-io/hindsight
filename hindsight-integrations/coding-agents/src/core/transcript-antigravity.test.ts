@@ -33,16 +33,26 @@ describe("readAntigravityTranscript", () => {
     ]);
   });
 
-  it("reads Antigravity CLI's native USER_INPUT records", () => {
+  it("reads Antigravity CLI's native USER_INPUT records without agy's envelope (#5791)", () => {
     writeFileSync(
       file,
-      JSON.stringify({
-        type: "USER_INPUT",
-        content: "<USER_REQUEST>\nCreate a bank for this repo.\n</USER_REQUEST>",
-      })
+      [
+        JSON.stringify({
+          type: "USER_INPUT",
+          content:
+            "<USER_REQUEST>\nCreate a bank for this repo.\n</USER_REQUEST>\n" +
+            "<ADDITIONAL_METADATA>\nThe current local time is: 2026-10-23T18:00:00\n</ADDITIONAL_METADATA>",
+        }),
+        JSON.stringify({
+          type: "USER_INPUT",
+          content:
+            "<ADDITIONAL_METADATA>\nlocal time\n</ADDITIONAL_METADATA>\nNo request tag here.",
+        }),
+      ].join("\n")
     );
     expect(readAntigravityTranscript(file)).toEqual([
-      { role: "user", content: "<USER_REQUEST>\nCreate a bank for this repo.\n</USER_REQUEST>" },
+      { role: "user", content: "Create a bank for this repo." },
+      { role: "user", content: "No request tag here." },
     ]);
   });
 

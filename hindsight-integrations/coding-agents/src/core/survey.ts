@@ -131,7 +131,8 @@ function resolveAgentBin(harness: SurveyHarness, claudeBin?: string): string {
  * Whether `bin` is opencode v1 — the only opencode our plugin can teach SURVEY_AGENT to. npm
  * `@opencode/cli` (v2, versioned `0.0.0-beta-…`) publishes an `opencode` bin too, and a v2 plugin
  * cannot define an agent (harness/opencode2.ts), so `run --agent hindsight-survey` under it dies
- * with "agent hindsight-survey not found" (#5084). Any probe failure answers no.
+ * with "agent hindsight-survey not found" (#5084). Stable v2 prints `2.x`, so only major 1 counts
+ * (#5923). Any probe failure answers no.
  */
 function opencodeCanDefineSurveyAgent(bin: string): boolean {
   try {
@@ -141,7 +142,7 @@ function opencodeCanDefineSurveyAgent(bin: string): boolean {
       windowsHide: true,
       stdio: ["ignore", "pipe", "ignore"],
     });
-    return Number(/(\d+)\./.exec(out)?.[1] ?? 0) >= 1;
+    return Number(/(\d+)\./.exec(out)?.[1] ?? 0) === 1;
   } catch {
     return false;
   }

@@ -349,6 +349,23 @@ describe("retainLiveSession — incremental write-back", () => {
     expect(retain.mock.calls[0][5].operationId).not.toBe(retain.mock.calls[1][5].operationId);
   });
 
+  it("restores a branch the session returns to, instead of reusing its completed id (#5845)", async () => {
+    const { retain, client } = stubClient();
+    const cursors = memoryCursorStore();
+    const branchA = turns(3);
+    const branchB = [turn(0), turn(1), { role: "user", content: "sibling" }];
+    await write(client, branchA, cursors);
+    await write(client, branchB, cursors);
+    await write(client, branchA, cursors);
+    const ids = retain.mock.calls.map((call) => call[5].operationId);
+    expect(retain.mock.calls.map((call) => call[5].updateMode)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(new Set(ids).size).toBe(3);
+  });
+
   it("skips the write entirely when no turn was added", async () => {
     const { retain, client } = stubClient();
     const cursors = memoryCursorStore();

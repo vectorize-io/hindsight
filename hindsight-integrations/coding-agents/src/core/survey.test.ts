@@ -224,6 +224,7 @@ describe("startCodebaseSurvey", () => {
 
   it.skipIf(process.platform === "win32").each([
     ["0.0.0-beta-18743", false],
+    ["2.1.2", false], // stable v2 (#5923)
     ["1.18.9", true],
   ])("reads `opencode --version` %s as able to define the agent: %s", async (version, ok) => {
     const bin = join(lockDir, "opencode");
