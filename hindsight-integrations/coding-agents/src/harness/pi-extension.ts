@@ -5,7 +5,7 @@
  * Prime Agent (PrimeIntellect) is a fork of pi and loads the same shape from
  * `~/.prime/agent/settings.json`. Both call an extension's default export with their `pi` API, and
  * both expose the identical surface this adapter needs: `before_agent_start` (recall +
- * system-prompt injection), `agent_end` (transcript write-back), and `registerTool` for the native
+ * user-turn injection), `agent_end` (transcript write-back), and `registerTool` for the native
  * `hindsight_*` knowledge tools. So neither host needs an adapter of its own — they differ only in
  * which harness name they report, which selects the `harnesses.<name>` config section, feeds
  * `{harness}` bank templating, and keeps their sessions attributable in diagnostics separately.
@@ -28,10 +28,6 @@ interface BeforeAgentStartEvent {
   type: "before_agent_start";
   /** The raw user prompt text. */
   prompt: string;
-  /** The fully assembled system prompt for this turn. */
-  systemPrompt: string;
-  /** Present on hosts that compose the prompt from extension sections. */
-  systemPromptOptions?: { sections: Record<string, string> };
 }
 
 interface AgentEndEvent {
@@ -40,8 +36,10 @@ interface AgentEndEvent {
   messages: readonly PiMessage[];
 }
 
+/** A custom message for the host to store after the user's prompt. It reaches the model as a
+ *  user message; `display: false` keeps it out of the transcript view. */
 interface BeforeAgentStartResult {
-  systemPrompt?: string;
+  message?: { customType: string; content: string; display: boolean };
 }
 
 interface SessionManagerLike {
@@ -155,22 +153,19 @@ export function createPiHooks(
         // before it has any knowledge (mirrors the other harnesses).
         await sessionStart;
       }
-      const prompt = event.prompt.trim();
-      if (prompt) await core.onPrompt(sessionId, prompt);
+      // Called on an empty prompt too, so the core drops the previous turn's block (see onPrompt).
+      await core.onPrompt(sessionId, event.prompt.trim());
       const injection = core.getInjection(sessionId);
       if (!injection) {
         diag(harness, "inject_empty", { session: sessionId });
         return undefined;
       }
       diag(harness, "inject_ok", { session: sessionId, chars: injection.length });
-      // Hosts that compose the prompt from sections get the memory as one: a returned systemPrompt
-      // forces the whole prompt, so sections added by later extensions are dropped (#4841). Older
-      // hosts without sections still take the appended full prompt below.
-      if (event.systemPromptOptions?.sections) {
-        event.systemPromptOptions.sections.hindsight = injection;
-        return undefined;
-      }
-      return { systemPrompt: `${event.systemPrompt}\n\n${injection}` };
+      // A message, not the system prompt: the block changes between turns, so a system prompt
+      // carrying it broke the provider's prefix cache (#5914), while a stored message stays in the
+      // turn it was made for. It also leaves other extensions' prompt sections alone, which a
+      // returned systemPrompt did not (#4841).
+      return { message: { customType: "hindsight", content: injection, display: false } };
     },
     /** `branch` is the session's entries (`sessionManager.getBranch()`): the event alone holds only
      *  the latest run, and writing that back replaced the session's earlier runs (#4963). */

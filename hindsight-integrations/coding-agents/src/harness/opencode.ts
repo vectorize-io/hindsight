@@ -3,9 +3,9 @@
  *
  * Maps opencode's persistent-plugin hooks onto the shared RuntimeCore, and reads opencode sessions
  * for backfill. opencode is the cleanest platform of the lot: a real per-turn event, a working
- * system-prompt injection channel, transcript access, and NATIVE tool registration — so the whole
+ * user-message injection channel, transcript access, and NATIVE tool registration — so the whole
  * v2 surface (per-turn recall + attribution/user-feedback injection, the hindsight_* knowledge
- * tools, cold-check auto-seed, rich write-back) rides these five hooks with no MCP server needed.
+ * tools, cold-check auto-seed, rich write-back) rides these hooks with no MCP server needed.
  * This is the only opencode-specific file; everything it uses is in ../core.
  */
 import { tool } from "@opencode-ai/plugin";
@@ -23,7 +23,14 @@ import { jsonChatReader } from "./registry";
 import { SURVEY_AGENT, SURVEY_AGENT_CONFIG } from "../core/survey";
 
 // opencode message part shape for the per-turn prompt (structurally typed).
-type Part = { type?: string; text?: string };
+type Part = {
+  id?: string;
+  sessionID?: string;
+  messageID?: string;
+  type?: string;
+  text?: string;
+  synthetic?: boolean;
+};
 
 /**
  * Teach the host about the survey agent (core/survey.ts spawns `opencode run --agent
@@ -95,24 +102,32 @@ function createRuntime(core: RuntimeCore) {
   return {
     ...surveyAgentHook,
     tool: tools,
-    // Each user turn: recall on the prompt; the injection it builds is pushed by system.transform.
-    "chat.message": async (input: { sessionID?: string }, output: { parts: Part[] }) => {
-      await core.onPrompt(input.sessionID, textOf(output.parts));
-    },
-    // Push this turn's injection (recalled memories + attribution/user-feedback framing, plus the
-    // knowledge preamble on turn 1 and the roster refresh on cadence) into the system prompt every
-    // turn. opencode fires this hook with NO sessionId (input is just `{model}`), so getInjection
-    // falls back to the most recent turn's block (see RuntimeCore.getInjection).
-    "experimental.chat.system.transform": async (
-      input: { sessionID?: string },
-      output: { system: string[] }
+    // Each user turn: recall on the prompt, then add this turn's injection (recalled memories +
+    // attribution/user-feedback framing, plus the knowledge preamble on turn 1 and the roster
+    // refresh on cadence) to the user message as a synthetic text part. The host saves the parts
+    // this hook leaves behind, so the block stays in the turn it was made for and every later
+    // request repeats it byte for byte. It used to be pushed into the system prompt through
+    // `experimental.chat.system.transform`, which made the system prompt change between turns
+    // and broke the provider's prefix cache (#5914).
+    "chat.message": async (
+      input: { sessionID: string },
+      output: { message: { id: string }; parts: Part[] }
     ) => {
+      await core.onPrompt(input.sessionID, textOf(output.parts));
       const inj = core.getInjection(input.sessionID);
-      if (inj) output.system.push(inj);
-      diag(core.harness, inj ? "inject_ok" : "inject_empty", {
-        chars: inj?.length ?? 0,
-        hasSession: !!input.sessionID,
-      });
+      // unshift, and an id with `prt-` rather than the host's `prt_`: the host orders a message's
+      // parts by id when it reads them back, so this keeps the block first in the live list and
+      // the stored one alike.
+      if (inj)
+        output.parts.unshift({
+          id: `prt-hindsight-${output.message.id}`,
+          sessionID: input.sessionID,
+          messageID: output.message.id,
+          type: "text",
+          text: inj,
+          synthetic: true,
+        });
+      diag(core.harness, inj ? "inject_ok" : "inject_empty", { chars: inj?.length ?? 0 });
     },
     // Write-back (on by default): normalize the live transcript to rich turns (text + tool calls +
     // their inline output) and hand it to core, which upserts every N user turns.
