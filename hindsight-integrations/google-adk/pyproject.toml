@@ -54,3 +54,12 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "ruff>=0.8.0",
 ]
+
+[tool.uv]
+# google-adk caps opentelemetry-api/-sdk below 1.45.1, the release that fixes
+# GHSA-xcq7-p3pf-p88h (unbounded tracestate parsing). The cap is still present
+# at the latest google-adk release (2.13.0 declares <=1.44), so override it.
+override-dependencies = [
+    "opentelemetry-api>=1.45.1",
+    "opentelemetry-sdk>=1.45.1",
+]
