@@ -87,6 +87,14 @@ class _Raises(EmbeddingsExtension):
         raise RuntimeError("model store unreachable")
 
 
+class _ReadsTheEngine(EmbeddingsExtension):
+    seen = None
+
+    def create_embeddings(self, build_default):
+        _ReadsTheEngine.seen = self.context.get_memory_engine()
+        return build_default()
+
+
 class _Routes(EmbeddingsExtension):
     def create_embeddings(self, build_default):
         return _PerSchemaEmbeddings(
@@ -159,6 +167,12 @@ def test_the_extension_gets_the_engine_context_and_its_config():
     ext = engine._embeddings_extension
     assert ext.context is engine._ext_ctx
     assert ext.config["my_option"] == "x"
+
+
+def test_the_extension_can_use_its_context_while_building_the_model():
+    _ReadsTheEngine.seen = None
+    engine = _build_engine(_env("_ReadsTheEngine"))
+    assert _ReadsTheEngine.seen is engine
 
 
 def test_returning_something_other_than_embeddings_fails_startup():

@@ -131,7 +131,7 @@ Supplies the embeddings model the engine stores and searches with, in place of t
 - **Use a provider Hindsight does not ship**, or a client with your own auth, pooling or telemetry.
 - **Choose the model per tenant.** Route each call by the current tenant schema, for example to put new tenants on a new model while existing tenants keep the one their vectors were made with.
 
-It is asked once, when the engine is built, and returns an `Embeddings`. Its argument builds the server's own model, so the extension can wrap it, fall back to it, or ignore it (it is only built if called).
+It is asked once, when the engine is built, and returns an `Embeddings`. Its argument builds the server's own model, so the extension can wrap it, fall back to it, or ignore it (it is only built if called). `self.context` is already set at that point, but the engine has not started: its database pool does not exist until `initialize()`.
 
 ```bash
 HINDSIGHT_API_EMBEDDINGS_EXTENSION=mypackage.embeddings:MyEmbeddings

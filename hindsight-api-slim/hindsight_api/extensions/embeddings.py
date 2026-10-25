@@ -14,7 +14,9 @@ extension supplies that object instead, so a deployment can:
 
 It is asked once, when the engine is built. ``build_default`` builds the model the
 server's own settings describe; call it to wrap or fall back to that model, or ignore
-it to replace it outright (it is never built unless called).
+it to replace it outright (it is never built unless called). ``self.context`` is
+already set when it is asked, but the engine has not started yet: its database pool
+does not exist until ``initialize()``.
 
 Things an implementation must get right:
 

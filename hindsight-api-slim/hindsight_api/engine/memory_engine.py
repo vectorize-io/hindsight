@@ -2975,32 +2975,6 @@ class MemoryEngine(MemoryEngineInterface):
         # Initialize entity resolver (will be created in initialize())
         self.entity_resolver: EntityResolverHandle | None = None
 
-        # Initialize embeddings: an explicit argument, else the embeddings extension, else
-        # the server's own settings. The extension gets its context below, with the others.
-        from ..extensions.embeddings import EmbeddingsExtension  # noqa: PLC0415
-        from ..extensions.loader import load_extension  # noqa: PLC0415
-
-        self._embeddings_extension: EmbeddingsExtension | None = None
-        if embeddings is not None:
-            self.embeddings = embeddings
-        else:
-            self._embeddings_extension = load_extension("EMBEDDINGS", EmbeddingsExtension)
-            if self._embeddings_extension is not None:
-                supplied = self._embeddings_extension.create_embeddings(create_embeddings_from_env)
-                if not isinstance(supplied, Embeddings):
-                    raise TypeError(
-                        f"{type(self._embeddings_extension).__name__}.create_embeddings() returned "
-                        f"{type(supplied).__name__}, not an Embeddings"
-                    )
-                self.embeddings = supplied
-                logger.info(
-                    "[embeddings] supplied by %s (provider=%s)",
-                    type(self._embeddings_extension).__name__,
-                    supplied.provider_name,
-                )
-            else:
-                self.embeddings = create_embeddings_from_env()
-
         # Initialize query analyzer
         if query_analyzer is not None:
             self.query_analyzer = query_analyzer
@@ -3453,17 +3427,42 @@ class MemoryEngine(MemoryEngineInterface):
         )
 
         # One context for every extension the engine owns. The tenant extension and the
-        # operation validator are constructed BEFORE the engine and handed to __init__, and
-        # the embeddings extension before this context exists, so
+        # operation validator are constructed BEFORE the engine and handed to __init__, so
         # load_extension() never got to set a context on them -- without this, a validator
         # hook reaching context.get_memory_engine() raises "Extension context not set".
         # Safe to share: the context holds only process-global handles (db url, engine,
         # webhook manager) and no per-request state. getattr rather than a bare call
         # because tests hand in duck-typed extensions that are not Extension subclasses.
-        for _ext in (self._tenant_extension, self._operation_validator, self._embeddings_extension):
+        for _ext in (self._tenant_extension, self._operation_validator):
             _set_context = getattr(_ext, "set_context", None)
             if _set_context is not None:
                 _set_context(self._ext_ctx)
+
+        # Initialize embeddings: an explicit argument, else the embeddings extension, else
+        # the server's own settings. The extension is loaded with the context, so
+        # create_embeddings() can already use it.
+        from ..extensions.embeddings import EmbeddingsExtension  # noqa: PLC0415
+
+        self._embeddings_extension: EmbeddingsExtension | None = None
+        if embeddings is not None:
+            self.embeddings = embeddings
+        else:
+            self._embeddings_extension = load_extension("EMBEDDINGS", EmbeddingsExtension, context=self._ext_ctx)
+            if self._embeddings_extension is not None:
+                supplied = self._embeddings_extension.create_embeddings(create_embeddings_from_env)
+                if not isinstance(supplied, Embeddings):
+                    raise TypeError(
+                        f"{type(self._embeddings_extension).__name__}.create_embeddings() returned "
+                        f"{type(supplied).__name__}, not an Embeddings"
+                    )
+                self.embeddings = supplied
+                logger.info(
+                    "[embeddings] supplied by %s (provider=%s)",
+                    type(self._embeddings_extension).__name__,
+                    supplied.provider_name,
+                )
+            else:
+                self.embeddings = create_embeddings_from_env()
 
         # The LLM request extension decides the credentials of every LLM call in the
         # process, so it is installed process-wide rather than handed to each LLM the
