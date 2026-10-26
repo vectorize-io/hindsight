@@ -2640,7 +2640,15 @@ class MultiCrossEncoder(CrossEncoderModel):
     fallback. This chain holds no policy of its own: retrying here would retry the
     whole failover sequence rather than the member that stumbled. A member that fails to initialize is not fatal — that is the point of
     the chain — it is retried lazily on the next request that reaches it.
+
+    A member that fails is benched for ``MEMBER_COOLDOWN_SECONDS``: requests try
+    it after the healthy members instead of first, so an outage costs one slow
+    request per cooldown rather than every recall paying the dead member's
+    retries. The first request after the cooldown probes it again.
     """
+
+    # ponytail: fixed cooldown, make it a setting if operators ask to tune it
+    MEMBER_COOLDOWN_SECONDS = 30.0
 
     traces_calls = False  # each member's predict() traces its own attempt
 
@@ -2651,6 +2659,7 @@ class MultiCrossEncoder(CrossEncoderModel):
         self._ready = [False] * len(members)
         self._locks = [asyncio.Lock() for _ in members]
         self._active = 0
+        self._benched_until = [0.0] * len(members)
 
     @property
     def provider_name(self) -> str:
@@ -2693,6 +2702,7 @@ class MultiCrossEncoder(CrossEncoderModel):
         )
         for index, result in enumerate(results):
             if isinstance(result, BaseException):
+                self._benched_until[index] = time.monotonic() + self.MEMBER_COOLDOWN_SECONDS
                 logger.warning(
                     "Reranker member %d (%s) failed to initialize: %s; it will be retried on use",
                     index,
@@ -2705,7 +2715,11 @@ class MultiCrossEncoder(CrossEncoderModel):
     async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """Score ``pairs`` with the first member that answers usably."""
         last_exc: BaseException | None = None
-        for index, member in enumerate(self._members):
+        now = time.monotonic()
+        # Benched members go last, not away: if every member is down, still try them.
+        order = sorted(range(len(self._members)), key=lambda i: self._benched_until[i] > now)
+        for position, index in enumerate(order):
+            member = self._members[index]
             try:
                 if not self._ready[index]:
                     await self._ensure_member_ready(index)
@@ -2714,7 +2728,8 @@ class MultiCrossEncoder(CrossEncoderModel):
                     raise RuntimeError(f"returned {len(scores)} scores for {len(pairs)} pairs")
             except Exception as e:  # noqa: BLE001 - re-raised below if no member answers
                 last_exc = e
-                remaining = len(self._members) - index - 1
+                self._benched_until[index] = time.monotonic() + self.MEMBER_COOLDOWN_SECONDS
+                remaining = len(order) - position - 1
                 logger.warning(
                     "Reranker member %d (%s) failed: %s%s",
                     index,
@@ -2723,6 +2738,7 @@ class MultiCrossEncoder(CrossEncoderModel):
                     f"; trying next member ({remaining} left)" if remaining else "; no members left",
                 )
                 continue
+            self._benched_until[index] = 0.0
             if index != self._active:
                 logger.info(
                     "Reranker: now serving from member %d (%s)",

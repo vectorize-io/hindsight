@@ -197,6 +197,9 @@ async def test_concurrent_reranks_capture_the_serving_member(first_query: str) -
             return [0.4] * len(pairs)
 
     class _InterleavedChain(MultiCrossEncoder):
+        # The primary fails per query, not per outage: keep it in front.
+        MEMBER_COOLDOWN_SECONDS = 0.0
+
         async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
             scores = await super().predict(pairs)
             # Yield AFTER the member answered and BEFORE rerank reads its metadata.

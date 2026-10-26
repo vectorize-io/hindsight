@@ -1324,6 +1324,11 @@ recall down with it. Configure extra rerankers **by index** and Hindsight tries 
 in order: if a member fails (timeout, connection error, HTTP error, or an unusable
 response), the next one serves the request.
 
+A member that fails is benched for 30 seconds: requests try it after the healthy
+members instead of first, so an outage slows down one recall per 30 seconds rather
+than every recall. When the 30 seconds are up, the next request tries it again. If
+every member is down, benched members are still tried as a last resort.
+
 The unindexed `HINDSIGHT_API_RERANKER_*` config is the **primary** (member 0). Extra
 members are numbered from 1, and every setting of member `n` carries the same index —
 `HINDSIGHT_API_RERANKER_<n>_<SETTING>` for any `<SETTING>` in the table above:
