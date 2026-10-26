@@ -2639,7 +2639,7 @@ class MultiCrossEncoder(CrossEncoderModel):
     exhausted its retries and raised — an ordinary quota blip does not burn a
     fallback. This chain holds no policy of its own: retrying here would retry the
     whole failover sequence rather than the member that stumbled. A member that fails to initialize is not fatal — that is the point of
-    the chain — it is retried lazily on the next request that reaches it.
+    the chain — it is retried lazily once its cooldown (below) is over.
 
     A member that fails is benched for ``MEMBER_COOLDOWN_SECONDS``: requests try
     it after the healthy members instead of first, so an outage costs one slow
@@ -2647,6 +2647,8 @@ class MultiCrossEncoder(CrossEncoderModel):
     retries. The first request after the cooldown probes it again.
     """
 
+    # Same idea as MultiLLMProvider's cooldown, minus its config and doubling: a
+    # reranker outage is a host being down, not an hours-long quota to back off from.
     # ponytail: fixed cooldown, make it a setting if operators ask to tune it
     MEMBER_COOLDOWN_SECONDS = 30.0
 
@@ -2704,10 +2706,11 @@ class MultiCrossEncoder(CrossEncoderModel):
             if isinstance(result, BaseException):
                 self._benched_until[index] = time.monotonic() + self.MEMBER_COOLDOWN_SECONDS
                 logger.warning(
-                    "Reranker member %d (%s) failed to initialize: %s; it will be retried on use",
+                    "Reranker member %d (%s) failed to initialize: %s; it will be retried on use after %.0fs",
                     index,
                     self._members[index].provider_name,
                     result,
+                    self.MEMBER_COOLDOWN_SECONDS,
                 )
         if not any(self._ready):
             logger.error("Reranker: no member of the failover chain initialized; recall will retry them per request")
