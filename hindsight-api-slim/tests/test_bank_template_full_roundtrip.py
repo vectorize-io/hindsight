@@ -48,7 +48,8 @@ import pytest_asyncio
 
 from hindsight_api.api import create_app
 from hindsight_api.config import HindsightConfig
-from hindsight_api.engine.bank_templates import BankTemplateConfig
+from hindsight_api.engine.bank_templates import BankTemplateConfig, BankTemplateDirective, BankTemplateMentalModel
+from hindsight_api.engine.response_models import MentalModelTrigger
 
 # One value per BankTemplateConfig field, each chosen to differ visibly from the
 # server default so a value that silently reverts is caught rather than matching
@@ -344,9 +345,6 @@ _SAMPLE_DIRECTIVE: dict[str, Any] = {
 
 def test_resource_samples_cover_every_field():
     """A new mental model, trigger or directive field must be given a sample value."""
-    from hindsight_api.engine.bank_templates import BankTemplateDirective, BankTemplateMentalModel
-    from hindsight_api.engine.response_models import MentalModelTrigger
-
     assert all(set(mm) == set(BankTemplateMentalModel.model_fields) for mm in _SAMPLE_MENTAL_MODELS)
     sampled_trigger_fields = {k for mm in _SAMPLE_MENTAL_MODELS for k in mm["trigger"]}
     assert sampled_trigger_fields == set(MentalModelTrigger.model_fields)
