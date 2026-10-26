@@ -1104,3 +1104,10 @@ async def test_provider_cleanup_keeps_shared_manager_usable(make_llm):
     result = await second.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
     assert result.content == "hello"
     assert len(upstream.refresh_forms) == 1
+
+
+def test_lost_session_names_the_refresh_error_that_cleared_it(tmp_path):
+    # What a refresh rejected with invalid_grant leaves behind (#6095).
+    _write(tmp_path, _credential(access_token=None, refresh_token=None, last_auth_error="invalid_grant"))
+    with pytest.raises(auth.ChatGPTLoginRequiredError, match="last token refresh failed with invalid_grant"):
+        auth.ChatGPTAuth.from_home(tmp_path)

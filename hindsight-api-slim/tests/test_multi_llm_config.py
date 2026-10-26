@@ -737,3 +737,44 @@ def test_chain_can_fail_fast_on_primary_while_fallback_still_retries(clean_llm_e
     fallback = _parse_llm_members("")[0]
     assert primary_policy.max_retries == 0
     assert _member_call_defaults(fallback, primary_policy)["max_retries"] == 2
+
+
+# ── a member whose sign-in is gone (#6095) ──────────────────────────────────────
+
+
+@pytest.fixture
+def chatgpt_logged_out(clean_llm_env, tmp_path):
+    """ChatGPT plan credentials point at an empty directory: no login."""
+    from hindsight_api.config import clear_config_cache
+
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_CHATGPT_HOME", str(tmp_path))
+    clear_config_cache()
+    yield
+    clear_config_cache()
+
+
+async def test_logged_out_primary_fails_over_to_next_member(chatgpt_logged_out):
+    from hindsight_api.engine.llm_interface import ProviderUnavailableError
+
+    base = LLMProvider(provider="chatgpt", api_key="", base_url="", model="gpt-5")  # used to crash startup
+    config = _empty_config(llm_members=[_member("mock")], llm_strategy=LLMStrategyConfig(mode="failover"))
+    chain = _build_llm(base, config, "", _NO_CALL_DEFAULTS)
+
+    with pytest.raises(ProviderUnavailableError, match="hindsight-admin chatgpt login"):
+        await base.verify_connection()
+    # The logged-out primary raises, so the mock member answers instead.
+    assert await chain.call(messages=[{"role": "user", "content": "hi"}]) is not None
+
+
+def test_logged_out_middle_member_keeps_the_rest_of_the_chain(chatgpt_logged_out):
+    config = _empty_config(
+        llm_members=[_member("chatgpt"), _member("mock")],
+        llm_strategy=LLMStrategyConfig(mode="failover"),
+    )
+    chain = _build_llm(_base_llm(), config, "", _NO_CALL_DEFAULTS)
+    assert [m.provider for m in chain.members] == ["mock", "chatgpt", "mock"]
+
+
+def test_unknown_provider_still_fails_startup(clean_llm_env):
+    with pytest.raises(ValueError):
+        LLMProvider(provider="no-such-provider", api_key="k", base_url="", model="m")
