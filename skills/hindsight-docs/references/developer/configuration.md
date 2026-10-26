@@ -638,6 +638,8 @@ The strategy JSON supports three modes:
 
 **Cooldown.** In `failover` and `round-robin`, a member that fails (after its own retries) is moved to the back of the order for `cooldown_seconds` (default `60`), so later requests stop waiting on its errors and timeouts — useful when a member has run out of a daily or weekly quota. If it fails again once the cooldown is over, the cooldown doubles, up to one hour; its next success clears it. A cooling member is only deprioritized, never dropped: if every other member fails too, it is still tried. Set `"cooldown_seconds": 0` to try every member in order on every request. The cooldown is held in memory per process, so a restart clears it.
 
+**A member that is not signed in.** A provider that runs on a stored login (`chatgpt`, `openai-codex`, `nous`, `github-copilot`) and finds none when the server starts does not stop the server. It logs a warning with the login command to run, fails every call it gets, and the chain fails over past it. Sign in again and restart the server to bring it back.
+
 ```bash
 # Primary OpenAI, failover to Groq then Anthropic
 export HINDSIGHT_API_LLM_PROVIDER=openai
