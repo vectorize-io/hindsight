@@ -1066,9 +1066,10 @@ async def test_a_retried_retain_keeps_the_documents_a_buffering_session_never_co
 
     async def retain_batch(**kwargs):
         if kwargs.get("document_id") == "doc-1":
-            result = await real_retain_batch(**kwargs)
-            doc1_done.set()
-            return result
+            try:
+                return await real_retain_batch(**kwargs)
+            finally:
+                doc1_done.set()
         if kwargs.get("document_id") == "doc-2" and fail_doc2:
             # Fail only once document 1 is fully through the pipeline (and checkpointed, if the
             # orchestrator still writes one), as an LLM call that ran out of retries would.
