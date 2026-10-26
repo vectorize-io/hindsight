@@ -90,6 +90,9 @@ logger = logging.getLogger(__name__)
 #: ("Cannot copy out of meta tensor"), or the other model's smoke test mixes
 #: float/bfloat16 — about half of cold starts with two Qwen3 models (issue #4420).
 #: Downloads do not touch that state, so ``prefetch_local_model`` runs them outside.
+#: The first ``transformers`` import (``sentence_transformers`` included) and
+#: ``AutoTokenizer.from_pretrained`` run under it too: transformers' lazy namespace
+#: raises ImportError for a name another thread is still populating (issue #6069).
 LOCAL_MODEL_BUILD_LOCK = threading.Lock()
 
 # Weight formats the loaders do not read when the repo also ships safetensors (``*.bin``

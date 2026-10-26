@@ -330,13 +330,15 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         if self._model is not None:
             return
 
-        try:
-            from sentence_transformers import CrossEncoder
-        except ImportError:
-            raise ImportError(
-                "sentence-transformers is required for LocalSTCrossEncoder. "
-                "Install it with: pip install sentence-transformers"
-            )
+        # Imports transformers; see LOCAL_MODEL_BUILD_LOCK.
+        with LOCAL_MODEL_BUILD_LOCK:
+            try:
+                from sentence_transformers import CrossEncoder
+            except ImportError:
+                raise ImportError(
+                    "sentence-transformers is required for LocalSTCrossEncoder. "
+                    "Install it with: pip install sentence-transformers"
+                )
 
         logger.info(f"Reranker: initializing local provider with model {self.model_name}")
 
@@ -353,19 +355,21 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         # (e.g., jina-reranker-v2-base-multilingual). transformers 5.x removed
         # create_position_ids_from_input_ids as a module-level function; the custom
         # code in these models still references it. This monkey-patch restores it.
-        try:
-            import transformers.models.xlm_roberta.modeling_xlm_roberta as xlm_module
-            from transformers.models.xlm_roberta.modeling_xlm_roberta import XLMRobertaEmbeddings
+        # Imports transformers; see LOCAL_MODEL_BUILD_LOCK.
+        with LOCAL_MODEL_BUILD_LOCK:
+            try:
+                import transformers.models.xlm_roberta.modeling_xlm_roberta as xlm_module
+                from transformers.models.xlm_roberta.modeling_xlm_roberta import XLMRobertaEmbeddings
 
-            if not hasattr(xlm_module, "create_position_ids_from_input_ids"):
-                setattr(
-                    xlm_module,
-                    "create_position_ids_from_input_ids",
-                    XLMRobertaEmbeddings.create_position_ids_from_input_ids,
-                )
-                logger.info("Reranker: applied transformers 5.x compatibility patch for XLM-RoBERTa")
-        except Exception:
-            pass
+                if not hasattr(xlm_module, "create_position_ids_from_input_ids"):
+                    setattr(
+                        xlm_module,
+                        "create_position_ids_from_input_ids",
+                        XLMRobertaEmbeddings.create_position_ids_from_input_ids,
+                    )
+                    logger.info("Reranker: applied transformers 5.x compatibility patch for XLM-RoBERTa")
+            except Exception:
+                pass
 
         # Download outside the lock; build and smoke-test under it, because a
         # transformers build flips process-global state (see LOCAL_MODEL_BUILD_LOCK).
@@ -1937,14 +1941,16 @@ class OnnxCrossEncoder(CrossEncoderModel):
         if self._session is not None:
             return
 
-        try:
-            import onnxruntime as ort
-            from transformers import AutoTokenizer
-        except ImportError as exc:
-            raise ImportError(
-                "onnxruntime and transformers are required for the 'onnx' reranker. "
-                "Install with: pip install 'hindsight-api-slim[local-onnx]'"
-            ) from exc
+        # Imports transformers; see LOCAL_MODEL_BUILD_LOCK.
+        with LOCAL_MODEL_BUILD_LOCK:
+            try:
+                import onnxruntime as ort
+                from transformers import AutoTokenizer
+            except ImportError as exc:
+                raise ImportError(
+                    "onnxruntime and transformers are required for the 'onnx' reranker. "
+                    "Install with: pip install 'hindsight-api-slim[local-onnx]'"
+                ) from exc
 
         model_path = self.model_path
         if not model_path:
@@ -1968,7 +1974,9 @@ class OnnxCrossEncoder(CrossEncoderModel):
             OnnxCrossEncoder._max_concurrent,
             self.batch_size,
         )
-        self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name_or_path)
+        # Imports transformers; see LOCAL_MODEL_BUILD_LOCK.
+        with LOCAL_MODEL_BUILD_LOCK:
+            self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name_or_path)
         session_options = ort.SessionOptions()
         # The arena caches freed activation blocks and never returns them, so RSS would
         # hold the largest batch's high-water mark forever (same as FlashRank/OnnxEmbeddings).
@@ -2323,10 +2331,11 @@ class JinaMLXCrossEncoder(CrossEncoderModel):
         # which has an unguarded window where `from transformers import AutoTokenizer`
         # raises ImportError if another thread is concurrently initializing the
         # namespace (e.g. embeddings init in an executor thread).
-        # See: https://github.com/vectorize-io/hindsight/issues/994
-        import transformers
+        # See: https://github.com/vectorize-io/hindsight/issues/994 and #6069.
+        with LOCAL_MODEL_BUILD_LOCK:
+            import transformers
 
-        _ = transformers.AutoTokenizer
+            _ = transformers.AutoTokenizer
 
         try:
             import mlx.core  # noqa: F401  # ty: ignore[unresolved-import]

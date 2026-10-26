@@ -502,14 +502,16 @@ class TransformerQueryAnalyzer(QueryAnalyzer):
         if self._model is not None:
             return
 
-        try:
-            from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-        except ImportError:
-            raise ImportError(
-                "transformers is required for TransformerQueryAnalyzer. Install it with: pip install transformers"
-            )
-
         from .local_device import LOCAL_MODEL_BUILD_LOCK, align_local_model_weights, prefetch_local_model
+
+        # Imports transformers; see LOCAL_MODEL_BUILD_LOCK.
+        with LOCAL_MODEL_BUILD_LOCK:
+            try:
+                from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+            except ImportError:
+                raise ImportError(
+                    "transformers is required for TransformerQueryAnalyzer. Install it with: pip install transformers"
+                )
 
         logger.info(f"Loading query analyzer model: {self.model_name}...")
         # Starts alongside the other local models; see LOCAL_MODEL_BUILD_LOCK.

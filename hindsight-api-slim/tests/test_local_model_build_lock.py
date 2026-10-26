@@ -118,3 +118,51 @@ async def test_prefetch_downloads_where_sentence_transformers_reads(monkeypatch,
         await embeddings.initialize()
 
     assert download.call_args.kwargs["cache_dir"] == str(tmp_path)
+
+
+class _StopInit(Exception):
+    pass
+
+
+@pytest.mark.parametrize("loader", ["reranker", "embeddings"])
+async def test_onnx_loaders_touch_transformers_only_under_the_build_lock(monkeypatch, loader):
+    """transformers' lazy namespace raises ImportError for a name another thread is
+    still populating, so the ONNX loaders' import and tokenizer load must not overlap
+    a local model build (issue #6069)."""
+    import sys
+    import types
+
+    from hindsight_api.engine.cross_encoder import OnnxCrossEncoder
+    from hindsight_api.engine.embeddings import OnnxEmbeddings
+    from hindsight_api.engine.local_device import LOCAL_MODEL_BUILD_LOCK
+
+    unlocked: list[str] = []
+
+    class _Transformers(types.ModuleType):
+        def __getattr__(self, name):
+            if not LOCAL_MODEL_BUILD_LOCK.locked():
+                unlocked.append(f"transformers.{name}")
+            if name != "AutoTokenizer":
+                raise AttributeError(name)
+            tokenizer = MagicMock()
+            tokenizer.from_pretrained.side_effect = (
+                lambda *a, **k: (unlocked.append("from_pretrained") if not LOCAL_MODEL_BUILD_LOCK.locked() else None)
+                or MagicMock()
+            )
+            return tokenizer
+
+    ort = MagicMock()
+    ort.get_available_providers.return_value = ["CPUExecutionProvider"]
+    ort.InferenceSession.side_effect = _StopInit  # everything after the tokenizer is out of scope
+    monkeypatch.setitem(sys.modules, "transformers", _Transformers("transformers"))
+    monkeypatch.setitem(sys.modules, "onnxruntime", ort)
+
+    if loader == "reranker":
+        model = OnnxCrossEncoder(model_path="/m/model.onnx", tokenizer_name_or_path="/m")
+    else:
+        model = OnnxEmbeddings(model_id="org/m", model_path="/m/model.onnx", tokenizer_name_or_path="/m")
+
+    with pytest.raises(_StopInit):
+        await model.initialize()
+
+    assert unlocked == []

@@ -367,13 +367,15 @@ class LocalSTEmbeddings(Embeddings):
         if self._model is not None:
             return
 
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError:
-            raise ImportError(
-                "sentence-transformers is required for LocalSTEmbeddings. "
-                "Install it with: pip install sentence-transformers"
-            )
+        # Imports transformers; see LOCAL_MODEL_BUILD_LOCK.
+        with LOCAL_MODEL_BUILD_LOCK:
+            try:
+                from sentence_transformers import SentenceTransformer
+            except ImportError:
+                raise ImportError(
+                    "sentence-transformers is required for LocalSTEmbeddings. "
+                    "Install it with: pip install sentence-transformers"
+                )
 
         logger.info(f"Embeddings: initializing local provider with model {self.model_name}")
 
@@ -567,20 +569,22 @@ class OnnxEmbeddings(Embeddings):
         if self._session is not None and self._tokenizer is not None:
             return
 
-        try:
-            import onnxruntime as ort
-            from transformers import AutoTokenizer
-        except ImportError as exc:
-            if self.device == "cuda":
+        # Imports transformers; see LOCAL_MODEL_BUILD_LOCK.
+        with LOCAL_MODEL_BUILD_LOCK:
+            try:
+                import onnxruntime as ort
+                from transformers import AutoTokenizer
+            except ImportError as exc:
+                if self.device == "cuda":
+                    raise ImportError(
+                        "CUDA OnnxEmbeddings requires transformers and a compatible onnxruntime-gpu installation "
+                        "with CUDA/cuDNN libraries. See docker/docker-compose/cuda-onnx/ for a custom image recipe; "
+                        "the local-onnx extra alone installs the CPU runtime."
+                    ) from exc
                 raise ImportError(
-                    "CUDA OnnxEmbeddings requires transformers and a compatible onnxruntime-gpu installation "
-                    "with CUDA/cuDNN libraries. See docker/docker-compose/cuda-onnx/ for a custom image recipe; "
-                    "the local-onnx extra alone installs the CPU runtime."
+                    "onnxruntime and transformers are required for OnnxEmbeddings. "
+                    "Install with: pip install 'hindsight-api-slim[local-onnx]'"
                 ) from exc
-            raise ImportError(
-                "onnxruntime and transformers are required for OnnxEmbeddings. "
-                "Install with: pip install 'hindsight-api-slim[local-onnx]'"
-            ) from exc
 
         # Reject a CPU-only runtime before downloading a potentially large graph.
         providers: list[str | tuple[str, dict[str, str]]] = ["CPUExecutionProvider"]
@@ -629,7 +633,9 @@ class OnnxEmbeddings(Embeddings):
             self.batch_size,
             self.cpu_mem_arena,
         )
-        tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name_or_path)
+        # Imports transformers; see LOCAL_MODEL_BUILD_LOCK.
+        with LOCAL_MODEL_BUILD_LOCK:
+            tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name_or_path)
         # With the arena enabled (ORT's default) freed activation blocks are cached and
         # never returned to the OS, so RSS ratchets up to the largest batch ever run and
         # holds that plateau for the life of the process. The reranker disables it for
