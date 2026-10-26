@@ -58,9 +58,10 @@ from functools import lru_cache
 
 import toktok
 
-# Vocabularies toktok compiles into its extension module. Used only to make a
-# misconfigured HINDSIGHT_API_TOKENIZER_ENCODING fail with a list of what would have
-# worked, instead of a bare KeyError from the extension module mid-request.
+# Vocabularies toktok compiles into its extension module. Used to make a misconfigured
+# HINDSIGHT_API_TOKENIZER_ENCODING or HINDSIGHT_API_DECISION_MODEL_TOKENIZER fail with a
+# list of what would have worked, instead of a bare KeyError from the extension module
+# mid-request, and to bound the per-name cache below.
 BUNDLED_ENCODINGS = ("o200k_base", "cl100k_base", "o200k_harmony", "qwen3.5")
 
 # Estimates of a model's own count that have no ids: 'jev' is Jev's (TypeSafe). A caller

@@ -358,7 +358,7 @@ async def test_requests_are_split_in_the_models_own_vocabulary():
 
 
 def test_the_default_request_ceiling_fits_a_32k_window(monkeypatch):
-    """The endpoint counted 14% more than we do on the same body."""
+    """The endpoint counted 14% more than o200k_base on the same body."""
     assert _config(monkeypatch, {}).decision_model_max_request_tokens * 1.14 < 32_768
 
 

@@ -1597,8 +1597,9 @@ DEFAULT_DECISION_MODEL_TIMEOUT = 60.0
 DEFAULT_DECISION_MODEL_MAX_CONCURRENT = 24
 # Most tokens one request may carry, counted on the whole JSON body. It follows the context
 # window of the model the endpoint serves (32k for jev-latest), less a margin: the endpoint
-# counted 14% more than we do on the same body (42.3k vs 37.3k, 95.2k vs 83.5k), so 26k
-# here is about 29.6k there. A request has to hold the state and at least one question,
+# counted 14% more than o200k_base on the same body (42.3k vs 37.3k, 95.2k vs 83.5k), so 26k
+# here was about 29.6k there. Counted in HINDSIGHT_API_DECISION_MODEL_TOKENIZER ('jev' for
+# typesafe) the gap is smaller, and the margin is headroom for that estimate's error. A request has to hold the state and at least one question,
 # hence the floor.
 DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS = 26_000
 MIN_DECISION_MODEL_MAX_REQUEST_TOKENS = 1_000
