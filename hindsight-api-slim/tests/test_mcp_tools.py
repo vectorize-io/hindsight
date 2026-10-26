@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastmcp.exceptions import ValidationError as FastMCPValidationError
 from pydantic import ValidationError
 
 from hindsight_api.engine import page_markdown
@@ -24,6 +25,11 @@ from hindsight_api.mcp_tools import (
     register_mcp_tools,
 )
 from hindsight_api.models import RequestContext
+
+# Argument validation failures surface from ``call_tool`` as ``pydantic.ValidationError``
+# on fastmcp < 3.4 and as ``fastmcp.exceptions.ValidationError`` (chained from the
+# pydantic error) on fastmcp >= 3.4.
+MCP_ARG_VALIDATION_ERRORS = (ValidationError, FastMCPValidationError)
 
 
 class TestParseTimestamp:
@@ -1807,10 +1813,8 @@ class TestListToolBounds:
         ],
     )
     async def test_out_of_range_is_rejected(self, mock_memory, tool, args):
-        from pydantic import ValidationError
-
         mcp = _make_mcp_server(mock_memory, {tool}, include_bank_id=True)
-        with pytest.raises(ValidationError):
+        with pytest.raises(MCP_ARG_VALIDATION_ERRORS):
             await mcp.call_tool(tool, args)
         engine_method = "list_memory_units" if tool == "list_memories" else tool
         getattr(mock_memory, engine_method).assert_not_called()
@@ -1835,10 +1839,8 @@ class TestRecallReflectTagsMatch:
     @pytest.mark.parametrize("include_bank_id", [True, False])
     @pytest.mark.parametrize("tool", ["recall", "reflect"])
     async def test_unknown_mode_is_rejected(self, mock_memory, tool, include_bank_id):
-        from pydantic import ValidationError
-
         mcp = _make_mcp_server(mock_memory, {tool}, include_bank_id=include_bank_id)
-        with pytest.raises(ValidationError):
+        with pytest.raises(MCP_ARG_VALIDATION_ERRORS):
             await mcp.call_tool(tool, {"query": "q", "tags": ["typescript"], "tags_match": "any-strict"})
         getattr(mock_memory, f"{tool}_async").assert_not_called()
 
