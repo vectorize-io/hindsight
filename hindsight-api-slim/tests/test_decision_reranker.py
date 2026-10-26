@@ -5,13 +5,9 @@ from datetime import UTC, datetime
 import pytest
 
 from hindsight_api.config import DecisionModelConfig
-from hindsight_api.engine.decision_model import DecisionAnswer
-from hindsight_api.engine.search.decision_reranker import (
-    _MAX_MEMORY_TOKENS,
-    _MAX_SHARED_CONTEXT_TOKENS,
-    DecisionModelReranker,
-    rerank_shared_context,
-)
+from hindsight_api.engine.decision_model import DecisionAnswer, DecisionModel
+from hindsight_api.engine.decision_rerank_interface import MAX_MEMORY_TOKENS, MAX_SHARED_CONTEXT_TOKENS
+from hindsight_api.engine.search.decision_reranker import DecisionModelReranker, rerank_shared_context
 from hindsight_api.engine.search.reranking import CrossEncoderReranker
 from hindsight_api.engine.search.types import MergedCandidate, RetrievalResult
 from hindsight_api.engine.token_encoding import count_tokens
@@ -25,6 +21,8 @@ class _Client:
         self.asked: list[tuple[str, dict]] = []
         self.max_request_tokens = 26_000
         self.tokenizer = None
+
+    rerank_interface = DecisionModel.rerank_interface
 
     async def ask_all(self, state, questions, *, scope):
         self.asked.append((state, questions))
@@ -143,7 +141,7 @@ class TestSharedState:
             await reranker.predict([("q", "a"), ("q", "b")])
         finally:
             rerank_shared_context.reset(token)
-        assert count_tokens(client.asked[0][0]) <= _MAX_SHARED_CONTEXT_TOKENS + count_tokens("\n\nQuestion: q")
+        assert count_tokens(client.asked[0][0]) <= MAX_SHARED_CONTEXT_TOKENS + count_tokens("\n\nQuestion: q")
 
     async def test_a_huge_memory_is_capped(self):
         """One question carries one memory; uncapped, a single long one could outgrow the
@@ -151,7 +149,7 @@ class TestSharedState:
         client = _Client()
         await _reranker(client).predict([("q", "word " * 20_000), ("q", "short")])
         memories = [q.instructions["memory"] for q in client.asked[0][1].values()]
-        assert count_tokens(memories[0]) <= _MAX_MEMORY_TOKENS
+        assert count_tokens(memories[0]) <= MAX_MEMORY_TOKENS
         assert memories[1] == "short"
 
     async def test_the_caps_count_in_the_models_own_vocabulary(self):
@@ -160,8 +158,8 @@ class TestSharedState:
         client.tokenizer = "jev"
         await _reranker(client).predict([("q", "東京 café naïve 🎉 " * 3_000), ("q", "short")])
         memory = next(iter(client.asked[0][1].values())).instructions["memory"]
-        assert count_tokens(memory, "jev") <= _MAX_MEMORY_TOKENS
-        assert count_tokens(memory) < _MAX_MEMORY_TOKENS - 500
+        assert count_tokens(memory, "jev") <= MAX_MEMORY_TOKENS
+        assert count_tokens(memory) < MAX_MEMORY_TOKENS - 500
 
     async def test_a_low_request_ceiling_shrinks_the_caps(self):
         """A ceiling below the caps would otherwise fail every request."""

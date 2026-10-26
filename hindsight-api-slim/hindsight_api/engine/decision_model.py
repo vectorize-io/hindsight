@@ -33,8 +33,9 @@ from .._cross_loop import CrossLoopSemaphore
 from ..config import DecisionModelConfig
 from ..tracing import get_span_recorder
 from .aiohttp_session import LoopLocalSession, UpstreamHTTPError, per_phase_timeout, raise_for_status
+from .decision_rerank_interface import MAX_QUESTIONS, DecisionRerank
 from .remote_retry import RetryPolicy, acall_with_retry
-from .token_encoding import count_tokens
+from .token_encoding import count_tokens, truncate_to_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -206,11 +207,10 @@ def record_decision_call(
 
 
 class DecisionModel:
-    # Most questions in one request. Measured on System One: roughly 750 single-candidate
-    # questions go through and 775 come back max_tokens_exceeded, so this is kept clear of
-    # the edge. The token ceiling is ``max_request_tokens``: it belongs to the model the
-    # endpoint serves, not to this client, so it is a setting.
-    MAX_QUESTIONS = 700
+    # Most questions in one request (see decision_rerank_interface). The token ceiling is
+    # ``max_request_tokens``: it belongs to the model the endpoint serves, not to this
+    # client, so it is a setting.
+    MAX_QUESTIONS = MAX_QUESTIONS
 
     def __init__(
         self,
@@ -316,20 +316,18 @@ class DecisionModel:
         vocabulary when the config names it. The OpenAI shape carries the same text under
         other keys. A single question over the ceiling still goes out alone, and fails there.
         """
-        envelope = count_tokens(json.dumps({"model": self.model, "state": state, "questions": {}}), self.tokenizer)
-        parts: list[dict[str, DecisionQuestion]] = []
-        current: dict[str, DecisionQuestion] = {}
-        used = envelope
-        for key, question in questions.items():
-            tokens = count_tokens(json.dumps({key: question.system_one()}), self.tokenizer)
-            if current and (len(current) >= self.MAX_QUESTIONS or used + tokens > self.max_request_tokens):
-                parts.append(current)
-                current, used = {}, envelope
-            current[key] = question
-            used += tokens
-        if current:
-            parts.append(current)
-        return parts
+        groups = self.rerank_interface().split(
+            self.model, state, {key: question.system_one() for key, question in questions.items()}
+        )
+        return [{key: questions[key] for key in group} for group in groups]
+
+    def rerank_interface(self) -> DecisionRerank:
+        """Request building and splitting in this model's vocabulary and request ceiling."""
+        return DecisionRerank(
+            count=lambda text: count_tokens(text, self.tokenizer),
+            truncate=lambda text, max_tokens: truncate_to_tokens(text, max_tokens, self.tokenizer).text,
+            max_request_tokens=self.max_request_tokens,
+        )
 
     async def _ask_traced(
         self, state: str | dict[str, Any], questions: dict[str, DecisionQuestion], scope: str

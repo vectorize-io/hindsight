@@ -19,7 +19,6 @@ import contextvars
 from ...config import DecisionModelConfig
 from ..cross_encoder import CrossEncoderModel
 from ..decision_model import DecisionModel, DecisionQuestion
-from ..token_encoding import count_tokens, truncate_to_tokens
 
 PROVIDER_NAME = "decision_model"
 
@@ -32,19 +31,8 @@ rerank_shared_context: contextvars.ContextVar[str | None] = contextvars.ContextV
     "hindsight_rerank_shared_context", default=None
 )
 
-# Defensive ceilings on the query and the shared context, which every request carries:
-# past the request ceiling, every request would fail. Each also stays within a quarter of
-# that ceiling, so a low one still leaves half of each request for the questions.
-_MAX_QUERY_TOKENS = 2_000
-_MAX_SHARED_CONTEXT_TOKENS = 4_000
-# The same for each candidate's text, which one question carries alone.
-_MAX_MEMORY_TOKENS = 4_000
-
-# The question asked of each candidate. Four wordings were tried on the same pool; this
-# one is the best calibrated, lifting the wanted candidate to 0.74 against 0.59 for
-# "contains information needed to answer" while holding the pool median at 0.08. Framing it
-# as help-versus-distract asks the question a keep/drop decision actually turns on.
-_KEEP_INSTRUCTIONS = "Showing this memory to someone answering the question would help them, rather than distract them."
+# The questions themselves, their state, caps and scores live in decision_rerank_interface,
+# which services outside hindsight-api load to rank exactly as this does.
 
 
 class DecisionModelReranker(CrossEncoderModel):
@@ -78,38 +66,19 @@ class DecisionModelReranker(CrossEncoderModel):
     async def initialize(self) -> None:
         pass
 
-    def _capped(self, text: str, ceiling: int) -> str:
-        ceiling = min(ceiling, self._client.max_request_tokens // 4)
-        tokenizer = self._client.tokenizer
-        return truncate_to_tokens(text, ceiling, tokenizer).text if count_tokens(text, tokenizer) > ceiling else text
-
-    def _state(self, query: str) -> str:
-        """The question's state: what is being asked, plus what every candidate shares."""
-        query = self._capped(query, _MAX_QUERY_TOKENS)
-        shared = self._capped(rerank_shared_context.get() or "", _MAX_SHARED_CONTEXT_TOKENS)
-        return f"{shared}\n\nQuestion: {query}" if shared else f"Question: {query}"
-
     async def _rerank(self, query: str, docs: list[str], indices: list[int], scores: list[float]) -> None:
         """Scores ``indices`` by position, best first."""
-        # Each memory capped like the query, so no single question can outgrow the window:
-        # a failed request now raises instead of ranking its candidates last.
+        rerank = self._client.rerank_interface()
         questions = {
-            f"m{slot}": DecisionQuestion(
-                type="noul",
-                instructions={"task": _KEEP_INSTRUCTIONS, "memory": self._capped(docs[index], _MAX_MEMORY_TOKENS)},
-            )
-            for slot, index in enumerate(indices)
+            key: DecisionQuestion(**question)
+            for key, question in rerank.questions([docs[index] for index in indices]).items()
         }
-        answers = await self._client.ask_all(self._state(query), questions, scope="decision_recall_rerank")
-
-        def answer(slot: int) -> float:
-            found = answers.get(f"m{slot}")
-            return found.noul if found is not None and found.noul is not None else 0.0
-
+        state = rerank.state(query, rerank_shared_context.get())
+        answers = await self._client.ask_all(state, questions, scope="decision_recall_rerank")
         # Stable on the caller's input order, so equal answers keep their RRF order.
-        order = sorted(range(len(indices)), key=lambda slot: -answer(slot))
-        for position, slot in enumerate(order):
-            scores[indices[slot]] = (len(order) - position) / len(order)
+        nouls = {key: answer.noul for key, answer in answers.items()}
+        for slot, score in enumerate(rerank.scores(len(indices), nouls)):
+            scores[indices[slot]] = score
 
     async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         docs = [doc for _, doc in pairs]
