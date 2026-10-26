@@ -743,36 +743,58 @@ def test_chain_can_fail_fast_on_primary_while_fallback_still_retries(clean_llm_e
 
 
 @pytest.fixture
-def chatgpt_logged_out(clean_llm_env, tmp_path):
-    """ChatGPT plan credentials point at an empty directory: no login."""
+def logged_out(clean_llm_env, tmp_path):
+    """Every sign-in based provider looks in an empty home: nobody is logged in."""
     from hindsight_api.config import clear_config_cache
 
-    clean_llm_env.setenv("HINDSIGHT_API_LLM_CHATGPT_HOME", str(tmp_path))
+    clean_llm_env.setenv("HOME", str(tmp_path))
+    for var in ("CODEX_HOME", "COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"):
+        clean_llm_env.delenv(var, raising=False)
     clear_config_cache()
     yield
     clear_config_cache()
 
 
-async def test_logged_out_primary_fails_over_to_next_member(chatgpt_logged_out):
+# Every provider that reads a stored sign-in while it is built. A new one belongs here
+# too, or a lost login on it crash-loops the server again.
+@pytest.mark.parametrize("provider", ["chatgpt", "openai-codex", "nous", "github-copilot"])
+async def test_logged_out_provider_builds_and_fails_each_call(logged_out, provider):
     from hindsight_api.engine.llm_interface import ProviderUnavailableError
+    from hindsight_api.engine.providers.none_llm import UnavailableLLM
 
-    base = LLMProvider(provider="chatgpt", api_key="", base_url="", model="gpt-5")  # used to crash startup
+    llm = LLMProvider(provider=provider, api_key="", base_url="", model="m")  # used to raise here
+
+    assert isinstance(llm._provider_impl, UnavailableLLM)
+    assert llm.provider == provider  # not mistaken for provider "none"
+    with pytest.raises(ProviderUnavailableError):
+        await llm.verify_connection()
+    with pytest.raises(ProviderUnavailableError):
+        await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
+
+
+async def test_logged_out_primary_fails_over_to_next_member(logged_out):
+    base = LLMProvider(provider="chatgpt", api_key="", base_url="", model="gpt-5")
     config = _empty_config(llm_members=[_member("mock")], llm_strategy=LLMStrategyConfig(mode="failover"))
     chain = _build_llm(base, config, "", _NO_CALL_DEFAULTS)
 
-    with pytest.raises(ProviderUnavailableError, match="hindsight-admin chatgpt login"):
-        await base.verify_connection()
-    # The logged-out primary raises, so the mock member answers instead.
-    assert await chain.call(messages=[{"role": "user", "content": "hi"}]) is not None
+    await chain.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
+
+    assert len(chain.members[1]._provider_impl._mock_calls) == 1
 
 
-def test_logged_out_middle_member_keeps_the_rest_of_the_chain(chatgpt_logged_out):
+async def test_logged_out_middle_member_keeps_the_rest_of_the_chain(logged_out):
     config = _empty_config(
         llm_members=[_member("chatgpt"), _member("mock")],
         llm_strategy=LLMStrategyConfig(mode="failover"),
     )
-    chain = _build_llm(_base_llm(), config, "", _NO_CALL_DEFAULTS)
-    assert [m.provider for m in chain.members] == ["mock", "chatgpt", "mock"]
+    primary = _base_llm()
+    primary._provider_impl._mock_exception = RuntimeError("primary down")
+    chain = _build_llm(primary, config, "", _NO_CALL_DEFAULTS)
+
+    await chain.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
+
+    # Primary failed, the logged-out middle member failed, the last member answered.
+    assert len(chain.members[2]._provider_impl._mock_calls) == 1
 
 
 def test_unknown_provider_still_fails_startup(clean_llm_env):

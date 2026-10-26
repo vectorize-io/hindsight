@@ -153,6 +153,34 @@ def wif_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterato
 
 
 @pytest.fixture(scope="session")
+def logged_out_primary_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
+    """A failover chain whose primary is a ChatGPT plan with no sign-in (issue #6095).
+
+    The credentials directory is empty, which is what a refresh rejected with
+    ``invalid_grant`` leaves behind after a restart. Member 1 is the stub. The provider
+    is server-level, hence a process; HTTP only, for the same reason as ``wif_server``.
+    """
+    run_dir = tmp_path_factory.mktemp("logged-out-primary-server")
+    server = start_hindsight_server(
+        stub_url=stub_server.url,
+        log_path=run_dir / "server.log",
+        extra_env={
+            "HINDSIGHT_API_LLM_PROVIDER": "chatgpt",
+            "HINDSIGHT_API_LLM_MODEL": "gpt-5",
+            "HINDSIGHT_API_LLM_CHATGPT_HOME": str(run_dir / "chatgpt"),
+            "HINDSIGHT_API_LLM_STRATEGY": '{"mode": "failover"}',
+            "HINDSIGHT_API_LLM_1_PROVIDER": "openai",
+            "HINDSIGHT_API_LLM_1_MODEL": "stub-model",
+            "HINDSIGHT_API_LLM_1_API_KEY": "stub-key",
+            "HINDSIGHT_API_LLM_1_BASE_URL": f"{stub_server.url}/v1",
+            "HINDSIGHT_API_WORKER_ENABLED": "false",
+        },
+    )
+    yield server
+    server.stop()
+
+
+@pytest.fixture(scope="session")
 def scoped_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
     """A server whose operation validator confines each API key to ``user:<key>`` + ``kind:rule``.
 
@@ -326,6 +354,13 @@ async def retrying_client(retrying_server) -> AsyncIterator[Hindsight]:
 @pytest.fixture
 async def wif_client(wif_server) -> AsyncIterator[Hindsight]:
     client = Hindsight(base_url=wif_server.url)
+    yield client
+    await client.aclose()
+
+
+@pytest.fixture
+async def logged_out_primary_client(logged_out_primary_server) -> AsyncIterator[Hindsight]:
+    client = Hindsight(base_url=logged_out_primary_server.url)
     yield client
     await client.aclose()
 
