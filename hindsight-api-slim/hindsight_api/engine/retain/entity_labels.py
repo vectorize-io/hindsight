@@ -110,7 +110,12 @@ def migrate_entity_labels_input(value: Any) -> Any:
     Keeps the request boundary accepting the legacy ``free_values``/``multi_value`` shape (translated to
     the ``type`` field) that ``parse_entity_labels`` already tolerates on the storage-read side, so typing
     the field as ``list[LabelGroup]`` (which publishes the schema in OpenAPI) does not drop those keys.
+
+    Also unwraps the ``{"attributes": [...]}`` envelope that ``parse_entity_labels`` accepts and the
+    config API stores, so a bank configured that way still exports its labels (#6057).
     """
+    if isinstance(value, dict) and "attributes" in value:
+        value = value["attributes"]
     if isinstance(value, list):
         return [_migrate_label_group(item) if isinstance(item, dict) else item for item in value]
     return value
