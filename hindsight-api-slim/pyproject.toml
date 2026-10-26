@@ -10,10 +10,12 @@ license = "MIT"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    # 0.30.0 added Connection.get_reset_query(), the only supported way to skip
-    # asyncpg's release-time reset (see engine/db/postgresql.py). On 0.29 the
-    # override would be silently ignored, making the flag a no-op.
-    "asyncpg>=0.30.0",
+    # 0.32.0: before it, a query that timed out on a connection that then dropped
+    # left every later query on that connection (the transaction's ROLLBACK
+    # included) awaiting forever, which wedged the worker's claim loop (#6067).
+    # 0.30.0 also added Connection.get_reset_query(), which the pool's
+    # release-time reset skip relies on (see engine/db/postgresql.py).
+    "asyncpg>=0.32.0",
     "python-dotenv>=1.0.0",
     "openai>=1.66.0",  # Responses API (client.responses.create, reasoning=, text.format) for the openai-responses provider
     "pydantic>=2.0.0",
