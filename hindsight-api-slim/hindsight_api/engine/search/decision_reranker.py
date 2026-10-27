@@ -81,24 +81,30 @@ class DecisionModelReranker(CrossEncoderModel):
     async def _rerank(self, query: str, docs: list[str], indices: list[int], scores: list[float]) -> None:
         """Scores ``indices`` by position, best first."""
         rerank = self._client.rerank_interface()
-        asked = rerank.questions([docs[index] for index in indices])
+        subset = [docs[index] for index in indices]
+        asked = rerank.questions(subset)
         questions = {question.key: DecisionQuestion.model_validate(question.system_one()) for question in asked}
         state = rerank.state(query, rerank_shared_context.get())
+        repeats: list[RepeatQuestion] = []
+        if self.prunes_candidates:
+            fact_types = rerank_fact_types.get()
+            repeats = rerank.repeat_questions(subset, [fact_types[index] for index in indices] if fact_types else None)
+        # The repeat questions go out with the keep ones, so pruning adds no round trip.
         # Every memory is capped (see DecisionRerank.questions), so no single question can
         # outgrow the window: a failed request now raises instead of ranking its candidates last.
-        answers = await self._client.ask_all(state, questions, scope="decision_recall_rerank")
+        repeating = asyncio.gather(*(self._ask_repeat(question) for question in repeats))
+        try:
+            answers = await self._client.ask_all(state, questions, scope="decision_recall_rerank")
+        except BaseException:
+            repeating.cancel()
+            raise
+        repeat_answers = await repeating
         # Stable on the caller's input order, so equal answers keep their RRF order.
         nouls = [answers[question.key].noul if question.key in answers else None for question in asked]
         if not self.prunes_candidates:
             ranked = rerank.scores(nouls)
         else:
-            subset = [docs[index] for index in indices]
-            relevant = rerank.relevant(nouls)
-            fact_types = rerank_fact_types.get()
-            kinds = [fact_types[index] for index in indices] if fact_types else None
-            repeats = rerank.repeat_questions(subset, relevant, kinds)
-            repeat_answers = await asyncio.gather(*(self._ask_repeat(question) for question in repeats))
-            ranked = rerank.pruned(nouls, relevant, repeats, repeat_answers)
+            ranked = rerank.pruned(nouls, rerank.relevant(nouls), repeats, repeat_answers)
         for slot, score in enumerate(ranked):
             scores[indices[slot]] = score
 

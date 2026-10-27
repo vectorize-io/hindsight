@@ -1,5 +1,6 @@
 """Recall's decision-model reranker: one question per candidate, ordered by the answers."""
 
+import asyncio
 from datetime import UTC, datetime
 
 import pytest
@@ -238,7 +239,29 @@ class TestPrune:
         client = _PruneClient(keep={best: 0.9, again: 0.8}, repeats={(best, again)})
         scores = await _pruning(client).predict([("q", again), ("q", best)])
         assert scores[1] > 0.0 and scores[0] == 0.0
-        assert client.pairs == [(best, again)]
+        # Both ways round: the rank order is not known when the pairs go out.
+        assert sorted(client.pairs) == sorted([(again, best), (best, again)])
+
+    async def test_only_the_answer_with_the_better_ranked_candidate_first_counts(self):
+        best, again = "Marta favourite tea is genmaicha", "Marta favorite tea is genmaicha"
+        client = _PruneClient(keep={best: 0.9, again: 0.8}, repeats={(again, best)})
+        assert all(score > 0.0 for score in await _pruning(client).predict([("q", again), ("q", best)]))
+
+    async def test_the_repeat_questions_go_out_with_the_keep_ones(self):
+        """One round trip: the keep request is still waiting when the repeat one is asked."""
+        best, again = "Marta favourite tea is genmaicha", "Marta favorite tea is genmaicha"
+        repeat_asked = asyncio.Event()
+
+        class _Waiting(_PruneClient):
+            async def ask_all(self, state, questions, *, scope):
+                if "repeat" in questions:
+                    repeat_asked.set()
+                else:
+                    await asyncio.wait_for(repeat_asked.wait(), timeout=5)
+                return await super().ask_all(state, questions, scope=scope)
+
+        client = _Waiting(keep={best: 0.9, again: 0.8}, repeats={(best, again)})
+        assert (await _pruning(client).predict([("q", best), ("q", again)]))[1] == 0.0
 
     async def test_a_repeat_of_a_dropped_candidate_stays(self):
         """Repeats are judged against what is kept, so a chain does not drop its own head."""

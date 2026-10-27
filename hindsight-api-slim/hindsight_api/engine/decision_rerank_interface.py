@@ -4,7 +4,7 @@ This file is a public interface, meant to be used outside hindsight-api too: a s
 that reranks for Hindsight over the System One API can load it and send exactly the
 questions recall's :class:`~hindsight_api.engine.search.decision_reranker.DecisionModelReranker`
 sends, so a pool comes back in the order recall itself would give it. With pruning on
-(:meth:`DecisionRerank.relevant`, :meth:`DecisionRerank.repeat_questions`,
+(:meth:`DecisionRerank.repeat_questions`, :meth:`DecisionRerank.relevant`,
 :meth:`DecisionRerank.pruned`), it drops the same candidates recall would.
 
 To keep it loadable on its own, by file path, without installing hindsight-api:
@@ -69,8 +69,9 @@ REPEAT_ABOVE = 0.5
 # repeat still shares its names and values. On the bench it asked a quarter of the pairs
 # and still caught every repeat; 0.4 missed some.
 REPEAT_MIN_OVERLAP = 0.3
-# Only the best candidates are checked for repeats, bounding the pairs one rerank asks.
-# ponytail: a repeat ranked below this survives; raise it if long pools show repeats.
+# Only the first candidates in the caller's order are checked for repeats, bounding the
+# pairs one rerank asks.
+# ponytail: a repeat placed below this survives; raise it if long pools show repeats.
 REPEAT_CANDIDATES = 40
 _DATE_PREFIX = re.compile(r"^\[Date: [^\]]*\]")
 _WORD = re.compile(r"[a-z0-9][a-z0-9.]*")
@@ -220,10 +221,18 @@ class DecisionRerank:
         floor = max(PRUNE_BELOW, PRUNE_BELOW_BEST * (answers[order[0]] or 0.0))
         return [slot for position, slot in enumerate(order) if position == 0 or (answers[slot] or 0.0) >= floor]
 
-    def repeat_questions(
-        self, docs: Sequence[str], relevant: Sequence[int], kinds: Sequence[str] | None = None
-    ) -> list[RepeatQuestion]:
-        """Pruning, step two: the pairs among the best ``relevant`` worth asking about.
+    def repeat_questions(self, docs: Sequence[str], kinds: Sequence[str] | None = None) -> list[RepeatQuestion]:
+        """Pruning's repeat check: the pairs among the first ``docs`` worth asking about.
+
+        Picked before any keep answer, so they go out in the same round trip as the keep
+        questions: a second round after the keep answers cost one more request's latency on
+        every pruning recall. Folding the check into the keep question itself was tried and
+        did not work: listing the similar memories above a candidate in its question dropped
+        3 of 52 repeats (the model ignores the list), and the whole pool in the state lost 8
+        of 76 needed facts. Each pair is asked both ways round, as the rank order that
+        decides which one is Memory A is not known yet, and the answer is not symmetric:
+        "Initech signed up" then "Acme signed up" came back 0.84, the other way round under
+        0.3. The lexical filter still keeps it to ~a quarter of the pairs.
 
         ``docs`` are the uncapped candidate texts; each is capped in the state as in its keep
         question. Pairs dated differently or sharing too few words are not asked, nor, when
@@ -233,7 +242,7 @@ class DecisionRerank:
         observation ranked below its fact was the one dropped, so a recall preferring
         observations got the raw fact and no observation.
         """
-        checked = relevant[:REPEAT_CANDIDATES]
+        checked = range(min(len(docs), REPEAT_CANDIDATES))
         return [
             RepeatQuestion(
                 above=above,
@@ -241,9 +250,9 @@ class DecisionRerank:
                 state=f"Memory A: {self.capped(docs[above], MAX_MEMORY_TOKENS)}\n"
                 f"Memory B: {self.capped(docs[slot], MAX_MEMORY_TOKENS)}",
             )
-            for position, slot in enumerate(checked)
-            for above in checked[:position]
-            if (kinds is None or kinds[above] == kinds[slot]) and _may_repeat(docs[above], docs[slot])
+            for slot in checked
+            for above in checked
+            if above != slot and (kinds is None or kinds[above] == kinds[slot]) and _may_repeat(docs[above], docs[slot])
         ]
 
     @staticmethod
@@ -264,8 +273,8 @@ class DecisionRerank:
             (q.above, q.slot) for q, a in zip(repeats, repeat_answers, strict=True) if (a or 0.0) >= REPEAT_ABOVE
         }
         kept: list[int] = []
-        for position, slot in enumerate(relevant):
-            if position < REPEAT_CANDIDATES and any((above, slot) in said_repeat for above in kept):
+        for slot in relevant:
+            if any((above, slot) in said_repeat for above in kept):
                 continue
             kept.append(slot)
         scores = DecisionRerank.scores(answers)

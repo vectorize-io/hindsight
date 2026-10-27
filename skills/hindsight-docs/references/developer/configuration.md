@@ -1625,7 +1625,8 @@ same fact retained from several documents comes back once. Two memories are only
 when they share enough words and carry the same date, so recurring events ("went climbing"
 on two days) and alike-but-distinct facts (two customers joining the same beta) both stay.
 The best candidate always survives. Repeat checks cost one small decision-model request per
-compared pair, among the 40 best candidates.
+compared pair, among the first 40 candidates, both ways round. They go out with the ranking
+request, so pruning adds no wait.
 
 **Consolidation.** With a decision model, consolidation asks it, for each new fact, how the
 fact relates to the observations recall found for it: does it restate one, add something new
