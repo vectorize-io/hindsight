@@ -80,6 +80,10 @@ logger = logging.getLogger(__name__)
 _TICK_SECONDS = 60
 # How long stop() lets the job in progress reach a stopping point before cancelling it.
 _STOP_GRACE_SECONDS = 5.0
+# How long stop() then waits for the cancel to land. A job that suppresses or delays
+# cancellation (a call that does not yield, a cleanup that catches CancelledError) is
+# left behind after this rather than waited on.
+_STOP_CANCEL_GRACE_SECONDS = 5.0
 # ── retention sweep pacing ────────────────────────────────────────────────────
 # Retention used to issue one unbounded `DELETE FROM <table> WHERE started_at <
 # cutoff` per schema. On a table with a real backlog that is a single statement
@@ -174,8 +178,15 @@ class MaintenanceLoop:
         if pending:
             logger.info(f"Maintenance: cancelling the job in progress after {_STOP_GRACE_SECONDS:.0f}s to stop")
             task.cancel()
+            _, pending = await asyncio.wait({task}, timeout=_STOP_CANCEL_GRACE_SECONDS)
+            if pending:
+                logger.warning(
+                    f"Maintenance: the job in progress did not stop within {_STOP_CANCEL_GRACE_SECONDS:.0f}s "
+                    "of being cancelled; leaving it behind"
+                )
+                return
         try:
-            await task
+            task.result()
         except asyncio.CancelledError:
             pass
         except Exception:

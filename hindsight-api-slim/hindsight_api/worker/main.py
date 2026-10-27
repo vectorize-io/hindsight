@@ -16,6 +16,7 @@ import os
 import signal
 import socket
 import sys
+import threading
 import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -41,16 +42,52 @@ logger = logging.getLogger(__name__)
 # (the maintenance loop cancels its job in progress after a few seconds); this
 # keeps any step that is not from turning one restart into a full grace period.
 _ENGINE_CLOSE_TIMEOUT_SECONDS = 60.0
+# How long to wait for close() to accept its cancel once the bound is up. Not
+# asyncio.wait_for: that cancels at the timeout and then waits for the cancel to
+# land, unbounded, so a close() that catches CancelledError would hold anyway.
+_CLOSE_CANCEL_GRACE_SECONDS = 5.0
+# Last resort once shutdown has begun: exit the process if it is still running this
+# long after the signal. It covers what the bounds above cannot, such as asyncio.run's
+# own teardown, which waits on every task left. In-flight tasks were returned to
+# 'pending' before any of this, so nothing is lost by exiting.
+_SHUTDOWN_HARD_LIMIT_SECONDS = 120.0
 
 
 async def _close_within(memory: Any, timeout: float) -> bool:
     """Close the engine, giving up after ``timeout`` seconds. True if it closed in time."""
-    try:
-        await asyncio.wait_for(memory.close(), timeout=timeout)
+    task = asyncio.ensure_future(memory.close())
+    done, _ = await asyncio.wait({task}, timeout=timeout)
+    if done:
+        task.result()
         return True
-    except asyncio.TimeoutError:
-        logger.warning(f"Engine close did not finish within {timeout:.0f}s; exiting without it")
-        return False
+    task.cancel()
+    done, _ = await asyncio.wait({task}, timeout=_CLOSE_CANCEL_GRACE_SECONDS)
+    if done and not task.cancelled() and task.exception() is not None:
+        logger.warning(f"Engine close failed while being cancelled: {task.exception()!r}")
+    logger.warning(
+        f"Engine close did not finish within {timeout:.0f}s"
+        + ("" if done else f" or stop within {_CLOSE_CANCEL_GRACE_SECONDS:.0f}s of being cancelled")
+        + "; exiting without it"
+    )
+    return False
+
+
+def _arm_exit_backstop(seconds: float, exit_fn: Callable[[int], Any] = os._exit) -> threading.Timer:
+    """Exit the process ``seconds`` from now unless it has exited on its own (a daemon timer)."""
+
+    def _fire() -> None:
+        logger.error(f"Worker shutdown still running {seconds:.0f}s after the signal; exiting")
+        for handler in logging.getLogger().handlers:
+            with contextlib.suppress(Exception):
+                handler.flush()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        exit_fn(1)
+
+    timer = threading.Timer(seconds, _fire)
+    timer.daemon = True
+    timer.start()
+    return timer
 
 
 def _install_shutdown_signal_handlers(
@@ -387,6 +424,7 @@ def main():
             else:
                 print("\nReceived shutdown signal, initiating graceful shutdown...")
                 print("(Press Ctrl+C again to force immediate exit)")
+                _arm_exit_backstop(_SHUTDOWN_HARD_LIMIT_SECONDS)
                 shutdown_requested.set()
 
         async_handlers_installed = _install_shutdown_signal_handlers(loop, signal_handler)

@@ -153,6 +153,37 @@ class TestStop:
         assert loop._task is None
 
     @pytest.mark.asyncio
+    async def test_a_job_that_ignores_the_cancel_is_left_behind(self, monkeypatch):
+        """A job that catches CancelledError and keeps going (a driver call that does not yield, a
+        cleanup that suppresses it) must not hold stop(): waiting out the cancel is bounded too."""
+        import asyncio
+
+        import hindsight_api.engine.maintenance as maintenance_mod
+
+        monkeypatch.setattr(maintenance_mod, "_STOP_GRACE_SECONDS", 0.05)
+        monkeypatch.setattr(maintenance_mod, "_STOP_CANCEL_GRACE_SECONDS", 0.05)
+        loop = MaintenanceLoop(engine=None)
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def _stubborn_job():
+            started.set()
+            while not release.is_set():
+                try:
+                    await asyncio.sleep(0.01)
+                except asyncio.CancelledError:
+                    continue
+
+        task = asyncio.create_task(_stubborn_job())
+        loop._task = task
+        await started.wait()
+        t0 = asyncio.get_running_loop().time()
+        await asyncio.wait_for(loop.stop(), timeout=2)
+        assert asyncio.get_running_loop().time() - t0 < 1
+        assert not task.done()  # left behind, not waited on
+        release.set()
+        await task
+
+    @pytest.mark.asyncio
     async def test_a_job_that_reaches_a_stopping_point_finishes_on_its_own(self):
         import asyncio
 
