@@ -31,10 +31,12 @@ where the real embedder, reranker or extraction is the thing that could fail.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import asdict, dataclass, field
+from typing import Literal
 
 from hindsight_client import Hindsight
+from hindsight_client_api.models.recall_response import RecallResponse
+from hindsight_client_api.models.recall_result import RecallResult
 
 from hindsight_system_evals.judge import evaluate
 from hindsight_system_evals.pages import SettleFn
@@ -51,7 +53,23 @@ class Memory:
 
 #: Extra checks a case needs beyond the declarative ones: given the client, the bank and
 #: the response, return what failed.
-Check = Callable[[Hindsight, str, Any], Awaitable[list[str]]]
+Check = Callable[[Hindsight, str, RecallResponse], Awaitable[list[str]]]
+
+
+@dataclass(frozen=True)
+class Recall:
+    """The ``arecall`` options a case sets; anything left None keeps the client's default."""
+
+    types: list[str] | None = None
+    tags: list[str] | None = None
+    tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] | None = None
+    query_timestamp: str | None = None
+    max_tokens: int | None = None
+    include_chunks: bool | None = None
+    prefer_observations: bool | None = None
+
+    def options(self) -> dict[str, object]:
+        return {name: value for name, value in asdict(self).items() if value is not None}
 
 
 @dataclass(frozen=True)
@@ -63,8 +81,7 @@ class Case:
     origin: str
     memories: tuple[Memory, ...]
     query: str
-    #: Passed to ``arecall`` as is (types, tags, query_timestamp, max_tokens, ...).
-    recall: dict[str, Any] = field(default_factory=dict)
+    recall: Recall = Recall()
     found: tuple[str, ...] = ()
     within: int = 3
     ranked: tuple[tuple[str, str], ...] = ()
@@ -82,7 +99,7 @@ class Case:
 class CaseOutcome:
     case: Case
     bank_id: str
-    results: list[Any]
+    results: list[RecallResult]
     failed: list[str] = field(default_factory=list)
     trapped: list[str] = field(default_factory=list)
 
@@ -97,7 +114,7 @@ def _names(text: str, word: str) -> bool:
     return any(option.lower() in text.lower() for option in word.split("|"))
 
 
-def _first(results: list[Any], word: str, *, without: str | None = None) -> int | None:
+def _first(results: list[RecallResult], word: str, *, without: str | None = None) -> int | None:
     for i, result in enumerate(results):
         if _names(result.text, word) and not (without and _names(result.text, without)):
             return i
@@ -125,7 +142,7 @@ async def run_case(client: Hindsight, bank_id: str, settled: SettleFn, case: Cas
     )
     await settled(bank_id)
 
-    response = await client.arecall(bank_id, case.query, **case.recall)
+    response = await client.arecall(bank_id, case.query, **case.recall.options())
     outcome = CaseOutcome(case=case, bank_id=bank_id, results=list(response.results))
     results = outcome.results
 
@@ -165,7 +182,7 @@ async def run_case(client: Hindsight, bank_id: str, settled: SettleFn, case: Cas
 # ── Checks a declarative field cannot express ───────────────────────────────────────
 
 
-async def _budget_is_respected(client: Hindsight, bank_id: str, response: Any) -> list[str]:
+async def _budget_is_respected(client: Hindsight, bank_id: str, response: RecallResponse) -> list[str]:
     """A small ``max_tokens`` returns fewer facts than the default, but never none (#3688)."""
     uncapped = await client.arecall(bank_id, "What has the team been working on?")
     if not response.results:
@@ -175,7 +192,7 @@ async def _budget_is_respected(client: Hindsight, bank_id: str, response: Any) -
     return []
 
 
-async def _chunks_without_facts(client: Hindsight, bank_id: str, response: Any) -> list[str]:
+async def _chunks_without_facts(client: Hindsight, bank_id: str, response: RecallResponse) -> list[str]:
     """``max_tokens=0`` is the documented way to ask for the source text only (#364)."""
     failed = []
     if response.results:
@@ -187,7 +204,7 @@ async def _chunks_without_facts(client: Hindsight, bank_id: str, response: Any) 
     return failed
 
 
-async def _observations_supersede_their_facts(client: Hindsight, bank_id: str, response: Any) -> list[str]:
+async def _observations_supersede_their_facts(client: Hindsight, bank_id: str, response: RecallResponse) -> list[str]:
     """With ``prefer_observations``, no raw fact comes back beside the observation built from it (#5617)."""
     observations = [r for r in response.results if r.type == "observation"]
     if not observations:
@@ -293,7 +310,7 @@ CASES: tuple[Case, ...] = (
             Memory("I went to Berlin for a friend's wedding.", timestamp="2023-11-12T10:00:00"),
         ),
         query="Where did I travel last month?",
-        recall={"query_timestamp": "2024-04-05T12:00:00"},
+        recall=Recall(query_timestamp="2024-04-05T12:00:00"),
         found=("Lisbon",),
         within=1,
         minimum=True,
@@ -308,7 +325,7 @@ CASES: tuple[Case, ...] = (
             Memory("I went to the gym for leg day.", timestamp="2024-06-10T18:00:00"),
         ),
         query="What did I do yesterday?",
-        recall={"query_timestamp": "2024-06-16T10:00:00"},
+        recall=Recall(query_timestamp="2024-06-16T10:00:00"),
         found=("concert|Blue Note|jazz",),
         within=1,
     ),
@@ -322,7 +339,7 @@ CASES: tuple[Case, ...] = (
             Memory("The 2025 climate summit was held in Hanoi.", timestamp="2025-11-20T10:00:00"),
         ),
         query="Where is the climate summit in 2026?",
-        recall={"query_timestamp": "2026-02-01T10:00:00"},
+        recall=Recall(query_timestamp="2026-02-01T10:00:00"),
         found=("Nairobi",),
         within=1,
     ),
@@ -336,7 +353,7 @@ CASES: tuple[Case, ...] = (
             Memory("The office moved to the third floor.", timestamp="2024-02-26T10:00:00"),
         ),
         query="What happened in the first week of March 2024?",
-        recall={"query_timestamp": "2024-04-10T10:00:00"},
+        recall=Recall(query_timestamp="2024-04-10T10:00:00"),
         found=("billing",),
         within=1,
     ),
@@ -350,7 +367,7 @@ CASES: tuple[Case, ...] = (
             Memory("I just started a new job at Initech as a staff engineer.", timestamp="2024-05-01T10:00:00"),
         ),
         query="Where does the user work now?",
-        recall={"query_timestamp": "2024-06-01T10:00:00"},
+        recall=Recall(query_timestamp="2024-06-01T10:00:00"),
         ranked=(("Initech", "Globex"),),
         minimum=True,
     ),
@@ -366,7 +383,7 @@ CASES: tuple[Case, ...] = (
             ),
         ),
         query="Which database does the orders service use?",
-        recall={"query_timestamp": "2024-05-01T10:00:00"},
+        recall=Recall(query_timestamp="2024-05-01T10:00:00"),
         ranked=(("Postgres", "MySQL"),),
     ),
     # ── Multi-hop: the answer is one link away ────────────────────────────────────
@@ -425,7 +442,7 @@ CASES: tuple[Case, ...] = (
             ),
         ),
         query="What did the assistant change?",
-        recall={"types": ["experience"]},
+        recall=Recall(types=["experience"]),
         types=("experience",),
         found=("retry|flaky",),
     ),
@@ -441,7 +458,7 @@ CASES: tuple[Case, ...] = (
             ),
         ),
         query="What are the user's formatting preferences?",
-        recall={"types": ["world"]},
+        recall=Recall(types=["world"]),
         types=("world",),
         found=("tabs",),
     ),
@@ -457,7 +474,7 @@ CASES: tuple[Case, ...] = (
             ),
         ),
         query="Which editor is the favourite?",
-        recall={"tags": ["user:ana"], "tags_match": "any_strict"},
+        recall=Recall(tags=["user:ana"], tags_match="any_strict"),
         found=("Helix",),
         absent=("Zed", "VS Code"),
     ),
@@ -485,7 +502,7 @@ CASES: tuple[Case, ...] = (
             Memory("我在家里休息，看了一部电影。", timestamp="2024-05-15T10:00:00"),
         ),
         query="我上周见了谁？",
-        recall={"query_timestamp": "2024-05-16T10:00:00"},
+        recall=Recall(query_timestamp="2024-05-16T10:00:00"),
         found=("王",),
         within=2,
     ),
@@ -533,7 +550,7 @@ CASES: tuple[Case, ...] = (
             )
         ),
         query="What has the team been working on?",
-        recall={"max_tokens": 60},
+        recall=Recall(max_tokens=60),
         check=_budget_is_respected,
     ),
     Case(
@@ -545,7 +562,7 @@ CASES: tuple[Case, ...] = (
             Memory("Release Hawthorn added the export to CSV."),
         ),
         query="What does the Juniper release add?",
-        recall={"max_tokens": 0, "include_chunks": True},
+        recall=Recall(max_tokens=0, include_chunks=True),
         check=_chunks_without_facts,
     ),
     # ── Observations: what consolidation wrote, found by recall ──────────────────
@@ -560,7 +577,7 @@ CASES: tuple[Case, ...] = (
             Memory("I don't drink coffee, it makes me jittery.", timestamp="2024-02-15T08:00:00"),
         ),
         query="What does the user drink in the morning?",
-        recall={"types": ["observation"]},
+        recall=Recall(types=["observation"]),
         types=("observation",),
         found=("tea",),
     ),
@@ -575,7 +592,7 @@ CASES: tuple[Case, ...] = (
             Memory("The payments team is led by Marta.", timestamp="2024-03-20T10:00:00"),
         ),
         query="Who leads the payments team?",
-        recall={"types": ["world", "observation"], "prefer_observations": True},
+        recall=Recall(types=["world", "observation"], prefer_observations=True),
         found=("Marta",),
         check=_observations_supersede_their_facts,
     ),

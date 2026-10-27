@@ -34,7 +34,7 @@ a recall about it hands back every copy. That is the default, and the first test
 it: it fails if recall starts returning the fact once, because then something
 deduplicates and the reason should be known.
 
-``HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE`` asks the decision model to drop a
+``HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE`` (#6131) asks the decision model to drop a
 candidate that repeats a better-ranked one, or that is no help at all. The second test
 stresses that against pools built to tempt it into the wrong drop: a reworded repeat
 must go, but a different customer signing up for the same beta, or a different detail
@@ -139,7 +139,7 @@ async def test_recall(client: Hindsight, bank_id: str, settled: SettleFn, case: 
     )
     log.info("%s [%s] %r:\n%s", case.id, case.category, case.query, outcome.rendered)
     evidence = (
-        f"bank {bank_id} ({case.origin})\nquery: {case.query!r} {case.recall or ''}\nresults:\n{outcome.rendered}"
+        f"bank {bank_id} ({case.origin})\nquery: {case.query!r} {case.recall.options()}\nresults:\n{outcome.rendered}"
     )
     assert not outcome.trapped, (
         f"{case.id}: returned what it must not —\n" + "\n".join(outcome.trapped) + f"\n{evidence}"

@@ -187,7 +187,7 @@ failures are real too: `gpt-6-luna` stored English input as Russian and Spanish 
 **Duplicates** (`test_recall_duplicates`, `test_recall_pools`). With observations and
 consolidation off, one sentence retained as four documents becomes four facts, and recall
 hands back every copy: observations merge facts, recall does not. With
-`HINDSIGHT_EVAL_SET_RECALL_DECISION_MODEL_PRUNE=true` (and a decision model) the same story
+`HINDSIGHT_EVAL_SET_RECALL_DECISION_MODEL_PRUNE=true` (the flag from #6131, and a decision model) the same story
 expects one copy. Three pools of stored-as-written facts check that recall returns every
 needed fact; with pruning on they also stress it: reworded repeats must collapse to one,
 while alike-but-distinct facts (four customers joining one beta, three details of one
