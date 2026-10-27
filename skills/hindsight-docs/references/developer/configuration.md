@@ -1618,6 +1618,15 @@ boosts it applies to a cross-encoder, and publishes no reranker score, so
 while other operations use the decision model, set
 `HINDSIGHT_API_RECALL_DECISION_MODEL_PROVIDER=none`.
 
+Set `HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE=true` (default `false`, server-level) to also
+drop candidates instead of only ordering them. A candidate goes when it is no help — it scores
+below 0.2, or below 40% of the best candidate — or when it repeats a better-ranked one: the
+same fact retained from several documents comes back once. Two memories are only compared
+when they share enough words and carry the same date, so recurring events ("went climbing"
+on two days) and alike-but-distinct facts (two customers joining the same beta) both stay.
+The best candidate always survives. Repeat checks cost one small decision-model request per
+compared pair, among the 40 best candidates.
+
 **Consolidation.** With a decision model, consolidation asks it, for each new fact, how the
 fact relates to the observations recall found for it: does it restate one, add something new
 that touches none, change one, or is it chatter. Restatements become evidence for their

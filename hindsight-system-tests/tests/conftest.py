@@ -115,6 +115,26 @@ def decision_model_server(stub_server, tmp_path_factory: pytest.TempPathFactory)
     server.stop()
 
 
+@pytest.fixture(scope="session")
+def decision_model_prune_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
+    """``decision_model_server`` with recall's prune flag on. A process of its own for the
+    same reason: the flag is server-level."""
+    log_path: Path = tmp_path_factory.mktemp("decision-model-prune-server") / "server.log"
+    server = start_hindsight_server(
+        stub_url=stub_server.url,
+        log_path=log_path,
+        extra_env={
+            "HINDSIGHT_API_DECISION_MODEL_PROVIDER": "typesafe",
+            "HINDSIGHT_API_DECISION_MODEL_API_KEY": "stub-key",
+            "HINDSIGHT_API_DECISION_MODEL_BASE_URL": stub_server.url,
+            "HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE": "true",
+            "HINDSIGHT_API_WORKER_ENABLED": "false",
+        },
+    )
+    yield server
+    server.stop()
+
+
 #: What the federated server presents at the token exchange — a projected
 #: service-account token, in a real deployment.
 WIF_IDENTITY_TOKEN = "systest-projected-sa-jwt"
@@ -375,6 +395,13 @@ async def typesafe_client(typesafe_server) -> AsyncIterator[Hindsight]:
 @pytest.fixture
 async def decision_model_client(decision_model_server) -> AsyncIterator[Hindsight]:
     client = Hindsight(base_url=decision_model_server.url)
+    yield client
+    await client.aclose()
+
+
+@pytest.fixture
+async def decision_model_prune_client(decision_model_prune_server) -> AsyncIterator[Hindsight]:
+    client = Hindsight(base_url=decision_model_prune_server.url)
     yield client
     await client.aclose()
 
