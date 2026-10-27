@@ -32,6 +32,13 @@ rerank_shared_context: contextvars.ContextVar[str | None] = contextvars.ContextV
     "hindsight_rerank_shared_context", default=None
 )
 
+# Each candidate's fact type, aligned with the pairs handed to predict(): pruning only asks
+# whether two candidates of the same type repeat each other (see
+# DecisionRerank.repeat_questions). Set by CrossEncoderReranker.rerank().
+rerank_fact_types: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "hindsight_rerank_fact_types", default=None
+)
+
 # The questions themselves, their state, caps, scores and pruning live in
 # decision_rerank_interface, which services outside hindsight-api load to rank and prune
 # exactly as this does. This class only sends the questions.
@@ -87,7 +94,9 @@ class DecisionModelReranker(CrossEncoderModel):
         else:
             subset = [docs[index] for index in indices]
             relevant = rerank.relevant(nouls)
-            repeats = rerank.repeat_questions(subset, relevant)
+            fact_types = rerank_fact_types.get()
+            kinds = [fact_types[index] for index in indices] if fact_types else None
+            repeats = rerank.repeat_questions(subset, relevant, kinds)
             repeat_answers = await asyncio.gather(*(self._ask_repeat(question) for question in repeats))
             ranked = rerank.pruned(nouls, relevant, repeats, repeat_answers)
         for slot, score in enumerate(ranked):

@@ -36,9 +36,9 @@ def _reranker(client: _Client) -> DecisionModelReranker:
     return DecisionModelReranker(client)  # type: ignore[arg-type]
 
 
-def _candidate(text: str, context: str | None = None) -> MergedCandidate:
+def _candidate(text: str, context: str | None = None, fact_type: str = "world") -> MergedCandidate:
     return MergedCandidate(
-        retrieval=RetrievalResult(id=text, text=text, fact_type="world", context=context),
+        retrieval=RetrievalResult(id=text, text=text, fact_type=fact_type, context=context),
         rrf_score=0.0,
         source_ranks={},
     )
@@ -262,6 +262,14 @@ class TestPrune:
         reranker = CrossEncoderReranker(cross_encoder=_pruning(client))
         result = await reranker.rerank("q", [_candidate("offsite in lisbon"), _candidate("tea is genmaicha")])
         assert [r.candidate.retrieval.text for r in result.results] == ["tea is genmaicha"]
+
+    async def test_an_observation_is_not_pruned_as_a_repeat_of_its_fact(self):
+        fact, observation = "Marta leads the payments team", "Marta has led the payments team since 2022"
+        client = _PruneClient(keep={fact: 0.9, observation: 0.8}, repeats={(fact, observation)})
+        reranker = CrossEncoderReranker(cross_encoder=_pruning(client))
+        result = await reranker.rerank("q", [_candidate(fact), _candidate(observation, fact_type="observation")])
+        assert [r.candidate.retrieval.text for r in result.results] == [fact, observation]
+        assert client.pairs == []
 
     def test_the_flag_reaches_recalls_reranker(self, monkeypatch):
         from hindsight_api import config as config_module

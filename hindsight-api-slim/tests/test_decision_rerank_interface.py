@@ -46,3 +46,12 @@ def test_pruning_without_sending_anything():
     assert repeat.system_one() == {"type": "noul", "instructions": decision_rerank_interface.REPEAT_INSTRUCTIONS}
     assert words.pruned(answers, relevant, [repeat], [0.9]) == [1.0, 0.0, 0.0]
     assert words.pruned(answers, relevant, [repeat], [0.1]) == [1.0, 0.0, 2 / 3]
+
+
+def test_pruning_asks_no_repeat_across_fact_types():
+    """An observation repeats the facts it was built from; prefer_observations chooses between them."""
+    words = decision_rerank_interface.DecisionRerank(count=lambda t: len(t.split()), truncate=lambda t, n: t)
+    docs = ["Marta leads the payments team", "Marta has led the payments team since 2022"]
+    assert len(words.repeat_questions(docs, [0, 1])) == 1
+    assert words.repeat_questions(docs, [0, 1], ["world", "observation"]) == []
+    assert len(words.repeat_questions(docs, [0, 1], ["world", "world"])) == 1

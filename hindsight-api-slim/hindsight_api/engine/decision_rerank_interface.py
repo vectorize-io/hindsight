@@ -220,11 +220,18 @@ class DecisionRerank:
         floor = max(PRUNE_BELOW, PRUNE_BELOW_BEST * (answers[order[0]] or 0.0))
         return [slot for position, slot in enumerate(order) if position == 0 or (answers[slot] or 0.0) >= floor]
 
-    def repeat_questions(self, docs: Sequence[str], relevant: Sequence[int]) -> list[RepeatQuestion]:
+    def repeat_questions(
+        self, docs: Sequence[str], relevant: Sequence[int], kinds: Sequence[str] | None = None
+    ) -> list[RepeatQuestion]:
         """Pruning, step two: the pairs among the best ``relevant`` worth asking about.
 
         ``docs`` are the uncapped candidate texts; each is capped in the state as in its keep
-        question. Pairs dated differently or sharing too few words are not asked.
+        question. Pairs dated differently or sharing too few words are not asked, nor, when
+        ``kinds`` gives each candidate's fact type, pairs of two different types: an
+        observation is built from the very facts it repeats, and choosing between them is
+        recall's ``prefer_observations``, which keeps the observation. Asked as a repeat, the
+        observation ranked below its fact was the one dropped, so a recall preferring
+        observations got the raw fact and no observation.
         """
         checked = relevant[:REPEAT_CANDIDATES]
         return [
@@ -236,7 +243,7 @@ class DecisionRerank:
             )
             for position, slot in enumerate(checked)
             for above in checked[:position]
-            if _may_repeat(docs[above], docs[slot])
+            if (kinds is None or kinds[above] == kinds[slot]) and _may_repeat(docs[above], docs[slot])
         ]
 
     @staticmethod
