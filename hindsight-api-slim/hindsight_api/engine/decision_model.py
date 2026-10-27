@@ -33,7 +33,7 @@ from .._cross_loop import CrossLoopSemaphore
 from ..config import DecisionModelConfig
 from ..tracing import get_span_recorder
 from .aiohttp_session import LoopLocalSession, UpstreamHTTPError, per_phase_timeout, raise_for_status
-from .decision_rerank_interface import MAX_QUESTIONS, DecisionRerank
+from .decision_rerank_interface import DecisionRerank
 from .remote_retry import RetryPolicy, acall_with_retry
 from .token_encoding import count_tokens, truncate_to_tokens
 
@@ -207,11 +207,9 @@ def record_decision_call(
 
 
 class DecisionModel:
-    # Most questions in one request (see decision_rerank_interface). The token ceiling is
-    # ``max_request_tokens``: it belongs to the model the endpoint serves, not to this
-    # client, so it is a setting.
-    MAX_QUESTIONS = MAX_QUESTIONS
-
+    # A request holds at most decision_rerank_interface.MAX_QUESTIONS questions. The token
+    # ceiling is ``max_request_tokens``: it belongs to the model the endpoint serves, not to
+    # this client, so it is a setting.
     def __init__(
         self,
         provider: str,

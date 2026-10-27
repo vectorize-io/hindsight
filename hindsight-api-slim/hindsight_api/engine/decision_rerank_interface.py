@@ -10,17 +10,18 @@ To keep it loadable on its own, by file path, without installing hindsight-api:
 - it imports the standard library only, never the rest of ``hindsight_api``;
 - the caller brings the tokenizer, as ``count`` and ``truncate`` functions, so each
   caller counts in the vocabulary of the model it talks to;
-- it builds and reads plain System One JSON; sending it is the caller's job.
+- it builds plain System One JSON; sending it is the caller's job;
+- it has no ``from __future__ import annotations``: with string annotations, a dataclass
+  looks its module up in ``sys.modules``, which a caller loading this file by path need
+  not have registered.
 
 Changing a name, a signature or the wording here changes what external callers send,
 so treat it as an API: keep it backwards compatible, or say so in the release notes.
 """
 
-from __future__ import annotations
-
 import json
-from collections.abc import Callable, Mapping
-from typing import Any
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 
 # The question asked of each candidate. Four wordings were tried on the same pool; this
 # one is the best calibrated, lifting the wanted candidate to 0.74 against 0.59 for
@@ -43,6 +44,23 @@ MAX_QUESTIONS = 700
 MAX_REQUEST_TOKENS = 26_000
 
 
+@dataclass(frozen=True)
+class RerankQuestion:
+    """One candidate's question: would showing ``memory`` help someone answer, or distract?
+
+    ``key`` names it in the request and in the answers; ``memory`` is the candidate's text,
+    already capped.
+    """
+
+    key: str
+    memory: str
+
+    def system_one(self) -> dict[str, object]:
+        """The question as System One takes it: a Noul with the task and the memory."""
+        return {"type": "noul", "instructions": {"task": KEEP_INSTRUCTIONS, "memory": self.memory}}
+
+
+@dataclass(frozen=True)
 class DecisionRerank:
     """Builds one rerank's System One requests and turns the answers into scores.
 
@@ -50,17 +68,9 @@ class DecisionRerank:
     requests go to; ``max_request_tokens`` is the most tokens one request may hold.
     """
 
-    # A plain class, not a dataclass: a dataclass looks its module up in sys.modules,
-    # which a caller loading this file by path need not have registered.
-    def __init__(
-        self,
-        count: Callable[[str], int],
-        truncate: Callable[[str, int], str],
-        max_request_tokens: int = MAX_REQUEST_TOKENS,
-    ) -> None:
-        self.count = count
-        self.truncate = truncate
-        self.max_request_tokens = max_request_tokens
+    count: Callable[[str], int]
+    truncate: Callable[[str, int], str]
+    max_request_tokens: int = MAX_REQUEST_TOKENS
 
     def capped(self, text: str, ceiling: int) -> str:
         """``text`` cut to ``ceiling`` tokens, and never past a quarter of a request."""
@@ -79,27 +89,25 @@ class DecisionRerank:
         shared = self.capped(shared_context or "", MAX_SHARED_CONTEXT_TOKENS)
         return f"{shared}\n\nQuestion: {query}" if shared else f"Question: {query}"
 
-    def questions(self, docs: list[str]) -> dict[str, dict[str, Any]]:
-        """One Noul per candidate, keyed ``m0``, ``m1``, ... in the order of ``docs``.
+    def questions(self, docs: Sequence[str]) -> list[RerankQuestion]:
+        """One question per candidate, keyed ``m0``, ``m1``, ... in the order of ``docs``.
 
         Each memory is capped like the query, so no single question can outgrow the window.
         """
-        return {
-            f"m{slot}": {
-                "type": "noul",
-                "instructions": {"task": KEEP_INSTRUCTIONS, "memory": self.capped(doc, MAX_MEMORY_TOKENS)},
-            }
-            for slot, doc in enumerate(docs)
-        }
+        return [
+            RerankQuestion(key=f"m{slot}", memory=self.capped(doc, MAX_MEMORY_TOKENS)) for slot, doc in enumerate(docs)
+        ]
 
     def split(
-        self, model: str, state: str | dict[str, Any], questions: Mapping[str, dict[str, Any]]
+        self, model: str, state: str | Mapping[str, object], questions: Mapping[str, Mapping[str, object]]
     ) -> list[list[str]]:
         """The keys of ``questions``, in groups whose requests each fit ``max_request_tokens``.
 
-        Counted on the System One body (``{"model", "state", "questions"}``), since that is
-        what the endpoint counts against its window. At most ``MAX_QUESTIONS`` per group. A
-        single question over the ceiling still goes out alone, and fails there.
+        ``questions`` maps each key to the question's System One JSON, so any question can
+        be split, not only a :class:`RerankQuestion`. Counted on the System One body
+        (``{"model", "state", "questions"}``), since that is what the endpoint counts against
+        its window. At most ``MAX_QUESTIONS`` per group. A single question over the ceiling
+        still goes out alone, and fails there.
         """
         envelope = self.count(json.dumps({"model": model, "state": state, "questions": {}}))
         groups: list[list[str]] = []
@@ -117,19 +125,15 @@ class DecisionRerank:
         return groups
 
     @staticmethod
-    def scores(n: int, nouls: Mapping[str, float | None]) -> list[float]:
-        """Scores for the ``n`` candidates, aligned with ``docs``, from each key's Noul answer.
+    def scores(answers: Sequence[float | None]) -> list[float]:
+        """Scores from each candidate's Noul answer, both aligned with ``docs``.
 
         The scores are positions, not confidences: the best gets 1.0 and each place below
-        it 1/n less. An unanswered candidate counts as 0.0. Equal answers keep the input
-        order, so the caller's own order breaks ties.
+        it 1/n less. An unanswered candidate (None) counts as 0.0. Equal answers keep the
+        input order, so the caller's own order breaks ties.
         """
-
-        def answer(slot: int) -> float:
-            noul = nouls.get(f"m{slot}")
-            return noul if noul is not None else 0.0
-
-        order = sorted(range(n), key=lambda slot: -answer(slot))
+        n = len(answers)
+        order = sorted(range(n), key=lambda slot: -(answers[slot] or 0.0))
         scores = [0.0] * n
         for position, slot in enumerate(order):
             scores[slot] = (n - position) / n

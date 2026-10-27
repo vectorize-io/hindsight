@@ -69,15 +69,15 @@ class DecisionModelReranker(CrossEncoderModel):
     async def _rerank(self, query: str, docs: list[str], indices: list[int], scores: list[float]) -> None:
         """Scores ``indices`` by position, best first."""
         rerank = self._client.rerank_interface()
-        questions = {
-            key: DecisionQuestion(**question)
-            for key, question in rerank.questions([docs[index] for index in indices]).items()
-        }
+        asked = rerank.questions([docs[index] for index in indices])
+        questions = {question.key: DecisionQuestion.model_validate(question.system_one()) for question in asked}
         state = rerank.state(query, rerank_shared_context.get())
+        # Every memory is capped (see DecisionRerank.questions), so no single question can
+        # outgrow the window: a failed request now raises instead of ranking its candidates last.
         answers = await self._client.ask_all(state, questions, scope="decision_recall_rerank")
         # Stable on the caller's input order, so equal answers keep their RRF order.
-        nouls = {key: answer.noul for key, answer in answers.items()}
-        for slot, score in enumerate(rerank.scores(len(indices), nouls)):
+        nouls = [answers[question.key].noul if question.key in answers else None for question in asked]
+        for slot, score in enumerate(rerank.scores(nouls)):
             scores[indices[slot]] = score
 
     async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:

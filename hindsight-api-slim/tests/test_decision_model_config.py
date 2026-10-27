@@ -16,6 +16,7 @@ from hindsight_api.engine.decision_model import (
     DecisionResponse,
     DecisionUsage,
 )
+from hindsight_api.engine.decision_rerank_interface import MAX_QUESTIONS
 from hindsight_api.engine.remote_retry import RetryPolicy
 from hindsight_api.engine.token_encoding import count_tokens
 from tests.aiohttp_stub import stub_server
@@ -437,10 +438,8 @@ async def test_every_request_fits_the_ceiling_counting_the_whole_body():
 async def test_a_pool_over_the_question_cap_is_split():
     upstream = _Answering()
     async with stub_server(upstream.handle) as base_url:
-        await _splitting_client(base_url).ask_all(
-            "q", _nouls(DecisionModel.MAX_QUESTIONS + 5, "x"), scope="decision_test"
-        )
-    assert sorted(len(body["questions"]) for body in upstream.bodies) == [5, DecisionModel.MAX_QUESTIONS]
+        await _splitting_client(base_url).ask_all("q", _nouls(MAX_QUESTIONS + 5, "x"), scope="decision_test")
+    assert sorted(len(body["questions"]) for body in upstream.bodies) == [5, MAX_QUESTIONS]
 
 
 async def test_a_rate_limited_request_is_retried():
