@@ -180,6 +180,8 @@ mod tests {
             max_tokens: 4096,
             trace: false,
             prefer_observations: None,
+            prune: None,
+            dedup: None,
             budget: None,
             include: None,
             query_timestamp: None,

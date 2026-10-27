@@ -329,6 +329,8 @@ impl App {
                         trace: false,
                         query_timestamp: None,
                         prefer_observations: None,
+                        prune: None,
+                        dedup: None,
                         include: None,
                         tags: None,
                         tags_match: TagsMatch::Any,
