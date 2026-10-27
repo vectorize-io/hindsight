@@ -45,5 +45,5 @@ async def test_a_logged_out_primary_fails_over_to_the_next_member(logged_out_pri
     # extracted by member 1, the stub.
     response = await logged_out_primary_client.arecall(bank_id=bank_id, query="Who repairs harpsichords?")
     assert [result.text for result in response.results] == [
-        "Odalys Brenwick repairs harpsichords in Trieste | Involving: Odalys Brenwick"
+        "Odalys Brenwick repairs harpsichords in Trieste | Where: Trieste | Involving: Odalys Brenwick"
     ]

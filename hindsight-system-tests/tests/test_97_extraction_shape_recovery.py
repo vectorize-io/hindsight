@@ -89,7 +89,7 @@ async def test_a_drifted_extraction_is_corrected_and_the_facts_survive(
     # The order is pinned, not just the membership — with the LLM, embedder and
     # reranker stubbed this ranking is deterministic.
     assert [result.text for result in response.results] == [
-        "Maria migrated the billing service to Frankfurt | Involving: Maria",
         "Maria is the head of operations | Involving: Maria",
+        "Maria migrated the billing service to Frankfurt | Where: Frankfurt | Involving: Maria",
     ]
     assert all(result.type == "world" for result in response.results)
