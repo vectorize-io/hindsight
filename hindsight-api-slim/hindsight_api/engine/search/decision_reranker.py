@@ -19,7 +19,6 @@ import contextvars
 from ...config import DecisionModelConfig
 from ..cross_encoder import CrossEncoderModel
 from ..decision_model import DecisionModel, DecisionQuestion
-from ..decision_rerank_interface import RepeatQuestion
 
 PROVIDER_NAME = "decision_model"
 
@@ -32,16 +31,8 @@ rerank_shared_context: contextvars.ContextVar[str | None] = contextvars.ContextV
     "hindsight_rerank_shared_context", default=None
 )
 
-# Each candidate's fact type, aligned with the pairs handed to predict(): pruning only asks
-# whether two candidates of the same type repeat each other (see
-# DecisionRerank.repeat_questions). Set by CrossEncoderReranker.rerank().
-rerank_fact_types: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
-    "hindsight_rerank_fact_types", default=None
-)
-
-# The questions themselves, their state, caps, scores and pruning live in
-# decision_rerank_interface, which services outside hindsight-api load to rank and prune
-# exactly as this does. This class only sends the questions.
+# The questions themselves, their state, caps and scores live in decision_rerank_interface,
+# which services outside hindsight-api load to rank exactly as this does.
 
 
 class DecisionModelReranker(CrossEncoderModel):
@@ -55,9 +46,8 @@ class DecisionModelReranker(CrossEncoderModel):
     0.59 against 0.79 on a 20-question answer-quality set.
 
     The scores handed back are positions, not confidences: descending from 1.0 in rank
-    order. With ``prune`` on, a candidate it would leave out scores exactly 0.0, which is
-    how :attr:`prunes_candidates` tells recall to drop it: one judged no help, or one that
-    repeats a better-ranked candidate. The best candidate always survives.
+    order. With ``prune`` on, a candidate judged no help scores exactly 0.0, which is how
+    :attr:`prunes_candidates` tells recall to drop it; the best candidate always survives.
     """
 
     # Its decision-model requests are traced one by one; a rerank row would count them twice.
@@ -81,37 +71,17 @@ class DecisionModelReranker(CrossEncoderModel):
     async def _rerank(self, query: str, docs: list[str], indices: list[int], scores: list[float]) -> None:
         """Scores ``indices`` by position, best first."""
         rerank = self._client.rerank_interface()
-        subset = [docs[index] for index in indices]
-        asked = rerank.questions(subset)
+        asked = rerank.questions([docs[index] for index in indices])
         questions = {question.key: DecisionQuestion.model_validate(question.system_one()) for question in asked}
         state = rerank.state(query, rerank_shared_context.get())
-        repeats: list[RepeatQuestion] = []
-        if self.prunes_candidates:
-            fact_types = rerank_fact_types.get()
-            repeats = rerank.repeat_questions(subset, [fact_types[index] for index in indices] if fact_types else None)
-        # The repeat questions go out with the keep ones, so pruning adds no round trip.
         # Every memory is capped (see DecisionRerank.questions), so no single question can
         # outgrow the window: a failed request now raises instead of ranking its candidates last.
-        repeating = asyncio.gather(*(self._ask_repeat(question) for question in repeats))
-        try:
-            answers = await self._client.ask_all(state, questions, scope="decision_recall_rerank")
-        except BaseException:
-            repeating.cancel()
-            raise
-        repeat_answers = await repeating
+        answers = await self._client.ask_all(state, questions, scope="decision_recall_rerank")
         # Stable on the caller's input order, so equal answers keep their RRF order.
         nouls = [answers[question.key].noul if question.key in answers else None for question in asked]
-        if not self.prunes_candidates:
-            ranked = rerank.scores(nouls)
-        else:
-            ranked = rerank.pruned(nouls, rerank.relevant(nouls), repeats, repeat_answers)
+        ranked = rerank.pruned(nouls) if self.prunes_candidates else rerank.scores(nouls)
         for slot, score in enumerate(ranked):
             scores[indices[slot]] = score
-
-    async def _ask_repeat(self, question: RepeatQuestion) -> float | None:
-        question_body = DecisionQuestion.model_validate(question.system_one())
-        found = await self._client.ask_all(question.state, {"repeat": question_body}, scope="decision_recall_prune")
-        return found["repeat"].noul if "repeat" in found else None
 
     async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         docs = [doc for _, doc in pairs]

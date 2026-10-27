@@ -1,6 +1,5 @@
 """Recall's decision-model reranker: one question per candidate, ordered by the answers."""
 
-import asyncio
 from datetime import UTC, datetime
 
 import pytest
@@ -37,9 +36,9 @@ def _reranker(client: _Client) -> DecisionModelReranker:
     return DecisionModelReranker(client)  # type: ignore[arg-type]
 
 
-def _candidate(text: str, context: str | None = None, fact_type: str = "world") -> MergedCandidate:
+def _candidate(text: str, context: str | None = None) -> MergedCandidate:
     return MergedCandidate(
-        retrieval=RetrievalResult(id=text, text=text, fact_type=fact_type, context=context),
+        retrieval=RetrievalResult(id=text, text=text, fact_type="world", context=context),
         rrf_score=0.0,
         source_ranks={},
     )
@@ -195,104 +194,38 @@ class TestSharedState:
         assert client.asked[0][0] in {f"Current date: {day.isoformat()}\n\nQuestion: q" for day in (before, after)}
 
 
-class _PruneClient(_Client):
-    """Ranks from ``keep``; calls a pair a repeat when it is in ``repeats`` as (A, B)."""
-
-    def __init__(self, keep=None, repeats=()):
-        super().__init__(keep)
-        self.repeats = set(repeats)
-        self.pairs: list[tuple[str, str]] = []
-
-    async def ask_all(self, state, questions, *, scope):
-        if "repeat" not in questions:
-            return await super().ask_all(state, questions, scope=scope)
-        a, b = (line.split(": ", 1)[1] for line in state.split("\n"))
-        self.pairs.append((a, b))
-        return {"repeat": DecisionAnswer(noul=0.9 if (a, b) in self.repeats else 0.1)}
-
-
-def _pruning(client: _PruneClient) -> DecisionModelReranker:
+def _pruning(client: _Client) -> DecisionModelReranker:
     return DecisionModelReranker(client, prune=True)  # type: ignore[arg-type]
 
 
 class TestPrune:
     async def test_off_by_default_nothing_is_dropped(self):
-        client = _PruneClient(keep={"tea is genmaicha": 0.9, "offsite in lisbon": 0.01})
+        client = _Client({"tea is genmaicha": 0.9, "offsite in lisbon": 0.01})
         scores = await _reranker(client).predict([("q", "tea is genmaicha"), ("q", "offsite in lisbon")])
         assert all(score > 0.0 for score in scores)
-        assert client.pairs == []
 
     async def test_a_candidate_judged_no_help_is_dropped_but_the_best_always_survives(self):
-        client = _PruneClient(keep={"tea is genmaicha": 0.9, "offsite in lisbon": 0.1})
+        client = _Client({"tea is genmaicha": 0.9, "offsite in lisbon": 0.1})
         scores = await _pruning(client).predict([("q", "offsite in lisbon"), ("q", "tea is genmaicha")])
         assert scores == [0.0, 1.0]
 
         # Relative to the best: 0.3 clears the floor but not 40% of 0.9.
-        crowded = _PruneClient(keep={"tea is genmaicha": 0.9, "offsite in lisbon": 0.3})
+        crowded = _Client({"tea is genmaicha": 0.9, "offsite in lisbon": 0.3})
         assert (await _pruning(crowded).predict([("q", "offsite in lisbon"), ("q", "tea is genmaicha")]))[0] == 0.0
 
-        lonely = _PruneClient(keep={"offsite in lisbon": 0.05})
+        lonely = _Client({"offsite in lisbon": 0.05})
         assert (await _pruning(lonely).predict([("q", "offsite in lisbon")]))[0] > 0.0
 
-    async def test_a_repeat_of_a_better_ranked_candidate_is_dropped(self):
-        best, again = "Marta favourite tea is genmaicha", "Marta favorite tea is genmaicha"
-        client = _PruneClient(keep={best: 0.9, again: 0.8}, repeats={(best, again)})
-        scores = await _pruning(client).predict([("q", again), ("q", best)])
-        assert scores[1] > 0.0 and scores[0] == 0.0
-        # Both ways round: the rank order is not known when the pairs go out.
-        assert sorted(client.pairs) == sorted([(again, best), (best, again)])
-
-    async def test_only_the_answer_with_the_better_ranked_candidate_first_counts(self):
-        best, again = "Marta favourite tea is genmaicha", "Marta favorite tea is genmaicha"
-        client = _PruneClient(keep={best: 0.9, again: 0.8}, repeats={(again, best)})
-        assert all(score > 0.0 for score in await _pruning(client).predict([("q", again), ("q", best)]))
-
-    async def test_the_repeat_questions_go_out_with_the_keep_ones(self):
-        """One round trip: the keep request is still waiting when the repeat one is asked."""
-        best, again = "Marta favourite tea is genmaicha", "Marta favorite tea is genmaicha"
-        repeat_asked = asyncio.Event()
-
-        class _Waiting(_PruneClient):
-            async def ask_all(self, state, questions, *, scope):
-                if "repeat" in questions:
-                    repeat_asked.set()
-                else:
-                    await asyncio.wait_for(repeat_asked.wait(), timeout=5)
-                return await super().ask_all(state, questions, scope=scope)
-
-        client = _Waiting(keep={best: 0.9, again: 0.8}, repeats={(best, again)})
-        assert (await _pruning(client).predict([("q", best), ("q", again)]))[1] == 0.0
-
-    async def test_a_repeat_of_a_dropped_candidate_stays(self):
-        """Repeats are judged against what is kept, so a chain does not drop its own head."""
-        a, b, c = "Acme signed the beta", "Acme signed the beta deal", "Acme signed the beta contract"
-        client = _PruneClient(keep={a: 0.9, b: 0.8, c: 0.7}, repeats={(a, b), (b, c)})
-        scores = await _pruning(client).predict([("q", a), ("q", b), ("q", c)])
-        assert [score > 0.0 for score in scores] == [True, False, True]
-
-    async def test_pairs_dated_differently_or_sharing_few_words_are_not_asked(self):
-        """Different dates are different occasions; few shared words cannot be a rewording."""
-        may3 = "[Date: May 03, 2026 (2026-05-03)] Sam went climbing at Boulder Hall"
-        may10 = "[Date: May 10, 2026 (2026-05-10)] Sam went climbing at Boulder Hall"
-        other = "The payments service moved to Go"
-        client = _PruneClient(keep={may3: 0.9, may10: 0.8, other: 0.7})
-        scores = await _pruning(client).predict([("q", may3), ("q", may10), ("q", other)])
-        assert client.pairs == []
-        assert all(score > 0.0 for score in scores)
+    async def test_pruning_asks_nothing_more_than_ranking(self):
+        client = _Client({"tea is genmaicha": 0.9, "Marta favourite tea is genmaicha": 0.85})
+        await _pruning(client).predict([("q", "tea is genmaicha"), ("q", "Marta favourite tea is genmaicha")])
+        assert len(client.asked) == 1
 
     async def test_recall_leaves_the_dropped_candidates_out(self):
-        client = _PruneClient(keep={"tea is genmaicha": 0.9, "offsite in lisbon": 0.1})
+        client = _Client({"tea is genmaicha": 0.9, "offsite in lisbon": 0.1})
         reranker = CrossEncoderReranker(cross_encoder=_pruning(client))
         result = await reranker.rerank("q", [_candidate("offsite in lisbon"), _candidate("tea is genmaicha")])
         assert [r.candidate.retrieval.text for r in result.results] == ["tea is genmaicha"]
-
-    async def test_an_observation_is_not_pruned_as_a_repeat_of_its_fact(self):
-        fact, observation = "Marta leads the payments team", "Marta has led the payments team since 2022"
-        client = _PruneClient(keep={fact: 0.9, observation: 0.8}, repeats={(fact, observation)})
-        reranker = CrossEncoderReranker(cross_encoder=_pruning(client))
-        result = await reranker.rerank("q", [_candidate(fact), _candidate(observation, fact_type="observation")])
-        assert [r.candidate.retrieval.text for r in result.results] == [fact, observation]
-        assert client.pairs == []
 
     def test_the_flag_reaches_recalls_reranker(self, monkeypatch):
         from hindsight_api import config as config_module

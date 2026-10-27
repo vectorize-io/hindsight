@@ -173,23 +173,19 @@ async def test_recall_duplicates(client: Hindsight, bank_id: str, settled: Settl
         context=f"The same sentence was retained as {RETAIN_REPEATS} separate documents: {CONTENT!r}",
     )
     where = f"{len(documents)} documents among the results — bank {bank_id}: {verdict.reasoning}\n{results}"
-    expected = not PRUNING
+    # Pruning drops what is no help, not repeats, so every copy comes back either way.
     RECORDED.append(
         EvalRecord(
             kind="recall",
             question_id=case,
             category="duplicates",
-            correct=verdict.meets_criteria == expected and bool(recalled.results),
+            correct=verdict.meets_criteria,
             hit_trap=False,
             bank_id=bank_id,
             reason=verdict.reasoning,
         )
     )
-    if PRUNING:
-        assert not verdict.meets_criteria, f"recall pruned, yet returned the fact more than once ({where})"
-        assert recalled.results, f"recall pruned every copy ({where})"
-    else:
-        assert verdict.meets_criteria, f"recall returned no duplicates ({where})"
+    assert verdict.meets_criteria, f"recall returned no duplicates ({where})"
 
 
 @dataclass(frozen=True)
@@ -197,7 +193,7 @@ class PruneCase:
     id: str
     category: str
     query: str
-    #: Each inner tuple is one fact, reworded: one of them must come back, and only one.
+    #: Each inner tuple is one fact, reworded: at least one of them must come back.
     facts: tuple[tuple[str, ...], ...]
     #: Nothing to do with the query: should not come back.
     junk: tuple[str, ...]
@@ -257,9 +253,10 @@ PRUNE_CASES = (
 # ── Prune: labelled pools, stored as written ─────────────────────────────────
 @pytest.mark.parametrize("case", case_params(PRUNE_CASES, {c.id for c in PRUNE_CASES}))
 async def test_recall_pools(client: Hindsight, bank_id: str, settled: SettleFn, case: PruneCase) -> None:
-    """Every needed fact comes back. With pruning on, also: one copy of each, and most junk gone.
+    """Every needed fact comes back. With pruning on, also: most junk gone.
 
-    Without pruning recall returns repeats and junk by design, so only the first holds.
+    Without pruning recall returns junk by design, so only the first holds. Repeats come back
+    either way: pruning drops what is no help, not repeats.
     """
     # Stored as written, so each label points at the exact text recall returns.
     await prepare_bank(client, bank_id)
@@ -275,7 +272,6 @@ async def test_recall_pools(client: Hindsight, bank_id: str, settled: SettleFn, 
         return any(text in r for r in returned)
 
     lost = [fact[0] for fact in case.facts if not any(came_back(text) for text in fact)]
-    repeated = [fact[0] for fact in case.facts if sum(came_back(text) for text in fact) > 1] if PRUNING else []
     junk = [text for text in case.junk if came_back(text)]
     # Most, not all: an unrelated memory is dropped only when the model is sure, since
     # dropping a needed one costs more than showing a stray one.
@@ -285,15 +281,14 @@ async def test_recall_pools(client: Hindsight, bank_id: str, settled: SettleFn, 
             kind="recall",
             question_id=case.id,
             category=case.category,
-            correct=not (lost or repeated or too_much_junk),
+            correct=not (lost or too_much_junk),
             hit_trap=False,
             bank_id=bank_id,
-            reason=f"lost {lost}; repeated {repeated}; junk {len(junk)}/{len(case.junk)}",
+            reason=f"lost {lost}; junk {len(junk)}/{len(case.junk)}",
         )
     )
     where = f"bank {bank_id}, returned:\n" + "\n".join(returned)
     assert not lost, f"{case.id}: every copy of {lost} is missing — {where}"
-    assert not repeated, f"{case.id}: more than one copy of {repeated} came back — {where}"
     assert not too_much_junk, f"{case.id}: {len(junk)}/{len(case.junk)} unrelated came back — {where}"
 
 

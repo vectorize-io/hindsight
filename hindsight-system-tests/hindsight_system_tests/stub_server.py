@@ -217,8 +217,7 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
         gets a probability, and they sum to 1, so the stub scores each option's text
         lexically and normalises, except the ``impact`` choice, a delta refresh's gate,
         which is the rulebook's verdict on the memory as yes or no. A ``noul`` asks about one memory, and is answered
-        with the rulebook's verdict for it, else its lexical relevance to the state; the one
-        about two memories (a pruning recall's repeat check) with the rulebook's repeats. A
+        with the rulebook's verdict for it, else its lexical relevance to the state. A
         ``score`` is the cut: its answer is a level, and the rulebook decides which
         one.
         """
@@ -247,11 +246,7 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
             return JSONResponse({"model": "stub", "answers": answers, "usage": {"input_tokens": 1, "output_tokens": 1}})
 
         for question_id, question in body["questions"].items():
-            if question["type"] == "noul" and isinstance(question["instructions"], str):
-                # A pruning recall's repeat check: both memories are lines of the state.
-                memory_a, memory_b = (line.split(": ", 1)[1] for line in state.split("\n"))
-                answers[question_id] = {"type": "noul", "noul": stubs.rerank.repeat(memory_a, memory_b)}
-            elif question["type"] == "noul":
+            if question["type"] == "noul":
                 memory = question["instructions"]["memory"]
                 stubs.rerank.states.append(body["state"])
                 answers[question_id] = {"type": "noul", "noul": stubs.rerank.verdict(body["state"], memory)}

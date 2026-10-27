@@ -69,7 +69,7 @@ stays out of the category counts.
 | recall | precision | 2 | the right budget among near-identical ones; a negation kept |
 | recall | budget | 2 | a small `max_tokens` returns fewer facts but never none; `max_tokens=0` returns chunks only |
 | recall | observations | 2 | `types=[observation]`; `prefer_observations` drops the facts an observation was built from |
-| recall | duplicates | 2 | one sentence in four documents comes back four times (once, with pruning); reworded repeats collapse under pruning |
+| recall | duplicates | 2 | one sentence in four documents comes back four times; reworded repeats all come back, pruning or not |
 | recall | distinct | 2 | facts that only look alike (four customers, three details of one offsite) all come back |
 | consolidation | merge | 2 | restatements update one observation; the same facts under two tags merge in a shared scope |
 | consolidation | update | 4 | a new employer, retired tools, a correction, a member leaving a list: the old belief stops reading as current |
@@ -187,11 +187,11 @@ failures are real too: `gpt-6-luna` stored English input as Russian and Spanish 
 **Duplicates** (`test_recall_duplicates`, `test_recall_pools`). With observations and
 consolidation off, one sentence retained as four documents becomes four facts, and recall
 hands back every copy: observations merge facts, recall does not. With
-`HINDSIGHT_EVAL_SET_RECALL_DECISION_MODEL_PRUNE=true` (the flag from #6131, and a decision model) the same story
-expects one copy. Three pools of stored-as-written facts check that recall returns every
-needed fact; with pruning on they also stress it: reworded repeats must collapse to one,
-while alike-but-distinct facts (four customers joining one beta, three details of one
-offsite) must all survive, and most unrelated facts must go.
+`HINDSIGHT_EVAL_SET_RECALL_DECISION_MODEL_PRUNE=true` (the flag from #6131, and a decision model) it still
+does: pruning drops what is no help, not repeats. Three pools of stored-as-written facts check
+that recall returns every needed fact; with pruning on they also stress it: alike-but-distinct
+facts (four customers joining one beta, three details of one offsite) must all survive, and
+most unrelated facts must go.
 
 **Benchmark: ranked retrieval on BEIR** (`test_recall_benchmark_beir_scifact`). The only suite graded against labels
 nobody here wrote, and the only one that makes **no model call**. It records a

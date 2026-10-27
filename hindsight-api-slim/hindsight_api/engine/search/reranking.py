@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from ..cross_encoder import RerankTimeoutError, _served_provider
 from .decision_reranker import PROVIDER_NAME as DECISION_MODEL_RERANKER
-from .decision_reranker import DecisionModelReranker, rerank_fact_types, rerank_shared_context
+from .decision_reranker import DecisionModelReranker, rerank_shared_context
 from .types import MergedCandidate, ScoredResult
 
 logger = logging.getLogger(__name__)
@@ -438,7 +438,6 @@ class CrossEncoderReranker:
         unscored: set[int] = set()
         token = _served_provider.set(None)
         shared_context_token = rerank_shared_context.set(shared_context)
-        fact_types_token = rerank_fact_types.set([c.retrieval.fact_type for c in candidates])
         try:
             try:
                 # The model takes 2-tuples; `pairs` is built as two-element lists.
@@ -450,7 +449,6 @@ class CrossEncoderReranker:
             served_provider = _served_provider.get()
         finally:
             rerank_shared_context.reset(shared_context_token)
-            rerank_fact_types.reset(fact_types_token)
             _served_provider.reset(token)
         if served_provider is None:
             # Single-member encoders do not record one. Their provider_name is

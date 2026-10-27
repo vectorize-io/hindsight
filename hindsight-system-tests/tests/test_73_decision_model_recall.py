@@ -118,22 +118,20 @@ async def tea_bank(decision_model_prune_client, hindsight_server, llm) -> AsyncI
         await decision_model_prune_client.banks.delete_bank(bank)
 
 
-async def test_pruning_drops_a_repeat_and_what_is_no_help(decision_model_prune_client, tea_bank, stubs):
-    """With HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE on, the client gets the fact once and
-    not the memory judged no help; a different fact about the same person stays."""
+async def test_pruning_drops_what_is_no_help(decision_model_prune_client, tea_bank, stubs):
+    """With HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE on, the client does not get the memory
+    judged no help. Repeats are not pruned: both copies of the tea fact come back."""
     stubs.rerank.verdicts = {TEA: 0.9, TEA_AGAIN: 0.85, SENCHA: 0.8, UNRELATED: 0.05}
-    stubs.rerank.repeats = {(TEA, TEA_AGAIN)}
 
     response = await decision_model_prune_client.arecall(bank_id=tea_bank, query="What tea does Marta like?")
 
-    assert _texts(response) == [TEA, SENCHA]
+    assert _texts(response) == [TEA, TEA_AGAIN, SENCHA]
 
 
 async def test_without_pruning_every_candidate_comes_back(decision_model_client, tea_bank, stubs):
-    """The same bank and verdicts on a server without the flag: the repeat and the
-    unrelated memory are only ordered last, not dropped."""
+    """The same bank and verdicts on a server without the flag: the unrelated memory is
+    only ordered last, not dropped."""
     stubs.rerank.verdicts = {TEA: 0.9, TEA_AGAIN: 0.85, SENCHA: 0.8, UNRELATED: 0.05}
-    stubs.rerank.repeats = {(TEA, TEA_AGAIN)}
 
     response = await decision_model_client.arecall(bank_id=tea_bank, query="What tea does Marta like?")
 

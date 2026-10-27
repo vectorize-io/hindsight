@@ -4008,7 +4008,7 @@ class HindsightConfig:
     recall_decision_model_api_key: str | None = None
     recall_decision_model_model: str | None = None
     recall_decision_model_base_url: str | None = None
-    # Recall only, server-level: the decision reranker drops irrelevant and repeated candidates.
+    # Recall only, server-level: the decision reranker drops the candidates it judges no help.
     recall_decision_model_prune: bool = DEFAULT_RECALL_DECISION_MODEL_PRUNE
     reflect_decision_model_provider: str | None = None
     reflect_decision_model_api_key: str | None = None
