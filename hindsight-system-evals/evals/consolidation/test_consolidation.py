@@ -61,7 +61,7 @@ from hindsight_system_evals.consolidation import (
     run_scenario,
 )
 from hindsight_system_evals.pages import SettleFn
-from hindsight_system_evals.report import RECORDED, EvalRecord
+from hindsight_system_evals.report import RECORDED, EvalRecord, case_params
 
 log = logging.getLogger(__name__)
 
@@ -70,11 +70,10 @@ def _wave(*facts: Fact, no_new_observations: bool = False, tags: tuple[str, ...]
     return Wave(tuple(facts), tags=tags, no_new_observations=no_new_observations)
 
 
-_SCENARIOS: dict[str, Scenario] = {
-    s.id: s
-    for s in (
+SCENARIOS: tuple[Scenario, ...] = (
         Scenario(
             id="restatements-merge",
+            category="merge",
             origin="#3249: the same preference retained twice came back as three proof_count=1 duplicates; #1566",
             waves=(
                 _wave(
@@ -104,6 +103,7 @@ _SCENARIOS: dict[str, Scenario] = {
         ),
         Scenario(
             id="employer-supersedes",
+            category="update",
             origin="#1151: many old facts support 'Alice works at Google'; one newer fact says she left",
             waves=(
                 _wave(
@@ -139,6 +139,7 @@ _SCENARIOS: dict[str, Scenario] = {
         ),
         Scenario(
             id="retired-conventions",
+            category="update",
             origin="#3248 (fnm -> nub, npx -> bun global, corepack removed), #3475 (autocommit=false reverted)",
             waves=(
                 _wave(
@@ -185,6 +186,7 @@ _SCENARIOS: dict[str, Scenario] = {
         ),
         Scenario(
             id="recency-is-when-stated",
+            category="recency",
             origin="#2550: an older session backfilled after a newer one inverted 'used to like X, now Y'",
             waves=(
                 _wave(
@@ -202,6 +204,7 @@ _SCENARIOS: dict[str, Scenario] = {
         ),
         Scenario(
             id="recency-same-day-amendment-arrives-first",
+            category="recency",
             origin="#5938: an amendment and the rule it amends, stated an hour apart, retained newest first; "
             "the older rule is worded 'was updated'",
             waves=(
@@ -234,6 +237,7 @@ _SCENARIOS: dict[str, Scenario] = {
         ),
         Scenario(
             id="correction-retires-false-belief",
+            category="update",
             origin="#3509: five facts said Gramps works via KeePass; the user later confirmed KeePass is not installed",
             waves=(
                 _wave(
@@ -264,6 +268,7 @@ _SCENARIOS: dict[str, Scenario] = {
         ),
         Scenario(
             id="horse-farm",
+            category="counts",
             origin="#814 and tests/test_horse_observations.py: counts merged with names, naming bumped the count",
             waves=tuple(
                 _wave(Fact(text, day, ents))
@@ -296,6 +301,7 @@ _SCENARIOS: dict[str, Scenario] = {
         ),
         Scenario(
             id="no-arithmetic",
+            category="counts",
             origin="prompt rule 8 ('I have 2 dogs' + 'a dog named Rex' must not become 3)",
             waves=(
                 _wave(Fact("The user has 2 dogs.", "2026-04-01", ("user",))),
@@ -307,6 +313,7 @@ _SCENARIOS: dict[str, Scenario] = {
         ),
         Scenario(
             id="cascade-to-group",
+            category="update",
             origin="prompt rule 5 (a member leaving updates its own observation AND the list that contains it)",
             waves=(
                 _wave(
@@ -341,6 +348,7 @@ _SCENARIOS: dict[str, Scenario] = {
         ),
         Scenario(
             id="resolve-reference",
+            category="entities",
             origin="prompt rule 6 ('home country' -> 'Sweden')",
             waves=(
                 _wave(
@@ -354,6 +362,7 @@ _SCENARIOS: dict[str, Scenario] = {
         ),
         Scenario(
             id="distinct-entities-stay-apart",
+            category="entities",
             origin="prompt rule 9; #5497 ('batch size 8' vs 'batch size 4' look near-identical); #1725",
             waves=(
                 _wave(
@@ -379,6 +388,7 @@ _SCENARIOS: dict[str, Scenario] = {
         ),
         Scenario(
             id="language-chinese",
+            category="language",
             origin="#3166/#3181: Chinese facts produced English observations ('User lives in Shenzhen.')",
             waves=(
                 _wave(
@@ -393,6 +403,7 @@ _SCENARIOS: dict[str, Scenario] = {
         ),
         Scenario(
             id="language-mixed-update",
+            category="language",
             origin="#3181: an English observation updated by a Chinese fact must be rewritten, not patched",
             waves=(
                 _wave(Fact("Zhang Wei works at Tencent in Shenzhen.", "2026-05-01", ("Zhang Wei", "Tencent"))),
@@ -410,6 +421,7 @@ _SCENARIOS: dict[str, Scenario] = {
         ),
         Scenario(
             id="default-drops-chatter",
+            category="mission",
             origin="decision guide: purely ephemeral facts are omitted unless the mission targets them",
             waves=(
                 _wave(
@@ -437,6 +449,7 @@ _SCENARIOS: dict[str, Scenario] = {
         ),
         Scenario(
             id="mission-keeps-ephemeral",
+            category="mission",
             origin="#525: the built-in 'skip ephemeral state' rule discarded what the mission asked for",
             mission="Track every shell command the agent ran, with the time it ran and its exit status.",
             waves=(
@@ -464,6 +477,7 @@ _SCENARIOS: dict[str, Scenario] = {
         ),
         Scenario(
             id="mission-forbids-names",
+            category="mission",
             origin="#4619 / system test 29: a company-wide scope told to name no company",
             mission="Record only generalized, industry-level trends. Name no specific company or person.",
             waves=(
@@ -494,6 +508,7 @@ _SCENARIOS: dict[str, Scenario] = {
         ),
         Scenario(
             id="shared-scope-merges-across-tags",
+            category="merge",
             origin="#2188/#2202 (211 per-session duplicates), #3564 (Traefik facts observed once per harness tag)",
             observation_scopes="shared",
             waves=(
@@ -520,8 +535,29 @@ _SCENARIOS: dict[str, Scenario] = {
             must=("The observations record Traefik as the reverse proxy and automatic ACME certificate renewal.",),
             traps=("Two or more observations state that Traefik is the reverse proxy.",),
         ),
+)
+
+
+def _with_mission(scenario: Scenario) -> Scenario:
+    """The service bank again under a bank's own mission, the common setup (#525, #4619 set one):
+    the mission's wording must not change what lands, and chatter it does not ask for stays out."""
+    return dataclasses.replace(
+        scenario,
+        id="noisy-service-catalogue-mission",
+        mission=(
+            "Keep a catalogue of the platform's services: which team owns each one, what language it is "
+            "written in, the port it listens on and where its pages go. Leave out small talk."
+        ),
+        # The chatter's own words join the focus so the judge sees any observation it left.
+        focus=(*scenario.focus, "coffee", "wifi", "thanks", "Grafana", "stand-up"),
+        traps=(*scenario.traps, "Some observation records small talk: a coffee break, the wifi, a thank-you."),
     )
-}
+
+
+#: The same rules at scale: 30 near-identical services with chatter (``noisy_service_bank``), 20
+#: people whose names come in lookalike pairs (``noisy_personal_bank``), and the services again
+#: under a mission.
+SCALE = (noisy_service_bank(), noisy_personal_bank(), _with_mission(noisy_service_bank()))
 
 #: The failures that shipped and had to be fixed. Everything else runs with ``--full``.
 MINIMUM_ACCEPTANCE = (
@@ -540,7 +576,7 @@ async def _run(client: Hindsight, bank_id: str, settled: SettleFn, scenario: Sce
         EvalRecord(
             kind="consolidation",
             question_id=scenario.id,
-            category=scenario.origin.split(":")[0],
+            category=scenario.category,
             correct=not (outcome.missed or outcome.problems),
             hit_trap=bool(outcome.traps_hit),
             bank_id=bank_id,
@@ -565,49 +601,6 @@ async def _run(client: Hindsight, bank_id: str, settled: SettleFn, scenario: Sce
     assert outcome.passed, outcome.report()
 
 
-@pytest.mark.parametrize("scenario_id", MINIMUM_ACCEPTANCE)
-async def test_consolidation_minimum_acceptance(
-    client: Hindsight, bank_id: str, settled: SettleFn, scenario_id: str
-) -> None:
-    await _run(client, bank_id, settled, _SCENARIOS[scenario_id])
-
-
-@pytest.mark.full
-@pytest.mark.parametrize("scenario_id", [s for s in _SCENARIOS if s not in MINIMUM_ACCEPTANCE])
-async def test_consolidation_full(client: Hindsight, bank_id: str, settled: SettleFn, scenario_id: str) -> None:
-    await _run(client, bank_id, settled, _SCENARIOS[scenario_id])
-
-
-@pytest.mark.full
-async def test_consolidation_noisy_bank(client: Hindsight, bank_id: str, settled: SettleFn) -> None:
-    """The same rules at scale: 30 near-identical services and chatter (see ``noisy_service_bank``)."""
-    await _run(client, bank_id, settled, noisy_service_bank())
-
-
-@pytest.mark.full
-async def test_consolidation_noisy_personal_bank(client: Hindsight, bank_id: str, settled: SettleFn) -> None:
-    """The same at scale on a different shape: 20 people whose names come in lookalike pairs."""
-    await _run(client, bank_id, settled, noisy_personal_bank())
-
-
-@pytest.mark.full
-async def test_consolidation_noisy_bank_with_mission(client: Hindsight, bank_id: str, settled: SettleFn) -> None:
-    """The service bank again under a bank's own mission, the common setup (#525, #4619 set one):
-    the mission's wording must not change what lands, and chatter it does not ask for stays out."""
-    scenario = noisy_service_bank()
-    await _run(
-        client,
-        bank_id,
-        settled,
-        dataclasses.replace(
-            scenario,
-            id="noisy-service-catalogue-mission",
-            mission=(
-                "Keep a catalogue of the platform's services: which team owns each one, what language it is "
-                "written in, the port it listens on and where its pages go. Leave out small talk."
-            ),
-            # The chatter's own words join the focus so the judge sees any observation it left.
-            focus=(*scenario.focus, "coffee", "wifi", "thanks", "Grafana", "stand-up"),
-            traps=(*scenario.traps, "Some observation records small talk: a coffee break, the wifi, a thank-you."),
-        ),
-    )
+@pytest.mark.parametrize("scenario", case_params(SCENARIOS + SCALE, MINIMUM_ACCEPTANCE))
+async def test_consolidation(client: Hindsight, bank_id: str, settled: SettleFn, scenario: Scenario) -> None:
+    await _run(client, bank_id, settled, scenario)

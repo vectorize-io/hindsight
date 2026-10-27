@@ -11,7 +11,7 @@ import logging
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Callable
 
-from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
+from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, ProviderUnavailableError
 from ..response_models import LLMCallResult, LLMToolCallResult
 
 logger = logging.getLogger(__name__)
@@ -82,3 +82,30 @@ class NoneLLM(LLMInterface):
     async def cleanup(self) -> None:
         """No-op — nothing to clean up."""
         pass
+
+
+class UnavailableLLM(NoneLLM):
+    """Stand-in for a provider whose sign-in was missing when it was built.
+
+    Every call and verification raises the original error, so a failover chain
+    moves on to its next member and the error says which login to run. Unlike
+    ``NoneLLM`` it is not "no LLM": its provider name stays the real one, so
+    nothing treats it as chunk-only mode.
+    """
+
+    def __init__(self, error: ProviderUnavailableError, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._error = error
+
+    async def verify_connection(self) -> None:
+        raise self._error
+
+    def supports_vision(self) -> None:
+        # Unknown, not False: the real provider's answer is what matters once it is back.
+        return None
+
+    async def call(self, *args: Any, **kwargs: Any) -> LLMCallResult:
+        raise self._error
+
+    async def call_with_tools(self, *args: Any, **kwargs: Any) -> LLMToolCallResult:
+        raise self._error

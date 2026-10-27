@@ -92,7 +92,7 @@ class TestSearchPacksWholePagesUnderABudget:
 
     Snippets alone cut a refresh 29% (gemini-2.5-flash-lite) and 55% (a local 35B),
     but the model sometimes answered from a snippet without ever reading the page —
-    a graded failure in the system-evals story ``test_06_reflect_reads_pages``.
+    a graded failure in the system-evals story ``test_reflect_from_page``.
     Whole pages in rank order up to a token budget keep the best pages readable while
     bounding what five unbounded pages cost; one whole page under a fixed limit left
     banks with large pages, or answers spread across pages, with none (#5787).

@@ -94,6 +94,9 @@ const server = spawn('node', [serverPath], {
   cwd: standaloneDir,
   env,
   stdio: 'inherit',
+  // On Windows a console-less parent (PM2, services) would otherwise give the
+  // child its own visible console window; logs still flow via inherited stdio.
+  windowsHide: true,
 });
 
 server.on('error', (err) => {

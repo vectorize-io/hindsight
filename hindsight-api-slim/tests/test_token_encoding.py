@@ -10,6 +10,8 @@ import pytest
 from hindsight_api.config import DEFAULT_TOKENIZER_ENCODING, ENV_TOKENIZER_ENCODING, clear_config_cache
 from hindsight_api.engine.token_encoding import (
     BUNDLED_ENCODINGS,
+    ESTIMATED_ENCODINGS,
+    check_encoding,
     _load_encoding,
     count_tokens,
     truncate_many_to_tokens,
@@ -190,3 +192,25 @@ def test_a_negative_budget_empties_rather_than_raising():
     result = truncate_to_tokens("alpha beta gamma", -5)
     assert result.text == ""
     assert result.original_tokens == count_tokens("alpha beta gamma")
+
+
+# --- a model's own vocabulary, named by the caller ------------------------------
+
+
+@pytest.mark.parametrize("name", [*BUNDLED_ENCODINGS, *ESTIMATED_ENCODINGS])
+def test_a_named_encoding_counts_and_truncates(name):
+    """'jev' has no ids, so it must never go through a loaded tokenizer."""
+    check_encoding(name)
+    text = "東京 café naïve 🎉 the storage layer " * 50
+    assert count_tokens(text, name) > 0
+    truncated = truncate_to_tokens(text, 20, name)
+    assert count_tokens(truncated.text, name) <= 20
+    assert truncated.original_tokens == count_tokens(text, name)
+    assert text.startswith(truncated.text)
+    (many,) = truncate_many_to_tokens([text], 20, name)
+    assert many == truncated
+
+
+def test_an_unknown_named_encoding_lists_what_would_work():
+    with pytest.raises(ValueError, match="jev"):
+        check_encoding("nope")

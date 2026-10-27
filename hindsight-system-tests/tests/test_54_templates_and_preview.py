@@ -261,3 +261,35 @@ async def test_a_misspelled_strategy_is_refused_instead_of_stored(client, config
     assert "scope" in str(caught.value)
     config = (await client.banks.get_bank_config(configured_bank)).config
     assert config.get("consolidation_strategies") is None
+
+
+LABEL_GROUP = {
+    "key": "area",
+    "tag": True,
+    "type": "multi-values",
+    "values": [{"value": "cdm", "description": "cognitive diagnosis"}],
+}
+
+
+async def test_a_template_carries_entity_labels_set_through_the_config_api(client, configured_bank, fresh_bank):
+    """The config API stores labels in the `{"attributes": [...]}` envelope its
+    own GET returns, and the control plane saves that same shape. Export used to
+    accept only the bare list, so it dropped the whole taxonomy with a warning in
+    the server log and nothing in the response (#6057): the clone extracted no
+    labels, and every `tag: true` group was gone as a recall filter.
+
+    Asserted on the imported bank's own config, because that is what retain reads.
+    """
+    await client.banks.update_bank_config(
+        configured_bank, {"updates": {"entity_labels": {"attributes": [LABEL_GROUP]}}}
+    )
+
+    template = await _templates(client).export_bank_template(configured_bank)
+    assert template.bank.entity_labels is not None, "export dropped entity_labels"
+    await _templates(client).import_bank_template(fresh_bank, template)
+
+    stored = (await client.banks.get_bank_config(fresh_bank)).config["entity_labels"]
+    groups = stored["attributes"] if isinstance(stored, dict) else stored
+    assert [(g["key"], g["tag"], g["type"], g["values"]) for g in groups] == [
+        (LABEL_GROUP["key"], LABEL_GROUP["tag"], LABEL_GROUP["type"], LABEL_GROUP["values"])
+    ]

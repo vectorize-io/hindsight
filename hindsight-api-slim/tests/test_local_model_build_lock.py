@@ -118,3 +118,66 @@ async def test_prefetch_downloads_where_sentence_transformers_reads(monkeypatch,
         await embeddings.initialize()
 
     assert download.call_args.kwargs["cache_dir"] == str(tmp_path)
+
+
+class _StopInit(Exception):
+    """Raised by the first model build: everything after it is out of scope."""
+
+
+@pytest.mark.parametrize("loader", ["local-embeddings", "local-reranker", "onnx-embeddings", "onnx-reranker", "t5"])
+async def test_loaders_touch_transformers_only_under_the_build_lock(monkeypatch, loader):
+    """transformers' lazy namespace raises ImportError for a name another thread is
+    still populating, so no loader may import it (or sentence_transformers, which
+    imports it) or load a tokenizer outside the build lock (issue #6069)."""
+    import sys
+    import types
+
+    from hindsight_api.engine.cross_encoder import LocalSTCrossEncoder, OnnxCrossEncoder
+    from hindsight_api.engine.embeddings import LocalSTEmbeddings, OnnxEmbeddings
+    from hindsight_api.engine.local_device import LOCAL_MODEL_BUILD_LOCK
+    from hindsight_api.engine.query_analyzer import TransformerQueryAnalyzer
+
+    unlocked: list[str] = []
+
+    def touch(what: str) -> None:
+        if not LOCAL_MODEL_BUILD_LOCK.locked():
+            unlocked.append(what)
+
+    class _FakeLib(types.ModuleType):
+        def __getattr__(self, name: str) -> MagicMock:
+            if name.startswith("__"):
+                raise AttributeError(name)
+            touch(f"{self.__name__}.{name}")
+            cls = MagicMock(side_effect=_StopInit)  # SentenceTransformer(...) / CrossEncoder(...)
+
+            def from_pretrained(*args, **kwargs) -> MagicMock:
+                touch(f"{name}.from_pretrained")
+                if name != "AutoTokenizer":
+                    raise _StopInit
+                return MagicMock()
+
+            cls.from_pretrained.side_effect = from_pretrained
+            return cls
+
+    ort = MagicMock()
+    ort.get_available_providers.return_value = ["CPUExecutionProvider"]
+    ort.InferenceSession.side_effect = _StopInit
+    monkeypatch.setitem(sys.modules, "transformers", _FakeLib("transformers"))
+    monkeypatch.setitem(sys.modules, "sentence_transformers", _FakeLib("sentence_transformers"))
+    monkeypatch.setitem(sys.modules, "onnxruntime", ort)
+    for module in ("embeddings", "cross_encoder", "local_device"):
+        monkeypatch.setattr(f"hindsight_api.engine.{module}.prefetch_local_model", lambda *a, **k: None)
+
+    with pytest.raises(_StopInit):
+        if loader == "local-embeddings":
+            await LocalSTEmbeddings(model_name="org/m", force_cpu=True).initialize()
+        elif loader == "local-reranker":
+            await LocalSTCrossEncoder(model_name="org/m", force_cpu=True).initialize()
+        elif loader == "onnx-embeddings":
+            await OnnxEmbeddings(model_id="org/m", model_path="/m/model.onnx", tokenizer_name_or_path="/m").initialize()
+        elif loader == "onnx-reranker":
+            await OnnxCrossEncoder(model_path="/m/model.onnx", tokenizer_name_or_path="/m").initialize()
+        else:
+            TransformerQueryAnalyzer(model_name="org/m").load()
+
+    assert unlocked == []

@@ -1961,7 +1961,7 @@ jobs:
             model: gemini-2.5-flash-lite
             api_key_secret: GEMINI_API_KEY
           - provider: openai
-            model: gpt-4.1-nano
+            model: gpt-6-luna
             api_key_secret: OPENAI_API_KEY
           - provider: groq
             model: openai/gpt-oss-20b
@@ -1969,7 +1969,7 @@ jobs:
           - provider: bedrock
             model: us.amazon.nova-2-lite-v1:0
           - provider: litellmrouter
-            model: gpt-4.1-nano
+            model: gpt-6-luna
             # Single-deployment chain over OpenAI — verifies the Router-backed
             # call path works end-to-end. Built from secrets in the step below.
     name: LLM acceptance (${{ matrix.provider }}/${{ matrix.model }})

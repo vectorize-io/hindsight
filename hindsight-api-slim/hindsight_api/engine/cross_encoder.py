@@ -330,13 +330,15 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         if self._model is not None:
             return
 
-        try:
-            from sentence_transformers import CrossEncoder
-        except ImportError:
-            raise ImportError(
-                "sentence-transformers is required for LocalSTCrossEncoder. "
-                "Install it with: pip install sentence-transformers"
-            )
+        # Imports transformers; see LOCAL_MODEL_BUILD_LOCK.
+        with LOCAL_MODEL_BUILD_LOCK:
+            try:
+                from sentence_transformers import CrossEncoder
+            except ImportError:
+                raise ImportError(
+                    "sentence-transformers is required for LocalSTCrossEncoder. "
+                    "Install it with: pip install sentence-transformers"
+                )
 
         logger.info(f"Reranker: initializing local provider with model {self.model_name}")
 
@@ -353,19 +355,21 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         # (e.g., jina-reranker-v2-base-multilingual). transformers 5.x removed
         # create_position_ids_from_input_ids as a module-level function; the custom
         # code in these models still references it. This monkey-patch restores it.
-        try:
-            import transformers.models.xlm_roberta.modeling_xlm_roberta as xlm_module
-            from transformers.models.xlm_roberta.modeling_xlm_roberta import XLMRobertaEmbeddings
+        # Imports transformers; see LOCAL_MODEL_BUILD_LOCK.
+        with LOCAL_MODEL_BUILD_LOCK:
+            try:
+                import transformers.models.xlm_roberta.modeling_xlm_roberta as xlm_module
+                from transformers.models.xlm_roberta.modeling_xlm_roberta import XLMRobertaEmbeddings
 
-            if not hasattr(xlm_module, "create_position_ids_from_input_ids"):
-                setattr(
-                    xlm_module,
-                    "create_position_ids_from_input_ids",
-                    XLMRobertaEmbeddings.create_position_ids_from_input_ids,
-                )
-                logger.info("Reranker: applied transformers 5.x compatibility patch for XLM-RoBERTa")
-        except Exception:
-            pass
+                if not hasattr(xlm_module, "create_position_ids_from_input_ids"):
+                    setattr(
+                        xlm_module,
+                        "create_position_ids_from_input_ids",
+                        XLMRobertaEmbeddings.create_position_ids_from_input_ids,
+                    )
+                    logger.info("Reranker: applied transformers 5.x compatibility patch for XLM-RoBERTa")
+            except Exception:
+                pass
 
         # Download outside the lock; build and smoke-test under it, because a
         # transformers build flips process-global state (see LOCAL_MODEL_BUILD_LOCK).
@@ -1191,6 +1195,10 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
     """
     TypeSafe reranker (https://typesafe.ai), Jev by default.
 
+    Deprecated as a reranker provider (``HINDSIGHT_API_RERANKER_PROVIDER=typesafe``): set up
+    the shared decision model (``HINDSIGHT_API_DECISION_MODEL_*``) instead, which recall
+    uses in place of the reranker. The class stays, since reflect's decision model uses it.
+
     Not a Cohere-compatible /rerank endpoint: TypeSafe evaluates typed *questions*
     against a *state*. This provider asks two of them.
 
@@ -1937,14 +1945,16 @@ class OnnxCrossEncoder(CrossEncoderModel):
         if self._session is not None:
             return
 
-        try:
-            import onnxruntime as ort
-            from transformers import AutoTokenizer
-        except ImportError as exc:
-            raise ImportError(
-                "onnxruntime and transformers are required for the 'onnx' reranker. "
-                "Install with: pip install 'hindsight-api-slim[local-onnx]'"
-            ) from exc
+        # Imports transformers; see LOCAL_MODEL_BUILD_LOCK.
+        with LOCAL_MODEL_BUILD_LOCK:
+            try:
+                import onnxruntime as ort
+                from transformers import AutoTokenizer
+            except ImportError as exc:
+                raise ImportError(
+                    "onnxruntime and transformers are required for the 'onnx' reranker. "
+                    "Install with: pip install 'hindsight-api-slim[local-onnx]'"
+                ) from exc
 
         model_path = self.model_path
         if not model_path:
@@ -1968,7 +1978,9 @@ class OnnxCrossEncoder(CrossEncoderModel):
             OnnxCrossEncoder._max_concurrent,
             self.batch_size,
         )
-        self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name_or_path)
+        # Imports transformers; see LOCAL_MODEL_BUILD_LOCK.
+        with LOCAL_MODEL_BUILD_LOCK:
+            self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name_or_path)
         session_options = ort.SessionOptions()
         # The arena caches freed activation blocks and never returns them, so RSS would
         # hold the largest batch's high-water mark forever (same as FlashRank/OnnxEmbeddings).
@@ -2323,10 +2335,11 @@ class JinaMLXCrossEncoder(CrossEncoderModel):
         # which has an unguarded window where `from transformers import AutoTokenizer`
         # raises ImportError if another thread is concurrently initializing the
         # namespace (e.g. embeddings init in an executor thread).
-        # See: https://github.com/vectorize-io/hindsight/issues/994
-        import transformers
+        # See: https://github.com/vectorize-io/hindsight/issues/994 and #6069.
+        with LOCAL_MODEL_BUILD_LOCK:
+            import transformers
 
-        _ = transformers.AutoTokenizer
+            _ = transformers.AutoTokenizer
 
         try:
             import mlx.core  # noqa: F401  # ty: ignore[unresolved-import]
@@ -2630,8 +2643,18 @@ class MultiCrossEncoder(CrossEncoderModel):
     exhausted its retries and raised — an ordinary quota blip does not burn a
     fallback. This chain holds no policy of its own: retrying here would retry the
     whole failover sequence rather than the member that stumbled. A member that fails to initialize is not fatal — that is the point of
-    the chain — it is retried lazily on the next request that reaches it.
+    the chain — it is retried lazily once its cooldown (below) is over.
+
+    A member that fails is benched for ``MEMBER_COOLDOWN_SECONDS``: requests try
+    it after the healthy members instead of first, so an outage costs one slow
+    request per cooldown rather than every recall paying the dead member's
+    retries. The first request after the cooldown probes it again.
     """
+
+    # Same idea as MultiLLMProvider's cooldown, minus its config and doubling: a
+    # reranker outage is a host being down, not an hours-long quota to back off from.
+    # ponytail: fixed cooldown, make it a setting if operators ask to tune it
+    MEMBER_COOLDOWN_SECONDS = 30.0
 
     traces_calls = False  # each member's predict() traces its own attempt
 
@@ -2642,6 +2665,7 @@ class MultiCrossEncoder(CrossEncoderModel):
         self._ready = [False] * len(members)
         self._locks = [asyncio.Lock() for _ in members]
         self._active = 0
+        self._benched_until = [0.0] * len(members)
 
     @property
     def provider_name(self) -> str:
@@ -2684,11 +2708,13 @@ class MultiCrossEncoder(CrossEncoderModel):
         )
         for index, result in enumerate(results):
             if isinstance(result, BaseException):
+                self._benched_until[index] = time.monotonic() + self.MEMBER_COOLDOWN_SECONDS
                 logger.warning(
-                    "Reranker member %d (%s) failed to initialize: %s; it will be retried on use",
+                    "Reranker member %d (%s) failed to initialize: %s; it will be retried on use after %.0fs",
                     index,
                     self._members[index].provider_name,
                     result,
+                    self.MEMBER_COOLDOWN_SECONDS,
                 )
         if not any(self._ready):
             logger.error("Reranker: no member of the failover chain initialized; recall will retry them per request")
@@ -2696,7 +2722,11 @@ class MultiCrossEncoder(CrossEncoderModel):
     async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """Score ``pairs`` with the first member that answers usably."""
         last_exc: BaseException | None = None
-        for index, member in enumerate(self._members):
+        now = time.monotonic()
+        # Benched members go last, not away: if every member is down, still try them.
+        order = sorted(range(len(self._members)), key=lambda i: self._benched_until[i] > now)
+        for position, index in enumerate(order):
+            member = self._members[index]
             try:
                 if not self._ready[index]:
                     await self._ensure_member_ready(index)
@@ -2705,7 +2735,8 @@ class MultiCrossEncoder(CrossEncoderModel):
                     raise RuntimeError(f"returned {len(scores)} scores for {len(pairs)} pairs")
             except Exception as e:  # noqa: BLE001 - re-raised below if no member answers
                 last_exc = e
-                remaining = len(self._members) - index - 1
+                self._benched_until[index] = time.monotonic() + self.MEMBER_COOLDOWN_SECONDS
+                remaining = len(order) - position - 1
                 logger.warning(
                     "Reranker member %d (%s) failed: %s%s",
                     index,
@@ -2714,6 +2745,7 @@ class MultiCrossEncoder(CrossEncoderModel):
                     f"; trying next member ({remaining} left)" if remaining else "; no members left",
                 )
                 continue
+            self._benched_until[index] = 0.0
             if index != self._active:
                 logger.info(
                     "Reranker: now serving from member %d (%s)",
@@ -2937,6 +2969,11 @@ def _create_cross_encoder_backend(member: RerankerMemberConfig) -> CrossEncoderM
             timeout=member.alibaba_timeout,
         )
     elif provider == "typesafe":
+        logger.warning(
+            "Reranker provider 'typesafe' is deprecated and will be removed in a future release. "
+            "Set up the shared decision model instead (HINDSIGHT_API_DECISION_MODEL_PROVIDER=typesafe "
+            "and HINDSIGHT_API_DECISION_MODEL_API_KEY): recall then ranks with it in place of the reranker."
+        )
         api_key = member.typesafe_api_key
         if not api_key:
             raise ValueError(

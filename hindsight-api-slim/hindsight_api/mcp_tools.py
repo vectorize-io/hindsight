@@ -922,6 +922,10 @@ def _apply_audit_logging(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
     original_call_tool = mcp.call_tool
 
     async def _call_tool(name: str, arguments: dict[str, Any] | None = None, **kwargs: Any) -> Any:
+        # FastMCP 3 re-enters self.call_tool (this wrapper) with run_middleware=False after the
+        # middleware chain; the outer call already logs and audits it (#6071).
+        if kwargs.get("run_middleware") is False:
+            return await original_call_tool(name, arguments, **kwargs)
         bank_id = None
         if isinstance(arguments, dict):
             bank_id = arguments.get("bank_id") or (config.bank_id_resolver() if config.bank_id_resolver else None)

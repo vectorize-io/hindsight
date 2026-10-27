@@ -523,6 +523,7 @@ _OVERRIDE_ANSWERED_BY = {
     "NousLLM": "NousLLM",
     "OpenAICompatibleLLM": "OpenAICompatibleLLM",
     "OpenAIResponsesLLM": "LLMInterface",
+    "UnavailableLLM": "LLMInterface",
     "XaiOAuthLLM": "LLMInterface",
 }
 

@@ -717,7 +717,8 @@ ENV_RERANKER_NVIDIA_TIMEOUT = "HINDSIGHT_API_RERANKER_NVIDIA_TIMEOUT"
 ENV_RERANKER_NVIDIA_BATCH_SIZE = "HINDSIGHT_API_RERANKER_NVIDIA_BATCH_SIZE"
 ENV_RERANKER_NVIDIA_MAX_CONCURRENT = "HINDSIGHT_API_RERANKER_NVIDIA_MAX_CONCURRENT"
 
-# TypeSafe configuration (reranker only; typed-question API, not a /rerank endpoint)
+# TypeSafe configuration (reranker only; typed-question API, not a /rerank endpoint).
+# Deprecated: set up the shared decision model (ENV_DECISION_MODEL_* below) instead.
 ENV_RERANKER_TYPESAFE_API_KEY = "HINDSIGHT_API_RERANKER_TYPESAFE_API_KEY"
 ENV_RERANKER_TYPESAFE_MODEL = "HINDSIGHT_API_RERANKER_TYPESAFE_MODEL"
 ENV_RERANKER_TYPESAFE_BASE_URL = "HINDSIGHT_API_RERANKER_TYPESAFE_BASE_URL"
@@ -735,7 +736,7 @@ ENV_RERANKER_GOOGLE_PROJECT_ID = "HINDSIGHT_API_RERANKER_GOOGLE_PROJECT_ID"
 ENV_RERANKER_GOOGLE_SERVICE_ACCOUNT_KEY = "HINDSIGHT_API_RERANKER_GOOGLE_SERVICE_ACCOUNT_KEY"
 
 # Decision model (TypeSafe System One): set up once, shared by every operation that supports
-# one. Separate from the typesafe reranker above, which keeps its own settings. Each operation may override provider/key/model/URL with
+# one. Separate from the deprecated typesafe reranker above, which keeps its own settings. Each operation may override provider/key/model/URL with
 # HINDSIGHT_API_{RECALL,REFLECT,CONSOLIDATION}_DECISION_MODEL_* (see _decision_model_env).
 ENV_DECISION_MODEL_PROVIDER = "HINDSIGHT_API_DECISION_MODEL_PROVIDER"
 ENV_DECISION_MODEL_API_KEY = "HINDSIGHT_API_DECISION_MODEL_API_KEY"
@@ -744,6 +745,8 @@ ENV_DECISION_MODEL_BASE_URL = "HINDSIGHT_API_DECISION_MODEL_BASE_URL"
 ENV_DECISION_MODEL_TIMEOUT = "HINDSIGHT_API_DECISION_MODEL_TIMEOUT"
 ENV_DECISION_MODEL_MAX_CONCURRENT = "HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT"
 ENV_DECISION_MODEL_MAX_REQUEST_TOKENS = "HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS"
+ENV_DECISION_MODEL_TOKENIZER = "HINDSIGHT_API_DECISION_MODEL_TOKENIZER"
+ENV_RECALL_DECISION_MODEL_PRUNE = "HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE"
 
 ENV_VECTOR_EXTENSION = "HINDSIGHT_API_VECTOR_EXTENSION"
 ENV_ANN_ITERATIVE_SCAN = "HINDSIGHT_API_ANN_ITERATIVE_SCAN"
@@ -1578,12 +1581,15 @@ class _DecisionProviderDefaults:
     model: str
     #: None when the URL is per account and must be configured (Cloudflare).
     base_url: str | None
+    #: The vocabulary the model counts its window in; None when unknown, which counts
+    #: with HINDSIGHT_API_TOKENIZER_ENCODING.
+    tokenizer: str | None = None
 
 
 # "none": no decision model; operations that could use one keep their LLM-only path.
 # typesafe and cloudflare speak the System One API; openai has its own Decisions API.
 DECISION_MODEL_PROVIDER_DEFAULTS = {
-    "typesafe": _DecisionProviderDefaults(model="jev-latest", base_url="https://api.typesafe.ai"),
+    "typesafe": _DecisionProviderDefaults(model="jev-latest", base_url="https://api.typesafe.ai", tokenizer="jev"),
     "cloudflare": _DecisionProviderDefaults(model="clef", base_url=None),
     "openai": _DecisionProviderDefaults(model="gpt-6-luna", base_url="https://api.openai.com"),
 }
@@ -1593,11 +1599,14 @@ DEFAULT_DECISION_MODEL_TIMEOUT = 60.0
 DEFAULT_DECISION_MODEL_MAX_CONCURRENT = 24
 # Most tokens one request may carry, counted on the whole JSON body. It follows the context
 # window of the model the endpoint serves (32k for jev-latest), less a margin: the endpoint
-# counted 14% more than we do on the same body (42.3k vs 37.3k, 95.2k vs 83.5k), so 26k
-# here is about 29.6k there. A request has to hold the state and at least one question,
+# counted 14% more than o200k_base on the same body (42.3k vs 37.3k, 95.2k vs 83.5k), so 26k
+# here was about 29.6k there. Counted in HINDSIGHT_API_DECISION_MODEL_TOKENIZER ('jev' for
+# typesafe) the gap is smaller, and the margin is headroom for that estimate's error. A request has to hold the state and at least one question,
 # hence the floor.
 DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS = 26_000
 MIN_DECISION_MODEL_MAX_REQUEST_TOKENS = 1_000
+# Off by default: dropping candidates changes what recall returns, so it is opt-in.
+DEFAULT_RECALL_DECISION_MODEL_PRUNE = False
 
 
 def _decision_model_env(operation: str, setting: str) -> str:
@@ -3225,6 +3234,9 @@ class DecisionModelConfig:
     timeout: float
     max_concurrent: int
     max_request_tokens: int
+    #: The vocabulary ``max_request_tokens`` and the reranker's caps are counted in; None
+    #: counts with HINDSIGHT_API_TOKENIZER_ENCODING.
+    tokenizer: str | None = None
 
 
 @dataclass
@@ -3991,10 +4003,13 @@ class HindsightConfig:
     decision_model_timeout: float = DEFAULT_DECISION_MODEL_TIMEOUT
     decision_model_max_concurrent: int = DEFAULT_DECISION_MODEL_MAX_CONCURRENT
     decision_model_max_request_tokens: int = DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS
+    decision_model_tokenizer: str | None = None
     recall_decision_model_provider: str | None = None
     recall_decision_model_api_key: str | None = None
     recall_decision_model_model: str | None = None
     recall_decision_model_base_url: str | None = None
+    # Recall only, server-level: the decision reranker drops the candidates it judges no help.
+    recall_decision_model_prune: bool = DEFAULT_RECALL_DECISION_MODEL_PRUNE
     reflect_decision_model_provider: str | None = None
     reflect_decision_model_api_key: str | None = None
     reflect_decision_model_model: str | None = None
@@ -5161,12 +5176,16 @@ class HindsightConfig:
             decision_model_max_request_tokens=int(
                 os.getenv(ENV_DECISION_MODEL_MAX_REQUEST_TOKENS) or DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS
             ),
+            decision_model_tokenizer=os.getenv(ENV_DECISION_MODEL_TOKENIZER) or None,
             **{
                 f"{operation}_decision_model_{setting.lower()}": os.getenv(_decision_model_env(operation, setting))
                 or None
                 for operation in DECISION_MODEL_OPERATIONS
                 for setting in ("PROVIDER", "API_KEY", "MODEL", "BASE_URL")
             },
+            recall_decision_model_prune=_parse_boolean_env(
+                ENV_RECALL_DECISION_MODEL_PRUNE, DEFAULT_RECALL_DECISION_MODEL_PRUNE
+            ),
             # Server
             host=os.getenv(ENV_HOST) or None,
             port=int(os.getenv(ENV_PORT, DEFAULT_PORT)),
@@ -5865,6 +5884,16 @@ class HindsightConfig:
             return value
 
         defaults = DECISION_MODEL_PROVIDER_DEFAULTS[provider]
+        # The endpoint's model, not the provider, decides the vocabulary: a System One
+        # endpoint serving another model than Jev sets it.
+        tokenizer = self.decision_model_tokenizer or defaults.tokenizer
+        if tokenizer is not None:
+            from .engine.token_encoding import check_encoding
+
+            try:
+                check_encoding(tokenizer)
+            except ValueError as err:
+                raise ValueError(f"{ENV_DECISION_MODEL_TOKENIZER}: {err}") from err
         return DecisionModelConfig(
             provider=provider,
             api_key=required(setting("api_key"), "API_KEY"),
@@ -5873,6 +5902,7 @@ class HindsightConfig:
             timeout=self.decision_model_timeout,
             max_concurrent=self.decision_model_max_concurrent,
             max_request_tokens=self.decision_model_max_request_tokens,
+            tokenizer=tokenizer,
         )
 
     def log_config(self) -> None:

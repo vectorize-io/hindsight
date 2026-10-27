@@ -48,7 +48,8 @@ import pytest_asyncio
 
 from hindsight_api.api import create_app
 from hindsight_api.config import HindsightConfig
-from hindsight_api.engine.bank_templates import BankTemplateConfig
+from hindsight_api.engine.bank_templates import BankTemplateConfig, BankTemplateDirective, BankTemplateMentalModel
+from hindsight_api.engine.response_models import MentalModelTrigger
 
 # One value per BankTemplateConfig field, each chosen to differ visibly from the
 # server default so a value that silently reverts is caught rather than matching
@@ -240,3 +241,147 @@ async def test_every_exportable_field_survives_export_then_import(api_client, ba
             f"round-trip mismatch for {field}: "
             f"source has {source_overrides.get(field)!r}, clone has {clone_overrides.get(field)!r}"
         )
+
+
+# Shapes the config API (PATCH /config) accepts besides the ones in _SAMPLE_VALUES.
+# The test above seeds through import, so every value already fits the template
+# model and the export can never reject it. Banks are mostly configured through
+# PATCH /config and the control plane instead, which accept wider shapes; an
+# export that rejects one drops the field with only a server-side warning (#6057).
+# Add a shape here whenever the config API learns to accept a new one.
+_CONFIG_API_ALTERNATE_SHAPES: dict[str, list[Any]] = {
+    "entity_labels": [
+        # The envelope GET /config returns and the control plane stores.
+        {"attributes": _SAMPLE_VALUES["entity_labels"]},
+        # The legacy free_values/multi_value form parse_entity_labels migrates.
+        [{"key": "topic", "free_values": True}, {"key": "area", "multi_value": True, "values": [{"value": "cdm"}]}],
+        {"attributes": [{"key": "topic", "free_values": True}]},
+    ],
+}
+
+
+def _config_api_cases() -> list[tuple[str, dict[str, Any]]]:
+    cases = [("sample_values", dict(_SAMPLE_VALUES))]
+    for field, shapes in _CONFIG_API_ALTERNATE_SHAPES.items():
+        cases += [(f"{field}[{i}]", {**_SAMPLE_VALUES, field: shape}) for i, shape in enumerate(shapes)]
+    return cases
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case,updates", _config_api_cases(), ids=[c[0] for c in _config_api_cases()])
+async def test_every_field_set_through_config_api_survives_export_then_import(api_client, bank_id, case, updates):
+    """Configure a bank through PATCH /config, export it, and import into a fresh bank."""
+    source_id = f"{bank_id}_source"
+    clone_id = f"{bank_id}_clone"
+
+    resp = await api_client.patch(f"/v1/default/banks/{source_id}/config", json={"updates": updates})
+    assert resp.status_code == 200, resp.text
+
+    export_resp = await api_client.get(f"/v1/default/banks/{source_id}/export")
+    assert export_resp.status_code == 200, export_resp.text
+    exported = export_resp.json()
+    exported_bank = exported.get("bank") or {}
+    dropped_by_export = sorted(f for f in updates if exported_bank.get(f) is None)
+    assert not dropped_by_export, f"export dropped fields set through the config API: {dropped_by_export}"
+
+    import_resp = await api_client.post(f"/v1/default/banks/{clone_id}/import", json=exported)
+    assert import_resp.status_code == 200, import_resp.text
+
+    # The source may hold a wider input shape than the clone (the envelope vs the bare
+    # list), so compare what each bank exports: the clone must export what the source did.
+    clone_export = await api_client.get(f"/v1/default/banks/{clone_id}/export")
+    assert clone_export.status_code == 200, clone_export.text
+    assert clone_export.json()["bank"] == exported_bank
+
+
+# Every mental model and directive field set away from its default, so the
+# round-trip below fails if export or import stops carrying any one of them.
+# Two models, because a trigger refreshes either after consolidation or on a
+# cron, never both: together they cover every trigger field.
+_SAMPLE_MENTAL_MODELS: list[dict[str, Any]] = [
+    {
+        "id": "roundtrip-cron",
+        "name": "Roundtrip Cron Model",
+        "source_query": "What did the team decide?",
+        "tags": ["team:platform"],
+        "max_tokens": 1024,
+        "trigger": {
+            "budget": "high",
+            "mode": "delta",
+            "refresh_cron": "0 * * * *",
+            "full_refresh_cron": "0 0 * * 0",
+            "min_refresh_interval_seconds": 600,
+            "fact_types": ["world", "observation"],
+            "exclude_mental_models": True,
+            "exclude_mental_model_ids": ["other-mm"],
+            "tags_match": "all",
+            "tag_groups": [{"tags": ["team:platform"], "match": "any", "resolve": "exact"}],
+            "include_chunks": True,
+            "recall_max_tokens": 3000,
+            "recall_chunks_max_tokens": 1500,
+            "reflect_search_observations_max_tokens": 2500,
+            "reflect_search_observations_include_entities": False,
+            "response_schema": {"type": "object", "properties": {"summary": {"type": "string"}}},
+            "keep_trace": True,
+        },
+    },
+    {
+        "id": "roundtrip-consolidation",
+        "name": "Roundtrip Consolidation Model",
+        "source_query": "What changed this week?",
+        "tags": [],
+        "max_tokens": 4096,
+        "trigger": {"refresh_after_consolidation": True},
+    },
+]
+_SAMPLE_DIRECTIVE: dict[str, Any] = {
+    "name": "Roundtrip Directive",
+    "content": "Cite the decision date.",
+    "priority": 7,
+    "is_active": False,
+    "tags": ["team:platform"],
+}
+
+
+def test_resource_samples_cover_every_field():
+    """A new mental model, trigger or directive field must be given a sample value."""
+    assert all(set(mm) == set(BankTemplateMentalModel.model_fields) for mm in _SAMPLE_MENTAL_MODELS)
+    sampled_trigger_fields = {k for mm in _SAMPLE_MENTAL_MODELS for k in mm["trigger"]}
+    assert sampled_trigger_fields == set(MentalModelTrigger.model_fields)
+    assert set(_SAMPLE_DIRECTIVE) == set(BankTemplateDirective.model_fields)
+
+
+def _lost_fields(sample: dict[str, Any], exported: dict[str, Any]) -> list[str]:
+    """Sample keys whose value did not come back, looking inside the trigger too."""
+    lost = [k for k, v in sample.items() if k != "trigger" and exported.get(k) != v]
+    exported_trigger = exported.get("trigger") or {}
+    lost += [f"trigger.{k}" for k, v in sample.get("trigger", {}).items() if exported_trigger.get(k) != v]
+    return lost
+
+
+@pytest.mark.asyncio
+async def test_every_mental_model_and_directive_field_survives_export_then_import(api_client, bank_id):
+    """Export carries every mental model and directive field, and a clone exports the same."""
+    source_id = f"{bank_id}_source"
+    clone_id = f"{bank_id}_clone"
+
+    resp = await api_client.post(
+        f"/v1/default/banks/{source_id}/import",
+        json={"version": "1", "mental_models": _SAMPLE_MENTAL_MODELS, "directives": [_SAMPLE_DIRECTIVE]},
+    )
+    assert resp.status_code == 200, resp.text
+
+    exported = (await api_client.get(f"/v1/default/banks/{source_id}/export")).json()
+    exported_models = {mm["id"]: mm for mm in exported["mental_models"]}
+    for sample in _SAMPLE_MENTAL_MODELS:
+        lost = _lost_fields(sample, exported_models[sample["id"]])
+        assert not lost, f"export lost {sample['id']} fields: {lost}"
+    assert exported["directives"] == [_SAMPLE_DIRECTIVE]
+
+    resp = await api_client.post(f"/v1/default/banks/{clone_id}/import", json=exported)
+    assert resp.status_code == 200, resp.text
+    clone_export = (await api_client.get(f"/v1/default/banks/{clone_id}/export")).json()
+    assert sorted(clone_export["mental_models"], key=lambda mm: mm["id"]) == sorted(
+        exported["mental_models"], key=lambda mm: mm["id"]
+    )
+    assert clone_export["directives"] == exported["directives"]

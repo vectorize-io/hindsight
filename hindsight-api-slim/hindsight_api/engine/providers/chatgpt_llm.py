@@ -25,7 +25,7 @@ from typing import Any
 
 from openai import APIConnectionError, APIError, APIStatusError, AuthenticationError
 
-from hindsight_api.engine.llm_interface import ProviderRateLimitResetError
+from hindsight_api.engine.llm_interface import ProviderRateLimitResetError, ProviderUnavailableError
 from hindsight_api.engine.providers.chatgpt_auth import (
     RESOURCE,
     ChatGPTAuth,
@@ -171,7 +171,7 @@ class ChatGPTLLM(OpenAIResponsesLLM):
         try:
             self._auth = ChatGPTAuth.shared(default_home())
         except ChatGPTAuthError as e:
-            raise RuntimeError(f"chatgpt provider unavailable: {e}") from e
+            raise ProviderUnavailableError(f"chatgpt provider unavailable: {e}") from e
         if model.startswith("openai/"):
             model = model[len("openai/") :]
         super().__init__(

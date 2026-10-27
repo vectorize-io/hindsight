@@ -5,13 +5,9 @@ from datetime import UTC, datetime
 import pytest
 
 from hindsight_api.config import DecisionModelConfig
-from hindsight_api.engine.decision_model import DecisionAnswer
-from hindsight_api.engine.search.decision_reranker import (
-    _MAX_MEMORY_TOKENS,
-    _MAX_SHARED_CONTEXT_TOKENS,
-    DecisionModelReranker,
-    rerank_shared_context,
-)
+from hindsight_api.engine.decision_model import DecisionAnswer, DecisionModel
+from hindsight_api.engine.decision_rerank_interface import MAX_MEMORY_TOKENS, MAX_SHARED_CONTEXT_TOKENS
+from hindsight_api.engine.search.decision_reranker import DecisionModelReranker, rerank_shared_context
 from hindsight_api.engine.search.reranking import CrossEncoderReranker
 from hindsight_api.engine.search.types import MergedCandidate, RetrievalResult
 from hindsight_api.engine.token_encoding import count_tokens
@@ -24,6 +20,9 @@ class _Client:
         self.keep = keep or {}
         self.asked: list[tuple[str, dict]] = []
         self.max_request_tokens = 26_000
+        self.tokenizer = None
+
+    rerank_interface = DecisionModel.rerank_interface
 
     async def ask_all(self, state, questions, *, scope):
         self.asked.append((state, questions))
@@ -142,7 +141,7 @@ class TestSharedState:
             await reranker.predict([("q", "a"), ("q", "b")])
         finally:
             rerank_shared_context.reset(token)
-        assert count_tokens(client.asked[0][0]) <= _MAX_SHARED_CONTEXT_TOKENS + count_tokens("\n\nQuestion: q")
+        assert count_tokens(client.asked[0][0]) <= MAX_SHARED_CONTEXT_TOKENS + count_tokens("\n\nQuestion: q")
 
     async def test_a_huge_memory_is_capped(self):
         """One question carries one memory; uncapped, a single long one could outgrow the
@@ -150,8 +149,17 @@ class TestSharedState:
         client = _Client()
         await _reranker(client).predict([("q", "word " * 20_000), ("q", "short")])
         memories = [q.instructions["memory"] for q in client.asked[0][1].values()]
-        assert count_tokens(memories[0]) <= _MAX_MEMORY_TOKENS
+        assert count_tokens(memories[0]) <= MAX_MEMORY_TOKENS
         assert memories[1] == "short"
+
+    async def test_the_caps_count_in_the_models_own_vocabulary(self):
+        """Capped by o200k_base, a mixed-script memory would still run past 4k by Jev's count."""
+        client = _Client()
+        client.tokenizer = "jev"
+        await _reranker(client).predict([("q", "東京 café naïve 🎉 " * 3_000), ("q", "short")])
+        memory = next(iter(client.asked[0][1].values())).instructions["memory"]
+        assert count_tokens(memory, "jev") <= MAX_MEMORY_TOKENS
+        assert count_tokens(memory) < MAX_MEMORY_TOKENS - 500
 
     async def test_a_low_request_ceiling_shrinks_the_caps(self):
         """A ceiling below the caps would otherwise fail every request."""
@@ -184,6 +192,50 @@ class TestSharedState:
         await reranker.rerank("q", [_candidate("a"), _candidate("b")])
         after = datetime.now(UTC).date()
         assert client.asked[0][0] in {f"Current date: {day.isoformat()}\n\nQuestion: q" for day in (before, after)}
+
+
+def _pruning(client: _Client) -> DecisionModelReranker:
+    return DecisionModelReranker(client, prune=True)  # type: ignore[arg-type]
+
+
+class TestPrune:
+    async def test_off_by_default_nothing_is_dropped(self):
+        client = _Client({"tea is genmaicha": 0.9, "offsite in lisbon": 0.01})
+        scores = await _reranker(client).predict([("q", "tea is genmaicha"), ("q", "offsite in lisbon")])
+        assert all(score > 0.0 for score in scores)
+
+    async def test_a_candidate_judged_no_help_is_dropped_but_the_best_always_survives(self):
+        client = _Client({"tea is genmaicha": 0.9, "offsite in lisbon": 0.1})
+        scores = await _pruning(client).predict([("q", "offsite in lisbon"), ("q", "tea is genmaicha")])
+        assert scores == [0.0, 1.0]
+
+        # Relative to the best: 0.3 clears the floor but not 40% of 0.9.
+        crowded = _Client({"tea is genmaicha": 0.9, "offsite in lisbon": 0.3})
+        assert (await _pruning(crowded).predict([("q", "offsite in lisbon"), ("q", "tea is genmaicha")]))[0] == 0.0
+
+        lonely = _Client({"offsite in lisbon": 0.05})
+        assert (await _pruning(lonely).predict([("q", "offsite in lisbon")]))[0] > 0.0
+
+    async def test_pruning_asks_nothing_more_than_ranking(self):
+        client = _Client({"tea is genmaicha": 0.9, "Marta favourite tea is genmaicha": 0.85})
+        await _pruning(client).predict([("q", "tea is genmaicha"), ("q", "Marta favourite tea is genmaicha")])
+        assert len(client.asked) == 1
+
+    async def test_recall_leaves_the_dropped_candidates_out(self):
+        client = _Client({"tea is genmaicha": 0.9, "offsite in lisbon": 0.1})
+        reranker = CrossEncoderReranker(cross_encoder=_pruning(client))
+        result = await reranker.rerank("q", [_candidate("offsite in lisbon"), _candidate("tea is genmaicha")])
+        assert [r.candidate.retrieval.text for r in result.results] == ["tea is genmaicha"]
+
+    def test_the_flag_reaches_recalls_reranker(self, monkeypatch):
+        from hindsight_api import config as config_module
+
+        monkeypatch.setenv("HINDSIGHT_API_DECISION_MODEL_PROVIDER", "typesafe")
+        monkeypatch.setenv("HINDSIGHT_API_DECISION_MODEL_API_KEY", "k")
+        monkeypatch.setattr(config_module, "get_config", config_module.HindsightConfig.from_env)
+        assert CrossEncoderReranker().cross_encoder.prunes_candidates is False
+        monkeypatch.setenv("HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE", "true")
+        assert CrossEncoderReranker().cross_encoder.prunes_candidates is True
 
 
 @pytest.fixture(autouse=True)

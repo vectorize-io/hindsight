@@ -24,7 +24,13 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from pydantic import ValidationError
 
-from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
+from hindsight_api.engine.llm_interface import (
+    LLM_TOOL_CHOICE_AUTO,
+    LLMInterface,
+    LLMToolChoice,
+    LLMToolChoiceMode,
+    ProviderUnavailableError,
+)
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema
@@ -125,7 +131,7 @@ def _sync_copilot_auth_metadata(target_home: Path, source_home: Path | None = No
                 source,
             )
             return
-        raise RuntimeError(
+        raise ProviderUnavailableError(
             f"GitHub Copilot account metadata was not found at {source}. "
             "Start Copilot CLI and sign in, or set COPILOT_GITHUB_TOKEN, GH_TOKEN, or GITHUB_TOKEN."
         )

@@ -14,16 +14,17 @@ about.
 
 And difficulty is not only retrieval. Several clusters are built so that
 retrieval returns EVERY candidate and still tells you nothing — the answer is
-only right if reflect reasons over what it retrieved:
+only right if reflect reasons over what it retrieved (the question id, then its
+category — the group the per-category tables report):
 
-* ``supersession`` — a value changes three times; every version is retrievable
+* ``hq-owner-latest`` (update) — a value changes three times; every version is retrievable
   and equally on-topic. Only the latest is correct.
-* ``counting`` — the answer is how many facts match, so missing one is wrong
+* ``hq-count-billing`` (aggregation) — the answer is how many facts match, so missing one is wrong
   while recall@k still looks fine.
-* ``entity_confusion`` — two services one character apart, with parallel facts.
-* ``scoped_truth`` — true in one region, false in another; an unqualified answer
+* ``hq-entity-port`` (precision) — two services one character apart, with parallel facts.
+* ``hq-scoped-2fa`` (no_overreach) — true in one region, false in another; an unqualified answer
   is wrong.
-* ``absence_dense`` — the topic is densely present, the specific fact is not.
+* ``hq-absent-2024`` (no_overreach) — the topic is densely present, the specific fact is not.
   Saying "no information" is the correct answer, surrounded by plausible bait.
 
 Questions and their gold ids are produced by the SAME generator that writes the
@@ -135,7 +136,7 @@ def _releases() -> HardCorpus:
 
     q = HardQuestion(
         id="hq-release-prod",
-        category="precision_discrimination",
+        category="precision",
         question="Which release was deployed to production on 18 March 2026?",
         ideal_query="release deployed production 2026-03-18",
         gold=[gold_id],
@@ -181,7 +182,7 @@ def _supersession() -> HardCorpus:
 
     q = HardQuestion(
         id="hq-owner-latest",
-        category="supersession",
+        category="update",
         question="Which team owns the ranking service now?",
         ideal_query="ranking service ownership current team",
         gold=[f.id for f in facts if f.cluster == "supersession" and f.id.startswith("own-0")],
@@ -261,7 +262,7 @@ def _counting() -> HardCorpus:
 
     q = HardQuestion(
         id="hq-count-billing",
-        category="counting",
+        category="aggregation",
         question="How many customers reported a billing error in the second quarter of 2026?",
         ideal_query="customers billing error April May June 2026 count",
         gold=gold,
@@ -298,7 +299,7 @@ def _entity_confusion() -> HardCorpus:
                 gold.append(fid)
     q = HardQuestion(
         id="hq-entity-port",
-        category="entity_confusion",
+        category="precision",
         question="Which port does the payments-api service listen on?",
         ideal_query="payments-api service listening port",
         gold=gold,
@@ -319,7 +320,7 @@ def _scoped_truth() -> HardCorpus:
     ]
     q = HardQuestion(
         id="hq-scoped-2fa",
-        category="scoped_truth",
+        category="no_overreach",
         question="Is two-factor authentication mandatory for our accounts?",
         ideal_query="two-factor authentication mandatory optional region accounts",
         gold=["scp-001", "scp-002", "scp-003"],
@@ -346,7 +347,7 @@ def _absence_dense() -> HardCorpus:
     ]
     q = HardQuestion(
         id="hq-absent-2024",
-        category="absence_dense",
+        category="no_overreach",
         question="What was the engineering headcount at the end of 2024?",
         ideal_query="engineering headcount end of 2024",
         gold=[],
@@ -414,7 +415,7 @@ def _numeric_precision() -> HardCorpus:
 
     q = HardQuestion(
         id="hq-numeric-outage",
-        category="numeric_precision",
+        category="precision",
         question="What caused the April 2026 outage, at what connection limit, and how long did it last?",
         ideal_query="April 2026 outage connection pool exhaustion 200 connections 47 minutes",
         gold=[gold_id],

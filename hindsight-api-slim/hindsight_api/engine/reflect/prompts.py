@@ -148,7 +148,7 @@ def build_agent_user_prompt(query: str, llm_output_language: str | None = None, 
     The bank's mission is restated here for the same reason. As the role line at the top of the
     system prompt it lost to the retrieval ladder below it: with a mission telling reflect to read a
     decision's own commit or conversation before reporting it, agent turns still answered from a
-    fresh page that had misread the decision (test_09 boltons-budget-history, 0/2), and the answer
+    fresh page that had misread the decision (coding-agent reflect benchmark, boltons-budget-history, 0/2), and the answer
     reported a "simplification" commit as replacing a decision the mission said it does not.
     """
     mission_section = (
@@ -1527,7 +1527,7 @@ def build_structured_delta_prompt(
 
     # The re-read line (#5228): a refresh rewrote the block a new fact was about and
     # left the opening summary still saying "Alice owns it, no owner change recorded".
-    # On gemini-2.5-flash-lite the system eval (test_10) kept a stale line in 10/16
+    # On gemini-2.5-flash-lite the system eval (test_refresh_pages_consistency) kept a stale line in 10/16
     # pages without this line and 3/16 with it. A system-prompt rule to "update
     # every block about the changed item" did not move it (8/16) and made
     # gemini-3.1-flash-lite rewrite the unrefuted release in

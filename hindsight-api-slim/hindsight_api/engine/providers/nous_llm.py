@@ -26,6 +26,7 @@ from typing import Any
 
 from openai import APIStatusError, AsyncOpenAI
 
+from hindsight_api.engine.llm_interface import ProviderUnavailableError
 from hindsight_api.engine.providers.nous_auth import (
     NousAuthManager,
     NousNotLoggedInError,
@@ -56,7 +57,7 @@ class NousLLM(OpenAICompatibleLLM):
         try:
             self._auth = NousAuthManager.from_file()
         except NousNotLoggedInError as e:
-            raise RuntimeError(
+            raise ProviderUnavailableError(
                 f"Failed to load Nous Portal credentials: {e}\n\n"
                 "To set up Nous authentication:\n"
                 "1. Install Hermes: https://hermes-agent.nousresearch.com\n"

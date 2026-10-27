@@ -40,6 +40,7 @@ from hindsight_api.engine.llm_interface import (
     LLMToolChoice,
     LLMToolChoiceMode,
     ProviderRateLimitResetError,
+    ProviderUnavailableError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_transport import build_aiohttp_timeout
@@ -338,7 +339,7 @@ class CodexLLM(LLMInterface):
             logger.info(f"Loaded Codex OAuth credentials for account: {account_id}")
         except Exception as e:
             auth_file = default_codex_auth_file(self._codex_home)
-            raise RuntimeError(
+            raise ProviderUnavailableError(
                 f"Failed to load Codex OAuth credentials from {auth_file}: {e}\n\n"
                 "To set up Codex authentication:\n"
                 "1. Install Codex CLI: npm install -g @openai/codex\n"

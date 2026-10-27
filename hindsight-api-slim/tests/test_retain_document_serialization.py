@@ -1036,3 +1036,79 @@ async def test_unfolded_retain_reports_one_hook_with_full_usage(memory_stub_emb,
     assert len(validator.results) == 1
     assert validator.results[0].llm_total_tokens == usage.total_tokens
     assert validator.results[0].folded_with is None
+
+
+@pytest.mark.asyncio
+async def test_a_retried_retain_keeps_the_documents_a_buffering_session_never_committed(
+    memory_stub_emb, request_context, monkeypatch
+):
+    """Regression for #6099: a store whose retain session buffers until ``commit()``.
+
+    Document 1's facts reach the session, then document 2 fails, so the session aborts and
+    nothing is written. The retry must extract document 1 again. It used to find a
+    "facts committed" checkpoint for document 1 — written when its facts were handed to the
+    session, not when the store made them durable — skip it, and finish with the document empty.
+    """
+    from hindsight_api.engine.memories import get_memories, set_memories
+    from hindsight_api.engine.retain import orchestrator
+    from tests.test_memories_extension import InMemoryMemories
+
+    bank_id = f"test_session_retry_{_ts()}"
+    operation_id = uuid.uuid4()
+    contents = [
+        {"content": "Alice works at Google as a software engineer.", "document_id": "doc-1"},
+        {"content": "Bob works at Microsoft as a product manager.", "document_id": "doc-2"},
+    ]
+
+    real_retain_batch = orchestrator.retain_batch
+    doc1_done = asyncio.Event()
+    fail_doc2 = True
+
+    async def retain_batch(**kwargs):
+        if kwargs.get("document_id") == "doc-1":
+            try:
+                return await real_retain_batch(**kwargs)
+            finally:
+                doc1_done.set()
+        if kwargs.get("document_id") == "doc-2" and fail_doc2:
+            # Fail only once document 1 is fully through the pipeline (and checkpointed, if the
+            # orchestrator still writes one), as an LLM call that ran out of retries would.
+            await doc1_done.wait()
+            raise RuntimeError("extraction failed")
+        return await real_retain_batch(**kwargs)
+
+    monkeypatch.setattr(orchestrator, "retain_batch", retain_batch)
+
+    store = InMemoryMemories({})
+    previous = get_memories()
+    set_memories(store)
+    try:
+        pool = await memory_stub_emb._get_pool()
+        await pool.execute("INSERT INTO banks (bank_id, name) VALUES ($1, $1)", bank_id)
+        await pool.execute(
+            "INSERT INTO async_operations (operation_id, bank_id, operation_type, status) "
+            "VALUES ($1, $2, 'retain', 'processing')",
+            operation_id,
+            bank_id,
+        )
+        with pytest.raises(RuntimeError, match="extraction failed"):
+            await memory_stub_emb.retain_batch_async(
+                bank_id=bank_id,
+                contents=contents,
+                request_context=request_context,
+                operation_id=str(operation_id),
+            )
+        assert not store.rows, "an aborted buffering session wrote nothing"
+
+        fail_doc2 = False
+        await memory_stub_emb.retain_batch_async(
+            bank_id=bank_id,
+            contents=contents,
+            request_context=request_context,
+            operation_id=str(operation_id),
+        )
+    finally:
+        set_memories(previous)
+
+    documents_with_facts = {row.document_id for row in store.rows.values()}
+    assert documents_with_facts == {"doc-1", "doc-2"}

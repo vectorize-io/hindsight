@@ -638,6 +638,8 @@ The strategy JSON supports three modes:
 
 **Cooldown.** In `failover` and `round-robin`, a member that fails (after its own retries) is moved to the back of the order for `cooldown_seconds` (default `60`), so later requests stop waiting on its errors and timeouts — useful when a member has run out of a daily or weekly quota. If it fails again once the cooldown is over, the cooldown doubles, up to one hour; its next success clears it. A cooling member is only deprioritized, never dropped: if every other member fails too, it is still tried. Set `"cooldown_seconds": 0` to try every member in order on every request. The cooldown is held in memory per process, so a restart clears it.
 
+**A member that is not signed in.** A provider that runs on a stored login (`chatgpt`, `openai-codex`, `nous`, `github-copilot`) and finds none when the server starts does not stop the server. It logs a warning with the login command to run, fails every call it gets, and the chain fails over past it. Sign in again and restart the server to bring it back.
+
 ```bash
 # Primary OpenAI, failover to Groq then Anthropic
 export HINDSIGHT_API_LLM_PROVIDER=openai
@@ -1209,7 +1211,7 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `nvidia`, `typesafe`, `alibaba`, `google`, `flashrank`, `onnx`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
+| `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `nvidia`, `typesafe` (deprecated, see [Decision model](#decision-model)), `alibaba`, `google`, `flashrank`, `onnx`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
 | `HINDSIGHT_API_RERANKER_MAX_TOKENS_PER_CANDIDATE` | Applies to **every** provider. If set, truncate each rerank candidate to this many tokens (tiktoken, approximate) before reranking. Set it below the model's context window (e.g. `900` for a 1024-token model), or lower to bound request size when documents can be very long (keeps a CPU-only rerank server from running out of memory). Each fallback member has its own (`HINDSIGHT_API_RERANKER_<n>_MAX_TOKENS_PER_CANDIDATE`). Off by default. (Deprecated alias: `HINDSIGHT_API_RERANKER_LITELLM_MAX_TOKENS_PER_DOC`.) | - |
 | `HINDSIGHT_API_RERANKER_MAX_RETRIES` | Retries after the first attempt when a remote rerank call fails transiently (5xx, timeout, connection error, `429` quota). `0` disables retrying. Applies to every remote provider except `tei`, which has its own retry loop; the in-process providers (`local`, `flashrank`, `onnx`, `jina-mlx`, `rrf`) are unaffected. 4xx auth/validation errors are never retried. | `3` |
 | `HINDSIGHT_API_RERANKER_INITIAL_BACKOFF` | Initial backoff in seconds between rerank retries (doubles per attempt, with jitter) | `0.5` |
@@ -1259,12 +1261,12 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | `HINDSIGHT_API_RERANKER_NVIDIA_TIMEOUT` | HTTP request timeout for NVIDIA reranker (seconds). | `60.0` |
 | `HINDSIGHT_API_RERANKER_NVIDIA_BATCH_SIZE` | Max passages per rerank request (the hosted API caps it at 512) | `512` |
 | `HINDSIGHT_API_RERANKER_NVIDIA_MAX_CONCURRENT` | Max in-flight NVIDIA rerank requests | `8` |
-| `HINDSIGHT_API_RERANKER_TYPESAFE_API_KEY` | TypeSafe API key for reranking | - |
-| `HINDSIGHT_API_RERANKER_TYPESAFE_MODEL` | TypeSafe model used to judge relevance | `jev-latest` |
-| `HINDSIGHT_API_RERANKER_TYPESAFE_BASE_URL` | Base URL for the TypeSafe API | `https://api.typesafe.ai` |
-| `HINDSIGHT_API_RERANKER_TYPESAFE_TIMEOUT` | HTTP request timeout for the TypeSafe reranker (seconds). | `60.0` |
-| `HINDSIGHT_API_RERANKER_TYPESAFE_MAX_CONCURRENT` | Maximum in-flight TypeSafe requests. | `24` |
-| `HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES` | Ask a second question that cuts the ranked list where relevance ends, returning only the relevant candidates. Shrinks what recall returns — see the note below. | `false` |
+| `HINDSIGHT_API_RERANKER_TYPESAFE_API_KEY` | **Deprecated** with the `typesafe` provider, use [`HINDSIGHT_API_DECISION_MODEL_API_KEY`](#decision-model). TypeSafe API key for reranking | - |
+| `HINDSIGHT_API_RERANKER_TYPESAFE_MODEL` | **Deprecated.** TypeSafe model used to judge relevance | `jev-latest` |
+| `HINDSIGHT_API_RERANKER_TYPESAFE_BASE_URL` | **Deprecated.** Base URL for the TypeSafe API | `https://api.typesafe.ai` |
+| `HINDSIGHT_API_RERANKER_TYPESAFE_TIMEOUT` | **Deprecated.** HTTP request timeout for the TypeSafe reranker (seconds). | `60.0` |
+| `HINDSIGHT_API_RERANKER_TYPESAFE_MAX_CONCURRENT` | **Deprecated.** Maximum in-flight TypeSafe requests. | `24` |
+| `HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES` | **Deprecated.** Ask a second question that cuts the ranked list where relevance ends, returning only the relevant candidates. Shrinks what recall returns — see the note below. | `false` |
 | `HINDSIGHT_API_RERANKER_ALIBABA_API_KEY` | Alibaba Cloud DashScope API key for reranking | - |
 | `HINDSIGHT_API_RERANKER_ALIBABA_MODEL` | DashScope rerank model | `qwen3-rerank` |
 | `HINDSIGHT_API_RERANKER_ALIBABA_TIMEOUT` | HTTP request timeout for the Alibaba Cloud DashScope reranker (seconds). | `60.0` |
@@ -1306,6 +1308,11 @@ Reranking is a refinement stage, but by default a reranker that is unreachable t
 recall down with it. Configure extra rerankers **by index** and Hindsight tries them
 in order: if a member fails (timeout, connection error, HTTP error, or an unusable
 response), the next one serves the request.
+
+A member that fails is benched for 30 seconds: requests try it after the healthy
+members instead of first, so an outage slows down one recall per 30 seconds rather
+than every recall. When the 30 seconds are up, the next request tries it again. If
+every member is down, benched members are still tried as a last resort.
 
 The unindexed `HINDSIGHT_API_RERANKER_*` config is the **primary** (member 0). Extra
 members are numbered from 1, and every setting of member `n` carries the same index —
@@ -1431,11 +1438,10 @@ export HINDSIGHT_API_RERANKER_PROVIDER=nvidia
 export HINDSIGHT_API_RERANKER_NVIDIA_API_KEY=nvapi-your-key
 # export HINDSIGHT_API_RERANKER_NVIDIA_MODEL=nvidia/llama-nemotron-rerank-vl-1b-v2  # default
 
-# TypeSafe - relevance judged by a typed-decision model (Jev), not a /rerank endpoint
-export HINDSIGHT_API_RERANKER_PROVIDER=typesafe
-export HINDSIGHT_API_RERANKER_TYPESAFE_API_KEY=your-api-key
-# export HINDSIGHT_API_RERANKER_TYPESAFE_MODEL=jev-latest              # default
-# export HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES=true          # also prune irrelevant candidates
+# TypeSafe (Jev) - deprecated as a reranker provider: set up the shared decision model
+# instead, which recall uses in place of the reranker (see "Decision model" below)
+export HINDSIGHT_API_DECISION_MODEL_PROVIDER=typesafe
+export HINDSIGHT_API_DECISION_MODEL_API_KEY=your-api-key
 
 # Alibaba Cloud DashScope - qwen3-rerank via Cohere-compatible /reranks endpoint
 export HINDSIGHT_API_RERANKER_PROVIDER=alibaba
@@ -1480,6 +1486,14 @@ Both support the same providers:
 
 #### TypeSafe
 
+> **⚠️ Deprecated**
+>
+`HINDSIGHT_API_RERANKER_PROVIDER=typesafe` and its `HINDSIGHT_API_RERANKER_TYPESAFE_*` settings
+still work but will be removed in a future release. Set up the shared
+[decision model](#decision-model) instead (`HINDSIGHT_API_DECISION_MODEL_PROVIDER=typesafe` and
+`HINDSIGHT_API_DECISION_MODEL_API_KEY`): recall uses it in place of the reranker, and reflect and
+consolidation can use the same setup. The decision model has no equivalent of
+`HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES`: it ranks the candidates but does not cut them.
 TypeSafe is not a `/rerank` endpoint. It evaluates typed *questions* against a *state*,
 and this provider asks two of them.
 
@@ -1570,6 +1584,7 @@ This is separate from the `typesafe` [reranker](#reranker), which keeps its own
 | `HINDSIGHT_API_DECISION_MODEL_TIMEOUT` | Request timeout in seconds. | `60` |
 | `HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT` | Most requests in flight at once, for each operation using the decision model. | `24` |
 | `HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS` | Most tokens one request may carry, counted on the whole request body. Larger asks are split across requests. Set it to the served model's context window less a margin. | `26000` |
+| `HINDSIGHT_API_DECISION_MODEL_TOKENIZER` | The vocabulary the request ceiling and recall's caps (on the query, the shared context and each memory) are counted in: the served model's own, since it is the model that refuses a request past its window. `jev` (an estimate of Jev's count) and `qwen3.5` are available besides the `HINDSIGHT_API_TOKENIZER_ENCODING` ones. Set it when the endpoint serves another model than the provider's default. | `jev` for `typesafe`; else `HINDSIGHT_API_TOKENIZER_ENCODING` |
 
 Every request is retried on its own when it is rate-limited (429) or fails transiently.
 
@@ -1602,6 +1617,12 @@ boosts it applies to a cross-encoder, and publishes no reranker score, so
 `min_scores.reranker` is rejected. To keep the cross-encoder for recall
 while other operations use the decision model, set
 `HINDSIGHT_API_RECALL_DECISION_MODEL_PROVIDER=none`.
+
+Set `HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE=true` (default `false`, server-level) to also
+drop candidates instead of only ordering them. A candidate goes when it is judged no help: it
+scores below 0.2, or below 40% of the best candidate. The cut reuses the ranking answers, so
+it costs no extra request, and the best candidate always survives. Repeats are not dropped:
+the same fact retained from several documents comes back once per copy that passes the cut.
 
 **Consolidation.** With a decision model, consolidation asks it, for each new fact, how the
 fact relates to the observations recall found for it: does it restate one, add something new

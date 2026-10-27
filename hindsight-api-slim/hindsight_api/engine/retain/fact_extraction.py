@@ -318,8 +318,8 @@ class FactExtractionResponse(BaseModel):
 # this small still overflows the model's output cap, the cause is degenerate or
 # looping model output rather than genuinely dense input, and halving it just
 # recurses toward a single character. A few-hundred-character floor bounds that
-# runaway (an all-sizes-overflow 3000-char chunk drops in ~17 extraction calls
-# instead of ~5000) while staying well under any chunk that legitimately holds
+# runaway (an all-sizes-overflow 3000-char chunk fails the retain after ~17 extraction
+# calls instead of ~5000) while staying well under any chunk that legitimately holds
 # enough facts to exceed the cap.
 _MIN_SPLIT_CHUNK_CHARS = 500
 
@@ -2219,9 +2219,10 @@ async def _extract_facts_from_chunk(
                         return value
                     return None
 
-                # NEW FORMAT: what, when, who, why (all required)
+                # NEW FORMAT: what, when, where, who, why (all required)
                 what = get_value("what")
                 when = get_value("when")
+                where = get_value("where")
                 who = get_value("who")
                 why = get_value("why")
 
@@ -2264,7 +2265,7 @@ async def _extract_facts_from_chunk(
                 if fact_kind not in ["conversation", "event", "other"]:
                     fact_kind = "conversation"
 
-                # Build combined fact text from the 4 dimensions: what | when | who | why
+                # Build combined fact text from the 5 dimensions: what | when | where | who | why
                 # In verbatim mode, leave combined_text empty — _collapse_to_verbatim backfills it
                 # A kwargs BAG for `Fact(**fact_data)` below: its inferred value type is the union of
                 # everything put in it, so the unpack is checked against that union for every field.
@@ -2277,6 +2278,9 @@ async def _extract_facts_from_chunk(
 
                     if when:
                         combined_parts.append(f"When: {when}")
+
+                    if where:
+                        combined_parts.append(f"Where: {where}")
 
                     if who:
                         combined_parts.append(f"Involving: {who}")
@@ -2592,11 +2596,14 @@ async def _extract_facts_with_auto_split(
 
         split_chunks = _split_chunk_for_output_retry(chunk)
         if split_chunks is None:
-            logger.warning(
-                f"Cannot make progress splitting chunk {chunk_index + 1}/{total_chunks} "
-                f"({len(chunk)} chars); dropping this sub-chunk."
+            # Raise rather than return []: an empty result commits the document with
+            # no facts and reports success, losing the content silently (#6129, same
+            # rule as #1833). The floor still stops the recursion (#3172).
+            raise RuntimeError(
+                f"Fact extraction failed: the LLM reply for chunk {chunk_index + 1}/{total_chunks} "
+                f"({len(chunk)} chars) exceeded the output token limit and the chunk is too small "
+                f"to split further. The model may be producing a runaway reply."
             )
-            return [], TokenUsage()
 
         first_half, second_half = split_chunks
 
@@ -2669,7 +2676,8 @@ async def extract_facts_from_text(
     to avoid hitting output token limits. Processes ALL chunks in PARALLEL for speed.
 
     If a chunk produces output that exceeds token limits (OutputTooLongError), it is
-    automatically split in half and retried recursively until successful.
+    automatically split in half and retried recursively. A piece too small to split
+    that still overflows fails the retain rather than being dropped (#6129).
 
     Args:
         text: Input text (conversation, article, etc.)
@@ -3224,6 +3232,7 @@ async def extract_facts_from_contents_batch_api(
                 continue
 
             when = get_value("when")
+            where = get_value("where")
             who = get_value("who")
             why = get_value("why")
 
@@ -3243,6 +3252,8 @@ async def extract_facts_from_contents_batch_api(
             combined_parts = [what]
             if when:
                 combined_parts.append(f"When: {when}")
+            if where:
+                combined_parts.append(f"Where: {where}")
             if who:
                 combined_parts.append(f"Involving: {who}")
             if why:

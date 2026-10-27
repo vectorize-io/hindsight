@@ -18,7 +18,7 @@ So this guards the *contract*, not the *incident*:
   like this most plausibly causes and the more valuable of the two guards.
 
 The incident itself is reproduced end to end by
-``hindsight-system-evals`` (``evals/test_02_reflect_answers.py``, question
+``hindsight-system-evals`` (``evals/reflect/test_reflect.py``, question
 ``hq-absent-2024``), which is what caught the bug and what confirmed the fix.
 """
 

@@ -17,7 +17,7 @@ configuration.
 Asserted here: the stamp survives into the tool result the model reads, on the
 raw-fact path and the observation path both. Whether the model then FOLLOWS a
 precedence rule is a question for a real model, and is measured in
-`hindsight-system-evals/evals/test_07_source_priority.py`.
+`hindsight-system-evals/evals/reflect/test_reflect.py` (`test_reflect_sources`).
 """
 
 from __future__ import annotations

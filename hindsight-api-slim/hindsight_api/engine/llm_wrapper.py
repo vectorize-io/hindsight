@@ -40,6 +40,7 @@ from .llm_interface import (
     LLMToolChoice,
     LLMToolChoiceMode,
     PromptCachePrefix,
+    ProviderUnavailableError,
 )
 from .llm_interface import (
     OutputTooLongError as OutputTooLongError,
@@ -1100,30 +1101,51 @@ class LLMProvider:
         router_config: dict[str, Any] | None = self.litellmrouter_config
 
         # Create provider implementation using factory
-        self._provider_impl = create_llm_provider(
-            provider=self.provider,
-            api_key=self.api_key,
-            base_url=self.base_url,
-            model=self.model,
-            reasoning_effort=self.reasoning_effort,
-            groq_service_tier=self.groq_service_tier,
-            openai_service_tier=self.openai_service_tier,
-            bedrock_service_tier=self.bedrock_service_tier,
-            gemini_service_tier=self.gemini_service_tier,
-            codex_home=self.codex_home,
-            extra_body=self.extra_body,
-            default_headers=self.default_headers,
-            vertexai_project_id=vertexai_project_id,
-            vertexai_region=vertexai_region,
-            vertexai_credentials=vertexai_credentials,
-            gemini_safety_settings=self.gemini_safety_settings,
-            prompt_cache_enabled=self.prompt_cache_enabled,
-            litellmrouter_config=router_config,
-            ollama_num_ctx=self.ollama_num_ctx,
-            timeout=self.timeout,
-            cache_affinity=self.cache_affinity,
-            structured_output_forced_tool=self.structured_output_forced_tool,
-        )
+        try:
+            self._provider_impl = create_llm_provider(
+                provider=self.provider,
+                api_key=self.api_key,
+                base_url=self.base_url,
+                model=self.model,
+                reasoning_effort=self.reasoning_effort,
+                groq_service_tier=self.groq_service_tier,
+                openai_service_tier=self.openai_service_tier,
+                bedrock_service_tier=self.bedrock_service_tier,
+                gemini_service_tier=self.gemini_service_tier,
+                codex_home=self.codex_home,
+                extra_body=self.extra_body,
+                default_headers=self.default_headers,
+                vertexai_project_id=vertexai_project_id,
+                vertexai_region=vertexai_region,
+                vertexai_credentials=vertexai_credentials,
+                gemini_safety_settings=self.gemini_safety_settings,
+                prompt_cache_enabled=self.prompt_cache_enabled,
+                litellmrouter_config=router_config,
+                ollama_num_ctx=self.ollama_num_ctx,
+                timeout=self.timeout,
+                cache_affinity=self.cache_affinity,
+                structured_output_forced_tool=self.structured_output_forced_tool,
+            )
+        except ProviderUnavailableError as e:
+            from .providers.none_llm import UnavailableLLM
+
+            # A missing or revoked sign-in must not stop the server: build a member
+            # that fails every call instead, so a failover chain moves on to its next
+            # member and recall keeps working (#6095). Bad configuration still raises.
+            logger.warning(
+                "LLM %s/%s is unavailable and will fail every call until it is fixed and the server restarted: %s",
+                self.provider,
+                self.model,
+                e,
+            )
+            self._provider_impl = UnavailableLLM(
+                e,
+                provider=self.provider,
+                api_key=self.api_key,
+                base_url=self.base_url,
+                model=self.model,
+                reasoning_effort=self.reasoning_effort,
+            )
 
         # Backward compatibility: Keep mock provider properties
         self._mock_calls: list[dict] = []

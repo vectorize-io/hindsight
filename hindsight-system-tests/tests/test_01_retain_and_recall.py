@@ -59,14 +59,14 @@ async def test_a_retained_memory_comes_back_from_recall(client, llm, bank_id, se
     # a working pipeline must separate them; an inverted order here means fusion
     # or reranking regressed.
     assert [result.text for result in response.results] == [
-        "Alice moved to Berlin in 2021 | When: 2021 | Involving: Alice",
+        "Alice moved to Berlin in 2021 | When: 2021 | Where: Berlin | Involving: Alice",
         "Alice plays the cello professionally | Involving: Alice",
     ]
 
     berlin, cello = response.results
 
     # --- how a fact is rendered back ----------------------------------------
-    # `what` is not stored verbatim: the populated `when`/`who` fields are appended
+    # `what` is not stored verbatim: the populated `when`/`where`/`who` fields are appended
     # as labelled clauses, and the ones left at "N/A" are dropped. That rendering is
     # what a caller reads, so it is part of the contract.
     assert berlin.type == "world"
@@ -100,8 +100,8 @@ async def test_a_retained_memory_comes_back_from_recall(client, llm, bank_id, se
     # last ~8 digits shift from month to month. Hence a float32-sized tolerance.
     # It used to be pinned at abs=1e-12 to the September value, which failed every
     # run from October 1 onward (#5043).
-    assert berlin.scores.semantic == pytest.approx(0.434659155, abs=1e-7)
-    assert berlin.scores.reranker == pytest.approx(0.37416573867739417, abs=1e-12)
+    assert berlin.scores.semantic == pytest.approx(0.45907810086477396, abs=1e-7)
+    assert berlin.scores.reranker == pytest.approx(0.4291662538799943, abs=1e-12)
     assert berlin.scores.keyword == pytest.approx(0.30000001192092896, abs=1e-12)
 
     assert cello.scores.semantic == pytest.approx(0.4146140043322447, abs=1e-7)
@@ -111,7 +111,7 @@ async def test_a_retained_memory_comes_back_from_recall(client, llm, bank_id, se
     # `final` folds in recency, measured against wall-clock now, so it drifts in the
     # ninth decimal between runs. Loose enough to absorb that, tight enough that a
     # changed weighting fails.
-    assert berlin.scores.final == pytest.approx(0.41158231, abs=1e-6)
+    assert berlin.scores.final == pytest.approx(0.47208288, abs=1e-6)
     assert cello.scores.final == pytest.approx(0.36666666, abs=1e-6)
     assert berlin.scores.final > cello.scores.final
 

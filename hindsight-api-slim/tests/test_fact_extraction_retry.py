@@ -62,7 +62,7 @@ def test_output_retry_split_divides_single_oversized_turn_content():
 
 
 def test_output_retry_split_returns_none_when_no_progress_possible():
-    """Pathological tiny chunks should be dropped instead of recursively retried."""
+    """Pathological tiny chunks cannot be split further (the caller then fails the retain)."""
     from hindsight_api.engine.retain.fact_extraction import _split_chunk_for_output_retry
 
     assert _split_chunk_for_output_retry("x") is None
@@ -108,8 +108,12 @@ def test_output_retry_split_drops_subchunk_below_minimum_floor():
 
 
 @pytest.mark.asyncio
-async def test_output_too_long_drops_unsplittable_subchunk_without_recursing():
-    """If a chunk cannot be reduced further, auto-split exits gracefully."""
+async def test_output_too_long_on_unsplittable_chunk_raises_without_recursing():
+    """A chunk that overflows the output cap and cannot be split fails the retain.
+
+    Returning [] here committed the document with 0 facts and reported success,
+    losing the content silently (#6129). It must raise, and still not recurse.
+    """
     from hindsight_api.engine.llm_wrapper import OutputTooLongError
     from hindsight_api.engine.retain.fact_extraction import _extract_facts_with_auto_split
 
@@ -120,18 +124,18 @@ async def test_output_too_long_drops_unsplittable_subchunk_without_recursing():
         "hindsight_api.engine.retain.fact_extraction._extract_facts_from_chunk",
         side_effect=OutputTooLongError("too long"),
     ) as extract:
-        facts, usage = await _extract_facts_with_auto_split(
-            chunk="x",
-            chunk_index=0,
-            total_chunks=1,
-            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
-            context="",
-            llm_config=llm_config,
-            config=config,
-            agent_name="agent",
-        )
+        with pytest.raises(RuntimeError, match="too small to split"):
+            await _extract_facts_with_auto_split(
+                chunk="x",
+                chunk_index=0,
+                total_chunks=1,
+                event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+                context="",
+                llm_config=llm_config,
+                config=config,
+                agent_name="agent",
+            )
 
-    assert facts == []
     assert extract.call_count == 1
 
 
@@ -247,7 +251,8 @@ async def test_top_level_fact_list_is_accepted_without_retry():
 
     assert llm_config.call.call_count == 1
     assert len(facts) == 1
-    assert "Alice visited Paris" in facts[0].fact
+    # The place must reach the stored text, not only the entities (#6129).
+    assert facts[0].fact == "Alice visited Paris | When: 2023 | Where: Paris | Involving: Alice | vacation"
 
 
 @pytest.mark.asyncio

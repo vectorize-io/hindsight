@@ -485,6 +485,16 @@ class ProviderAuthError(RuntimeError):
     """
 
 
+class ProviderUnavailableError(RuntimeError):
+    """Raised while building a provider whose sign-in is missing or revoked.
+
+    It means "this member cannot serve until someone logs in again", not "the
+    configuration is wrong": ``LLMProvider`` turns it into a member that fails
+    every call, so a failover chain moves on to its next member and the server
+    still starts (issue #6095). Any other construction error stays fatal.
+    """
+
+
 class ProviderRateLimitResetError(Exception):
     """Raised when an upstream provider says quota will reopen at a known time."""
 

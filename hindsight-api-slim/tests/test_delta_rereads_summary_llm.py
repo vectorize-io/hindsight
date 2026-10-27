@@ -1,7 +1,7 @@
 """A delta refresh corrects the opening summary when a value it restates changes (#5228).
 
 The page is the wave-one page gemini-2.5-flash-lite wrote in the system eval
-(``hindsight-system-evals/evals/test_10_page_stays_consistent.py``), verbatim: an
+(``hindsight-system-evals/evals/refresh-pages/test_refresh_pages.py``, consistency cases), verbatim: an
 opening summary that names the owner and says no owner change was recorded, then
 sections that say the same again. Wave two moves the interval and the owner. Without
 the re-read line in the task footer the model rewrote every section but the summary,

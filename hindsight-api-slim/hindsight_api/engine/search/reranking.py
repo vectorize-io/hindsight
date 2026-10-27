@@ -327,9 +327,10 @@ class CrossEncoderReranker:
             from hindsight_api.engine.cross_encoder import create_cross_encoder_from_env
 
             # A decision model set up for recall replaces the configured reranker outright.
-            decision_model = get_config().decision_model_config("recall")
+            config = get_config()
+            decision_model = config.decision_model_config("recall")
             cross_encoder = (
-                DecisionModelReranker.from_config(decision_model)
+                DecisionModelReranker.from_config(decision_model, prune=config.recall_decision_model_prune)
                 if decision_model is not None
                 else create_cross_encoder_from_env()
             )

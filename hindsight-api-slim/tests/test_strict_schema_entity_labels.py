@@ -12,7 +12,7 @@ vertexai/gemini-2.5-flash-lite, and the Gemini provider grammar-enforces its own
 native ``response_schema`` without ever calling ``strict_json_schema()``. A core
 run would pass no matter what the serializer emits — which is precisely why the
 existing entity-label LLM tests never caught this. The matrix job includes
-openai/gpt-4.1-nano and litellmrouter, whose validators are the ones that reject
+openai/gpt-6-luna and litellmrouter, whose validators are the ones that reject
 the sibling keyword.
 """
 
