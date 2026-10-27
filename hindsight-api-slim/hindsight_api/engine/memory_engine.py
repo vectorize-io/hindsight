@@ -9279,6 +9279,10 @@ class MemoryEngine(MemoryEngineInterface):
         max_entity_tokens: int = 500,
         include_chunks: bool = False,
         max_chunk_tokens: int = 8192,
+        # None means "use the bank-resolved recall_decision_model_prune / _dedup", for every
+        # caller, internal ones included. Only a decision-model reranker acts on them.
+        prune: bool | None = None,
+        dedup: bool | None = None,
         include_source_facts: bool = False,
         max_source_facts_tokens: int = 4096,
         max_source_facts_tokens_per_observation: int = -1,
@@ -9334,6 +9338,11 @@ class MemoryEngine(MemoryEngineInterface):
                              Chunks are fetched in batches (estimated as (max_chunk_tokens // retain_chunk_size) * 2)
                              until the token budget is exhausted or all chunks are fetched.
                              This handles varying chunk sizes across documents.
+            prune: With a decision-model reranker, drop the candidates it judges no help.
+                   None resolves to the bank's recall_decision_model_prune config.
+            dedup: With a decision-model reranker, drop a candidate repeating a better-ranked
+                   one (one more decision-model request). None resolves to the bank's
+                   recall_decision_model_dedup config.
             tags: Optional list of tags for visibility filtering (OR matching - returns
                   memories that have at least one matching tag)
             created_after: Lower bound on the window, exclusive. Despite the name it bounds
@@ -9503,6 +9512,10 @@ class MemoryEngine(MemoryEngineInterface):
         reranking = _resolve_reranking(budget_config_dict, reranking)
         if prefer_observations is None:
             prefer_observations = bool(budget_config_dict.get("recall_prefer_observations", False))
+        if prune is None:
+            prune = bool(budget_config_dict.get("recall_decision_model_prune", False))
+        if dedup is None:
+            dedup = bool(budget_config_dict.get("recall_decision_model_dedup", False))
 
         # One id for every log line of this recall, including a reranker failover
         # warning, so concurrent recalls can be told apart (#6072). The uuid suffix
@@ -9564,6 +9577,8 @@ class MemoryEngine(MemoryEngineInterface):
                             request_context,
                             semaphore_wait=semaphore_wait,
                             prefer_observations=prefer_observations,
+                            prune=prune,
+                            dedup=dedup,
                             tags=tags,
                             tags_match=tags_match,
                             tag_groups=tag_groups,
@@ -9738,6 +9753,8 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext" = None,
         semaphore_wait: float = 0.0,
         prefer_observations: bool = False,
+        prune: bool = False,
+        dedup: bool = False,
         tags: list[str] | None = None,
         tags_match: TagsMatch = "any",
         tag_groups: list[TagGroup] | None = None,
@@ -10453,7 +10470,7 @@ class MemoryEngine(MemoryEngineInterface):
                     # Ensure reranker is initialized (for lazy initialization mode)
                     await reranker_instance.ensure_initialized()
                     reranked = await reranker_instance.rerank(
-                        query, merged_candidates, now=_recall_scoring_now(question_date)
+                        query, merged_candidates, now=_recall_scoring_now(question_date), prune=prune, dedup=dedup
                     )
                     scored_results = reranked.results
                     # Copied off the call that produced these scores. Do not read

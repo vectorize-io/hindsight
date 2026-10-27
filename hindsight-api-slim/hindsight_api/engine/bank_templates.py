@@ -248,6 +248,12 @@ class BankTemplateConfig(BaseModel):
     recall_prefer_observations: bool | None = Field(
         default=None, description="Default for recall prefer_observations when the request omits it"
     )
+    recall_decision_model_prune: bool | None = Field(
+        default=None, description="Default for recall prune when the request omits it (decision-model reranker only)"
+    )
+    recall_decision_model_dedup: bool | None = Field(
+        default=None, description="Default for recall dedup when the request omits it (decision-model reranker only)"
+    )
     recall_max_tokens: int | None = Field(default=None, description="Max tokens of results returned by recall")
     recall_chunks_max_tokens: int | None = Field(
         default=None, description="Max tokens of raw chunks returned by recall (when recall_include_chunks is set)"

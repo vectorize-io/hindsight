@@ -136,3 +136,43 @@ async def test_without_pruning_every_candidate_comes_back(decision_model_client,
     response = await decision_model_client.arecall(bank_id=tea_bank, query="What tea does Marta like?")
 
     assert _texts(response) == [TEA, TEA_AGAIN, SENCHA, UNRELATED]
+
+
+async def test_a_request_turns_prune_and_dedup_on(decision_model_client, tea_bank, stubs):
+    """On a server with neither flag, the request asks for both: the repeat of the tea fact
+    and the memory judged no help are left out; a different fact about Marta stays."""
+    stubs.rerank.verdicts = {TEA: 0.9, TEA_AGAIN: 0.85, SENCHA: 0.8, UNRELATED: 0.05}
+    stubs.rerank.repeats = {(TEA, TEA_AGAIN)}
+    query = "What tea does Marta like?"
+
+    dedup_only = await decision_model_client.arecall(bank_id=tea_bank, query=query, dedup=True)
+    both = await decision_model_client.arecall(bank_id=tea_bank, query=query, prune=True, dedup=True)
+
+    assert _texts(dedup_only) == [TEA, SENCHA, UNRELATED]
+    assert _texts(both) == [TEA, SENCHA]
+
+
+async def test_a_request_turns_the_servers_prune_off(decision_model_prune_client, tea_bank, stubs):
+    """The server default is only a default: a request saying prune=False gets everything."""
+    stubs.rerank.verdicts = {TEA: 0.9, TEA_AGAIN: 0.85, SENCHA: 0.8, UNRELATED: 0.05}
+
+    response = await decision_model_prune_client.arecall(
+        bank_id=tea_bank, query="What tea does Marta like?", prune=False
+    )
+
+    assert _texts(response) == [TEA, TEA_AGAIN, SENCHA, UNRELATED]
+
+
+async def test_the_bank_sets_dedup_for_requests_that_omit_it(decision_model_client, tea_bank, stubs):
+    """A bank with recall_decision_model_dedup on dedups every recall that does not say
+    otherwise, and a request can still turn it off."""
+    stubs.rerank.verdicts = {TEA: 0.9, TEA_AGAIN: 0.85, SENCHA: 0.8, UNRELATED: 0.05}
+    stubs.rerank.repeats = {(TEA, TEA_AGAIN)}
+    await decision_model_client.aupdate_bank_config(tea_bank, recall_decision_model_dedup=True)
+    query = "What tea does Marta like?"
+
+    omitted = await decision_model_client.arecall(bank_id=tea_bank, query=query)
+    off = await decision_model_client.arecall(bank_id=tea_bank, query=query, dedup=False)
+
+    assert _texts(omitted) == [TEA, SENCHA, UNRELATED]
+    assert _texts(off) == [TEA, TEA_AGAIN, SENCHA, UNRELATED]

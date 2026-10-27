@@ -34,6 +34,8 @@ class RecallRequest(BaseModel):
     query: StrictStr
     types: Optional[List[StrictStr]] = None
     prefer_observations: Optional[StrictBool] = None
+    prune: Optional[StrictBool] = None
+    dedup: Optional[StrictBool] = None
     budget: Optional[Budget] = None
     max_tokens: Optional[StrictInt] = 4096
     trace: Optional[StrictBool] = False
@@ -44,7 +46,7 @@ class RecallRequest(BaseModel):
     tag_groups: Optional[List[MentalModelTriggerInputTagGroupsInner]] = None
     min_scores: Optional[MinScores] = None
     temporal_window: Optional[TemporalWindow] = None
-    __properties: ClassVar[List[str]] = ["query", "types", "prefer_observations", "budget", "max_tokens", "trace", "query_timestamp", "include", "tags", "tags_match", "tag_groups", "min_scores", "temporal_window"]
+    __properties: ClassVar[List[str]] = ["query", "types", "prefer_observations", "prune", "dedup", "budget", "max_tokens", "trace", "query_timestamp", "include", "tags", "tags_match", "tag_groups", "min_scores", "temporal_window"]
 
     @field_validator('tags_match')
     def tags_match_validate_enum(cls, value):
@@ -121,6 +123,16 @@ class RecallRequest(BaseModel):
         if self.prefer_observations is None and "prefer_observations" in self.model_fields_set:
             _dict['prefer_observations'] = None
 
+        # set to None if prune (nullable) is None
+        # and model_fields_set contains the field
+        if self.prune is None and "prune" in self.model_fields_set:
+            _dict['prune'] = None
+
+        # set to None if dedup (nullable) is None
+        # and model_fields_set contains the field
+        if self.dedup is None and "dedup" in self.model_fields_set:
+            _dict['dedup'] = None
+
         # set to None if query_timestamp (nullable) is None
         # and model_fields_set contains the field
         if self.query_timestamp is None and "query_timestamp" in self.model_fields_set:
@@ -161,6 +173,8 @@ class RecallRequest(BaseModel):
             "query": obj.get("query"),
             "types": obj.get("types"),
             "prefer_observations": obj.get("prefer_observations"),
+            "prune": obj.get("prune"),
+            "dedup": obj.get("dedup"),
             "budget": obj.get("budget"),
             "max_tokens": obj.get("max_tokens") if obj.get("max_tokens") is not None else 4096,
             "trace": obj.get("trace") if obj.get("trace") is not None else False,

@@ -1,5 +1,7 @@
 """Recall's decision-model reranker: one question per candidate, ordered by the answers."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 
 import pytest
@@ -7,18 +9,26 @@ import pytest
 from hindsight_api.config import DecisionModelConfig
 from hindsight_api.engine.decision_model import DecisionAnswer, DecisionModel
 from hindsight_api.engine.decision_rerank_interface import MAX_MEMORY_TOKENS, MAX_SHARED_CONTEXT_TOKENS
-from hindsight_api.engine.search.decision_reranker import DecisionModelReranker, rerank_shared_context
+from hindsight_api.engine.search.decision_reranker import (
+    DecisionModelReranker,
+    RerankOptions,
+    rerank_options,
+    rerank_shared_context,
+)
 from hindsight_api.engine.search.reranking import CrossEncoderReranker
 from hindsight_api.engine.search.types import MergedCandidate, RetrievalResult
 from hindsight_api.engine.token_encoding import count_tokens
 
 
 class _Client:
-    """Answers each candidate's question from ``keep``, by memory text."""
+    """Answers each candidate's question from ``keep``, by memory text; a dedup question
+    is a repeat when its (Memory A, Memory B) texts are in ``repeats``."""
 
-    def __init__(self, keep=None):
+    def __init__(self, keep=None, repeats=()):
         self.keep = keep or {}
+        self.repeats = set(repeats)
         self.asked: list[tuple[str, dict]] = []
+        self.scopes: list[str] = []
         self.max_request_tokens = 26_000
         self.tokenizer = None
 
@@ -26,10 +36,22 @@ class _Client:
 
     async def ask_all(self, state, questions, *, scope):
         self.asked.append((state, questions))
-        return {
-            key: DecisionAnswer(noul=self.keep.get(question.instructions["memory"], 0.5))
-            for key, question in questions.items()
-        }
+        self.scopes.append(scope)
+        return {key: DecisionAnswer(noul=self._answer(question.instructions)) for key, question in questions.items()}
+
+    def _answer(self, instructions) -> float:
+        if "memory_a" in instructions:
+            return 0.9 if (instructions["memory_a"], instructions["memory_b"]) in self.repeats else 0.1
+        return self.keep.get(instructions["memory"], 0.5)
+
+    @property
+    def pairs(self) -> list[tuple[str, str]]:
+        return [
+            (q.instructions["memory_a"], q.instructions["memory_b"])
+            for _, questions in self.asked
+            for q in questions.values()
+            if "memory_a" in q.instructions
+        ]
 
 
 def _reranker(client: _Client) -> DecisionModelReranker:
@@ -194,48 +216,98 @@ class TestSharedState:
         assert client.asked[0][0] in {f"Current date: {day.isoformat()}\n\nQuestion: q" for day in (before, after)}
 
 
-def _pruning(client: _Client) -> DecisionModelReranker:
-    return DecisionModelReranker(client, prune=True)  # type: ignore[arg-type]
+@contextmanager
+def _options(**options) -> Iterator[None]:
+    """What CrossEncoderReranker.rerank() sets for one recall."""
+    token = rerank_options.set(RerankOptions(**options))
+    try:
+        yield
+    finally:
+        rerank_options.reset(token)
+
+
+async def _predict(client: _Client, docs: list[str], **options) -> list[float]:
+    with _options(**options):
+        return await _reranker(client).predict([("q", doc) for doc in docs])
+
+
+TEA, TEA_AGAIN = "Marta favourite tea is genmaicha", "Marta favorite tea is genmaicha"
+SENCHA = "Marta drinks sencha"
 
 
 class TestPrune:
     async def test_off_by_default_nothing_is_dropped(self):
         client = _Client({"tea is genmaicha": 0.9, "offsite in lisbon": 0.01})
-        scores = await _reranker(client).predict([("q", "tea is genmaicha"), ("q", "offsite in lisbon")])
-        assert all(score > 0.0 for score in scores)
+        assert all(score > 0.0 for score in await _predict(client, ["tea is genmaicha", "offsite in lisbon"]))
 
     async def test_a_candidate_judged_no_help_is_dropped_but_the_best_always_survives(self):
         client = _Client({"tea is genmaicha": 0.9, "offsite in lisbon": 0.1})
-        scores = await _pruning(client).predict([("q", "offsite in lisbon"), ("q", "tea is genmaicha")])
-        assert scores == [0.0, 1.0]
+        assert await _predict(client, ["offsite in lisbon", "tea is genmaicha"], prune=True) == [0.0, 1.0]
 
         # Relative to the best: 0.3 clears the floor but not 40% of 0.9.
         crowded = _Client({"tea is genmaicha": 0.9, "offsite in lisbon": 0.3})
-        assert (await _pruning(crowded).predict([("q", "offsite in lisbon"), ("q", "tea is genmaicha")]))[0] == 0.0
+        assert (await _predict(crowded, ["offsite in lisbon", "tea is genmaicha"], prune=True))[0] == 0.0
 
         lonely = _Client({"offsite in lisbon": 0.05})
-        assert (await _pruning(lonely).predict([("q", "offsite in lisbon")]))[0] > 0.0
+        assert (await _predict(lonely, ["offsite in lisbon"], prune=True))[0] > 0.0
 
     async def test_pruning_asks_nothing_more_than_ranking(self):
-        client = _Client({"tea is genmaicha": 0.9, "Marta favourite tea is genmaicha": 0.85})
-        await _pruning(client).predict([("q", "tea is genmaicha"), ("q", "Marta favourite tea is genmaicha")])
-        assert len(client.asked) == 1
+        client = _Client({TEA: 0.9, TEA_AGAIN: 0.85}, repeats={(TEA, TEA_AGAIN)})
+        assert all(score > 0.0 for score in await _predict(client, [TEA, TEA_AGAIN], prune=True))
+        assert client.scopes == ["decision_recall_rerank"]
 
     async def test_recall_leaves_the_dropped_candidates_out(self):
         client = _Client({"tea is genmaicha": 0.9, "offsite in lisbon": 0.1})
-        reranker = CrossEncoderReranker(cross_encoder=_pruning(client))
-        result = await reranker.rerank("q", [_candidate("offsite in lisbon"), _candidate("tea is genmaicha")])
+        reranker = CrossEncoderReranker(cross_encoder=_reranker(client))
+        candidates = [_candidate("offsite in lisbon"), _candidate("tea is genmaicha")]
+        assert len((await reranker.rerank("q", candidates)).results) == 2
+        result = await reranker.rerank("q", candidates, prune=True)
         assert [r.candidate.retrieval.text for r in result.results] == ["tea is genmaicha"]
 
-    def test_the_flag_reaches_recalls_reranker(self, monkeypatch):
-        from hindsight_api import config as config_module
 
-        monkeypatch.setenv("HINDSIGHT_API_DECISION_MODEL_PROVIDER", "typesafe")
-        monkeypatch.setenv("HINDSIGHT_API_DECISION_MODEL_API_KEY", "k")
-        monkeypatch.setattr(config_module, "get_config", config_module.HindsightConfig.from_env)
-        assert CrossEncoderReranker().cross_encoder.prunes_candidates is False
-        monkeypatch.setenv("HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE", "true")
-        assert CrossEncoderReranker().cross_encoder.prunes_candidates is True
+class TestDedup:
+    async def test_a_repeat_of_a_better_ranked_candidate_is_dropped_in_one_more_request(self):
+        client = _Client({TEA: 0.9, TEA_AGAIN: 0.8, SENCHA: 0.7}, repeats={(TEA, TEA_AGAIN)})
+        scores = await _predict(client, [TEA_AGAIN, SENCHA, TEA], dedup=True)
+        assert scores[0] == 0.0 and scores[1] > 0.0 and scores[2] == 1.0
+        assert client.scopes == ["decision_recall_rerank", "decision_recall_dedup"]
+        # Each pair once, the better-ranked as Memory A.
+        assert sorted(client.pairs) == sorted([(TEA, TEA_AGAIN), (TEA, SENCHA), (TEA_AGAIN, SENCHA)])
+
+    async def test_off_no_second_request(self):
+        client = _Client({TEA: 0.9, TEA_AGAIN: 0.8}, repeats={(TEA, TEA_AGAIN)})
+        assert all(score > 0.0 for score in await _predict(client, [TEA, TEA_AGAIN]))
+        assert client.scopes == ["decision_recall_rerank"]
+
+    async def test_only_the_candidates_left_after_the_cut_are_compared(self):
+        client = _Client({TEA: 0.9, TEA_AGAIN: 0.8, "offsite in lisbon": 0.05})
+        await _predict(client, [TEA, TEA_AGAIN, "offsite in lisbon"], prune=True, dedup=True)
+        assert client.pairs == [(TEA, TEA_AGAIN)]
+
+    async def test_a_repeat_of_a_dropped_candidate_stays(self):
+        """Greedy in rank order, so a chain does not drop its own head."""
+        a, b, c = "Acme signed the beta", "Acme signed the beta deal", "Acme signed the beta contract"
+        client = _Client({a: 0.9, b: 0.8, c: 0.7}, repeats={(a, b), (b, c)})
+        assert [score > 0.0 for score in await _predict(client, [a, b, c], dedup=True)] == [True, False, True]
+
+    async def test_different_dates_and_fact_types_are_not_compared(self):
+        may3 = "[Date: May 03, 2026 (2026-05-03)] Sam went climbing"
+        may10 = "[Date: May 10, 2026 (2026-05-10)] Sam went climbing"
+        client = _Client({may3: 0.9, may10: 0.8}, repeats={(may3, may10)})
+        assert all(score > 0.0 for score in await _predict(client, [may3, may10], dedup=True))
+        assert client.pairs == []
+
+        fact, observation = "Marta leads payments", "Marta has led payments since 2022"
+        client = _Client({fact: 0.9, observation: 0.8}, repeats={(fact, observation)})
+        scores = await _predict(client, [fact, observation], dedup=True, fact_types=["world", "observation"])
+        assert all(score > 0.0 for score in scores)
+        assert client.pairs == []
+
+    async def test_recall_leaves_the_repeat_out(self):
+        client = _Client({TEA: 0.9, TEA_AGAIN: 0.8}, repeats={(TEA, TEA_AGAIN)})
+        reranker = CrossEncoderReranker(cross_encoder=_reranker(client))
+        result = await reranker.rerank("q", [_candidate(TEA_AGAIN), _candidate(TEA)], dedup=True)
+        assert [r.candidate.retrieval.text for r in result.results] == [TEA]
 
 
 @pytest.fixture(autouse=True)

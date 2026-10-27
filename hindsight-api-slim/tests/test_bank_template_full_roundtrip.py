@@ -134,6 +134,8 @@ _SAMPLE_VALUES: dict[str, Any] = {
     "consolidation_llm_parallelism": 3,
     "recall_include_chunks": True,
     "recall_prefer_observations": True,
+    "recall_decision_model_prune": True,
+    "recall_decision_model_dedup": True,
     "recall_max_tokens": 9000,
     "recall_chunks_max_tokens": 4500,
     # Validated against the DefensePolicy schema on write (parse_policy), so this

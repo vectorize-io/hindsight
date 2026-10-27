@@ -747,6 +747,7 @@ ENV_DECISION_MODEL_MAX_CONCURRENT = "HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT
 ENV_DECISION_MODEL_MAX_REQUEST_TOKENS = "HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS"
 ENV_DECISION_MODEL_TOKENIZER = "HINDSIGHT_API_DECISION_MODEL_TOKENIZER"
 ENV_RECALL_DECISION_MODEL_PRUNE = "HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE"
+ENV_RECALL_DECISION_MODEL_DEDUP = "HINDSIGHT_API_RECALL_DECISION_MODEL_DEDUP"
 
 ENV_VECTOR_EXTENSION = "HINDSIGHT_API_VECTOR_EXTENSION"
 ENV_ANN_ITERATIVE_SCAN = "HINDSIGHT_API_ANN_ITERATIVE_SCAN"
@@ -1609,6 +1610,8 @@ DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS = 26_000
 MIN_DECISION_MODEL_MAX_REQUEST_TOKENS = 1_000
 # Off by default: dropping candidates changes what recall returns, so it is opt-in.
 DEFAULT_RECALL_DECISION_MODEL_PRUNE = False
+# Off by default: it costs one more decision-model request per recall.
+DEFAULT_RECALL_DECISION_MODEL_DEDUP = False
 
 
 def _decision_model_env(operation: str, setting: str) -> str:
@@ -4016,8 +4019,10 @@ class HindsightConfig:
     recall_decision_model_api_key: str | None = None
     recall_decision_model_model: str | None = None
     recall_decision_model_base_url: str | None = None
-    # Recall only, server-level: the decision reranker drops the candidates it judges no help.
+    # Recall defaults for a request that omits them, per bank: the decision reranker drops the
+    # candidates it judges no help (prune), and the ones repeating a better-ranked one (dedup).
     recall_decision_model_prune: bool = DEFAULT_RECALL_DECISION_MODEL_PRUNE
+    recall_decision_model_dedup: bool = DEFAULT_RECALL_DECISION_MODEL_DEDUP
     reflect_decision_model_provider: str | None = None
     reflect_decision_model_api_key: str | None = None
     reflect_decision_model_model: str | None = None
@@ -4169,6 +4174,8 @@ class HindsightConfig:
         # Recall settings (used by internal recall, e.g. mental model refresh)
         "recall_include_chunks",
         "recall_prefer_observations",
+        "recall_decision_model_prune",
+        "recall_decision_model_dedup",
         "recall_max_tokens",
         "recall_chunks_max_tokens",
         # Recall budget mapping (Budget enum -> thinking_budget integer)
@@ -5193,6 +5200,9 @@ class HindsightConfig:
             },
             recall_decision_model_prune=_parse_boolean_env(
                 ENV_RECALL_DECISION_MODEL_PRUNE, DEFAULT_RECALL_DECISION_MODEL_PRUNE
+            ),
+            recall_decision_model_dedup=_parse_boolean_env(
+                ENV_RECALL_DECISION_MODEL_DEDUP, DEFAULT_RECALL_DECISION_MODEL_DEDUP
             ),
             # Server
             host=os.getenv(ENV_HOST) or None,

@@ -4,7 +4,9 @@ This file is a public interface, meant to be used outside hindsight-api too: a s
 that reranks for Hindsight over the System One API can load it and send exactly the
 questions recall's :class:`~hindsight_api.engine.search.decision_reranker.DecisionModelReranker`
 sends, so a pool comes back in the order recall itself would give it. With pruning on
-(:meth:`DecisionRerank.pruned`), it drops the same candidates recall would.
+(:meth:`DecisionRerank.pruned`), it drops the same candidates recall would, and with dedup
+on (:meth:`DecisionRerank.repeat_questions`, :meth:`DecisionRerank.deduped`) the same
+repeats.
 
 To keep it loadable on its own, by file path, without installing hindsight-api:
 
@@ -21,6 +23,7 @@ so treat it as an API: keep it backwards compatible, or say so in the release no
 """
 
 import json
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
@@ -53,14 +56,32 @@ MAX_REQUEST_TOKENS = 26_000
 # to do with the question" was worse than useless: the model answers on topic overlap and
 # ignores the negation, so it dropped the needed facts and kept the junk.
 #
-# Repeats are not dropped. A pairwise "Memory B is a repeat of Memory A" question, both
-# memories in the state, caught them, but only one pair per request: on a 250-candidate pool
-# that is either a second round trip after the keep answers or hundreds of requests, and
-# asked inside one request with the pool in the state it lost needed facts. With a model
-# whose keep answers are sharp, the cut alone leaves a pool small enough that the repeats
-# in it cost less than that check would.
+# Pruning drops no repeats: that is dedup, below, and it costs a second request.
 PRUNE_BELOW = 0.2
 PRUNE_BELOW_BEST = 0.4
+
+# Dedup, opt-in: dropping a candidate that repeats one ranked above it. It needs both memories
+# in one question, and which pairs matter is only known once the ranking answers are in, so it
+# is a second request, after the ranking one: the best DEDUP_CANDIDATES candidates still in the
+# pool, each asked against every one ranked above it, both memories in the question and the
+# better-ranked one as Memory A. One way round is enough: the order is known by then, and
+# asking both ways dropped no more. Measured with a model whose ranking answers are sharp,
+# after the prune cut: on 250-candidate pools it dropped every repeat (32/32) and lost no
+# needed fact (0/48), for ~1.3k more input tokens and ~0.23s (p50) more per recall; on small
+# labelled pools 47/48 repeats, 0/72 needed facts lost. Picking pairs up front so they could
+# share the ranking request did not work: with no answers yet the budget went to look-alike
+# junk (3-7/32 repeats). One request per pair, or the whole pool in the state, cost hundreds
+# of requests or lost needed facts.
+DEDUP_INSTRUCTIONS = "Memory B is a repeat of Memory A."
+REPEAT_ABOVE = 0.5
+# ponytail: a repeat ranked below this survives; raise it if unpruned pools show repeats.
+DEDUP_CANDIDATES = 30
+_DATE_PREFIX = re.compile(r"^\[Date: [^\]]*\]")
+
+
+def _date(doc: str) -> str | None:
+    match = _DATE_PREFIX.match(doc)
+    return match.group(0) if match else None
 
 
 @dataclass(frozen=True)
@@ -77,6 +98,28 @@ class RerankQuestion:
     def system_one(self) -> dict[str, object]:
         """The question as System One takes it: a Noul with the task and the memory."""
         return {"type": "noul", "instructions": {"task": KEEP_INSTRUCTIONS, "memory": self.memory}}
+
+
+@dataclass(frozen=True)
+class RepeatQuestion:
+    """Dedup's question: does the candidate at ``slot`` repeat the one at ``above``?
+
+    ``above`` is ranked better, so it is Memory A. Both memories ride in the question, so
+    every pair goes in one request under the ranking state.
+    """
+
+    key: str
+    above: int
+    slot: int
+    memory_a: str
+    memory_b: str
+
+    def system_one(self) -> dict[str, object]:
+        """The question as System One takes it: a Noul with the task and both memories."""
+        return {
+            "type": "noul",
+            "instructions": {"task": DEDUP_INSTRUCTIONS, "memory_a": self.memory_a, "memory_b": self.memory_b},
+        }
 
 
 @dataclass(frozen=True)
@@ -169,3 +212,55 @@ class DecisionRerank:
         floor = max(PRUNE_BELOW, PRUNE_BELOW_BEST * best)
         scores = DecisionRerank.scores(answers)
         return [score if score == 1.0 or (answer or 0.0) >= floor else 0.0 for answer, score in zip(answers, scores)]
+
+    def repeat_questions(
+        self, docs: Sequence[str], scores: Sequence[float], kinds: Sequence[str] | None = None
+    ) -> list[RepeatQuestion]:
+        """Dedup's questions: each of the best ``DEDUP_CANDIDATES`` still in the pool against
+        every one ranked above it.
+
+        ``scores`` are :meth:`scores` or :meth:`pruned`; a candidate at 0.0 is already out.
+        ``docs`` are the uncapped texts, capped here as in the ranking questions. Not asked:
+        pairs dated differently — "went climbing" on the 3rd and on the 10th are two
+        occasions, and the model calls those repeats — and, when ``kinds`` gives each
+        candidate's fact type, pairs of two types: an observation is built from the very facts
+        it repeats, and choosing between them is recall's ``prefer_observations``.
+        """
+        checked = DecisionRerank._ranked(scores)[:DEDUP_CANDIDATES]
+        return [
+            RepeatQuestion(
+                key=f"r{above}_{slot}",
+                above=above,
+                slot=slot,
+                memory_a=self.capped(docs[above], MAX_MEMORY_TOKENS),
+                memory_b=self.capped(docs[slot], MAX_MEMORY_TOKENS),
+            )
+            for position, slot in enumerate(checked)
+            for above in checked[:position]
+            if not (_date(docs[above]) and _date(docs[slot]) and _date(docs[above]) != _date(docs[slot]))
+            and (kinds is None or kinds[above] == kinds[slot])
+        ]
+
+    @staticmethod
+    def deduped(
+        scores: Sequence[float], repeats: Sequence[RepeatQuestion], answers: Mapping[str, float | None]
+    ) -> list[float]:
+        """``scores`` with every repeat at exactly 0.0; ``answers`` maps each question's key.
+
+        Greedy in rank order: a candidate goes only when it repeats one that stays, so of two
+        repeats the better-ranked one is kept, and a chain does not drop its own head.
+        """
+        said_repeat = {(q.above, q.slot) for q in repeats if (answers.get(q.key) or 0.0) >= REPEAT_ABOVE}
+        kept: list[int] = []
+        dropped: set[int] = set()
+        for slot in DecisionRerank._ranked(scores):
+            if any((above, slot) in said_repeat for above in kept):
+                dropped.add(slot)
+            else:
+                kept.append(slot)
+        return [0.0 if slot in dropped else score for slot, score in enumerate(scores)]
+
+    @staticmethod
+    def _ranked(scores: Sequence[float]) -> list[int]:
+        # The slots still in the pool, best first.
+        return sorted((slot for slot, score in enumerate(scores) if score > 0.0), key=lambda slot: -scores[slot])

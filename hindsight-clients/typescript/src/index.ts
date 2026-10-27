@@ -566,6 +566,10 @@ export class HindsightClient {
       types?: string[];
       /** When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact a returned observation was consolidated from, so the observation supersedes it (no duplicate content). No effect unless 'observation' and at least one raw type are both in types. Omitted: the bank's recall_prefer_observations config decides (false unless configured). */
       preferObservations?: boolean;
+      /** With a decision model set up for recall, drop the results it judges no help instead of only ranking them last. Omitted: the bank's recall_decision_model_prune config decides (false unless configured). */
+      prune?: boolean;
+      /** With a decision model set up for recall, drop a result repeating a better-ranked one, at the cost of one more decision-model request. Omitted: the bank's recall_decision_model_dedup config decides (false unless configured). */
+      dedup?: boolean;
       maxTokens?: number;
       budget?: Budget;
       trace?: boolean;
@@ -600,6 +604,8 @@ export class HindsightClient {
             query,
             types: options?.types,
             prefer_observations: options?.preferObservations,
+            prune: options?.prune,
+            dedup: options?.dedup,
             max_tokens: options?.maxTokens,
             budget: options?.budget || "mid",
             trace: options?.trace,
@@ -1004,6 +1010,10 @@ export class HindsightClient {
       recallIncludeChunks?: boolean;
       /** Default prefer_observations for recall requests that omit it. */
       recallPreferObservations?: boolean;
+      /** Default prune for recall requests that omit it. */
+      recallDecisionModelPrune?: boolean;
+      /** Default dedup for recall requests that omit it. */
+      recallDecisionModelDedup?: boolean;
       /** Token budget for those chunks. */
       recallChunksMaxTokens?: number;
       /** How the per-query result budget is derived: 'fixed' or 'adaptive'. */
@@ -1118,6 +1128,10 @@ export class HindsightClient {
       updates.recall_include_chunks = options.recallIncludeChunks;
     if (options.recallPreferObservations !== undefined)
       updates.recall_prefer_observations = options.recallPreferObservations;
+    if (options.recallDecisionModelPrune !== undefined)
+      updates.recall_decision_model_prune = options.recallDecisionModelPrune;
+    if (options.recallDecisionModelDedup !== undefined)
+      updates.recall_decision_model_dedup = options.recallDecisionModelDedup;
     if (options.recallChunksMaxTokens !== undefined)
       updates.recall_chunks_max_tokens = options.recallChunksMaxTokens;
     if (options.recallBudgetFunction !== undefined)

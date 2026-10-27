@@ -1618,11 +1618,15 @@ boosts it applies to a cross-encoder, and publishes no reranker score, so
 while other operations use the decision model, set
 `HINDSIGHT_API_RECALL_DECISION_MODEL_PROVIDER=none`.
 
-Set `HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE=true` (default `false`, server-level) to also
-drop candidates instead of only ordering them. A candidate goes when it is judged no help: it
-scores below 0.2, or below 40% of the best candidate. The cut reuses the ranking answers, so
-it costs no extra request, and the best candidate always survives. Repeats are not dropped:
-the same fact retained from several documents comes back once per copy that passes the cut.
+Recall can also **drop** candidates instead of only ordering them. Both are off by default,
+and a recall request turns each on or off with `prune` / `dedup`; a request that omits one
+gets the bank's value, else the server's. That covers every recall, including the ones
+reflect and consolidation run.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE` | Drop a candidate judged no help: below 0.2, or below 40% of the best candidate. Reuses the ranking answers, so no extra request; the best candidate always survives. Per bank (`recall_decision_model_prune`). | `false` |
+| `HINDSIGHT_API_RECALL_DECISION_MODEL_DEDUP` | Drop a candidate repeating a better-ranked one, so the same fact retained from several documents comes back once. One more decision-model request after the ranking one, over the 30 best candidates still in the pool; memories dated differently, or of two fact types, are never called repeats. Per bank (`recall_decision_model_dedup`). | `false` |
 
 **Consolidation.** With a decision model, consolidation asks it, for each new fact, how the
 fact relates to the observations recall found for it: does it restate one, add something new

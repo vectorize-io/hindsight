@@ -482,9 +482,17 @@ class RerankStub:
     #: model was told besides the memory.
     states: list[str]
 
+    #: Pairs a dedup question ("Memory B is a repeat of Memory A") answers yes for, each
+    #: as (text in Memory A, text in Memory B). Every other pair is not a repeat.
+    repeats: set[tuple[str, str]]
+
     def __init__(self) -> None:
         self.verdicts = {}
         self.states = []
+        self.repeats = set()
+
+    def repeat(self, memory_a: str, memory_b: str) -> float:
+        return 0.9 if any(a in memory_a and b in memory_b for a, b in self.repeats) else 0.1
 
     def verdict(self, state: str, memory: str) -> float:
         scripted = next((score for text, score in self.verdicts.items() if text in memory), None)
@@ -578,6 +586,7 @@ class Stubs:
         self.rerank.cut_level = RerankStub.cut_level
         self.rerank.verdicts = {}
         self.rerank.states = []
+        self.rerank.repeats = set()
         self.triage.reset()
         self.rejected_requests.clear()
         self.webhooks.clear()

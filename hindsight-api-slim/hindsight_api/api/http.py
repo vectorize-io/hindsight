@@ -568,6 +568,23 @@ class RecallRequest(BaseModel):
             "recall_prefer_observations config (false unless configured). No effect unless 'observation' and at least one raw type are both requested."
         ),
     )
+    prune: bool | None = Field(
+        default=None,
+        description=(
+            "Drop the results the decision model judges no help to the query, instead of only ranking them "
+            "last. Costs no extra request. When omitted, uses the bank/global recall_decision_model_prune "
+            "config (false unless configured). No effect unless a decision model is set up for recall."
+        ),
+    )
+    dedup: bool | None = Field(
+        default=None,
+        description=(
+            "Drop a result that repeats a better-ranked one, so the same fact comes back once. Costs one "
+            "more decision-model request after the ranking one. When omitted, uses the bank/global "
+            "recall_decision_model_dedup config (false unless configured). No effect unless a decision "
+            "model is set up for recall."
+        ),
+    )
     budget: Budget = Budget.MID
     max_tokens: int = 4096
     trace: bool = False
@@ -5417,6 +5434,8 @@ def _register_routes(app: FastAPI):
                         enable_trace=request.trace,
                         fact_type=fact_types,
                         prefer_observations=request.prefer_observations,
+                        prune=request.prune,
+                        dedup=request.dedup,
                         question_date=question_date,
                         include_entities=include_entities,
                         max_entity_tokens=max_entity_tokens,

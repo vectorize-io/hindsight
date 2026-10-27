@@ -73,6 +73,8 @@ type BankTemplateConfig struct {
 	ConsolidationLlmParallelism NullableInt32 `json:"consolidation_llm_parallelism,omitempty"`
 	RecallIncludeChunks NullableBool `json:"recall_include_chunks,omitempty"`
 	RecallPreferObservations NullableBool `json:"recall_prefer_observations,omitempty"`
+	RecallDecisionModelPrune NullableBool `json:"recall_decision_model_prune,omitempty"`
+	RecallDecisionModelDedup NullableBool `json:"recall_decision_model_dedup,omitempty"`
 	RecallMaxTokens NullableInt32 `json:"recall_max_tokens,omitempty"`
 	RecallChunksMaxTokens NullableInt32 `json:"recall_chunks_max_tokens,omitempty"`
 	MemoryDefense map[string]interface{} `json:"memory_defense,omitempty"`
@@ -2291,6 +2293,90 @@ func (o *BankTemplateConfig) UnsetRecallPreferObservations() {
 	o.RecallPreferObservations.Unset()
 }
 
+// GetRecallDecisionModelPrune returns the RecallDecisionModelPrune field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetRecallDecisionModelPrune() bool {
+	if o == nil || IsNil(o.RecallDecisionModelPrune.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.RecallDecisionModelPrune.Get()
+}
+
+// GetRecallDecisionModelPruneOk returns a tuple with the RecallDecisionModelPrune field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetRecallDecisionModelPruneOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.RecallDecisionModelPrune.Get(), o.RecallDecisionModelPrune.IsSet()
+}
+
+// HasRecallDecisionModelPrune returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasRecallDecisionModelPrune() bool {
+	if o != nil && o.RecallDecisionModelPrune.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetRecallDecisionModelPrune gets a reference to the given NullableBool and assigns it to the RecallDecisionModelPrune field.
+func (o *BankTemplateConfig) SetRecallDecisionModelPrune(v bool) {
+	o.RecallDecisionModelPrune.Set(&v)
+}
+// SetRecallDecisionModelPruneNil sets the value for RecallDecisionModelPrune to be an explicit nil
+func (o *BankTemplateConfig) SetRecallDecisionModelPruneNil() {
+	o.RecallDecisionModelPrune.Set(nil)
+}
+
+// UnsetRecallDecisionModelPrune ensures that no value is present for RecallDecisionModelPrune, not even an explicit nil
+func (o *BankTemplateConfig) UnsetRecallDecisionModelPrune() {
+	o.RecallDecisionModelPrune.Unset()
+}
+
+// GetRecallDecisionModelDedup returns the RecallDecisionModelDedup field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetRecallDecisionModelDedup() bool {
+	if o == nil || IsNil(o.RecallDecisionModelDedup.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.RecallDecisionModelDedup.Get()
+}
+
+// GetRecallDecisionModelDedupOk returns a tuple with the RecallDecisionModelDedup field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetRecallDecisionModelDedupOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.RecallDecisionModelDedup.Get(), o.RecallDecisionModelDedup.IsSet()
+}
+
+// HasRecallDecisionModelDedup returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasRecallDecisionModelDedup() bool {
+	if o != nil && o.RecallDecisionModelDedup.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetRecallDecisionModelDedup gets a reference to the given NullableBool and assigns it to the RecallDecisionModelDedup field.
+func (o *BankTemplateConfig) SetRecallDecisionModelDedup(v bool) {
+	o.RecallDecisionModelDedup.Set(&v)
+}
+// SetRecallDecisionModelDedupNil sets the value for RecallDecisionModelDedup to be an explicit nil
+func (o *BankTemplateConfig) SetRecallDecisionModelDedupNil() {
+	o.RecallDecisionModelDedup.Set(nil)
+}
+
+// UnsetRecallDecisionModelDedup ensures that no value is present for RecallDecisionModelDedup, not even an explicit nil
+func (o *BankTemplateConfig) UnsetRecallDecisionModelDedup() {
+	o.RecallDecisionModelDedup.Unset()
+}
+
 // GetRecallMaxTokens returns the RecallMaxTokens field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *BankTemplateConfig) GetRecallMaxTokens() int32 {
 	if o == nil || IsNil(o.RecallMaxTokens.Get()) {
@@ -2579,6 +2665,12 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.RecallPreferObservations.IsSet() {
 		toSerialize["recall_prefer_observations"] = o.RecallPreferObservations.Get()
+	}
+	if o.RecallDecisionModelPrune.IsSet() {
+		toSerialize["recall_decision_model_prune"] = o.RecallDecisionModelPrune.Get()
+	}
+	if o.RecallDecisionModelDedup.IsSet() {
+		toSerialize["recall_decision_model_dedup"] = o.RecallDecisionModelDedup.Get()
 	}
 	if o.RecallMaxTokens.IsSet() {
 		toSerialize["recall_max_tokens"] = o.RecallMaxTokens.Get()

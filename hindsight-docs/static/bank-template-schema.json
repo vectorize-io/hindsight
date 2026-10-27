@@ -744,6 +744,32 @@
           "description": "Default for recall prefer_observations when the request omits it",
           "title": "Recall Prefer Observations"
         },
+        "recall_decision_model_prune": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Default for recall prune when the request omits it (decision-model reranker only)",
+          "title": "Recall Decision Model Prune"
+        },
+        "recall_decision_model_dedup": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Default for recall dedup when the request omits it (decision-model reranker only)",
+          "title": "Recall Decision Model Dedup"
+        },
         "recall_max_tokens": {
           "anyOf": [
             {

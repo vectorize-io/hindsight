@@ -6729,6 +6729,12 @@ components:
         recall_prefer_observations:
           nullable: true
           type: boolean
+        recall_decision_model_prune:
+          nullable: true
+          type: boolean
+        recall_decision_model_dedup:
+          nullable: true
+          type: boolean
         recall_max_tokens:
           nullable: true
           type: integer
@@ -12200,6 +12206,12 @@ components:
           nullable: true
           type: array
         prefer_observations:
+          nullable: true
+          type: boolean
+        prune:
+          nullable: true
+          type: boolean
+        dedup:
           nullable: true
           type: boolean
         budget:

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from ..cross_encoder import RerankTimeoutError, _served_provider
 from .decision_reranker import PROVIDER_NAME as DECISION_MODEL_RERANKER
-from .decision_reranker import DecisionModelReranker, rerank_shared_context
+from .decision_reranker import DecisionModelReranker, RerankOptions, rerank_options, rerank_shared_context
 from .types import MergedCandidate, ScoredResult
 
 logger = logging.getLogger(__name__)
@@ -327,10 +327,9 @@ class CrossEncoderReranker:
             from hindsight_api.engine.cross_encoder import create_cross_encoder_from_env
 
             # A decision model set up for recall replaces the configured reranker outright.
-            config = get_config()
-            decision_model = config.decision_model_config("recall")
+            decision_model = get_config().decision_model_config("recall")
             cross_encoder = (
-                DecisionModelReranker.from_config(decision_model, prune=config.recall_decision_model_prune)
+                DecisionModelReranker.from_config(decision_model)
                 if decision_model is not None
                 else create_cross_encoder_from_env()
             )
@@ -371,7 +370,14 @@ class CrossEncoderReranker:
             ) from e
         self._initialized = True
 
-    async def rerank(self, query: str, candidates: list[MergedCandidate], now: datetime | None = None) -> RerankResult:
+    async def rerank(
+        self,
+        query: str,
+        candidates: list[MergedCandidate],
+        now: datetime | None = None,
+        prune: bool = False,
+        dedup: bool = False,
+    ) -> RerankResult:
         """
         Rerank candidates using cross-encoder scores.
 
@@ -380,6 +386,9 @@ class CrossEncoderReranker:
             candidates: Merged candidates from RRF
             now: When the question is asked (the recall's question date), told to a decision
                 model so it can weigh how recent each candidate is. Defaults to now.
+            prune: With a decision model, also drop the candidates it judges no help.
+            dedup: With a decision model, also drop a candidate repeating a better-ranked one.
+                Both are ignored by any other reranker, which only orders.
 
         Returns:
             Scored results sorted by cross-encoder score, and the provider that
@@ -398,7 +407,9 @@ class CrossEncoderReranker:
         # between them is information.
         shared_context = None
         pooled_context = None
-        if getattr(self.cross_encoder, "provider_name", None) == DECISION_MODEL_RERANKER:
+        is_decision_model = getattr(self.cross_encoder, "provider_name", None) == DECISION_MODEL_RERANKER
+        prune, dedup = prune and is_decision_model, dedup and is_decision_model
+        if is_decision_model:
             contexts = {c.retrieval.context for c in candidates if c.retrieval.context}
             pooled_context = next(iter(contexts)) if len(contexts) == 1 else None
             today = f"Current date: {(now or datetime.now(timezone.utc)).date().isoformat()}"
@@ -438,6 +449,9 @@ class CrossEncoderReranker:
         unscored: set[int] = set()
         token = _served_provider.set(None)
         shared_context_token = rerank_shared_context.set(shared_context)
+        options_token = rerank_options.set(
+            RerankOptions(prune=prune, dedup=dedup, fact_types=[c.retrieval.fact_type for c in candidates])
+        )
         try:
             try:
                 # The model takes 2-tuples; `pairs` is built as two-element lists.
@@ -449,6 +463,7 @@ class CrossEncoderReranker:
             served_provider = _served_provider.get()
         finally:
             rerank_shared_context.reset(shared_context_token)
+            rerank_options.reset(options_token)
             _served_provider.reset(token)
         if served_provider is None:
             # Single-member encoders do not record one. Their provider_name is
@@ -509,7 +524,7 @@ class CrossEncoderReranker:
         # `candidates` arrives in RRF order, so appending preserves it for the tail.
         scored_results.extend(unscored_results)
 
-        if not self.cross_encoder.prunes_candidates:
+        if not (self.cross_encoder.prunes_candidates or prune or dedup):
             return RerankResult(results=scored_results, provider_name=served_provider)
 
         # This backend judges relevance rather than only ordering it, and marks a
