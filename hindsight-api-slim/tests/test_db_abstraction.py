@@ -225,6 +225,8 @@ class TestPostgreSQLDialect:
         assert "to_tsquery" in arm
         assert "'bm25' AS source" in arm
         assert "LIMIT $3" in arm
+        # Ties at the LIMIT cut break on id, so repeated recalls keep the same rows (#6056)
+        assert "ORDER BY ts_rank_cd(search_vector, to_tsquery('english', $4)) DESC, id LIMIT $3" in arm
         # Default language is english when bm25_language is not specified
         assert "to_tsquery('english', $4)" in arm
 
