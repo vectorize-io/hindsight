@@ -133,7 +133,7 @@ def triage_model(config: Any) -> DecisionModel | None:
 
 
 def _sentence(fact: dict[str, Any]) -> str:
-    # Facts render as "<sentence> | When: … | Involving: …"; only the sentence is prose.
+    # Facts render as "<sentence> | When: … | Where: … | Involving: …"; only the sentence is prose.
     return str(fact.get("text") or "").split(" | ")[0].strip()
 
 

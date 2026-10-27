@@ -560,7 +560,8 @@ async def test_english_coding_transcript_stays_english():
         response="\n".join(f"- {f.fact}" for f in facts),
         criteria=(
             "Every fact's main sentence (the text before the first ' | ') is written in English. "
-            "Ignore the ' | When: …' / ' | Involving: …' fields, proper nouns, identifiers and numbers."
+            "Ignore the ' | When: …' / ' | Where: …' / ' | Involving: …' fields, "
+            "proper nouns, identifiers and numbers."
         ),
         context="The input was an English conversation between a user and a coding assistant.",
         msg=f"English transcript must yield English facts: {[f.fact for f in facts]}",
