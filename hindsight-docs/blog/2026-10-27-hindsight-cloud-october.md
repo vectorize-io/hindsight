@@ -3,13 +3,13 @@ title: "What's New in Hindsight Cloud: The API Is a Promise Now"
 authors: [benfrank241]
 slug: "2026/10/27/hindsight-cloud-october"
 date: 2026-10-27T15:00
-tags: [hindsight-cloud, release, memlake, mcp, reflect]
-description: "Hindsight hit 1.0, most of Cloud moved onto a new storage engine, ChatGPT can connect as a client, and a bank's documents now travel in and out as a zip."
+tags: [hindsight-cloud, release, memlake, reflect]
+description: "Hindsight hit 1.0, most of Cloud moved onto a new storage engine, a bank's documents now travel in and out as a zip, and reflect shows its work."
 image: /img/blog/hindsight-cloud-october.png
 hide_table_of_contents: true
 ---
 
-![What's new in Hindsight Cloud: Hindsight 1.0, Memlake under the hood, the ChatGPT connector, and document import](/img/blog/hindsight-cloud-october.png)
+![What's new in Hindsight Cloud: Hindsight 1.0, Memlake under the hood, document import, and reflect's evidence panel](/img/blog/hindsight-cloud-october.png)
 
 The most important thing that happened to Hindsight Cloud in the last five weeks is something you cannot see in the console, and that is the point.
 
@@ -23,11 +23,10 @@ Underneath it, a lot moved. Here is the rest.
 
 - **Hindsight 1.0.** The API is stable and stays that way.
 - **Memlake runs most of Cloud now.** A new storage engine, nothing to turn on.
-- **ChatGPT can connect to your banks** as a custom connector over MCP, and members can approve clients now, not just admins.
 - **A bank's documents travel both ways.** Export to a zip, import it back into the same bank or a different one, billed below the retain rate.
 - **Reflect shows its work**, and can rank a handbook above the chatter.
 - **A bank answers to more than one name.**
-- **Fresh this week:** every document carries a change history, and observations can group themselves by tags your client never sends.
+- **Members can approve AI clients**, and connections now end when access does.
 
 ## Memlake runs most of Cloud now
 
@@ -36,14 +35,6 @@ Underneath it, a lot moved. Here is the rest.
 Most of Hindsight Cloud already runs on it. Vectorize operates it, so there is nothing to enable, no migration to schedule and no setting to find. If you want the detail on how it works, the launch post has it, and [the Memlake docs](https://docs.hindsight.vectorize.io/enterprise/memlake) cover running it in your own cloud or data center with Hindsight Enterprise.
 
 This is the kind of change that only shows up as an absence: fewer slow queries on large banks, and headroom you do not have to think about.
-
-## ChatGPT can connect to your banks
-
-ChatGPT's custom connectors can now link to Hindsight Cloud over MCP. Add Hindsight as a connector, approve it once, and ChatGPT can retain and recall memories in your banks directly.
-
-Alongside it, **who** can approve a client changed. Organization owners can now let plain **members** approve MCP connections from clients like Claude, ChatGPT and Cursor, where before that was limited to owners and admins. Turn it on under **Settings** then **Connected AI clients (MCP)**.
-
-Two smaller fixes in the same area are worth knowing because they close real gaps. MCP connections now follow access: when someone leaves the organization, or loses the role that let them connect, their connections are revoked rather than quietly continuing to work. And signing in with SSO partway through an MCP connection now returns you to the approval screen instead of dumping you on the dashboard.
 
 ## A bank's documents travel both ways
 
@@ -73,6 +64,12 @@ Add an **alias** to a bank and requests to either id reach the same memories. Pr
 
 This makes renaming painless. Point new clients at the new name while existing ones keep working on the old one, with no downtime and nothing to move. API keys scoped to a bank work with that bank's aliases too. Owners and admins manage them on the bank's **Configuration** tab.
 
+## Who can connect an AI client
+
+Approving an AI client used to be limited to owners and admins. Organization owners can now let plain **members** approve MCP connections too, under **Settings** then **Connected AI clients (MCP)**.
+
+Connections also follow access now. When someone leaves the organization, or loses the role that let them connect, their connections are revoked rather than quietly continuing to work.
+
 ## Finding things in a large bank
 
 A run of smaller additions, all aimed at reading one slice of a bank instead of all of it:
@@ -85,30 +82,9 @@ A run of smaller additions, all aimed at reading one slice of a bank instead of 
 
 The memories and documents APIs also filter and sort by time on the server now, so a client no longer has to pull a page and sort it itself.
 
-## Fresh this week
-
-These shipped in the engine in the last few days and are live on Cloud ahead of the docs catching up.
-
-**Every document has a change history.** Observations in Hindsight are rebuilt, not versioned: when a fact is edited, appended to, re-retained or invalidated, the observations built on it are deleted and rebuilt. Until now that left no trace, so an observation you did not recognise was the end of the investigation. Now each document has a **History** tab in the console, and `GET /v1/default/banks/{bank_id}/documents/{document_id}/history`, listing every retain, append, reprocess, fact edit, invalidation, restore, delete and retag, and every consolidation run with the observations it created, updated and removed.
-
-Three limits are worth knowing. It is **reconstructed from your bank's async operations**, so it reaches back only as far as those operations are kept, and a change that ran without one is not in it: a **synchronous retain**, sent with `async=false`, leaves no trace, and neither does a fact edit, delete or retag made while auto-consolidation is off. It **starts when the feature arrives**, so earlier changes are not in it. And it is ids and counts rather than diffs, with each id list capped at 100.
-
-**Observations can group themselves.** A tag in `observation_scopes` can now be a glob, so `[["topic:*"]]` groups a memory by whatever `topic:` tags it happens to carry. That is the only way to do this when the tags are added during extraction and your client could not have known them when it sent the request. Banks also get `default_observation_scopes`, applied to every retain that sends none, so memories about the same subject consolidate together no matter which agent produced them, with no client change.
-
-One detail in the matching is deliberate and worth repeating: a scope whose globs match nothing is **dropped**, not kept as an empty scope, because the empty scope is the untagged bank-wide one. A memory your pattern missed must not silently become visible to everyone.
-
-**Three smaller ones.** Document search now covers a document's original text as well as its id, and tells you which of the two matched. Knowledge pages and mental models download as PDF or Markdown. And live API requests now take the next free model slot ahead of background work like async retain and consolidation, so a bank in the middle of consolidating no longer makes interactive recall feel slow.
-
-## Two behaviour changes to know about
-
-**A retain that returns no facts list is now an error.** When the model's reply came back without a top-level facts list, retain used to treat it as zero facts and report success. It now reports the malformed response as an error. If you have a dashboard counting successful retains, some of what it counted was never a retain, and you may see those surface as failures for the first time.
-
-**Bank imports validate ids.** An import now rejects an invalid bank id, and ids using the reserved underscore prefix. Worth checking any scripted import before your next run.
-
 ## Learn more
 
 - [Hindsight Memlake](https://hindsight.vectorize.io/blog/2026/10/13/memlake) on the storage engine behind most of Cloud
 - [What's New in Hindsight Cloud](https://docs.hindsight.vectorize.io/cloud/whats-new) for the running list, with every item dated
-- [MCP setup](https://docs.hindsight.vectorize.io/cloud/mcp) for connecting ChatGPT, Claude and Cursor
 - [Billing](https://docs.hindsight.vectorize.io/cloud/billing) for the import rate and the rest of the pricing card
 - [What's New in Hindsight Cloud: Memory That Reads Screenshots](https://hindsight.vectorize.io/blog/2026/09/21/hindsight-cloud-0-10-0) for the previous roundup
