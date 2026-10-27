@@ -44,7 +44,7 @@ _SNIPPET_CHARS = 280
 DEFAULT_MENTAL_MODELS_SEARCH_MAX_TOKENS = 16000
 
 #: The budget a mental-model refresh searches pages with: the best page whole, the rest
-#: snippets. At the reflect default, test_05_refresh_cost's refreshes (sibling pages
+#: snippets. At the reflect default, test_refresh_pages_benchmark_cost's refreshes (sibling pages
 #: included) cost ~50% more input (79k -> 120k full, 69k -> 100k delta), mostly sibling
 #: pages a refresh does not need.
 REFRESH_MENTAL_MODELS_SEARCH_MAX_TOKENS = 1
@@ -281,7 +281,7 @@ async def tool_search_mental_models(
 
         content = row["content"] or ""
         # Whole pages in rank order, up to the budget, the rest as snippets. A model that
-        # answers from a snippet without reading the page is a measured failure (test_06),
+        # answers from a snippet without reading the page is a measured failure (test_reflect_from_page),
         # so the best hit is always whole, even alone over the budget: a snippet of it
         # would leave the search with no page at all (#5787). A lower page that does not
         # fit is skipped, not the end of packing, so a smaller one after it still can.

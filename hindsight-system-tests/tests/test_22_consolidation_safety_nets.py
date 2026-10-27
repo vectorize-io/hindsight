@@ -2,7 +2,7 @@
 
 A model's consolidation answer is advice, and a small model's advice has holes in
 it. Every hole below was observed on gemini-3.1-flash-lite by the consolidation
-eval (``hindsight-system-evals/evals/test_09_consolidation.py``) and used to cost
+eval (``hindsight-system-evals/evals/consolidation/test_consolidation.py``) and used to cost
 knowledge silently: the fact was stamped consolidated, backed nothing, and was
 never shown to the model again. Each story makes the stub give one such answer
 and checks the bank still ends up holding the fact.

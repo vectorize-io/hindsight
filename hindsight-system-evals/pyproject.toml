@@ -43,6 +43,7 @@ hindsight-client = { path = "../hindsight-clients/python", editable = true }
 # `run-amb`, not `amb`: AMB's own CLI is named `amb`, and two of them resolving
 # in the same shell is a coin flip.
 run-amb = "hindsight_system_evals.amb:main"
+eval-table = "hindsight_system_evals.table:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["hindsight_system_evals"]

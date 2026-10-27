@@ -1382,7 +1382,7 @@ async def _run_reflect_agent_inner(
             # the decision itself (sde-bench dedupe-history, 1/4). Sending that ``done`` back with
             # "search first" fixed the answer but billed the refused turn as well: with a reflect
             # mission asking for the source of every rule, it was most first rounds, and reflect
-            # with the decision model ran slower than agent turns (test_09, 15.3s against 14.3s).
+            # with the decision model ran slower than agent turns (the coding-agent reflect benchmark, 15.3s against 14.3s).
             iter_tool_choice = LLMToolChoice.named(forced_sequence[-1])
         elif absence_recall_forced and not recall_ran:
             iter_tool_choice = LLMToolChoice.named("recall")
@@ -1735,10 +1735,10 @@ async def _run_reflect_agent_inner(
             # False" was in the evidence three times), and the agent needed a correction for it.
             # A decision-orchestrated reflect keeps the free turn's done: there the done comes right
             # after a pruned round, and re-writing it in the closing step lost the recorded decision
-            # on the coding-agent eval (test_09 with Jev: 10/12 before, 7/12 with the closing step).
+            # on the coding-agent eval (the coding-agent reflect benchmark with Jev: 10/12 before, 7/12 with the closing step).
             # A document (a page refresh) still goes through the closing step: the page update
             # merges only the facts the answer cites, and the free turn's done cited fewer of them
-            # (a Q2 count lost two of four new customers on test_01 hq-count-billing).
+            # (a Q2 count lost two of four new customers on the refresh-pages eval, hq-count-billing).
             if not decision_orchestrated or decision_model_failed or answer_as_document:
                 return await (_forced_final_synthesis if compacted else _finish)(iteration + 1)
 

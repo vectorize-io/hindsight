@@ -1,18 +1,18 @@
 """Updates a delta refresh has to fold into a page it already wrote.
 
-``test_01`` grades a page that is *built* across waves: most of what the second
+The convergence cases grade a page that is *built* across waves: most of what the second
 wave carries is new to the page. This grades the other half of a delta's job —
 an established page, then a wave that changes what it says. Each case is one
-way an update reaches a page:
+way an update reaches a page (its category in brackets):
 
-* ``linked_by_page`` — the new memory never names the topic; only the page
+* ``du-oncall-departed`` (update) — the new memory never names the topic; only the page
   connects them ("Dana left the company", on a page naming Dana as on-call);
-* ``second_hop`` — the update names a service by its new name, and the rename
+* ``du-renamed-service`` (update) — the update names a service by its new name, and the rename
   arrives in the same wave;
-* ``correction`` — a memory saying an earlier figure was wrong;
-* ``membership`` — one item joins a list and another leaves it;
-* ``new_item`` — something the topic covers that the page has never mentioned;
-* ``quiet_wave`` — nothing in the wave bears on the page, which must survive it.
+* ``du-backup-correction`` (update) — a memory saying an earlier figure was wrong;
+* ``du-enterprise-plan`` (aggregation) — one item joins a list and another leaves it;
+* ``du-launch-risk`` (aggregation) — something the topic covers that the page has never mentioned;
+* ``du-quiet-wave`` (stability) — nothing in the wave bears on the page, which must survive it.
 
 Behind it: the decision-model gate in front of a delta refresh asks, memory by
 memory, "could this change the page?" and hands only the yeses to the LLM. A
@@ -23,7 +23,7 @@ updating, so this suite looks at the page. The first four cases are the ones a
 yes/no on one memory at a time finds hardest, and every wave also carries the
 hard corpus, so the gate has plenty to say no to.
 
-Every case is graded twice, like ``test_01``: ``correct`` and the trap, which
+Every case is graded twice, like the convergence cases: ``correct`` and the trap, which
 here is the page still asserting the value the wave replaced. The wave-1 page
 must state that old value first, or the update has nothing to replace.
 """
@@ -62,6 +62,14 @@ class DeltaUpdate:
     #: What the wave-1 page must already say, or the update replaces nothing.
     base_criteria: str
 
+    @property
+    def id(self) -> str:
+        return self.question.id
+
+    @property
+    def category(self) -> str:
+        return self.question.category
+
 
 def _q(question_id: str, category: str, question: str, criteria: str, trap: str) -> HardQuestion:
     return HardQuestion(
@@ -78,7 +86,7 @@ CASES: tuple[DeltaUpdate, ...] = (
     DeltaUpdate(
         question=_q(
             "du-oncall-departed",
-            "linked_by_page",
+            "update",
             "Who should be paged for a payments-api incident?",
             "Does not present Dana Reyes as someone to page now: it says she has left the company, or "
             "drops her, or names Marco Silva as the one to page.",
@@ -94,7 +102,7 @@ CASES: tuple[DeltaUpdate, ...] = (
     DeltaUpdate(
         question=_q(
             "du-renamed-service",
-            "second_hop",
+            "update",
             "What platform does the search-indexer service run on?",
             "States that the service (now called lexicon) runs on AWS Lambda since June 2026. Mentioning "
             "Kubernetes as where it ran before is fine.",
@@ -110,7 +118,7 @@ CASES: tuple[DeltaUpdate, ...] = (
     DeltaUpdate(
         question=_q(
             "du-backup-correction",
-            "correction",
+            "update",
             "How long are database backups retained?",
             "States that database backups are retained for 14 days. Mentioning that 30 days was an "
             "earlier, wrong figure is fine.",
@@ -126,7 +134,7 @@ CASES: tuple[DeltaUpdate, ...] = (
     DeltaUpdate(
         question=_q(
             "du-enterprise-plan",
-            "membership",
+            "aggregation",
             "Which customers are on the Enterprise plan?",
             "Lists exactly Harbor Mills, Quanta Rail and Orbital Freight as the Enterprise customers. "
             "Kestrel Labs may appear only as a former Enterprise customer.",
@@ -147,7 +155,7 @@ CASES: tuple[DeltaUpdate, ...] = (
     DeltaUpdate(
         question=_q(
             "du-launch-risk",
-            "new_item",
+            "aggregation",
             "What are the known risks to the September 2026 launch?",
             "Includes, among the risks, that the payment SDK vendor ends support for the SDK on 1 September "
             "2026, before the launch. Also keeps the load-test risk.",
@@ -165,7 +173,7 @@ CASES: tuple[DeltaUpdate, ...] = (
     DeltaUpdate(
         question=_q(
             "du-quiet-wave",
-            "quiet_wave",
+            "stability",
             "Which region hosts the primary analytics warehouse?",
             "States that the primary analytics warehouse is in eu-west-1.",
             "the primary analytics warehouse is in a region other than eu-west-1",

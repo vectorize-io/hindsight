@@ -536,7 +536,7 @@ async def test_english_coding_transcript_stays_english():
     The shape that regressed: a transcript dense with numbers, tool names and paths.
     Under the old "detect the language, then STRICTLY never switch" rule gpt-5.6-luna
     wrote French or Russian facts from it in ~18% of runs. The rate itself is tracked by
-    hindsight-system-evals ``test_03_retain_language``; this pins the behaviour on the
+    hindsight-system-evals ``test_retain_language``; this pins the behaviour on the
     CI model. Judged, because the language call is the model's and a word list would
     misread English tool names inside prose.
     """

@@ -10,7 +10,7 @@ The scenario, end to end through the public API:
 Facts go in with ``retain_extraction_mode=chunks``: each item is stored as one
 fact, verbatim. That isolates the step under test. Real extraction would
 paraphrase, split or merge the input, and a wrong observation could then be
-extraction's fault, which ``test_03``/``test_04`` already grade. The facts are
+extraction's fault, which the retain eval already grades. The facts are
 written the way extraction writes them (third person, one claim each, entities
 attached), so consolidation sees the shape it sees in production.
 
@@ -75,6 +75,8 @@ class Wave:
 @dataclass(frozen=True)
 class Scenario:
     id: str
+    #: The group a per-category table reports it under (merge, update, recency, ...).
+    category: str
     #: Where the scenario comes from: issues, PRs, prompt rules.
     origin: str
     waves: tuple[Wave, ...]
@@ -528,6 +530,7 @@ def noisy_service_bank() -> Scenario:
         ),
     )
     return Scenario(
+        category="scale",
         id="noisy-service-catalogue",
         origin="#1907 (twin ranked out of view), #1977/#2000 (update drifts into a duplicate), #1566",
         # Growth is reported, not gated, here: whether a restatement updates rather than
@@ -639,6 +642,7 @@ def noisy_personal_bank() -> Scenario:
         ),
     )
     return Scenario(
+        category="scale",
         id="noisy-personal-contacts",
         origin="#1907 (finding the twin at scale), rule 9 (lookalike people), #1151 (newer fact supersedes)",
         # Growth is reported, not gated — see noisy_service_bank.
