@@ -9737,6 +9737,24 @@ class MemoryEngine(MemoryEngineInterface):
             recall_span_context.__exit__(None, None, None)
             recall_log_id.reset(recall_log_token)
 
+    async def _semantic_links_among(self, bank_id: str, unit_ids: list[str]) -> set[frozenset[str]] | None:
+        """The pairs of ``unit_ids`` joined by a stored semantic link, for recall's dedup.
+
+        ``None`` — the store keeps no links, or the read failed — makes dedup ask every pair:
+        it still works, at more questions, so a failure here never fails the recall.
+        """
+        from .memories import get_memories
+
+        try:
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                return await get_memories().semantic_links_among(
+                    conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids
+                )
+        except Exception:
+            logger.warning("recall dedup: semantic links unavailable, asking every pair", exc_info=True)
+            return None
+
     async def _search_with_retries(
         self,
         bank_id: str,
@@ -10469,8 +10487,23 @@ class MemoryEngine(MemoryEngineInterface):
 
                     # Ensure reranker is initialized (for lazy initialization mode)
                     await reranker_instance.ensure_initialized()
+                    # Dedup asks only pairs joined by a stored semantic link (or written in two
+                    # scripts). The links are read while the ranking request runs, so they add no
+                    # round trip: the reranker awaits them only once the ranking answers are in.
+                    links = None
+                    if dedup and getattr(reranker_instance.cross_encoder, "provider_name", None) == (
+                        DECISION_MODEL_RERANKER
+                    ):
+                        links = asyncio.create_task(
+                            self._semantic_links_among(bank_id, [mc.retrieval.id for mc in merged_candidates])
+                        )
                     reranked = await reranker_instance.rerank(
-                        query, merged_candidates, now=_recall_scoring_now(question_date), prune=prune, dedup=dedup
+                        query,
+                        merged_candidates,
+                        now=_recall_scoring_now(question_date),
+                        prune=prune,
+                        dedup=dedup,
+                        links=links,
                     )
                     scored_results = reranked.results
                     # Copied off the call that produced these scores. Do not read

@@ -1,5 +1,6 @@
 """Recall's decision-model reranker: one question per candidate, ordered by the answers."""
 
+import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -307,6 +308,63 @@ class TestDedup:
         client = _Client({TEA: 0.9, TEA_AGAIN: 0.8}, repeats={(TEA, TEA_AGAIN)})
         reranker = CrossEncoderReranker(cross_encoder=_reranker(client))
         result = await reranker.rerank("q", [_candidate(TEA_AGAIN), _candidate(TEA)], dedup=True)
+        assert [r.candidate.retrieval.text for r in result.results] == [TEA]
+
+
+async def _found(links: set[frozenset[str]] | None) -> set[frozenset[str]] | None:
+    return links
+
+
+class TestDedupLinks:
+    """With the stored links, dedup asks only linked pairs and pairs in two scripts."""
+
+    async def _dedup(self, client: _Client, docs: list[str], links: set[frozenset[str]] | None) -> list[float]:
+        task = asyncio.create_task(_found(links))
+        return await _predict(client, docs, dedup=True, ids=docs, links=task)
+
+    async def test_only_linked_pairs_are_asked(self):
+        client = _Client({TEA: 0.9, TEA_AGAIN: 0.8, SENCHA: 0.7}, repeats={(TEA, TEA_AGAIN)})
+        scores = await self._dedup(client, [TEA, TEA_AGAIN, SENCHA], {frozenset((TEA, TEA_AGAIN))})
+        assert client.pairs == [(TEA, TEA_AGAIN)]
+        assert scores[1] == 0.0 and scores[2] > 0.0
+
+    async def test_no_qualifying_pair_skips_the_second_request(self):
+        client = _Client({TEA: 0.9, SENCHA: 0.7})
+        await self._dedup(client, [TEA, SENCHA], set())
+        assert client.scopes == ["decision_recall_rerank"]
+
+    async def test_a_pair_in_two_scripts_is_asked_without_a_link(self):
+        """A translated copy: an English-leaning embedder never links it."""
+        chinese = "玛尔塔最喜欢的茶是玄米茶"
+        client = _Client({TEA: 0.9, chinese: 0.8, SENCHA: 0.7}, repeats={(TEA, chinese)})
+        scores = await self._dedup(client, [TEA, chinese, SENCHA], set())
+        assert client.pairs == [(TEA, chinese), (chinese, SENCHA)]
+        assert scores[1] == 0.0
+
+    async def test_without_links_every_pair_is_asked(self):
+        """The store keeps no links (or the read failed): fall back to every kept pair."""
+        client = _Client({TEA: 0.9, TEA_AGAIN: 0.8, SENCHA: 0.7})
+        await self._dedup(client, [TEA, TEA_AGAIN, SENCHA], None)
+        assert len(client.pairs) == 3
+
+    async def test_the_link_lookup_runs_alongside_the_ranking_request(self):
+        """No round trip of its own: the ranking request is still out when the lookup runs."""
+        lookup_ran = asyncio.Event()
+
+        async def lookup() -> set[frozenset[str]]:
+            lookup_ran.set()
+            return {frozenset((TEA, TEA_AGAIN))}
+
+        class _Ranking(_Client):
+            async def ask_all(self, state, questions, *, scope):
+                if scope == "decision_recall_rerank":
+                    await asyncio.wait_for(lookup_ran.wait(), timeout=5)
+                return await super().ask_all(state, questions, scope=scope)
+
+        client = _Ranking({TEA: 0.9, TEA_AGAIN: 0.8}, repeats={(TEA, TEA_AGAIN)})
+        reranker = CrossEncoderReranker(cross_encoder=_reranker(client))
+        task = asyncio.create_task(lookup())
+        result = await reranker.rerank("q", [_candidate(TEA), _candidate(TEA_AGAIN)], dedup=True, links=task)
         assert [r.candidate.retrieval.text for r in result.results] == [TEA]
 
 

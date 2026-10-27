@@ -39,13 +39,18 @@ class RerankOptions:
 
     Per recall, not per reranker: one reranker serves every bank, and the request, then the
     bank, then the server decide (``recall_decision_model_prune`` / ``_dedup``).
-    ``fact_types`` is each candidate's fact type, aligned with the pairs handed to predict(),
-    so dedup only compares two candidates of one type.
+    ``fact_types`` and ``ids`` are each candidate's fact type and memory id, aligned with the
+    pairs handed to predict(), so dedup only compares two candidates of one type. ``links`` is
+    the caller's lookup of the semantic links among those ids, already running so it costs no
+    round trip of its own: dedup awaits it after the ranking request. It resolves to ``None``
+    when the store has no links, and then dedup asks every pair.
     """
 
     prune: bool = False
     dedup: bool = False
     fact_types: list[str] | None = None
+    ids: list[str] | None = None
+    links: asyncio.Task[set[frozenset[str]] | None] | None = None
 
 
 # Set by CrossEncoderReranker.rerank(), like rerank_shared_context.
@@ -108,7 +113,7 @@ class DecisionModelReranker(CrossEncoderModel):
         if options.dedup:
             # The second request: its pairs depend on the ranking answers above.
             kinds = [options.fact_types[index] for index in indices] if options.fact_types else None
-            repeats = rerank.repeat_questions(subset, ranked, kinds)
+            repeats = rerank.repeat_questions(subset, ranked, kinds, await self._linked(options, indices))
             if repeats:
                 found = await self._client.ask_all(
                     state,
@@ -118,6 +123,21 @@ class DecisionModelReranker(CrossEncoderModel):
                 ranked = rerank.deduped(ranked, repeats, {key: answer.noul for key, answer in found.items()})
         for slot, score in enumerate(ranked):
             scores[indices[slot]] = score
+
+    @staticmethod
+    async def _linked(options: RerankOptions, indices: list[int]) -> set[frozenset[int]] | None:
+        """The stored links among ``indices`` as pairs of slots, or None to ask every pair."""
+        if options.links is None or options.ids is None:
+            return None
+        links = await options.links
+        if links is None:
+            return None
+        slot_of = {options.ids[index]: slot for slot, index in enumerate(indices)}
+        return {
+            frozenset(slot_of[unit_id] for unit_id in link)
+            for link in links
+            if all(unit_id in slot_of for unit_id in link)
+        }
 
     async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         docs = [doc for _, doc in pairs]

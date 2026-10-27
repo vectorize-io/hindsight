@@ -24,7 +24,8 @@ so treat it as an API: keep it backwards compatible, or say so in the release no
 
 import json
 import re
-from collections.abc import Callable, Mapping, Sequence
+import unicodedata
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 
 # The question asked of each candidate. Four wordings were tried on the same pool; this
@@ -62,26 +63,41 @@ PRUNE_BELOW_BEST = 0.4
 
 # Dedup, opt-in: dropping a candidate that repeats one ranked above it. It needs both memories
 # in one question, and which pairs matter is only known once the ranking answers are in, so it
-# is a second request, after the ranking one: the best DEDUP_CANDIDATES candidates still in the
-# pool, each asked against every one ranked above it, both memories in the question and the
-# better-ranked one as Memory A. One way round is enough: the order is known by then, and
-# asking both ways dropped no more. Measured with a model whose ranking answers are sharp,
-# after the prune cut: on 250-candidate pools it dropped every repeat (32/32) and lost no
-# needed fact (0/48), for ~1.3k more input tokens and ~0.23s (p50) more per recall; on small
-# labelled pools 47/48 repeats, 0/72 needed facts lost. Picking pairs up front so they could
-# share the ranking request did not work: with no answers yet the budget went to look-alike
-# junk (3-7/32 repeats). One request per pair, or the whole pool in the state, cost hundreds
-# of requests or lost needed facts.
+# is a second request, after the ranking one. Among the candidates still in the pool, a pair is
+# asked (both memories in the question, the better-ranked one as Memory A, one way round: the
+# order is known by then) when the caller says the two are linked — recall passes the semantic
+# links retain already stored — or when their texts are in different scripts: a translated
+# copy is a repeat an English-leaning embedder never links. Without links, every pair is asked.
+#
+# Measured on a real server (true fusion order, 250 candidates, six languages, 36 recalls), the
+# second request: all kept pairs 60/60 repeats dropped, up to 153 pairs and 10.3k tokens; linked
+# pairs only 57/60 (the misses were cross-language copies), up to 25 pairs and 1.9k tokens;
+# linked + cross-script 60/60, up to 25 pairs and 1.9k tokens, p50 0.21s / p90 0.33s. No needed
+# fact was dropped by any of them. Ruled out: picking pairs before the ranking answers, to share
+# the ranking request (26/40: a kept memory can rank as low as 199 by fusion, so only 76% of
+# repeat pairs had both in the top 40); deciding by cosine alone (distinct pairs reach 0.96);
+# character overlap (0 across languages); one choice over the whole pool, or the pool in the
+# state (both lose needed facts).
 DEDUP_INSTRUCTIONS = "Memory B is a repeat of Memory A."
 REPEAT_ABOVE = 0.5
-# ponytail: a repeat ranked below this survives; raise it if unpruned pools show repeats.
-DEDUP_CANDIDATES = 30
 _DATE_PREFIX = re.compile(r"^\[Date: [^\]]*\]")
 
 
 def _date(doc: str) -> str | None:
     match = _DATE_PREFIX.match(doc)
     return match.group(0) if match else None
+
+
+def _script(doc: str) -> str | None:
+    """The writing system of the first letter after the date: "LATIN", "CYRILLIC", "cjk"."""
+    for char in _DATE_PREFIX.sub("", doc):
+        if char.isalpha():
+            name = unicodedata.name(char, "")
+            # Chinese and Japanese mix ideographs and kana within one text.
+            if name.startswith(("CJK", "HIRAGANA", "KATAKANA")):
+                return "cjk"
+            return name.split(" ")[0] or None
+    return None
 
 
 @dataclass(frozen=True)
@@ -214,19 +230,27 @@ class DecisionRerank:
         return [score if score == 1.0 or (answer or 0.0) >= floor else 0.0 for answer, score in zip(answers, scores)]
 
     def repeat_questions(
-        self, docs: Sequence[str], scores: Sequence[float], kinds: Sequence[str] | None = None
+        self,
+        docs: Sequence[str],
+        scores: Sequence[float],
+        kinds: Sequence[str] | None = None,
+        linked: Collection[frozenset[int]] | None = None,
     ) -> list[RepeatQuestion]:
-        """Dedup's questions: each of the best ``DEDUP_CANDIDATES`` still in the pool against
-        every one ranked above it.
+        """Dedup's questions: pairs of candidates still in the pool, the better-ranked as A.
 
         ``scores`` are :meth:`scores` or :meth:`pruned`; a candidate at 0.0 is already out.
-        ``docs`` are the uncapped texts, capped here as in the ranking questions. Not asked:
-        pairs dated differently — "went climbing" on the 3rd and on the 10th are two
-        occasions, and the model calls those repeats — and, when ``kinds`` gives each
-        candidate's fact type, pairs of two types: an observation is built from the very facts
-        it repeats, and choosing between them is recall's ``prefer_observations``.
+        ``docs`` are the uncapped texts, capped here as in the ranking questions. ``linked``
+        holds the pairs of slots the caller knows to be alike (recall: a stored semantic link);
+        with it, only those pairs and pairs written in different scripts are asked, and
+        without it (``None``: the caller has no links) every pair is. Never asked: pairs dated
+        differently — "went climbing" on the 3rd and on the 10th are two occasions, and the
+        model calls those repeats — and, when ``kinds`` gives each candidate's fact type,
+        pairs of two types: an observation is built from the very facts it repeats, and
+        choosing between them is recall's ``prefer_observations``.
         """
-        checked = DecisionRerank._ranked(scores)[:DEDUP_CANDIDATES]
+        # ponytail: no count cap; the caller splits the pairs into parallel requests by the size
+        # limits, so a pool kept unpruned with many links or scripts costs more requests at once.
+        checked = DecisionRerank._ranked(scores)
         return [
             RepeatQuestion(
                 key=f"r{above}_{slot}",
@@ -239,6 +263,7 @@ class DecisionRerank:
             for above in checked[:position]
             if not (_date(docs[above]) and _date(docs[slot]) and _date(docs[above]) != _date(docs[slot]))
             and (kinds is None or kinds[above] == kinds[slot])
+            and (linked is None or frozenset((above, slot)) in linked or _script(docs[above]) != _script(docs[slot]))
         ]
 
     @staticmethod

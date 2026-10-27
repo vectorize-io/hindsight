@@ -325,6 +325,35 @@ async def graph_direct_links(
     return [dict(row) for row in rows]
 
 
+async def semantic_links_among(
+    *,
+    conn: DatabaseConnection,
+    fq_table: Callable[[str], str],
+    bank_id: str,
+    unit_ids: list[str],
+) -> set[frozenset[str]]:
+    """The pairs of ``unit_ids`` joined by a semantic link, either direction.
+
+    Served by ``idx_memory_links_from_type_weight`` (from_unit_id, link_type): ~1 ms for a
+    recall's few dozen kept candidates.
+    """
+    if len(unit_ids) < 2:
+        return set()
+    rows = await conn.fetch(
+        f"""
+        SELECT ml.from_unit_id, ml.to_unit_id
+        FROM {fq_table("memory_links")} ml
+        WHERE ml.from_unit_id = ANY($1::uuid[])
+          AND ml.link_type = 'semantic'
+          AND ml.to_unit_id = ANY($1::uuid[])
+          AND ml.bank_id = $2
+        """,
+        _as_uuids(unit_ids),
+        bank_id,
+    )
+    return {frozenset((str(row["from_unit_id"]), str(row["to_unit_id"]))) for row in rows}
+
+
 # ------------------------------------------------------------ entity postings
 
 
