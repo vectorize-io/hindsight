@@ -1195,6 +1195,10 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
     """
     TypeSafe reranker (https://typesafe.ai), Jev by default.
 
+    Deprecated as a reranker provider (``HINDSIGHT_API_RERANKER_PROVIDER=typesafe``): set up
+    the shared decision model (``HINDSIGHT_API_DECISION_MODEL_*``) instead, which recall
+    uses in place of the reranker. The class stays, since reflect's decision model uses it.
+
     Not a Cohere-compatible /rerank endpoint: TypeSafe evaluates typed *questions*
     against a *state*. This provider asks two of them.
 
@@ -2965,6 +2969,11 @@ def _create_cross_encoder_backend(member: RerankerMemberConfig) -> CrossEncoderM
             timeout=member.alibaba_timeout,
         )
     elif provider == "typesafe":
+        logger.warning(
+            "Reranker provider 'typesafe' is deprecated and will be removed in a future release. "
+            "Set up the shared decision model instead (HINDSIGHT_API_DECISION_MODEL_PROVIDER=typesafe "
+            "and HINDSIGHT_API_DECISION_MODEL_API_KEY): recall then ranks with it in place of the reranker."
+        )
         api_key = member.typesafe_api_key
         if not api_key:
             raise ValueError(

@@ -5,8 +5,8 @@ someone answer the question, and orders the pool by that, in one batch of reques
 order is final: recall applies none of the recency, temporal or proof-count boosts it
 applies to a cross-encoder's scores.
 
-This is not the ``typesafe`` reranker provider (``HINDSIGHT_API_RERANKER_PROVIDER``),
-which is configured on its own and ranks differently. This one is configured by
+It replaces the deprecated ``typesafe`` reranker provider (``HINDSIGHT_API_RERANKER_PROVIDER``):
+configure the shared ``HINDSIGHT_API_DECISION_MODEL_*`` settings instead. This one is read by
 ``HindsightConfig.decision_model_config("recall")`` and talks to the endpoint through the
 shared :class:`~hindsight_api.engine.decision_model.DecisionModel` client.
 """

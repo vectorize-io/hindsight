@@ -1261,7 +1261,7 @@ Reranks initial search results to improve precision.
 | `zeroentropy` | ZeroEntropy rerank API (zerank-2) | Production, state-of-the-art accuracy |
 | `siliconflow` | SiliconFlow rerank API (Cohere-compatible `/rerank` endpoint) | Users in China or anyone on SiliconFlow's platform |
 | `nvidia` | NVIDIA NIM reranking API (native `/retrieval/{model}/reranking` endpoint) | Users on NVIDIA NIM / build.nvidia.com |
-| `typesafe` | TypeSafe typed-decision API (Jev) — ranks the whole pool in one question | Production, highest ranking quality; can also return only the relevant candidates |
+| `typesafe` | **Deprecated** — set up the shared [decision model](configuration.md#decision-model) instead. TypeSafe typed-decision API (Jev) — ranks the whole pool in one question | Production, highest ranking quality; can also return only the relevant candidates |
 | `alibaba` | Alibaba Cloud DashScope rerank API (qwen3-rerank) | Users on Alibaba Cloud / DashScope |
 | `google` | Google Discovery Engine ranking API (REST + Google auth) | Production, GCP integration |
 | `tei` | HuggingFace Text Embeddings Inference | Production, self-hosted |
@@ -1305,6 +1305,12 @@ SiliconFlow hosts a range of open-weight rerankers behind a Cohere-compatible `/
 
 ### TypeSafe Models
 
+> **⚠️ Deprecated**
+>
+The `typesafe` reranker provider will be removed in a future release. Set up the shared
+[decision model](configuration.md#decision-model) instead
+(`HINDSIGHT_API_DECISION_MODEL_PROVIDER=typesafe` and `HINDSIGHT_API_DECISION_MODEL_API_KEY`):
+recall uses it in place of the reranker.
 TypeSafe is not a `/rerank` endpoint — it answers typed *questions* against a *state*.
 Hindsight makes the candidates the options of a Choice question, so the returned
 probability distribution is the ranking. When the candidate pool fits within the 250-option
@@ -1383,11 +1389,10 @@ export HINDSIGHT_API_RERANKER_PROVIDER=nvidia
 export HINDSIGHT_API_RERANKER_NVIDIA_API_KEY=nvapi-your-key
 export HINDSIGHT_API_RERANKER_NVIDIA_MODEL=nvidia/llama-nemotron-rerank-vl-1b-v2  # default, can omit
 
-# TypeSafe (typed-decision API, ranks the whole pool in one question)
-export HINDSIGHT_API_RERANKER_PROVIDER=typesafe
-export HINDSIGHT_API_RERANKER_TYPESAFE_API_KEY=your-api-key
-export HINDSIGHT_API_RERANKER_TYPESAFE_MODEL=jev-latest  # default, can omit
-# export HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES=true  # return only the relevant ones
+# TypeSafe (Jev) - the typesafe reranker provider is deprecated: set up the shared
+# decision model instead, which recall uses in place of the reranker
+export HINDSIGHT_API_DECISION_MODEL_PROVIDER=typesafe
+export HINDSIGHT_API_DECISION_MODEL_API_KEY=your-api-key
 
 # Alibaba Cloud DashScope (qwen3-rerank)
 export HINDSIGHT_API_RERANKER_PROVIDER=alibaba

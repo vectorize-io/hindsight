@@ -384,7 +384,7 @@ class TestMinKeep:
 
 
 class TestFactory:
-    def test_provider_is_built_from_config(self):
+    def test_provider_is_built_from_config(self, caplog):
         config = _make_config(
             reranker_provider="typesafe",
             reranker_typesafe_api_key="k",
@@ -399,6 +399,8 @@ class TestFactory:
         assert encoder.provider_name == "typesafe"
         assert encoder.model == "jev-latest"
         assert encoder.prunes_candidates is True
+        # Deprecated in favour of the shared decision model; building it says so.
+        assert "HINDSIGHT_API_DECISION_MODEL_PROVIDER" in caplog.text
 
     def test_missing_api_key_names_its_env_var(self):
         config = _make_config(reranker_provider="typesafe")
