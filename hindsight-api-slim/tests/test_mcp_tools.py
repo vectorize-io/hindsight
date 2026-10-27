@@ -2863,7 +2863,9 @@ class TestMcpCallLogging:
             and "status=ok" in m
             for m in messages
         ), messages
-        assert any(m.startswith("mcp tool=delete_bank bank=test-bank status=ok") for m in messages), messages
+        # FastMCP 3 re-enters call_tool after its middleware; that inner call must not log again (#6071).
+        assert sum(m.startswith("destructive_op action=delete_bank") for m in messages) == 1, messages
+        assert sum(m.startswith("mcp tool=delete_bank bank=test-bank status=ok") for m in messages) == 1, messages
 
     async def test_read_tool_named_but_not_destructive(self, mock_memory, caplog):
         mcp = _make_mcp_server(mock_memory, {"list_tags"}, include_bank_id=False)
@@ -2878,5 +2880,6 @@ class TestMcpCallLogging:
         mock_memory.audit_logger.log_fire_and_forget = MagicMock()
         mcp = _make_mcp_server(mock_memory, {"sync_retain"}, include_bank_id=False)
         await mcp.call_tool("sync_retain", {"content": "hello"})
+        mock_memory.audit_logger.log_fire_and_forget.assert_called_once()  # not once more for the inner call (#6071)
         entry = mock_memory.audit_logger.log_fire_and_forget.call_args.args[0]
         assert (entry.action, entry.transport, entry.bank_id) == ("sync_retain", "mcp", "test-bank")
