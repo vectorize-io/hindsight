@@ -180,7 +180,7 @@ What fails is mostly recall, not the model. **A date in the query barely moves t
 recency are each a ±10% multiplier on it (`reranking.py`), so "Berlin for a wedding" outranks
 it, and "a dentist appointment" four days ago outranks yesterday's concert. The same holds
 for "where does the user work now?": the older "works at Globex" outranks "just started at
-Initech" on every model. These cases stay red until ranking weighs dates more. The model
+Initech" on every model. These cases stay red until ranking weighs dates more (#6132). The model
 failures are real too: `gpt-6-luna` stored English input as Russian and Spanish facts (the
 #4283 drift), and Gemini 3.1 flash-lite dropped "Rotterdam" from the fact it was asked about.
 

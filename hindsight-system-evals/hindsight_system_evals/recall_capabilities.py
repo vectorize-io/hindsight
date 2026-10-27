@@ -300,6 +300,8 @@ CASES: tuple[Case, ...] = (
         within=1,
     ),
     # ── Temporal: dates in the query, resolved against query_timestamp ────────────
+    # These and the currency cases fail on every model today: the date or recency is a
+    # ±10% multiplier on the cross-encoder's score, too small to reorder (#6132).
     Case(
         id="last-month",
         category="temporal",
