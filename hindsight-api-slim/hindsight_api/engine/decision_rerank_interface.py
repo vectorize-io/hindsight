@@ -3,7 +3,9 @@
 This file is a public interface, meant to be used outside hindsight-api too: a service
 that reranks for Hindsight over the System One API can load it and send exactly the
 questions recall's :class:`~hindsight_api.engine.search.decision_reranker.DecisionModelReranker`
-sends, so a pool comes back in the order recall itself would give it.
+sends, so a pool comes back in the order recall itself would give it. With pruning on
+(:meth:`DecisionRerank.relevant`, :meth:`DecisionRerank.repeat_questions`,
+:meth:`DecisionRerank.pruned`), it drops the same candidates recall would.
 
 To keep it loadable on its own, by file path, without installing hindsight-api:
 
@@ -20,6 +22,7 @@ so treat it as an API: keep it backwards compatible, or say so in the release no
 """
 
 import json
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
@@ -43,6 +46,56 @@ MAX_QUESTIONS = 700
 # The default request ceiling, in tokens of the model's own vocabulary.
 MAX_REQUEST_TOKENS = 26_000
 
+# Pruning, opt-in: dropping candidates instead of only ordering them. A candidate is dropped
+# as no help when its answer to the keep question falls below PRUNE_BELOW, or below
+# PRUNE_BELOW_BEST of the best candidate's. The relative cut is needed because the answers
+# move with the pool: asked alongside four memories answering at 0.9, an unrelated "staging
+# cluster upgraded" came back 0.26, against 0.07 among weaker ones. On a labelled bench of
+# pools mixing needed facts, related context and unrelated facts, over 6 shuffles, these two
+# cuts lost no needed fact and dropped 58/132 unrelated ones (0.2 alone: 42; half the best:
+# lost two). Reusing the ranking answer costs no extra question. Asking separately whether a
+# memory "has nothing to do with the question" was worse than useless: the model answers on
+# topic overlap and ignores the negation, so it dropped the needed facts and kept the junk.
+PRUNE_BELOW = 0.2
+PRUNE_BELOW_BEST = 0.4
+# A candidate that repeats one kept above it is dropped. Asked of the pair with both
+# memories in the state: with both in the question's instructions the model answered
+# ~0.9 for any pair, related or not, and asked of one candidate against the whole list
+# above it, it dropped distinct customers in a "which customers" pool as repeats. Pairwise
+# it dropped 72/72 repeats and no needed fact.
+REPEAT_INSTRUCTIONS = "Memory B is a repeat of Memory A."
+REPEAT_ABOVE = 0.5
+# Pairs sharing fewer words than this (over the shorter memory) are not asked: a reworded
+# repeat still shares its names and values. On the bench it asked a quarter of the pairs
+# and still caught every repeat; 0.4 missed some.
+REPEAT_MIN_OVERLAP = 0.3
+# Only the best candidates are checked for repeats, bounding the pairs one rerank asks.
+# ponytail: a repeat ranked below this survives; raise it if long pools show repeats.
+REPEAT_CANDIDATES = 40
+_DATE_PREFIX = re.compile(r"^\[Date: [^\]]*\]")
+_WORD = re.compile(r"[a-z0-9][a-z0-9.]*")
+
+
+def _date(doc: str) -> str | None:
+    match = _DATE_PREFIX.match(doc)
+    return match.group(0) if match else None
+
+
+def _words(doc: str) -> set[str]:
+    # The sentence only: the date prefix and the trailing "| When: … | Involving: …" fields
+    # are shared by unrelated memories about the same day or person.
+    body = _DATE_PREFIX.sub("", doc).split(" | ")[0]
+    return {word for word in _WORD.findall(body.lower()) if len(word) > 2}
+
+
+def _may_repeat(a: str, b: str) -> bool:
+    # Two memories dated differently are two occasions — "went climbing" on the 3rd and on
+    # the 10th — however alike they read; the model calls those repeats.
+    if _date(a) and _date(b) and _date(a) != _date(b):
+        return False
+    words_a, words_b = _words(a), _words(b)
+    return len(words_a & words_b) >= REPEAT_MIN_OVERLAP * max(1, min(len(words_a), len(words_b)))
+
 
 @dataclass(frozen=True)
 class RerankQuestion:
@@ -58,6 +111,23 @@ class RerankQuestion:
     def system_one(self) -> dict[str, object]:
         """The question as System One takes it: a Noul with the task and the memory."""
         return {"type": "noul", "instructions": {"task": KEEP_INSTRUCTIONS, "memory": self.memory}}
+
+
+@dataclass(frozen=True)
+class RepeatQuestion:
+    """Pruning's second question: does the candidate at ``slot`` repeat the one at ``above``?
+
+    Unlike the keep questions it carries its own ``state`` (both memories), so each is one
+    request of its own, with the single question keyed ``repeat``.
+    """
+
+    above: int
+    slot: int
+    state: str
+
+    def system_one(self) -> dict[str, object]:
+        """The question as System One takes it: a Noul on the pair in the state."""
+        return {"type": "noul", "instructions": REPEAT_INSTRUCTIONS}
 
 
 @dataclass(frozen=True)
@@ -125,6 +195,11 @@ class DecisionRerank:
         return groups
 
     @staticmethod
+    def order(answers: Sequence[float | None]) -> list[int]:
+        """The candidates' slots, best answer first. Equal answers keep the input order."""
+        return sorted(range(len(answers)), key=lambda slot: -(answers[slot] or 0.0))
+
+    @staticmethod
     def scores(answers: Sequence[float | None]) -> list[float]:
         """Scores from each candidate's Noul answer, both aligned with ``docs``.
 
@@ -133,8 +208,59 @@ class DecisionRerank:
         input order, so the caller's own order breaks ties.
         """
         n = len(answers)
-        order = sorted(range(n), key=lambda slot: -(answers[slot] or 0.0))
         scores = [0.0] * n
-        for position, slot in enumerate(order):
+        for position, slot in enumerate(DecisionRerank.order(answers)):
             scores[slot] = (n - position) / n
         return scores
+
+    @staticmethod
+    def relevant(answers: Sequence[float | None]) -> list[int]:
+        """Pruning, step one: the slots not judged no help, best first. The best always stays."""
+        order = DecisionRerank.order(answers)
+        floor = max(PRUNE_BELOW, PRUNE_BELOW_BEST * (answers[order[0]] or 0.0))
+        return [slot for position, slot in enumerate(order) if position == 0 or (answers[slot] or 0.0) >= floor]
+
+    def repeat_questions(self, docs: Sequence[str], relevant: Sequence[int]) -> list[RepeatQuestion]:
+        """Pruning, step two: the pairs among the best ``relevant`` worth asking about.
+
+        ``docs`` are the uncapped candidate texts; each is capped in the state as in its keep
+        question. Pairs dated differently or sharing too few words are not asked.
+        """
+        checked = relevant[:REPEAT_CANDIDATES]
+        return [
+            RepeatQuestion(
+                above=above,
+                slot=slot,
+                state=f"Memory A: {self.capped(docs[above], MAX_MEMORY_TOKENS)}\n"
+                f"Memory B: {self.capped(docs[slot], MAX_MEMORY_TOKENS)}",
+            )
+            for position, slot in enumerate(checked)
+            for above in checked[:position]
+            if _may_repeat(docs[above], docs[slot])
+        ]
+
+    @staticmethod
+    def pruned(
+        answers: Sequence[float | None],
+        relevant: Sequence[int],
+        repeats: Sequence[RepeatQuestion],
+        repeat_answers: Sequence[float | None],
+    ) -> list[float]:
+        """Pruning, the result: :meth:`scores`, with every dropped candidate at exactly 0.0.
+
+        Dropped are the slots not in ``relevant``, and those that repeat a candidate kept
+        above them (``repeat_answers`` aligned with ``repeats``). Greedy in rank order: a
+        candidate goes only when it repeats one that stays, so of two repeats the
+        better-ranked one is kept.
+        """
+        said_repeat = {
+            (q.above, q.slot) for q, a in zip(repeats, repeat_answers, strict=True) if (a or 0.0) >= REPEAT_ABOVE
+        }
+        kept: list[int] = []
+        for position, slot in enumerate(relevant):
+            if position < REPEAT_CANDIDATES and any((above, slot) in said_repeat for above in kept):
+                continue
+            kept.append(slot)
+        scores = DecisionRerank.scores(answers)
+        keep = set(kept)
+        return [score if slot in keep else 0.0 for slot, score in enumerate(scores)]

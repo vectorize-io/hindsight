@@ -31,3 +31,18 @@ def test_the_tokenizer_is_the_callers():
     # A quarter of a 40-token request: 10 words of memory, whatever the cap says.
     (question,) = words.questions(["word " * 50])
     assert question.memory == " ".join(["word"] * 10)
+
+
+def test_pruning_without_sending_anything():
+    """The steps an outside caller runs: cut the no-help ones, ask the pairs, drop repeats."""
+    words = decision_rerank_interface.DecisionRerank(count=lambda t: len(t.split()), truncate=lambda t, n: t)
+    docs = ["Marta tea is genmaicha", "unrelated offsite note", "Marta tea genmaicha again"]
+    answers = [0.9, 0.1, 0.8]
+    relevant = words.relevant(answers)
+    assert relevant == [0, 2]
+    (repeat,) = words.repeat_questions(docs, relevant)
+    assert (repeat.above, repeat.slot) == (0, 2)
+    assert repeat.state == f"Memory A: {docs[0]}\nMemory B: {docs[2]}"
+    assert repeat.system_one() == {"type": "noul", "instructions": decision_rerank_interface.REPEAT_INSTRUCTIONS}
+    assert words.pruned(answers, relevant, [repeat], [0.9]) == [1.0, 0.0, 0.0]
+    assert words.pruned(answers, relevant, [repeat], [0.1]) == [1.0, 0.0, 2 / 3]
