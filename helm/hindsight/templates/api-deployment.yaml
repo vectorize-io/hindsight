@@ -37,6 +37,7 @@ spec:
       {{- if kindIs "bool" .Values.api.automountServiceAccountToken }}
       automountServiceAccountToken: {{ .Values.api.automountServiceAccountToken }}
       {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.api.terminationGracePeriodSeconds }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       {{- with .Values.api.extraInitContainers }}

@@ -75,6 +75,8 @@ helm install hindsight ./helm/hindsight -n hindsight --create-namespace -f value
 | `api.startupProbe` | Startup probe for the api container; liveness and readiness wait until it passes | `{}` (none) |
 | `api.strategy` | Deployment strategy for the api, e.g. `{type: Recreate}` | `{}` (Kubernetes `RollingUpdate`) |
 | `api.automountServiceAccountToken` | Set `false` to stop mounting the service account token in the api pod | unset (Kubernetes mounts it) |
+| `api.terminationGracePeriodSeconds` | Seconds the api pod gets after SIGTERM to drain and hand back in-flight tasks | `60` |
+| `worker.terminationGracePeriodSeconds` | Seconds a worker pod gets after SIGTERM to drain and hand back in-flight tasks | `60` |
 | `controlPlane.enabled` | Enable the control plane | `true` |
 | `controlPlane.image.repository` | Control plane image repository | `ghcr.io/vectorize-io/hindsight-control-plane` |
 | `controlPlane.image.tag` | Control plane image tag (defaults to `version`) | - |
