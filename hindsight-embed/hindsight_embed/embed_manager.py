@@ -6,6 +6,7 @@ abstracting away the implementation details.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from typing import Optional
 
 
@@ -66,6 +67,11 @@ class EmbedManager(ABC):
         Returns:
             True if daemon is running and responsive
         """
+        pass
+
+    @abstractmethod
+    def resolve_database_url(self, profile: str, config: Mapping[str, str] | None = None) -> str:
+        """Return the database the daemon for this profile runs on: a URL the user set, else the profile's pg0."""
         pass
 
     @abstractmethod

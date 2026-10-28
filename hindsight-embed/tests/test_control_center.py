@@ -127,6 +127,15 @@ class TestService:
         assert paths.daemon_url.startswith("http://localhost:")
         assert "127.0.0.1" not in paths.ui_url and "0.0.0.0" not in paths.ui_url
 
+    def test_profile_paths_show_external_database(self, temp_hindsight_dir, monkeypatch):
+        # Issue #6065: a profile on an external server must not be shown a pg0 directory.
+        monkeypatch.delenv("HINDSIGHT_EMBED_API_DATABASE_URL", raising=False)
+        monkeypatch.delenv("HINDSIGHT_API_DATABASE_URL", raising=False)
+        assert service.get_profile_paths("").database_path is not None
+
+        service.write_env_file("", "HINDSIGHT_API_DATABASE_URL=postgresql://u:p@127.0.0.1:5433/db\n")
+        assert service.get_profile_paths("").database_path is None
+
     def test_tail_log_missing_file(self, temp_hindsight_dir):
         view = service.tail_log("", 10)
         assert view.exists is False and view.content == ""

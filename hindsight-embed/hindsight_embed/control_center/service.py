@@ -414,7 +414,6 @@ def write_env_file(name: str, content: str) -> EnvFileView:
 # --------------------------------------------------------------------------
 def get_profile_paths(name: str) -> ProfilePathsView:
     """Resolve the on-disk references and URLs for a profile."""
-    import os
     from pathlib import Path
 
     from .. import get_embed_manager
@@ -423,7 +422,7 @@ def get_profile_paths(name: str) -> ProfilePathsView:
     paths = ProfileManager().resolve_profile_paths(name)
 
     # Honor the same DB override the daemon uses, else the per-profile pg0.
-    database_url = os.getenv("HINDSIGHT_EMBED_API_DATABASE_URL") or get_embed_manager().get_database_url(name)
+    database_url = get_embed_manager().resolve_database_url(name)
     database_path: str | None = None
     if database_url.startswith("pg0://"):
         instance = database_url.removeprefix("pg0://")

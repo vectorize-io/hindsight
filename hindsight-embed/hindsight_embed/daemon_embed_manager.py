@@ -323,6 +323,24 @@ class DaemonEmbedManager(EmbedManager):
         safe_profile = self._sanitize_profile_name(profile)
         return f"pg0://hindsight-embed-{safe_profile}"
 
+    def resolve_database_url(self, profile: str, config: Mapping[str, str] | None = None) -> str:
+        """Return the database the daemon for this profile runs on.
+
+        A URL the user set wins, from the profile .env (or ``config``) first and
+        the process environment second: HINDSIGHT_EMBED_API_DATABASE_URL, then
+        the API's own HINDSIGHT_API_DATABASE_URL. Only with neither set does the
+        profile get its own pg0. The API variable used to be overwritten with
+        pg0, which left no way to use an external server on a machine where pg0
+        cannot start (issue #6065).
+        """
+        if config is None:
+            config = self._profile_manager.load_profile_config(profile)
+        for key in ("HINDSIGHT_EMBED_API_DATABASE_URL", "HINDSIGHT_API_DATABASE_URL"):
+            url = config.get(key) or os.getenv(key)
+            if url:
+                return url
+        return self.get_database_url(profile)
+
     def get_url(self, profile: str) -> str:
         """
         Get the URL for the daemon serving this profile.
@@ -892,12 +910,7 @@ class DaemonEmbedManager(EmbedManager):
             if key.startswith("HINDSIGHT_") and value is not None:
                 env[key] = str(value)
 
-        # Use profile-specific database (check config for override)
-        db_override = config.get("HINDSIGHT_EMBED_API_DATABASE_URL") or env.get("HINDSIGHT_EMBED_API_DATABASE_URL")
-        if db_override:
-            env["HINDSIGHT_API_DATABASE_URL"] = db_override
-        else:
-            env["HINDSIGHT_API_DATABASE_URL"] = self.get_database_url(profile)
+        env["HINDSIGHT_API_DATABASE_URL"] = self.resolve_database_url(profile, config)
 
         database_url = env["HINDSIGHT_API_DATABASE_URL"]
         is_pg0 = database_url.startswith("pg0://")
