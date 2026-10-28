@@ -87,7 +87,7 @@ Connecting the app gives agents the memory _tools_; the **Hindsight Memory skill
 - The MCP server connection, by contrast, is added once in the Local server's settings and is available to **every** agent — so the tools reach everyone; only the skill (the habit) is per-agent.
 - For **Claude** agents specifically, a skill placed in `~/.agents/skills/<slug>/` is loaded by every Claude agent automatically. Other providers (OpenCode, Codex, Gemini, …) need the per-agent install.
 
-> The cleanest long-term answer to "every agent should use Hindsight automatically" is Hindsight _replacing_ OpenBot's built-in memory rather than sitting beside it — tracked upstream in [nightly-labs/openbot#3672](https://github.com/nightly-labs/openbot/issues/3672).
+> The cleanest long-term answer to "every agent should use Hindsight automatically" is Hindsight _replacing_ OpenBot's built-in memory rather than sitting beside it — tracked upstream in [nightly-labs/openbot#3682](https://github.com/nightly-labs/openbot/issues/3682).
 
 ## Try it
 
