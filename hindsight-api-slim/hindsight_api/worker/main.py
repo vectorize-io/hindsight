@@ -28,6 +28,8 @@ from .poller import WorkerPoller
 if TYPE_CHECKING:
     import uvicorn
 
+    from ..engine.memory_engine import MemoryEngine
+
 # Filter deprecation warnings from third-party libraries
 warnings.filterwarnings("ignore", message="websockets.legacy is deprecated")
 warnings.filterwarnings("ignore", message="websockets.server.WebSocketServerProtocol is deprecated")
@@ -53,7 +55,7 @@ _CLOSE_CANCEL_GRACE_SECONDS = 5.0
 _SHUTDOWN_HARD_LIMIT_SECONDS = 120.0
 
 
-async def _close_within(memory: Any, timeout: float) -> bool:
+async def _close_within(memory: "MemoryEngine", timeout: float) -> bool:
     """Close the engine, giving up after ``timeout`` seconds. True if it closed in time."""
     task = asyncio.ensure_future(memory.close())
     done, _ = await asyncio.wait({task}, timeout=timeout)

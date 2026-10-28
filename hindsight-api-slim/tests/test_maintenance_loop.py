@@ -1,6 +1,7 @@
 """Tests for the MaintenanceLoop: due-timer logic, consolidation reconcile
 gating, and cross-schema retention purge."""
 
+import asyncio
 import time
 import uuid
 
@@ -128,8 +129,6 @@ class TestStop:
 
     @pytest.mark.asyncio
     async def test_a_job_that_does_not_reach_a_stopping_point_is_cancelled(self, monkeypatch):
-        import asyncio
-
         import hindsight_api.engine.maintenance as maintenance_mod
 
         monkeypatch.setattr(maintenance_mod, "_STOP_GRACE_SECONDS", 0.1)
@@ -156,8 +155,6 @@ class TestStop:
     async def test_a_job_that_ignores_the_cancel_is_left_behind(self, monkeypatch):
         """A job that catches CancelledError and keeps going (a driver call that does not yield, a
         cleanup that suppresses it) must not hold stop(): waiting out the cancel is bounded too."""
-        import asyncio
-
         import hindsight_api.engine.maintenance as maintenance_mod
 
         monkeypatch.setattr(maintenance_mod, "_STOP_GRACE_SECONDS", 0.05)
@@ -185,8 +182,6 @@ class TestStop:
 
     @pytest.mark.asyncio
     async def test_a_job_that_reaches_a_stopping_point_finishes_on_its_own(self):
-        import asyncio
-
         loop = MaintenanceLoop(engine=None)
         finished = asyncio.Event()
 
@@ -203,8 +198,6 @@ class TestStop:
 
     @pytest.mark.asyncio
     async def test_a_job_failing_while_stopping_does_not_raise(self):
-        import asyncio
-
         loop = MaintenanceLoop(engine=None)
 
         async def _failing_job():
@@ -276,6 +269,31 @@ async def test_reconcile_submits_eligible_skips_disabled_and_in_flight(
     assert eligible in submitted
     assert disabled not in submitted
     assert in_flight not in submitted
+
+
+@pytest.mark.asyncio
+async def test_a_stop_ends_the_reconcile_between_banks(memory: MemoryEngine, request_context, monkeypatch):
+    """A reconcile over many banks stops at the next bank once the loop is stopped."""
+    config = '{"enable_observations": true, "enable_auto_consolidation": true}'
+    banks = [await _make_bank(memory, request_context, f"stop{i}", config) for i in range(3)]
+    async with memory._pool.acquire() as conn:
+        for bank in banks:
+            await _insert_fact(conn, bank)
+
+    loop = MaintenanceLoop(memory)
+    submitted: list[str] = []
+
+    async def _record_then_stop(*, bank_id, request_context, observation_scopes=None):
+        submitted.append(bank_id)
+        loop._stop.set()  # shutdown arrives while the first bank is being submitted
+        return {"operation_id": str(uuid.uuid4())}
+
+    monkeypatch.setattr(memory, "submit_async_consolidation", _record_then_stop)
+    await loop._run_reconcile()
+
+    # Discovery spans every schema, so under a parallel run the first bank reached may be
+    # another test's; what matters is that nothing after it was.
+    assert len(submitted) == 1
 
 
 @pytest.mark.asyncio
@@ -401,8 +419,6 @@ class TestRetentionSweepPacing:
         """The point of SKIP LOCKED: with no leader, several pods sweep at once and
         each row is deleted exactly once — the deletes partition the backlog instead
         of waiting on each other's row locks."""
-        import asyncio
-
         import hindsight_api.engine.maintenance as maintenance_mod
 
         monkeypatch.setattr(maintenance_mod, "_RETENTION_BATCH_SIZE", 2)

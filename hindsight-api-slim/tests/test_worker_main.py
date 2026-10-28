@@ -4,6 +4,7 @@ import asyncio
 import os
 import signal
 import sys
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -195,8 +196,6 @@ async def test_engine_close_that_ignores_the_cancel_does_not_hold_shutdown(monke
 def test_exit_backstop_ends_the_process_when_shutdown_overruns():
     """Last resort past every bound above (asyncio.run's own teardown waits on every task left):
     the process exits once the backstop fires. The tasks were returned to 'pending' before it."""
-    import threading
-
     fired = threading.Event()
     codes = []
 
@@ -211,8 +210,6 @@ def test_exit_backstop_ends_the_process_when_shutdown_overruns():
 
 
 def test_exit_backstop_does_nothing_when_cancelled():
-    import threading
-
     fired = threading.Event()
     timer = _arm_exit_backstop(0.1, exit_fn=lambda code: fired.set())
     timer.cancel()
