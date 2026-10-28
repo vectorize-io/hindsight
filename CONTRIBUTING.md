@@ -84,7 +84,8 @@ If you'd rather set things up by hand instead of running the script above:
 ### Running the documentation locally
 
 ```bash
-./scripts/dev/start-docs.sh
+./scripts/dev/start-docs.sh          # pages compile on first visit (~1 GB)
+./scripts/dev/start-docs.sh --full   # compile every page up front, like the build (~3.5 GB)
 ```
 
 ### Running tests
