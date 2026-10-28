@@ -1864,11 +1864,13 @@ class KnowledgeTagFilter:
         )
 
 
-#: Above this many new memories a delta refresh searches instead of asking about each:
-#: search and pruning are what handle volume, and the per-memory questions add up.
-# ponytail: one question per memory, run in parallel; batch several memories per request
-# if a burst this size turns out slow.
-_DELTA_GATE_MAX_MEMORIES = 200
+#: Questions one delta refresh keeps in flight. The decision model's own cap
+#: (HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT) is per process and shared with recall and
+#: consolidation; without this a 200-memory refresh fills it alone, and on a rate-limited
+#: endpoint half its requests came back 429 (#6103).
+# ponytail: one question per memory, not batched: asked in one request the model blurs the
+# memories together and drops on-topic ones (1-13 of 20 kept, against 20 of 20 alone).
+_DELTA_GATE_MAX_CONCURRENT = 8
 
 
 @dataclass(frozen=True)
@@ -17776,8 +17778,9 @@ class MemoryEngine(MemoryEngineInterface):
         those reach the delta LLM call. None of them means no LLM call at all.
 
         None when the gate does not apply (the bank opted out, no decision model, a store
-        that cannot list, more memories than it is worth asking about) or a question failed:
-        the refresh then runs reflect as it always has.
+        that cannot list, more memories than HINDSIGHT_API_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES)
+        or a question failed before any answered: the refresh then runs reflect as it always
+        has. A question failing after that keeps its memory.
 
         Sibling pages are not offered, as reflect would: a sibling changes only when its
         own memories do, and the memories in this page's scope are already here.
@@ -17788,6 +17791,7 @@ class MemoryEngine(MemoryEngineInterface):
         resolved = await self._config_resolver.resolve_full_config(bank_id, request_context)
         if not resolved.mental_model_delta_use_decision_model:
             return None
+        max_memories = get_config().mental_model_delta_gate_max_memories
         from .memories import get_memories
 
         backend = await self._get_backend()
@@ -17798,29 +17802,49 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id,
                 until=refresh_cutoff,
                 since=created_after,
-                limit=_DELTA_GATE_MAX_MEMORIES + 1,
+                limit=max_memories + 1,
                 fact_types=fact_types,
                 tags=tag_filtering.tags,
                 tags_match=tag_filtering.tags_match,
                 tag_groups=tag_filtering.tag_groups,
             )
-        if memories is None or len(memories) > _DELTA_GATE_MAX_MEMORIES:
+        if memories is None or len(memories) > max_memories:
             return None
+        slots = asyncio.Semaphore(_DELTA_GATE_MAX_CONCURRENT)
+        answered = False
+        failed = 0
+
+        async def ask(text: str) -> bool:
+            nonlocal answered, failed
+            async with slots:
+                try:
+                    verdict = await decision_model.could_change_page(source_query, current_content, text)
+                except Exception:
+                    # Nothing answered yet reads as the model being down: cancel the rest
+                    # and search. Once it has answered, a question that ran out of retries
+                    # is a "yes", as a doubt is: the memory goes to the LLM, the other
+                    # verdicts are kept.
+                    if not answered:
+                        raise
+                    failed += 1
+                    return True
+            answered = True
+            return verdict
+
         try:
-            # A TaskGroup, not gather: one failed question cancels the rest instead of
-            # letting up to 199 retry on their own for a result that is thrown away.
             # ponytail: these calls are not added to the refresh's usage or llm_calls, like
             # every other decision-model call; count them there if their cost needs watching.
             async with asyncio.TaskGroup() as group:
-                questions = [
-                    group.create_task(decision_model.could_change_page(source_query, current_content, m.text))
-                    for m in memories
-                ]
+                questions = [group.create_task(ask(m.text)) for m in memories]
             verdicts = [q.result() for q in questions]
         except Exception as exc:
             cause = exc.exceptions[0] if isinstance(exc, ExceptionGroup) else exc
             logger.warning(f"[MENTAL_MODELS] Delta gate failed ({cause!r}); searching instead")
             return None
+        if failed:
+            logger.warning(
+                f"[MENTAL_MODELS] Delta gate: {failed} of {len(memories)} questions failed; kept their memories"
+            )
         listed: dict[str, int] = {}
         kept: dict[str, list[MemoryFact]] = {}
         for memory, could_change in zip(memories, verdicts):
