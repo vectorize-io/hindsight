@@ -24,7 +24,6 @@ so treat it as an API: keep it backwards compatible, or say so in the release no
 
 import json
 import re
-import unicodedata
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 
@@ -66,56 +65,50 @@ PRUNE_BELOW_BEST = 0.4
 # is a second request, after the ranking one. Among the candidates still in the pool, a pair is
 # asked (both memories in the question, the better-ranked one as Memory A, one way round: the
 # order is known by then) when the caller says the two are alike — recall passes the pairs
-# whose stored embeddings are at least ``ALIKE_FROM`` apart in cosine — or when their texts are
-# in different scripts: a translated copy an English-leaning embedder scores low. Without that
-# (the caller has no embeddings), every pair is asked.
+# whose stored embeddings have a cosine of ``ALIKE_FROM`` or more. Without that (the caller
+# has no embeddings), every pair is asked. Either way at most ``MAX_REPEAT_PAIRS`` are asked,
+# best-ranked first.
 #
 # ``ALIKE_FROM`` only narrows the pairs asked; the model decides. The lowest cosine of a true
-# same-script repeat in the labelled pools was 0.74 with the server's default local embedder
-# and 0.69 with a multilingual one ("Rate limit on the public API: 100 req/min" vs "Clients may
-# send at most 100 requests a minute to the public API"), so 0.65 keeps a margin under both.
-# Cross-script copies go through the script check instead: they fall as low as 0.40. An embedder
-# that packs every text close together (one multilingual model put all pairs above 0.77) passes
-# more pairs, never fewer repeats.
+# repeat in the labelled pools was 0.74 with the server's default local embedder and 0.69 with a
+# multilingual one ("Rate limit on the public API: 100 req/min" vs "Clients may send at most 100
+# requests a minute to the public API"), so 0.65 keeps a margin under both. It assumes a bank
+# holds one language: a translated copy scores far lower (0.40), and is not looked for. An
+# embedder that packs every text close together passes more pairs, never fewer repeats.
 #
-# Measured on a real server (true fusion order, 250 candidates, six languages, 36 recalls), the
-# second request: all kept pairs 60/60 repeats dropped, up to 153 pairs and 10.3k tokens; pairs
-# joined by a stored semantic link + cross-script 60/60, up to 25 pairs and 1.9k tokens, p50
-# 0.21s. No needed fact was dropped by any of them. Stored links were then dropped: retain keeps
+# ``MAX_REPEAT_PAIRS``: the pairs grow with the square of the candidates kept, and with a
+# single-language embedder alike-but-distinct facts all sit above ``ALIKE_FROM`` ("Lena owns the
+# billing service" vs "Mei owns the billing service" score 0.9+, true repeats 0.83-0.99), so the
+# threshold barely narrows them. Uncapped, one recall kept 99 alike memories and asked 4,851
+# pairs and 347k tokens. 100 pairs is about 7k tokens, one request at about 0.25s (p90 0.30s);
+# in the earlier banks of 250 candidates a recall never asked more than 153 pairs even
+# uncapped, median 6. Best-ranked first, because a repeat near the top costs the reader most.
+# On a 1,147-memory English bank crowded with alike facts (22 recalls) with pruning on, the cap
+# was hit in 11 recalls: best-ranked first still dropped 33/38 repeats with 1 fact wrongly
+# dropped, where most-alike-first dropped 29/38 and wrongly dropped 7 (the most alike pairs
+# are the near-identical templates the model most often calls repeats). Asking every alike
+# pair dropped 38/38 but wrongly dropped 10. With pruning off, the cap reaches about the 15th
+# candidate: every repeat in the top 20 dropped (35/35), 1 wrongly dropped.
+#
+# History: the pairs were first those joined by a semantic link retain stored. Retain keeps
 # only a memory's 50 nearest above 0.7, so in a bank crowded with alike facts a repeat is often
-# not among them. On one 1,109-memory bank of crowded alike facts (12 recalls, six languages),
-# links + cross-script caught 46/48 repeats with the default local embedder and 81/83 with a
-# multilingual one; cosine 0.65 + cross-script caught 48/48 and 83/83, as many as asking every
-# kept pair. The price is the pairs: they grow with the square of the kept candidates, from a
-# median of 64 to 1,953 (131k tokens, split across parallel requests, p90 0.40s) when 63 alike
-# memories all help. Capping each candidate to its 3 or 5 nearest above it bounds that (183 or
-# 300 pairs) but missed 10/48 and 5/48: the nearest is often another copy that goes itself, so
-# the copy is never asked against the one that stays. Ruled out: picking pairs before the ranking answers, to share
-# the ranking request (26/40: a kept memory can rank as low as 199 by fusion, so only 76% of
-# repeat pairs had both in the top 40); deciding by cosine alone (distinct pairs reach 0.96);
-# character overlap (0 across languages); one choice over the whole pool, or the pool in the
-# state (both lose needed facts).
+# not linked: on a 1,109-memory bank, links caught 46/48 repeats where cosine caught 48/48.
+# Ruled out: picking pairs before the ranking answers, to share the ranking request (26/40: a
+# kept memory can rank as low as 199 by fusion, so only 76% of repeat pairs had both in the top
+# 40); deciding by cosine alone (distinct pairs reach 0.96); character overlap; one choice over
+# the whole pool, or the pool in the state (both lose needed facts); capping each candidate to
+# its 3 or 5 nearest above it (missed 10/48 and 5/48: the nearest is often another copy that
+# goes itself, so the copy is never asked against the one that stays).
 DEDUP_INSTRUCTIONS = "Memory B is a repeat of Memory A."
 REPEAT_ABOVE = 0.5
 ALIKE_FROM = 0.65
+MAX_REPEAT_PAIRS = 100
 _DATE_PREFIX = re.compile(r"^\[Date: [^\]]*\]")
 
 
 def _date(doc: str) -> str | None:
     match = _DATE_PREFIX.match(doc)
     return match.group(0) if match else None
-
-
-def _script(doc: str) -> str | None:
-    """The writing system of the first letter after the date: "LATIN", "CYRILLIC", "cjk"."""
-    for char in _DATE_PREFIX.sub("", doc):
-        if char.isalpha():
-            name = unicodedata.name(char, "")
-            # Chinese and Japanese mix ideographs and kana within one text.
-            if name.startswith(("CJK", "HIRAGANA", "KATAKANA")):
-                return "cjk"
-            return name.split(" ")[0] or None
-    return None
 
 
 @dataclass(frozen=True)
@@ -259,31 +252,40 @@ class DecisionRerank:
         ``scores`` are :meth:`scores` or :meth:`pruned`; a candidate at 0.0 is already out.
         ``docs`` are the uncapped texts, capped here as in the ranking questions. ``alike``
         holds the pairs of slots the caller knows to be alike (recall: cosine of the stored
-        embeddings at least ``ALIKE_FROM``); with it, only those pairs and pairs written in
-        different scripts are asked, and without it (``None``: the caller has no embeddings)
-        every pair is. Never asked: pairs dated
-        differently — "went climbing" on the 3rd and on the 10th are two occasions, and the
-        model calls those repeats — and, when ``kinds`` gives each candidate's fact type,
-        pairs of two types: an observation is built from the very facts it repeats, and
-        choosing between them is recall's ``prefer_observations``.
+        embeddings at least ``ALIKE_FROM``); with it only those pairs are asked, and without it
+        (``None``: the caller has no embeddings) every pair is. At most ``MAX_REPEAT_PAIRS``
+        are asked, best-ranked first: a candidate is compared with those above it before the
+        next one down is. Never asked: pairs dated differently — "went climbing" on the 3rd and
+        on the 10th are two occasions, and the model calls those repeats — and, when ``kinds``
+        gives each candidate's fact type, pairs of two types: an observation is built from the
+        very facts it repeats, and choosing between them is recall's ``prefer_observations``.
         """
-        # ponytail: no count cap; the caller splits the pairs into parallel requests by the size
-        # limits, so a pool kept unpruned with many alike pairs or scripts costs more requests at once.
         checked = DecisionRerank._ranked(scores)
-        return [
-            RepeatQuestion(
-                key=f"r{above}_{slot}",
-                above=above,
-                slot=slot,
-                memory_a=self.capped(docs[above], MAX_MEMORY_TOKENS),
-                memory_b=self.capped(docs[slot], MAX_MEMORY_TOKENS),
-            )
+        # A generator: with pruning off, every pair of 300 candidates would be built only to be cut.
+        pairs = (
+            (above, slot)
             for position, slot in enumerate(checked)
             for above in checked[:position]
-            if not (_date(docs[above]) and _date(docs[slot]) and _date(docs[above]) != _date(docs[slot]))
-            and (kinds is None or kinds[above] == kinds[slot])
-            and (alike is None or frozenset((above, slot)) in alike or _script(docs[above]) != _script(docs[slot]))
-        ]
+            if alike is None or frozenset((above, slot)) in alike
+        )
+        questions: list[RepeatQuestion] = []
+        for above, slot in pairs:
+            if len(questions) == MAX_REPEAT_PAIRS:
+                break
+            if _date(docs[above]) and _date(docs[slot]) and _date(docs[above]) != _date(docs[slot]):
+                continue
+            if kinds is not None and kinds[above] != kinds[slot]:
+                continue
+            questions.append(
+                RepeatQuestion(
+                    key=f"r{above}_{slot}",
+                    above=above,
+                    slot=slot,
+                    memory_a=self.capped(docs[above], MAX_MEMORY_TOKENS),
+                    memory_b=self.capped(docs[slot], MAX_MEMORY_TOKENS),
+                )
+            )
+        return questions
 
     @staticmethod
     def deduped(

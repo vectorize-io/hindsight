@@ -132,26 +132,23 @@ class DecisionModelReranker(CrossEncoderModel):
         """The pairs of slots still in the pool whose stored embeddings are alike (cosine at
         least ``ALIKE_FROM``), or None to ask every pair.
 
-        Computed here, on the candidates the ranking kept, rather than read from the
-        semantic links retain stores: retain keeps only each memory's 50 nearest above its
-        link threshold, so in a large bank of alike facts a repeat is often not among them. A
-        candidate with no stored embedding is treated as alike to every other, so it is asked.
+        Computed here, on the candidates the ranking kept, rather than read from the semantic
+        links retain stores: retain keeps only each memory's 50 nearest above its link
+        threshold, so in a large bank of alike facts a repeat is often not among them. A
+        candidate with no stored embedding is not compared.
         """
         if options.embeddings is None or options.ids is None:
             return None
         vectors = await options.embeddings
         if vectors is None:
             return None
-        kept = [slot for slot, score in enumerate(ranked) if score > 0.0]
-        found = [slot for slot in kept if options.ids[indices[slot]] in vectors]
-        missing = set(kept) - set(found)
-        alike = {frozenset((a, b)) for a in missing for b in kept if a != b}
-        if len(found) > 1:
-            matrix = np.stack([vectors[options.ids[indices[slot]]] for slot in found])
-            matrix = matrix / np.maximum(np.linalg.norm(matrix, axis=1, keepdims=True), 1e-12)
-            similar = np.argwhere(np.triu(matrix @ matrix.T >= ALIKE_FROM, k=1))
-            alike.update(frozenset((found[a], found[b])) for a, b in similar)
-        return alike
+        found = [slot for slot, score in enumerate(ranked) if score > 0.0 and options.ids[indices[slot]] in vectors]
+        if len(found) < 2:
+            return set()
+        matrix = np.stack([vectors[options.ids[indices[slot]]] for slot in found])
+        matrix = matrix / np.maximum(np.linalg.norm(matrix, axis=1, keepdims=True), 1e-12)
+        similar = np.argwhere(np.triu(matrix @ matrix.T >= ALIKE_FROM, k=1))
+        return {frozenset((found[a], found[b])) for a, b in similar}
 
     async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         docs = [doc for _, doc in pairs]

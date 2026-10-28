@@ -10495,9 +10495,9 @@ class MemoryEngine(MemoryEngineInterface):
 
                     # Ensure reranker is initialized (for lazy initialization mode)
                     await reranker_instance.ensure_initialized()
-                    # Dedup asks only pairs whose stored embeddings are alike (or written in two
-                    # scripts). The embeddings are read while the ranking request runs, so they add
-                    # no round trip: the reranker awaits them only once the ranking answers are in.
+                    # Dedup asks only pairs whose stored embeddings are alike. The embeddings are
+                    # read while the ranking request runs, so they add no round trip: the reranker
+                    # awaits them only once the ranking answers are in.
                     embeddings = None
                     if dedup and getattr(reranker_instance.cross_encoder, "provider_name", None) == (
                         DECISION_MODEL_RERANKER

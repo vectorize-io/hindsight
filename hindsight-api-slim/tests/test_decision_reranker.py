@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from hindsight_api.config import DecisionModelConfig
+from hindsight_api.engine import decision_rerank_interface
 from hindsight_api.engine.decision_model import DecisionAnswer, DecisionModel
 from hindsight_api.engine.decision_rerank_interface import MAX_MEMORY_TOKENS, MAX_SHARED_CONTEXT_TOKENS
 from hindsight_api.engine.search.decision_reranker import (
@@ -321,7 +322,7 @@ async def _found(vectors: dict[str, list[float]] | None) -> dict[str, np.ndarray
 
 
 class TestDedupAlike:
-    """With the stored embeddings, dedup asks only alike pairs and pairs in two scripts."""
+    """With the stored embeddings, dedup asks only alike pairs, best-ranked first."""
 
     async def _dedup(self, client: _Client, docs: list[str], vectors: dict[str, list[float]] | None) -> list[float]:
         task = asyncio.create_task(_found(vectors))
@@ -338,24 +339,24 @@ class TestDedupAlike:
         await self._dedup(client, [TEA, SENCHA], _VECTORS)
         assert client.scopes == ["decision_recall_rerank"]
 
-    async def test_a_pair_in_two_scripts_is_asked_however_far_apart(self):
-        """A translated copy: an English-leaning embedder scores it low."""
-        chinese = "玛尔塔最喜欢的茶是玄米茶"
-        client = _Client({TEA: 0.9, chinese: 0.8, SENCHA: 0.7}, repeats={(TEA, chinese)})
-        scores = await self._dedup(client, [TEA, chinese, SENCHA], {**_VECTORS, chinese: [0.0, -1.0]})
-        assert client.pairs == [(TEA, chinese), (chinese, SENCHA)]
-        assert scores[1] == 0.0
-
     async def test_without_embeddings_every_pair_is_asked(self):
         """The store keeps none (or the read failed): fall back to every kept pair."""
         client = _Client({TEA: 0.9, TEA_AGAIN: 0.8, SENCHA: 0.7})
         await self._dedup(client, [TEA, TEA_AGAIN, SENCHA], None)
         assert len(client.pairs) == 3
 
-    async def test_a_candidate_without_an_embedding_is_compared_with_every_other(self):
+    async def test_a_candidate_without_an_embedding_is_not_compared(self):
         client = _Client({TEA: 0.9, TEA_AGAIN: 0.8, SENCHA: 0.7})
         await self._dedup(client, [TEA, TEA_AGAIN, SENCHA], {TEA: _VECTORS[TEA], SENCHA: _VECTORS[SENCHA]})
-        assert client.pairs == [(TEA, TEA_AGAIN), (TEA_AGAIN, SENCHA)]
+        assert client.scopes == ["decision_recall_rerank"]
+
+    async def test_the_best_ranked_alike_pairs_are_asked_up_to_the_cap(self, monkeypatch):
+        monkeypatch.setattr(decision_rerank_interface, "MAX_REPEAT_PAIRS", 1)
+        closer = "Marta's favourite tea: genmaicha"
+        vectors = {**_VECTORS, closer: [1.0, 0.01]}
+        client = _Client({TEA: 0.9, TEA_AGAIN: 0.8, closer: 0.7})
+        await self._dedup(client, [TEA, TEA_AGAIN, closer], vectors)
+        assert client.pairs == [(TEA, TEA_AGAIN)]
 
     async def test_only_the_kept_candidates_are_compared(self):
         client = _Client({TEA: 0.9, TEA_AGAIN: 0.05, SENCHA: 0.7})
