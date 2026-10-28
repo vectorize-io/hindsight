@@ -5598,8 +5598,10 @@ class HindsightConfig:
                 ENV_MENTAL_MODEL_DELTA_USE_DECISION_MODEL, str(DEFAULT_MENTAL_MODEL_DELTA_USE_DECISION_MODEL)
             ).lower()
             == "true",
-            mental_model_delta_gate_max_memories=int(
-                os.getenv(ENV_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES, str(DEFAULT_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES))
+            mental_model_delta_gate_max_memories=_parse_positive_int(
+                ENV_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES,
+                os.getenv(ENV_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES),
+                DEFAULT_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES,
             ),
             reflect_prompt_cache_enabled=os.getenv(
                 ENV_REFLECT_PROMPT_CACHE_ENABLED, str(DEFAULT_REFLECT_PROMPT_CACHE_ENABLED)

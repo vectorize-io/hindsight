@@ -297,3 +297,12 @@ async def test_the_store_lists_new_memories_in_the_page_scope(memory: MemoryEngi
 
         assert await listed() == ["oldest in window", "newer in window", "newest in window"]
         assert await listed(limit=2) == ["oldest in window", "newer in window"]
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "lots"])
+def test_gate_cap_must_be_a_positive_integer(monkeypatch, raw):
+    from hindsight_api.config import ENV_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES, HindsightConfig
+
+    monkeypatch.setenv(ENV_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES, raw)
+    with pytest.raises(ValueError, match=ENV_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES):
+        HindsightConfig.from_env()
