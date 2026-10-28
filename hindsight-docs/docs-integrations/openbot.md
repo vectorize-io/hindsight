@@ -25,6 +25,15 @@ Connecting the Hindsight MCP server gives every OpenBot agent the Hindsight tool
 - **Shared or isolated, your choice** — give the team one bank for shared memory, or give each agent its own bank for strict isolation. The bank is chosen by the MCP URL.
 - **Same data everywhere** — the memory an OpenBot agent writes is the same bank your other Hindsight integrations and automations read, so they see one consistent view.
 
+## Hindsight and OpenBot's built-in memory
+
+OpenBot ships its own built-in memory (the `remember` / `search_memories` tools) — a small, per-agent store. When Hindsight is connected, an agent has **both** sets of memory tools available, and the two stores don't share. Left to its own judgement, an agent may still save some facts to OpenBot's built-in store instead of to Hindsight.
+
+Two things follow:
+
+- **The MCP connection is a capability, not a habit.** Connecting Hindsight makes its tools available to every agent on the server — but an agent only *uses* them when it decides to. To make agents consistently recall from and retain to Hindsight (rather than the built-in store), pair the connection with the **Hindsight Memory skill** (see [Make it automatic](#make-it-automatic-optional)).
+- **Hindsight is the shared, durable layer.** Built-in memory is per-agent and small; a Hindsight bank is semantic, long-lived, and shared across every agent pointed at it.
+
 ## Installation
 
 > ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — sign up free, create a bank, grab an API key, and skip self-hosting.
@@ -68,6 +77,18 @@ The bank is part of the MCP URL (`/mcp/<bank>/`), so each connection is scoped t
 
 See the [MCP server reference](/developer/mcp-server) for the full tool list and bank-selection rules.
 
+## Make it automatic (optional)
+
+Connecting the app gives agents the memory _tools_; the **Hindsight Memory skill** gives them the _habit_ — recall before acting, retain durable facts, and use Hindsight's tools instead of OpenBot's built-in memory. [Download `SKILL.md`](https://hindsight.vectorize.io/skills/openbot/hindsight-memory/SKILL.md), add it to OpenBot's skill library, and enable it for the agents that use Hindsight.
+
+**Enabling it across agents.** A skill is enabled **per agent** — there's no "all agents" switch, and new agents don't inherit it automatically:
+
+- Enable it on each agent that should use Hindsight (from the agent's **Skills** panel, or ask an agent to run `install_local_skill`).
+- The MCP server connection, by contrast, is added once in the Local server's settings and is available to **every** agent — so the tools reach everyone; only the skill (the habit) is per-agent.
+- For **Claude** agents specifically, a skill placed in `~/.agents/skills/<slug>/` is loaded by every Claude agent automatically. Other providers (OpenCode, Codex, Gemini, …) need the per-agent install.
+
+> The cleanest long-term answer to "every agent should use Hindsight automatically" is Hindsight _replacing_ OpenBot's built-in memory rather than sitting beside it — tracked upstream in [nightly-labs/openbot#3672](https://github.com/nightly-labs/openbot/issues/3672).
+
 ## Try it
 
 Ask an agent to remember something, then start a fresh thread and ask it back:
@@ -76,4 +97,6 @@ Ask an agent to remember something, then start a fresh thread and ask it back:
 
 > _(new thread)_ **What database did we standardize on, and why?**
 
-The second thread recalls the decision from Hindsight — even though its own context was empty.
+With the **Hindsight Memory skill** enabled, the agent saves with Hindsight's `sync_retain` and the second thread recalls the decision from Hindsight — even though its own context was empty.
+
+> **Tip:** if the first thread reports it saved to its own "essential memories" and the second thread can't recall it, the agent used OpenBot's built-in memory instead of Hindsight. Enable the memory skill (below) so it uses Hindsight's `retain`/`recall`.
