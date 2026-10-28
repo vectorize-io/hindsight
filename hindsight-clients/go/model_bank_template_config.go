@@ -69,6 +69,7 @@ type BankTemplateConfig struct {
 	StoreDocumentText NullableBool `json:"store_document_text,omitempty"`
 	EnableAutoConsolidation NullableBool `json:"enable_auto_consolidation,omitempty"`
 	ConsolidationUseDecisionModel NullableBool `json:"consolidation_use_decision_model,omitempty"`
+	ConsolidationFormat NullableString `json:"consolidation_format,omitempty"`
 	ConsolidationMaxMemoriesPerRound NullableInt32 `json:"consolidation_max_memories_per_round,omitempty"`
 	ConsolidationLlmParallelism NullableInt32 `json:"consolidation_llm_parallelism,omitempty"`
 	RecallIncludeChunks NullableBool `json:"recall_include_chunks,omitempty"`
@@ -2123,6 +2124,48 @@ func (o *BankTemplateConfig) UnsetConsolidationUseDecisionModel() {
 	o.ConsolidationUseDecisionModel.Unset()
 }
 
+// GetConsolidationFormat returns the ConsolidationFormat field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetConsolidationFormat() string {
+	if o == nil || IsNil(o.ConsolidationFormat.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.ConsolidationFormat.Get()
+}
+
+// GetConsolidationFormatOk returns a tuple with the ConsolidationFormat field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetConsolidationFormatOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.ConsolidationFormat.Get(), o.ConsolidationFormat.IsSet()
+}
+
+// HasConsolidationFormat returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasConsolidationFormat() bool {
+	if o != nil && o.ConsolidationFormat.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetConsolidationFormat gets a reference to the given NullableString and assigns it to the ConsolidationFormat field.
+func (o *BankTemplateConfig) SetConsolidationFormat(v string) {
+	o.ConsolidationFormat.Set(&v)
+}
+// SetConsolidationFormatNil sets the value for ConsolidationFormat to be an explicit nil
+func (o *BankTemplateConfig) SetConsolidationFormatNil() {
+	o.ConsolidationFormat.Set(nil)
+}
+
+// UnsetConsolidationFormat ensures that no value is present for ConsolidationFormat, not even an explicit nil
+func (o *BankTemplateConfig) UnsetConsolidationFormat() {
+	o.ConsolidationFormat.Unset()
+}
+
 // GetConsolidationMaxMemoriesPerRound returns the ConsolidationMaxMemoriesPerRound field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *BankTemplateConfig) GetConsolidationMaxMemoriesPerRound() int32 {
 	if o == nil || IsNil(o.ConsolidationMaxMemoriesPerRound.Get()) {
@@ -2567,6 +2610,9 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.ConsolidationUseDecisionModel.IsSet() {
 		toSerialize["consolidation_use_decision_model"] = o.ConsolidationUseDecisionModel.Get()
+	}
+	if o.ConsolidationFormat.IsSet() {
+		toSerialize["consolidation_format"] = o.ConsolidationFormat.Get()
 	}
 	if o.ConsolidationMaxMemoriesPerRound.IsSet() {
 		toSerialize["consolidation_max_memories_per_round"] = o.ConsolidationMaxMemoriesPerRound.Get()

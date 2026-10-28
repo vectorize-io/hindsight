@@ -93,6 +93,35 @@ class Consolidation(BaseModel):
     deletes: list[ObservationDelete] = Field(default_factory=list)
 
 
+class ObservationJudgement(BaseModel):
+    """One existing observation a fact-by-fact answer judges (``consolidation_format = "facts"``)."""
+
+    observation_id: str
+    observation_text: str = ""
+    observation_about: str = ""
+    effect: Literal["unrelated", "repeats", "changes", "ends"]
+    text: str = ""
+
+
+class FactEntry(BaseModel):
+    """What a fact-by-fact answer does with one new fact."""
+
+    fact_id: str
+    about: str = ""
+    kind: Literal["lasting", "momentary"] = "lasting"
+    existing: list[ObservationJudgement] = Field(default_factory=list)
+    adds: Literal["yes", "no"] = "no"
+    new: list[str] = Field(default_factory=list)
+    same_as_fact: str | None = None
+
+
+class FactConsolidation(BaseModel):
+    """The fact-by-fact consolidation answer: one entry per new fact."""
+
+    facts: list[FactEntry] = Field(default_factory=list)
+    deletes: list[ObservationDelete] = Field(default_factory=list)
+
+
 def fact(what: str, **fields: object) -> Fact:
     """``Fact(what=...)`` with the required-but-usually-irrelevant fields defaulted."""
     return Fact(what=what, **fields)  # type: ignore[arg-type]

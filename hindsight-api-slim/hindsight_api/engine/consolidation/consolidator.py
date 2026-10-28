@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 import asyncpg
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from ...config import get_config
 from ...metrics import get_metrics_collector
@@ -65,6 +66,7 @@ from ..stored_dates import finite_utc
 from .prompts import (
     build_consolidation_input,
     build_consolidation_system_prompt,
+    build_fact_consolidation_system_prompt,
 )
 from .triage import TriageResult, triage_facts, triage_model
 
@@ -871,10 +873,162 @@ class _MergedAway:
     target_id: str | None
 
 
+class _SkipAction(BaseModel):
+    """A new fact the model judged chatter (``kind: "momentary"`` in a fact-by-fact answer).
+
+    Naming it tells a judgement apart from an oversight: a fact the response neither cites nor
+    skips was forgotten and is asked again, a skipped one is settled. Without it every
+    unaddressed fact looked forgotten, and asking chatter again alone got it stored.
+    """
+
+    fact_id: str
+
+
 class _ConsolidationBatchResponse(BaseModel):
     creates: list[_CreateAction] = []
     updates: list[_UpdateAction] = []
     deletes: list[_DeleteAction] = []
+    #: Filled only from a fact-by-fact answer (:meth:`_FactBatchResponse.to_actions`); hidden from
+    #: the schema the actions prompt is given, which never asks for it.
+    skips: SkipJsonSchema[list[_SkipAction]] = []
+
+
+def _validate_items(v: Any, handler: Any) -> Any:
+    if not isinstance(v, list):
+        return handler(v)
+    kept: list[Any] = []
+    for item in v:
+        try:
+            kept.extend(handler([item]))
+        except ValidationError as exc:
+            logger.warning(
+                f"[CONSOLIDATION] dropped an invalid action from the response: {exc.errors()[0]['msg']}: "
+                f"{str(item)[:300]!r}"
+            )
+    # Once more as a whole, for the list's own constraints (the cap on creates).
+    return handler(kept)
+
+
+class _ObservationChange(BaseModel):
+    """Fact-by-fact answer: one existing observation that mentions a fact's subject."""
+
+    model_config = ConfigDict(json_schema_extra=_advertise_required("observation_text", "observation_about", "effect"))
+
+    observation_id: str
+    #: Copied before it is judged: gemma-4 judging by id alone named the fact's subject as the
+    #: observation's and changed a lookalike's port. Not used by the code.
+    observation_text: str = ""
+    #: Copied next to the fact's ``about`` so a lookalike name is seen. Not used by the code.
+    observation_about: str = ""
+    #: The model's own verdict: "unrelated" leaves the observation alone, "repeats" attaches the
+    #: fact as evidence, "changes"/"ends" rewrite it.
+    effect: str = ""
+    text: str = ""
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def sanitize_text(cls, v: str) -> str:
+        return sanitize_llm_output(v) or ""
+
+
+class _FactDecision(BaseModel):
+    """Fact-by-fact answer: everything one new fact does."""
+
+    model_config = ConfigDict(
+        json_schema_extra=_advertise_required("fact_id", "about", "kind", "existing", "adds", "new")
+    )
+
+    #: Empty when the model left it out: :meth:`_FactBatchResponse.to_actions` then takes it by position.
+    fact_id: str = ""
+    about: str = ""
+    #: "momentary" records nothing, whatever else the entry says.
+    kind: str = ""
+    existing: list[_ObservationChange] = []
+    #: "no": the fact only repeats or changes observations, and ``new`` is ignored.
+    adds: str = ""
+    new: list[str] = []
+    same_as_fact: str | None = None
+
+    @field_validator("new", mode="before")
+    @classmethod
+    def sanitize_new(cls, v: Any) -> Any:
+        return [t for t in (sanitize_llm_output(x) or "" for x in v) if t.strip()] if isinstance(v, list) else v
+
+    @field_validator("existing", mode="wrap")
+    @classmethod
+    def _drop_invalid(cls, v: Any, handler: Any) -> Any:
+        return _validate_items(v, handler)
+
+
+class _FactBatchResponse(BaseModel):
+    """The fact-by-fact answer (``consolidation_format = "facts"``), turned into actions by :meth:`to_actions`."""
+
+    facts: list[_FactDecision] = []
+    deletes: list[_DeleteAction] = []
+
+    @field_validator("facts", mode="wrap")
+    @classmethod
+    def _drop_invalid(cls, v: Any, handler: Any) -> Any:
+        return _validate_items(v, handler)
+
+    def to_actions(
+        self, pool_text: dict[str, str], fact_ids: list[str], stated_after: Callable[[str, str], bool]
+    ) -> _ConsolidationBatchResponse:
+        """``stated_after(fact_id, observation_id)``: the observation was stated after the fact. A
+        change to it is then the fact as its earlier state, added after its text, and the fact
+        creates nothing: gemma-4 compared the dates itself and got them wrong both ways."""
+        # gemma-4 sometimes leaves out every entry's fact_id; one entry per fact, in order, is what was asked.
+        if len(self.facts) == len(fact_ids):
+            for f, fid in zip(self.facts, fact_ids):
+                f.fact_id = f.fact_id or fid
+        creates: dict[str, _CreateAction] = {}
+        all_creates: list[_CreateAction] = []
+        updates: list[_UpdateAction] = []
+        skips: list[_SkipAction] = []
+        for f in self.facts:
+            if not f.fact_id:
+                continue
+            if f.kind == "momentary":
+                skips.append(_SkipAction(fact_id=f.fact_id))
+                continue
+            history = False
+            for change in f.existing:
+                oid = _resolve_pool_id(change.observation_id, set(pool_text))
+                current = pool_text.get(oid)
+                if change.effect not in ("repeats", "changes", "ends"):
+                    continue
+                if current is None:
+                    # gemma-4 names an observation an earlier fact of this answer creates as "existing",
+                    # with an invented id: its own copy of that observation's text says which one.
+                    copied = {change.observation_text.strip(), change.text.strip()} - {""}
+                    twin = next((c for c in all_creates if c.text.strip() in copied), None)
+                    if twin is not None and change.effect == "repeats":
+                        twin.source_fact_ids.append(f.fact_id)
+                    continue
+                later = stated_after(f.fact_id, oid)
+                if change.effect == "repeats" or not change.text.strip():
+                    text = current
+                elif later:
+                    history = True
+                    text = f"{current.rstrip()} {change.text.strip()}"
+                else:
+                    text = change.text
+                updates.append(
+                    _UpdateAction(
+                        observation_id=change.observation_id,
+                        current_text=current,
+                        text=text,
+                        source_fact_ids=[f.fact_id],
+                        reason=f"{change.effect}: {f.about!r} / {change.observation_about!r}, later: {later}",
+                    )
+                )
+            for text in [] if history or f.adds == "no" else f.new:
+                create = _CreateAction(text=text, source_fact_ids=[f.fact_id], reason=f"about {f.about!r}")
+                creates.setdefault(f.fact_id, create)
+                all_creates.append(create)
+            if not f.new and f.same_as_fact and (twin := creates.get(f.same_as_fact)) is not None:
+                twin.source_fact_ids.append(f.fact_id)
+        return _ConsolidationBatchResponse(creates=all_creates, updates=updates, deletes=self.deletes, skips=skips)
 
 
 @dataclass
@@ -923,6 +1077,8 @@ class _BatchLLMResult:
     creates: list[_CreateAction] = field(default_factory=list)
     updates: list[_UpdateAction] = field(default_factory=list)
     deletes: list[_DeleteAction] = field(default_factory=list)
+    #: Facts the model chose not to record as a create or update.
+    skips: list[_SkipAction] = field(default_factory=list)
     obs_count: int = 0
     prompt_chars: int = 0
     failed: bool = False
@@ -1304,6 +1460,24 @@ def _build_response_model(
         updates: list[_Update] = []
 
     return _ConstrainedConsolidationBatchResponse
+
+
+def _build_fact_response_model(fact_ids: list[str]) -> type[_FactBatchResponse]:
+    """:class:`_FactBatchResponse` with this batch's fact ids and the enums pinned."""
+
+    class _Change(_ObservationChange):
+        effect: str = Field(default="", json_schema_extra={"enum": ["unrelated", "repeats", "changes", "ends"]})
+
+    class _Fact(_FactDecision):
+        fact_id: str = Field(default="", json_schema_extra={"enum": list(fact_ids)})
+        adds: str = Field(default="", json_schema_extra={"enum": ["yes", "no"]})
+        kind: str = Field(default="", json_schema_extra={"enum": ["lasting", "momentary"]})
+        existing: list[_Change] = []
+
+    class _Constrained(_FactBatchResponse):
+        facts: list[_Fact] = []
+
+    return _Constrained
 
 
 class ConsolidationPerfLog:
@@ -2636,6 +2810,10 @@ async def _process_memory_batch(
             config=config,
             remaining_observation_slots=remaining_observation_slots,
             max_observations_per_scope=max_obs,
+            closest={
+                str(m["id"]): [str(o.id) for o in r.results[:_CLOSEST_SHOWN]]
+                for m, r in zip(memories, per_fact_recalls, strict=True)
+            },
         )
         if llm_memories
         else _BatchLLMResult()
@@ -2644,6 +2822,7 @@ async def _process_memory_batch(
         perf.record_timing("llm", time.perf_counter() - t0)
         perf.record_llm_call(llm_result.obs_count, llm_result.prompt_chars)
         perf.record_llm_batch_failures(llm_result.failed_attempts)
+    honored_skips = _settle_skips(llm_result)
     _apply_triage(llm_result, triage, union_observations)
 
     # 4. Prepare every action connection-free, then apply them all in ONE transaction.
@@ -3045,6 +3224,8 @@ async def _process_memory_batch(
             results.append({"action": "updated"})
         elif mid in triage.chatter:
             results.append({"action": "skipped", "reason": "triage_chatter"})
+        elif mid in honored_skips:
+            results.append({"action": "skipped", "reason": "llm_skipped"})
         else:
             results.append({"action": "skipped", "reason": "no_durable_knowledge"})
 
@@ -3338,6 +3519,19 @@ def _apply_triage(llm_result: _BatchLLMResult, triage: TriageResult, union_obser
                     reason="triage: restates this observation",
                 )
             )
+
+
+#: How many of each fact's top-ranked observations its prompt line names.
+_CLOSEST_SHOWN = 3
+
+
+def _settle_skips(llm_result: _BatchLLMResult) -> set[str]:
+    """The fact ids the response's ``skips`` settle as chatter.
+
+    A skip of a fact some other action cites settles nothing: the model recorded it after all.
+    """
+    cited = {fid for a in [*llm_result.creates, *llm_result.updates] for fid in a.source_fact_ids}
+    return {skip.fact_id for skip in llm_result.skips if skip.fact_id not in cited}
 
 
 def _resolve_pool_id(raw: str, pool_ids: set[str]) -> str:
@@ -3697,10 +3891,16 @@ async def _consolidate_batch_with_llm(
     config: Any,
     remaining_observation_slots: int | None = None,
     max_observations_per_scope: int = -1,
+    closest: dict[str, list[str]] | None = None,
 ) -> _BatchLLMResult:
-    """Single LLM call for a batch of facts against a pooled set of observations."""
+    """Single LLM call for a batch of facts against a pooled set of observations.
+
+    ``closest`` names each fact's best-ranked observations; the fact-by-fact prompt shows them
+    under the fact (``consolidation_format = "facts"``), the actions prompt does not.
+    """
     if config is None:
         raise ValueError("config is required for _consolidate_batch_with_llm")
+    fact_format = config.consolidation_format == "facts"
     if union_observations:
         newest_input_fact = _latest_time(
             *(m.get(key) for m in memories for key in ("occurred_start", "occurred_end", "mentioned_at"))
@@ -3712,6 +3912,12 @@ async def _consolidate_batch_with_llm(
     else:
         observations_text = "[]"
 
+    obs_time = {str(o.id): _latest_time(o.occurred_start, o.occurred_end, o.mentioned_at) for o in union_observations}
+    fact_time = {
+        str(m["id"]): _latest_time(m.get("occurred_start"), m.get("occurred_end"), m.get("mentioned_at"))
+        for m in memories
+    }
+
     def _fact_line(m: dict[str, Any]) -> str:
         text = f"[{m['id']}] {m['text']}"
         temporal_parts = [
@@ -3721,9 +3927,27 @@ async def _consolidate_batch_with_llm(
         ]
         if temporal_parts:
             text += f" ({', '.join(temporal_parts)})"
+        # The observations this fact's own recall ranked first. Among ~100 lookalike observations
+        # gemma-4 updated the first one about the right service — its port — with a change of
+        # owner, and left "owned by team Atlas" standing; it does not search, it scans.
+        if ids := (closest or {}).get(str(m["id"])):
+            if fact_format:
+                # The time comparison per pair, done here: gemma-4 compares dates badly.
+                ft = fact_time[str(m["id"])]
+                ids = [
+                    f"{oid} (stated after this fact)" if ft and (t := obs_time.get(oid)) and t > ft else oid
+                    for oid in ids
+                ]
+            text += f"\n  closest existing observations: {', '.join(ids)}"
         return text
 
-    facts_lines = "\n".join(_fact_line(m) for m in memories)
+    # Oldest first, so a later fact reads as the change it is (prompt TIME section).
+    ordered = (
+        sorted(memories, key=lambda m: fact_time[str(m["id"])] or datetime.min.replace(tzinfo=timezone.utc))
+        if fact_format
+        else memories
+    )
+    facts_lines = "\n".join(_fact_line(m) for m in ordered)
 
     # Build capacity note for the prompt when observation limit is configured
     observation_capacity_note: str | None = None
@@ -3747,7 +3971,7 @@ async def _consolidate_batch_with_llm(
     # single Gemini context cache shared by every bank — the bank mission, capacity
     # note, and response_schema (all bank/batch-variable) are kept OUT of the
     # cached prefix so one cache serves all and it never busts within a run.
-    system_prompt = build_consolidation_system_prompt(
+    system_prompt = (build_fact_consolidation_system_prompt if fact_format else build_consolidation_system_prompt)(
         llm_output_language=config.llm_output_language if config is not None else None,
     )
     user_content = build_consolidation_input(
@@ -3763,10 +3987,14 @@ async def _consolidate_batch_with_llm(
     prompt_cache = PromptCachePrefix(system_instruction=system_prompt)
 
     # Constrain the schema: the observation cap on creates, and source_fact_ids to this batch's ids
-    response_model = _build_response_model(
-        max_creates=remaining_observation_slots,
-        fact_ids=[str(m["id"]) for m in memories],
-        supports_max_items=config.llm_supports_max_items,
+    response_model: Any = (
+        _build_fact_response_model([str(m["id"]) for m in memories])
+        if fact_format
+        else _build_response_model(
+            max_creates=remaining_observation_slots,
+            fact_ids=[str(m["id"]) for m in memories],
+            supports_max_items=config.llm_supports_max_items,
+        )
     )
 
     max_attempts = config.consolidation_max_attempts
@@ -3811,7 +4039,14 @@ async def _consolidate_batch_with_llm(
             if inner_max_retries is not None:
                 call_kwargs["max_retries"] = inner_max_retries
             batch_call = await llm_config.call(**call_kwargs)
-            response: _ConsolidationBatchResponse = batch_call.content
+            if fact_format:
+                response: _ConsolidationBatchResponse = batch_call.content.to_actions(
+                    {str(o.id): o.text for o in union_observations},
+                    [str(m["id"]) for m in ordered],
+                    lambda fid, oid: bool((ft := fact_time.get(fid)) and (ot := obs_time.get(oid)) and ot > ft),
+                )
+            else:
+                response = batch_call.content
             # A model recording a new fact sometimes names that fact as the UPDATE target. There is
             # no observation to update, and dropping it loses the fact: it is a create.
             fact_ids = {str(m["id"]) for m in memories}
@@ -3834,6 +4069,7 @@ async def _consolidate_batch_with_llm(
                 creates=creates,
                 updates=updates,
                 deletes=response.deletes,
+                skips=response.skips,
                 obs_count=len(union_observations),
                 prompt_chars=len(system_prompt) + len(user_content),
                 failed_attempts=failed_attempts,

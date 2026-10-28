@@ -188,7 +188,9 @@ def start_eval_server(*, log_path: Path) -> EvalServer:
     env.update(provider_environment())
     env.update(
         {
-            "HINDSIGHT_API_DATABASE_URL": f"pg0://{instance}",
+            # An explicit port: left to pg0, servers started together raced for the same one and
+            # one database died under the other's run ("Connection refused" mid-scenario).
+            "HINDSIGHT_API_DATABASE_URL": f"pg0://{instance}:{free_port()}",
             "HINDSIGHT_API_HOST": "127.0.0.1",
             "HINDSIGHT_API_PORT": str(port),
             "HINDSIGHT_API_LOG_LEVEL": "info",

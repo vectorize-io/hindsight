@@ -956,6 +956,7 @@ ENV_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION = (
 )
 ENV_CONSOLIDATION_RECALL_BUDGET = "HINDSIGHT_API_CONSOLIDATION_RECALL_BUDGET"
 ENV_CONSOLIDATION_MAX_ATTEMPTS = "HINDSIGHT_API_CONSOLIDATION_MAX_ATTEMPTS"
+ENV_CONSOLIDATION_FORMAT = "HINDSIGHT_API_CONSOLIDATION_FORMAT"
 ENV_CONSOLIDATION_USE_DECISION_MODEL = "HINDSIGHT_API_CONSOLIDATION_USE_DECISION_MODEL"
 ENV_OBSERVATIONS_MISSION = "HINDSIGHT_API_OBSERVATIONS_MISSION"
 ENV_MAX_OBSERVATIONS_PER_SCOPE = "HINDSIGHT_API_MAX_OBSERVATIONS_PER_SCOPE"
@@ -1925,6 +1926,9 @@ DEFAULT_REFLECT_DEFAULT_OPTIONS: dict | None = None
 DEFAULT_MENTAL_MODEL_HISTORY_MAX_ENTRIES = 50
 DEFAULT_OBSERVATION_HISTORY_MAX_ENTRIES = 50
 DEFAULT_CONSOLIDATION_MAX_ATTEMPTS = 3  # Outer retry attempts for consolidation LLM batch calls
+# How the consolidation LLM answers: "actions" (creates/updates/deletes) or "facts" (one entry per
+# new fact, judging each observation that mentions it) — the latter written for small models (gemma-4).
+DEFAULT_CONSOLIDATION_FORMAT = "actions"
 DEFAULT_CONSOLIDATION_BATCH_SIZE = 50  # Memories to load per batch (internal memory optimization)
 DEFAULT_CONSOLIDATION_MAX_MEMORIES_PER_ROUND = (
     100  # Max memories per consolidation round (0 = unlimited). Limits how long one bank holds a worker slot.
@@ -3740,6 +3744,7 @@ class HindsightConfig:
     consolidation_source_facts_max_tokens: int
     consolidation_source_facts_max_tokens_per_observation: int
     consolidation_max_attempts: int
+    consolidation_format: str
     observations_mission: str | None
     max_observations_per_scope: int
     # Per-scope observation caps overriding max_observations_per_scope.
@@ -4149,6 +4154,7 @@ class HindsightConfig:
         "consolidation_source_facts_max_tokens",
         "consolidation_source_facts_max_tokens_per_observation",
         "observations_mission",
+        "consolidation_format",
         "max_observations_per_scope",
         "observation_scope_limits",
         "default_observation_scopes",
@@ -5501,6 +5507,7 @@ class HindsightConfig:
             consolidation_max_attempts=int(
                 os.getenv(ENV_CONSOLIDATION_MAX_ATTEMPTS, str(DEFAULT_CONSOLIDATION_MAX_ATTEMPTS))
             ),
+            consolidation_format=os.getenv(ENV_CONSOLIDATION_FORMAT, DEFAULT_CONSOLIDATION_FORMAT),
             observations_mission=os.getenv(ENV_OBSERVATIONS_MISSION) or DEFAULT_OBSERVATIONS_MISSION,
             max_observations_per_scope=int(
                 os.getenv(ENV_MAX_OBSERVATIONS_PER_SCOPE, str(DEFAULT_MAX_OBSERVATIONS_PER_SCOPE))

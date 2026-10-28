@@ -69,6 +69,7 @@ describe("full bank config surface mapping", () => {
     await client.updateBankConfig("bank", {
       enableAutoConsolidation: false,
       consolidationUseDecisionModel: false,
+      consolidationFormat: "facts",
       mentalModelDeltaUseDecisionModel: false,
       consolidationLlmBatchSize: 4,
       consolidationLlmParallelism: 2,
@@ -98,6 +99,7 @@ describe("full bank config surface mapping", () => {
     expect(body.updates).toEqual({
       enable_auto_consolidation: false,
       consolidation_use_decision_model: false,
+      consolidation_format: "facts",
       mental_model_delta_use_decision_model: false,
       consolidation_llm_batch_size: 4,
       consolidation_llm_parallelism: 2,

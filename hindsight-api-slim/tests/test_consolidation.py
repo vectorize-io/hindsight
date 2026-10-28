@@ -2501,6 +2501,7 @@ class TestBuildResponseModel:
             consolidation_llm_max_retries=None,
             consolidation_max_completion_tokens=None,
             llm_temperature_consolidation=0.0,
+            consolidation_format="actions",
         )
 
         result = await _consolidate_batch_with_llm(

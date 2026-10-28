@@ -264,3 +264,155 @@ def build_consolidation_input(
     # the cached system prefix) — only the variable facts/observations remain.
     template = mission_section + capacity_section + _SPLIT_INPUT_SECTION
     return template.format(facts_text=facts_text, observations_text=observations_text)
+
+
+# The fact-by-fact prompt (`consolidation_format = "facts"`), for small models: written for gemma-4,
+# which on the prompt above scored 29/40 on the consolidation evals and 36-38/40 on this one, with
+# no code checks and no second call. Each answer is one entry per new fact, and inside it every
+# existing observation that mentions the fact's subject, judged one by one with a fixed verdict
+# (`effect`): asked for creates and updates directly, gemma-4 closed the updates array after the
+# first stale observation, merged facets into one sentence, and changed a lookalike's value. The
+# code turns the entries into actions (consolidator._FactBatchResponse.to_actions) and does what
+# gemma-4 got wrong both ways: it compares the times itself (`(stated after this fact)`).
+_FACT_RULES = """## WHAT AN OBSERVATION IS
+
+One short sentence about ONE subject and ONE facet of it: its owner, its port, its job, its city, a count, one named member. "Paolo is the user's cousin" and "Paolo works as a teacher" are two observations — never join facets into one sentence, never add a new facet to an existing observation.
+
+## HOW TO WORK
+
+Go through the new facts one at a time, in the order given, and write one entry in `facts` for each. Finish a fact completely before the next one.
+
+For each fact:
+
+1. `fact_id`: the fact's `[uuid]`.
+2. `about`: who or what the fact is about, copied exactly as the fact spells it ("ledger-sink", "Paola", "the on-call rotation").
+3. `kind` — will this still be worth knowing next month?
+   - `"momentary"`: no — it is only true or relevant for minutes. This is about TIME only, never about who or what the fact names. Greetings, thanks, small talk, a break, what someone is doing or looking at right now, what is on a screen. Nothing is recorded. (When the MISSION asks for such data, it is "lasting".) Never call a fact momentary because of the MISSION: a fact the MISSION wants recorded without some detail is "lasting" — record it without that detail. MISSION "name no company" + fact "Acme moved its API to Rust" → "lasting", new: "Companies are moving their APIs to Rust."
+   - `"lasting"`: yes — names, numbers, owners, ports, channels, places, dates, jobs, decisions, preferences, rules, events, corrections.
+4. `existing`: go through the existing observations — the fact's `closest existing observations` first, then ALL the others — and list every one that mentions `about` (or a name that looks like it). For each:
+   - `observation_id`: copied exactly.
+   - `observation_text`: the observation's text, copied exactly — read it before judging it.
+   - `observation_about`: who or what THAT TEXT is about, copied exactly as the text spells it (not as the fact spells it).
+   - `effect` — what this fact does to that observation:
+     - `"unrelated"`: a different subject (a name a letter or a word apart — "ledger-sync" / "ledger-sink", "Paolo" / "Paola" — is a DIFFERENT subject), or the same subject but another facet the fact does not touch. Nothing changes.
+     - `"repeats"`: the observation already says what the fact says.
+     - `"changes"`: the fact gives a new value for exactly the facet the observation states (a new owner for the owner observation, a new port for the port observation — never a language fact for an owner observation), or fills in what the observation left vague ("her home country" → "Sweden").
+     - `"ends"`: the fact makes the observation no longer true as written — an item was sold, a tool retired, the observation is shown to be wrong, a member left a group, or someone left an employer: then EVERYTHING that was true only because of it ends too — their role there, their team there, their tenure there, their commute to its office.
+   - `text`: the observation after this fact.
+     - unrelated or repeats → empty: `""`.
+     - the observation is marked `(stated after this fact)` or `"newer_than_input_facts": true` → the fact is older news: write ONLY one short sentence saying what THIS FACT says, as the earlier state ("Before that, small overages were not waived."). Never restate the observation in it. It is added after the observation's text, which stays the current value.
+     - changes → the new value; you may keep the old one as history ("The billing-gateway service is owned by team Nimbus; earlier by team Atlas."). A vague reference → the same sentence with the value filled in ("Lena plans to move back to Sweden next spring.").
+     - ends, for a group or list → it goes on, present tense, naming the members who REMAIN, then who left ("The rotation is Ana, Ben and Dev; Cleo left it on 3 May 2025.").
+     - ends, anything else → the past tense with the date, keeping what it said ("Alice commuted to the Google office in Zurich until she left Google in April 2026."). Shown to be wrong → say it was wrong and what is true.
+5. `adds`: does the fact say anything that none of the observations you marked repeats, changes or ends already says? `"yes"` or `"no"`. A fact that only repeats an observation is "no".
+6. `new`: when `adds` is "yes", one sentence per facet the fact states that no existing observation already says. Write what the fact says, as stated:
+   - Never calculate. "The user has 2 dogs" + "the user has a dog named Rex" → new "The user has a dog named Rex"; the count observation is "unrelated" and stays 2. A count changes only when a fact states a new count.
+   - Empty when the fact changes an observation marked `(stated after this fact)`: its content is that observation's earlier state.
+7. `same_as_fact`: when this fact says the same as an EARLIER fact of this batch that already has a `new` observation, that fact's id — and leave `new` empty. Otherwise null.
+
+A lasting fact must end up somewhere: an existing observation it repeats, changes or ends, or `new`. Otherwise it is lost.
+
+`deletes` (rare): only when two EXISTING observations say exactly the same thing — delete one with `merged_into` set to the other. Never delete because something changed or ended."""
+
+_FACT_TIME_RULE = """## TIME
+
+Facts are NOT given in the order they happened: old conversations are imported late. What counts is when something was stated: `mentioned_at` (and `occurred_start` / `occurred_end` for when it happened). The most recently stated value is the current one — not the fact processed last, and not the one worded "now", "new", "amended" or "was updated": an older fact describing a change describes an EARLIER state.
+
+The comparison is done for you: in a fact's `closest existing observations`, the ones stated after that fact are marked `(stated after this fact)`, and an observation stated after every new fact carries `"newer_than_input_facts": true` — both mean the fact is older news for it. Unmarked means the fact is the more recent.
+
+The new facts are listed oldest first. When two new facts disagree about the same thing, the LATER one in the list is current: the earlier one's `new` sentence says it as the earlier state ("Before 21 October 2026, small overages were not waived."), never as the current rule. An older fact is still recorded, as the earlier state — never dropped."""
+
+_FACT_OUTPUT = """## OUTPUT FORMAT
+
+Return one JSON object: `{{"facts": [...one entry per new fact, in order...], "deletes": []}}`.
+
+### Example
+
+New facts:
+  [aaaaaaaa-0000-0000-0000-000000000001] ledger-sink now listens on port 8444. (mentioned_at=2025-05-10)
+    closest existing observations: 11111111-1111-1111-1111-111111111111
+  [aaaaaaaa-0000-0000-0000-000000000002] Thanks, that's really helpful! (mentioned_at=2025-05-10)
+  [aaaaaaaa-0000-0000-0000-000000000003] Cleo left the on-call rotation on 3 May 2025. (mentioned_at=2025-05-10)
+    closest existing observations: 22222222-2222-2222-2222-222222222222, 66666666-6666-6666-6666-666666666666
+  [aaaaaaaa-0000-0000-0000-000000000004] The user has a dog named Rex. (mentioned_at=2025-05-10)
+    closest existing observations: 44444444-4444-4444-4444-444444444444
+  [aaaaaaaa-0000-0000-0000-000000000005] The user said their favorite framework is now React. (mentioned_at=2025-05-10)
+    closest existing observations: 55555555-5555-5555-5555-555555555555 (stated after this fact)
+  [aaaaaaaa-0000-0000-0000-000000000006] ledger-sink is listening on port 8444. (mentioned_at=2025-05-11)
+
+Existing observations:
+  {{"id": "11111111-1111-1111-1111-111111111111", "text": "billing-sink listens on port 8336.", "mentioned_at": "2025-04-01"}}
+  {{"id": "22222222-2222-2222-2222-222222222222", "text": "The on-call rotation is Ana, Ben, Cleo and Dev.", "mentioned_at": "2025-04-01"}}
+  {{"id": "33333333-3333-3333-3333-333333333333", "text": "Cleo is on call on Mondays.", "mentioned_at": "2025-04-01"}}
+  {{"id": "44444444-4444-4444-4444-444444444444", "text": "The user has 2 dogs.", "mentioned_at": "2025-04-01"}}
+  {{"id": "55555555-5555-5555-5555-555555555555", "text": "The user's favorite framework is Svelte.", "mentioned_at": "2025-06-01", "newer_than_input_facts": true}}
+  {{"id": "66666666-6666-6666-6666-666666666666", "text": "Cleo lives in Lisbon.", "mentioned_at": "2025-04-01"}}
+
+Output:
+
+{{"facts": [
+  {{"fact_id": "aaaaaaaa-0000-0000-0000-000000000001", "about": "ledger-sink", "kind": "lasting", "existing": [
+      {{"observation_id": "11111111-1111-1111-1111-111111111111", "observation_text": "billing-sink listens on port 8336.", "observation_about": "billing-sink", "effect": "unrelated", "text": ""}}],
+    "adds": "yes", "new": ["ledger-sink listens on port 8444."], "same_as_fact": null}},
+  {{"fact_id": "aaaaaaaa-0000-0000-0000-000000000002", "about": "the conversation", "kind": "momentary", "existing": [], "adds": "no", "new": [], "same_as_fact": null}},
+  {{"fact_id": "aaaaaaaa-0000-0000-0000-000000000003", "about": "Cleo", "kind": "lasting", "existing": [
+      {{"observation_id": "22222222-2222-2222-2222-222222222222", "observation_text": "The on-call rotation is Ana, Ben, Cleo and Dev.", "observation_about": "the on-call rotation", "effect": "ends", "text": "The on-call rotation is Ana, Ben and Dev; Cleo left it on 3 May 2025."}},
+      {{"observation_id": "66666666-6666-6666-6666-666666666666", "observation_text": "Cleo lives in Lisbon.", "observation_about": "Cleo", "effect": "unrelated", "text": ""}},
+      {{"observation_id": "33333333-3333-3333-3333-333333333333", "observation_text": "Cleo is on call on Mondays.", "observation_about": "Cleo", "effect": "ends", "text": "Cleo was on call on Mondays until she left the rotation on 3 May 2025."}}],
+    "adds": "no", "new": [], "same_as_fact": null}},
+  {{"fact_id": "aaaaaaaa-0000-0000-0000-000000000004", "about": "the user's dog Rex", "kind": "lasting", "existing": [
+      {{"observation_id": "44444444-4444-4444-4444-444444444444", "observation_text": "The user has 2 dogs.", "observation_about": "the user's dogs", "effect": "unrelated", "text": ""}}],
+    "adds": "yes", "new": ["The user has a dog named Rex."], "same_as_fact": null}},
+  {{"fact_id": "aaaaaaaa-0000-0000-0000-000000000005", "about": "the user's favorite framework", "kind": "lasting", "existing": [
+      {{"observation_id": "55555555-5555-5555-5555-555555555555", "observation_text": "The user's favorite framework is Svelte.", "observation_about": "the user's favorite framework", "effect": "changes", "text": "Before that, their favorite was React."}}],
+    "adds": "no", "new": [], "same_as_fact": null}},
+  {{"fact_id": "aaaaaaaa-0000-0000-0000-000000000006", "about": "ledger-sink", "kind": "lasting", "existing": [
+      {{"observation_id": "11111111-1111-1111-1111-111111111111", "observation_text": "billing-sink listens on port 8336.", "observation_about": "billing-sink", "effect": "unrelated", "text": ""}}],
+    "adds": "no", "new": [], "same_as_fact": "aaaaaaaa-0000-0000-0000-000000000001"}}
+],
+"deletes": []}}
+
+Why: billing-sink is not ledger-sink. Cleo's city is another facet, so it is unrelated; observation 3333 was not among the closest but mentions Cleo, so it is found by scanning. The dog count is not touched by a named dog. Svelte was stated after React, so Svelte stays the favorite and React is added as the earlier state. Fact 6 repeats fact 1.
+
+### Text rules
+
+- Clean prose. Never copy metadata into the text (`mentioned_at=...`, uuids, "Involving:" labels).
+- Do NOT include `tags` — handled automatically."""
+
+
+_FACT_INPUT_FORMAT = f"""## INPUT FORMAT
+
+Each request provides new facts and existing observations. Every temporal field is optional and is omitted when unknown.
+
+### New facts
+
+Oldest first, one per line, formatted as `[uuid] fact text (temporal fields)`:
+- `[uuid]`: the fact's identifier — copy it into `fact_id`
+- `occurred_start` / `occurred_end`: when the described event happened
+- `mentioned_at`: when the fact was stated — its recency, NOT when it was added to memory
+- `closest existing observations` (next line, when any): the ids of the existing observations most similar to this fact, best first, those stated after the fact marked `(stated after this fact)`. Ranked by similarity only: a lookalike name ranks close too.
+
+### Existing observations
+
+A JSON array pooled from recalls across the new facts. Each entry has:
+{_OBSERVATION_FIELDS}"""
+
+
+def build_fact_consolidation_system_prompt(llm_output_language: str | None = None) -> str:
+    """The fact-by-fact variant of :func:`build_consolidation_system_prompt` (``consolidation_format = "facts"``).
+
+    Bank-agnostic and cacheable the same way; the per-batch user message is the same too
+    (:func:`build_consolidation_input`), with each fact's closest observations named under it.
+    """
+    language_section = default_language_section(_DEFAULT_LANGUAGE_RULE, llm_output_language)
+    template = (
+        "You keep a long-term memory. New facts arrive; you record what they say as observations — short "
+        "sentences, one facet each — and keep existing observations true.\n\n"
+        "If anything in the MISSION conflicts with the rules below, the MISSION takes priority.\n\n"
+        f"{language_section}"
+        f"{_FACT_TIME_RULE}\n\n"
+        f"{_FACT_RULES}\n\n"
+        f"{_FACT_INPUT_FORMAT}\n\n"
+        f"{_FACT_OUTPUT}" + output_language_directive(llm_output_language)
+    )
+    return template.format()

@@ -130,6 +130,7 @@ _SAMPLE_VALUES: dict[str, Any] = {
     "store_document_text": False,
     "enable_auto_consolidation": False,
     "consolidation_use_decision_model": False,
+    "consolidation_format": "facts",
     "consolidation_max_memories_per_round": 42,
     "consolidation_llm_parallelism": 3,
     "recall_include_chunks": True,
