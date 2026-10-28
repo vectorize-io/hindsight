@@ -1601,6 +1601,15 @@ jobs:
         grep -q '/app/start-all.sh' <<<"$out"
         grep -q 'startupProbe:' <<<"$out"
 
+    - name: Render terminationGracePeriodSeconds
+      run: |
+        # 60s by default on both pods that run workers: the API drains in-flight
+        # tasks for 30s, cancels the rest, then hands them back (#6068).
+        out=$(helm template rel helm/hindsight --set worker.enabled=true -s templates/api-deployment.yaml -s templates/worker-statefulset.yaml)
+        test "$(grep -c 'terminationGracePeriodSeconds: 60' <<<"$out")" = 2
+        out=$(helm template rel helm/hindsight -s templates/api-deployment.yaml --set api.terminationGracePeriodSeconds=90)
+        grep -q 'terminationGracePeriodSeconds: 90' <<<"$out"
+
   test-standalone-start-script:
     needs: [detect-changes]
     if: >-
