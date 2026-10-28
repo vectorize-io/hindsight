@@ -9,6 +9,8 @@ import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+import numpy as np
+
 from ..cross_encoder import RerankTimeoutError, _served_provider
 from .decision_reranker import PROVIDER_NAME as DECISION_MODEL_RERANKER
 from .decision_reranker import DecisionModelReranker, RerankOptions, rerank_options, rerank_shared_context
@@ -378,7 +380,7 @@ class CrossEncoderReranker:
         now: datetime | None = None,
         prune: bool = False,
         dedup: bool = False,
-        links: asyncio.Task[set[frozenset[str]] | None] | None = None,
+        embeddings: asyncio.Task[dict[str, np.ndarray] | None] | None = None,
     ) -> RerankResult:
         """
         Rerank candidates using cross-encoder scores.
@@ -391,7 +393,7 @@ class CrossEncoderReranker:
             prune: With a decision model, also drop the candidates it judges no help.
             dedup: With a decision model, also drop a candidate repeating a better-ranked one.
                 Both are ignored by any other reranker, which only orders.
-            links: For dedup, the lookup of the semantic links among the candidates' ids, started
+            embeddings: For dedup, the read of the candidates' stored embeddings, started
                 by the caller so it runs alongside the ranking request (see RerankOptions). It is
                 cancelled here if dedup never needs it.
 
@@ -460,7 +462,7 @@ class CrossEncoderReranker:
                 dedup=dedup,
                 fact_types=[c.retrieval.fact_type for c in candidates],
                 ids=[c.retrieval.id for c in candidates],
-                links=links if dedup else None,
+                embeddings=embeddings if dedup else None,
             )
         )
         try:
@@ -475,8 +477,8 @@ class CrossEncoderReranker:
         finally:
             rerank_shared_context.reset(shared_context_token)
             rerank_options.reset(options_token)
-            if links is not None and not links.done():
-                links.cancel()
+            if embeddings is not None and not embeddings.done():
+                embeddings.cancel()
             _served_provider.reset(token)
         if served_provider is None:
             # Single-member encoders do not record one. Their provider_name is

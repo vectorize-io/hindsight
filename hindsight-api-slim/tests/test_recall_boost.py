@@ -490,7 +490,7 @@ def test_recall_async_wires_stage2_and_keeps_interleave(monkeypatch):
         async def ensure_initialized(self) -> None:
             return None
 
-        async def rerank(self, _query: str, candidates: list[MergedCandidate], now=None) -> RerankResult:
+        async def rerank(self, _query: str, candidates: list[MergedCandidate], now=None, **_options) -> RerankResult:
             return RerankResult(
                 results=[
                     ScoredResult(

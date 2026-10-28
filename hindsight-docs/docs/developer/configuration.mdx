@@ -1646,7 +1646,7 @@ reflect and consolidation run.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE` | Drop a candidate judged no help: below 0.2, or below 40% of the best candidate. Reuses the ranking answers, so no extra request; the best candidate always survives. Per bank (`recall_decision_model_prune`). | `false` |
-| `HINDSIGHT_API_RECALL_DECISION_MODEL_DEDUP` | Drop a candidate repeating a better-ranked one, so the same fact retained from several documents comes back once. One more decision-model request after the ranking one, asking only about candidates still in the pool that retain already linked as similar, or that are written in two scripts (a translated copy); memories dated differently, or of two fact types, are never called repeats. Per bank (`recall_decision_model_dedup`). | `false` |
+| `HINDSIGHT_API_RECALL_DECISION_MODEL_DEDUP` | Drop a candidate repeating a better-ranked one, so the same fact retained from several documents comes back once. One more decision-model request after the ranking one, asking only about candidates still in the pool whose stored embeddings are alike (cosine 0.65 or more), or that are written in two scripts (a translated copy); memories dated differently, or of two fact types, are never called repeats. Per bank (`recall_decision_model_dedup`). | `false` |
 
 **Consolidation.** With a decision model, consolidation asks it, for each new fact, how the
 fact relates to the observations recall found for it: does it restate one, add something new

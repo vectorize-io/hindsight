@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 
+import numpy as np
 import pytest
 
 from hindsight_api.config import DecisionModelConfig
@@ -311,60 +312,81 @@ class TestDedup:
         assert [r.candidate.retrieval.text for r in result.results] == [TEA]
 
 
-async def _found(links: set[frozenset[str]] | None) -> set[frozenset[str]] | None:
-    return links
+# Stored embeddings: the two tea memories point the same way, sencha elsewhere.
+_VECTORS = {TEA: [1.0, 0.0], TEA_AGAIN: [0.95, 0.1], SENCHA: [0.0, 1.0]}
 
 
-class TestDedupLinks:
-    """With the stored links, dedup asks only linked pairs and pairs in two scripts."""
+async def _found(vectors: dict[str, list[float]] | None) -> dict[str, np.ndarray] | None:
+    return None if vectors is None else {key: np.array(vector) for key, vector in vectors.items()}
 
-    async def _dedup(self, client: _Client, docs: list[str], links: set[frozenset[str]] | None) -> list[float]:
-        task = asyncio.create_task(_found(links))
-        return await _predict(client, docs, dedup=True, ids=docs, links=task)
 
-    async def test_only_linked_pairs_are_asked(self):
+class TestDedupAlike:
+    """With the stored embeddings, dedup asks only alike pairs and pairs in two scripts."""
+
+    async def _dedup(self, client: _Client, docs: list[str], vectors: dict[str, list[float]] | None) -> list[float]:
+        task = asyncio.create_task(_found(vectors))
+        return await _predict(client, docs, dedup=True, ids=docs, embeddings=task)
+
+    async def test_only_alike_pairs_are_asked(self):
         client = _Client({TEA: 0.9, TEA_AGAIN: 0.8, SENCHA: 0.7}, repeats={(TEA, TEA_AGAIN)})
-        scores = await self._dedup(client, [TEA, TEA_AGAIN, SENCHA], {frozenset((TEA, TEA_AGAIN))})
+        scores = await self._dedup(client, [TEA, TEA_AGAIN, SENCHA], _VECTORS)
         assert client.pairs == [(TEA, TEA_AGAIN)]
         assert scores[1] == 0.0 and scores[2] > 0.0
 
     async def test_no_qualifying_pair_skips_the_second_request(self):
         client = _Client({TEA: 0.9, SENCHA: 0.7})
-        await self._dedup(client, [TEA, SENCHA], set())
+        await self._dedup(client, [TEA, SENCHA], _VECTORS)
         assert client.scopes == ["decision_recall_rerank"]
 
-    async def test_a_pair_in_two_scripts_is_asked_without_a_link(self):
-        """A translated copy: an English-leaning embedder never links it."""
+    async def test_a_pair_in_two_scripts_is_asked_however_far_apart(self):
+        """A translated copy: an English-leaning embedder scores it low."""
         chinese = "玛尔塔最喜欢的茶是玄米茶"
         client = _Client({TEA: 0.9, chinese: 0.8, SENCHA: 0.7}, repeats={(TEA, chinese)})
-        scores = await self._dedup(client, [TEA, chinese, SENCHA], set())
+        scores = await self._dedup(client, [TEA, chinese, SENCHA], {**_VECTORS, chinese: [0.0, -1.0]})
         assert client.pairs == [(TEA, chinese), (chinese, SENCHA)]
         assert scores[1] == 0.0
 
-    async def test_without_links_every_pair_is_asked(self):
-        """The store keeps no links (or the read failed): fall back to every kept pair."""
+    async def test_without_embeddings_every_pair_is_asked(self):
+        """The store keeps none (or the read failed): fall back to every kept pair."""
         client = _Client({TEA: 0.9, TEA_AGAIN: 0.8, SENCHA: 0.7})
         await self._dedup(client, [TEA, TEA_AGAIN, SENCHA], None)
         assert len(client.pairs) == 3
 
-    async def test_the_link_lookup_runs_alongside_the_ranking_request(self):
-        """No round trip of its own: the ranking request is still out when the lookup runs."""
-        lookup_ran = asyncio.Event()
+    async def test_a_candidate_without_an_embedding_is_compared_with_every_other(self):
+        client = _Client({TEA: 0.9, TEA_AGAIN: 0.8, SENCHA: 0.7})
+        await self._dedup(client, [TEA, TEA_AGAIN, SENCHA], {TEA: _VECTORS[TEA], SENCHA: _VECTORS[SENCHA]})
+        assert client.pairs == [(TEA, TEA_AGAIN), (TEA_AGAIN, SENCHA)]
 
-        async def lookup() -> set[frozenset[str]]:
-            lookup_ran.set()
-            return {frozenset((TEA, TEA_AGAIN))}
+    async def test_only_the_kept_candidates_are_compared(self):
+        client = _Client({TEA: 0.9, TEA_AGAIN: 0.05, SENCHA: 0.7})
+        await _predict(
+            client,
+            [TEA, TEA_AGAIN, SENCHA],
+            prune=True,
+            dedup=True,
+            ids=[TEA, TEA_AGAIN, SENCHA],
+            embeddings=asyncio.create_task(_found(_VECTORS)),
+        )
+        assert client.scopes == ["decision_recall_rerank"]
+
+    async def test_the_embeddings_are_read_alongside_the_ranking_request(self):
+        """No round trip of its own: the ranking request is still out when the read runs."""
+        read_ran = asyncio.Event()
+
+        async def read() -> dict[str, np.ndarray] | None:
+            read_ran.set()
+            return await _found(_VECTORS)
 
         class _Ranking(_Client):
             async def ask_all(self, state, questions, *, scope):
                 if scope == "decision_recall_rerank":
-                    await asyncio.wait_for(lookup_ran.wait(), timeout=5)
+                    await asyncio.wait_for(read_ran.wait(), timeout=5)
                 return await super().ask_all(state, questions, scope=scope)
 
         client = _Ranking({TEA: 0.9, TEA_AGAIN: 0.8}, repeats={(TEA, TEA_AGAIN)})
         reranker = CrossEncoderReranker(cross_encoder=_reranker(client))
-        task = asyncio.create_task(lookup())
-        result = await reranker.rerank("q", [_candidate(TEA), _candidate(TEA_AGAIN)], dedup=True, links=task)
+        task = asyncio.create_task(read())
+        result = await reranker.rerank("q", [_candidate(TEA), _candidate(TEA_AGAIN)], dedup=True, embeddings=task)
         assert [r.candidate.retrieval.text for r in result.results] == [TEA]
 
 

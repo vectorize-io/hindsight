@@ -2,6 +2,7 @@
 
 import uuid
 
+import numpy as np
 import pytest
 
 from hindsight_api import MemoryEngine, RequestContext
@@ -17,7 +18,7 @@ async def test_request_overrides_bank_overrides_server(memory_no_llm_verify: Mem
     await engine.ensure_bank_profile(bank_id, request_context=RC)
     seen: list[tuple[bool, bool]] = []
 
-    async def spy(query, candidates, now=None, prune=False, dedup=False, links=None):
+    async def spy(query, candidates, now=None, prune=False, dedup=False, embeddings=None):
         seen.append((prune, dedup))
         return RerankResult(results=[], provider_name="spy")
 
@@ -43,46 +44,40 @@ async def test_request_overrides_bank_overrides_server(memory_no_llm_verify: Mem
 
 
 @pytest.mark.memory_backend_incompatible
-async def test_dedup_reads_the_semantic_links_among_the_candidates(memory_no_llm_verify: MemoryEngine, monkeypatch):
-    """Only semantic links, both endpoints among the ids, this bank only; a failed read falls
-    back to None, which makes dedup ask every pair instead of failing the recall."""
+async def test_dedup_reads_the_candidates_embeddings(memory_no_llm_verify: MemoryEngine, monkeypatch):
+    """This bank's stored embeddings of the ids asked for; a memory without one is left out, and
+    a failed read falls back to None, which makes dedup ask every pair instead of failing."""
     engine = memory_no_llm_verify
-    bank_id, other_bank = f"test-dedup-links-{uuid.uuid4().hex[:8]}", f"test-dedup-other-{uuid.uuid4().hex[:8]}"
-    a, b, c, outside = (str(uuid.uuid4()) for _ in range(4))
+    bank_id, other_bank = f"test-dedup-emb-{uuid.uuid4().hex[:8]}", f"test-dedup-other-{uuid.uuid4().hex[:8]}"
+    a, b, bare, elsewhere = (str(uuid.uuid4()) for _ in range(4))
+    vector = (await engine.embeddings.encode(["tea"]))[0]
+    as_text = "[" + ",".join(str(x) for x in vector) + "]"
     pool = await engine._get_pool()
-    # Seeded directly: retain derives these links from real embeddings, which this test does
-    # not need — it pins which stored rows the read returns.
     async with pool.acquire() as conn:
         for bank in (bank_id, other_bank):
             await engine.ensure_bank_profile(bank, request_context=RC)
-        for unit_id, bank in ((a, bank_id), (b, bank_id), (c, bank_id), (outside, bank_id)):
-            await conn.execute(
-                "INSERT INTO memory_units (id, bank_id, text, fact_type) VALUES ($1, $2, $3, 'world')",
-                unit_id,
-                bank,
-                unit_id,
-            )
-        for from_id, to_id, link_type, bank in (
-            (a, b, "semantic", bank_id),
-            (b, c, "temporal", bank_id),
-            (c, outside, "semantic", bank_id),
-            (c, a, "semantic", other_bank),
+        for unit_id, bank, embedding in (
+            (a, bank_id, as_text),
+            (b, bank_id, as_text),
+            (bare, bank_id, None),
+            (elsewhere, other_bank, as_text),
         ):
             await conn.execute(
-                "INSERT INTO memory_links (from_unit_id, to_unit_id, link_type, weight, bank_id)"
-                " VALUES ($1, $2, $3, 0.9, $4)",
-                from_id,
-                to_id,
-                link_type,
+                "INSERT INTO memory_units (id, bank_id, text, fact_type, embedding) VALUES ($1, $2, $3, 'world', $4::vector)",
+                unit_id,
                 bank,
+                unit_id,
+                embedding,
             )
 
-    assert await engine._semantic_links_among(bank_id, [a, b, c]) == {frozenset((a, b))}
+    found = await engine._candidate_embeddings(bank_id, [a, b, bare, elsewhere])
+    assert found is not None and set(found) == {a, b}
+    assert np.allclose(found[a], vector, atol=1e-6)
 
     from hindsight_api.engine import memories
 
     async def broken(**kwargs):
-        raise RuntimeError("no links here")
+        raise RuntimeError("no embeddings here")
 
-    monkeypatch.setattr(memories.get_memories(), "semantic_links_among", broken)
-    assert await engine._semantic_links_among(bank_id, [a, b, c]) is None
+    monkeypatch.setattr(memories.get_memories(), "unit_embeddings", broken)
+    assert await engine._candidate_embeddings(bank_id, [a, b]) is None

@@ -165,7 +165,7 @@ async def test_concurrent_recalls_use_their_own_rerank_provider(
     chain.MEMBER_COOLDOWN_SECONDS = 0.0  # the primary fails per query, not per outage
 
     class _InterleavedReranker(CrossEncoderReranker):
-        async def rerank(self, query: str, candidates: list[MergedCandidate], now=None) -> RerankResult:
+        async def rerank(self, query: str, candidates: list[MergedCandidate], now=None, **_options) -> RerankResult:
             result = await super().rerank(query, candidates)
             # Let the other request move the shared cursor before recall consumes
             # this result. Both requests use the real rerank/normalization path.

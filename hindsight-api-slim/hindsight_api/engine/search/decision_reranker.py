@@ -17,9 +17,12 @@ import asyncio
 import contextvars
 from dataclasses import dataclass
 
+import numpy as np
+
 from ...config import DecisionModelConfig
 from ..cross_encoder import CrossEncoderModel
 from ..decision_model import DecisionModel, DecisionQuestion
+from ..decision_rerank_interface import ALIKE_FROM
 
 PROVIDER_NAME = "decision_model"
 
@@ -40,17 +43,17 @@ class RerankOptions:
     Per recall, not per reranker: one reranker serves every bank, and the request, then the
     bank, then the server decide (``recall_decision_model_prune`` / ``_dedup``).
     ``fact_types`` and ``ids`` are each candidate's fact type and memory id, aligned with the
-    pairs handed to predict(), so dedup only compares two candidates of one type. ``links`` is
-    the caller's lookup of the semantic links among those ids, already running so it costs no
-    round trip of its own: dedup awaits it after the ranking request. It resolves to ``None``
-    when the store has no links, and then dedup asks every pair.
+    pairs handed to predict(), so dedup only compares two candidates of one type.
+    ``embeddings`` is the caller's read of those ids' stored embeddings (id to vector), already
+    running so it costs no round trip of its own: dedup awaits it after the ranking request. It
+    resolves to ``None`` when the store has none, and then dedup asks every pair.
     """
 
     prune: bool = False
     dedup: bool = False
     fact_types: list[str] | None = None
     ids: list[str] | None = None
-    links: asyncio.Task[set[frozenset[str]] | None] | None = None
+    embeddings: asyncio.Task[dict[str, np.ndarray] | None] | None = None
 
 
 # Set by CrossEncoderReranker.rerank(), like rerank_shared_context.
@@ -113,7 +116,7 @@ class DecisionModelReranker(CrossEncoderModel):
         if options.dedup:
             # The second request: its pairs depend on the ranking answers above.
             kinds = [options.fact_types[index] for index in indices] if options.fact_types else None
-            repeats = rerank.repeat_questions(subset, ranked, kinds, await self._linked(options, indices))
+            repeats = rerank.repeat_questions(subset, ranked, kinds, await self._alike(options, indices, ranked))
             if repeats:
                 found = await self._client.ask_all(
                     state,
@@ -125,19 +128,30 @@ class DecisionModelReranker(CrossEncoderModel):
             scores[indices[slot]] = score
 
     @staticmethod
-    async def _linked(options: RerankOptions, indices: list[int]) -> set[frozenset[int]] | None:
-        """The stored links among ``indices`` as pairs of slots, or None to ask every pair."""
-        if options.links is None or options.ids is None:
+    async def _alike(options: RerankOptions, indices: list[int], ranked: list[float]) -> set[frozenset[int]] | None:
+        """The pairs of slots still in the pool whose stored embeddings are alike (cosine at
+        least ``ALIKE_FROM``), or None to ask every pair.
+
+        Computed here, on the candidates the ranking kept, rather than read from the
+        semantic links retain stores: retain keeps only each memory's 50 nearest above its
+        link threshold, so in a large bank of alike facts a repeat is often not among them. A
+        candidate with no stored embedding is treated as alike to every other, so it is asked.
+        """
+        if options.embeddings is None or options.ids is None:
             return None
-        links = await options.links
-        if links is None:
+        vectors = await options.embeddings
+        if vectors is None:
             return None
-        slot_of = {options.ids[index]: slot for slot, index in enumerate(indices)}
-        return {
-            frozenset(slot_of[unit_id] for unit_id in link)
-            for link in links
-            if all(unit_id in slot_of for unit_id in link)
-        }
+        kept = [slot for slot, score in enumerate(ranked) if score > 0.0]
+        found = [slot for slot in kept if options.ids[indices[slot]] in vectors]
+        missing = set(kept) - set(found)
+        alike = {frozenset((a, b)) for a in missing for b in kept if a != b}
+        if len(found) > 1:
+            matrix = np.stack([vectors[options.ids[indices[slot]]] for slot in found])
+            matrix = matrix / np.maximum(np.linalg.norm(matrix, axis=1, keepdims=True), 1e-12)
+            similar = np.argwhere(np.triu(matrix @ matrix.T >= ALIKE_FROM, k=1))
+            alike.update(frozenset((found[a], found[b])) for a, b in similar)
+        return alike
 
     async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         docs = [doc for _, doc in pairs]

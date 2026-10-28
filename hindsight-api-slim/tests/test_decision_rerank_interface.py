@@ -60,17 +60,17 @@ def test_dedup_without_sending_anything():
     assert words.deduped(scores, [repeat], {repeat.key: 0.1}) == scores
 
 
-def test_dedup_asks_linked_pairs_and_pairs_in_two_scripts():
-    """With links, only linked pairs and translated copies are asked; without, every pair."""
+def test_dedup_asks_alike_pairs_and_pairs_in_two_scripts():
+    """With alike pairs given, only those and translated copies are asked; without, every pair."""
     words = decision_rerank_interface.DecisionRerank(count=lambda t: len(t.split()), truncate=lambda t, n: t)
     docs = ["tea is genmaicha", "tea genmaicha again", "чай генмайча", "[Date: May 03, 2026] 玄米茶"]
     scores = words.scores([0.9, 0.8, 0.7, 0.6])
 
-    asked = {(q.above, q.slot) for q in words.repeat_questions(docs, scores, linked={frozenset((0, 1))})}
-    # Latin, Latin, Cyrillic, CJK: (0, 1) is linked and every other pair crosses scripts.
+    asked = {(q.above, q.slot) for q in words.repeat_questions(docs, scores, alike={frozenset((0, 1))})}
+    # Latin, Latin, Cyrillic, CJK: (0, 1) is alike and every other pair crosses scripts.
     assert asked == {(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)}
 
     latin = ["tea is genmaicha", "tea genmaicha again", "sencha in the afternoon"]
     latin_scores = words.scores([0.9, 0.8, 0.7])
-    assert words.repeat_questions(latin, latin_scores, linked=set()) == []
+    assert words.repeat_questions(latin, latin_scores, alike=set()) == []
     assert len(words.repeat_questions(latin, latin_scores)) == 3

@@ -2567,17 +2567,6 @@ class MemoriesExtension(Extension, ABC):
     async def graph_direct_links(self, *, conn, fq_table, bank_id: str, unit_ids: list[str]) -> list[dict[str, Any]]:
         """Memory-to-memory edges among ``unit_ids`` for the graph view."""
 
-    async def semantic_links_among(
-        self, *, conn, fq_table, bank_id: str, unit_ids: list[str]
-    ) -> set[frozenset[str]] | None:
-        """The pairs of ``unit_ids`` joined by a semantic link retain stored, either direction.
-
-        Recall's dedup asks only these pairs (and cross-script ones) whether one repeats the
-        other. ``None`` means this store keeps no such links, and dedup then asks every pair:
-        the default, so a store without them still dedups, at more questions.
-        """
-        return None
-
     async def graph_view(
         self,
         *,
@@ -3710,9 +3699,10 @@ class MemoriesExtension(Extension, ABC):
 
     async def unit_embeddings(self, *, conn, fq_table, bank_id: str, unit_ids: list[str]) -> list:
         """``(id, embedding, fact_type)`` rows, embedding as pgvector text, for the end-of-retain
-        semantic-link pass. Empty here, so the pass links nothing: that pass writes SQL links, and
-        a store that owns its memories derives its own (and sets
-        :attr:`derives_semantic_links_internally`, which skips the pass altogether)."""
+        semantic-link pass and recall's dedup. Empty here, so the pass links nothing: that pass
+        writes SQL links, and a store that owns its memories derives its own (and sets
+        :attr:`derives_semantic_links_internally`, which skips the pass altogether). Recall's
+        dedup then asks every pair among the kept candidates."""
         return []
 
     # ------------------------------------------------------------------ retain links and entity resolution

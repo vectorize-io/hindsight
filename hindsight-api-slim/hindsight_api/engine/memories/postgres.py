@@ -792,11 +792,6 @@ class PostgresMemories(MemoriesExtension):
     async def graph_direct_links(self, *, conn, fq_table, bank_id: str, unit_ids: list[str]) -> list[dict[str, Any]]:
         return await graph.graph_direct_links(conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_ids=unit_ids)
 
-    async def semantic_links_among(
-        self, *, conn, fq_table, bank_id: str, unit_ids: list[str]
-    ) -> set[frozenset[str]] | None:
-        return await graph.semantic_links_among(conn=conn, fq_table=fq_store_table, bank_id=bank_id, unit_ids=unit_ids)
-
     async def entity_memory_counts(
         self,
         *,

@@ -25,7 +25,7 @@ class _Reranker:
     async def ensure_initialized(self) -> None:
         return None
 
-    async def rerank(self, _query: str, candidates: list[Any], now=None) -> RerankResult:
+    async def rerank(self, _query: str, candidates: list[Any], now=None, **_options) -> RerankResult:
         return RerankResult(
             results=[
                 ScoredResult(

@@ -65,21 +65,39 @@ PRUNE_BELOW_BEST = 0.4
 # in one question, and which pairs matter is only known once the ranking answers are in, so it
 # is a second request, after the ranking one. Among the candidates still in the pool, a pair is
 # asked (both memories in the question, the better-ranked one as Memory A, one way round: the
-# order is known by then) when the caller says the two are linked — recall passes the semantic
-# links retain already stored — or when their texts are in different scripts: a translated
-# copy is a repeat an English-leaning embedder never links. Without links, every pair is asked.
+# order is known by then) when the caller says the two are alike — recall passes the pairs
+# whose stored embeddings are at least ``ALIKE_FROM`` apart in cosine — or when their texts are
+# in different scripts: a translated copy an English-leaning embedder scores low. Without that
+# (the caller has no embeddings), every pair is asked.
+#
+# ``ALIKE_FROM`` only narrows the pairs asked; the model decides. The lowest cosine of a true
+# same-script repeat in the labelled pools was 0.74 with the server's default local embedder
+# and 0.69 with a multilingual one ("Rate limit on the public API: 100 req/min" vs "Clients may
+# send at most 100 requests a minute to the public API"), so 0.65 keeps a margin under both.
+# Cross-script copies go through the script check instead: they fall as low as 0.40. An embedder
+# that packs every text close together (one multilingual model put all pairs above 0.77) passes
+# more pairs, never fewer repeats.
 #
 # Measured on a real server (true fusion order, 250 candidates, six languages, 36 recalls), the
-# second request: all kept pairs 60/60 repeats dropped, up to 153 pairs and 10.3k tokens; linked
-# pairs only 57/60 (the misses were cross-language copies), up to 25 pairs and 1.9k tokens;
-# linked + cross-script 60/60, up to 25 pairs and 1.9k tokens, p50 0.21s / p90 0.33s. No needed
-# fact was dropped by any of them. Ruled out: picking pairs before the ranking answers, to share
+# second request: all kept pairs 60/60 repeats dropped, up to 153 pairs and 10.3k tokens; pairs
+# joined by a stored semantic link + cross-script 60/60, up to 25 pairs and 1.9k tokens, p50
+# 0.21s. No needed fact was dropped by any of them. Stored links were then dropped: retain keeps
+# only a memory's 50 nearest above 0.7, so in a bank crowded with alike facts a repeat is often
+# not among them. On one 1,109-memory bank of crowded alike facts (12 recalls, six languages),
+# links + cross-script caught 46/48 repeats with the default local embedder and 81/83 with a
+# multilingual one; cosine 0.65 + cross-script caught 48/48 and 83/83, as many as asking every
+# kept pair. The price is the pairs: they grow with the square of the kept candidates, from a
+# median of 64 to 1,953 (131k tokens, split across parallel requests, p90 0.40s) when 63 alike
+# memories all help. Capping each candidate to its 3 or 5 nearest above it bounds that (183 or
+# 300 pairs) but missed 10/48 and 5/48: the nearest is often another copy that goes itself, so
+# the copy is never asked against the one that stays. Ruled out: picking pairs before the ranking answers, to share
 # the ranking request (26/40: a kept memory can rank as low as 199 by fusion, so only 76% of
 # repeat pairs had both in the top 40); deciding by cosine alone (distinct pairs reach 0.96);
 # character overlap (0 across languages); one choice over the whole pool, or the pool in the
 # state (both lose needed facts).
 DEDUP_INSTRUCTIONS = "Memory B is a repeat of Memory A."
 REPEAT_ABOVE = 0.5
+ALIKE_FROM = 0.65
 _DATE_PREFIX = re.compile(r"^\[Date: [^\]]*\]")
 
 
@@ -234,22 +252,23 @@ class DecisionRerank:
         docs: Sequence[str],
         scores: Sequence[float],
         kinds: Sequence[str] | None = None,
-        linked: Collection[frozenset[int]] | None = None,
+        alike: Collection[frozenset[int]] | None = None,
     ) -> list[RepeatQuestion]:
         """Dedup's questions: pairs of candidates still in the pool, the better-ranked as A.
 
         ``scores`` are :meth:`scores` or :meth:`pruned`; a candidate at 0.0 is already out.
-        ``docs`` are the uncapped texts, capped here as in the ranking questions. ``linked``
-        holds the pairs of slots the caller knows to be alike (recall: a stored semantic link);
-        with it, only those pairs and pairs written in different scripts are asked, and
-        without it (``None``: the caller has no links) every pair is. Never asked: pairs dated
+        ``docs`` are the uncapped texts, capped here as in the ranking questions. ``alike``
+        holds the pairs of slots the caller knows to be alike (recall: cosine of the stored
+        embeddings at least ``ALIKE_FROM``); with it, only those pairs and pairs written in
+        different scripts are asked, and without it (``None``: the caller has no embeddings)
+        every pair is. Never asked: pairs dated
         differently — "went climbing" on the 3rd and on the 10th are two occasions, and the
         model calls those repeats — and, when ``kinds`` gives each candidate's fact type,
         pairs of two types: an observation is built from the very facts it repeats, and
         choosing between them is recall's ``prefer_observations``.
         """
         # ponytail: no count cap; the caller splits the pairs into parallel requests by the size
-        # limits, so a pool kept unpruned with many links or scripts costs more requests at once.
+        # limits, so a pool kept unpruned with many alike pairs or scripts costs more requests at once.
         checked = DecisionRerank._ranked(scores)
         return [
             RepeatQuestion(
@@ -263,7 +282,7 @@ class DecisionRerank:
             for above in checked[:position]
             if not (_date(docs[above]) and _date(docs[slot]) and _date(docs[above]) != _date(docs[slot]))
             and (kinds is None or kinds[above] == kinds[slot])
-            and (linked is None or frozenset((above, slot)) in linked or _script(docs[above]) != _script(docs[slot]))
+            and (alike is None or frozenset((above, slot)) in alike or _script(docs[above]) != _script(docs[slot]))
         ]
 
     @staticmethod
