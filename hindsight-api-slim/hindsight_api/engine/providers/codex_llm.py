@@ -32,6 +32,7 @@ from typing import Any, Callable
 import aiohttp
 from pydantic import BaseModel, ValidationError
 
+from hindsight_api.config import get_config
 from hindsight_api.engine.aiohttp_session import LoopLocalSession, UpstreamHTTPError, raise_for_status
 from hindsight_api.engine.cache_affinity import cache_affinity_id
 from hindsight_api.engine.llm_interface import (
@@ -44,6 +45,7 @@ from hindsight_api.engine.llm_interface import (
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_transport import build_aiohttp_timeout
+from hindsight_api.engine.providers import tools_via_schema
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences
 from hindsight_api.engine.providers.openai_responses_llm import _messages_to_responses_input
@@ -1107,6 +1109,26 @@ class CodexLLM(LLMInterface):
         }
         payload.update(self._extra_body)
 
+        # The call through a response schema instead of tool_choice (see tools_via_schema):
+        # tools stay declared for the model to read, the reply is held to the schema.
+        via_schema = get_config().llm_tools_via_schema and tool_choice.mode in (
+            LLMToolChoiceMode.NAMED,
+            LLMToolChoiceMode.REQUIRED,
+        )
+        if via_schema:
+            held = tools_via_schema.response_schema(tools, tool_choice)
+            payload["input"] = [
+                *payload["input"],
+                {"type": "message", "role": "user", "content": tools_via_schema.turn_request(tools, tool_choice)},
+            ]
+            payload["tool_choice"] = "none"
+            payload["parallel_tool_calls"] = False
+            payload["text"] = {
+                "format": {"type": "json_schema", "name": held.name, "schema": held.schema, "strict": True}
+            }
+            # No resample on a cut-off reply, unlike the OpenAI-compatible path: this request
+            # carries no output cap (it never has), so a reply cannot end at one.
+
         headers = self._build_request_headers()
 
         url = f"{self.base_url}/codex/responses"
@@ -1174,6 +1196,9 @@ class CodexLLM(LLMInterface):
 
             content = reply.text or None
             tool_calls = reply.tool_calls
+            if via_schema and not tool_calls:
+                tool_calls = tools_via_schema.calls_from_reply(content, tools, tool_choice)
+                content = None
             usage = reply.usage or TokenUsage()
 
             duration = time.perf_counter() - start_time
@@ -1265,7 +1290,10 @@ class CodexLLM(LLMInterface):
                     usage = _usage_from_completed_event(event_type, data) or usage
 
                     # Extract text content
-                    if event_type == "response.text.delta" and "delta" in data:
+                    # The Responses API streams text as response.output_text.delta; without
+                    # it a turn answered in text -- a schema-held reply above all -- came back
+                    # empty, since this parser has no item-content fallback.
+                    if event_type in ("response.text.delta", "response.output_text.delta") and "delta" in data:
                         content += data["delta"]
 
                     # Extract completed tool calls from response.output_item.done

@@ -334,6 +334,48 @@ def _done_tool_for_document(base: dict) -> dict:
 
 TOOL_DONE_DOCUMENT = _done_tool_for_document(TOOL_DONE_ANSWER)
 
+# The same document, written as markdown and split into sections by its headings
+# (``structured_doc.split_markdown``, lossless). For a forced done asked for through a
+# response schema: a model held to the grammar wrote the nested section array thinner
+# than it writes markdown, and a judge preferred the markdown pages (98 to 37, against
+# 65 to 63 for the same request twice).
+_DONE_MARKDOWN_PROPERTY = {
+    "type": "string",
+    "description": (
+        "Your response as a markdown document: a '## ' heading per section, then its paragraphs, "
+        "lists, tables or code fences. " + NO_IDS_IN_TEXT_RULE
+    ),
+}
+
+
+def _done_tool_for_markdown_document(base: dict) -> dict:
+    """Swap a done tool's free-text ``answer`` for the document as ``markdown``.
+
+    The fields run answer_found, markdown, then the cited ids: a schema-enforced reply
+    is written in field order, so the citations come after the text they support.
+    """
+    tool = copy.deepcopy(base)
+    params = tool["function"]["parameters"]
+    properties = params["properties"]
+    properties.pop("answer", None)
+    ids = {name: prop for name, prop in properties.items() if name.endswith("_ids")}
+    rest = {name: prop for name, prop in properties.items() if not name.endswith("_ids") and name != "answer_found"}
+    params["properties"] = {
+        "answer_found": properties["answer_found"],
+        "markdown": _DONE_MARKDOWN_PROPERTY,
+        **rest,
+        **ids,
+    }
+    # Every field required, the id lists included (empty when nothing is cited): held to a
+    # schema, a model skips what it may skip, and optional citations came back 0.5 a page
+    # against 11.5 required.
+    params["required"] = list(params["properties"])
+    tool["function"]["description"] = (
+        "Signal completion with your final answer, as a markdown document. Use this when you have "
+        "gathered enough information to answer the question." + _DONE_SUFFICIENCY_GATE
+    )
+    return tool
+
 
 def _done_tool_for_output_language(base: dict, language: str) -> dict:
     """Replace a done tool's default source-language rule with the configured language.
@@ -448,6 +490,7 @@ def get_reflect_tools(
     answer_as_document: bool = False,
     llm_output_language: str | None = None,
     answer_ready: bool = False,
+    document_as_markdown: bool = False,
 ) -> list[dict]:
     """
     Get the list of tools for the reflect agent.
@@ -472,6 +515,8 @@ def get_reflect_tools(
             markdown that gets persisted.
         llm_output_language: Configured output language. Swaps ``done``'s default
             answer-in-the-question's-language rule for a directive to write in it.
+        document_as_markdown: With ``answer_as_document``, have ``done`` take the
+            document as one ``markdown`` string instead of a section array.
         answer_ready: Offer ``answer_ready``, the stop signal (one ``answer_found``
             bool), for a reflect whose answer the closing step writes.
 
@@ -500,13 +545,16 @@ def get_reflect_tools(
     else:
         done_tool = TOOL_DONE_ANSWER
     if answer_as_document:
-        done_tool = _done_tool_for_document(done_tool)
+        done_tool = (_done_tool_for_markdown_document if document_as_markdown else _done_tool_for_document)(done_tool)
     if answer_ready:
         done_tool = copy.deepcopy(done_tool)
+        form = ""
+        if answer_as_document:
+            form = ", as a markdown document" if document_as_markdown else ", as a structured document"
         # Keeps the sufficiency gate: dropping it with the rest of the old description let the
         # closing answer infer a value the evidence did not state (system eval hq-absent-2024).
         done_tool["function"]["description"] = (
-            f"Your final answer{', as a structured document' if answer_as_document else ''}. Call this only when "
+            f"Your final answer{form}. Call this only when "
             "you are asked for the answer; until then, call "
             "answer_ready once you have enough." + _DONE_SUFFICIENCY_GATE
         )

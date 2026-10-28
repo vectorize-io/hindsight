@@ -191,6 +191,7 @@ ENV_LLM_STRICT_SCHEMA_RETAIN = "HINDSIGHT_API_LLM_STRICT_SCHEMA_RETAIN"
 ENV_LLM_STRICT_SCHEMA_REFLECT = "HINDSIGHT_API_LLM_STRICT_SCHEMA_REFLECT"
 ENV_LLM_STRICT_SCHEMA_CONSOLIDATION = "HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION"
 ENV_LLM_SUPPORTS_MAX_ITEMS = "HINDSIGHT_API_LLM_SUPPORTS_MAX_ITEMS"
+ENV_LLM_TOOLS_VIA_SCHEMA = "HINDSIGHT_API_LLM_TOOLS_VIA_SCHEMA"
 ENV_LLM_SUPPORTS_STRING_PATTERN = "HINDSIGHT_API_LLM_SUPPORTS_STRING_PATTERN"
 # Route structured output through a forced function tool instead of the
 # OpenAI-style ``response_format`` on the LiteLLM-backed providers (``litellm``,
@@ -1250,6 +1251,18 @@ DEFAULT_LLAMACPP_EXTRA_ARGS = None  # Space-separated extra CLI args for llama.c
 # on parse retries.
 DEFAULT_LLM_STRICT_SCHEMA = False
 DEFAULT_LLM_SUPPORTS_MAX_ITEMS = True
+
+# True = reflect's tool calls go through a response schema instead of tool_choice: the
+# tools stay declared, tool_choice is "none", and each turn's reply is held to a JSON
+# schema -- a forced turn to its tool's arguments, a free turn to "one of the tools with
+# its arguments" -- and handed back as the call (engine/providers/tools_via_schema.py).
+# For servers that parse tool calls but do not enforce tool_choice: vLLM's gemma4
+# parser skips the grammar for "required" and named choices, and the model then answers
+# a forced search with the stop signal, or the closing call with another tool. Also has
+# a knowledge page's ``done`` take the page as markdown rather than a nested section
+# array: under the grammar, the nested form came out thinner. OpenAI-compatible and
+# Codex providers.
+DEFAULT_LLM_TOOLS_VIA_SCHEMA = False
 
 # True = the backend accepts the JSON Schema ``pattern`` keyword in a
 # structured-output schema. Retain uses it to constrain occurred_start /
@@ -3327,6 +3340,10 @@ class HindsightConfig:
     llm_strict_schema_retain: bool
     llm_strict_schema_reflect: bool
     llm_strict_schema_consolidation: bool
+    llm_tools_via_schema: bool = field(
+        default=DEFAULT_LLM_TOOLS_VIA_SCHEMA,
+        kw_only=True,
+    )  # Tool calls through a response schema (see DEFAULT_LLM_TOOLS_VIA_SCHEMA)
     llm_supports_max_items: bool = field(
         default=DEFAULT_LLM_SUPPORTS_MAX_ITEMS,
         kw_only=True,
@@ -4620,6 +4637,7 @@ class HindsightConfig:
             llm_strict_schema_retain=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_RETAIN),
             llm_strict_schema_reflect=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_REFLECT),
             llm_strict_schema_consolidation=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_CONSOLIDATION),
+            llm_tools_via_schema=_parse_boolean_env(ENV_LLM_TOOLS_VIA_SCHEMA, DEFAULT_LLM_TOOLS_VIA_SCHEMA),
             llm_supports_max_items=_parse_boolean_env(
                 ENV_LLM_SUPPORTS_MAX_ITEMS,
                 DEFAULT_LLM_SUPPORTS_MAX_ITEMS,

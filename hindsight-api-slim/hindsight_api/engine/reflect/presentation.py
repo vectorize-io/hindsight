@@ -87,6 +87,10 @@ class ToolResultPresenter:
         self._id_by_alias[alias] = raw_id
         return alias
 
+    def aliases(self, prefix: str) -> list[str]:
+        """Every alias handed out under ``prefix`` ("f" facts, "o" observations, "p" pages), in order."""
+        return [f"{prefix}{n}" for n in range(1, self._counters.get(prefix, 0) + 1)]
+
     def resolve(self, value: Any) -> Any:
         """Map every alias in a tool call's arguments back to its real id.
 

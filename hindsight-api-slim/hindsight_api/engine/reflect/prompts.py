@@ -210,6 +210,7 @@ def build_system_prompt_for_tools(
     answer_as_document: bool = False,
     llm_output_language: str | None = None,
     answer_ready: bool = False,
+    document_as_markdown: bool = False,
 ) -> str:
     """
     Build the system prompt for tool-calling reflect agent.
@@ -232,6 +233,8 @@ def build_system_prompt_for_tools(
         include_observations: Whether search_observations is in the tool list.
         budget: Search depth budget - "low", "mid", or "high". Controls exploration thoroughness.
         answer_as_document: Whether done() takes a structured document instead of markdown.
+        document_as_markdown: With answer_as_document, done() takes that document as one
+            markdown string (see tools_schema's markdown document tool).
         llm_output_language: Configured output language; drops the default language rule
             (the directive itself goes on the user message, see build_agent_user_prompt).
     """
@@ -562,7 +565,25 @@ def build_system_prompt_for_tools(
     parts.extend(f"{idx}. {step}" for idx, step in enumerate(steps, 1))
 
     non_conversational_rule = "- CRITICAL: This is a NON-CONVERSATIONAL system. NEVER ask follow-up questions, offer further assistance, or suggest next steps. Your answer must be complete and self-contained. The user cannot reply."
-    if answer_as_document:
+    if answer_as_document and document_as_markdown:
+        # The document again, written as markdown: its headings are its sections. The
+        # section-array instructions below must not appear here -- told to "state the
+        # structure, do NOT write markdown" and then asked for markdown, the model gets
+        # two contracts for one answer.
+        parts.extend(
+            [
+                "",
+                "## Output Format: Markdown Document",
+                "Call done() with a 'markdown' field holding the whole document: a '## ' heading per "
+                "section, then its paragraphs, lists, tables or code fences.",
+                "- Give every section the specifics, numbers, names, dates and examples the results "
+                "hold: the structure is how the answer is laid out, NOT a reason to say less",
+                "- Prefer several paragraphs and lists over one paragraph that summarises them away",
+                f"- {NO_IDS_IN_TEXT_RULE}",
+                non_conversational_rule,
+            ]
+        )
+    elif answer_as_document:
         # The document is stored as structure and the markdown is rendered from
         # it, so asking for "a markdown answer" here would be asking for the one
         # thing the caller does not want (see tools_schema's document tool).

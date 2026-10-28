@@ -3644,6 +3644,82 @@ class TestReflectFinishesThroughDone:
         assert result.text == "synthesized"
         provider.call.assert_awaited()
 
+    @pytest.mark.asyncio
+    async def test_another_tool_answering_the_closing_call_is_redirected_to_done(self, mock_functions):
+        """Asked for done, the model calls the stop signal the system prompt still names.
+
+        An OpenAI-compatible server that does not enforce tool_choice lets it. One redirect on
+        the same prefix gets the document; the standalone prompt would write it from scratch.
+        """
+        provider = _StepCacheProvider(
+            scripted=[
+                *self._searches(),
+                LLMToolCallResult(content="here is the answer", finish_reason="stop"),
+                LLMToolCallResult(
+                    tool_calls=[LLMToolCall(id="r", name="answer_ready", arguments={"answer_found": True})],
+                    finish_reason="tool_calls",
+                ),
+                LLMToolCallResult(
+                    tool_calls=[LLMToolCall(id="9", name="done", arguments={"answer": "A", "memory_ids": ["f1"]})],
+                    finish_reason="tool_calls",
+                ),
+            ]
+        )
+        provider.call = AsyncMock(side_effect=AssertionError("the standalone prompt must not run"))
+
+        result = await run_reflect_agent(
+            llm_config=provider,
+            bank_id="b",
+            query="q",
+            bank_profile={"name": "T", "mission": "M"},
+            has_mental_models=False,
+            budget="high",
+            max_iterations=8,
+            **self._functions(mock_functions),
+        )
+
+        assert result.text == "A"
+        redirect, first_closing = provider.calls[-1], provider.calls[-2]
+        assert redirect["tool_choice"].function_name == "done"
+        # The wrong call and its answer are appended to the same conversation: two messages more.
+        assert redirect["n_messages"] == first_closing["n_messages"] + 2
+        assert [c.scope for c in result.llm_trace][-2:] == ["closing_done", "closing_done"]
+
+    @pytest.mark.asyncio
+    async def test_a_second_wrong_tool_falls_back_to_the_standalone_prompt(self, mock_functions):
+        """The redirect is tried once; a model that still will not call done gets the old fallback."""
+        wrong = LLMToolCallResult(
+            tool_calls=[LLMToolCall(id="r", name="answer_ready", arguments={"answer_found": True})],
+            finish_reason="tool_calls",
+        )
+        provider = _StepCacheProvider(
+            scripted=[
+                *self._searches(),
+                LLMToolCallResult(content="here is the answer", finish_reason="stop"),
+                wrong,
+                wrong.model_copy(),
+            ]
+        )
+        provider.call = AsyncMock(
+            return_value=LLMCallResult(
+                content="synthesized", usage=TokenUsage(input_tokens=1, output_tokens=1, total_tokens=2)
+            )
+        )
+
+        result = await run_reflect_agent(
+            llm_config=provider,
+            bank_id="b",
+            query="q",
+            bank_profile={"name": "T", "mission": "M"},
+            has_mental_models=False,
+            budget="high",
+            max_iterations=8,
+            **self._functions(mock_functions),
+        )
+
+        assert result.text == "synthesized"
+        provider.call.assert_awaited_once()
+
 
 class TestReflectKeepsItsPrefixStable:
     """Everything reflect re-sends each turn must be byte-identical to the last turn.

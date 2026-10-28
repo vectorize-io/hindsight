@@ -183,7 +183,18 @@ class TestMalformedDocumentIsRejected:
 
     def test_blocks_that_is_not_a_list_is_rejected(self):
         with pytest.raises(DocumentSectionsInvalidError):
-            document_from_sections({"sections": [{"heading": "Ops", "blocks": "Intro."}]})
+            document_from_sections({"sections": [{"heading": "Ops", "blocks": {"text": "Intro."}}]})
+
+    def test_blocks_sent_as_one_string_is_that_one_block(self):
+        """The brackets dropped around a section's single block, most often a markdown list.
+
+        Seen from an OpenAI-compatible server that does not enforce the tool schema, in about
+        one done call in twenty: refusing it cost a whole re-ask for a document already right.
+        """
+        doc = document_from_sections(
+            {"sections": [{"heading": "Ops", "level": 2, "blocks": "- one\n- two\n\nAfter the list."}]}
+        )
+        assert [b.text for b in doc.sections[0].blocks] == ["- one\n- two", "After the list."]
 
     def test_every_offending_field_is_reported_in_one_error(self):
         """The retry gets the whole list, so it is not fixed one round-trip at a time."""

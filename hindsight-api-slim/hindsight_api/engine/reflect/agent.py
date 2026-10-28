@@ -8,6 +8,7 @@ Uses hierarchical retrieval:
 """
 
 import asyncio
+import copy
 import json
 import logging
 import time
@@ -51,6 +52,7 @@ from .structured_doc import (
     StructuredDocument,
     document_from_sections,
     render_document,
+    split_markdown,
 )
 from .tokenization import count_prompt_tokens
 from .tools import returned_memories
@@ -166,6 +168,16 @@ _COMPACTED_TOOL_RESULT = "[Earlier tool result omitted to fit the context budget
 #: written); more than that is a model that will not comply, and spending the
 #: rest of the iteration budget on it costs a reflect either way.
 _MAX_DOCUMENT_REJECTIONS = 1
+
+#: A loop turn's output cap under HINDSIGHT_API_LLM_TOOLS_VIA_SCHEMA, where it only names a
+#: search. The longest valid one measured was 130 tokens.
+_SCHEMA_LOOP_TURN_MAX_TOKENS = 1024
+
+#: What a tool other than done is told when it answers the closing request.
+_CLOSING_REDIRECT_ERROR = (
+    "{tool} is not available now: retrieval is over. Call done() with your final answer, built from the "
+    "tool results above."
+)
 
 #: Temperature for reflect's mechanical passes: split synthesis's map calls, which copy
 #: claims and ids out of one chunk, and the structured-output extraction pass, which
@@ -716,6 +728,18 @@ async def _run_reflect_agent_inner(
     # as-is (see the done handling below). Then a free turn only has to say "enough", and
     # the cheap way to say it is answer_ready (one bool), not an answer that is discarded.
     closing_step_answers = evidence_is_sufficient_fn is None or answer_as_document
+    # A forced done asked for through a response schema takes the page as markdown: held to
+    # the grammar, the nested section array came out thinner (see tools_schema).
+    document_as_markdown = answer_as_document and get_config().llm_tools_via_schema
+    # A loop turn through a response schema only names its next search when the closing
+    # step writes the answer, so it is capped: under load a schema-held reply can fall into
+    # a repetition loop ("ranking service squad owner ranking service squad owner ..."),
+    # which uncapped ran to 12,288 tokens and the request timeout.
+    loop_turn_max_completion_tokens = synthesis_max_completion_tokens
+    if get_config().llm_tools_via_schema and closing_step_answers:
+        loop_turn_max_completion_tokens = min(
+            synthesis_max_completion_tokens or _SCHEMA_LOOP_TURN_MAX_TOKENS, _SCHEMA_LOOP_TURN_MAX_TOKENS
+        )
     tools = get_reflect_tools(
         directive_rules=directive_rules,
         include_mental_models=has_mental_models,
@@ -725,6 +749,7 @@ async def _run_reflect_agent_inner(
         answer_as_document=answer_as_document,
         llm_output_language=llm_output_language,
         answer_ready=closing_step_answers,
+        document_as_markdown=document_as_markdown,
     )
     # Build set of enabled tool names to guard against LLM hallucinating disabled tool calls
     enabled_tools: frozenset[str] = frozenset(t["function"]["name"] for t in tools if t.get("type") == "function")
@@ -740,6 +765,7 @@ async def _run_reflect_agent_inner(
         answer_as_document=answer_as_document,
         llm_output_language=llm_output_language,
         answer_ready=closing_step_answers,
+        document_as_markdown=document_as_markdown,
     )
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
@@ -982,6 +1008,25 @@ async def _run_reflect_agent_inner(
             },
         ]
 
+    def _closing_redirect_messages(calls: "Sequence[LLMToolCall]") -> list[dict[str, Any]]:
+        """Another tool, answered with the closing request, and the messages that re-ask for ``done``.
+
+        Every call gets a result -- a strict API refuses a tool_use left unanswered -- and each
+        one says the same thing: retrieval is over, write the answer.
+        """
+        wire_ids = _unique_tool_call_ids(list(calls), emitted_wire_ids)
+        return [
+            {"role": "assistant", "tool_calls": [_tool_call_to_dict(c, w) for c, w in zip(calls, wire_ids)]},
+            *(
+                {
+                    "role": "tool",
+                    "tool_call_id": w,
+                    "content": json.dumps({"error": _CLOSING_REDIRECT_ERROR.format(tool=c.name)}, ensure_ascii=False),
+                }
+                for c, w in zip(calls, wire_ids)
+            ),
+        ]
+
     async def _ask_for_done(feedback: "Sequence[dict[str, Any]]" = ()) -> "LLMToolCallResult | None":
         """Ask for the answer as a ``done`` call, in the conversation it was gathered in.
 
@@ -1021,7 +1066,7 @@ async def _run_reflect_agent_inner(
                     },
                     *feedback,
                 ],
-                tools=tools,
+                tools=_with_cited_handles(tools, presenter) if document_as_markdown else tools,
                 scope="reflect",
                 tool_choice=LLMToolChoice.named("done"),
                 temperature=get_config().llm_temperature_reflect,
@@ -1064,16 +1109,30 @@ async def _run_reflect_agent_inner(
         """
         feedback: Sequence[dict[str, Any]] = ()
         rejections = 0
+        redirected = False
         while True:
             reply = await _ask_for_done(feedback)
             closing = next((tc for tc in reply.tool_calls if _is_done_tool(tc.name)), None) if reply else None
             if reply is None or closing is None:
-                if feedback:
+                if rejections:
                     # A document was already refused on this path. Dropping to
                     # the standalone prose prompt would answer the question by
                     # re-reading markdown the model wrote -- the contract this
                     # mode exists to avoid -- so the refusal stands.
                     raise DocumentSectionsInvalidError(["(closing done): the model would not re-emit the document"])
+                if reply is not None and reply.tool_calls and not redirected:
+                    # Asked for done, the model called another tool: the stop signal or a search
+                    # that the system prompt, written for the loop, still tells it to call. Not
+                    # enforcing tool_choice, an OpenAI-compatible server lets it. Told once on the
+                    # same prefix that retrieval is over, it writes the document; the standalone
+                    # prompt would write it from scratch on a new, uncached prompt instead.
+                    redirected = True
+                    logger.warning(
+                        f"[REFLECT {reflect_id}] closing call answered with "
+                        f"{[tc.name for tc in reply.tool_calls]} instead of done; asking again"
+                    )
+                    feedback = _closing_redirect_messages(reply.tool_calls)
+                    continue
                 return await _forced_final_synthesis(iterations_completed)
             try:
                 return await _process_done_tool(
@@ -1512,11 +1571,12 @@ async def _run_reflect_agent_inner(
                     scope="reflect_tool_call",
                     tool_choice=iter_tool_choice,
                     temperature=get_config().llm_temperature_reflect,
-                    # Same uncapped-by-default ceiling the synthesis calls use. Left
-                    # unset this fell through to the provider's own default, which on
-                    # Anthropic truncated long ``done`` payloads before the answer
-                    # field was written (#4437).
-                    max_completion_tokens=synthesis_max_completion_tokens,
+                    # The uncapped-by-default ceiling the synthesis calls use, since a free
+                    # turn's done can carry the answer: left unset this fell through to the
+                    # provider's own default, which on Anthropic truncated long ``done``
+                    # payloads before the answer field was written (#4437). Capped only
+                    # through a response schema with a closing step (see its definition).
+                    max_completion_tokens=loop_turn_max_completion_tokens,
                 )
                 if (
                     incremental_caching
@@ -2504,6 +2564,37 @@ def _done_arguments(done_call: "LLMToolCall", finish_reason: str | None) -> dict
     return _decode_json_argument(args["_raw"], finish_reason, "arguments")
 
 
+#: Which alias prefix each of done's id fields cites (presentation._LISTS).
+_CITED_ID_PREFIXES = {"memory_ids": "f", "observation_ids": "o", "mental_model_ids": "p"}
+
+
+def _with_cited_handles(tools: list[dict[str, Any]], presenter: ToolResultPresenter) -> list[dict[str, Any]]:
+    """The tools with done's id fields limited to the handles the tool results gave out.
+
+    Enforced as a response schema, a free string array let the model invent handles
+    after the text (9.9 a page on a replay, against 0.1 limited) and is where a runaway
+    reply looped ("o1234567890..." to the token cap). A field with nothing to cite
+    takes nothing.
+    """
+    limited = []
+    for tool in tools:
+        if tool.get("function", {}).get("name") != "done":
+            limited.append(tool)
+            continue
+        tool = copy.deepcopy(tool)
+        properties = tool["function"]["parameters"]["properties"]
+        for field, prefix in _CITED_ID_PREFIXES.items():
+            if field in properties:
+                handles = presenter.aliases(prefix)
+                properties[field] = {
+                    **properties[field],
+                    "items": {"type": "string", **({"enum": handles} if handles else {})},
+                    "maxItems": len(handles),
+                }
+        limited.append(tool)
+    return limited
+
+
 def _cited_ids(value: object, available: set[str]) -> list[str]:
     """The ids in a ``done`` id field that were actually retrieved.
 
@@ -2575,8 +2666,13 @@ async def _process_done_tool(
                 f"({json.dumps(raw_document, default=str)[:120]})"
             ]
         )
+    raw_markdown = args.get("markdown")
     if isinstance(raw_document, dict):
         document = document_from_sections(raw_document)
+        answer = render_document(document).strip()
+    elif isinstance(raw_markdown, str):
+        # The markdown document form: its headings are its sections, split losslessly.
+        document = split_markdown(raw_markdown)
         answer = render_document(document).strip()
     else:
         answer = args.get("answer", "").strip()

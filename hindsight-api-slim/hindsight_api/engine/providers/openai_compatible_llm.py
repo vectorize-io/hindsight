@@ -59,6 +59,7 @@ from hindsight_api.engine.llm_transport import (
     describe_llm_error,
 )
 from hindsight_api.engine.llm_wrapper import parse_llm_json
+from hindsight_api.engine.providers import tools_via_schema
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.providers.openai_compatible_headers import with_openai_compatible_user_agent
 from hindsight_api.engine.remote_retry import jittered_backoff
@@ -1747,7 +1748,19 @@ class OpenAICompatibleLLM(LLMInterface):
         start_time = time.perf_counter()
 
         request_tool_choice: str | None
-        if tool_choice.mode is LLMToolChoiceMode.NAMED:
+        # Set when this turn's call is asked for through a response schema (tools_via_schema).
+        via_schema: tools_via_schema.ResponseSchema | None = None
+        if get_config().llm_tools_via_schema and tool_choice.mode in (
+            LLMToolChoiceMode.NAMED,
+            LLMToolChoiceMode.REQUIRED,
+        ):
+            # The server need not enforce tool_choice (vLLM's gemma4 parser does not), but it
+            # does enforce a response schema. Every tool stays declared, so the prompt keeps
+            # the prefix the earlier turns cached, and the call is asked for in words too.
+            via_schema = tools_via_schema.response_schema(tools, tool_choice)
+            messages = [*messages, {"role": "user", "content": tools_via_schema.turn_request(tools, tool_choice)}]
+            request_tool_choice = "none"
+        elif tool_choice.mode is LLMToolChoiceMode.NAMED:
             forced_name = tool_choice.selected_function_name
             filtered = [tool for tool in tools if tool.get("function", {}).get("name") == forced_name]
             if len(filtered) != 1:
@@ -1841,6 +1854,11 @@ class OpenAICompatibleLLM(LLMInterface):
             call_params["seed"] = DEFAULT_LLM_SEED
         if extra_body:
             call_params["extra_body"] = extra_body
+        if via_schema is not None:
+            call_params["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": via_schema.name, "strict": True, "schema": via_schema.schema},
+            }
 
         apply_bank_attribution(call_params)
         apply_cache_affinity(call_params, self._cache_affinity)
@@ -1851,6 +1869,7 @@ class OpenAICompatibleLLM(LLMInterface):
         # Mutable budget rather than a fixed range: the reasoning_effort repair below
         # grants one extra attempt, since it changes the request instead of retrying it.
         attempts_allowed = max_retries + 1
+        schema_reply_resampled = False
         attempt = -1
         while (attempt := attempt + 1) < attempts_allowed:
             try:
@@ -1864,6 +1883,16 @@ class OpenAICompatibleLLM(LLMInterface):
                 choice = _first_choice_or_error(response, provider=self.provider, model=self.model, scope=scope)
                 message = choice.message
                 finish_reason = choice.finish_reason
+                if via_schema is not None and finish_reason == "length" and not schema_reply_resampled:
+                    # Cut off at the cap: a schema-held reply that fell into a repetition
+                    # loop, which a fresh sample almost never repeats. Once.
+                    schema_reply_resampled = True
+                    attempts_allowed += 1
+                    logger.warning(
+                        f"Schema-held reply hit the token cap ({self.provider}/{self.model}, scope={scope}); "
+                        "sampling it again"
+                    )
+                    continue
 
                 # Extract tool calls if present
                 tool_calls: list[LLMToolCall] = []
@@ -1876,6 +1905,10 @@ class OpenAICompatibleLLM(LLMInterface):
                         tool_calls.append(LLMToolCall(id=tc.id, name=tc.function.name, arguments=args))
 
                 content = message.content
+                if via_schema is not None and not tool_calls:
+                    # The call came back as the reply itself; hand it on as the call.
+                    tool_calls = tools_via_schema.calls_from_reply(content, tools, tool_choice)
+                    content = None
 
                 # Record metrics
                 duration = time.perf_counter() - start_time

@@ -355,6 +355,9 @@ def document_from_sections(payload: dict) -> StructuredDocument:
     keeps the granularity delta operations address even when the model packs a
     whole section into one string.
 
+    The same goes for ``blocks`` sent as one string instead of an array of them:
+    it is the section's single block, as the brackets would have made it.
+
     A *type* violation is refused instead: a block that is not a string, or a
     section that is not an object, raises :class:`DocumentSectionsInvalidError`
     for the caller to feed back to the model. There is no correct reading of
@@ -394,6 +397,12 @@ def document_from_sections(payload: dict) -> StructuredDocument:
             )
             continue
         raw_blocks = raw_section.get("blocks") or []
+        if isinstance(raw_blocks, str):
+            # The list's brackets dropped around its one entry -- seen most on a section that is
+            # a single markdown list. One reading, nothing lost: it is that block, split below
+            # like any block holding several fragments.
+            raw_blocks = [raw_blocks]
+            raw_section = {**raw_section, "blocks": raw_blocks}
         if not isinstance(raw_blocks, list):
             errors.append(f"sections[{i}].blocks: expected an array of strings, got {type(raw_blocks).__name__}")
             continue
