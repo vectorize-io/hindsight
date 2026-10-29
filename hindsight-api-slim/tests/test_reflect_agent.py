@@ -2844,7 +2844,7 @@ class TestMentalModelShortCircuitRealLLM:
 
         The reporter's model answered "the bank holds nothing" straight off the
         page layer; flash-lite in CI does not, so that one turn is staged here:
-        the second LLM turn is replaced by ``done(answer_found=false)``. Every
+        the second LLM turn is replaced by ``answer_ready(answer_found=false)``. Every
         other turn is the real model -- what this checks is that it writes a
         useful recall query under the forced choice and then answers from the
         raw fact instead of repeating the negative.
@@ -2875,11 +2875,8 @@ class TestMentalModelShortCircuitRealLLM:
             if turns["n"] == 2:
                 return LLMToolCallResult(
                     tool_calls=[
-                        LLMToolCall(
-                            id="staged-done",
-                            name="done",
-                            arguments={"answer": "The bank holds nothing on AURORA-412.", "answer_found": False},
-                        )
+                        # A free turn stops with answer_ready (done is the closing step's).
+                        LLMToolCall(id="staged-ready", name="answer_ready", arguments={"answer_found": False})
                     ],
                     finish_reason="tool_calls",
                 )
