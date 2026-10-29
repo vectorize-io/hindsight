@@ -55,6 +55,7 @@ import type {
   TagGroupOrInput,
   TagGroupNotInput,
   MinScores,
+  RerankOptions,
   TemporalWindow,
   AsyncOperationSubmitResponse,
   CreateKnowledgePageResponse,
@@ -566,10 +567,8 @@ export class HindsightClient {
       types?: string[];
       /** When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact a returned observation was consolidated from, so the observation supersedes it (no duplicate content). No effect unless 'observation' and at least one raw type are both in types. Omitted: the bank's recall_prefer_observations config decides (false unless configured). */
       preferObservations?: boolean;
-      /** With a decision model set up for recall, drop the results it judges no help instead of only ranking them last. Omitted: the bank's recall_decision_model_prune config decides (false unless configured). */
-      prune?: boolean;
-      /** With a decision model set up for recall, drop a result repeating a better-ranked one, at the cost of one more decision-model request. Omitted: the bank's recall_decision_model_dedup config decides (false unless configured). */
-      dedup?: boolean;
+      /** What a decision model set up for recall does beyond ordering: `prune` drops the results it judges no help instead of only ranking them last; `dedup` drops a result repeating a better-ranked one, at the cost of one more decision-model request. A field left out uses the bank's recall_decision_model_prune / recall_decision_model_dedup config (false unless configured). */
+      rerank?: RerankOptions;
       maxTokens?: number;
       budget?: Budget;
       trace?: boolean;
@@ -604,8 +603,7 @@ export class HindsightClient {
             query,
             types: options?.types,
             prefer_observations: options?.preferObservations,
-            prune: options?.prune,
-            dedup: options?.dedup,
+            rerank: options?.rerank,
             max_tokens: options?.maxTokens,
             budget: options?.budget || "mid",
             trace: options?.trace,
@@ -2181,6 +2179,7 @@ export type {
   TagGroupOrInput,
   TagGroupNotInput,
   MinScores,
+  RerankOptions,
   TemporalWindow,
   AsyncOperationSubmitResponse,
   CreateKnowledgePageResponse,

@@ -12208,12 +12208,8 @@ components:
         prefer_observations:
           nullable: true
           type: boolean
-        prune:
-          nullable: true
-          type: boolean
-        dedup:
-          nullable: true
-          type: boolean
+        rerank:
+          $ref: '#/components/schemas/RerankOptions'
         budget:
           $ref: '#/components/schemas/Budget'
         max_tokens:
@@ -12874,6 +12870,18 @@ components:
       - operation_id
       - success
       title: ReprocessDocumentResponse
+    RerankOptions:
+      description: |-
+        What the decision-model reranker does beyond ordering. Each field left unset (null) uses the
+        bank/global config; neither has any effect unless a decision model is set up for recall.
+      properties:
+        prune:
+          nullable: true
+          type: boolean
+        dedup:
+          nullable: true
+          type: boolean
+      title: RerankOptions
     RetainRequest:
       description: Request model for retain endpoint.
       example:

@@ -658,8 +658,7 @@ class Hindsight:
         tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
         tag_groups: list[dict[str, Any]] | None = None,
         prefer_observations: bool | None = None,
-        prune: bool | None = None,
-        dedup: bool | None = None,
+        rerank: dict[str, bool | None] | None = None,
         min_scores: dict[str, float] | None = None,
         temporal_window: dict[str, Any] | None = None,
     ) -> RecallResponse:
@@ -691,12 +690,11 @@ class Hindsight:
                 observation supersedes it (no duplicate content). No effect unless "observation" and at
                 least one raw type are both in ``types``. ``None`` (default) uses the bank's
                 ``recall_prefer_observations`` config.
-            prune: With a decision model set up for recall, drop the results it judges no help
-                instead of only ranking them last. ``None`` (default) uses the bank's
-                ``recall_decision_model_prune`` config.
-            dedup: With a decision model set up for recall, drop a result repeating a
-                better-ranked one, at the cost of one more decision-model request. ``None``
-                (default) uses the bank's ``recall_decision_model_dedup`` config.
+            rerank: What a decision model set up for recall does beyond ordering, e.g.
+                ``{"prune": True, "dedup": True}``. ``prune`` drops the results it judges no help
+                instead of only ranking them last; ``dedup`` drops a result repeating a better-ranked
+                one, at the cost of one more decision-model request. A key left out (or ``None``) uses
+                the bank's ``recall_decision_model_prune`` / ``recall_decision_model_dedup`` config.
             min_scores: Optional per-stage score floors, e.g. ``{"semantic": 0.2, "final": 0.5}``.
                 ``semantic`` and ``keyword`` are retrieval-level cutoffs; ``reranker`` and ``final``
                 are applied to the scored results after reranking. Any omitted stage imposes no floor.
@@ -729,8 +727,7 @@ class Hindsight:
                 tags_match=tags_match,
                 tag_groups=tag_groups,
                 prefer_observations=prefer_observations,
-                prune=prune,
-                dedup=dedup,
+                rerank=rerank,
                 min_scores=min_scores,
                 temporal_window=temporal_window,
             )
@@ -1353,8 +1350,7 @@ class Hindsight:
         tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
         tag_groups: list[dict[str, Any]] | None = None,
         prefer_observations: bool | None = None,
-        prune: bool | None = None,
-        dedup: bool | None = None,
+        rerank: dict[str, bool | None] | None = None,
         min_scores: dict[str, float] | None = None,
         temporal_window: dict[str, Any] | None = None,
     ) -> RecallResponse:
@@ -1391,12 +1387,11 @@ class Hindsight:
                 observation supersedes it (no duplicate content). No effect unless "observation" and at
                 least one raw type are both in ``types``. ``None`` (default) uses the bank's
                 ``recall_prefer_observations`` config.
-            prune: With a decision model set up for recall, drop the results it judges no help
-                instead of only ranking them last. ``None`` (default) uses the bank's
-                ``recall_decision_model_prune`` config.
-            dedup: With a decision model set up for recall, drop a result repeating a
-                better-ranked one, at the cost of one more decision-model request. ``None``
-                (default) uses the bank's ``recall_decision_model_dedup`` config.
+            rerank: What a decision model set up for recall does beyond ordering, e.g.
+                ``{"prune": True, "dedup": True}``. ``prune`` drops the results it judges no help
+                instead of only ranking them last; ``dedup`` drops a result repeating a better-ranked
+                one, at the cost of one more decision-model request. A key left out (or ``None``) uses
+                the bank's ``recall_decision_model_prune`` / ``recall_decision_model_dedup`` config.
             min_scores: Optional per-stage score floors, e.g. ``{"semantic": 0.2, "final": 0.5}``.
                 ``semantic`` and ``keyword`` are retrieval-level cutoffs; ``reranker`` and ``final``
                 are applied to the scored results after reranking. Any omitted stage imposes no floor.
@@ -1452,6 +1447,16 @@ class Hindsight:
                 )
             min_scores_obj = MinScores.from_dict(min_scores)
 
+        rerank_obj = None
+        if rerank is not None:
+            from hindsight_client_api.models.rerank_options import RerankOptions
+
+            unknown_rerank = set(rerank) - {"prune", "dedup"}
+            if unknown_rerank:
+                # Fail loud, as for min_scores: a misspelled key would leave the bank's default on.
+                raise ValueError(f"Unknown rerank keys: {sorted(unknown_rerank)}. Allowed keys: ['dedup', 'prune'].")
+            rerank_obj = RerankOptions.from_dict(rerank)
+
         temporal_window_obj = None
         if temporal_window is not None:
             from hindsight_client_api.models.temporal_window import TemporalWindow
@@ -1462,8 +1467,7 @@ class Hindsight:
             query=query,
             types=types,
             prefer_observations=prefer_observations,
-            prune=prune,
-            dedup=dedup,
+            rerank=rerank_obj,
             budget=budget,
             max_tokens=max_tokens,
             trace=trace,

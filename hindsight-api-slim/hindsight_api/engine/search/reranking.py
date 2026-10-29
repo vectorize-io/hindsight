@@ -13,7 +13,7 @@ import numpy as np
 
 from ..cross_encoder import RerankTimeoutError, _served_provider
 from .decision_reranker import PROVIDER_NAME as DECISION_MODEL_RERANKER
-from .decision_reranker import DecisionModelReranker, RerankOptions, rerank_options, rerank_shared_context
+from .decision_reranker import DecisionModelReranker, DecisionRerankOptions, rerank_options, rerank_shared_context
 from .types import MergedCandidate, ScoredResult
 
 logger = logging.getLogger(__name__)
@@ -394,7 +394,7 @@ class CrossEncoderReranker:
             dedup: With a decision model, also drop a candidate repeating a better-ranked one.
                 Both are ignored by any other reranker, which only orders.
             embeddings: For dedup, the read of the candidates' stored embeddings, started
-                by the caller so it runs alongside the ranking request (see RerankOptions). It is
+                by the caller so it runs alongside the ranking request (see DecisionRerankOptions). It is
                 cancelled here if dedup never needs it.
 
         Returns:
@@ -457,7 +457,7 @@ class CrossEncoderReranker:
         token = _served_provider.set(None)
         shared_context_token = rerank_shared_context.set(shared_context)
         options_token = rerank_options.set(
-            RerankOptions(
+            DecisionRerankOptions(
                 prune=prune,
                 dedup=dedup,
                 fact_types=[c.retrieval.fact_type for c in candidates],

@@ -646,8 +646,7 @@ export class ControlPlaneClient {
     query: string;
     types?: string[];
     prefer_observations?: boolean;
-    prune?: boolean;
-    dedup?: boolean;
+    rerank?: { prune?: boolean; dedup?: boolean };
     bank_id: string;
     budget?: string;
     max_tokens?: number;

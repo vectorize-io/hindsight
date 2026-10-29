@@ -673,6 +673,7 @@ export type {
   ReprocessDocumentResponse,
   ReprocessDocumentResponse2,
   ReprocessDocumentResponses,
+  RerankOptions,
   ResetBankConfigData,
   ResetBankConfigError,
   ResetBankConfigErrors,

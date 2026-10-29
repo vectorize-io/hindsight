@@ -533,6 +533,28 @@ class IncludeOptions(BaseModel):
     )
 
 
+class RerankOptions(BaseModel):
+    """What the decision-model reranker does beyond ordering. Each field left unset (null) uses the
+    bank/global config; neither has any effect unless a decision model is set up for recall."""
+
+    prune: bool | None = Field(
+        default=None,
+        description=(
+            "Drop the results the decision model judges no help to the query, instead of only ranking them "
+            "last. Costs no extra request. When omitted, uses the bank/global recall_decision_model_prune "
+            "config (false unless configured)."
+        ),
+    )
+    dedup: bool | None = Field(
+        default=None,
+        description=(
+            "Drop a result that repeats a better-ranked one, so the same fact comes back once. Costs one "
+            "more decision-model request after the ranking one. When omitted, uses the bank/global "
+            "recall_decision_model_dedup config (false unless configured)."
+        ),
+    )
+
+
 class RecallRequest(BaseModel):
     """Request model for recall endpoint."""
 
@@ -568,21 +590,12 @@ class RecallRequest(BaseModel):
             "recall_prefer_observations config (false unless configured). No effect unless 'observation' and at least one raw type are both requested."
         ),
     )
-    prune: bool | None = Field(
+    rerank: RerankOptions | None = Field(
         default=None,
         description=(
-            "Drop the results the decision model judges no help to the query, instead of only ranking them "
-            "last. Costs no extra request. When omitted, uses the bank/global recall_decision_model_prune "
-            "config (false unless configured). No effect unless a decision model is set up for recall."
-        ),
-    )
-    dedup: bool | None = Field(
-        default=None,
-        description=(
-            "Drop a result that repeats a better-ranked one, so the same fact comes back once. Costs one "
-            "more decision-model request after the ranking one. When omitted, uses the bank/global "
-            "recall_decision_model_dedup config (false unless configured). No effect unless a decision "
-            "model is set up for recall."
+            "What the decision-model reranker does beyond ordering: drop results that do not help "
+            "(`prune`) or that repeat a better-ranked one (`dedup`). Each field left unset uses the "
+            "bank/global config. No effect unless a decision model is set up for recall."
         ),
     )
     budget: Budget = Budget.MID
@@ -5434,8 +5447,8 @@ def _register_routes(app: FastAPI):
                         enable_trace=request.trace,
                         fact_type=fact_types,
                         prefer_observations=request.prefer_observations,
-                        prune=request.prune,
-                        dedup=request.dedup,
+                        prune=request.rerank.prune if request.rerank else None,
+                        dedup=request.rerank.dedup if request.rerank else None,
                         question_date=question_date,
                         include_entities=include_entities,
                         max_entity_tokens=max_entity_tokens,

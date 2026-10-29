@@ -24,8 +24,7 @@ type RecallRequest struct {
 	Query string `json:"query"`
 	Types []string `json:"types,omitempty"`
 	PreferObservations NullableBool `json:"prefer_observations,omitempty"`
-	Prune NullableBool `json:"prune,omitempty"`
-	Dedup NullableBool `json:"dedup,omitempty"`
+	Rerank NullableRerankOptions `json:"rerank,omitempty"`
 	Budget *Budget `json:"budget,omitempty"`
 	MaxTokens *int32 `json:"max_tokens,omitempty"`
 	Trace *bool `json:"trace,omitempty"`
@@ -171,88 +170,46 @@ func (o *RecallRequest) UnsetPreferObservations() {
 	o.PreferObservations.Unset()
 }
 
-// GetPrune returns the Prune field value if set, zero value otherwise (both if not set or set to explicit null).
-func (o *RecallRequest) GetPrune() bool {
-	if o == nil || IsNil(o.Prune.Get()) {
-		var ret bool
+// GetRerank returns the Rerank field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *RecallRequest) GetRerank() RerankOptions {
+	if o == nil || IsNil(o.Rerank.Get()) {
+		var ret RerankOptions
 		return ret
 	}
-	return *o.Prune.Get()
+	return *o.Rerank.Get()
 }
 
-// GetPruneOk returns a tuple with the Prune field value if set, nil otherwise
+// GetRerankOk returns a tuple with the Rerank field value if set, nil otherwise
 // and a boolean to check if the value has been set.
 // NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *RecallRequest) GetPruneOk() (*bool, bool) {
+func (o *RecallRequest) GetRerankOk() (*RerankOptions, bool) {
 	if o == nil {
 		return nil, false
 	}
-	return o.Prune.Get(), o.Prune.IsSet()
+	return o.Rerank.Get(), o.Rerank.IsSet()
 }
 
-// HasPrune returns a boolean if a field has been set.
-func (o *RecallRequest) HasPrune() bool {
-	if o != nil && o.Prune.IsSet() {
+// HasRerank returns a boolean if a field has been set.
+func (o *RecallRequest) HasRerank() bool {
+	if o != nil && o.Rerank.IsSet() {
 		return true
 	}
 
 	return false
 }
 
-// SetPrune gets a reference to the given NullableBool and assigns it to the Prune field.
-func (o *RecallRequest) SetPrune(v bool) {
-	o.Prune.Set(&v)
+// SetRerank gets a reference to the given NullableRerankOptions and assigns it to the Rerank field.
+func (o *RecallRequest) SetRerank(v RerankOptions) {
+	o.Rerank.Set(&v)
 }
-// SetPruneNil sets the value for Prune to be an explicit nil
-func (o *RecallRequest) SetPruneNil() {
-	o.Prune.Set(nil)
-}
-
-// UnsetPrune ensures that no value is present for Prune, not even an explicit nil
-func (o *RecallRequest) UnsetPrune() {
-	o.Prune.Unset()
+// SetRerankNil sets the value for Rerank to be an explicit nil
+func (o *RecallRequest) SetRerankNil() {
+	o.Rerank.Set(nil)
 }
 
-// GetDedup returns the Dedup field value if set, zero value otherwise (both if not set or set to explicit null).
-func (o *RecallRequest) GetDedup() bool {
-	if o == nil || IsNil(o.Dedup.Get()) {
-		var ret bool
-		return ret
-	}
-	return *o.Dedup.Get()
-}
-
-// GetDedupOk returns a tuple with the Dedup field value if set, nil otherwise
-// and a boolean to check if the value has been set.
-// NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *RecallRequest) GetDedupOk() (*bool, bool) {
-	if o == nil {
-		return nil, false
-	}
-	return o.Dedup.Get(), o.Dedup.IsSet()
-}
-
-// HasDedup returns a boolean if a field has been set.
-func (o *RecallRequest) HasDedup() bool {
-	if o != nil && o.Dedup.IsSet() {
-		return true
-	}
-
-	return false
-}
-
-// SetDedup gets a reference to the given NullableBool and assigns it to the Dedup field.
-func (o *RecallRequest) SetDedup(v bool) {
-	o.Dedup.Set(&v)
-}
-// SetDedupNil sets the value for Dedup to be an explicit nil
-func (o *RecallRequest) SetDedupNil() {
-	o.Dedup.Set(nil)
-}
-
-// UnsetDedup ensures that no value is present for Dedup, not even an explicit nil
-func (o *RecallRequest) UnsetDedup() {
-	o.Dedup.Unset()
+// UnsetRerank ensures that no value is present for Rerank, not even an explicit nil
+func (o *RecallRequest) UnsetRerank() {
+	o.Rerank.Unset()
 }
 
 // GetBudget returns the Budget field value if set, zero value otherwise.
@@ -624,11 +581,8 @@ func (o RecallRequest) ToMap() (map[string]interface{}, error) {
 	if o.PreferObservations.IsSet() {
 		toSerialize["prefer_observations"] = o.PreferObservations.Get()
 	}
-	if o.Prune.IsSet() {
-		toSerialize["prune"] = o.Prune.Get()
-	}
-	if o.Dedup.IsSet() {
-		toSerialize["dedup"] = o.Dedup.Get()
+	if o.Rerank.IsSet() {
+		toSerialize["rerank"] = o.Rerank.Get()
 	}
 	if !IsNil(o.Budget) {
 		toSerialize["budget"] = o.Budget

@@ -14,7 +14,7 @@ from hindsight_api.engine.decision_model import DecisionAnswer, DecisionModel
 from hindsight_api.engine.decision_rerank_interface import MAX_MEMORY_TOKENS, MAX_SHARED_CONTEXT_TOKENS
 from hindsight_api.engine.search.decision_reranker import (
     DecisionModelReranker,
-    RerankOptions,
+    DecisionRerankOptions,
     rerank_options,
     rerank_shared_context,
 )
@@ -222,7 +222,7 @@ class TestSharedState:
 @contextmanager
 def _options(**options) -> Iterator[None]:
     """What CrossEncoderReranker.rerank() sets for one recall."""
-    token = rerank_options.set(RerankOptions(**options))
+    token = rerank_options.set(DecisionRerankOptions(**options))
     try:
         yield
     finally:

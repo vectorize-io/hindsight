@@ -37,7 +37,7 @@ rerank_shared_context: contextvars.ContextVar[str | None] = contextvars.ContextV
 
 
 @dataclass(frozen=True)
-class RerankOptions:
+class DecisionRerankOptions:
     """What this one recall asks of the decision model beyond ranking.
 
     Per recall, not per reranker: one reranker serves every bank, and the request, then the
@@ -57,8 +57,8 @@ class RerankOptions:
 
 
 # Set by CrossEncoderReranker.rerank(), like rerank_shared_context.
-rerank_options: contextvars.ContextVar[RerankOptions] = contextvars.ContextVar(
-    "hindsight_rerank_options", default=RerankOptions()
+rerank_options: contextvars.ContextVar[DecisionRerankOptions] = contextvars.ContextVar(
+    "hindsight_rerank_options", default=DecisionRerankOptions()
 )
 
 # The questions themselves, their state, caps, scores, the prune cut and dedup live in
@@ -77,7 +77,7 @@ class DecisionModelReranker(CrossEncoderModel):
     0.59 against 0.79 on a 20-question answer-quality set.
 
     The scores handed back are positions, not confidences: descending from 1.0 in rank
-    order. With :class:`RerankOptions` ``prune`` on, a candidate judged no help scores
+    order. With :class:`DecisionRerankOptions` ``prune`` on, a candidate judged no help scores
     exactly 0.0, and with ``dedup`` on so does one repeating a better-ranked candidate:
     that is how recall knows to drop it. The best candidate always survives.
     """
@@ -128,7 +128,9 @@ class DecisionModelReranker(CrossEncoderModel):
             scores[indices[slot]] = score
 
     @staticmethod
-    async def _alike(options: RerankOptions, indices: list[int], ranked: list[float]) -> set[frozenset[int]] | None:
+    async def _alike(
+        options: DecisionRerankOptions, indices: list[int], ranked: list[float]
+    ) -> set[frozenset[int]] | None:
         """The pairs of slots still in the pool whose stored embeddings are alike (cosine at
         least ``ALIKE_FROM``), or None to ask every pair.
 

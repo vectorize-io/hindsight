@@ -145,19 +145,21 @@ async def test_a_request_turns_prune_and_dedup_on(decision_model_client, tea_ban
     stubs.rerank.repeats = {(TEA, TEA_AGAIN)}
     query = "What tea does Marta like?"
 
-    dedup_only = await decision_model_client.arecall(bank_id=tea_bank, query=query, dedup=True)
-    both = await decision_model_client.arecall(bank_id=tea_bank, query=query, prune=True, dedup=True)
+    dedup_only = await decision_model_client.arecall(bank_id=tea_bank, query=query, rerank={"dedup": True})
+    both = await decision_model_client.arecall(
+        bank_id=tea_bank, query=query, rerank={"prune": True, "dedup": True}
+    )
 
     assert _texts(dedup_only) == [TEA, SENCHA, UNRELATED]
     assert _texts(both) == [TEA, SENCHA]
 
 
 async def test_a_request_turns_the_servers_prune_off(decision_model_prune_client, tea_bank, stubs):
-    """The server default is only a default: a request saying prune=False gets everything."""
+    """The server default is only a default: a request saying rerank.prune=false gets everything."""
     stubs.rerank.verdicts = {TEA: 0.9, TEA_AGAIN: 0.85, SENCHA: 0.8, UNRELATED: 0.05}
 
     response = await decision_model_prune_client.arecall(
-        bank_id=tea_bank, query="What tea does Marta like?", prune=False
+        bank_id=tea_bank, query="What tea does Marta like?", rerank={"prune": False}
     )
 
     assert _texts(response) == [TEA, TEA_AGAIN, SENCHA, UNRELATED]
@@ -172,7 +174,7 @@ async def test_the_bank_sets_dedup_for_requests_that_omit_it(decision_model_clie
     query = "What tea does Marta like?"
 
     omitted = await decision_model_client.arecall(bank_id=tea_bank, query=query)
-    off = await decision_model_client.arecall(bank_id=tea_bank, query=query, dedup=False)
+    off = await decision_model_client.arecall(bank_id=tea_bank, query=query, rerank={"dedup": False})
 
     assert _texts(omitted) == [TEA, SENCHA, UNRELATED]
     assert _texts(off) == [TEA, TEA_AGAIN, SENCHA, UNRELATED]
