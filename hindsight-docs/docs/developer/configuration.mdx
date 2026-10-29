@@ -1639,9 +1639,9 @@ while other operations use the decision model, set
 `HINDSIGHT_API_RECALL_DECISION_MODEL_PROVIDER=none`.
 
 Recall can also **drop** candidates instead of only ordering them. Both are off by default,
-and a recall request turns each on or off with `prune` / `dedup`; a request that omits one
-gets the bank's value, else the server's. That covers every recall, including the ones
-reflect and consolidation run.
+and a recall request turns each on or off with `rerank.prune` / `rerank.dedup`; a request
+that omits one gets the bank's value, else the server's. That covers every recall, including
+the ones reflect runs (consolidation's recall skips the reranker).
 
 | Variable | Description | Default |
 |----------|-------------|---------|

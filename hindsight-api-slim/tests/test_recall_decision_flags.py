@@ -56,6 +56,8 @@ async def test_dedup_reads_the_candidates_embeddings(memory_no_llm_verify: Memor
     vector = (await engine.embeddings.encode(["tea"]))[0]
     as_text = "[" + ",".join(str(x) for x in vector) + "]"
     pool = await engine._get_pool()
+    # Direct insert: the API can't store a memory without an embedding, and this checks the
+    # read stays in its own bank.
     async with pool.acquire() as conn:
         for bank in (bank_id, other_bank):
             await engine.ensure_bank_profile(bank, request_context=RC)

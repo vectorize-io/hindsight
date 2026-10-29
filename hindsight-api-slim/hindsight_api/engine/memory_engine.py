@@ -9752,15 +9752,15 @@ class MemoryEngine(MemoryEngineInterface):
                 rows = await get_memories().unit_embeddings(
                     conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids
                 )
+            # pgvector text, "[0.1,0.2,...]". Parsed inside the try: a malformed row must not fail the recall.
+            vectors = {
+                row["id"]: np.array(row["embedding"][1:-1].split(","), dtype=np.float32)
+                for row in rows
+                if row["embedding"] is not None
+            }
         except Exception:
             logger.warning("recall dedup: embeddings unavailable, asking every pair", exc_info=True)
             return None
-        # pgvector text, "[0.1,0.2,...]".
-        vectors = {
-            row["id"]: np.array(row["embedding"][1:-1].split(","), dtype=np.float32)
-            for row in rows
-            if row["embedding"] is not None
-        }
         return vectors or None
 
     async def _search_with_retries(
