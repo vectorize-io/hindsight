@@ -88,10 +88,3 @@ dev = [
 # (requires-python >= 3.10) is unchanged. Same approach as the crewai and
 # smolagents integrations.
 environments = ["python_version >= '3.11'"]
-# litellm 1.104.0 and later declare filelock<4.0, but the fix for
-# GHSA-69hj-f68j-2879 / GHSA-8mx5-7m5m-r77g only ships in filelock 4.2.1.
-# litellm imports a single symbol, FileLock, in one CLI helper
-# (litellm/proxy/client/cli/commands/claude_settings.py) and calls it as
-# FileLock(path, timeout=..., mode=...) - a signature filelock 4.x keeps.
-# Drop this once litellm lifts the cap.
-override-dependencies = ["filelock>=4.2.1"]
