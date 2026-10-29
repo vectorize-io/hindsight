@@ -397,8 +397,8 @@ issue/PR history — and what grades it. "eval" = a `test_consolidation` scenari
 - Deletes must name an `observation_id`; a malformed one no longer voids the response (#4152, #4183) — unit `test_consolidation_delete_schema.py`, `test_consolidation_delete_prompt_llm.py`
 - A merge delete (`merged_into`) moves its evidence to the survivor, or re-queues it; a plain delete retires it — system `test_22_consolidation_safety_nets`
 - Facts a response ignores are re-asked (together, then alone) — system `test_22_consolidation_safety_nets`
-- `consolidation_format = "facts"` (small models, gemma-4): one entry per new fact judging each observation that mentions it; the code compares the times and turns the verdicts into writes — eval (run with `HINDSIGHT_EVAL_SET_CONSOLIDATION_FORMAT=facts`); unit `test_consolidation_fact_format.py`; system `test_25c_fact_format_consolidation`
-- Miscopied observation ids are repaired; an update aimed at a fact id becomes a create — unit `test_consolidation_id_repair.py`; system `test_22_consolidation_safety_nets`
+- The answer is one entry per new fact, judging the observations it touches; the code compares the times and turns the verdicts into writes — eval; unit `test_consolidation_fact_format.py`; system `test_25c_consolidation_answer_per_fact`
+- A change aimed at a new fact's own id becomes a new observation — unit `test_consolidation_fact_format.py`; system `test_22_consolidation_safety_nets`
 - Observation scopes (`combined`, `per_tag`, `all_combinations`, `shared`, explicit) and strategies (#2202, #4619) — system `test_24`, `test_29`
 - Per-scope observation caps (#729, #2163) — system `test_29`; unit `test_observation_scope_limit_resolution.py`
 - Observation history snapshots — unit `test_observation_history.py`

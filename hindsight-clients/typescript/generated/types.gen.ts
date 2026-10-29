@@ -877,12 +877,6 @@ export type BankTemplateConfig = {
    */
   consolidation_use_decision_model?: boolean | null;
   /**
-   * Consolidation Format
-   *
-   * How the consolidation LLM answers: "actions" (creates/updates/deletes) or "facts" (one entry per new fact, for small models)
-   */
-  consolidation_format?: "actions" | "facts" | null;
-  /**
    * Consolidation Max Memories Per Round
    *
    * Max memory units fed into a single consolidation round

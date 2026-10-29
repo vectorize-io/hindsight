@@ -238,11 +238,6 @@ class BankTemplateConfig(BaseModel):
         description="When the server has a decision model, consolidation lets it settle restatements, new "
         "facets and chatter before the LLM call",
     )
-    consolidation_format: Literal["actions", "facts"] | None = Field(
-        default=None,
-        description='How the consolidation LLM answers: "actions" (creates/updates/deletes) or "facts" '
-        "(one entry per new fact, for small models)",
-    )
     consolidation_max_memories_per_round: int | None = Field(
         default=None, description="Max memory units fed into a single consolidation round"
     )

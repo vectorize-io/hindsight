@@ -242,34 +242,6 @@ async def one_observation(client, llm, bank_id, settled) -> str:
     return bank_id
 
 
-async def test_a_miscopied_observation_id_still_reaches_its_observation(client, llm, one_observation, settled):
-    """`d0a3effa-1795-4c48-…` came back as `d0a3effa-1795-4ef0-…`: the head right,
-    the tail invented. The one shown observation with that head is the target."""
-    llm.on_step("extract_facts", contains="TLS").returns(
-        extracted(fact("ledger-sync terminates TLS itself", entities=["ledger-sync"]))
-    )
-
-    def miscopied(request) -> Consolidation:
-        [target] = shown_observations(request).values()
-        return Consolidation(
-            updates=[
-                ObservationUpdate(
-                    text="ledger-sync listens on port 8443 and terminates TLS itself",
-                    observation_id=target[:13] + "-0000-0000-000000000000"[: len(target) - 13],
-                    source_fact_ids=batch_fact_ids(request),
-                )
-            ]
-        )
-
-    llm.on_step("consolidate").answers_with(miscopied)
-    await client.aretain(bank_id=one_observation, content="ledger-sync terminates TLS itself.")
-    await settled(one_observation)
-
-    [observation] = await _observations(client, one_observation)
-    assert observation.text == "ledger-sync listens on port 8443 and terminates TLS itself"
-    assert observation.proof_count == 2
-
-
 async def test_an_update_aimed_at_the_new_fact_is_recorded_as_a_create(client, llm, one_observation, settled):
     """A model recording a new fact sometimes names that fact as the UPDATE target.
     There is no observation to update, and dropping the update lost the fact."""

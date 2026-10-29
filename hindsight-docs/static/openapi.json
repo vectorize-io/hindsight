@@ -10029,22 +10029,6 @@
             "title": "Consolidation Use Decision Model",
             "description": "When the server has a decision model, consolidation lets it settle restatements, new facets and chatter before the LLM call"
           },
-          "consolidation_format": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "actions",
-                  "facts"
-                ]
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Consolidation Format",
-            "description": "How the consolidation LLM answers: \"actions\" (creates/updates/deletes) or \"facts\" (one entry per new fact, for small models)"
-          },
           "consolidation_max_memories_per_round": {
             "anyOf": [
               {

@@ -1,6 +1,6 @@
 """The fact-by-fact consolidation prompt gets a real model to keep observations true.
 
-``consolidation_format = "facts"`` asks for one entry per new fact, judging every observation
+The prompt asks for one entry per new fact, judging every observation
 that mentions it. Whether a model judges a lookalike name as a different subject, ends every
 observation a job change makes untrue (not only the closest), and leaves a count alone for a
 named member is prompt-following that MockLLM cannot simulate — so this runs the real batch
@@ -9,7 +9,6 @@ call on one batch holding all three, and judges the writes it turns into.
 
 from __future__ import annotations
 
-import dataclasses
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -52,7 +51,7 @@ async def test_real_model_ends_what_a_fact_makes_untrue_and_leaves_lookalikes_al
         memories=memories,
         union_observations=pool,
         union_source_facts={},
-        config=dataclasses.replace(_get_raw_config(), consolidation_format="facts"),
+        config=_get_raw_config(),
         closest={str(m["id"]): list(observations) for m in memories},
     )
 

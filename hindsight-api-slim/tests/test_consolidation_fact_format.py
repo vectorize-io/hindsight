@@ -1,7 +1,7 @@
-"""The fact-by-fact consolidation answer (``consolidation_format = "facts"``), turned into actions.
+"""The consolidation answer, one entry per new fact, turned into actions.
 
-The model writes one entry per new fact and judges every observation that mentions the fact's
-subject (``effect``). These tests pin how that answer becomes creates, updates and skips — the
+The model writes one entry per new fact and names each observation it repeats, changes or ends
+(``effect``). These tests pin how that answer becomes creates, updates and skips — the
 model's own verdicts decide, the code only reads them — and what the prompt is shown.
 """
 
@@ -17,7 +17,7 @@ from hindsight_api.engine.consolidation.consolidator import (
     _settle_skips,
     _SkipAction,
 )
-from hindsight_api.engine.consolidation.prompts import build_fact_consolidation_system_prompt
+from hindsight_api.engine.consolidation.prompts import build_consolidation_system_prompt
 from hindsight_api.engine.response_models import LLMCallResult
 
 POOL = {"o-port": "ledger-sink listens on port 8444.", "o-fav": "The user's favorite framework is Svelte."}
@@ -35,13 +35,13 @@ def _change(oid: str, effect: str, text: str = "") -> dict[str, str]:
     return {"observation_id": oid, "observation_text": POOL.get(oid, ""), "effect": effect, "text": text}
 
 
-def test_unrelated_observations_are_left_alone_and_the_fact_is_created() -> None:
+def test_a_fact_touching_no_observation_is_created() -> None:
     actions = _actions(
         _answer(
             {
                 "fact_id": "f1",
                 "kind": "lasting",
-                "existing": [_change("o-port", "unrelated")],
+                "existing": [],
                 "adds": "yes",
                 "new": ["ledger-sync listens on port 8443."],
             }
@@ -139,6 +139,14 @@ def test_a_repeat_of_this_answers_own_create_under_an_invented_id_joins_it() -> 
     assert actions.updates == []
 
 
+def test_a_change_aimed_at_the_fact_itself_is_a_new_observation() -> None:
+    actions = _actions(
+        _answer({"fact_id": "f1", "kind": "lasting", "existing": [_change("f1", "changes", "Kotlin.")], "adds": "no"})
+    )
+    assert [(c.text, c.source_fact_ids) for c in actions.creates] == [("Kotlin.", ["f1"])]
+    assert actions.updates == []
+
+
 def test_entries_without_fact_ids_are_matched_by_position() -> None:
     actions = _actions(
         _answer(
@@ -172,7 +180,7 @@ def test_a_chatter_skip_settles_a_fact_no_action_cites() -> None:
     assert _settle_skips(result) == {"f1"}
 
 
-async def test_the_prompt_lists_facts_oldest_first_and_marks_later_observations() -> None:
+async def test_the_prompt_uses_short_ids_oldest_first_and_marks_later_observations() -> None:
     def at(day: int) -> datetime:
         return datetime(2026, 10, day, tzinfo=timezone.utc)
 
@@ -184,10 +192,19 @@ async def test_the_prompt_lists_facts_oldest_first_and_marks_later_observations(
     class _LLM:
         async def call(self, **kwargs: Any) -> Any:
             sent.update(kwargs)
-            return LLMCallResult(content=kwargs["response_format"].model_validate({"facts": []}))
+            answer = {
+                "facts": [
+                    {
+                        "fact_id": "F2",
+                        "kind": "lasting",
+                        "existing": [{"observation_id": "O1", "effect": "changes", "text": "Now React."}],
+                        "adds": "no",
+                    }
+                ]
+            }
+            return LLMCallResult(content=kwargs["response_format"].model_validate(answer))
 
     config = SimpleNamespace(
-        consolidation_format="facts",
         llm_output_language=None,
         observations_mission=None,
         llm_supports_max_items=True,
@@ -201,15 +218,21 @@ async def test_the_prompt_lists_facts_oldest_first_and_marks_later_observations(
         {"id": "f-new", "text": "newer", "mentioned_at": at(25)},
         {"id": "f-old", "text": "older", "mentioned_at": at(10)},
     ]
-    await _consolidate_batch_with_llm(
+    result = await _consolidate_batch_with_llm(
         _LLM(), memories, [observation], {}, config, closest={"f-old": ["o-fav"], "f-new": ["o-fav"]}
     )
 
     user = sent["messages"][-1]["content"]
-    assert user.index("[f-old]") < user.index("[f-new]")
+    assert "f-old" not in user and "o-fav" not in user
+    assert user.index("[F1] older") < user.index("[F2] newer")
     assert (
-        "[f-old] older (mentioned_at=2026-10-10T00:00Z)\n  closest existing observations: o-fav (stated after this fact)"
+        "[F1] older (mentioned_at=2026-10-10T00:00Z)\n  closest existing observations: O1 (stated after this fact)"
         in user
     )
-    assert "closest existing observations: o-fav\n" in user + "\n"  # f-new is the more recent: unmarked
-    assert sent["messages"][0]["content"] == build_fact_consolidation_system_prompt()
+    assert "closest existing observations: O1\n" in user + "\n"  # F2 is the more recent: unmarked
+    assert '"id": "O1"' in user
+    # The answer's short ids come back as the real ones.
+    assert [(u.observation_id, u.source_fact_ids, u.text) for u in result.updates] == [
+        ("o-fav", ["f-new"], "Now React.")
+    ]
+    assert sent["messages"][0]["content"] == build_consolidation_system_prompt()

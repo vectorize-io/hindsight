@@ -15,7 +15,6 @@ import pytest
 from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.consolidation.consolidator import (
     _aggregate_source_fields,
-    _build_response_model,
     _count_observations_for_scope,
     _find_related_observations,
     run_consolidation_job,
@@ -27,6 +26,7 @@ from hindsight_api.engine.reflect.tools import (
     tool_search_observations,
 )
 from tests.llm_judge import assert_meets_criteria
+from tests.consolidation_answers import batch_fact_ids, batch_fact_texts, fact_answer
 
 
 async def _unconsolidated(memory: MemoryEngine, bank_id: str, request_context) -> int:
@@ -2382,143 +2382,6 @@ class TestConsolidationSourceFactsConfig:
 # ---------------------------------------------------------------------------
 
 
-class TestBuildResponseModel:
-    """Unit tests for _build_response_model (consolidation response-model factory)."""
-
-    def test_no_limit_returns_base_model(self):
-        from hindsight_api.engine.consolidation.consolidator import _ConsolidationBatchResponse
-
-        for max_creates in (None, -1):
-            assert _build_response_model(max_creates) is _ConsolidationBatchResponse
-
-    def test_schema_contains_max_items_by_default(self):
-        for max_creates in (0, 3, 50):
-            schema = _build_response_model(max_creates).model_json_schema()
-            creates_prop = schema["properties"]["creates"]
-            assert creates_prop.get("maxItems") == max_creates
-
-    def test_schema_omits_max_items_when_unsupported(self):
-        """Regression for #2500: Bedrock rejects maxItems in response schemas."""
-        from hindsight_api.engine.consolidation.consolidator import _ConsolidationBatchResponse
-
-        for max_creates in (0, 3, 50):
-            model = _build_response_model(max_creates, supports_max_items=False)
-            assert model is _ConsolidationBatchResponse
-            assert "maxItems" not in model.model_json_schema()["properties"]["creates"]
-
-    def test_model_enforces_cap_by_default(self):
-        from pydantic import ValidationError
-
-        model = _build_response_model(2)
-        with pytest.raises(ValidationError):
-            model(
-                creates=[
-                    {"text": "obs1", "source_fact_ids": ["a"]},
-                    {"text": "obs2", "source_fact_ids": ["b"]},
-                    {"text": "obs3", "source_fact_ids": ["c"]},
-                ],
-                updates=[],
-                deletes=[],
-            )
-
-    def test_model_accepts_over_cap_when_max_items_unsupported(self):
-        model = _build_response_model(2, supports_max_items=False)
-        result = model(
-            creates=[
-                {"text": "obs1", "source_fact_ids": ["a"]},
-                {"text": "obs2", "source_fact_ids": ["b"]},
-                {"text": "obs3", "source_fact_ids": ["c"]},
-            ],
-            updates=[],
-            deletes=[],
-        )
-        assert len(result.creates) == 3
-
-    def test_updates_and_deletes_unconstrained(self):
-        """The creates cap never constrained updates or deletes (unchanged)."""
-        model = _build_response_model(0)
-        result = model(
-            creates=[],
-            updates=[
-                {"text": "updated", "observation_id": "x", "source_fact_ids": ["a"]},
-                {"text": "updated2", "observation_id": "y", "source_fact_ids": ["b"]},
-            ],
-            deletes=[{"observation_id": "z"}],
-        )
-        assert len(result.updates) == 2
-        assert len(result.deletes) == 1
-
-    def test_fact_ids_pin_source_fact_ids_in_schema(self):
-        """#5273: the schema only allows the batch's fact ids, at least one per action."""
-        model = _build_response_model(None, fact_ids=["f1", "f2"])
-        defs = model.model_json_schema()["$defs"]
-        for action in ("_Create", "_Update"):
-            ids = defs[action]["properties"]["source_fact_ids"]
-            assert ids["items"] == {"type": "string", "enum": ["f1", "f2"]}
-            assert ids["minItems"] == 1
-
-    def test_fact_ids_omit_min_items_when_unsupported(self):
-        model = _build_response_model(None, fact_ids=["f1"], supports_max_items=False)
-        ids = model.model_json_schema()["$defs"]["_Create"]["properties"]["source_fact_ids"]
-        assert ids["items"]["enum"] == ["f1"]
-        assert "minItems" not in ids
-
-    def test_fact_ids_are_a_schema_hint_not_validation(self):
-        """A provider that ignores the schema must not fail the whole batch."""
-        model = _build_response_model(3, fact_ids=["f1"])
-        result = model(
-            creates=[{"text": "obs", "source_fact_ids": "not-in-batch"}],
-            updates=[{"text": "upd", "observation_id": "o", "source_fact_ids": []}],
-        )
-        assert result.creates[0].source_fact_ids == ["not-in-batch"]
-        assert result.updates[0].source_fact_ids == []
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(("remaining_slots", "expected_creates"), [(0, 0), (2, 2)])
-    async def test_unsupported_max_items_still_truncates_creates(
-        self, remaining_slots: int, expected_creates: int
-    ) -> None:
-        """The operation config controls the schema while the runtime cap remains hard."""
-        from hindsight_api.engine.consolidation.consolidator import (
-            _consolidate_batch_with_llm,
-            _ConsolidationBatchResponse,
-            _CreateAction,
-        )
-
-        creates = [_CreateAction(text=f"observation {index}", source_fact_ids=[f"fact-{index}"]) for index in range(3)]
-        llm_config = SimpleNamespace(
-            _provider_impl=None,
-            call=AsyncMock(
-                return_value=LLMCallResult(content=_ConsolidationBatchResponse(creates=creates), usage=TokenUsage())
-            ),
-        )
-        config = SimpleNamespace(
-            llm_output_language=None,
-            observations_mission=None,
-            llm_strict_schema_consolidation=False,
-            llm_supports_max_items=False,
-            consolidation_max_attempts=1,
-            consolidation_llm_max_retries=None,
-            consolidation_max_completion_tokens=None,
-            llm_temperature_consolidation=0.0,
-            consolidation_format="actions",
-        )
-
-        result = await _consolidate_batch_with_llm(
-            llm_config=llm_config,
-            memories=[{"id": "fact-0", "text": "a fact"}],
-            union_observations=[],
-            union_source_facts={},
-            config=config,
-            remaining_observation_slots=remaining_slots,
-            max_observations_per_scope=2,
-        )
-
-        response_model = llm_config.call.await_args.kwargs["response_format"]
-        assert "maxItems" not in response_model.model_json_schema()["properties"]["creates"]
-        assert len(result.creates) == expected_creates
-
-
 class TestDedupeUpdates:
     """`_dedupe_updates` collapses LLM responses that target one observation_id
     multiple times — without this, the second `_execute_update_action` call
@@ -2715,7 +2578,7 @@ def _make_mock_llm_one_obs_per_fact():
 
     def callback(messages, scope):
         if scope != "consolidation":
-            return _ConsolidationBatchResponse()
+            return fact_answer()
         # Parse all fact UUIDs from the prompt — one create per fact. Read only
         # the user message(s): consolidation sends the facts there, while the
         # stable (cacheable) system message carries example UUIDs in its OUTPUT
@@ -2723,9 +2586,12 @@ def _make_mock_llm_one_obs_per_fact():
         import re
 
         prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
-        fact_ids = re.findall(r"\[([0-9a-f-]{36})\]", prompt)
-        creates = [_CreateAction(text=f"Observation about fact {fid[:8]}", source_fact_ids=[fid]) for fid in fact_ids]
-        return _ConsolidationBatchResponse(creates=creates)
+        fact_ids = batch_fact_ids(prompt)
+        creates = [
+            _CreateAction(text=f"Observation about {batch_fact_texts(prompt)[fid]}", source_fact_ids=[fid])
+            for fid in fact_ids
+        ]
+        return fact_answer(creates=creates)
 
     mock_llm.set_response_callback(callback)
 
@@ -2876,22 +2742,20 @@ async def test_max_observations_per_scope_allows_updates_at_capacity(memory: Mem
         def callback(messages, scope):
             nonlocal call_count, existing_obs_id
             if scope != "consolidation":
-                return _ConsolidationBatchResponse()
+                return fact_answer()
             call_count += 1
             import re
 
             # Facts live in the user message; the system message (stable, cached)
             # carries example UUIDs in its OUTPUT samples — read user only.
             prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
-            fact_ids = re.findall(r"\[([0-9a-f-]{36})\]", prompt)
+            fact_ids = batch_fact_ids(prompt)
             if call_count == 1 and fact_ids:
                 # First call: create an observation
-                return _ConsolidationBatchResponse(
-                    creates=[_CreateAction(text="Alice hikes.", source_fact_ids=[fact_ids[0]])]
-                )
+                return fact_answer(creates=[_CreateAction(text="Alice hikes.", source_fact_ids=[fact_ids[0]])])
             elif call_count >= 2 and fact_ids and existing_obs_id:
                 # Second+ call: update the existing observation
-                return _ConsolidationBatchResponse(
+                return fact_answer(
                     updates=[
                         _UpdateAction(
                             text="Alice hikes and runs trails.",
@@ -2900,7 +2764,7 @@ async def test_max_observations_per_scope_allows_updates_at_capacity(memory: Mem
                         )
                     ]
                 )
-            return _ConsolidationBatchResponse()
+            return fact_answer()
 
         mock_llm.set_response_callback(callback)
         wrapper = MagicMock()
@@ -3243,7 +3107,7 @@ def test_consolidation_prompt_split_is_cacheable_and_complete():
     assert "{facts_text}" not in sys_prompt
     assert "{observations_text}" not in sys_prompt
     # JSON examples are unescaped (single braces), i.e. .format() ran.
-    assert '{"creates"' in sys_prompt
+    assert '{"facts"' in sys_prompt
     assert "{{" not in sys_prompt
     # The stable observation-format boilerplate lives in the cached prefix.
     assert "proof_count" in sys_prompt
@@ -3414,16 +3278,14 @@ async def test_repeated_source_ids_are_stored_once(memory: MemoryEngine, request
 
     def callback(messages, scope):
         if scope != "consolidation":
-            return _ConsolidationBatchResponse()
+            return fact_answer()
         prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
-        fact_ids = re.findall(r"\[([0-9a-f-]{36})\]", prompt)
+        fact_ids = batch_fact_ids(prompt)
         if not fact_ids:
-            return _ConsolidationBatchResponse()
+            return fact_answer()
         if obs_id is None:
-            return _ConsolidationBatchResponse(
-                creates=[_CreateAction(text="Alice hikes.", source_fact_ids=[fact_ids[0]] * 50)]
-            )
-        return _ConsolidationBatchResponse(
+            return fact_answer(creates=[_CreateAction(text="Alice hikes.", source_fact_ids=[fact_ids[0]] * 50)])
+        return fact_answer(
             updates=[
                 _UpdateAction(
                     text="Alice hikes and runs trails.",

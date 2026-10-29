@@ -974,8 +974,6 @@ export class HindsightClient {
       enableAutoConsolidation?: boolean;
       /** When the server has a decision model, let it settle restatements, new facts and chatter before the consolidation LLM call. */
       consolidationUseDecisionModel?: boolean;
-      /** How the consolidation LLM answers: "actions" (creates, updates, deletes) or "facts" (one entry per new fact; for small models such as gemma-4). */
-      consolidationFormat?: "actions" | "facts";
       /** Number of LLM calls to batch during consolidation. */
       consolidationLlmBatchSize?: number;
       /** Concurrent LLM calls during consolidation. */
@@ -1089,8 +1087,6 @@ export class HindsightClient {
       updates.enable_auto_consolidation = options.enableAutoConsolidation;
     if (options.consolidationUseDecisionModel !== undefined)
       updates.consolidation_use_decision_model = options.consolidationUseDecisionModel;
-    if (options.consolidationFormat !== undefined)
-      updates.consolidation_format = options.consolidationFormat;
     if (options.consolidationLlmBatchSize !== undefined)
       updates.consolidation_llm_batch_size = options.consolidationLlmBatchSize;
     if (options.consolidationLlmParallelism !== undefined)

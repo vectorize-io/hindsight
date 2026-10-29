@@ -1,11 +1,9 @@
-"""A bank set to the fact-by-fact consolidation format keeps its observations true the same way.
+"""Consolidation's answer, one entry per new fact, comes back as the right writes.
 
-``consolidation_format = "facts"`` changes what the model is asked for: one entry per new fact,
-judging every observation that mentions it (repeats / changes / ends / unrelated), instead of
-lists of creates and updates. It is written for small models, which lose track of the lists.
-The bank must not notice the difference: a job change still ends the old observation in place
-and records the new one, and chatter still records nothing — the answer is read back into the
-same writes, through the same API a client sees.
+The model judges what each new fact does to the observations it touches (repeats / changes /
+ends / unrelated) instead of writing lists of creates and updates — small models lose track of
+the lists. The bank sees the same API either way: a job change ends the old observation in place
+and records the new one, and chatter records nothing, in one call.
 """
 
 from __future__ import annotations
@@ -36,15 +34,15 @@ async def _observations(client, bank: str) -> list[str]:
 
 
 @pytest.fixture
-async def fact_format_bank(client, llm, bank_id, settled) -> str:
-    await client.banks.update_bank_config(bank_id, {"updates": {"consolidation_format": "facts"}})
-
+async def judged_bank(client, llm, bank_id, settled) -> str:
     llm.on_step("extract_facts", contains="Google").returns(
         extracted(fact("Alice works at Google", who="Alice", entities=["Alice", "Google"]))
     )
     llm.on_step("consolidate").answers_with(
         lambda request: FactConsolidation(
-            facts=[FactEntry(fact_id=fid, about="Alice", adds="yes", new=[AT_GOOGLE]) for fid in batch_fact_ids(request)]
+            facts=[
+                FactEntry(fact_id=fid, about="Alice", adds="yes", new=[AT_GOOGLE]) for fid in batch_fact_ids(request)
+            ]
         )
     )
     await client.aretain(bank_id=bank_id, content="Alice works at Google.")
@@ -83,11 +81,11 @@ async def fact_format_bank(client, llm, bank_id, settled) -> str:
     return bank_id
 
 
-async def test_an_ended_observation_is_rewritten_and_the_new_one_recorded(client, fact_format_bank):
-    assert await _observations(client, fact_format_bank) == sorted([LEFT_GOOGLE, AT_MICROSOFT])
+async def test_an_ended_observation_is_rewritten_and_the_new_one_recorded(client, judged_bank):
+    assert await _observations(client, judged_bank) == sorted([LEFT_GOOGLE, AT_MICROSOFT])
 
 
-async def test_chatter_records_nothing_and_is_not_asked_again(client, llm, fact_format_bank):
+async def test_chatter_records_nothing_and_is_not_asked_again(client, llm, judged_bank):
     """The momentary fact is the model's answer, not an oversight: no observation cites it,
     and no further consolidation call asks about it."""
     assert len(llm.prompts_for("consolidate")) == 1

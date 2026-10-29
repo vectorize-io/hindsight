@@ -40,6 +40,7 @@ from hindsight_api.engine.consolidation.consolidator import (
 from hindsight_api.engine.memory_engine import MemoryEngine, _is_non_retryable_task_error
 from hindsight_api.engine.providers.mock_llm import MockLLM
 from hindsight_api.engine.response_models import RecallResult
+from tests.consolidation_answers import batch_fact_ids, batch_fact_texts, fact_answer
 
 
 class _RecallTimeout(Exception):
@@ -137,11 +138,14 @@ def _mock_llm_one_obs_per_fact():
 
     def callback(messages, scope):
         if scope != "consolidation":
-            return _ConsolidationBatchResponse()
+            return fact_answer()
         prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
-        fact_ids = re.findall(r"\[([0-9a-f-]{36})\]", prompt)
-        creates = [_CreateAction(text=f"Observation about fact {fid[:8]}", source_fact_ids=[fid]) for fid in fact_ids]
-        return _ConsolidationBatchResponse(creates=creates)
+        fact_ids = batch_fact_ids(prompt)
+        creates = [
+            _CreateAction(text=f"Observation about {batch_fact_texts(prompt)[fid]}", source_fact_ids=[fid])
+            for fid in fact_ids
+        ]
+        return fact_answer(creates=creates)
 
     mock_llm.set_response_callback(callback)
     wrapper = MagicMock()

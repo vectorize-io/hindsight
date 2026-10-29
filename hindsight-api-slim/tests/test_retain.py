@@ -12,6 +12,7 @@ import pytest
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.response_models import Budget
 from tests.llm_judge import assert_meets_criteria
+from tests.consolidation_answers import batch_fact_ids, fact_answer
 
 logger = logging.getLogger(__name__)
 
@@ -3273,7 +3274,7 @@ def _make_mock_llm_call():
 
         if kwargs.get("scope") == "consolidation":
             return LLMCallResult(
-                content=_ConsolidationBatchResponse(),
+                content=fact_answer(),
                 usage=TokenUsage(input_tokens=0, output_tokens=0),
             )
 

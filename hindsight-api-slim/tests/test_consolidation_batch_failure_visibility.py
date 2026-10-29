@@ -36,6 +36,7 @@ from hindsight_api.engine.consolidation.consolidator import (
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.providers.mock_llm import MockLLM
 from hindsight_api.metrics import NoOpMetricsCollector
+from tests.consolidation_answers import batch_fact_ids, batch_fact_texts, fact_answer
 
 
 @pytest.fixture(autouse=True)
@@ -126,18 +127,19 @@ async def test_failures_rescued_by_bisection_are_still_counted(memory: MemoryEng
         def callback(messages, scope):
             nonlocal validation_failures
             if scope != "consolidation":
-                return _ConsolidationBatchResponse()
+                return fact_answer()
             prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
-            fact_ids = re.findall(r"\[([0-9a-f-]{36})\]", prompt)
+            fact_ids = batch_fact_ids(prompt)
             # Stands in for a model that only emits valid strict JSON for the
             # simplest prompts: anything with more than one fact comes back
             # schema-invalid, and bisection is what eventually gets through.
             if len(fact_ids) > 1:
                 validation_failures += 1
                 raise _schema_validation_error()
-            return _ConsolidationBatchResponse(
+            return fact_answer(
                 creates=[
-                    _CreateAction(text=f"Observation about fact {fid[:8]}", source_fact_ids=[fid]) for fid in fact_ids
+                    _CreateAction(text=f"Observation about {batch_fact_texts(prompt)[fid]}", source_fact_ids=[fid])
+                    for fid in fact_ids
                 ]
             )
 
@@ -184,12 +186,13 @@ async def test_a_clean_run_reports_no_batch_failures(memory: MemoryEngine, reque
 
         def callback(messages, scope):
             if scope != "consolidation":
-                return _ConsolidationBatchResponse()
+                return fact_answer()
             prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
-            fact_ids = re.findall(r"\[([0-9a-f-]{36})\]", prompt)
-            return _ConsolidationBatchResponse(
+            fact_ids = batch_fact_ids(prompt)
+            return fact_answer(
                 creates=[
-                    _CreateAction(text=f"Observation about fact {fid[:8]}", source_fact_ids=[fid]) for fid in fact_ids
+                    _CreateAction(text=f"Observation about {batch_fact_texts(prompt)[fid]}", source_fact_ids=[fid])
+                    for fid in fact_ids
                 ]
             )
 
@@ -227,7 +230,7 @@ async def test_retried_attempts_each_count(memory: MemoryEngine, request_context
 
         def callback(messages, scope):
             if scope != "consolidation":
-                return _ConsolidationBatchResponse()
+                return fact_answer()
             # Not JSONDecodeError/ValidationError/OutputTooLong, so it classifies RETRY
             # and the outer ladder re-sends instead of failing the batch immediately.
             raise RuntimeError("connection reset by peer")
@@ -271,7 +274,7 @@ async def test_facts_bisection_cannot_rescue_are_counted_in_both_places(memory: 
 
         def callback(messages, scope):
             if scope != "consolidation":
-                return _ConsolidationBatchResponse()
+                return fact_answer()
             raise _schema_validation_error()
 
         _install_llm(memory, callback)
@@ -313,10 +316,10 @@ async def test_action_citing_no_batch_fact_is_counted_not_silent(memory: MemoryE
 
         def callback(messages, scope):
             if scope != "consolidation":
-                return _ConsolidationBatchResponse()
+                return fact_answer()
             prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
-            fact_ids = re.findall(r"\[([0-9a-f-]{36})\]", prompt)
-            return _ConsolidationBatchResponse(
+            fact_ids = batch_fact_ids(prompt)
+            return fact_answer(
                 creates=[
                     _CreateAction(text="Erin likes tea", source_fact_ids=[fact_ids[0]]),
                     _CreateAction(text="Erin bikes", source_fact_ids=[fact_ids[1][:8] + "-…", str(uuid.uuid4())]),
@@ -352,10 +355,10 @@ async def test_action_with_empty_text_is_dropped_not_embedded(memory: MemoryEngi
 
         def callback(messages, scope):
             if scope != "consolidation":
-                return _ConsolidationBatchResponse()
+                return fact_answer()
             prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
-            fact_ids = re.findall(r"\[([0-9a-f-]{36})\]", prompt)
-            return _ConsolidationBatchResponse(
+            fact_ids = batch_fact_ids(prompt)
+            return fact_answer(
                 creates=[
                     _CreateAction(text="Erin likes tea", source_fact_ids=[fact_ids[0]]),
                     _CreateAction(text="  ", source_fact_ids=[fact_ids[-1]]),

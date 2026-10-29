@@ -22,6 +22,7 @@ from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
 from hindsight_api.engine.task_backend import SyncTaskBackend
 from hindsight_api.engine.retain.fact_extraction import FactExtractionResponse, ExtractedFact
 from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
+from tests.consolidation_answers import batch_fact_ids, fact_answer
 
 logger = logging.getLogger(__name__)
 
@@ -170,9 +171,7 @@ class TestLargeBatchRetain:
             # Consolidation calls expect a _ConsolidationBatchResponse (not a raw dict),
             # because consolidation does NOT use skip_validation=True.
             if kwargs.get("scope") == "consolidation":
-                return LLMCallResult(
-                    content=_ConsolidationBatchResponse(), usage=TokenUsage(input_tokens=0, output_tokens=0)
-                )
+                return LLMCallResult(content=fact_answer(), usage=TokenUsage(input_tokens=0, output_tokens=0))
 
             call_tracker["count"] += 1
 
@@ -263,9 +262,7 @@ class TestLargeBatchRetain:
             from hindsight_api.engine.consolidation.consolidator import _ConsolidationBatchResponse
 
             if kwargs.get("scope") == "consolidation":
-                return LLMCallResult(
-                    content=_ConsolidationBatchResponse(), usage=TokenUsage(input_tokens=0, output_tokens=0)
-                )
+                return LLMCallResult(content=fact_answer(), usage=TokenUsage(input_tokens=0, output_tokens=0))
 
             messages = kwargs.get("messages", args[0] if args else [])
             user_msg = messages[-1]["content"] if messages else ""
