@@ -11,10 +11,3 @@ dev-dependencies = []
 # no cp314 wheels. This forks onnxruntime per platform. Drop it once markitdown
 # allows magika 1.x.
 constraint-dependencies = ["onnxruntime>=1.24.1; sys_platform != 'win32'"]
-# litellm (every release through 1.106.x) declares filelock<4.0, but the fix for
-# GHSA-69hj-f68j-2879 and GHSA-8mx5-7m5m-r77g only ships in filelock 4.2.1.
-# litellm imports a single symbol, FileLock, in one CLI helper
-# (litellm/proxy/client/cli/commands/claude_settings.py) and calls it as
-# FileLock(path, timeout=..., mode=...) - a signature filelock 4.x keeps.
-# Drop this once litellm lifts the cap.
-override-dependencies = ["filelock>=4.2.1"]
