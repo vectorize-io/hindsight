@@ -312,6 +312,34 @@ def current_call_metadata() -> dict[str, Any] | None:
     return _call_metadata_ctx.get()
 
 
+@dataclass(frozen=True)
+class SchemaToolTurn:
+    """The tool turn an in-flight ``call`` makes through a response schema.
+
+    ``LLMProvider.call_with_tools`` makes a turn as an ordinary ``call``, so the model-call
+    record built inside it sees only the JSON reply. Bound for that call, this lets the
+    record carry the turn's tool calls, as it did when providers made them natively.
+    """
+
+    tools: list[dict[str, Any]]
+    tool_choice: Any
+
+
+_schema_tool_turn_ctx: ContextVar[SchemaToolTurn | None] = ContextVar("hindsight_schema_tool_turn_ctx", default=None)
+
+
+def set_schema_tool_turn(turn: SchemaToolTurn | None) -> Token:
+    return _schema_tool_turn_ctx.set(turn)
+
+
+def reset_schema_tool_turn(token: Token) -> None:
+    _schema_tool_turn_ctx.reset(token)
+
+
+def current_schema_tool_turn() -> SchemaToolTurn | None:
+    return _schema_tool_turn_ctx.get()
+
+
 def current_trace_context() -> LLMTraceContext | None:
     """Return the active trace attribution, or None outside a traced context."""
     return _trace_ctx.get()

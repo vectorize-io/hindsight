@@ -30,6 +30,7 @@ Load it with::
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from abc import ABC, abstractmethod
@@ -173,11 +174,20 @@ class ModelCallRecorder:
         from hindsight_api.engine.llm_trace import (
             current_call_metadata,
             current_request_context,
+            current_schema_tool_turn,
             current_trace_context,
             genai_operation_name,
         )
         from hindsight_api.operation_runs import add_model_call, current_operation_id
 
+        turn = current_schema_tool_turn()
+        if tool_calls is None and turn is not None and error is None and response_content is not None:
+            # A tool turn made through a response schema: its reply is the call (see
+            # ``LLMProvider.call_with_tools``), so the record carries it as one.
+            from hindsight_api.engine.providers.tools_via_schema import calls_from_reply
+
+            reply = response_content if isinstance(response_content, str) else json.dumps(response_content)
+            tool_calls = [c.model_dump() for c in calls_from_reply(reply, turn.tools, turn.tool_choice)]
         ctx = current_trace_context()
         ended_at = datetime.now(timezone.utc)
         metadata = dict(ctx.metadata) if ctx else {}

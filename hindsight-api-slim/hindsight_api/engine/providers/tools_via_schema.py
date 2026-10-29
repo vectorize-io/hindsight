@@ -157,7 +157,7 @@ def calls_from_reply(content: str | None, tools: list[dict[str, Any]], tool_choi
         reply = None
     if tool_choice.mode is LLMToolChoiceMode.NAMED:
         name = _function(forced_tool(tools, tool_choice))["name"]
-        arguments = reply
+        arguments = _unwrapped(reply, name)
     else:
         call = reply.get("call") if isinstance(reply, dict) else None
         name = call.get("name") if isinstance(call, dict) else None
@@ -169,6 +169,30 @@ def calls_from_reply(content: str | None, tools: list[dict[str, Any]], tool_choi
     else:
         arguments = {k: v for k, v in arguments.items() if v is not None}
     return [LLMToolCall(id=f"call_{name}_{uuid.uuid4().hex[:12]}", name=name, arguments=arguments)]
+
+
+def _unwrapped(reply: Any, name: str) -> Any:
+    """A forced turn's arguments, from the two wrappers a model put around them.
+
+    Where a provider does not enforce ``additionalProperties: false`` (Gemini's schema
+    support ignores it), a model answered a forced ``done`` as ``{"done": {...}}``, and
+    the page arrived with no ``markdown`` field; another wrote the free-turn shape
+    ``{"call": {"name": ..., "arguments": {...}}}``. Either one names this very function,
+    so it has one reading.
+    """
+    if not isinstance(reply, dict) or len(reply) != 1:
+        return reply
+    ((key, value),) = reply.items()
+    if key == name and isinstance(value, dict):
+        return value
+    if (
+        key == "call"
+        and isinstance(value, dict)
+        and value.get("name") == name
+        and isinstance(value.get("arguments"), dict)
+    ):
+        return value["arguments"]
+    return reply
 
 
 class SchemaFormat:

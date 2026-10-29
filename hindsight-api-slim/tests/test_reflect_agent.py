@@ -1826,10 +1826,10 @@ class TestReflectAgentMocked:
     async def test_premature_done_guardrail_emits_a_usable_wire_id(
         self, mock_llm: MagicMock, mock_functions: dict[str, AsyncMock]
     ) -> None:
-        """The "search first" guardrail loops, so its tool_use needs a deduped id too.
+        """The "search first" guardrail loops, so its call needs a deduped id too.
 
-        An empty id reaches Anthropic verbatim as ``tool_use.id: ""`` and is
-        rejected, taking the whole reflect run with it.
+        The id pairs each result with its call when the history is replayed; an
+        empty or repeated one would hand a result to the wrong call.
         """
         mock_functions["recall_fn"].side_effect = [{"memories": [{"id": "mem-1", "content": "first"}]}]
         mock_llm.call_with_tools.side_effect = closing_echo(
@@ -3514,3 +3514,40 @@ async def test_done_with_malformed_id_fields_keeps_the_answer():
     assert result.used_memory_ids == []
     assert result.used_mental_model_ids == []
     assert result.used_observation_ids == []
+
+
+@pytest.mark.asyncio
+async def test_an_answers_closing_done_must_cite_from_the_retrieved_handles(mock_functions):
+    """Optional ids under a strict schema are ids a model may leave null; one did (Bedrock Nova 2 Lite)."""
+    llm = MagicMock()
+    llm.call_with_tools = AsyncMock(
+        side_effect=closing_echo(
+            [
+                LLMToolCallResult(
+                    tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "q"})],
+                    finish_reason="tool_calls",
+                ),
+                LLMToolCallResult(
+                    tool_calls=[LLMToolCall(id="2", name="done", arguments={"answer": "A", "memory_ids": ["f1"]})],
+                    finish_reason="tool_calls",
+                ),
+            ]
+        )
+    )
+
+    await run_reflect_agent(
+        llm_config=llm,
+        bank_id="b",
+        query="q",
+        bank_profile={"name": "T", "mission": ""},
+        has_mental_models=False,
+        budget="low",
+        max_iterations=5,
+        **mock_functions,
+    )
+
+    closing = llm.call_with_tools.await_args_list[-1].kwargs
+    assert closing["tool_choice"] == LLMToolChoice.named("done")
+    done = next(t for t in closing["tools"] if t["function"]["name"] == "done")["function"]["parameters"]
+    assert "memory_ids" in done["required"]
+    assert done["properties"]["memory_ids"]["items"]["enum"] == ["f1"]

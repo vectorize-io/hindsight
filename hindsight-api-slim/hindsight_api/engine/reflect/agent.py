@@ -855,8 +855,9 @@ async def _run_reflect_agent_inner(
     async def _ask_for_done(feedback: "Sequence[dict[str, Any]]" = ()) -> "LLMToolCallResult | None":
         """Ask for the answer as a ``done`` call, in the conversation it was gathered in.
 
-        Every loop that stops retrieving ends here (``answer_ready``, a turn with no
-        call, out of iterations). The standalone synthesis prompt would re-render
+        Most loops that stop retrieving end here (``answer_ready``, a turn with no
+        call, out of iterations; a compacted or overflowing context goes straight to
+        the standalone prompt). The standalone synthesis prompt would re-render
         every tool result into a NEW prompt, so the whole evidence set is billed
         again at the full input rate; asking here reuses the prefix the provider
         already has, and a page comes back as ``done``'s markdown with its cited ids.
@@ -888,7 +889,7 @@ async def _run_reflect_agent_inner(
                     },
                     *feedback,
                 ],
-                tools=_with_cited_handles(tools, presenter) if answer_as_document else tools,
+                tools=_with_cited_handles(tools, presenter),
                 # The handle limits hold the reply only; the prompt declares what every loop
                 # turn declared, so this call rides the prefix the provider already holds.
                 declared_tools=tools,
@@ -1503,59 +1504,10 @@ async def _run_reflect_agent_inner(
         # Check for done tool call (handle various LLM output formats)
         done_call = next((tc for tc in result.tool_calls if _is_done_tool(tc.name)), None)
         if done_call:
-            # Guardrail: a search must have run before done. One that ran and found
-            # nothing counts: "nothing is recorded" is then the honest answer (#5702).
-            if not searched and iteration < max_iterations - 1:
-                # Add assistant message and fake tool result asking for evidence.
-                # This branch loops, so its call lands in the same conversation as
-                # every later turn -- it needs a deduped id just like the parallel
-                # batch below.
-                (done_wire_id,) = _unique_tool_call_ids([done_call], emitted_wire_ids)
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "tool_calls": [_tool_call_to_dict(done_call, done_wire_id)],
-                    }
-                )
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": done_wire_id,
-                        "content": json.dumps(
-                            {"error": _SEARCH_FIRST_ERROR},
-                            ensure_ascii=False,
-                        ),
-                    }
-                )
-                continue
-
-            if (
-                include_recall
-                and not recall_ran
-                and not absence_recall_forced
-                and iteration < max_iterations - 1
-                and not _answer_found(done_call.arguments)
-            ):
-                absence_recall_forced = True
-                logger.info(f"[REFLECT {reflect_id}] done reported nothing found before recall ran; forcing recall.")
-                (done_wire_id,) = _unique_tool_call_ids([done_call], emitted_wire_ids)
-                messages.append({"role": "assistant", "tool_calls": [_tool_call_to_dict(done_call, done_wire_id)]})
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": done_wire_id,
-                        "content": json.dumps(
-                            {
-                                "error": "You reported that nothing is known, but recall has not run yet. Call "
-                                "recall with the question's key terms (names, ids, issue keys verbatim) before "
-                                "answering."
-                            },
-                            ensure_ascii=False,
-                        ),
-                    }
-                )
-                continue
-
+            # Only a decision-orchestrated reflect offers done on a free turn (agent turns stop
+            # with answer_ready, which carries the "search first" and "recall before nothing
+            # found" gates), and its first parallel round has searched every layer, recall
+            # included, before any free turn: the same gates on done could not fire here.
             # The model is ready to answer. In agent turns the answer is written by the closing
             # step, never taken from this turn's ``done``: the closing request restates the question
             # and asks for every fact and exact value, and the done a free turn emits sees neither.
@@ -2322,6 +2274,11 @@ def _with_cited_handles(tools: list[dict[str, Any]], presenter: ToolResultPresen
     after the text (9.9 a page on a replay, against 0.1 limited) and is where a runaway
     reply looped ("o1234567890..." to the token cap). A field with nothing to cite
     takes nothing.
+
+    Every id field is required, as the page's ``done`` has them (``tools_schema``): under
+    a strict schema an optional field is one the model may leave null, and an answer's
+    citations came back empty that way (Bedrock Nova 2 Lite, the provider smoke test)
+    while a page's required ones did not.
     """
     limited = []
     for tool in tools:
@@ -2329,7 +2286,9 @@ def _with_cited_handles(tools: list[dict[str, Any]], presenter: ToolResultPresen
             limited.append(tool)
             continue
         tool = copy.deepcopy(tool)
-        properties = tool["function"]["parameters"]["properties"]
+        parameters = tool["function"]["parameters"]
+        properties = parameters["properties"]
+        required = parameters.setdefault("required", [])
         for field, prefix in _CITED_ID_PREFIXES.items():
             if field in properties:
                 handles = presenter.aliases(prefix)
@@ -2340,6 +2299,8 @@ def _with_cited_handles(tools: list[dict[str, Any]], presenter: ToolResultPresen
                     # and Anthropic's native structured output reject the keyword.
                     **({"maxItems": len(handles)} if get_config().llm_supports_max_items else {}),
                 }
+                if field not in required:
+                    required.append(field)
         limited.append(tool)
     return limited
 

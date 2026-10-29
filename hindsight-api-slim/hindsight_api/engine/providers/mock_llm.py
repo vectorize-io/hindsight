@@ -223,6 +223,7 @@ class MockLLM(LLMInterface):
         max_backoff: float = 30.0,
         tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
         attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
+        declared_tools: list[dict[str, Any]] | None = None,
     ) -> LLMToolCallResult:
         """
         Make a mock LLM API call with tool/function calling support.
@@ -233,6 +234,7 @@ class MockLLM(LLMInterface):
             messages: List of message dicts. Can include tool results with role='tool'.
             tools: List of tool definitions in OpenAI format.
             max_completion_tokens: Not used in mock.
+            declared_tools: Not used in mock (the prompt it would shape is never rendered).
             temperature: Recorded on the call record for test assertions.
             scope: Scope identifier for tracking.
             max_retries: Not used in mock.

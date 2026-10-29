@@ -1506,6 +1506,7 @@ class LLMProvider:
         every turn of a conversation keeps its prompt prefix, and the provider's cache of
         it, the same while a turn narrows what it may call.
         """
+        from .llm_trace import SchemaToolTurn, reset_schema_tool_turn, set_schema_tool_turn
         from .providers import tools_via_schema
         from .providers.mock_llm import MockLLM
         from .response_models import LLMToolCallResult
@@ -1528,27 +1529,40 @@ class LLMProvider:
             *tools_via_schema.as_text_messages(messages, declared_tools or tools),
             {"role": "user", "content": tools_via_schema.turn_request(tools, tool_choice)},
         ]
-        for attempt in range(2):
-            try:
-                result = await self.call(
-                    messages=text_messages,
-                    response_format=tools_via_schema.schema_format(held),
-                    max_completion_tokens=max_completion_tokens,
-                    temperature=temperature,
-                    scope=scope,
-                    max_retries=max_retries,
-                    initial_backoff=initial_backoff,
-                    max_backoff=max_backoff,
-                    skip_validation=True,
-                    strict_schema=True,
-                )
-                break
-            except OutputTooLongError:
-                # A held reply that loops (whitespace, a digit run) until the cap is a sampling
-                # accident: one more sample came back whole in every case measured on Gemma 4.
-                if attempt:
-                    raise
-                logger.warning(f"[{scope}] schema reply hit the token cap; sampling once more")
+        # The model-call record is built inside ``call``: bound here, it carries the turn's calls.
+        turn_token = set_schema_tool_turn(SchemaToolTurn(tools=tools, tool_choice=tool_choice))
+        try:
+            for attempt in range(2):
+                try:
+                    result = await self.call(
+                        messages=text_messages,
+                        response_format=tools_via_schema.schema_format(held),
+                        max_completion_tokens=max_completion_tokens,
+                        temperature=temperature,
+                        scope=scope,
+                        max_retries=max_retries,
+                        initial_backoff=initial_backoff,
+                        max_backoff=max_backoff,
+                        skip_validation=True,
+                        strict_schema=True,
+                    )
+                    break
+                except OutputTooLongError:
+                    # A held reply that loops (whitespace, a digit run) until the cap is a sampling
+                    # accident: one more sample came back whole in every case measured on Gemma 4.
+                    if attempt:
+                        raise
+                    logger.warning(f"[{scope}] schema reply hit the token cap; sampling once more")
+                except json.JSONDecodeError as exc:
+                    # Prose where the schema asked for JSON, after the provider's own retries: a
+                    # model that does not follow the schema. A turn with no call, as a prose reply
+                    # always was, so the caller can say the model is the problem (reflect raises
+                    # ReflectToolCallError on a first turn) rather than fail on a parse error.
+                    logger.warning(f"[{scope}] reply did not follow the response schema: {exc}")
+                    # The prose rides as content, so the error can quote what the model said.
+                    return LLMToolCallResult(content=exc.doc or None, tool_calls=[], finish_reason="stop")
+        finally:
+            reset_schema_tool_turn(turn_token)
         reply = result.content if isinstance(result.content, str) else json.dumps(result.content, ensure_ascii=False)
         tool_calls = tools_via_schema.calls_from_reply(reply, tools, tool_choice)
         return LLMToolCallResult(

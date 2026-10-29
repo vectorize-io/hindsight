@@ -127,12 +127,7 @@ def _expand_once_then_finish(llm: LLMStub, memory_id: str) -> None:
     turns that offer `expand`; the ladder and the prose answer stay with the loop."""
 
     def build(request: ChatRequest) -> ToolCall:
-        expanded = any(
-            call.get("function", {}).get("name") == "expand"
-            for m in request.messages
-            for call in (m.get("tool_calls") or [])
-        )
-        if expanded:
+        if request.has_result_of("expand"):
             return ToolCall("done", {"answer": ANSWER})
         return ToolCall("expand", {"memory_ids": [memory_id], "depth": "document"})
 
@@ -145,11 +140,7 @@ def _reflect_prompts(llm: LLMStub) -> str:
 
 
 def _expand_ran(llm: LLMStub) -> bool:
-    return any(
-        m.get("role") == "tool" and "memory_id" in (m.get("content") or "")
-        for call in llm.calls
-        for m in call.messages
-    )
+    return any(call.has_result_of("expand") for call in llm.calls)
 
 
 async def test_reflect_cannot_expand_the_rule_into_kates_note(client, llm, shared_bank):

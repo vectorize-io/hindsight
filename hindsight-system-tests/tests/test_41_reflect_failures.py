@@ -53,7 +53,7 @@ async def test_a_model_that_never_calls_a_tool_is_an_error(client, llm, bank_wit
         await client.areflect(bank_id=bank_with_facts, query=QUERY)
 
     message = str(raised.value)
-    assert "produced no usable tool call during initial tool selection" in message
+    assert "produced no usable call during initial tool selection" in message
     assert "tool_choice=" in message
     assert "finish_reason=" in message
     assert "I think Alice lives in Berlin." in message

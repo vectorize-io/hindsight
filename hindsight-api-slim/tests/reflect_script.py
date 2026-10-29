@@ -24,8 +24,10 @@ def _offered(kwargs: dict[str, Any]) -> set[str] | None:
 def closing_echo(replies: Iterable[Any]) -> Callable[..., Any]:
     """A ``side_effect`` that plays ``replies`` in order, then answers the closing ``done`` request.
 
-    A scripted ``done`` on a turn that does not offer it is played as ``answer_ready`` first,
-    then handed to the closing call. Once the script is used up, a call that names ``done``
+    A scripted ``done`` on a turn that does not offer it is played as ``answer_ready`` first
+    (its ``answer_found`` carried over, its ``finish_reason`` not), then handed to the next
+    call that asks for ``done`` — ahead of anything still scripted, so a script cannot queue a
+    different reply for that closing call. Once the script is used up, a call that names ``done``
     gets the last scripted ``done`` again:
     the model re-emits the answer it was about to give. Any other call past the script raises
     ``StopIteration``, as a plain list would.

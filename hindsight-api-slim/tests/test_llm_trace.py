@@ -536,23 +536,21 @@ def _litellm_tool_response_with_usage(arguments: str):
 
 @pytest.mark.asyncio
 async def test_litellm_tool_call_arg_parse_failure_keeps_usage(registered_recorder):
-    """The litellm tool path bills the provider response, then ``json.loads`` the
-    tool-call arguments locally; malformed args raise after billing, so the error
-    trace must keep the provider-reported tokens. Exercises the real
-    ``LiteLLMLLM.call_with_tools`` stash that ``LiteLLMRouterLLM`` also inherits
-    (the wrapper-level tools test uses a provider that already stashes)."""
+    """A tool turn whose reply is not JSON is billed all the same: the provider reported
+    the tokens before the reply was parsed. The turn comes back with no call (a model
+    that did not follow the schema), and the error trace keeps the provider's usage."""
     llm = LLMProvider(provider="litellm", api_key="test-key", base_url="https://example.test/v1", model="gpt-4o-mini")
-    # Valid response + usage, but the tool arguments are not valid JSON.
+    # Valid response + usage, but the reply is not valid JSON.
     llm._provider_impl._acompletion = AsyncMock(return_value=_litellm_tool_response_with_usage("{not valid json"))
 
-    with pytest.raises(json.JSONDecodeError):
-        await llm.call_with_tools(
-            messages=[{"role": "user", "content": "x"}],
-            tools=[],
-            scope="tools",
-            max_retries=0,
-        )
+    result = await llm.call_with_tools(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"type": "function", "function": {"name": "recall", "parameters": {"type": "object"}}}],
+        scope="tools",
+        max_retries=0,
+    )
 
+    assert result.tool_calls == []
     assert len(registered_recorder.records) == 1
     r = registered_recorder.records[0]
     assert r.status == "error"

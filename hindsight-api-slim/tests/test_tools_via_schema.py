@@ -124,6 +124,25 @@ class TestTheCall:
         assert [o["properties"]["name"]["enum"] for o in options] == [["recall"]]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "reply",
+        [{"recall": {"query": "editors"}}, {"call": {"name": "recall", "arguments": {"query": "editors"}}}],
+        ids=["under-its-name", "free-turn-shape"],
+    )
+    async def test_a_forced_reply_wrapped_in_the_functions_name_is_unwrapped(self, reply):
+        """Seen on a provider that does not enforce additionalProperties: the page came back empty."""
+        result, _ = await _call(LLMToolChoice.named("recall"), _reply(reply))
+        assert result.tool_calls[0].arguments == {"query": "editors"}
+
+    @pytest.mark.asyncio
+    async def test_prose_where_the_schema_asked_for_json_is_a_turn_without_a_call(self):
+        """A model that does not follow the schema; the caller names it instead of a parse error."""
+        prose = "I think Alice lives in Berlin."
+        result, _ = await _call(LLMToolChoice.named("recall"), json.JSONDecodeError("Expecting value", prose, 0))
+        assert result.tool_calls == [] and result.finish_reason == "stop"
+        assert result.content == prose
+
+    @pytest.mark.asyncio
     async def test_a_reply_naming_no_call_is_a_turn_without_one(self):
         result, _ = await _call(LLM_TOOL_CHOICE_REQUIRED, _reply({"call": {}}))
         assert result.tool_calls == []

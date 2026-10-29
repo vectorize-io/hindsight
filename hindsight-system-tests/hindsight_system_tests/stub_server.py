@@ -22,8 +22,12 @@ there.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 import time
+from dataclasses import dataclass
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -33,6 +37,44 @@ from .rulebook import ChatRequest, ReceivedWebhook, Stubs, TokenExchange
 from .validation import RequestRejected, validate_chat, validate_embeddings, validate_rerank, validate_systemone
 
 logger = logging.getLogger(__name__)
+
+
+#: The words Hindsight asks for a forced (named) call with (``tools_via_schema.turn_request``).
+_NAMED_TURN_RX = re.compile(r"^Call `([^`]+)` now")
+
+
+@dataclass(frozen=True)
+class SchemaToolTurn:
+    """A tool-calling turn made as a reply to a response schema, as Hindsight makes every one.
+
+    No ``tools`` are sent (``providers/tools_via_schema.py``): a free turn's schema is
+    ``{"call": one of the declared functions with its arguments}``, and a forced turn's is
+    that function's arguments, asked for in words. Rules keep scripting tool calls; the
+    call they return is written back as the JSON text the schema holds the reply to.
+    """
+
+    tools: tuple[str, ...]
+    named: bool
+
+    def reply_for(self, function: dict[str, Any]) -> dict[str, Any]:
+        arguments = json.loads(function.get("arguments") or "{}")
+        payload = arguments if self.named else {"call": {"name": function["name"], "arguments": arguments}}
+        return {"role": "assistant", "content": json.dumps(payload)}
+
+
+def _schema_tool_turn(body: dict[str, Any]) -> SchemaToolTurn | None:
+    """Recognised by shape: the provider names every response schema alike ("response")."""
+    schema = ((body.get("response_format") or {}).get("json_schema") or {}).get("schema") or {}
+    properties = schema.get("properties") or {}
+    if set(properties) == {"call"} and "anyOf" in properties["call"]:
+        options = properties["call"]["anyOf"]
+        return SchemaToolTurn(tools=tuple(o["properties"]["name"]["enum"][0] for o in options), named=False)
+    last = (body.get("messages") or [{}])[-1]
+    content = last.get("content")
+    match = _NAMED_TURN_RX.match(content) if schema and isinstance(content, str) else None
+    if match:
+        return SchemaToolTurn(tools=(match.group(1),), named=True)
+    return None
 
 
 def create_stub_app(stubs: Stubs) -> FastAPI:
@@ -52,10 +94,12 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
         body = await request.json()
         validate_chat(body)
 
+        turn = _schema_tool_turn(body)
         chat_request = ChatRequest(
             model=body["model"],
             messages=body["messages"],
-            tools=tuple(tool["function"]["name"] for tool in body.get("tools") or []),
+            # Hindsight sends no ``tools``: a tool turn is a reply to a response schema.
+            tools=turn.tools if turn else (),
             api_key=request.headers.get("authorization", "").removeprefix("Bearer ") or None,
             headers={k.lower(): v for k, v in request.headers.items()},
         )
@@ -87,18 +131,20 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
                 retry_after_seconds=reply.retry_after_seconds,
             )
 
+        message, finish_reason = reply.message, reply.finish_reason
+        if turn is not None and message.get("tool_calls"):
+            message, finish_reason = turn.reply_for(message["tool_calls"][0]["function"]), "stop"
+
         return JSONResponse(
             {
                 "id": "chatcmpl-stub",
                 "object": "chat.completion",
                 "created": int(time.time()),
                 "model": body["model"],
-                "choices": [
-                    {"index": 0, "message": reply.message, "finish_reason": reply.finish_reason, "logprobs": None}
-                ],
+                "choices": [{"index": 0, "message": message, "finish_reason": finish_reason, "logprobs": None}],
                 "usage": _usage(
                     chat_request.all_text,
-                    str(reply.message.get("content") or ""),
+                    str(message.get("content") or ""),
                     visible_tokens=reply.visible_tokens,
                     reasoning_tokens=reply.reasoning_tokens,
                 ),

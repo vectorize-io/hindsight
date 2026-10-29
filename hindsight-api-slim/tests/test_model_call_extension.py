@@ -99,6 +99,27 @@ async def test_a_tool_call_turn_records_the_tools_it_asked_for(ext):
     assert call.finish_reason == "tool_calls"
 
 
+def test_a_tool_turn_made_through_a_response_schema_records_its_call(ext):
+    """``call_with_tools`` makes a turn as a plain ``call``; the record still carries the call."""
+    from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_REQUIRED
+    from hindsight_api.engine.llm_trace import SchemaToolTurn, reset_schema_tool_turn, set_schema_tool_turn
+
+    tools = [{"type": "function", "function": {"name": "recall", "parameters": {"type": "object"}}}]
+    token = set_schema_tool_turn(SchemaToolTurn(tools=tools, tool_choice=LLM_TOOL_CHOICE_REQUIRED))
+    try:
+        tracing.get_span_recorder().record_llm_call(
+            provider="openai",
+            model="m",
+            scope="reflect",
+            response_content={"call": {"name": "recall", "arguments": {"query": "cats"}}},
+        )
+    finally:
+        reset_schema_tool_turn(token)
+
+    [call] = ext.calls
+    assert [(tc.name, tc.arguments) for tc in call.tool_calls] == [("recall", {"query": "cats"})]
+
+
 def test_a_failed_call(ext):
     tracing.get_span_recorder().record_llm_call(
         provider="openai",
