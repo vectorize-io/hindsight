@@ -66,10 +66,6 @@ class LLMToolCall(BaseModel):
     id: str = Field(description="Unique identifier for this tool call")
     name: str = Field(description="Name of the tool to call")
     arguments: dict[str, Any] = Field(description="Arguments to pass to the tool")
-    thought_signature: str | None = Field(
-        default=None,
-        description="Opaque token required by Gemini 3.1+ thinking models to preserve thought context across turns",
-    )
 
 
 class LLMToolCallResult(BaseModel):

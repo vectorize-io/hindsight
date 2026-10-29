@@ -1,7 +1,8 @@
 """
 Tool schema definitions for the reflect agent.
 
-These are OpenAI-format tool definitions used with native tool calling.
+These are OpenAI-format tool definitions; the model calls them through a response schema
+(see providers/tools_via_schema.py), never as native tool calls.
 The reflect agent uses a hierarchical retrieval strategy:
 1. search_mental_models - User-curated stored reflect responses (highest quality, if applicable)
 2. search_observations - Consolidated knowledge with freshness awareness

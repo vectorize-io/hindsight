@@ -779,7 +779,7 @@ class TestReflectAgentMocked:
 
         msg = str(exc_info.value)
         assert "vertex_ai/openai/gpt-oss-120b-maas" in msg
-        assert "no usable tool call" in msg
+        assert "no usable call" in msg
         # The forced-final fallback (mock_llm.call) must NOT have run: we fail fast
         # rather than synthesizing a hollow answer from zero evidence.
         mock_llm.call.assert_not_called()
@@ -3384,9 +3384,7 @@ class TestReflectDropsUnseenIds:
 
     @pytest.mark.asyncio
     async def test_length_rewrite_that_garbles_a_document_citation(self, functions, monkeypatch):
-        config = MagicMock(
-            reflect_max_completion_tokens=None, llm_temperature_reflect=0.1
-        )
+        config = MagicMock(reflect_max_completion_tokens=None, llm_temperature_reflect=0.1)
         monkeypatch.setattr("hindsight_api.engine.reflect.agent.get_config", lambda: config)
         document = {"sections": [{"heading": "Deploy", "blocks": ["detail " * 50 + "[f1]"]}]}
         rewrite = json.dumps({"sections": [{"heading": "Deploy", "blocks": [f"It failed [{self.FAKE}]."]}]})

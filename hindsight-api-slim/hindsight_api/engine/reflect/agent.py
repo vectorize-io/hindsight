@@ -1,5 +1,5 @@
 """
-Reflect agent - agentic loop for reflection with native tool calling.
+Reflect agent - agentic loop for reflection, its tool calls made as replies to a response schema.
 
 Uses hierarchical retrieval:
 1. search_mental_models - User-curated summaries (highest quality)
@@ -214,18 +214,13 @@ class ReflectNoAnswerError(RuntimeError):
 
 
 class ReflectToolCallError(RuntimeError):
-    """The model never produced a tool call reflect could understand.
+    """The model never produced a call reflect could understand.
 
-    Reflect is driven entirely by structured tool calls (``recall``, ``expand``,
-    ``done`` ...). Some provider transports do not actually support function
-    calling and silently drop the tool definitions from the request (e.g. litellm's
-    Vertex AI gpt-oss MaaS path strips ``tools``/``tool_choice`` when the model is
-    flagged as not supporting them). The model then answers in free text that may
-    mimic a ``done`` payload. Other endpoints support tools but ignore the forced
-    tool choice for some prompts only (#4557). Rather than salvage that untooled
-    text -- and risk surfacing raw tool-call JSON as the answer -- we fail loudly,
-    naming the requested tool choice and the response's finish reason so the
-    operator can tell the two cases apart.
+    Every reflect turn is a reply to a response schema ("one of these functions, with its
+    arguments", see ``providers/tools_via_schema.py``). A model whose replies never parse
+    as a call -- prose, or JSON naming no function -- cannot drive the loop. Rather than
+    salvage that text, and risk surfacing raw call JSON as the answer, we fail loudly,
+    naming the requested choice and the reply's finish reason.
     """
 
 
@@ -585,7 +580,7 @@ async def _run_reflect_agent_inner(
     reflect_id: str,
 ) -> ReflectAgentResult:
     """
-    Execute the reflect agent loop using native tool calling.
+    Execute the reflect agent loop.
 
     The agent uses hierarchical retrieval:
     1. search_mental_models - User-curated summaries (try first)
@@ -705,8 +700,8 @@ async def _run_reflect_agent_inner(
     # Tracking
     total_tools_called = 0
     # Whether the model has ever produced a tool call reflect could understand.
-    # Stays False when a transport silently strips tool support (the model then
-    # only ever returns free text) -- that case fails via ReflectToolCallError.
+    # Stays False when no reply ever parses as a call -- that case fails via
+    # ReflectToolCallError.
     saw_tool_call = False
     tool_trace: list[ToolCall] = []
     tool_trace_summary: list[dict[str, Any]] = []
@@ -1306,7 +1301,6 @@ async def _run_reflect_agent_inner(
         else:
             # ``required``, not ``auto``: left free, most models stopped with the answer as
             # prose, which is thrown away and written again by the closing step (#5832).
-            # A provider that ignores ``required`` downgrades it to ``auto`` itself.
             iter_tool_choice = LLM_TOOL_CHOICE_REQUIRED
         follow_up_required = False
 
@@ -1486,18 +1480,14 @@ async def _run_reflect_agent_inner(
                 if len(snippet) > 500:
                     snippet = snippet[:500] + "..."
                 detail = f" Response: {snippet!r}" if snippet else " The model returned no content."
-                # A single text-only response does not prove the model lacks tool
-                # support: some endpoints ignore a forced choice for short prompts.
-                # Report the requested choice and normalized response so operators can probe the
-                # failing contract, including truncation, without changing providers.
+                # Report the requested choice and the reply, so operators can see whether the
+                # model ignored the schema or was cut off (finish_reason).
                 requested_choice = iter_tool_choice.function_name or iter_tool_choice.mode.value
                 raise ReflectToolCallError(
-                    f"Reflect requires a tool-calling model, but {llm_config.provider}/{llm_config.model} "
-                    "produced no usable tool call during initial tool selection "
-                    f"(iteration={iteration + 1}, tool_choice={requested_choice!r}, "
-                    f"finish_reason={result.finish_reason!r}). "
-                    "Check tool-choice handling for this prompt on the configured endpoint; "
-                    "a successful tool call for another prompt does not establish compatibility." + detail
+                    f"Reflect needs a model that follows a response schema, but "
+                    f"{llm_config.provider}/{llm_config.model} produced no usable call during initial "
+                    f"tool selection (iteration={iteration + 1}, tool_choice={requested_choice!r}, "
+                    f"finish_reason={result.finish_reason!r})." + detail
                 )
             # A forced step the model skipped is not a stop: retry it once, so a
             # single empty reply cannot silently drop a retrieval layer (#4564).
@@ -2119,8 +2109,6 @@ def _tool_call_to_dict(tc: "LLMToolCall", wire_id: str) -> dict[str, Any]:
             "arguments": json.dumps(tc.arguments, ensure_ascii=False),
         },
     }
-    if tc.thought_signature is not None:
-        d["thought_signature"] = tc.thought_signature
     return d
 
 
