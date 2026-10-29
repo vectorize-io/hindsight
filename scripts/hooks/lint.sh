@@ -75,7 +75,9 @@ uv sync --frozen --quiet
 # Call the synced tools directly. Each task used to go through `uv run`, but
 # every `uv run` takes the same env lock, so the parallel tasks queued behind
 # each other. Node tools used to go through `npx`, which takes seconds to start.
-VENV_BIN="$REPO_ROOT/.venv/bin"
+# VIRTUAL_ENV is what `uv run` sets: ty reads it to find the installed packages.
+export VIRTUAL_ENV="$REPO_ROOT/.venv"
+VENV_BIN="$VIRTUAL_ENV/bin"
 
 echo "  Running lints in parallel..."
 
