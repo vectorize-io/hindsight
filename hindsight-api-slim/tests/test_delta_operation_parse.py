@@ -345,6 +345,29 @@ _UNKNOWN_SECTION = '{"operations": [{"op": "append_block", "section_id": "gone",
 _KNOWN_SECTION = '{"operations": [{"op": "append_block", "section_id": "prefs", "text": "ok"}]}'
 
 
+async def test_request_delta_operations_asks_again_when_an_op_spills_beside_the_array():
+    """An operation written as top-level keys next to ``operations`` used to be dropped silently.
+
+    Now the reply is refused and the retry names the stray keys, so the model can
+    put the operation back inside the array.
+    """
+    spilled = json.dumps(
+        {
+            "operations": [{"op": "append_block", "section_id": "s", "text": "kept"}],
+            "op": "append_block",
+            "section_id": "s",
+            "text": "dropped",
+        }
+    )
+    with pytest.raises(ValueError, match="beside operations"):
+        parse_delta_operation_list(spilled)
+    llm = _ScriptedLLM(spilled, _GOOD)
+    op_list = await request_delta_operations(llm, system_prompt="sys", user_prompt="usr", scope="test")
+    assert len(op_list.operations) == 1
+    assert len(llm.calls) == 2
+    assert "['op', 'section_id', 'text']" in llm.calls[1][3]["content"]
+
+
 async def test_request_delta_operations_asks_again_when_no_op_reaches_the_document():
     """#4206: a well-formed reply whose every op names a missing section used to fail
     the refresh and be retried with the same prompt. It now gets the same one retry,

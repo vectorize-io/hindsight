@@ -87,9 +87,9 @@ stays out of the category counts.
 | reflect | pages | 2 | the bank holds a page about the question, and the answer comes from it |
 | refresh_pages | precision | 3 | a page built across waves keeps the asked attribute apart from its near-misses |
 | refresh_pages | update | 4 | a later wave changes the answer: a newer owner, a departed on-call, a renamed service, a corrected figure |
-| refresh_pages | aggregation | 3 | a count grows across waves; a list gains and loses members; a new risk joins the list |
+| refresh_pages | aggregation | 4 | a count grows across waves; a list gains and loses members; a new risk joins the list; a table grows over four deltas |
 | refresh_pages | no_overreach | 2 | a year the bank does not cover; a rule true in one region only |
-| refresh_pages | stability | 2 | a wave with nothing for the page leaves it intact; no page collapses across waves |
+| refresh_pages | stability | 3 | a wave with nothing for the page leaves it intact; no page collapses across waves; a history re-recorded every wave is not re-added |
 | refresh_pages | consistency | 2 | a changed value changes everywhere the page restates it (English, Chinese) |
 
 The knowledge-page and reflect evals share one corpus and grade twice per question: **correct** (meets
@@ -510,6 +510,22 @@ same wave introduces, a correction of an earlier figure, a list gaining one memb
 losing another, a new item the topic covers, and a wave with nothing for the page at all.
 The wave-1 page must state the old value first; the trap is the page still asserting it.
 Every wave also carries the hard corpus, so most of what arrives is unrelated.
+
+Two more grow a page over several deltas, to the size where a model's delta goes wrong: a
+release history where every wave re-records, in other words, each release the page already
+lists (a model that takes the batch for news re-adds them all, and a long enough reply is cut
+off at the output cap and fails the refresh), and an incident table whose new rows fall
+between old ones by date (a model that re-types the table to slot them in drops rows). Both
+also count the items listed: none may vanish, every new one must land, at most one may appear
+twice. These fail one delta in a few, so measure a rate, not a pass:
+`HINDSIGHT_EVAL_DELTA_REPEATS=N` runs each delta case N times, and
+`HINDSIGHT_EVAL_DELTA_DUMP=DIR` writes each case's LLM calls (prompt and reply) in the
+`refresh-cost.json` shape, to replay a failing reply against the model.
+
+```bash
+HINDSIGHT_EVAL_DELTA_REPEATS=5 HINDSIGHT_EVAL_DELTA_DUMP=/tmp/delta \
+  uv run pytest evals/refresh-pages --full -k "du-rerecorded-history or du-incident-table"
+```
 
 Behind it: with a decision model set up, a delta refresh asks it which new memories to
 read and keeps only the ones it judges could change the page, one memory at a time. A

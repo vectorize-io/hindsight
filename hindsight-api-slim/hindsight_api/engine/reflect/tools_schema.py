@@ -264,6 +264,12 @@ TOOL_DONE_ANSWER = {
 # union types, no ``oneOf`` — a tool schema goes to the provider verbatim and not
 # every provider accepts a discriminated union (Gemini rejects ``oneOf``), and a
 # shape the model can fill without thinking is a shape it fills correctly.
+#
+# The heading and blocks descriptions name two shapes models produced that break
+# later delta refreshes: an untitled section per list item (a third of replayed
+# benchmark pages had them), whose blocks the delta then addresses under the
+# heading they visually sit under; and a list split one item per block, which a
+# delta "rewriting the list" rewrites only its first item of.
 _DONE_DOCUMENT_PROPERTY = {
     "type": "object",
     "description": (
@@ -280,8 +286,10 @@ _DONE_DOCUMENT_PROPERTY = {
                     "heading": {
                         "type": "string",
                         "description": (
-                            "Heading text WITHOUT any leading '#'. Empty string for an "
-                            "opening section that should render with no heading."
+                            "Heading text WITHOUT any leading '#'. Empty string ONLY for the first "
+                            "section, as an opening summary with no heading; every other section has a "
+                            "real heading. Several items under one heading (bugs, releases, components) "
+                            "are blocks of that ONE section, not untitled sections of their own."
                         ),
                     },
                     "level": {
@@ -294,7 +302,8 @@ _DONE_DOCUMENT_PROPERTY = {
                             "The section's content, one entry per block: a single paragraph, a single "
                             "list, a single table, or a single fenced code block. Never put two "
                             "paragraphs in one entry, and never put a heading in one — headings are the "
-                            "'heading' field. Within an entry, write the content as you would in a "
+                            "'heading' field. A list is ONE entry holding all its items, never one entry "
+                            "per item. Within an entry, write the content as you would in a "
                             "document: '- one\n- two' for a list, "
                             "'| a | b |\n| --- | --- |\n| 1 | 2 |' for a table. " + NO_IDS_IN_TEXT_RULE
                         ),

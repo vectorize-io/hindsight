@@ -966,16 +966,34 @@ def build_final_prompt(
     return "\n".join(parts) + output_language_directive(llm_output_language)
 
 
+#: The two shapes a generated page took that later delta refreshes could not edit
+#: cleanly: an untitled section per list item (the delta then addresses those
+#: blocks under the heading they visually sit under), and a list split one item
+#: per block (a delta "rewriting the list" rewrites only its first item, so a
+#: removed member stays listed). Replayed benchmark pages had each about a third
+#: of the time; the done tool's field descriptions alone did not move that.
+_DOCUMENT_SHAPE_INSTRUCTIONS = (
+    "\n## Document shape\n"
+    "- Only the first section may have an empty heading. Every other section has a real heading.\n"
+    "- Items of one kind (bugs, releases, customers, components) are blocks of ONE section under one "
+    "heading — never an untitled section per item.\n"
+    "- A list is ONE block holding all its items ('- a\\n- b\\n- c'), never one block per item."
+)
+
+
 def build_done_request_prompt(
     query: str,
     max_tokens: int | None = None,
     llm_output_language: str | None = None,
+    *,
+    as_document: bool = False,
 ) -> str:
     """The closing user turn that asks for the answer as a ``done`` call.
 
     Sent inside the tool-loop conversation, so it carries only what the answer
     needs beyond the evidence already there: stop retrieving, the question, the
-    instructions and the length target.
+    instructions and the length target — and, when the answer is a page's
+    structured document, the shape rules that keep it editable.
     """
     parts = [
         "## Answer now",
@@ -985,6 +1003,8 @@ def build_done_request_prompt(
         f"\n## Question\n{query}",
         "\n## Instructions\n" + _FINAL_INSTRUCTIONS,
     ]
+    if as_document:
+        parts.append(_DOCUMENT_SHAPE_INSTRUCTIONS)
     length_directive = _length_directive(max_tokens)
     if length_directive is not None:
         parts.append(length_directive)
@@ -1203,18 +1223,28 @@ You will be given:
    (1..6) and an ordered list of ``blocks``. Each block has a stable ``id`` and
    a ``text`` field holding one markdown fragment — a paragraph, a list, a
    table, or a fenced code block.
-3. SUPPORTING FACTS — observations and facts created since the last refresh.
-   These are genuinely new — they were NOT available when the current document
-   was written.
+3. SUPPORTING FACTS — observations and facts recorded since the last refresh.
+   Recorded since, not necessarily new to the document: a fact is often
+   recorded again, in other words, after the document already states it.
 
 Your task: output a JSON object ``{"operations": [...]}``. Applied to CURRENT
 DOCUMENT, the operations must produce a document that best answers the TOPIC
 by integrating the new facts.
 
 RULES
-- These facts are NEW since the last refresh. The existing document already
-  captures all prior information from earlier refreshes. Your job is to
-  integrate the new facts into the existing document.
+- **A fact the document already states needs no operation.** Before you add
+  anything, find it in CURRENT DOCUMENT; only what is not there yet is new.
+  Re-adding a stated fact duplicates it, and adding every fact of a long batch
+  one by one is the way a reply grows until it is cut off and nothing lands.
+  Judge each fact by WHAT it says, never by how it is worded: compare the
+  item it names (a person, release, customer, incident) against the items
+  the document lists.
+  ❌ document "- Lisbon office: opened March 2024" + fact "Note: the Lisbon
+     office opened in March 2024" → an ``append_block`` adding Lisbon again
+  ✅ the same pair → no operation; Lisbon is already listed
+  ✅ the same document + fact "Note: the Porto office opened in May 2025" →
+     add Porto: the document does not list it, however the fact is worded
+  A batch that only restates the document is ``{"operations": []}``.
 - **Preserve existing content**: The current document was built from prior facts
   that you cannot see. Do NOT remove or replace existing sections just because
   the new facts do not reference them. Only remove content when the new facts
@@ -1233,6 +1263,35 @@ RULES
   never invent one, never use a heading in place of an id, and never guess an
   id for a block you cannot see. An operation naming an id that does not exist
   is dropped, and its content never reaches the document.
+- **Never re-type a table to add rows to it, and never sort one.** New rows go
+  in their own ``insert_block`` right after the table block (or ``append_block``
+  when the table ends its section), holding ONLY the new rows — no header, no
+  separator. They join the table below its last row. Send each new row ONCE,
+  in one operation: never an ``insert_block`` and an ``append_block`` that
+  both carry the same rows. Rows stay in the order they
+  arrived: a new row whose date or id falls between existing rows still goes at
+  the end. Re-typing a table to slot rows in, merge them or re-sort it drops
+  rows you meant to keep.
+- **An item that leaves a list comes out of it.** When a fact says a member,
+  customer, owner or item no longer belongs to what a list or table names
+  (moved to another plan, left, retired, replaced), remove it from that list,
+  and note the change outside it — a dated sentence after the list, or in a
+  history section. Never re-add the item to the same list with a parenthetical:
+  a list item reads as a current member whatever its note says.
+  ❌ "Pro plan customers:" list keeps "- Acme Freight (moved to Basic on 3 May 2025)"
+  ✅ the list drops Acme Freight; after it: "Acme Freight moved to the Basic plan on 3 May 2025."
+  A list is sometimes stored one item per block — consecutive blocks that each
+  hold a single "- item". Then the item that leaves is its own block: send
+  ``remove_block`` for THAT block. Re-emitting another item's block without it
+  removes nothing.
+- **A state that ended is no longer current.** When a fact ends something the
+  document presents as current — a person left or changed role, a service was
+  retired or moved, a plan or owner changed — rewrite the claim that presents it
+  as current (``replace_block``). A sentence added beside it leaves the old claim
+  reading as true. For a member of a list, the rule above applies instead: take
+  the member out of the list (``remove_block`` when it is a block of its own).
+  ❌ keeps "Ana Ruiz is the on-call lead." and adds "Ana Ruiz left on 3 May 2025."
+  ✅ "Ana Ruiz was the on-call lead until she left on 3 May 2025."
 - **Add** new content with ``append_block``, ``insert_block``, or ``add_section``
   when facts introduce information not yet covered. Prefer extending an
   existing section over creating a new one.
@@ -1307,10 +1366,18 @@ BLOCK TEXT RULES
   a list is ``"- one\\n- two"``, a table is
   ``"| col | col |\\n| --- | --- |\\n| a | b |"``. A table whose rows are not
   separated by ``\\n`` is not a table.
-- To add a row to an existing table, or an item to an existing list, use
-  ``replace_block`` on that block and re-emit it *with* the addition. A lone
-  table row or bullet appended as its own block is a separate fragment, and a
-  table row on its own is not a table.
+- **Adding rows to a table never re-emits the table.** Send ONLY the new rows
+  (no header, no separator) with ``insert_block`` right after the table block,
+  or ``append_block`` when the table is the section's last block: they join
+  that table, below its last row. Leave the existing rows alone even when the
+  new ones would sort between them — a row out of date order is fine; a
+  re-typed table loses rows. Use ``replace_block`` on a table only to change
+  rows that are already in it.
+  ❌ ``insert_block`` with the 5 new rows AND a ``replace_block`` re-typing the
+     whole table with them merged in
+  ✅ one ``insert_block`` after the table block with just the 5 new rows
+- To add an item to an existing list, use ``replace_block`` on that block and
+  re-emit it *with* the addition.
 - ``insert_block`` places the new block directly after ``after_block_id``; use
   ``"after_block_id": null`` to place it first in the section.
 
@@ -1323,6 +1390,11 @@ JSON STRING RULES (critical)
   ``operations``, whose value is an array of operation objects (empty array
   when nothing changes).
 - Do not append extra ``]`` or ``}`` after the closing ``}`` of the root object.
+- EVERY operation goes inside the one ``operations`` array — the second and
+  later ones too. Close the array only after the LAST operation; the root
+  object has no key but ``operations``.
+  ❌ ``{"operations": [{"op": "replace_block", ...}], "op": "append_block", "section_id": "x", "text": "..."}``
+  ✅ ``{"operations": [{"op": "replace_block", ...}, {"op": "append_block", "section_id": "x", "text": "..."}]}``
 
 Examples
 - No changes needed → ``{"operations": []}``
@@ -1389,11 +1461,13 @@ def _fit_structured_delta_prompt_parts(
         f"## CURRENT DOCUMENT (apply ops to this; copy section and block ids from it verbatim)\n"
         f"```json\n\n```\n\n"
         f"## CANDIDATE SLOT (the retraction prompt's still-supported facts)\n\n"
-        f"## SUPPORTING FACTS (new since last refresh — integrate these)\n"
+        f"## SUPPORTING FACTS (recorded since last refresh — integrate what the document does not already say)\n"
         f"{budget_hint}\n\n"
         f"{task_footer}"
     )
-    facts_header = "## SUPPORTING FACTS (new since last refresh — integrate these)\n"
+    facts_header = (
+        "## SUPPORTING FACTS (recorded since last refresh — integrate what the document does not already say)\n"
+    )
     facts_prefix_tokens = count_prompt_tokens(facts_header)
     reserved_facts = min(4096, max(512, max_input_tokens // 8))
     # The refresh prompt leaves the candidate slot empty (its synthesis is not
@@ -1401,9 +1475,16 @@ def _fit_structured_delta_prompt_parts(
     doc_share = 55 if candidate_markdown else 85
     doc_budget = max(1024, (max_input_tokens - count_prompt_tokens(fixed) - reserved_facts) * doc_share // 100)
     cand_budget = max(512, (max_input_tokens - count_prompt_tokens(fixed) - reserved_facts) * 30 // 100)
-    facts_budget = max(256, reserved_facts - facts_prefix_tokens)
     doc_json = _truncate_prompt_text(current_document_json, doc_budget)
     candidate = _truncate_prompt_text(candidate_markdown, cand_budget)
+    # The facts get the reserve, plus whatever the document and candidate leave of
+    # theirs. A flat reserve cut a gated batch of new memories at ~3k tokens behind a
+    # page that used a tenth of its share: the cut facts were never shown, and the
+    # next refresh starts after them, so they never reached the page at all.
+    unused = (
+        max_input_tokens - count_prompt_tokens(fixed) - count_prompt_tokens(doc_json) - count_prompt_tokens(candidate)
+    )
+    facts_budget = max(256, max(reserved_facts, unused) - facts_prefix_tokens)
     facts_body = _truncate_prompt_text(facts_block, facts_budget)
     truncated = doc_json != current_document_json or candidate != candidate_markdown or facts_body != facts_block
     return FittedDeltaPrompt(doc_json, candidate, facts_body, truncated)
@@ -1573,7 +1654,7 @@ def build_structured_delta_prompt(
         f"## Topic\n{source_query}\n\n"
         f"## CURRENT DOCUMENT (apply ops to this; copy section and block ids from it verbatim)\n"
         f"```json\n{fitted.document_json}\n```\n\n"
-        f"## SUPPORTING FACTS (new since last refresh — integrate these)\n{fitted.facts}"
+        f"## SUPPORTING FACTS (recorded since last refresh — integrate what the document does not already say)\n{fitted.facts}"
         f"{document_hint}{budget_hint}{truncation_note}\n\n"
         f"{task_footer}"
     )

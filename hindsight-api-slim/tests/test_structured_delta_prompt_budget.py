@@ -159,3 +159,38 @@ def test_an_empty_candidate_slot_gives_its_budget_to_the_document():
     with_candidate = _fit_structured_delta_prompt_parts(candidate_markdown="surviving facts", **kwargs)
     without = _fit_structured_delta_prompt_parts(candidate_markdown="", **kwargs)
     assert len(without.document_json) > len(with_candidate.document_json) * 1.4
+
+
+def test_a_small_page_leaves_its_budget_to_the_facts():
+    """A batch of new memories past the facts reserve is shown whole when the page is small.
+
+    A cut fact is never shown again: the next refresh starts after it. With a flat
+    reserve, ten new rows behind a short page lost their last five.
+    """
+    facts = "\n".join(f"- [world:{i}] Incident INC-{i} " + "detail " * 40 for i in range(300))
+    assert count_prompt_tokens(facts) > 24_000 // 8
+    fitted = _fit_structured_delta_prompt_parts(
+        source_query="q",
+        current_document_json='{"sections": []}',
+        candidate_markdown="",
+        facts_block=facts,
+        budget_hint="",
+        task_footer="## Task",
+        max_input_tokens=24_000,
+    )
+    assert fitted.facts == facts
+
+
+def test_a_full_page_still_keeps_the_facts_reserve():
+    doc = "word " * 60_000
+    fitted = _fit_structured_delta_prompt_parts(
+        source_query="q",
+        current_document_json=doc,
+        candidate_markdown="",
+        facts_block="fact " * 10_000,
+        budget_hint="",
+        task_footer="## Task",
+        max_input_tokens=24_000,
+    )
+    assert count_prompt_tokens(fitted.facts) >= 24_000 // 8 - 64
+    assert count_prompt_tokens(fitted.document_json) + count_prompt_tokens(fitted.facts) <= 24_000

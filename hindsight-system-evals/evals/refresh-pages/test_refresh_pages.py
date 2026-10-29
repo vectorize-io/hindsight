@@ -120,6 +120,7 @@ import datetime as dt
 import json
 import logging
 import os
+import re
 import uuid
 from pathlib import Path
 
@@ -139,6 +140,7 @@ from hindsight_system_evals.refresh_cost import (
     PRICES,
     CostReport,
     RefreshCost,
+    llm_calls,
     measure_refresh,
     new_wave,
     page_trigger,
@@ -262,7 +264,11 @@ async def test_refresh_pages_never_collapse(client: Hindsight, bank_id: str, set
 async def _run_delta(client: Hindsight, bank_id: str, settled: SettleFn, case: DeltaUpdate) -> None:
     case_id = case.id
     question = case.question
-    outcome = await build_delta(client, bank_id, case, settled)
+    try:
+        outcome = await build_delta(client, bank_id, case, settled)
+    finally:
+        # Also when a refresh failed and raised: that is the run whose replies matter.
+        await _dump_llm_calls(client, bank_id, case_id)
     context = f"This is a knowledge page built to answer: {question.question}"
     where = f"bank {outcome.bank_id}, page {outcome.page_id}"
 
@@ -284,6 +290,10 @@ async def _run_delta(client: Hindsight, bank_id: str, settled: SettleFn, case: D
             context=context,
         )
         outcome.hit_trap, outcome.trap_reason = trap.meets_criteria, trap.reasoning
+    if case.listed and outcome.correct:
+        listing = _listing_problem(case, outcome.waves[0].content, outcome.final_content)
+        if listing:
+            outcome.correct, outcome.correct_reason = False, listing
 
     RECORDED.append(
         EvalRecord(
@@ -309,8 +319,56 @@ async def _run_delta(client: Hindsight, bank_id: str, settled: SettleFn, case: D
     assert outcome.correct, f"{case_id}: {outcome.correct_reason}\n{where}\npage reads: {outcome.final_content[:400]}"
 
 
+def _count(item: str, text: str) -> int:
+    """Whole-token occurrences, so ``3.1.0`` is not found inside ``3.11.0``."""
+    return len(re.findall(rf"(?<![\w.]){re.escape(item)}(?![\w]|\.\d)", text))
+
+
+def _listing_problem(case: DeltaUpdate, before: str, after: str) -> str:
+    """What the delta did wrong to the page's listing of ``case.listed``, or "".
+
+    Only the delta's own work is graded: an item the wave-1 page never carried is
+    the full rebuild's omission, unless the update is what brings it. So: nothing
+    the wave-1 page listed may vanish, every item the update brings must land, and
+    at most one item may appear twice (a "latest" line may restate the newest).
+    """
+    base = "\n".join(case.base)
+    lost = [i for i in case.listed if _count(i, before) and not _count(i, after)]
+    not_added = [i for i in case.listed if not _count(i, base) and not _count(i, after)]
+    twice = [i for i in case.listed if _count(i, after) > 1]
+    if lost:
+        return f"the delta dropped {len(lost)} item(s) the page already listed: {lost[:8]}"
+    if not_added:
+        return f"the delta never added {len(not_added)} new item(s): {not_added[:8]}"
+    if len(twice) > 1:
+        return f"the page lists {len(twice)} of {len(case.listed)} items more than once: {twice[:8]}"
+    return ""
+
+
+async def _dump_llm_calls(client: Hindsight, bank_id: str, case_id: str) -> None:
+    """With ``HINDSIGHT_EVAL_DELTA_DUMP=DIR``, write the bank's LLM calls in the cost-report
+    shape, so a failing reply can be replayed against the model prompt-for-prompt."""
+    out = os.getenv("HINDSIGHT_EVAL_DELTA_DUMP")
+    if not out:
+        return
+    calls = await llm_calls(client, bank_id, "2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z")
+    path = Path(out) / f"{case_id}-{bank_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"refreshes": [{"page": case_id, "mode": "delta", "calls": [c.model_dump() for c in calls]}]})
+    )
+
+
+#: How many times each delta case runs. A failure that shows one reply in ten needs
+#: more than one run to be seen; ``-k`` a case and raise this to measure its rate.
+DELTA_REPEATS = int(os.getenv("HINDSIGHT_EVAL_DELTA_REPEATS", "1"))
+
+
+@pytest.mark.parametrize("repeat", range(DELTA_REPEATS))
 @pytest.mark.parametrize("case", case_params(DELTA_CASES, DELTA_MINIMUM))
-async def test_refresh_pages_delta(client: Hindsight, bank_id: str, settled: SettleFn, case: DeltaUpdate) -> None:
+async def test_refresh_pages_delta(
+    client: Hindsight, bank_id: str, settled: SettleFn, case: DeltaUpdate, repeat: int
+) -> None:
     await _run_delta(client, bank_id, settled, case)
 
 
@@ -599,7 +657,9 @@ def _assert_measured(results: list[RefreshCost]) -> None:
         assert r.calls, f"{r.page} ({r.mode}): no LLM calls traced — is HINDSIGHT_API_LLM_TRACE_ENABLED off?"
 
 
-async def test_refresh_pages_benchmark_cost(request: pytest.FixtureRequest, client: Hindsight, settled: SettleFn) -> None:
+async def test_refresh_pages_benchmark_cost(
+    request: pytest.FixtureRequest, client: Hindsight, settled: SettleFn
+) -> None:
     bank = await _import_fixture(client, f"syseval-{uuid.uuid4().hex[:10]}", settled)
     results = await _measure(client, bank, settled, MINIMUM_PAGES)
     _report(request, results)
@@ -607,7 +667,9 @@ async def test_refresh_pages_benchmark_cost(request: pytest.FixtureRequest, clie
 
 
 @pytest.mark.full
-async def test_refresh_pages_benchmark_cost_all_pages(request: pytest.FixtureRequest, client: Hindsight, settled: SettleFn) -> None:
+async def test_refresh_pages_benchmark_cost_all_pages(
+    request: pytest.FixtureRequest, client: Hindsight, settled: SettleFn
+) -> None:
     bank = await _import_fixture(client, f"syseval-{uuid.uuid4().hex[:10]}", settled)
     results = await _measure(client, bank, settled, tuple(PAGES))
     _report(request, results)

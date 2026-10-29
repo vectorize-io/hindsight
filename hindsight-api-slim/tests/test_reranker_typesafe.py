@@ -362,7 +362,14 @@ class TestPageImpact:
         body = (await self._ask({"choice": "yes"})).request
         state = body["state"]
         assert "Who is on call?" in state and "Dana left the company." in state and "Dana is on call." in state
-        assert set(body["questions"]["impact"]["criteria"]) == {"yes", "no"}
+        criteria = set(body["questions"]["impact"]["criteria"])
+        assert {"yes", "no"} <= criteria and len(criteria) > 2
+
+    @pytest.mark.asyncio
+    async def test_a_hedged_answer_keeps_it(self):
+        """Every option but "no" keeps the memory, so a doubt split across them never drops it."""
+        assert (await self._ask({"choice": "maybe"})).verdict is True
+        assert (await self._ask({"choice": "no"})).verdict is False
 
     @pytest.mark.asyncio
     async def test_an_oversized_page_keeps_its_head(self):

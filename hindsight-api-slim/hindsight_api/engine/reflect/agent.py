@@ -1013,7 +1013,12 @@ async def _run_reflect_agent_inner(
             result = await llm_config.call_with_tools(
                 messages=[
                     *messages,
-                    {"role": "user", "content": build_done_request_prompt(query, max_tokens, llm_output_language)},
+                    {
+                        "role": "user",
+                        "content": build_done_request_prompt(
+                            query, max_tokens, llm_output_language, as_document=answer_as_document
+                        ),
+                    },
                     *feedback,
                 ],
                 tools=tools,
