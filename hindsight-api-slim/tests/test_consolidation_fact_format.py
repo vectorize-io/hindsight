@@ -35,7 +35,7 @@ def _actions(
     unmarked: set[tuple[str, str]] = frozenset(),
 ) -> Any:
     """``later``: observations stated after the fact, marked so in the prompt unless also in ``unmarked``."""
-    texts = {fid: f"Fact {fid} says so" for fid in ids}
+    texts = {fid: f"{fid}: Fact {fid} says so" for fid in ids}
     return answer.to_actions(POOL, texts, lambda f, o: (f, o) in later, lambda f, o: (f, o) not in unmarked)
 
 
@@ -104,9 +104,7 @@ def test_an_older_fact_only_adds_the_earlier_state_and_creates_nothing() -> None
     )
     actions = _actions(answer, later={("f1", "o-fav")})
     # The note is the fact's own text, whatever the model wrote.
-    assert [u.text for u in actions.updates] == [
-        "The user's favorite framework is Svelte. (Earlier, replaced by the above: Fact f1 says so.)"
-    ]
+    assert [u.text for u in actions.updates] == ["The user's favorite framework is Svelte. (f1: Fact f1 says so)"]
     assert actions.creates == []
 
 
@@ -120,7 +118,8 @@ def test_two_older_facts_both_land_as_earlier_states() -> None:
     )
     assert [(u.text, u.source_fact_ids) for u in actions.updates] == [
         (
-            "The user's favorite framework is Svelte. (Earlier, replaced by the above: Fact f1 says so.) (Earlier, replaced by the above: Fact f2 says so.)",
+            # Facts come oldest first: the later one's earlier state reads first.
+            "The user's favorite framework is Svelte. (f2: Fact f2 says so) (f1: Fact f1 says so)",
             ["f1", "f2"],
         )
     ]
@@ -138,6 +137,13 @@ def test_a_repeat_after_a_change_keeps_the_change() -> None:
         )
     )
     assert [(u.text, u.source_fact_ids) for u in actions.updates] == [("port 9443.", ["f1", "f2"])]
+
+
+def test_an_earlier_state_in_another_language_gets_no_words_of_ours() -> None:
+    pool = {"o-zh": "用户最喜欢的框架是Svelte。"}
+    answer = _answer({"fact_id": "f1", "kind": "lasting", "existing": [_change("o-zh", "changes")]})
+    actions = answer.to_actions(pool, {"f1": "2026-10-10 09:00: 用户最喜欢Vue"}, lambda f, o: True, lambda f, o: True)
+    assert [u.text for u in actions.updates] == ["用户最喜欢的框架是Svelte。 (2026-10-10 09:00: 用户最喜欢Vue)"]
 
 
 def test_a_change_the_prompt_did_not_mark_as_older_keeps_the_newer_text() -> None:
@@ -341,8 +347,8 @@ async def test_the_prompt_uses_short_ids_oldest_first_and_marks_later_observatio
     # newer (closest-list mark, or newer than every fact), the older fact's change is its earlier
     # state, added after the text; where it did not, the observation keeps its text.
     assert [(u.observation_id, u.source_fact_ids, u.text) for u in result.updates] == [
-        ("o-fav", ["f-old"], f"{POOL['o-fav']} (Earlier, replaced by the above: older.)"),
-        ("o-lang", ["f-old"], "The user codes in Rust. (Earlier, replaced by the above: older.)"),
+        ("o-fav", ["f-old"], f"{POOL['o-fav']} (2026-10-10 00:00: older)"),
+        ("o-lang", ["f-old"], "The user codes in Rust. (2026-10-10 00:00: older)"),
         ("o-city", ["f-old"], "The user lives in Lisbon."),
     ]
     assert sent["messages"][0]["content"] == build_consolidation_system_prompt()

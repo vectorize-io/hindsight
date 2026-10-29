@@ -132,7 +132,7 @@ def triage_model(config: Any) -> DecisionModel | None:
     return _client(setup) if setup is not None else None
 
 
-def _sentence(fact: dict[str, Any]) -> str:
+def fact_sentence(fact: dict[str, Any]) -> str:
     # Facts render as "<sentence> | When: … | Where: … | Involving: …"; only the sentence is prose.
     return str(fact.get("text") or "").split(" | ")[0].strip()
 
@@ -179,7 +179,7 @@ async def _ask(
             _TOUCHES.format(key=k), _TOUCHES_YES.format(key=k), _TOUCHES_NO.format(key=k)
         )
     state: dict[str, Any] = {
-        "new_fact": _dated(_sentence(fact), fact, stated="stated_on"),
+        "new_fact": _dated(fact_sentence(fact), fact, stated="stated_on"),
         "existing_observations": {k: _dated(c.text, c, stated="last_stated_on") for k, c in zip(keys, candidates)},
     }
     if mission:
@@ -267,7 +267,7 @@ async def triage_facts(
         elif (
             relation == "new"
             and may_create
-            and _sentence(memory)
+            and fact_sentence(memory)
             and (not mission or _picked(answer, "keep_as") == "as_stated")
         ):
             new_candidates.append(memory)
@@ -280,7 +280,7 @@ async def triage_facts(
             entity_count[entity] = entity_count.get(entity, 0) + 1
     for memory in new_candidates:
         if all(entity_count.get(e, 0) == 1 for e in set(entities_by_fact.get(str(memory["id"]), []))):
-            result.new[str(memory["id"])] = _sentence(memory)
+            result.new[str(memory["id"])] = fact_sentence(memory)
 
     result.seconds = time.monotonic() - started
     logger.info(

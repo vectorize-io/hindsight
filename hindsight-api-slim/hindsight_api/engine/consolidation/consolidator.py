@@ -66,8 +66,7 @@ from .prompts import (
     build_consolidation_input,
     build_consolidation_system_prompt,
 )
-from .triage import TriageResult, triage_facts, triage_model
-from .triage import _sentence as _fact_sentence
+from .triage import TriageResult, fact_sentence, triage_facts, triage_model
 
 if TYPE_CHECKING:
     # The engine's connection abstraction, which is what every caller passes; the annotations
@@ -980,7 +979,7 @@ class _FactBatchResponse(BaseModel):
     def to_actions(
         self,
         pool_text: dict[str, str],
-        fact_text: dict[str, str],
+        earlier_states: dict[str, str],
         stated_after: Callable[[str, str], bool],
         marked: Callable[[str, str], bool],
     ) -> _ConsolidationBatchResponse:
@@ -989,14 +988,17 @@ class _FactBatchResponse(BaseModel):
         ``stated_after(fact_id, observation_id)``: the observation was stated after the fact — the
         code compares the times, gemma-4 got them wrong both ways. ``marked``: the prompt told the
         model so (``(stated after this fact)`` or ``newer_than_input_facts``). A marked change adds
-        the fact's own text after the observation's as its earlier state, and the fact creates
-        nothing — its ``new`` would restate that earlier state as current. The code writes that
-        note, not the model: asked for it, gemini-3.1-flash-lite wrote an older rule as the removal
-        of the newer one ("until it was removed"), or repeated the whole observation. An unmarked
-        change was written as if the fact were newer: the observation keeps its text and only
-        cites the fact. ``fact_text`` holds the batch's facts, in the order they were listed.
+        the fact to the observation as its earlier state, in brackets after the current text, most
+        recent first, and the fact creates nothing — its ``new`` would restate that earlier state as
+        current. The code writes that note, not the model: asked for it, gemini-3.1-flash-lite
+        wrote an older rule as the removal of the newer one ("until it was removed"), or repeated
+        the whole observation. An unmarked change was written as if the fact were newer: the
+        observation keeps its text and only cites the fact. ``earlier_states`` holds the batch's
+        facts as such notes (their date and sentence, no words of ours: the observation keeps its
+        own language), in the order they were listed.
         """
-        fact_ids = list(fact_text)
+        fact_ids = list(earlier_states)
+        notes: dict[str, list[str]] = {}
         # gemma-4 sometimes leaves out every entry's fact_id; one entry per fact, in order, is what was asked.
         if len(self.facts) == len(fact_ids):
             for f, fid in zip(self.facts, fact_ids):
@@ -1047,14 +1049,9 @@ class _FactBatchResponse(BaseModel):
                     text = base
                 elif later:
                     history = True
-                    earlier_state = fact_text.get(f.fact_id, "").strip()
-                    # Parenthesised and pointing back: "Superseded earlier statement: <old rule>" was read
-                    # by a judge as the current rule being superseded.
-                    text = (
-                        f"{_sentence(base)} (Earlier, replaced by the above: {_sentence(earlier_state)})"
-                        if earlier_state
-                        else base
-                    )
+                    # Facts come oldest first: each older fact's note goes ahead of the ones before it.
+                    notes.setdefault(oid, []).insert(0, f"({earlier_states[f.fact_id]})")
+                    text = " ".join([_end_sentence(current), *notes[oid]])
                 elif not change.text.strip():
                     text = base
                 else:
@@ -1470,10 +1467,10 @@ def _config_for_scope(config: Any, fact_tags: list[str]) -> Any:
     return scoped
 
 
-def _sentence(text: str) -> str:
-    """``text`` ending in a full stop, so a note added after it reads as its own sentence."""
+def _end_sentence(text: str) -> str:
+    """``text`` ending in a full stop, so a note added after it reads apart from it."""
     text = text.strip()
-    return text if text[-1:] in ".!?)" else f"{text}."
+    return text if text[-1:] in ".!?)。！？）" else f"{text}."
 
 
 def _build_fact_response_model(fact_ids: list[str]) -> type[_FactBatchResponse]:
@@ -3995,7 +3992,12 @@ async def _consolidate_batch_with_llm(
             answer: _FactBatchResponse = batch_call.content
             response = answer.with_real_ids(real_id).to_actions(
                 {str(o.id): o.text for o in union_observations},
-                {str(m["id"]): _fact_sentence(m) for m in ordered},
+                {
+                    str(m["id"]): f"{t:%Y-%m-%d %H:%M}: {fact_sentence(m)}"
+                    if (t := fact_time[str(m["id"])])
+                    else fact_sentence(m)
+                    for m in ordered
+                },
                 lambda fid, oid: bool((ft := fact_time.get(fid)) and (ot := obs_time.get(oid)) and ot > ft),
                 # What the prompt marked: a fact's closest observations, and those newer than every fact.
                 lambda fid, oid: oid in (closest or {}).get(fid, ())
