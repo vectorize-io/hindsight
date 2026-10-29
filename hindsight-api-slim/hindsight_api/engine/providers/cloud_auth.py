@@ -36,11 +36,11 @@ from aiohttp import web
 from pydantic import BaseModel, ValidationError
 
 from ...banner import GRADIENT_END, GRADIENT_START, LOGO
-from ...config import DEFAULT_CLOUD_HOME, get_config
 from .chatgpt_auth import _print_now, _state_matches, _write_private
 from .oauth_store_lock import oauth_store_lock
 
-DEFAULT_CLOUD_URL = "https://ui.hindsight.vectorize.io"
+CLOUD_URL = "https://ui.hindsight.vectorize.io"
+HOME = Path("~/.hindsight/cloud").expanduser()
 CONNECT_PATH = "/connect/desktop"
 CALLBACK_PATH = "/callback"
 SOURCE = "hindsight_cli"
@@ -144,17 +144,16 @@ class CloudCredential(BaseModel):
     api_key: str
     org_id: str | None = None
     org_name: str | None = None
-    cloud_url: str = DEFAULT_CLOUD_URL
-    created_at: str | None = None
+    cloud_url: str = CLOUD_URL
+    created_at: datetime | None = None
 
 
-def default_home() -> Path:
-    """Credential directory: ``HINDSIGHT_API_CLOUD_HOME`` or ``~/.hindsight/cloud``."""
-    return Path(get_config().cloud_home or DEFAULT_CLOUD_HOME).expanduser()
+class _Callback(BaseModel):
+    """What Cloud sends back on ``/callback`` (besides the state, checked before this)."""
 
-
-def default_cloud_url() -> str:
-    return (get_config().cloud_url or DEFAULT_CLOUD_URL).rstrip("/")
+    key: str = ""
+    org_id: str | None = None
+    org_name: str | None = None
 
 
 def read_credential(path: Path) -> CloudCredential | None:
@@ -166,8 +165,8 @@ def read_credential(path: Path) -> CloudCredential | None:
 
 
 def saved_api_key(home: Path | None = None) -> str | None:
-    """The key ``hindsight-admin cloud login`` saved, or None. ``home`` defaults to the configured one."""
-    credential = read_credential((home or default_home()) / CREDENTIAL_FILE)
+    """The key ``hindsight-admin cloud login`` saved, or None. ``home`` defaults to ~/.hindsight/cloud."""
+    credential = read_credential((home or HOME) / CREDENTIAL_FILE)
     return credential.api_key if credential else None
 
 
@@ -189,17 +188,22 @@ def connect_url(cloud_url: str, *, port: int, state: str, host: str) -> str:
 
 async def _start_callback_listener(
     port: int, expected_state: str, timeout: float
-) -> Callable[[], Awaitable[dict[str, str]]]:
+) -> Callable[[], Awaitable[_Callback]]:
     """Listen on 127.0.0.1; return a waiter for the first callback carrying ``expected_state``."""
-    received: asyncio.Future[dict[str, str]] = asyncio.get_running_loop().create_future()
+    received: asyncio.Future[_Callback] = asyncio.get_running_loop().create_future()
 
     async def handle(request: web.Request) -> web.Response:
         # A stray or forged request to the port cannot finish (or abort) the login.
         if not _state_matches(request.query.get("state", ""), expected_state):
             return web.Response(status=400, text="Unexpected sign-in response.", content_type="text/plain")
+        callback = _Callback(
+            key=request.query.get("key", ""),
+            org_id=request.query.get("org_id") or None,
+            org_name=request.query.get("org_name") or None,
+        )
         if not received.done():
-            received.set_result(dict(request.query))
-        org = request.query.get("org_name")
+            received.set_result(callback)
+        org = callback.org_name
         page = _PAGE.format(
             heading=f"Signed in to {html.escape(org)}" if org else "Signed in to Hindsight Cloud",
             body="Your API key is saved. Return to the terminal.",
@@ -218,7 +222,7 @@ async def _start_callback_listener(
         await runner.cleanup()
         raise CloudAuthError(f"Cannot listen on 127.0.0.1:{port} ({exc.strerror}); try --port.") from exc
 
-    async def wait() -> dict[str, str]:
+    async def wait() -> _Callback:
         try:
             return await asyncio.wait_for(received, timeout=timeout)
         finally:
@@ -230,7 +234,7 @@ async def _start_callback_listener(
 async def login(
     home: Path,
     *,
-    cloud_url: str,
+    cloud_url: str = CLOUD_URL,
     port: int = 0,
     open_browser: Callable[[str], Any] | None = webbrowser.open,
     out: Callable[[str], None] = _print_now,
@@ -248,7 +252,7 @@ async def login(
         out(_paint("  Browser didn't open? Use this link:", _GRAY) + f"\n\n  {url}\n")
     spinner = asyncio.create_task(_spin("Waiting for you to approve in the browser…")) if _color_on() else None
     try:
-        query = await wait()
+        callback = await wait()
     except TimeoutError:
         raise CloudAuthError("Timed out waiting for the browser sign-in.") from None
     finally:
@@ -257,15 +261,14 @@ async def login(
             with contextlib.suppress(asyncio.CancelledError):
                 await spinner
 
-    key = query.get("key", "")
-    if not key.startswith(KEY_PREFIX):
+    if not callback.key.startswith(KEY_PREFIX):
         raise CloudAuthError("Hindsight Cloud returned no API key.")
     credential = CloudCredential(
-        api_key=key,
-        org_id=query.get("org_id") or None,
-        org_name=query.get("org_name") or None,
+        api_key=callback.key,
+        org_id=callback.org_id,
+        org_name=callback.org_name,
         cloud_url=cloud_url,
-        created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        created_at=datetime.now(timezone.utc).replace(microsecond=0),
     )
     await _write(home / CREDENTIAL_FILE, credential)
     return credential
@@ -300,7 +303,7 @@ def status_lines(home: Path) -> list[str]:
         f"Organization: {credential.org_name or '(unknown)'} ({credential.org_id or '?'})",
         f"Key: {KEY_PREFIX}…{credential.api_key[-4:]}",
         f"Cloud: {credential.cloud_url}",
-        f"Signed in: {credential.created_at or '(unknown)'}",
+        f"Signed in: {credential.created_at.isoformat() if credential.created_at else '(unknown)'}",
     ]
 
 
@@ -313,7 +316,7 @@ def main(argv: list[str]) -> int:
         "--home",
         type=Path,
         default=None,
-        help="Credential directory (default: HINDSIGHT_API_CLOUD_HOME or ~/.hindsight/cloud)",
+        help="Credential directory (default: ~/.hindsight/cloud)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
     login_parser = sub.add_parser(
@@ -322,17 +325,12 @@ def main(argv: list[str]) -> int:
     login_parser.add_argument("--port", type=int, default=0, help="Loopback callback port (default: a free one).")
     login_parser.add_argument("--no-browser", action="store_true", help="Print the sign-in link instead of opening it.")
     login_parser.add_argument(
-        "--cloud-url",
-        default=None,
-        help=f"Hindsight Cloud URL (default: HINDSIGHT_API_CLOUD_URL or {DEFAULT_CLOUD_URL}).",
-    )
-    login_parser.add_argument(
         "--from-file", type=Path, default=None, help="Copy a credentials.json made on a machine with a browser."
     )
     sub.add_parser("status", help="Show the organization and the key's last 4 characters.")
     sub.add_parser("logout", help="Delete the saved key (revoke it under API Keys in Hindsight Cloud).")
     args = parser.parse_args(argv)
-    home: Path = args.home.expanduser() if args.home else default_home()
+    home: Path = args.home.expanduser() if args.home else HOME
     path = home / CREDENTIAL_FILE
 
     try:
@@ -352,7 +350,6 @@ def main(argv: list[str]) -> int:
             credential = asyncio.run(
                 login(
                     home,
-                    cloud_url=(args.cloud_url or default_cloud_url()).rstrip("/"),
                     port=args.port,
                     open_browser=None if args.no_browser else webbrowser.open,
                 )

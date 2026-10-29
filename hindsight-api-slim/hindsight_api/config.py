@@ -748,11 +748,6 @@ ENV_DECISION_MODEL_MAX_REQUEST_TOKENS = "HINDSIGHT_API_DECISION_MODEL_MAX_REQUES
 ENV_DECISION_MODEL_TOKENIZER = "HINDSIGHT_API_DECISION_MODEL_TOKENIZER"
 ENV_RECALL_DECISION_MODEL_PRUNE = "HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE"
 ENV_RECALL_DECISION_MODEL_DEDUP = "HINDSIGHT_API_RECALL_DECISION_MODEL_DEDUP"
-# Where `hindsight-admin cloud login` saves its key (default ~/.hindsight/cloud), and the
-# Hindsight Cloud it signs in to (default https://ui.hindsight.vectorize.io).
-ENV_CLOUD_HOME = "HINDSIGHT_API_CLOUD_HOME"
-ENV_CLOUD_URL = "HINDSIGHT_API_CLOUD_URL"
-DEFAULT_CLOUD_HOME = "~/.hindsight/cloud"
 
 ENV_VECTOR_EXTENSION = "HINDSIGHT_API_VECTOR_EXTENSION"
 ENV_ANN_ITERATIVE_SCAN = "HINDSIGHT_API_ANN_ITERATIVE_SCAN"
@@ -1600,11 +1595,11 @@ class _DecisionProviderDefaults:
 # "none": no decision model; operations that could use one keep their LLM-only path.
 # hindsight, typesafe and cloudflare speak the System One API; openai has its own Decisions API.
 # hindsight is Hindsight Inference: its key comes from HINDSIGHT_API_DECISION_MODEL_API_KEY or,
-# when unset, from `hindsight-admin cloud login`. hs-decision-1 has a 64k window; the margin is
+# when unset, from `hindsight-admin cloud login`. hs-decision-1-flash has a 64k window; the margin is
 # for counting it with o200k_base, not its own vocabulary.
 DECISION_MODEL_PROVIDER_DEFAULTS = {
     "hindsight": _DecisionProviderDefaults(
-        model="hs-decision-1", base_url="https://inference.hindsight.vectorize.io", max_request_tokens=54_000
+        model="hs-decision-1-flash", base_url="https://inference.hindsight.vectorize.io", max_request_tokens=54_000
     ),
     "typesafe": _DecisionProviderDefaults(model="jev-latest", base_url="https://api.typesafe.ai", tokenizer="jev"),
     "cloudflare": _DecisionProviderDefaults(model="clef", base_url=None),
@@ -4033,10 +4028,6 @@ class HindsightConfig:
     # None: the provider's default (DecisionModelConfig.max_request_tokens holds the resolved value).
     decision_model_max_request_tokens: int | None = None
     decision_model_tokenizer: str | None = None
-    # `hindsight-admin cloud login`: where its key is saved (None = ~/.hindsight/cloud), and
-    # the Hindsight Cloud it signs in to. Server-level only, like llm_chatgpt_home.
-    cloud_home: str | None = None
-    cloud_url: str | None = None
     recall_decision_model_provider: str | None = None
     recall_decision_model_api_key: str | None = None
     recall_decision_model_model: str | None = None
@@ -4133,8 +4124,6 @@ class HindsightConfig:
         "consolidation_decision_model_base_url",
         # chatgpt: points at a directory holding an OAuth grant.
         "llm_chatgpt_home",
-        # hindsight decision model: a directory holding the Cloud login's key.
-        "cloud_home",
     }
 
     # CONFIGURABLE_FIELDS: Safe behavioral settings that can be customized per-tenant/bank
@@ -5218,8 +5207,6 @@ class HindsightConfig:
                 else None
             ),
             decision_model_tokenizer=os.getenv(ENV_DECISION_MODEL_TOKENIZER) or None,
-            cloud_home=os.getenv(ENV_CLOUD_HOME, "").strip() or None,
-            cloud_url=os.getenv(ENV_CLOUD_URL, "").strip() or None,
             **{
                 f"{operation}_decision_model_{setting.lower()}": os.getenv(_decision_model_env(operation, setting))
                 or None
@@ -5960,11 +5947,10 @@ class HindsightConfig:
                 raise ValueError(f"{ENV_DECISION_MODEL_TOKENIZER}: {err}") from err
         api_key = setting("api_key")
         if not api_key and provider == "hindsight":
-            from pathlib import Path
-
+            # Imported here: cloud_auth pulls in aiohttp's server, which only this provider needs.
             from .engine.providers.cloud_auth import saved_api_key
 
-            api_key = saved_api_key(Path(self.cloud_home or DEFAULT_CLOUD_HOME).expanduser())
+            api_key = saved_api_key()
             if not api_key:
                 raise ValueError(
                     "The hindsight decision model needs a key: run `hindsight-admin cloud login`, "

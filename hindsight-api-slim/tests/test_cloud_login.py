@@ -15,7 +15,7 @@ from hindsight_api.engine.providers import cloud_auth
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
-    monkeypatch.setenv("HINDSIGHT_API_CLOUD_HOME", str(tmp_path))
+    monkeypatch.setattr(cloud_auth, "HOME", tmp_path)
     return tmp_path
 
 
@@ -36,7 +36,7 @@ def test_provider_defaults_with_saved_login(home, monkeypatch):
     expected = DecisionModelConfig(
         provider="hindsight",
         api_key="hsk_saved_1234",
-        model="hs-decision-1",
+        model="hs-decision-1-flash",
         base_url="https://inference.hindsight.vectorize.io",
         timeout=60.0,
         max_concurrent=24,
@@ -73,7 +73,7 @@ def test_recall_keeps_its_reranker_unless_overridden(home, monkeypatch):
     config = _config(monkeypatch, {"HINDSIGHT_API_DECISION_MODEL_PROVIDER": "hindsight"})
     assert config.decision_model_config("recall") is None
     monkeypatch.setenv("HINDSIGHT_API_RECALL_DECISION_MODEL_PROVIDER", "hindsight")
-    assert HindsightConfig.from_env().decision_model_config("recall").model == "hs-decision-1"
+    assert HindsightConfig.from_env().decision_model_config("recall").model == "hs-decision-1-flash"
 
 
 def test_no_key_anywhere_names_the_login_command(home, monkeypatch):
@@ -92,28 +92,24 @@ async def _browser(url: str, *, state: str | None = None, key: str = "hsk_new_ke
 
 
 async def test_login_saves_the_key_privately(home):
-    statuses: list[int] = []
-
-    async def run():
-        links: list[str] = []
-        task = asyncio.create_task(
-            cloud_auth.login(home, cloud_url="http://cloud.test", open_browser=None, out=links.append, timeout=10)
-        )
-        while not links:
-            await asyncio.sleep(0.01)
-        url = links[0].split("\n\n")[1].strip()
-        assert url.startswith("http://cloud.test/connect/desktop?")
-        statuses.append(await _browser(url, state="forged"))
-        statuses.append(await _browser(url))
-        return await task
-
-    credential = await run()
+    links: list[str] = []
+    task = asyncio.create_task(
+        cloud_auth.login(home, cloud_url="http://cloud.test", open_browser=None, out=links.append, timeout=10)
+    )
+    while not links:
+        await asyncio.sleep(0.01)
+    url = links[0].split("\n\n")[1].strip()
+    assert url.startswith("http://cloud.test/connect/desktop?")
+    statuses = [await _browser(url, state="forged"), await _browser(url)]
+    credential = await task
     assert statuses == [400, 200]  # a wrong state is refused and does not end the login
     assert credential.api_key == "hsk_new_key_abcd" and credential.org_name == "Acme"
     path = home / cloud_auth.CREDENTIAL_FILE
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
     assert cloud_auth.saved_api_key(home) == "hsk_new_key_abcd"
-    assert "hsk_…abcd" in "\n".join(cloud_auth.status_lines(home))
+    status = "\n".join(cloud_auth.status_lines(home))
+    assert "hsk_…abcd" in status
+    assert f"Signed in: {credential.created_at.isoformat()}" in status
 
 
 async def test_login_refuses_a_callback_without_a_key(home):
