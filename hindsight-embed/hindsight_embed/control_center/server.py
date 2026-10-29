@@ -15,7 +15,7 @@ import json
 import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from . import lifecycle, providers, service
 
@@ -72,12 +72,24 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
         return bool(self.token) and secrets.compare_digest(provided, self.token)
 
     @staticmethod
-    def _segments(path: str) -> list[str]:
-        return [s for s in urlparse(path).path.split("/") if s]
+    def _segments(path: str) -> list[str] | None:
+        """Split the URL path and percent-decode each segment once.
+
+        The UI encodes profile names (``encodeURIComponent``), so a Unicode name
+        arrives as ``%E5%B7%A5``. None when a decoded segment could act as a path
+        part (``%2F``, ``%5C``, ``.``, ``..``) — those never name a profile.
+        """
+        segs = [unquote(s) for s in urlparse(path).path.split("/") if s]
+        if any(s in (".", "..") or "/" in s or "\\" in s for s in segs):
+            return None
+        return segs
 
     # ----- dispatch ------------------------------------------------------
     def do_GET(self) -> None:
         segs = self._segments(self.path)
+        if segs is None:
+            self._send_json(404, {"error": "not found"})
+            return
 
         if not segs or segs == ["index.html"]:
             self._serve_index()
