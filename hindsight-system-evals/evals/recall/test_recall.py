@@ -8,11 +8,8 @@ Each case has a ``category`` and its test id is ``<category>/<case id>``, so
 * temporal — "last month", "yesterday", a year, a named week, against ``query_timestamp``;
 * currency — the newer of two conflicting memories ranks first;
 * multi_hop — the answer is one entity or cause away from what the query names;
-* filters — fact types (what the assistant did vs what the user said) and tags;
 * language — non-English queries over memories in that language;
 * precision — the right number among near-identical ones; a negation kept;
-* budget — a small ``max_tokens``; source chunks without facts;
-* observations — consolidated observations, and ``prefer_observations``;
 * duplicates — one fact stated several times comes back several times, unless the
   decision model prunes (``same-sentence-four-documents``, ``reworded-repeats``);
 * distinct — memories that only look alike are all kept, by recall and by the
@@ -20,8 +17,9 @@ Each case has a ``category`` and its test id is ``<category>/<case id>``, so
 
 The capability cases are in ``hindsight_system_evals.recall_capabilities``, each naming
 the history behind it. Recall itself calls no LLM by default — dates in a query are read
-by a rule-based parser and ranking is the embedder plus a cross-encoder — so a model
-comparison here measures the memories that model's retain wrote, as recall finds them.
+by a rule-based parser and ranking is the embedder plus a reranker — and each case's
+memories are imported from the archive a real extraction recorded once, so a run makes
+no model call and grades with none.
 
 The benchmark at the bottom (``test_recall_benchmark_beir_scifact``) is not a case: it
 scores recall against BEIR SciFact's own labels and makes no model call.
@@ -133,17 +131,15 @@ async def test_recall(client: Hindsight, bank_id: str, settled: SettleFn, case: 
             question_id=case.id,
             category=case.category,
             correct=not outcome.failed,
-            hit_trap=bool(outcome.trapped),
+            hit_trap=False,
             bank_id=bank_id,
-            reason="; ".join(outcome.trapped or outcome.failed) or "ok",
+            reason="; ".join(outcome.failed) or "ok",
         )
     )
     log.info("%s [%s] %r:\n%s", case.id, case.category, case.query, outcome.rendered)
     evidence = (
-        f"bank {bank_id} ({case.origin})\nquery: {case.query!r} {case.recall.options()}\nresults:\n{outcome.rendered}"
-    )
-    assert not outcome.trapped, (
-        f"{case.id}: returned what it must not —\n" + "\n".join(outcome.trapped) + f"\n{evidence}"
+        f"bank {bank_id} ({case.origin})\nquery: {case.query!r} now={case.query_timestamp}\n"
+        f"results:\n{outcome.rendered}"
     )
     assert not outcome.failed, f"{case.id}:\n" + "\n".join(outcome.failed) + f"\n{evidence}"
 

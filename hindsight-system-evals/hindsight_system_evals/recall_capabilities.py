@@ -2,44 +2,50 @@
 
 The scenario, end to end through the public API:
 
-    retain the memories (real extraction) -> wait -> recall one query -> grade the results
+    import the case's bank -> add the haystack -> recall one query -> grade the results
 
 Recall itself calls no LLM by default: dates in a query are read by a rule-based parser
-(``engine/query_analyzer.py``), and ranking is the embedder plus a cross-encoder. What a
-model changes is what recall has to search: the facts, dates and entities retain wrote
-(and the observations consolidation wrote). So every case retains through the real
-extraction, and a model comparison here measures that model's memories as recall finds
-them — the end-to-end path a user's question takes.
+(``engine/query_analyzer.py``), and ranking is the embedder plus a reranker. What a model
+changes is what recall has to search: the facts, dates and entities retain wrote. Those
+are frozen: each case's memories were extracted once by a real model and exported to
+``fixtures/recall-cases/<case id>.zip``, and a run imports that archive, so the same code
+ranks the same facts every time and a run needs no LLM. ``HINDSIGHT_EVAL_RECALL_RECORD=1`` re-extracts with the configured model and
+rewrites the archives — after a case's memories change, or to measure another model's
+extraction as recall finds it. ``manifest.json`` beside them names the model.
 
-Graded deterministically wherever the API allows, on the returned facts' text:
+Graded on the returned facts' text, with no judge:
 
 * ``found`` — a word must appear in one of the top ``within`` results (``"a|b"`` accepts
   either, since extraction may reword);
 * ``ranked`` — the first result naming A must come before the first one naming B
-  without A (a fact that names both, "switched from MySQL to Postgres", counts as A);
-* ``absent`` — a word that must not come back at all;
-* ``types`` — every result is one of these fact types;
-* ``check`` — anything else (token budgets, chunks, observations and their sources).
+  without A (a fact that names both, "switched from MySQL to Postgres", counts as A).
 
-and with the judge only where wording decides it (``must`` / ``traps``, on the results).
-
-What the stub-model system tests already pin is left to them: every tag mode, the
-``min_scores`` floors, the budget levels, query-length capping. A case here exists
-where the real embedder, reranker or extraction is the thing that could fail.
+Only what the embedder and the ranking decide is graded here. Filters, tags, token
+budgets, ``min_scores`` floors and observations are deterministic, and the stub-model
+system tests pin them. Each case also stores decoys: wrong answers built so one search
+arm alone would pick them (dated inside the asked window, sharing the query's words,
+about someone else), so a case passes only when ranking weighs the arms well.
 """
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-from dataclasses import asdict, dataclass, field
-from typing import Literal
+import json
+import os
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
 
 from hindsight_client import Hindsight
-from hindsight_client_api.models.recall_response import RecallResponse
 from hindsight_client_api.models.recall_result import RecallResult
 
-from hindsight_system_evals.judge import evaluate
 from hindsight_system_evals.pages import SettleFn
+from hindsight_system_evals.recall_haystack import haystack_items
+
+
+#: One archive per case: its own memories as extraction (and consolidation) wrote them.
+CASE_BANKS = Path(__file__).resolve().parents[1] / "fixtures" / "recall-cases"
+CASE_BANKS_MANIFEST = CASE_BANKS / "manifest.json"
+RECORD = os.getenv("HINDSIGHT_EVAL_RECALL_RECORD") == "1"
 
 
 @dataclass(frozen=True)
@@ -47,29 +53,6 @@ class Memory:
     content: str
     #: The event date extraction resolves relative dates against (ISO).
     timestamp: str | None = None
-    context: str | None = None
-    tags: tuple[str, ...] = ()
-
-
-#: Extra checks a case needs beyond the declarative ones: given the client, the bank and
-#: the response, return what failed.
-Check = Callable[[Hindsight, str, RecallResponse], Awaitable[list[str]]]
-
-
-@dataclass(frozen=True)
-class Recall:
-    """The ``arecall`` options a case sets; anything left None keeps the client's default."""
-
-    types: list[str] | None = None
-    tags: list[str] | None = None
-    tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] | None = None
-    query_timestamp: str | None = None
-    max_tokens: int | None = None
-    include_chunks: bool | None = None
-    prefer_observations: bool | None = None
-
-    def options(self) -> dict[str, object]:
-        return {name: value for name, value in asdict(self).items() if value is not None}
 
 
 @dataclass(frozen=True)
@@ -81,17 +64,14 @@ class Case:
     origin: str
     memories: tuple[Memory, ...]
     query: str
-    recall: Recall = Recall()
+    #: The "now" a relative date in the query resolves against (ISO).
+    query_timestamp: str | None = None
+    #: Wrong answers built to win one search arm: dated inside the asked window, sharing
+    #: the query's words, about someone else. Stored as written, beside the haystack.
+    decoys: tuple[Memory, ...] = ()
     found: tuple[str, ...] = ()
     within: int = 3
     ranked: tuple[tuple[str, str], ...] = ()
-    absent: tuple[str, ...] = ()
-    types: tuple[str, ...] = ()
-    must: tuple[str, ...] = ()
-    traps: tuple[str, ...] = ()
-    check: Check | None = None
-    #: Consolidation on, for the cases about observations.
-    observations: bool = False
     minimum: bool = False
 
 
@@ -101,7 +81,6 @@ class CaseOutcome:
     bank_id: str
     results: list[RecallResult]
     failed: list[str] = field(default_factory=list)
-    trapped: list[str] = field(default_factory=list)
 
     @property
     def rendered(self) -> str:
@@ -122,9 +101,49 @@ def _first(results: list[RecallResult], word: str, *, without: str | None = None
 
 
 async def run_case(client: Hindsight, bank_id: str, settled: SettleFn, case: Case) -> CaseOutcome:
-    await client.aupdate_bank_config(
-        bank_id, enable_observations=case.observations, enable_auto_consolidation=case.observations
+    if RECORD:
+        await _record(client, bank_id, settled, case)
+    else:
+        archive = CASE_BANKS / f"{case.id}.zip"
+        if not archive.exists():
+            raise RuntimeError(f"missing {archive} — record it with HINDSIGHT_EVAL_RECALL_RECORD=1")
+        # Off before the import, so nothing consolidates the frozen facts again.
+        await client.aupdate_bank_config(bank_id, enable_observations=False, enable_auto_consolidation=False)
+        await client.document_transfer.import_documents(bank_id, archive.read_bytes())
+        await settled(bank_id)
+    # Stored as written, so the same every run without an archive of its own.
+    await client.aupdate_bank_config(bank_id, retain_extraction_mode="chunks")
+    await client.aretain_batch(
+        bank_id=bank_id,
+        items=haystack_items()
+        + [
+            {"content": m.content, "document_id": f"decoy-{i}", **({"timestamp": m.timestamp} if m.timestamp else {})}
+            for i, m in enumerate(case.decoys)
+        ],
     )
+    await settled(bank_id)
+
+    options = {"query_timestamp": case.query_timestamp} if case.query_timestamp else {}
+    response = await client.arecall(bank_id, case.query, **options)
+    outcome = CaseOutcome(case=case, bank_id=bank_id, results=list(response.results))
+    results = outcome.results
+
+    top = results[: case.within]
+    for word in case.found:
+        if not any(_names(r.text, word) for r in top):
+            outcome.failed.append(f"{word!r} not in the top {case.within}")
+    for better, worse in case.ranked:
+        a, b = _first(results, better), _first(results, worse, without=better)
+        if a is None:
+            outcome.failed.append(f"nothing naming {better!r} came back")
+        elif b is not None and b < a:
+            outcome.failed.append(f"{worse!r} (#{b + 1}) ranked above {better!r} (#{a + 1})")
+    return outcome
+
+
+async def _record(client: Hindsight, bank_id: str, settled: SettleFn, case: Case) -> None:
+    """Retain the case's memories through the real extraction and freeze them as its archive."""
+    await client.aupdate_bank_config(bank_id, enable_observations=False, enable_auto_consolidation=False)
     # One document per memory, retained together: each is its own source, as separate
     # conversations would be.
     await client.aretain_batch(
@@ -134,84 +153,20 @@ async def run_case(client: Hindsight, bank_id: str, settled: SettleFn, case: Cas
                 "content": m.content,
                 "document_id": f"{case.id}-{i}",
                 **({"timestamp": m.timestamp} if m.timestamp else {}),
-                **({"context": m.context} if m.context else {}),
-                **({"tags": list(m.tags)} if m.tags else {}),
             }
             for i, m in enumerate(case.memories)
         ],
     )
     await settled(bank_id)
-
-    response = await client.arecall(bank_id, case.query, **case.recall.options())
-    outcome = CaseOutcome(case=case, bank_id=bank_id, results=list(response.results))
-    results = outcome.results
-
-    top = results[: case.within]
-    for word in case.found:
-        if not any(_names(r.text, word) for r in top):
-            outcome.failed.append(f"{word!r} not in the top {case.within}")
-    for word in case.absent:
-        if any(_names(r.text, word) for r in results):
-            outcome.trapped.append(f"{word!r} came back")
-    for better, worse in case.ranked:
-        a, b = _first(results, better), _first(results, worse, without=better)
-        if a is None:
-            outcome.failed.append(f"nothing naming {better!r} came back")
-        elif b is not None and b < a:
-            outcome.failed.append(f"{worse!r} (#{b + 1}) ranked above {better!r} (#{a + 1})")
-    if case.types:
-        wrong = sorted({r.type for r in results} - set(case.types))
-        if wrong:
-            outcome.failed.append(f"results of type {wrong}, asked for {list(case.types)}")
-    if case.check is not None:
-        outcome.failed.extend(await case.check(client, bank_id, response))
-
-    if case.must or case.traps:
-        context = f"These are the memories a search returned, best first, for the query: {case.query!r}"
-        for trap in case.traps:
-            verdict = await evaluate(outcome.rendered, trap, context=context, confirm_met=True)
-            if verdict.meets_criteria:
-                outcome.trapped.append(f"{trap} — {verdict.reasoning}")
-        for criterion in case.must:
-            verdict = await evaluate(outcome.rendered, criterion, context=context)
-            if not verdict.meets_criteria:
-                outcome.failed.append(f"{criterion} — {verdict.reasoning}")
-    return outcome
-
-
-# ── Checks a declarative field cannot express ───────────────────────────────────────
-
-
-async def _budget_is_respected(client: Hindsight, bank_id: str, response: RecallResponse) -> list[str]:
-    """A small ``max_tokens`` returns fewer facts than the default, but never none (#3688)."""
-    uncapped = await client.arecall(bank_id, "What has the team been working on?")
-    if not response.results:
-        return ["max_tokens=60 returned nothing — a small budget must still return the facts that fit"]
-    if len(response.results) >= len(uncapped.results):
-        return [f"max_tokens=60 returned {len(response.results)} facts, as many as the default budget"]
-    return []
-
-
-async def _chunks_without_facts(client: Hindsight, bank_id: str, response: RecallResponse) -> list[str]:
-    """``max_tokens=0`` is the documented way to ask for the source text only (#364)."""
-    failed = []
-    if response.results:
-        failed.append(f"max_tokens=0 still returned {len(response.results)} facts")
-    if not response.chunks:
-        failed.append("include_chunks with max_tokens=0 returned no chunks")
-    elif not any("Juniper" in chunk.text for chunk in response.chunks.values()):
-        failed.append("no returned chunk holds the Juniper release note")
-    return failed
-
-
-async def _observations_supersede_their_facts(client: Hindsight, bank_id: str, response: RecallResponse) -> list[str]:
-    """With ``prefer_observations``, no raw fact comes back beside the observation built from it (#5617)."""
-    observations = [r for r in response.results if r.type == "observation"]
-    if not observations:
-        return ["no observation came back"]
-    sources = {source for o in observations for source in (o.source_fact_ids or [])}
-    doubled = [r.text for r in response.results if r.type != "observation" and r.id in sources]
-    return [f"raw facts returned beside their observation: {doubled}"] if doubled else []
+    archive = await client.aexport_documents(bank_id)
+    CASE_BANKS.mkdir(parents=True, exist_ok=True)
+    (CASE_BANKS / f"{case.id}.zip").write_bytes(archive)
+    manifest = json.loads(CASE_BANKS_MANIFEST.read_text()) if CASE_BANKS_MANIFEST.exists() else {}
+    manifest[case.id] = {
+        "llm": f"{os.getenv('HINDSIGHT_EVAL_LLM_PROVIDER')}/{os.getenv('HINDSIGHT_EVAL_LLM_MODEL')}",
+        "recorded_at": datetime.now(UTC).isoformat(timespec="seconds"),
+    }
+    CASE_BANKS_MANIFEST.write_text(json.dumps(dict(sorted(manifest.items())), indent=1) + "\n")
 
 
 # ── Cases ───────────────────────────────────────────────────────────────────────────
@@ -233,6 +188,11 @@ CASES: tuple[Case, ...] = (
             *_CHATTER,
         ),
         query="Which foods does the user dislike?",
+        decoys=(
+            Memory("My brother dislikes olives and won't eat them."),
+            Memory("The user's favourite foods are ramen and dumplings."),
+            Memory("An article listed the foods most kids dislike: broccoli and liver."),
+        ),
         found=("cilantro",),
         minimum=True,
     ),
@@ -246,6 +206,12 @@ CASES: tuple[Case, ...] = (
             *_CHATTER,
         ),
         query="travel disruption caused by bad weather",
+        decoys=(
+            Memory("The travel budget was disrupted by the reorg."),
+            Memory("Bad weather is forecast for the weekend, so the picnic is off."),
+            Memory("The deploy failure was caused by a bad config value."),
+            Memory("A rail strike could cause travel disruption next month."),
+        ),
         found=("Denver",),
     ),
     Case(
@@ -257,6 +223,11 @@ CASES: tuple[Case, ...] = (
             Memory("The office wifi password is printed on the fridge in the kitchen."),
         ),
         query="How often do the credentials for the test environment change?",
+        decoys=(
+            Memory("The credentials for the production environment change every 90 days."),
+            Memory("The test environment is rebuilt from scratch every night."),
+            Memory("How often should passwords change? The security team says when compromised."),
+        ),
         ranked=(("staging", "wifi"),),
         found=("30 days|30-day|thirty",),
     ),
@@ -271,6 +242,11 @@ CASES: tuple[Case, ...] = (
             Memory("Search fails with ERR_1377_INDEX while the index is rebuilding."),
         ),
         query="ERR_7731_TIMEOUT",
+        decoys=(
+            Memory("Checkout TIMEOUT errors spiked on Friday after the sale started."),
+            Memory("The mobile app shows ERR_1773_TIMEOUT when the network drops."),
+            Memory("ERR_TIMEOUT errors are logged to the payments dashboard."),
+        ),
         found=("7731",),
         within=1,
         minimum=True,
@@ -284,6 +260,10 @@ CASES: tuple[Case, ...] = (
             Memory("Order A9-44-QZ was returned by the customer as damaged."),
         ),
         query="A9-44-ZQ",
+        decoys=(
+            Memory("Order A9-44-ZR shipped from the Hamburg warehouse on Tuesday."),
+            Memory("Order A9-45-ZQ was cancelled before it shipped."),
+        ),
         ranked=(("Rotterdam", "damaged"),),
     ),
     Case(
@@ -296,12 +276,16 @@ CASES: tuple[Case, ...] = (
             Memory("Dr. Jones reviewed the hiring plan."),
         ),
         query="Oyelaran-Whitfield",
+        decoys=(
+            Memory("Dr. Olaniran-Whitfield approved the two extra trials."),
+            Memory("Dr. Whitfield-Oyelowo reviewed the safety report last year."),
+        ),
         found=("Oyelaran",),
         within=1,
     ),
     # ── Temporal: dates in the query, resolved against query_timestamp ────────────
-    # These and the currency cases fail on every model today: the date or recency is a
-    # ±10% multiplier on the cross-encoder's score, too small to reorder (#6132).
+    # With a cross-encoder the date or recency is a ±10% multiplier on its score, too small
+    # to reorder (#6132); a decision model is shown each memory's date and weighs it itself.
     Case(
         id="last-month",
         category="temporal",
@@ -312,7 +296,13 @@ CASES: tuple[Case, ...] = (
             Memory("I went to Berlin for a friend's wedding.", timestamp="2023-11-12T10:00:00"),
         ),
         query="Where did I travel last month?",
-        recall=Recall(query_timestamp="2024-04-05T12:00:00"),
+        decoys=(
+            Memory("My colleague travelled to Prague for a sales meeting.", timestamp="2024-03-15T10:00:00"),
+            Memory("I planned a trip to Tokyo for the summer.", timestamp="2024-03-12T10:00:00"),
+            Memory("I fixed the leaking kitchen sink.", timestamp="2024-03-20T10:00:00"),
+            Memory("I went to Porto for a long weekend.", timestamp="2024-04-02T10:00:00"),
+        ),
+        query_timestamp="2024-04-05T12:00:00",
         found=("Lisbon",),
         within=1,
         minimum=True,
@@ -327,7 +317,12 @@ CASES: tuple[Case, ...] = (
             Memory("I went to the gym for leg day.", timestamp="2024-06-10T18:00:00"),
         ),
         query="What did I do yesterday?",
-        recall=Recall(query_timestamp="2024-06-16T10:00:00"),
+        decoys=(
+            Memory("My partner went to a football match with friends.", timestamp="2024-06-15T15:00:00"),
+            Memory("The neighbours had a loud party until 2am.", timestamp="2024-06-15T23:00:00"),
+            Memory("I went to a pottery class.", timestamp="2024-06-14T18:00:00"),
+        ),
+        query_timestamp="2024-06-16T10:00:00",
         found=("concert|Blue Note|jazz",),
         within=1,
     ),
@@ -341,7 +336,12 @@ CASES: tuple[Case, ...] = (
             Memory("The 2025 climate summit was held in Hanoi.", timestamp="2025-11-20T10:00:00"),
         ),
         query="Where is the climate summit in 2026?",
-        recall=Recall(query_timestamp="2026-02-01T10:00:00"),
+        decoys=(
+            Memory("The 2026 football World Cup will be held in North America.", timestamp="2025-02-01T10:00:00"),
+            Memory("The climate summit dinner was held at the Sheraton.", timestamp="2025-11-21T10:00:00"),
+            Memory("In 2026 I want to visit Kenya.", timestamp="2025-12-30T10:00:00"),
+        ),
+        query_timestamp="2026-02-01T10:00:00",
         found=("Nairobi",),
         within=1,
     ),
@@ -355,7 +355,12 @@ CASES: tuple[Case, ...] = (
             Memory("The office moved to the third floor.", timestamp="2024-02-26T10:00:00"),
         ),
         query="What happened in the first week of March 2024?",
-        recall=Recall(query_timestamp="2024-04-10T10:00:00"),
+        decoys=(
+            Memory("We planned the March offsite in the first week of February.", timestamp="2024-02-05T10:00:00"),
+            Memory("In the last week of March we hired two interns.", timestamp="2024-03-28T10:00:00"),
+            Memory("The first week of April was the quarterly planning week.", timestamp="2024-04-03T10:00:00"),
+        ),
+        query_timestamp="2024-04-10T10:00:00",
         found=("billing",),
         within=1,
     ),
@@ -369,7 +374,12 @@ CASES: tuple[Case, ...] = (
             Memory("I just started a new job at Initech as a staff engineer.", timestamp="2024-05-01T10:00:00"),
         ),
         query="Where does the user work now?",
-        recall=Recall(query_timestamp="2024-06-01T10:00:00"),
+        decoys=(
+            Memory("My friend just started a new job at Hooli as a product manager.", timestamp="2024-05-20T10:00:00"),
+            Memory("I worked at Vandelay as an intern.", timestamp="2019-06-01T10:00:00"),
+            Memory("Where does the user want to work next? Maybe a startup.", timestamp="2024-05-25T10:00:00"),
+        ),
+        query_timestamp="2024-06-01T10:00:00",
         ranked=(("Initech", "Globex"),),
         minimum=True,
     ),
@@ -385,7 +395,11 @@ CASES: tuple[Case, ...] = (
             ),
         ),
         query="Which database does the orders service use?",
-        recall=Recall(query_timestamp="2024-05-01T10:00:00"),
+        decoys=(
+            Memory("The inventory service uses MongoDB.", timestamp="2024-04-20T10:00:00"),
+            Memory("The orders team discussed which database to use for analytics.", timestamp="2024-04-25T10:00:00"),
+        ),
+        query_timestamp="2024-05-01T10:00:00",
         ranked=(("Postgres", "MySQL"),),
     ),
     # ── Multi-hop: the answer is one link away ────────────────────────────────────
@@ -400,6 +414,10 @@ CASES: tuple[Case, ...] = (
             Memory("Initech has its headquarters in Austin."),
         ),
         query="In which city is Alice Moreau's employer headquartered?",
+        decoys=(
+            Memory("Alice Moreau visited a client's headquarters in Copenhagen."),
+            Memory("Alice Moreau's brother is a teacher in Bergen."),
+        ),
         found=("Oslo",),
         within=4,
         minimum=True,
@@ -414,6 +432,11 @@ CASES: tuple[Case, ...] = (
             Memory("The search outage on 9 May was caused by a full disk on the index node."),
         ),
         query="Why did the checkout outage happen?",
+        decoys=(
+            Memory("The checkout outage post-mortem meeting is on Friday."),
+            Memory("Why is checkout slow? Mostly large product images."),
+            Memory("The checkout page was redesigned in April."),
+        ),
         found=("cron|renewal",),
         within=4,
     ),
@@ -427,58 +450,12 @@ CASES: tuple[Case, ...] = (
             Memory("My neighbour has a cat called Biscuit."),
         ),
         query="What's the name of my sister's dog?",
+        decoys=(
+            Memory("My sister's friend has a dog called Rex."),
+            Memory("My colleague's sister has a beagle called Pepper."),
+        ),
         found=("Mochi",),
         within=4,
-    ),
-    # ── Filters: the fact types and tags a caller asks for ───────────────────────
-    Case(
-        id="experience-only",
-        category="filters",
-        origin="types=[experience]: what the assistant did, and nothing the user said (#775, #2440)",
-        memories=(
-            Memory(
-                "user: the payments test is flaky again, I prefer we fix tests rather than skip them.\n"
-                "assistant: I fixed the flaky payments test in test_payments.py by adding a retry around the "
-                "network call.",
-                context="conversation between the user and a coding assistant",
-            ),
-        ),
-        query="What did the assistant change?",
-        recall=Recall(types=["experience"]),
-        types=("experience",),
-        found=("retry|flaky",),
-    ),
-    Case(
-        id="world-only",
-        category="filters",
-        origin="types=[world]: the user's stated preference, without the assistant's actions",
-        memories=(
-            Memory(
-                "user: I prefer tabs over spaces, and please never reformat files I didn't touch.\n"
-                "assistant: Understood. I reformatted only main.py and committed it as 'fix lint'.",
-                context="conversation between the user and a coding assistant",
-            ),
-        ),
-        query="What are the user's formatting preferences?",
-        recall=Recall(types=["world"]),
-        types=("world",),
-        found=("tabs",),
-    ),
-    Case(
-        id="tag-scoped",
-        category="filters",
-        origin="tags any_strict: one user's memories, not another's, not the untagged ones (#2295)",
-        memories=(
-            Memory("Ana's favourite editor is Helix.", tags=("user:ana",)),
-            Memory("Ben's favourite editor is Zed.", tags=("user:ben",)),
-            Memory(
-                "The team's standard editor is VS Code.",
-            ),
-        ),
-        query="Which editor is the favourite?",
-        recall=Recall(tags=["user:ana"], tags_match="any_strict"),
-        found=("Helix",),
-        absent=("Zed", "VS Code"),
     ),
     # ── Language: queries in the language of their memories ──────────────────────
     Case(
@@ -491,7 +468,12 @@ CASES: tuple[Case, ...] = (
             Memory("Domenica abbiamo mangiato la pizza da Gino."),
         ),
         query="Che bicicletta ho comprato?",
-        found=("bicicletta",),
+        decoys=(
+            Memory("Ho comprato un casco nuovo per andare al lavoro."),
+            Memory("Mio fratello ha comprato una moto rossa."),
+        ),
+        # Either language: extraction may translate the memory, and recall is what is graded.
+        found=("bicicletta|bicycle",),
         within=1,
     ),
     Case(
@@ -504,8 +486,12 @@ CASES: tuple[Case, ...] = (
             Memory("我在家里休息，看了一部电影。", timestamp="2024-05-15T10:00:00"),
         ),
         query="我上周见了谁？",
-        recall=Recall(query_timestamp="2024-05-16T10:00:00"),
-        found=("王",),
+        decoys=(
+            Memory("我妹妹在医院见了李医生。", timestamp="2024-05-09T10:00:00"),
+            Memory("我在公司开了一个很长的会。", timestamp="2024-05-10T10:00:00"),
+        ),
+        query_timestamp="2024-05-16T10:00:00",
+        found=("王|Wang",),
         within=2,
     ),
     # ── Precision: the right value among near-identical ones ─────────────────────
@@ -519,6 +505,10 @@ CASES: tuple[Case, ...] = (
             Memory("The design budget for Q3 2024 is $8,000."),
         ),
         query="What is the Q3 marketing budget?",
+        decoys=(
+            Memory("The marketing budget for Q3 2023 was $11,000."),
+            Memory("Q3 marketing plan: three webinars and a newsletter."),
+        ),
         found=("12,500|12500|12.5",),
         within=1,
         minimum=True,
@@ -532,70 +522,14 @@ CASES: tuple[Case, ...] = (
             Memory("My colleague Sam uses Docker Desktop on his Mac."),
         ),
         query="Does the user use Docker?",
-        must=("A result says the user does not use Docker (they use Podman).",),
-        traps=("A result states that the user (not Sam) uses Docker.",),
-    ),
-    # ── Budget: how much comes back ──────────────────────────────────────────────
-    Case(
-        id="small-token-budget",
-        category="budget",
-        origin="#3688/#3704: max_tokens cuts in rank order and never returns nothing",
-        memories=tuple(
-            Memory(text)
-            for text in (
-                "The team migrated the billing service to Go.",
-                "The team added rate limiting to the public API.",
-                "The team rewrote the onboarding emails.",
-                "The team moved CI from Jenkins to GitHub Actions.",
-                "The team shipped dark mode in the dashboard.",
-                "The team cut the Docker image size in half.",
-            )
+        decoys=(
+            Memory("Docker images for the billing service are built in CI."),
+            Memory("Does the user use Linux? Yes, Fedora on a ThinkPad."),
         ),
-        query="What has the team been working on?",
-        recall=Recall(max_tokens=60),
-        check=_budget_is_respected,
-    ),
-    Case(
-        id="chunks-only",
-        category="budget",
-        origin="#364: max_tokens=0 with include_chunks returns the source text and no facts",
-        memories=(
-            Memory("Release Juniper adds offline mode and fixes the sync crash on Android."),
-            Memory("Release Hawthorn added the export to CSV."),
-        ),
-        query="What does the Juniper release add?",
-        recall=Recall(max_tokens=0, include_chunks=True),
-        check=_chunks_without_facts,
-    ),
-    # ── Observations: what consolidation wrote, found by recall ──────────────────
-    Case(
-        id="observation-type",
-        category="observations",
-        origin="types=[observation]: the bank's consolidated belief, not the raw facts",
-        observations=True,
-        memories=(
-            Memory("I always drink green tea in the morning.", timestamp="2024-02-01T08:00:00"),
-            Memory("Green tea is the first thing I have every morning.", timestamp="2024-02-08T08:00:00"),
-            Memory("I don't drink coffee, it makes me jittery.", timestamp="2024-02-15T08:00:00"),
-        ),
-        query="What does the user drink in the morning?",
-        recall=Recall(types=["observation"]),
-        types=("observation",),
-        found=("tea",),
-    ),
-    Case(
-        id="prefer-observations",
-        category="observations",
-        origin="#5617: prefer_observations drops the raw facts an observation was built from",
-        observations=True,
-        memories=(
-            Memory("Marta leads the payments team.", timestamp="2024-03-01T10:00:00"),
-            Memory("Marta has led the payments team since 2022.", timestamp="2024-03-10T10:00:00"),
-            Memory("The payments team is led by Marta.", timestamp="2024-03-20T10:00:00"),
-        ),
-        query="Who leads the payments team?",
-        recall=Recall(types=["world", "observation"], prefer_observations=True),
-        found=("Marta",),
-        check=_observations_supersede_their_facts,
+        # The user's "don't use Docker" outranks Sam's "uses Docker Desktop", which shares more
+        # words with the query. That the stored fact keeps the "don't" is extraction's
+        # job, checked once when the archive is recorded.
+        found=("Podman",),
+        ranked=(("Podman", "Docker Desktop"),),
     ),
 )

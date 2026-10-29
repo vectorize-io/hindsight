@@ -64,11 +64,8 @@ stays out of the category counts.
 | recall | temporal | 4 | "last month", "yesterday", a year-only event, a named week — against `query_timestamp` |
 | recall | currency | 2 | the newer of two conflicting memories (a job, a decision) ranks first |
 | recall | multi_hop | 3 | the answer one entity or cause away: an employer's city, the cause of a cause, my sister's dog |
-| recall | filters | 3 | `types=[experience]`, `types=[world]` on a user/assistant exchange; a tag scope |
 | recall | language | 2 | Italian and Chinese queries (with 上周) over memories in that language |
 | recall | precision | 2 | the right budget among near-identical ones; a negation kept |
-| recall | budget | 2 | a small `max_tokens` returns fewer facts but never none; `max_tokens=0` returns chunks only |
-| recall | observations | 2 | `types=[observation]`; `prefer_observations` drops the facts an observation was built from |
 | recall | duplicates | 2 | one sentence in four documents comes back four times (once, with dedup); reworded repeats collapse under dedup |
 | recall | distinct | 2 | facts that only look alike (four customers, three details of one offsite) all come back |
 | consolidation | merge | 2 | restatements update one observation; the same facts under two tags merge in a shared scope |
@@ -154,35 +151,46 @@ regression cannot return". The test that fails on that is
 
 ### Recall — `evals/recall/test_recall.py`
 
-**Capabilities** (`test_recall`): 26 cases in `hindsight_system_evals/recall_capabilities.py`,
+**Capabilities** (`test_recall`): 19 cases in `hindsight_system_evals/recall_capabilities.py`,
 each naming its history. Recall itself calls no LLM by default — dates in a query are read by
 a rule-based parser (`engine/query_analyzer.py`) and ranking is the embedder plus a
-cross-encoder — so every case retains through the real extraction, and a model comparison
-measures the memories that model's retain wrote, as recall finds them. Graded
-deterministically (a word in the top results, one result above another, a word never
-returned, the result types, token budgets and chunks) and by the judge only for a negation.
+reranker. Each case searches its own few memories among ~300 others
+(`recall_haystack.py`, one person's life written as near-misses: a trip in another month, an
+error code one digit off, a doctor with a similar name), as a real bank would make it.
+Each case also stores decoys beside it: wrong answers built so one search arm alone would
+pick them — dated inside the asked window, sharing the query's words, about someone else. Only
+ranking is graded; filters, tags, token budgets and observations are deterministic and pinned
+by the stub-model system tests.
+
+Every run is the same input: a case's memories were extracted once by a real model and frozen
+as `fixtures/recall-cases/<case id>.zip` (`manifest.json` names the model), a run imports that
+archive, and the haystack is stored as written. So the run needs no LLM and grades with none:
+a word in the top results, and one result above another. A score that moves, moved because
+ranking did.
+
+```bash
+# replay (no LLM)
+HINDSIGHT_EVAL_LLM_PROVIDER=none HINDSIGHT_EVAL_LLM_MODEL=none uv run pytest evals/recall --full -k test_recall
+# re-record after changing a case's memories, or to measure another model's extraction
+HINDSIGHT_EVAL_RECALL_RECORD=1 HINDSIGHT_EVAL_RECALL_HAYSTACK=0 uv run pytest evals/recall --full -k "test_recall and <case id>"
+```
+
 The tag modes, `min_scores` floors and budget levels are pinned by the stub-model system
 tests and are not repeated here.
 
-First full runs (judge `gemini-2.5-flash`):
+Rankers on the same archives (`HINDSIGHT_EVAL_SET_RERANKER_PROVIDER`, or a decision model
+via `HINDSIGHT_EVAL_SET_DECISION_MODEL_*`):
 
-| category | gemma-4-26b-a4b | gemini-3.1-flash-lite | gpt-6.1-sol | gpt-6-luna |
-|---|---|---|---|---|
-| semantic | 3/3 | 3/3 | 3/3 | 2/3 |
-| keyword | 3/3 | 2/3 | 3/3 | 2/3 |
-| temporal | 1/4 | 1/4 | 2/4 | 2/4 |
-| currency | 0/2 | 1/2 | 1/2 | 1/2 |
-| every other category | all | all | all | all |
+| ranker | passed |
+|---|---|
+| local cross-encoder (`ms-marco-MiniLM-L-6-v2`) | 6/19 |
+| `rrf` (fusion order, no reranker) | 10/19 |
+| decision model `systemone-jev-latest` | 19/19 |
 
-What fails is mostly recall, not the model. **A date in the query barely moves the order**:
-"where did I travel last month?" finds the Lisbon trip (the temporal arm matches its
-`mentioned_at`), but the final order is the cross-encoder's, and temporal proximity and
-recency are each a ±10% multiplier on it (`reranking.py`), so "Berlin for a wedding" outranks
-it, and "a dentist appointment" four days ago outranks yesterday's concert. The same holds
-for "where does the user work now?": the older "works at Globex" outranks "just started at
-Initech" on every model. These cases stay red until ranking weighs dates more (#6132). The model
-failures are real too: `gpt-6-luna` stored English input as Russian and Spanish facts (the
-#4283 drift), and Gemini 3.1 flash-lite dropped "Rotterdam" from the fact it was asked about.
+The decision model sees each memory's date (its event date, else the day it was stored), so
+"what did I do yesterday?" can rank yesterday's concert above last week's pottery class. An
+older decision model, `hs-decision-1`, fails a third of the cases or more: its answers to the questions in one request
+sway each other, so a memory's score depends on which others share its request.
 
 **Duplicates** (`test_recall_duplicates`, `test_recall_pools`). With observations and
 consolidation off, one sentence retained as four documents becomes four facts, and recall

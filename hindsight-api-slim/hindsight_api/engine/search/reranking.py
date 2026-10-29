@@ -432,10 +432,12 @@ class CrossEncoderReranker:
             if retrieval.context and not pooled_context:
                 doc_text = f"{retrieval.context}: {doc_text}"
 
-            # Add formatted date information for temporal awareness
-            if retrieval.occurred_start:
-                occurred_start = retrieval.occurred_start
-
+            # Add formatted date information for temporal awareness. A decision model also
+            # gets the date a memory was stored when no event date was extracted: without
+            # one it cannot tell yesterday's memory from last year's, and ranked an undated
+            # "went to a pottery class" above the dated concert "yesterday" asked for.
+            occurred_start = retrieval.occurred_start or (retrieval.mentioned_at if is_decision_model else None)
+            if occurred_start:
                 # Format in two styles for better model understanding
                 # 1. ISO format: YYYY-MM-DD
                 date_iso = occurred_start.strftime("%Y-%m-%d")

@@ -210,6 +210,33 @@ class TestSharedState:
         assert state == f"Current date: 2024-05-01\n\n{self.PROFILE}\n\nQuestion: q"
         assert [q.instructions["memory"] for q in questions.values()] == ["a", "b"]
 
+    async def test_a_memory_with_no_event_date_shows_the_day_it_was_stored(self):
+        """Without it the model cannot tell yesterday's memory from last year's."""
+        client = _Client()
+        reranker = CrossEncoderReranker(cross_encoder=_reranker(client))
+        stored = RetrievalResult(
+            id="pottery",
+            text="I went to a pottery class.",
+            fact_type="world",
+            mentioned_at=datetime(2024, 6, 14, tzinfo=UTC),
+        )
+        dated = RetrievalResult(
+            id="concert",
+            text="I went to a jazz concert.",
+            fact_type="world",
+            occurred_start=datetime(2024, 6, 15, tzinfo=UTC),
+            mentioned_at=datetime(2024, 6, 16, tzinfo=UTC),
+        )
+        await reranker.rerank(
+            "what did I do yesterday?",
+            [MergedCandidate(retrieval=r, rrf_score=0.0, source_ranks={}) for r in (stored, dated)],
+            now=datetime(2024, 6, 16, tzinfo=UTC),
+        )
+        assert [q.instructions["memory"] for q in client.asked[0][1].values()] == [
+            "[Date: June 14, 2024 (2024-06-14)] I went to a pottery class.",
+            "[Date: June 15, 2024 (2024-06-15)] I went to a jazz concert.",
+        ]
+
     async def test_without_a_question_date_it_is_today(self):
         client = _Client()
         reranker = CrossEncoderReranker(cross_encoder=_reranker(client))
