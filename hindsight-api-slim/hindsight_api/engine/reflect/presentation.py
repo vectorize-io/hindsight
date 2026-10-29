@@ -106,7 +106,7 @@ class ToolResultPresenter:
             for k, v in value.items():
                 if k in ("query", "reason"):
                     out[k] = v
-                elif k in ("answer", "document"):
+                elif k in ("answer", "markdown"):
                     # Prose that outlives the run: aliases inside it become real ids too.
                     out[k] = self._resolve_prose(v)
                 else:
