@@ -1567,11 +1567,11 @@ DEFAULT_EMBEDDINGS_NVIDIA_BATCH_SIZE = 100
 DEFAULT_RERANKER_TYPESAFE_MODEL = "jev-latest"
 DEFAULT_RERANKER_TYPESAFE_BASE_URL = "https://api.typesafe.ai"
 # Hindsight Inference: embeddings (OpenAI-compatible /v1/embeddings), reranking (Cohere-style
-# /v1/rerank) and the decision model (System One). hs-decision-1-flash serves both reranking
-# and decisions. Keys come from the provider's own *_HINDSIGHT_API_KEY or `hindsight-admin cloud login`.
+# /v1/rerank) and the decision model (System One). hs-rerank-1 reranks and hs-decide-1-flash decides.
+# Keys come from the provider's own *_HINDSIGHT_API_KEY or `hindsight-admin cloud login`.
 HINDSIGHT_INFERENCE_URL = "https://inference.hindsight.vectorize.io"
 DEFAULT_EMBEDDINGS_HINDSIGHT_MODEL = "hs-embed-1"
-DEFAULT_RERANKER_HINDSIGHT_MODEL = "hs-decision-1-flash"
+DEFAULT_RERANKER_HINDSIGHT_MODEL = "hs-rerank-1"
 DEFAULT_RERANKER_TYPESAFE_MAX_CONCURRENT = 24
 # Off by default: dropping changes what recall returns, so it is opt-in.
 DEFAULT_RERANKER_TYPESAFE_PRUNE_CANDIDATES = False
@@ -1600,11 +1600,11 @@ class _DecisionProviderDefaults:
 # "none": no decision model; operations that could use one keep their LLM-only path.
 # hindsight, typesafe and cloudflare speak the System One API; openai has its own Decisions API.
 # hindsight is Hindsight Inference: its key comes from HINDSIGHT_API_DECISION_MODEL_API_KEY or,
-# when unset, from `hindsight-admin cloud login`. hs-decision-1-flash has a 64k window; the margin is
+# when unset, from `hindsight-admin cloud login`. hs-decide-1-flash has a 64k window; the margin is
 # for counting it with o200k_base, not its own vocabulary.
 DECISION_MODEL_PROVIDER_DEFAULTS = {
     "hindsight": _DecisionProviderDefaults(
-        model="hs-decision-1-flash", base_url=HINDSIGHT_INFERENCE_URL, max_request_tokens=54_000
+        model="hs-decide-1-flash", base_url=HINDSIGHT_INFERENCE_URL, max_request_tokens=54_000
     ),
     "typesafe": _DecisionProviderDefaults(model="jev-latest", base_url="https://api.typesafe.ai", tokenizer="jev"),
     "cloudflare": _DecisionProviderDefaults(model="clef", base_url=None),

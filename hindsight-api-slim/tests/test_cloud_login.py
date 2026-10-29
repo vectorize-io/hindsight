@@ -36,7 +36,7 @@ def test_provider_defaults_with_saved_login(home, monkeypatch):
     expected = DecisionModelConfig(
         provider="hindsight",
         api_key="hsk_saved_1234",
-        model="hs-decision-1-flash",
+        model="hs-decide-1-flash",
         base_url="https://inference.hindsight.vectorize.io",
         timeout=60.0,
         max_concurrent=24,
@@ -73,7 +73,7 @@ def test_recall_keeps_its_reranker_unless_overridden(home, monkeypatch):
     config = _config(monkeypatch, {"HINDSIGHT_API_DECISION_MODEL_PROVIDER": "hindsight"})
     assert config.decision_model_config("recall") is None
     monkeypatch.setenv("HINDSIGHT_API_RECALL_DECISION_MODEL_PROVIDER", "hindsight")
-    assert HindsightConfig.from_env().decision_model_config("recall").model == "hs-decision-1-flash"
+    assert HindsightConfig.from_env().decision_model_config("recall").model == "hs-decide-1-flash"
 
 
 def test_no_key_anywhere_names_the_login_command(home, monkeypatch):
@@ -112,7 +112,7 @@ def test_embeddings_and_reranker_use_hindsight_inference_with_the_saved_login(ho
     rerank = _reranker(monkeypatch, {})._http_client
     assert (rerank.api_key, rerank.model, rerank.rerank_url) == (
         "hsk_saved_1234",
-        "hs-decision-1-flash",
+        "hs-rerank-1",
         "https://inference.hindsight.vectorize.io/v1/rerank",
     )
 
