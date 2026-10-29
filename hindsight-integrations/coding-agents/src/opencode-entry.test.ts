@@ -2,11 +2,12 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import HindsightOpencode2Plugin from "./opencode2";
 
-describe("opencode package entry (#5823)", () => {
-  it("points exports['./server'] at the root index.js and keeps main on the v1 plugin", () => {
+describe("opencode package entry (#5823, #6138)", () => {
+  it("points exports['./server'] at the root index.js and keeps main and '.' on the v1 plugin", () => {
     const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
     expect(pkg.exports["./server"]).toBe("./index.js");
     expect(pkg.main).toBe("dist/index.js");
+    expect(pkg.exports["."].default).toBe("./dist/index.js");
     expect(readFileSync(new URL("../index.js", import.meta.url), "utf8")).toContain(
       'from "./dist/opencode2.js"'
     );
