@@ -62,10 +62,9 @@ if [ -n "$CI" ] || [ -n "$LINT_ALL_INTEGRATIONS" ]; then
     LINT_ALL=1
 else
     LINT_ALL=0
-    git -C "$REPO_ROOT" diff --name-only HEAD -- "hindsight-integrations/" > "$TEMP_DIR/changed-tracked" &
-    GIT_DIFF_PID=$!
-    git -C "$REPO_ROOT" ls-files --others --exclude-standard -- "hindsight-integrations/" > "$TEMP_DIR/changed-untracked" &
-    GIT_LS_PID=$!
+    { git -C "$REPO_ROOT" diff --name-only HEAD -- "hindsight-integrations/"; \
+      git -C "$REPO_ROOT" ls-files --others --exclude-standard -- "hindsight-integrations/"; } > "$TEMP_DIR/changed" &
+    GIT_PID=$!
 fi
 
 echo "  Syncing Python dependencies..."
@@ -73,8 +72,9 @@ echo "  Syncing Python dependencies..."
 # Keep pre-commit from rewriting uv.lock. Dependency changes should update
 # the lockfile explicitly before linting.
 uv sync --frozen --quiet
-# Call the synced tools directly: every `uv run` takes the same env lock, so
-# parallel `uv run`s queue behind each other.
+# Call the synced tools directly. Each task used to go through `uv run`, but
+# every `uv run` takes the same env lock, so the parallel tasks queued behind
+# each other. Node tools used to go through `npx`, which takes seconds to start.
 VENV_BIN="$REPO_ROOT/.venv/bin"
 
 echo "  Running lints in parallel..."
@@ -84,6 +84,7 @@ CP_DIR="$REPO_ROOT/hindsight-control-plane"
 # eslint goes through the package's own lint script, so CI keeps that script working.
 # With --fix, eslint re-lints every file that has warnings and ignores its cache,
 # so check from the cache first and only run --fix when there is something to fix.
+# "potentially fixable" is the summary line of eslint's default formatter.
 eslint_task() {
     local args=(--cache --cache-location "$CACHE_DIR/eslint/")
     local out
@@ -116,8 +117,8 @@ run_task "ty-embed" "$REPO_ROOT/hindsight-embed" "$VENV_BIN/ty check hindsight_e
 # Python integrations use shared ruff.toml; Node integrations use shared .prettierrc.json.
 CHANGED_FILES=""
 if [ "$LINT_ALL" = "0" ]; then
-    wait "$GIT_DIFF_PID" "$GIT_LS_PID"
-    CHANGED_FILES="$(< "$TEMP_DIR/changed-tracked")"$'\n'"$(< "$TEMP_DIR/changed-untracked")"
+    wait "$GIT_PID"
+    CHANGED_FILES="$(< "$TEMP_DIR/changed")"
 fi
 
 integration_changed() {
