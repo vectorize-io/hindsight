@@ -855,21 +855,18 @@ async def _run_reflect_agent_inner(
     async def _ask_for_done(feedback: "Sequence[dict[str, Any]]" = ()) -> "LLMToolCallResult | None":
         """Ask for the answer as a ``done`` call, in the conversation it was gathered in.
 
-        The model stopping with prose is the common case (measured: only ~29% of
-        refreshes ever call ``done`` on their own), and it costs twice. The prose
-        is dropped — it can be a raw done payload with ids leaking into
-        user-visible text — and the standalone synthesis prompt then re-renders
+        Every loop that stops retrieving ends here (``answer_ready``, a turn with no
+        call, out of iterations). The standalone synthesis prompt would re-render
         every tool result into a NEW prompt, so the whole evidence set is billed
-        again at the full input rate. Asking here reuses the prefix the provider
-        already has, and comes back as the structured document a page wants
-        instead of markdown that has to be split back apart.
+        again at the full input rate; asking here reuses the prefix the provider
+        already has, and a page comes back as ``done``'s markdown with its cited ids.
 
         ``feedback`` re-asks: the rejected ``done`` call and the reason, appended
-        after the request prompt, so a document the schema refused is fixed on
-        the same prefix instead of being read back some looser way.
+        after the request prompt, so a call that did not parse is fixed on the
+        same prefix instead of being read back some looser way.
 
         Returns the whole reply (the caller needs its ``finish_reason`` to decide
-        whether a malformed document may be repaired), or None when the provider
+        whether a malformed payload may be repaired), or None when the provider
         will not produce the call, and the caller falls back to the standalone
         prompt.
         """
@@ -942,10 +939,9 @@ async def _run_reflect_agent_inner(
             closing = next((tc for tc in reply.tool_calls if _is_done_tool(tc.name)), None) if reply else None
             if reply is None or closing is None:
                 if rejections:
-                    # A document was already refused on this path. Dropping to
-                    # the standalone prose prompt would answer the question by
-                    # re-reading markdown the model wrote -- the contract this
-                    # mode exists to avoid -- so the refusal stands.
+                    # A done was already refused on this path. The refusal stands,
+                    # so a payload that never parsed is not swapped for an answer
+                    # written by another prompt without the run saying so.
                     raise DocumentSectionsInvalidError(["(closing done): the model would not re-emit the document"])
                 return await _forced_final_synthesis(iterations_completed)
             try:
@@ -2251,7 +2247,7 @@ async def _rewrite_to_length_budget(
     return _rewrite(rewritten.strip() or answer, None)
 
 
-def _decode_json_argument(raw: str, finish_reason: str | None, field: str) -> Any:
+def _decode_json_argument(raw: str, finish_reason: str | None) -> Any:
     """Decode ``done``'s whole payload when the provider could not parse it.
 
     A completed generation that is merely malformed (Qwen swapping or dropping a
@@ -2272,10 +2268,10 @@ def _decode_json_argument(raw: str, finish_reason: str | None, field: str) -> An
         if finish_reason in COMPLETED_FINISH_REASONS:
             repaired = repair_json(raw, return_objects=True)
             if isinstance(repaired, dict) and repaired:
-                logger.warning(f"[REFLECT] repaired malformed done {field} ({exc.msg} at char {exc.pos})")
+                logger.warning(f"[REFLECT] repaired malformed done arguments ({exc.msg} at char {exc.pos})")
                 return repaired
         raise DocumentSectionsInvalidError(
-            [f"{field}: not valid JSON ({exc.msg} at char {exc.pos} of {len(raw)}); check the closing brackets"]
+            [f"arguments: not valid JSON ({exc.msg} at char {exc.pos} of {len(raw)}); check the closing brackets"]
         ) from exc
 
 
@@ -2302,9 +2298,8 @@ def _answer_found(args: dict[str, Any]) -> bool:
 def _done_arguments(done_call: "LLMToolCall", finish_reason: str | None) -> dict[str, Any]:
     """``done``'s arguments, decoding a payload the provider could not parse.
 
-    Providers keep an unparseable arguments string as ``{"_raw": ...}``. When the
-    error is in the outer payload rather than inside ``document`` (#5272: a block
-    list closed with ``"}`` instead of ``"]}``), nothing else would ever look at it
+    Providers keep an unparseable arguments string as ``{"_raw": ...}`` (#5272: a
+    list closed with ``"}`` instead of ``"]}``); nothing else would ever look at it
     and the run failed as "no answer". Decoded before the presenter resolves the
     short ids, which live in that same payload.
     """
@@ -2313,7 +2308,7 @@ def _done_arguments(done_call: "LLMToolCall", finish_reason: str | None) -> dict
         return args
     # Repair only ever returns a dict, and a plain parse of what the provider
     # already failed to parse fails again — so this is a dict or it raised.
-    return _decode_json_argument(args["_raw"], finish_reason, "arguments")
+    return _decode_json_argument(args["_raw"], finish_reason)
 
 
 #: Which alias prefix each of done's id fields cites (presentation._LISTS).

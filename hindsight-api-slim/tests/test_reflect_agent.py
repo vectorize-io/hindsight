@@ -895,11 +895,12 @@ class TestReflectAgentMocked:
 
     @pytest.mark.asyncio
     async def test_nothing_found_before_recall_forces_recall(self, mock_llm, mock_functions):
-        """A short-circuited ``done`` that reports nothing found is refused until recall runs (#4567).
+        """A short-circuited "nothing found" is refused until recall runs (#4567).
 
         The fresh pages miss the question; the model says so with
-        ``answer_found: false``. That negative must not ship off the page layer
-        alone: the loop forces one recall, then accepts the next ``done``.
+        ``answer_found: false`` (through answer_ready, the free turn's stop). That
+        negative must not ship off the page layer alone: the loop forces one
+        recall, then accepts the answer.
         """
         mock_functions["search_mental_models_fn"].return_value = {
             "query": "test query",
@@ -948,9 +949,6 @@ class TestReflectAgentMocked:
         mock_functions["recall_fn"].assert_called_once()
         calls = mock_llm.call_with_tools.await_args_list
         assert calls[2].kwargs["tool_choice"] == LLMToolChoice.named("recall")
-        # The messages list is shared across calls, so find the refusal by its tool_call_id.
-        refusal = next(m for m in calls[2].kwargs["messages"] if m.get("tool_call_id") == "2")
-        assert "recall has not run" in json.loads(refusal["content"])["error"]
 
     @pytest.mark.asyncio
     async def test_nothing_found_after_recall_is_accepted(self, mock_llm, mock_functions):
