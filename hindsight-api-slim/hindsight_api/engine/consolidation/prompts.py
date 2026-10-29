@@ -30,7 +30,7 @@ Write every observation in the language of its own source facts — never transl
 When an existing observation is written in a different language from the new facts updating it, do NOT edit its wording in place — that is what produces an English sentence with a Chinese detail bolted on. Discard the old phrasing and compose the merged observation from scratch in the new facts' language."""
 
 _OBSERVATION_FIELDS = """- `id`: its identifier (`O1`, `O2`, …) — copy it into `observation_id`
-- `text`: the observation content
+- `text`: the observation content. A bracket after it, `(YYYY-MM-DD HH:MM: …)`, is an earlier state that the text before it replaced — not the current value. Keep the brackets as they are when you change the observation.
 - `proof_count`: how many source facts this observation has already merged
 - `occurred_start` / `occurred_end`: the span of the events behind the observation — earliest start and latest end across its source facts
 - `mentioned_at`: the latest of the `mentioned_at` values of its source facts — the most recent point at which this observation was stated

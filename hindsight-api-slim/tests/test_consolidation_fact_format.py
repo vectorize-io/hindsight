@@ -146,6 +146,18 @@ def test_an_earlier_state_in_another_language_gets_no_words_of_ours() -> None:
     assert [u.text for u in actions.updates] == ["用户最喜欢的框架是Svelte。 (2026-10-10 09:00: 用户最喜欢Vue)"]
 
 
+def test_a_change_before_an_earlier_state_note_is_kept() -> None:
+    """An undated fact sorts first and is never "stated after": its change comes before a note."""
+    actions = _actions(
+        _answer(
+            {"fact_id": "f1", "kind": "lasting", "existing": [_change("o-fav", "changes", "Fav is Solid.")]},
+            {"fact_id": "f2", "kind": "lasting", "existing": [_change("o-fav", "changes")]},
+        ),
+        later={("f2", "o-fav")},
+    )
+    assert [u.text for u in actions.updates] == ["Fav is Solid. (f2: Fact f2 says so)"]
+
+
 def test_a_change_the_prompt_did_not_mark_as_older_keeps_the_newer_text() -> None:
     """Outside a fact's closest list the model was not told the observation is newer: its rewrite
     is the older fact written as current, so the observation keeps its text and only cites it."""
@@ -352,5 +364,7 @@ async def test_the_prompt_uses_short_ids_oldest_first_and_marks_later_observatio
         ("o-city", ["f-old"], "The user lives in Lisbon."),
     ]
     assert sent["messages"][0]["content"] == build_consolidation_system_prompt()
+    # The prompt says what those brackets are, for the next call that sees them in the pool.
+    assert "is an earlier state that the text before it replaced" in sent["messages"][0]["content"]
     # A full scope is told in the answer's own terms: no `new` sentences.
     assert 'Write no `new` sentences (set `adds` to "no")' in user

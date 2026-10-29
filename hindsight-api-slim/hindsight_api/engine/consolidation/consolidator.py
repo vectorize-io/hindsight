@@ -999,6 +999,8 @@ class _FactBatchResponse(BaseModel):
         """
         fact_ids = list(earlier_states)
         notes: dict[str, list[str]] = {}
+        # The text the notes follow: an undated fact sorts first and may change it before them.
+        heads: dict[str, str] = {}
         # gemma-4 sometimes leaves out every entry's fact_id; one entry per fact, in order, is what was asked.
         if len(self.facts) == len(fact_ids):
             for f, fid in zip(self.facts, fact_ids):
@@ -1051,7 +1053,8 @@ class _FactBatchResponse(BaseModel):
                     history = True
                     # Facts come oldest first: each older fact's note goes ahead of the ones before it.
                     notes.setdefault(oid, []).insert(0, f"({earlier_states[f.fact_id]})")
-                    text = " ".join([_end_sentence(current), *notes[oid]])
+                    head = heads.setdefault(oid, base)
+                    text = " ".join([_end_sentence(head), *notes[oid]])
                 elif not change.text.strip():
                     text = base
                 else:
