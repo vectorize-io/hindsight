@@ -25,7 +25,13 @@ from hindsight_api.config import (
 from hindsight_api.engine import page_markdown
 from hindsight_api.engine.audit import AuditEntry, AuditLogger
 from hindsight_api.engine.memory_engine import KEEP_PARENT
-from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES, Budget, MinScores, TemporalWindow
+from hindsight_api.engine.response_models import (
+    VALID_RECALL_FACT_TYPES,
+    Budget,
+    MinScores,
+    RerankOptions,
+    TemporalWindow,
+)
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 from hindsight_api.engine.stored_dates import is_placeholder_date
 from hindsight_api.extensions import OperationValidationError
@@ -1245,6 +1251,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             query_timestamp: str | None = None,
             min_scores: dict | None = None,
             temporal_window: dict | None = None,
+            rerank: dict | None = None,
             include_chunks: bool = False,
             max_chunk_tokens: int = 8192,
             include_entities: bool = False,
@@ -1289,6 +1296,11 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     extracting dates from the query text — pass it when you already know the range you mean.
                     It ranks memories dated inside the window higher; it does NOT drop memories dated outside
                     it, so do not use it to restrict results to a period.
+                rerank: What the decision-model reranker does beyond ordering, as an object with any of
+                    "prune" (drop results judged no help to the query) and "dedup" (drop a result that
+                    repeats a better-ranked one; costs one more decision-model request). E.g.
+                    {"prune": true, "dedup": true}. A key left out uses the bank's recall_decision_model_prune /
+                    recall_decision_model_dedup config. No effect unless a decision model is set up for recall.
                 include_chunks: Also return the source text chunks the matched facts were extracted from.
                     Use it when you need exact strings (paths, IDs, commands) that extraction may have
                     paraphrased. Default: False.
@@ -1342,6 +1354,10 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     recall_kwargs["min_scores"] = MinScores.model_validate(min_scores)
                 if temporal_window is not None:
                     recall_kwargs["temporal_window"] = TemporalWindow.model_validate(temporal_window)
+                if rerank is not None:
+                    rerank_options = RerankOptions.model_validate(rerank)
+                    recall_kwargs["prune"] = rerank_options.prune
+                    recall_kwargs["dedup"] = rerank_options.dedup
 
                 recall_result = await memory.recall_async(**recall_kwargs)
 
@@ -1373,6 +1389,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             query_timestamp: str | None = None,
             min_scores: dict | None = None,
             temporal_window: dict | None = None,
+            rerank: dict | None = None,
             include_chunks: bool = False,
             max_chunk_tokens: int = 8192,
             include_entities: bool = False,
@@ -1416,6 +1433,11 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     extracting dates from the query text — pass it when you already know the range you mean.
                     It ranks memories dated inside the window higher; it does NOT drop memories dated outside
                     it, so do not use it to restrict results to a period.
+                rerank: What the decision-model reranker does beyond ordering, as an object with any of
+                    "prune" (drop results judged no help to the query) and "dedup" (drop a result that
+                    repeats a better-ranked one; costs one more decision-model request). E.g.
+                    {"prune": true, "dedup": true}. A key left out uses the bank's recall_decision_model_prune /
+                    recall_decision_model_dedup config. No effect unless a decision model is set up for recall.
                 include_chunks: Also return the source text chunks the matched facts were extracted from.
                     Use it when you need exact strings (paths, IDs, commands) that extraction may have
                     paraphrased. Default: False.
@@ -1468,6 +1490,10 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     recall_kwargs["min_scores"] = MinScores.model_validate(min_scores)
                 if temporal_window is not None:
                     recall_kwargs["temporal_window"] = TemporalWindow.model_validate(temporal_window)
+                if rerank is not None:
+                    rerank_options = RerankOptions.model_validate(rerank)
+                    recall_kwargs["prune"] = rerank_options.prune
+                    recall_kwargs["dedup"] = rerank_options.dedup
 
                 recall_result = await memory.recall_async(**recall_kwargs)
 

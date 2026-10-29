@@ -214,6 +214,7 @@ from hindsight_api.engine.response_models import (
     MinScores,
     RecallScores,
     ReflectDefaultOptions,
+    RerankOptions,
     TemporalWindow,
     TokenUsage,
 )
@@ -530,28 +531,6 @@ class IncludeOptions(BaseModel):
     source_facts: SourceFactsIncludeOptions | None = Field(
         default=None,
         description="Include source facts for observation-type results. Set to {} to enable, null to disable (default: disabled).",
-    )
-
-
-class RerankOptions(BaseModel):
-    """What the decision-model reranker does beyond ordering. Each field left unset (null) uses the
-    bank/global config; neither has any effect unless a decision model is set up for recall."""
-
-    prune: bool | None = Field(
-        default=None,
-        description=(
-            "Drop the results the decision model judges no help to the query, instead of only ranking them "
-            "last. Costs no extra request. When omitted, uses the bank/global recall_decision_model_prune "
-            "config (false unless configured)."
-        ),
-    )
-    dedup: bool | None = Field(
-        default=None,
-        description=(
-            "Drop a result that repeats a better-ranked one, so the same fact comes back once. Costs one "
-            "more decision-model request after the ranking one. When omitted, uses the bank/global "
-            "recall_decision_model_dedup config (false unless configured)."
-        ),
     )
 
 

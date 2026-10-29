@@ -1288,6 +1288,21 @@ class TestRecallNewParams:
         await _tools(mcp)["recall"].fn(query="test", prefer_observations=False)
         assert mock_memory.recall_async.call_args.kwargs["prefer_observations"] is False
 
+    async def test_recall_rerank_prune_dedup(self, mock_memory):
+        """rerank maps to the engine's prune/dedup; omitted or a key left out → None (bank config)."""
+        mcp = _make_mcp_server(mock_memory, {"recall"})
+        await _tools(mcp)["recall"].fn(query="test")
+        assert "prune" not in mock_memory.recall_async.call_args.kwargs
+        assert "dedup" not in mock_memory.recall_async.call_args.kwargs
+        await _tools(mcp)["recall"].fn(query="test", rerank={"prune": True})
+        call_kwargs = mock_memory.recall_async.call_args.kwargs
+        assert call_kwargs["prune"] is True
+        assert call_kwargs["dedup"] is None
+        await _tools(mcp)["recall"].fn(query="test", rerank={"prune": False, "dedup": True})
+        call_kwargs = mock_memory.recall_async.call_args.kwargs
+        assert call_kwargs["prune"] is False
+        assert call_kwargs["dedup"] is True
+
     async def test_recall_with_types(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"recall"})
         await _tools(mcp)["recall"].fn(query="test", types=["world"])
