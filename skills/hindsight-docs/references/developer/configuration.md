@@ -89,9 +89,9 @@ A few things to know:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_DB_POOL_MIN_SIZE` | Minimum connections in the primary pool | `5` |
+| `HINDSIGHT_API_DB_POOL_MIN_SIZE` | Minimum connections in the primary pool. The pool keeps this many open even when idle and replaces any that close; `0` lets it drain when idle. | `5` |
 | `HINDSIGHT_API_DB_POOL_MAX_SIZE` | Maximum connections in the primary pool | `100` |
-| `HINDSIGHT_API_READ_DB_POOL_MIN_SIZE` | Minimum connections in the read-replica pool (only used when `READ_DATABASE_URL` is set) | Falls back to `DB_POOL_MIN_SIZE` |
+| `HINDSIGHT_API_READ_DB_POOL_MIN_SIZE` | Minimum connections in the read-replica pool (only used when `READ_DATABASE_URL` is set). Kept open when idle, like `DB_POOL_MIN_SIZE`. | Falls back to `DB_POOL_MIN_SIZE` |
 | `HINDSIGHT_API_READ_DB_POOL_MAX_SIZE` | Maximum connections in the read-replica pool (only used when `READ_DATABASE_URL` is set) | Falls back to `DB_POOL_MAX_SIZE` |
 | `HINDSIGHT_API_DB_COMMAND_TIMEOUT` | PostgreSQL command timeout in seconds (asyncpg client-side) | `60` |
 | `HINDSIGHT_API_DB_ACQUIRE_TIMEOUT` | Connection acquisition timeout in seconds. Bounds how long a caller waits for a free pool connection before failing (retried by the caller); `0` waits indefinitely. | `30` |
