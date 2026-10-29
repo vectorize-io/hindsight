@@ -81,6 +81,56 @@ def test_no_key_anywhere_names_the_login_command(home, monkeypatch):
         _config(monkeypatch, {"HINDSIGHT_API_DECISION_MODEL_PROVIDER": "hindsight"}).validate()
 
 
+def _embeddings(monkeypatch, env):
+    from hindsight_api.config import clear_config_cache
+    from hindsight_api.engine.embeddings import create_embeddings_from_env
+
+    for name, value in {"HINDSIGHT_API_EMBEDDINGS_PROVIDER": "hindsight", **env}.items():
+        monkeypatch.setenv(name, value)
+    clear_config_cache()
+    try:
+        return create_embeddings_from_env()
+    finally:
+        clear_config_cache()
+
+
+def _reranker(monkeypatch, env):
+    from hindsight_api.engine.cross_encoder import create_cross_encoder
+
+    config = _config(monkeypatch, {"HINDSIGHT_API_RERANKER_PROVIDER": "hindsight", **env})
+    return create_cross_encoder(config.reranker_chain()[0])
+
+
+def test_embeddings_and_reranker_use_hindsight_inference_with_the_saved_login(home, monkeypatch):
+    _save(home)
+    embeddings = _embeddings(monkeypatch, {})
+    assert (embeddings.api_key, embeddings.model, embeddings.base_url) == (
+        "hsk_saved_1234",
+        "hs-embed-1",
+        "https://inference.hindsight.vectorize.io/v1",
+    )
+    rerank = _reranker(monkeypatch, {})._http_client
+    assert (rerank.api_key, rerank.model, rerank.rerank_url) == (
+        "hsk_saved_1234",
+        "hs-decision-1-flash",
+        "https://inference.hindsight.vectorize.io/v1/rerank",
+    )
+
+
+def test_embeddings_and_reranker_keys_win_over_saved_login(home, monkeypatch):
+    _save(home)
+    assert _embeddings(monkeypatch, {"HINDSIGHT_API_EMBEDDINGS_HINDSIGHT_API_KEY": "hsk_emb"}).api_key == "hsk_emb"
+    reranker = _reranker(monkeypatch, {"HINDSIGHT_API_RERANKER_HINDSIGHT_API_KEY": "hsk_rr"})
+    assert reranker._http_client.api_key == "hsk_rr"
+
+
+def test_embeddings_and_reranker_without_a_key_name_the_login_command(home, monkeypatch):
+    with pytest.raises(ValueError, match="HINDSIGHT_API_EMBEDDINGS_HINDSIGHT_API_KEY.*hindsight-admin cloud login"):
+        _embeddings(monkeypatch, {})
+    with pytest.raises(ValueError, match="HINDSIGHT_API_RERANKER_HINDSIGHT_API_KEY.*hindsight-admin cloud login"):
+        _reranker(monkeypatch, {})
+
+
 async def _browser(url: str, *, state: str | None = None, key: str = "hsk_new_key_abcd") -> int:
     """Stand in for Cloud: read the connect link and hit the CLI's callback."""
     query = {k: v[0] for k, v in parse_qs(urlparse(url).query).items()}
@@ -145,6 +195,8 @@ def test_login_shows_the_new_key_and_how_to_use_it(home):
     assert "hsk_full_key_1234" in text  # the whole key, once, like `claude setup-token`
     assert "HINDSIGHT_API_DECISION_MODEL_PROVIDER=hindsight" in text
     assert "HINDSIGHT_API_DECISION_MODEL_API_KEY=hsk_full_key_1234" in text
+    assert "HINDSIGHT_API_EMBEDDINGS_HINDSIGHT_API_KEY=hsk_full_key_1234" in text
+    assert "HINDSIGHT_API_RERANKER_HINDSIGHT_API_KEY=hsk_full_key_1234" in text
     assert "http://cloud.test/api-keys" in text
     assert "\033[" not in text  # no colors when stdout is not a terminal
 

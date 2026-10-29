@@ -27,6 +27,7 @@ TEXT_IN_PROVIDERS = [
     ("openai", {"HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY": "sk-test"}, "OpenAIEmbeddings"),
     ("openrouter", {"HINDSIGHT_API_EMBEDDINGS_OPENROUTER_API_KEY": "sk-or-test"}, "OpenAIEmbeddings"),
     ("requesty", {"HINDSIGHT_API_EMBEDDINGS_REQUESTY_API_KEY": "sk-req-test"}, "OpenAIEmbeddings"),
+    ("hindsight", {"HINDSIGHT_API_EMBEDDINGS_HINDSIGHT_API_KEY": "hsk_test"}, "OpenAIEmbeddings"),
     ("litellm", {}, "LiteLLMEmbeddings"),
     ("litellm-sdk", {}, "LiteLLMSDKEmbeddings"),
 ]
@@ -45,6 +46,7 @@ def setup_test_env():
         "HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY",
         "HINDSIGHT_API_EMBEDDINGS_OPENROUTER_API_KEY",
         "HINDSIGHT_API_EMBEDDINGS_REQUESTY_API_KEY",
+        "HINDSIGHT_API_EMBEDDINGS_HINDSIGHT_API_KEY",
         "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_API_KEY",
         "HINDSIGHT_API_LLM_API_KEY",
         "HINDSIGHT_API_LLM_PROVIDER",

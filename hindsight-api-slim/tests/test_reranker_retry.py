@@ -197,6 +197,7 @@ class TestEveryRemoteRerankerRetries:
                 },
             ),
             ("typesafe", {"reranker_typesafe_api_key": "k"}),
+            ("hindsight", {"reranker_hindsight_api_key": "k"}),
             ("alibaba", {"reranker_alibaba_api_key": "k"}),
             ("google", {"reranker_google_project_id": "p"}),
             ("litellm", {"reranker_litellm_api_base": "https://example.invalid"}),

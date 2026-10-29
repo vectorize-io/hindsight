@@ -28,10 +28,12 @@ from ..config import (
     DEFAULT_RERANKER_ALIBABA_MODEL,
     DEFAULT_RERANKER_COHERE_MAX_CONCURRENT,
     DEFAULT_RERANKER_COHERE_MODEL,
+    DEFAULT_RERANKER_COHERE_TIMEOUT,
     DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE,
     DEFAULT_RERANKER_FLASHRANK_CACHE_DIR,
     DEFAULT_RERANKER_FLASHRANK_MODEL,
     DEFAULT_RERANKER_GOOGLE_MODEL,
+    DEFAULT_RERANKER_HINDSIGHT_MODEL,
     DEFAULT_RERANKER_LITELLM_MODEL,
     DEFAULT_RERANKER_LITELLM_SDK_MODEL,
     DEFAULT_RERANKER_LOCAL_BATCH_SIZE,
@@ -58,6 +60,7 @@ from ..config import (
     DEFAULT_RERANKER_TYPESAFE_TIMEOUT,
     DEFAULT_RERANKER_ZEROENTROPY_MODEL,
     DEFAULT_ZEROENTROPY_BASE_URL,
+    HINDSIGHT_INFERENCE_URL,
     RerankerMemberConfig,
 )
 from .aiohttp_session import LoopLocal, LoopLocalSession, UpstreamHTTPError, per_phase_timeout, raise_for_status
@@ -3004,13 +3007,30 @@ def _create_cross_encoder_backend(member: RerankerMemberConfig) -> CrossEncoderM
             max_concurrent=member.typesafe_max_concurrent,
             prune_candidates=member.typesafe_prune_candidates,
         )
+    elif provider == "hindsight":
+        # Imported here: cloud_auth pulls in aiohttp's server, which only this provider needs.
+        from .providers.cloud_auth import saved_api_key
+
+        api_key = member.hindsight_api_key or saved_api_key()
+        if not api_key:
+            raise ValueError(
+                f"{member.env_name('HINDSIGHT_API_KEY')} is required when {member.env_name('PROVIDER')} is "
+                "'hindsight' (or run `hindsight-admin cloud login`)"
+            )
+        # Hindsight Inference speaks Cohere's /v1/rerank, so the Cohere-compatible client serves it.
+        return CohereCrossEncoder(
+            api_key=api_key,
+            model=DEFAULT_RERANKER_HINDSIGHT_MODEL,
+            base_url=f"{HINDSIGHT_INFERENCE_URL}/v1/rerank",
+            timeout=DEFAULT_RERANKER_COHERE_TIMEOUT,
+        )
     elif provider == "rrf":
         return RRFPassthroughCrossEncoder()
     elif provider == "jina-mlx":
         return JinaMLXCrossEncoder()
     else:
         raise ValueError(
-            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'siliconflow', 'nvidia', 'typesafe', 'alibaba', 'google', 'flashrank', 'onnx', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
+            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'siliconflow', 'nvidia', 'typesafe', 'hindsight', 'alibaba', 'google', 'flashrank', 'onnx', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
         )
 
 

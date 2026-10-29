@@ -607,6 +607,7 @@ ENV_RERANKER_OPENROUTER_BASE_URL = "HINDSIGHT_API_RERANKER_OPENROUTER_BASE_URL"
 # Requesty configuration (OpenAI-compatible gateway; embeddings)
 ENV_REQUESTY_API_KEY = "HINDSIGHT_API_REQUESTY_API_KEY"
 ENV_EMBEDDINGS_REQUESTY_API_KEY = "HINDSIGHT_API_EMBEDDINGS_REQUESTY_API_KEY"
+ENV_EMBEDDINGS_HINDSIGHT_API_KEY = "HINDSIGHT_API_EMBEDDINGS_HINDSIGHT_API_KEY"
 ENV_EMBEDDINGS_REQUESTY_MODEL = "HINDSIGHT_API_EMBEDDINGS_REQUESTY_MODEL"
 
 # ZeroEntropy configuration (embeddings)
@@ -720,6 +721,7 @@ ENV_RERANKER_NVIDIA_MAX_CONCURRENT = "HINDSIGHT_API_RERANKER_NVIDIA_MAX_CONCURRE
 # TypeSafe configuration (reranker only; typed-question API, not a /rerank endpoint).
 # Deprecated: set up the shared decision model (ENV_DECISION_MODEL_* below) instead.
 ENV_RERANKER_TYPESAFE_API_KEY = "HINDSIGHT_API_RERANKER_TYPESAFE_API_KEY"
+ENV_RERANKER_HINDSIGHT_API_KEY = "HINDSIGHT_API_RERANKER_HINDSIGHT_API_KEY"
 ENV_RERANKER_TYPESAFE_MODEL = "HINDSIGHT_API_RERANKER_TYPESAFE_MODEL"
 ENV_RERANKER_TYPESAFE_BASE_URL = "HINDSIGHT_API_RERANKER_TYPESAFE_BASE_URL"
 ENV_RERANKER_TYPESAFE_TIMEOUT = "HINDSIGHT_API_RERANKER_TYPESAFE_TIMEOUT"
@@ -1567,6 +1569,12 @@ DEFAULT_EMBEDDINGS_NVIDIA_BATCH_SIZE = 100
 
 DEFAULT_RERANKER_TYPESAFE_MODEL = "jev-latest"
 DEFAULT_RERANKER_TYPESAFE_BASE_URL = "https://api.typesafe.ai"
+# Hindsight Inference: embeddings (OpenAI-compatible /v1/embeddings), reranking (Cohere-style
+# /v1/rerank) and the decision model (System One). hs-decision-1-flash serves both reranking
+# and decisions. Keys come from the provider's own *_HINDSIGHT_API_KEY or `hindsight-admin cloud login`.
+HINDSIGHT_INFERENCE_URL = "https://inference.hindsight.vectorize.io"
+DEFAULT_EMBEDDINGS_HINDSIGHT_MODEL = "hs-embed-1"
+DEFAULT_RERANKER_HINDSIGHT_MODEL = "hs-decision-1-flash"
 DEFAULT_RERANKER_TYPESAFE_MAX_CONCURRENT = 24
 # Off by default: dropping changes what recall returns, so it is opt-in.
 DEFAULT_RERANKER_TYPESAFE_PRUNE_CANDIDATES = False
@@ -1599,7 +1607,7 @@ class _DecisionProviderDefaults:
 # for counting it with o200k_base, not its own vocabulary.
 DECISION_MODEL_PROVIDER_DEFAULTS = {
     "hindsight": _DecisionProviderDefaults(
-        model="hs-decision-1-flash", base_url="https://inference.hindsight.vectorize.io", max_request_tokens=54_000
+        model="hs-decision-1-flash", base_url=HINDSIGHT_INFERENCE_URL, max_request_tokens=54_000
     ),
     "typesafe": _DecisionProviderDefaults(model="jev-latest", base_url="https://api.typesafe.ai", tokenizer="jev"),
     "cloudflare": _DecisionProviderDefaults(model="clef", base_url=None),
@@ -3017,6 +3025,8 @@ class RerankerMemberConfig:
     google_project_id: str | None
     google_service_account_key: str | None
     google_timeout: float
+    # hindsight (None: the key `hindsight-admin cloud login` saved)
+    hindsight_api_key: str | None
 
     def env_name(self, suffix: str) -> str:
         """The env var this member reads ``suffix`` from, for error messages.
@@ -3169,6 +3179,7 @@ def _parse_reranker_members() -> list[RerankerMemberConfig]:
                     base, "NVIDIA_MAX_CONCURRENT", DEFAULT_RERANKER_NVIDIA_MAX_CONCURRENT
                 ),
                 typesafe_api_key=_member_opt_str(base, "TYPESAFE_API_KEY"),
+                hindsight_api_key=_member_opt_str(base, "HINDSIGHT_API_KEY"),
                 typesafe_model=_member_str(base, "TYPESAFE_MODEL", DEFAULT_RERANKER_TYPESAFE_MODEL),
                 typesafe_base_url=_member_str(base, "TYPESAFE_BASE_URL", DEFAULT_RERANKER_TYPESAFE_BASE_URL),
                 typesafe_timeout=_member_float(base, "TYPESAFE_TIMEOUT", DEFAULT_RERANKER_TYPESAFE_TIMEOUT),
@@ -3949,6 +3960,9 @@ class HindsightConfig:
     embeddings_zeroentropy_encoding_format: str = DEFAULT_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT
     embeddings_zeroentropy_batch_size: int = DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE
     embeddings_zeroentropy_latency: str | None = DEFAULT_EMBEDDINGS_ZEROENTROPY_LATENCY
+    # hindsight: None falls back to the key `hindsight-admin cloud login` saved.
+    embeddings_hindsight_api_key: str | None = None
+    reranker_hindsight_api_key: str | None = None
     embeddings_nvidia_api_key: str | None = None
     embeddings_nvidia_model: str = DEFAULT_EMBEDDINGS_NVIDIA_MODEL
     embeddings_nvidia_base_url: str = DEFAULT_EMBEDDINGS_NVIDIA_BASE_URL
@@ -4096,6 +4110,8 @@ class HindsightConfig:
         "embeddings_openai_api_key",
         "embeddings_zeroentropy_api_key",
         "embeddings_nvidia_api_key",
+        "embeddings_hindsight_api_key",
+        "reranker_hindsight_api_key",
         # File storage credentials
         "file_storage_s3_access_key_id",
         "file_storage_s3_secret_access_key",
@@ -4298,6 +4314,7 @@ class HindsightConfig:
             nvidia_batch_size=self.reranker_nvidia_batch_size,
             nvidia_max_concurrent=self.reranker_nvidia_max_concurrent,
             typesafe_api_key=self.reranker_typesafe_api_key,
+            hindsight_api_key=self.reranker_hindsight_api_key,
             typesafe_model=self.reranker_typesafe_model,
             typesafe_base_url=self.reranker_typesafe_base_url,
             typesafe_timeout=self.reranker_typesafe_timeout,
@@ -5167,6 +5184,8 @@ class HindsightConfig:
             ),
             # TypeSafe reranker
             reranker_typesafe_api_key=os.getenv(ENV_RERANKER_TYPESAFE_API_KEY),
+            reranker_hindsight_api_key=os.getenv(ENV_RERANKER_HINDSIGHT_API_KEY) or None,
+            embeddings_hindsight_api_key=os.getenv(ENV_EMBEDDINGS_HINDSIGHT_API_KEY) or None,
             reranker_typesafe_model=os.getenv(ENV_RERANKER_TYPESAFE_MODEL, DEFAULT_RERANKER_TYPESAFE_MODEL),
             reranker_typesafe_base_url=os.getenv(ENV_RERANKER_TYPESAFE_BASE_URL, DEFAULT_RERANKER_TYPESAFE_BASE_URL),
             reranker_typesafe_timeout=float(

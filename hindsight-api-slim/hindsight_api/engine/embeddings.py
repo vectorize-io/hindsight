@@ -31,6 +31,7 @@ from .._thread_limits import bound_onnx_session
 from ..config import (
     DEFAULT_EMBEDDINGS_COHERE_MODEL,
     DEFAULT_EMBEDDINGS_GEMINI_MODEL,
+    DEFAULT_EMBEDDINGS_HINDSIGHT_MODEL,
     DEFAULT_EMBEDDINGS_LITELLM_MODEL,
     DEFAULT_EMBEDDINGS_LITELLM_SDK_MODEL,
     DEFAULT_EMBEDDINGS_LOCAL_MODEL,
@@ -52,6 +53,7 @@ from ..config import (
     DEFAULT_ZEROENTROPY_BASE_URL,
     ENV_EMBEDDINGS_COHERE_API_KEY,
     ENV_EMBEDDINGS_GEMINI_API_KEY,
+    ENV_EMBEDDINGS_HINDSIGHT_API_KEY,
     ENV_EMBEDDINGS_LITELLM_DIMENSIONS,
     ENV_EMBEDDINGS_NVIDIA_API_KEY,
     ENV_EMBEDDINGS_OPENAI_API_KEY,
@@ -61,6 +63,7 @@ from ..config import (
     ENV_EMBEDDINGS_ZEROENTROPY_DIMENSIONS,
     ENV_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT,
     ENV_LLM_API_KEY,
+    HINDSIGHT_INFERENCE_URL,
 )
 from .aiohttp_session import LoopLocal, LoopLocalSession, UpstreamHTTPError, per_phase_timeout, raise_for_status
 from .bank_attribution import apply_bank_attribution
@@ -2528,6 +2531,28 @@ def create_embeddings_from_env() -> Embeddings:
             ),
             config,
         )
+    elif provider == "hindsight":
+        # Imported here: cloud_auth pulls in aiohttp's server, which only this provider needs.
+        from .providers.cloud_auth import saved_api_key
+
+        api_key = config.embeddings_hindsight_api_key or saved_api_key()
+        if not api_key:
+            raise ValueError(
+                f"{ENV_EMBEDDINGS_HINDSIGHT_API_KEY} is required when {ENV_EMBEDDINGS_PROVIDER} is 'hindsight' "
+                "(or run `hindsight-admin cloud login`)"
+            )
+        return _with_request_concurrency(
+            OpenAIEmbeddings(
+                api_key=api_key,
+                model=DEFAULT_EMBEDDINGS_HINDSIGHT_MODEL,
+                base_url=f"{HINDSIGHT_INFERENCE_URL}/v1",
+                batch_size=config.embeddings_openai_batch_size,
+                max_retries=config.embeddings_max_retries,
+                query_prefix=query_prefix,
+                passage_prefix=passage_prefix,
+            ),
+            config,
+        )
     elif provider == "zeroentropy":
         api_key = config.embeddings_zeroentropy_api_key
         if not api_key:
@@ -2634,5 +2659,5 @@ def create_embeddings_from_env() -> Embeddings:
         raise ValueError(
             f"Unknown embeddings provider: {provider}. "
             f"Supported: 'local', 'onnx', 'tei', 'openai', 'openai-codex', 'openrouter', 'requesty', 'cohere', 'google', "
-            f"'zeroentropy', 'nvidia', 'litellm', 'litellm-sdk'"
+            f"'zeroentropy', 'hindsight', 'nvidia', 'litellm', 'litellm-sdk'"
         )

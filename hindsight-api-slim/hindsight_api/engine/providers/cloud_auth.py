@@ -1,7 +1,7 @@
 """Sign in with Hindsight Cloud: ``hindsight-admin cloud login | status | logout``.
 
-The login gets a Hindsight Cloud API key for the ``hindsight`` decision-model provider
-(Hindsight Inference) without copying one by hand:
+The login gets a Hindsight Cloud API key for the ``hindsight`` decision-model, embeddings
+and reranker providers (Hindsight Inference) without copying one by hand:
 
 1. Listen on ``127.0.0.1:<free port>/callback`` and open
    ``<cloud>/connect/desktop?port=..&state=..&source=hindsight_cli&host=<hostname>``.
@@ -10,7 +10,9 @@ The login gets a Hindsight Cloud API key for the ``hindsight`` decision-model pr
    browser to ``/callback?state=..&key=hsk_..&org_id=..&org_name=..``.
 4. The key is saved to ``~/.hindsight/cloud/credentials.json`` (mode 0600).
 
-``HINDSIGHT_API_DECISION_MODEL_API_KEY`` still wins over the saved key.
+Each provider's own key (``HINDSIGHT_API_DECISION_MODEL_API_KEY``,
+``HINDSIGHT_API_EMBEDDINGS_HINDSIGHT_API_KEY``, ``HINDSIGHT_API_RERANKER_HINDSIGHT_API_KEY``)
+still wins over the saved key.
 """
 
 from __future__ import annotations
@@ -220,7 +222,9 @@ async def _start_callback_listener(
         await web.TCPSite(runner, "127.0.0.1", port).start()
     except OSError as exc:
         await runner.cleanup()
-        raise CloudAuthError(f"Cannot listen on 127.0.0.1:{port} ({exc.strerror}); try --port.") from exc
+        raise CloudAuthError(
+            f"Cannot open 127.0.0.1:{port} for the sign-in callback ({exc.strerror}); try --port."
+        ) from exc
 
     async def wait() -> _Callback:
         try:
@@ -290,6 +294,13 @@ def success_lines(credential: CloudCredential, path: Path) -> list[str]:
         "",
         f"    {_paint('HINDSIGHT_API_DECISION_MODEL_PROVIDER=hindsight', _TEAL)}",
         f"    {_paint('HINDSIGHT_API_DECISION_MODEL_API_KEY=' + credential.api_key, _TEAL)}",
+        "",
+        "  Optionally, embeddings and reranking on Hindsight Inference too:",
+        "",
+        f"    {_paint('HINDSIGHT_API_EMBEDDINGS_PROVIDER=hindsight', _TEAL)}",
+        f"    {_paint('HINDSIGHT_API_EMBEDDINGS_HINDSIGHT_API_KEY=' + credential.api_key, _TEAL)}",
+        f"    {_paint('HINDSIGHT_API_RERANKER_PROVIDER=hindsight', _TEAL)}",
+        f"    {_paint('HINDSIGHT_API_RERANKER_HINDSIGHT_API_KEY=' + credential.api_key, _TEAL)}",
     ]
 
 
