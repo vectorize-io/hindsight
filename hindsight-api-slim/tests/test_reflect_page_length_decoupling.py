@@ -180,6 +180,12 @@ async def test_tool_call_loop_uses_config_cap(monkeypatch):
         closing = [c for c in calls if c.kwargs["tool_choice"] == LLMToolChoice.named("done")]
         assert closing and all(c.kwargs["max_completion_tokens"] == 12345 for c in closing)
         assert all(c.kwargs["max_completion_tokens"] == 1024 for c in calls if c not in closing)
+        # A capped turn cannot pick done, whose page the cap would cut off; it is still declared,
+        # so every turn's prompt prefix is the same.
+        for c in calls:
+            if c not in closing:
+                assert "done" not in {t["function"]["name"] for t in c.kwargs["tools"]}
+            assert "done" in {t["function"]["name"] for t in c.kwargs["declared_tools"]}
     finally:
         clear_config_cache()
 

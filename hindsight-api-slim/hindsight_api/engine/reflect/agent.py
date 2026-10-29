@@ -173,12 +173,6 @@ _MAX_DOCUMENT_REJECTIONS = 1
 #: a search (its reply is held to a response schema, see providers/tools_via_schema). The longest valid one measured was 130 tokens.
 _SCHEMA_LOOP_TURN_MAX_TOKENS = 1024
 
-#: What a tool other than done is told when it answers the closing request.
-_CLOSING_REDIRECT_ERROR = (
-    "{tool} is not available now: retrieval is over. Call done() with your final answer, built from the "
-    "tool results above."
-)
-
 #: Temperature for reflect's mechanical passes: split synthesis's map calls, which copy
 #: claims and ids out of one chunk, and the structured-output extraction pass, which
 #: parses an answer into a response_schema. Like consolidation's extraction passes they
@@ -670,6 +664,12 @@ async def _run_reflect_agent_inner(
         llm_output_language=llm_output_language,
         answer_ready=closing_step_answers,
     )
+    # When the closing step writes the answer, a free turn picks a search or answer_ready, never
+    # done: its turn is capped (above), and a page sent through it would be cut off at the cap.
+    # Done stays declared in the prompt (``declared_tools``), so every turn shares one prefix.
+    loop_tools = tools
+    if closing_step_answers:
+        loop_tools = [t for t in tools if not _is_done_tool(t["function"]["name"])]
     # Build set of enabled tool names to guard against LLM hallucinating disabled tool calls
     enabled_tools: frozenset[str] = frozenset(t["function"]["name"] for t in tools if t.get("type") == "function")
 
@@ -830,9 +830,9 @@ async def _run_reflect_agent_inner(
         """The rejected ``done`` call and why, as the messages that re-ask for it.
 
         One shape for both re-ask paths (the loop and the closing call) so the
-        model is told the same thing either way. The tool_use needs a deduped
-        wire id like every other one written into this request -- a blank or
-        repeated id is rejected outright by a strict API.
+        model is told the same thing either way. The call needs a deduped id
+        like every other one in this conversation: the id is what pairs a result
+        with its call when the history is replayed.
         """
         (wire_id,) = _unique_tool_call_ids([done_call], emitted_wire_ids)
         return [
@@ -843,36 +843,13 @@ async def _run_reflect_agent_inner(
                 "content": json.dumps(
                     {
                         "error": (
-                            "Your document did not match the required shape, so it was discarded. "
+                            "Your done() call could not be read, so it was discarded. "
                             "Call done() again with the same content, fixing: " + "; ".join(exc.errors)
-                        ),
-                        "required_shape": (
-                            '{"sections": [{"heading": "...", "level": 2, '
-                            '"blocks": ["markdown string", "markdown string"]}]}'
                         ),
                     },
                     ensure_ascii=False,
                 ),
             },
-        ]
-
-    def _closing_redirect_messages(calls: "Sequence[LLMToolCall]") -> list[dict[str, Any]]:
-        """Another tool, answered with the closing request, and the messages that re-ask for ``done``.
-
-        Every call gets a result -- a strict API refuses a tool_use left unanswered -- and each
-        one says the same thing: retrieval is over, write the answer.
-        """
-        wire_ids = _unique_tool_call_ids(list(calls), emitted_wire_ids)
-        return [
-            {"role": "assistant", "tool_calls": [_tool_call_to_dict(c, w) for c, w in zip(calls, wire_ids)]},
-            *(
-                {
-                    "role": "tool",
-                    "tool_call_id": w,
-                    "content": json.dumps({"error": _CLOSING_REDIRECT_ERROR.format(tool=c.name)}, ensure_ascii=False),
-                }
-                for c, w in zip(calls, wire_ids)
-            ),
         ]
 
     async def _ask_for_done(feedback: "Sequence[dict[str, Any]]" = ()) -> "LLMToolCallResult | None":
@@ -915,6 +892,9 @@ async def _run_reflect_agent_inner(
                     *feedback,
                 ],
                 tools=_with_cited_handles(tools, presenter) if answer_as_document else tools,
+                # The handle limits hold the reply only; the prompt declares what every loop
+                # turn declared, so this call rides the prefix the provider already holds.
+                declared_tools=tools,
                 scope="reflect",
                 tool_choice=LLMToolChoice.named("done"),
                 temperature=get_config().llm_temperature_reflect,
@@ -957,7 +937,6 @@ async def _run_reflect_agent_inner(
         """
         feedback: Sequence[dict[str, Any]] = ()
         rejections = 0
-        redirected = False
         while True:
             reply = await _ask_for_done(feedback)
             closing = next((tc for tc in reply.tool_calls if _is_done_tool(tc.name)), None) if reply else None
@@ -968,19 +947,6 @@ async def _run_reflect_agent_inner(
                     # re-reading markdown the model wrote -- the contract this
                     # mode exists to avoid -- so the refusal stands.
                     raise DocumentSectionsInvalidError(["(closing done): the model would not re-emit the document"])
-                if reply is not None and reply.tool_calls and not redirected:
-                    # Asked for done, the model called another tool: the stop signal or a search
-                    # that the system prompt, written for the loop, still tells it to call. Not
-                    # enforcing tool_choice, an OpenAI-compatible server lets it. Told once on the
-                    # same prefix that retrieval is over, it writes the document; the standalone
-                    # prompt would write it from scratch on a new, uncached prompt instead.
-                    redirected = True
-                    logger.warning(
-                        f"[REFLECT {reflect_id}] closing call answered with "
-                        f"{[tc.name for tc in reply.tool_calls]} instead of done; asking again"
-                    )
-                    feedback = _closing_redirect_messages(reply.tool_calls)
-                    continue
                 return await _forced_final_synthesis(iterations_completed)
             try:
                 return await _process_done_tool(
@@ -1226,13 +1192,11 @@ async def _run_reflect_agent_inner(
     # errored or came back empty moved on to the next step and the skipped one
     # never ran (#4564); now that turn asks for the same step again.
     forced_steps_done = 0
-    forced_empty_retry_used = False
-    # Every wire id already written into ``messages`` as a tool_use block. The
-    # whole loop serialises into ONE request, so uniqueness has to hold across
-    # iterations, not just within a batch: a gateway that blanks (or repeats) an
-    # id does it every turn, and two turns minting the same replacement puts two
-    # tool_use blocks with one id back into the request. ``_unique_tool_call_ids``
-    # reads and extends this set.
+    # Every call id already written into ``messages``. The id pairs a result with
+    # its call when the history is replayed (``tools_via_schema.as_text_messages``),
+    # and the whole loop replays as ONE conversation, so uniqueness has to hold
+    # across iterations, not just within a batch. ``_unique_tool_call_ids`` reads
+    # and extends this set.
     emitted_wire_ids: set[str] = set()
     # How many times a decision-orchestrated reflect's ``done`` was refused because its payload or
     # its structured answer did not parse (agent turns answer through the closing step, which counts
@@ -1396,7 +1360,8 @@ async def _run_reflect_agent_inner(
             try:
                 ct_kwargs: dict[str, Any] = dict(
                     messages=messages,
-                    tools=tools,
+                    tools=loop_tools,
+                    declared_tools=tools,
                     scope="reflect_tool_call",
                     tool_choice=iter_tool_choice,
                     temperature=get_config().llm_temperature_reflect,
@@ -1489,21 +1454,6 @@ async def _run_reflect_agent_inner(
                     f"tool selection (iteration={iteration + 1}, tool_choice={requested_choice!r}, "
                     f"finish_reason={result.finish_reason!r})." + detail
                 )
-            # A forced step the model skipped is not a stop: retry it once, so a
-            # single empty reply cannot silently drop a retrieval layer (#4564).
-            if forced_step_pending:
-                requested_choice = iter_tool_choice.function_name
-                if not forced_empty_retry_used:
-                    forced_empty_retry_used = True
-                    logger.warning(
-                        f"[REFLECT {reflect_id}] Forced step {requested_choice!r} returned no tool call "
-                        f"(iteration={iteration + 1}, finish_reason={result.finish_reason!r}); retrying it once."
-                    )
-                    continue
-                logger.warning(
-                    f"[REFLECT {reflect_id}] Forced step {requested_choice!r} returned no tool call again; "
-                    "answering without it."
-                )
             # Model tool-called earlier and is now stopping with prose.
             return await _finish(iteration + 1)
 
@@ -1561,10 +1511,9 @@ async def _run_reflect_agent_inner(
             # nothing counts: "nothing is recorded" is then the honest answer (#5702).
             if not searched and iteration < max_iterations - 1:
                 # Add assistant message and fake tool result asking for evidence.
-                # This branch loops, so its tool_use lands in the same request as
-                # every later turn -- it needs a deduped wire id just like the
-                # parallel batch below (a blank ``done_call.id`` is rejected
-                # outright by a strict API).
+                # This branch loops, so its call lands in the same conversation as
+                # every later turn -- it needs a deduped id just like the parallel
+                # batch below.
                 (done_wire_id,) = _unique_tool_call_ids([done_call], emitted_wire_ids)
                 messages.append(
                     {
@@ -1731,10 +1680,10 @@ async def _run_reflect_agent_inner(
                 }
             )
 
-            # Serialize tool results in the ORIGINAL tool_calls order. Anthropic
-            # requires tool_result blocks to match the assistant tool_use order,
-            # so collect every result first and emit them in the model's order
-            # after execution (execution order may differ).
+            # Serialize tool results in the ORIGINAL tool_calls order, so the
+            # replayed history reads each call followed by its results in the order
+            # the model made them: collect every result first and emit them after
+            # execution (execution order may differ).
             #
             # Slots are indexed by POSITION, never by tool_call_id: a
             # non-conforming OpenAI-compatible gateway can hand back duplicate or
@@ -1952,9 +1901,7 @@ async def _run_reflect_agent_inner(
                 # Keep context history for fallback final prompt
                 context_history.append({"tool": tc.name, "input": input_dict, "output": presented})
 
-            # Emit tool_result messages in the assistant tool_calls order so the
-            # serialized history matches the tool_use blocks (Anthropic requires
-            # tool_result blocks in the same order as the corresponding tool_use).
+            # Emit tool results in the assistant tool_calls order (see above).
             for wire_id, tool_output in zip(wire_tool_call_ids, tool_outputs):
                 messages.append(
                     {
@@ -2073,16 +2020,15 @@ async def _prune_round(
 def _unique_tool_call_ids(tool_calls: list["LLMToolCall"], already_emitted: set[str]) -> list[str]:
     """Pick one unique wire id per tool call, by position, for a parallel batch.
 
-    A non-conforming OpenAI-compatible gateway can hand back duplicate or empty
-    ids, and a strict Anthropic API then rejects the turn outright ("each
-    tool_use must have a single result"). Only the ids that would collide are
-    rewritten, so a conforming provider keeps the ids it minted.
+    The id pairs each result with its call when the history is replayed, so two
+    calls sharing an id (a scripted test double, a call carried over from an
+    earlier turn) would get each other's results. Only the ids that would collide
+    are rewritten.
 
     ``already_emitted`` carries every id used earlier in the SAME conversation
     and is extended in place. Uniqueness has to span the whole reflect loop, not
-    one batch: the loop serialises into a single request, and a gateway that
-    blanks an id blanks it on every turn -- deduping per batch would just mint
-    the same replacement twice and put the collision back.
+    one batch: the loop replays as a single conversation, and deduping per batch
+    would just mint the same replacement twice and put the collision back.
     """
     wire_ids: list[str] = []
     for position, tc in enumerate(tool_calls):
@@ -2306,7 +2252,7 @@ async def _rewrite_to_length_budget(
 
 
 def _decode_json_argument(raw: str, finish_reason: str | None, field: str) -> Any:
-    """Decode a JSON-encoded tool argument: ``done``'s ``document``, or its whole payload.
+    """Decode ``done``'s whole payload when the provider could not parse it.
 
     A completed generation that is merely malformed (Qwen swapping or dropping a
     closing ``]``/``}``, #5272) is repaired with ``json_repair``. Repair is gated on
@@ -2441,63 +2387,31 @@ async def _process_done_tool(
     # Sibling id fields (memory_ids, ...) live in their own arguments and are
     # validated separately below -- they can't bleed into a parsed answer string.
     #
-    # In document mode the model states the document's structure instead, and the
-    # markdown is rendered from it. The rendered text still flows on as ``text``
-    # so every consumer (structured-output extraction, the length rewrite, the
-    # HTTP response) is unchanged -- what changes is that nobody has to read the
-    # model's markdown back to find out what it meant. A string-encoded
-    # ``document`` argument is decoded first: models on OpenAI-compatible
-    # transports sometimes double-encode nested tool arguments (same class as
-    # #899's MCP coercion).
+    # In document mode the answer is a ``markdown`` page instead, split into sections
+    # at its headings (losslessly). The rendered text still flows on as ``text``, so
+    # every consumer (structured-output extraction, the length rewrite, the HTTP
+    # response) is unchanged. It used to be a section array the model filled in; held
+    # to a response schema, models wrote that thinner than the same page as markdown.
     document: StructuredDocument | None = None
-    raw_document = args.get("document")
-    if isinstance(raw_document, str):
-        raw_document = _decode_json_argument(raw_document, finish_reason, "document")
-    # A double-encoded document is still JSON text after one decode (#5202). Only
-    # text that opens like JSON is decoded again: plain prose would otherwise fail
-    # as "not valid JSON, check the closing brackets", which is not what is wrong.
-    if isinstance(raw_document, str) and raw_document.lstrip()[:1] in ("{", "["):
-        raw_document = _decode_json_argument(raw_document, finish_reason, "document")
-    if isinstance(raw_document, list):
-        # A bare section array is the document with its wrapper dropped -- the
-        # same flattening document_from_sections forgives one level down.
-        raw_document = {"sections": raw_document}
-    if raw_document is not None and (
-        not isinstance(raw_document, dict) or not ({"sections", "blocks"} & raw_document.keys())
-    ):
-        # A document was sent but is not one. Falling through to ``answer`` would
-        # raise ReflectNoAnswerError with nothing saying what arrived, and fail a
-        # whole refresh over a shape the model fixes when told (#5202). Re-ask.
-        raise DocumentSectionsInvalidError(
-            [
-                f"document: expected an object with a sections array, got {type(raw_document).__name__} "
-                f"({json.dumps(raw_document, default=str)[:120]})"
-            ]
-        )
     raw_markdown = args.get("markdown")
-    if isinstance(raw_document, dict):
-        document = document_from_sections(raw_document)
-        answer = render_document(document).strip()
-    elif isinstance(raw_markdown, str):
-        # The markdown document form: its headings are its sections, split losslessly.
+    if isinstance(raw_markdown, str):
         document = split_markdown(raw_markdown)
         answer = render_document(document).strip()
     else:
         answer = args.get("answer", "").strip()
     if not answer:
         # The model called ``done`` with nothing usable in it -- no ``answer``
-        # field and no decodable ``document`` object. Typically its output was
-        # cut off mid-tool-call by the completion cap (finish_reason "length"),
-        # or a document with an empty sections array (a document of the wrong
-        # shape is re-asked before reaching here). Fail instead of standing in
+        # and no ``markdown`` text. Typically its output was cut off mid-tool-call
+        # by the completion cap (finish_reason "length"), or the page was empty
+        # (a call that does not parse is re-asked before reaching here). Fail instead of standing in
         # a placeholder: it is non-empty, so every downstream emptiness guard reads
         # it as a real answer and stores it over working content (#2959).
         raise ReflectNoAnswerError(
             f"Reflect's done tool returned no answer (iteration {iterations}, "
             f"{total_tools_called} tool call(s) made): the done call carried no usable "
-            f"answer and no document content (finish_reason={finish_reason}, argument keys: "
+            f"answer and no markdown page (finish_reason={finish_reason}, argument keys: "
             f"{sorted(args)}). If the model's output was cut off mid-tool-call, the answer "
-            "field may have arrived empty; a document with no sections produces the same signature."
+            "field may have arrived empty; an empty markdown page produces the same signature."
         )
 
     final_usage = usage
@@ -2876,18 +2790,7 @@ def _summarize_input(
         depth = args.get("depth", "chunk")
         return f"(memory_ids=[{len(memory_ids)} ids], depth={depth})"
     elif tool_name == "done":
-        raw_document = args.get("document")
-        if isinstance(raw_document, dict):
-            sections = raw_document.get("sections") or []
-            blocks = sum(len(s.get("blocks") or []) for s in sections if isinstance(s, dict))
-            memory_ids = args.get("memory_ids", [])
-            mental_model_ids = args.get("mental_model_ids", [])
-            observation_ids = args.get("observation_ids", [])
-            return (
-                f"(document={len(sections)} sections/{blocks} blocks, mem={len(memory_ids)}, "
-                f"mm={len(mental_model_ids)}, obs={len(observation_ids)})"
-            )
-        answer = args.get("answer", "")
+        answer = args.get("markdown") or args.get("answer", "")
         answer_preview = f"'{answer[:30]}...'" if len(answer) > 30 else f"'{answer}'"
         memory_ids = args.get("memory_ids", [])
         mental_model_ids = args.get("mental_model_ids", [])

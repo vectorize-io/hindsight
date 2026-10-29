@@ -61,13 +61,9 @@ Hindsight works with any provider that exposes an OpenAI-compatible API. Set `HI
 The `openai` provider talks to the **Chat Completions API** (`/v1/chat/completions`). For the newer **Responses API** (`/v1/responses`), use `HINDSIGHT_API_LLM_PROVIDER=openai-responses` — see the tip below. Both accept a custom `HINDSIGHT_API_LLM_BASE_URL`, so an OpenAI-compatible endpoint that exposes `/v1/responses` works the same way as a Chat Completions one.
 
 See [Configuration](./configuration.md#llm-provider) for setup examples.
-> **💡 OpenAI Responses API (reasoning + tools together)**
+> **💡 OpenAI Responses API**
 >
-Set `HINDSIGHT_API_LLM_PROVIDER=openai-responses` to call OpenAI's **Responses API** (`/v1/responses`) instead of Chat Completions.
-
-Why it exists: some reasoning models — e.g. `gpt-5.6-terra` — **reject `reasoning_effort` when function tools are present** on Chat Completions (HTTP 400 unless `reasoning_effort="none"`). Reflect is a tool-calling loop, so on the `openai` (Completions) provider that forces the whole operation — including the final synthesis — to run with reasoning disabled. (Hindsight retries that 400 once with `reasoning_effort="none"` so the call still succeeds — but it succeeds without reasoning.) The Responses API keeps the model's chain-of-thought as a first-class reasoning item, so **reasoning and tools coexist**: reflect's search loop runs with a real `HINDSIGHT_API_LLM_REASONING_EFFORT` (e.g. `high`).
-
-Recommended for reasoning models (gpt-5.x, o-series) that use tools. It also honors a custom `HINDSIGHT_API_LLM_BASE_URL`, so any OpenAI-compatible endpoint exposing `/v1/responses` (gateways, Azure-style deployments) can be used just like the Chat Completions path.
+Set `HINDSIGHT_API_LLM_PROVIDER=openai-responses` to call OpenAI's **Responses API** (`/v1/responses`) instead of Chat Completions. Both work for every operation; the Responses API keeps a reasoning model's chain-of-thought as a first-class item. It also honors a custom `HINDSIGHT_API_LLM_BASE_URL`, so any OpenAI-compatible endpoint exposing `/v1/responses` (gateways, Azure-style deployments) can be used just like the Chat Completions path.
 
 See [Configuration](./configuration.md#llm-provider) for setup examples.
 > **ℹ️ Reasoning/thinking models and `max_tokens`**
@@ -136,7 +132,7 @@ Beyond basic generation, some providers support optional features that lower cos
 | LiteLLM (100+) (`litellm`) | — | — |
 
 - **Batch API** — submits bulk retain extraction through the provider's asynchronous batch endpoint, typically at ~50% lower cost. Used automatically when available; otherwise calls run synchronously.
-- **Explicit prompt caching** — reuses the large, fixed system prefix that retain (fact extraction), consolidation, and the reflect tool-loop send on every call, billing it at the provider's cached-input rate. On Gemini/Vertex this uses the `CachedContent` API. **On by default**; disable with `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED=false`. Hindsight structures these prompts so the cached prefix is **bank-agnostic** — one cache is shared across all banks rather than one per bank/mission, and creation soft-fails to an uncached call, so it never breaks a request.
+- **Explicit prompt caching** — reuses the large, fixed system prefix that retain (fact extraction) and consolidation send on every call, billing it at the provider's cached-input rate. On Gemini/Vertex this uses the `CachedContent` API. **On by default**; disable with `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED=false`. Hindsight structures these prompts so the cached prefix is **bank-agnostic** — one cache is shared across all banks rather than one per bank/mission, and creation soft-fails to an uncached call, so it never breaks a request.
 
 > **📝 Note**
 >
@@ -231,7 +227,7 @@ export HINDSIGHT_API_RETAIN_LLM_PROVIDER=anthropic
 
 ### Using Other Models
 
-Other LLM models not listed above may work with Hindsight, but they must support **at least 65,000 output tokens** to ensure reliable fact extraction. If you need support for a specific model that doesn't meet this requirement, please [open an issue](https://github.com/hindsight-ai/hindsight/issues) to request an exception.
+Other LLM models not listed above may work with Hindsight. What a model needs is to **follow a JSON schema** (structured output) and a large enough context window — **native tool calling is not used**: reflect's tool calls are made as replies to a response schema on every provider. It must also support **at least 65,000 output tokens** to ensure reliable fact extraction. If you need support for a specific model that doesn't meet this requirement, please [open an issue](https://github.com/hindsight-ai/hindsight/issues) to request an exception.
 
 > **💡 Models with Limited Output Tokens**
 >
@@ -262,11 +258,11 @@ export HINDSIGHT_API_LLM_PROVIDER=openai
 export HINDSIGHT_API_LLM_API_KEY=sk-xxxxxxxxxxxx
 export HINDSIGHT_API_LLM_MODEL=gpt-4o
 
-# OpenAI Responses API (/v1/responses) — reasoning + tools together
+# OpenAI Responses API (/v1/responses)
 export HINDSIGHT_API_LLM_PROVIDER=openai-responses
 export HINDSIGHT_API_LLM_API_KEY=sk-xxxxxxxxxxxx
 export HINDSIGHT_API_LLM_MODEL=gpt-5.6           # reasoning model; e.g. gpt-5.6-terra
-export HINDSIGHT_API_LLM_REASONING_EFFORT=high   # sent alongside tools, unlike Completions
+export HINDSIGHT_API_LLM_REASONING_EFFORT=high
 # Optional: point at any OpenAI-compatible endpoint exposing /v1/responses
 # export HINDSIGHT_API_LLM_BASE_URL=https://your-gateway.example.com/v1
 
@@ -864,12 +860,12 @@ which makes Cursor a *client* of Hindsight. Here Cursor is the model backend Hin
   against `auto` — slower than a chat-completions request and past the 30s
   `HINDSIGHT_API_REFLECT_LLM_TIMEOUT` default. Left at the default, reflect spends its
   first iteration on timeout retries before recovering.
-- **Structured output and tool calling are prompt-level emulations.** The CLI exposes no
-  `response_format`, JSON-schema, temperature or tool-definition flag — only
+- **Structured output is a prompt-level emulation.** The CLI exposes no
+  `response_format`, JSON-schema or temperature flag — only
   `--output-format text|json|stream-json`, which describes the envelope. Hindsight puts
-  the schema (or the tool list) in the prompt and parses the model's JSON back out,
-  retrying on a parse failure. That is less reliable than a native schema, so prefer a
-  strong named model over `auto` for reflect, the operation that leans hardest on tools.
+  the schema in the prompt and parses the model's JSON back out, retrying on a parse
+  failure. That is less reliable than a native schema, so prefer a strong named model
+  over `auto` for reflect, the operation that leans hardest on it.
 - **Free plans are limited to `auto`.** A named `--model` returns
   `Named models unavailable Free plans can only use Auto`. Paid plans can use any id from
   `cursor-agent --list-models`.

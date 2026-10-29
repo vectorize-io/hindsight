@@ -309,14 +309,13 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 | `HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION` | Override `HINDSIGHT_API_LLM_STRICT_SCHEMA` for consolidation only (both the batch consolidation call and observation dedup). | Inherits global |
 | `HINDSIGHT_API_LLM_SUPPORTS_MAX_ITEMS` | Whether the LLM backend accepts JSON Schema `maxItems` / `minItems` in structured-output schemas. Set to `false` for backends such as Bedrock Converse that reject these keywords; consolidation still enforces observation caps after parsing. | `true` |
 | `HINDSIGHT_API_LLM_SUPPORTS_STRING_PATTERN` | Whether the LLM backend accepts JSON Schema `pattern` in structured-output schemas. When `true`, retain constrains `occurred_start` / `occurred_end` to an ISO timestamp, which stops a grammar-constrained model from reasoning inside the timestamp string — a failure that corrupts the date and can burn the entire completion budget on an unterminated response. Left `false` because support is narrow and rejection is a hard 400 at request time: Bedrock validates schemas against an allowlist that excludes this keyword, and OpenAI errors on unsupported keywords under `strict`. Backends that neither enforce nor reject it gain nothing. | `false` |
-| `HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_FORCED_TOOL` | Request structured output from the LiteLLM-backed providers (`litellm`, `litellmrouter`, `bedrock`) with a single forced tool call — the response schema becomes the tool's parameters — instead of `response_format`. Set to `true` for backends that reject `response_format` outright. This is region-dependent on Bedrock Claude: `ap-southeast-2` (`au.*` inference profiles) refuses the translated Converse `outputConfig` with `Extra inputs are not permitted`, while the same model in `us-east-1` (`us.*`) accepts it and needs nothing here. Verified against both. If the model answers without calling the tool, the reply is parsed as text as before. Other providers ignore it. | `false` |
+| `HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_IN_PROMPT` | Give the LiteLLM-backed providers (`litellm`, `litellmrouter`, `bedrock`) the structured-output schema in the prompt, and parse the reply, instead of sending `response_format`. Set to `true` for backends that reject `response_format` outright. This is region-dependent on Bedrock Claude: `ap-southeast-2` (`au.*` inference profiles) refuses the translated Converse `outputConfig` with `Extra inputs are not permitted`, while the same model in `us-east-1` (`us.*`) accepts it and needs nothing here. Verified against both. Other providers ignore it. | `false` |
 | `HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE` | Whether the OpenAI-compatible backend honours `response_format={"type": "json_object"}` on the soft (non-strict) structured-output path. Leave unset and the provider decides: LM Studio, Ollama, Volcano and z.ai get the schema in the prompt only, llama.cpp follows `HINDSIGHT_API_LLAMACPP_NO_GRAMMAR`, and every other provider also sends `json_object`. z.ai is skipped because its `json_object` mode deletes the literal token `json` from the generated text, so `latest.json` comes back as `latest.` — valid JSON, silently corrupted. Set `false` for `provider=openai` pointed at a local server that can't constrain output: some such servers rewrite the prompt instead, and a thinking model can loop on the rewrite until the LLM timeout. This doesn't make a model write JSON. It only drops the request the server mishandles, so the model still has to follow the schema in the prompt. Set `true` to force `json_object` on a backend that would otherwise skip it. | Provider decides |
 | `HINDSIGHT_API_LLM_CODEX_HOME` | Credentials directory for the `openai-codex` provider — the directory holding the `auth.json` it authenticates with. Overrides the process-wide `CODEX_HOME` for Hindsight's own LLM calls. Its reason to exist is that `CODEX_HOME` is process-wide: set this (and the per-member `HINDSIGHT_API_LLM_<n>_CODEX_HOME`) to run two independently authorized ChatGPT profiles in one process, so a [multi-LLM chain](#multi-llm-strategies-failover--round-robin) of two Codex members can fail over between accounts. | Unset (`CODEX_HOME`, else `~/.codex`) |
 | `HINDSIGHT_API_LLM_CHATGPT_HOME` | Credentials directory for the `chatgpt` provider: holds `credentials.json` (written by `hindsight-admin chatgpt login`, or `login --from-file` on a headless server) and this host's `host_id`. Server-level only. See [ChatGPT Setup](./models.md#chatgpt-setup-sign-in-with-chatgpt). | `~/.hindsight/chatgpt` |
 | `HINDSIGHT_API_LLM_OLLAMA_NUM_CTX` | Optional native Ollama `num_ctx` override. Leave unset to use the model/server default; set a positive integer only when you need a larger context window. Setting it also routes free-form calls (including the startup connection probe) through the native `/api/chat` API, since the OpenAI-compatible endpoint cannot express a context size — see the note below. | Unset |
 | `HINDSIGHT_API_LLM_GEMINI_SAFETY_SETTINGS` | JSON-encoded list of `{category, threshold}` dicts for Gemini/VertexAI content safety filtering | `null` |
 | `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED` | Reuse the fixed system prefix via the provider's explicit prompt cache, billed at the cached-input rate (Gemini/Vertex `CachedContent`). The cached prefix is shared across all banks and soft-fails to an uncached call. Set to `false` to disable. See [Models](./models.md#provider-capabilities). | `true` |
-| `HINDSIGHT_API_REFLECT_PROMPT_CACHE_ENABLED` | For reflect specifically, roll a step-by-step context cache forward through the agent's tool loop so each turn reuses the whole prior conversation (system + tools + all prior tool results) at the cached-input rate instead of only the static prefix. Requires `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED`. The per-reflect caches are ephemeral and deleted when the reflect ends. Set to `false` to run reflect uncached while leaving prompt caching on elsewhere — on Gemini that is currently the cheaper setting, because each cache's creation is billed at the full input rate plus storage and every rolling cache is read by exactly one call. | `true` |
 | `HINDSIGHT_API_LLM_DEBUG_DUMP_4XX` | Diagnostic: when enabled, on any LLM `4xx` the provider logs `[LLM_4XX_DUMP]` with the request as actually assembled — the serialized request config (response schema + generation params, message bodies stripped) and length-capped per-message previews — so an otherwise-unreproducible rejected request can be inspected. Wired into all remote providers (Gemini/Vertex, OpenAI-compatible incl. Fireworks/Nous, Anthropic, LiteLLM incl. Router, Codex). Off by default; leave off in normal operation. | `false` |
 
 When `HINDSIGHT_API_LLM_PROVIDER=ollama`, Hindsight no longer sends the previous native API default `num_ctx=16384` unless you set it explicitly. To keep the old request behavior, set `HINDSIGHT_API_LLM_OLLAMA_NUM_CTX=16384`; otherwise Ollama uses the model Modelfile or server default.
@@ -349,11 +348,7 @@ export HINDSIGHT_API_LLM_MODEL=gpt-4o
 export HINDSIGHT_API_LLM_PROVIDER=openai-responses
 export HINDSIGHT_API_LLM_API_KEY=sk-xxxxxxxxxxxx
 export HINDSIGHT_API_LLM_MODEL=gpt-5.6
-# Uses the OpenAI Responses API instead of chat/completions. Unlike
-# chat/completions, it supports reasoning together with function tools, so
-# reflect's tool-calling search loop can run with a real reasoning effort.
-# Recommended for reasoning models (gpt-5.x, o-series) that reject
-# `reasoning_effort` alongside tools on chat/completions (e.g. gpt-5.6-terra).
+# Uses the OpenAI Responses API instead of chat/completions.
 # export HINDSIGHT_API_LLM_REASONING_EFFORT=high
 
 # Gemini
@@ -445,10 +440,9 @@ export HINDSIGHT_API_LLM_MODEL=auto   # or any id from `cursor-agent --list-mode
 # timeouts or reflect burns its first iteration on a timeout retry.
 export HINDSIGHT_API_LLM_TIMEOUT=300
 export HINDSIGHT_API_REFLECT_LLM_TIMEOUT=180
-# The CLI exposes no response-format or tool-definition flags, so Hindsight emulates
-# structured output and tool calling through the prompt and parses the JSON back. That
-# is less reliable than a native schema: prefer a stronger named model over `auto` for
-# reflect, which is the operation that leans hardest on tool calls.
+# The CLI exposes no response-format flag, so Hindsight emulates structured output
+# through the prompt and parses the JSON back. That is less reliable than a native
+# schema: prefer a stronger named model over `auto` for reflect, which leans hardest on it.
 
 # Volcano Engine (ByteDance - OpenAI-compatible)
 export HINDSIGHT_API_LLM_PROVIDER=volcano
@@ -468,11 +462,6 @@ export HINDSIGHT_API_LLM_MODEL=qwen/qwen3.5-9b
 # Models that reject temperature (e.g. anthropic/claude-haiku-5.5) then fail with
 # "No endpoints found that can handle the requested parameters". Fix: omit it.
 # export HINDSIGHT_API_LLM_TEMPERATURE=none
-# Reflect forces tool calls: tool_choice "required" after its first searches and a
-# named tool on the forced steps. Some upstreams accept only "auto" and fail those
-# turns with "No endpoints found that support the provided 'tool_choice' value"
-# (reported for several gpt-oss-120b hosts, #5832). Pin ones that support it with
-# HINDSIGHT_API_LLM_EXTRA_BODY='{"provider": {"only": ["deepinfra", "cerebras"]}}'.
 
 # Requesty (OpenAI-compatible gateway)
 export HINDSIGHT_API_LLM_PROVIDER=requesty
@@ -485,9 +474,7 @@ export HINDSIGHT_API_LLM_API_KEY=sk-xxxxxxxxxxxx
 export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash
 # Notes:
 # - `deepseek-v4-flash` defaults to thinking mode at the API level (treated as
-#   `deepseek-reasoner`). Hindsight handles this transparently; the reflect
-#   agent will not crash with "deepseek-reasoner does not support this
-#   tool_choice".
+#   `deepseek-reasoner`).
 # - Use `deepseek-v4-pro` for the higher-quality reasoning route.
 # - Use `deepseek-chat` for the non-thinking alias (faster, cheaper).
 

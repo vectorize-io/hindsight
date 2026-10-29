@@ -548,7 +548,7 @@ class TestReflectAgentMocked:
             assert "Respond exclusively in English" in messages[1]["content"]
             # The done tool schema is the last thing the model reads before writing the
             # answer; its own "SAME language" rule has to go too, or it wins from there.
-            done_tool = next(t for t in call.kwargs["tools"] if t["function"]["name"] == "done")
+            done_tool = next(t for t in call.kwargs["declared_tools"] if t["function"]["name"] == "done")
             assert "SAME language" not in done_tool["function"]["parameters"]["properties"]["answer"]["description"]
             assert "exclusively in English" in done_tool["function"]["description"]
 
@@ -1126,54 +1126,6 @@ class TestReflectAgentMocked:
         )
 
         assert result.text == "Done."
-        mock_functions["search_observations_fn"].assert_called_once()
-        mock_functions["recall_fn"].assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_empty_reply_on_forced_step_retries_that_step(self, mock_llm, mock_functions):
-        """A forced step that comes back with no tool call is asked for again, not skipped (#4564)."""
-        mock_functions["search_mental_models_fn"].return_value = {"query": "test query", "mental_models": []}
-        mock_llm.call_with_tools.side_effect = closing_echo(
-            [
-                self._mm_call(),
-                # Endpoint ignores the forced ``search_observations`` once.
-                LLMToolCallResult(tool_calls=[], finish_reason="tool_calls"),
-                LLMToolCallResult(
-                    tool_calls=[LLMToolCall(id="2", name="search_observations", arguments={"query": "q"})],
-                    finish_reason="tool_calls",
-                ),
-                LLMToolCallResult(
-                    tool_calls=[LLMToolCall(id="3", name="recall", arguments={"query": "q"})],
-                    finish_reason="tool_calls",
-                ),
-                LLMToolCallResult(
-                    tool_calls=[
-                        LLMToolCall(id="4", name="done", arguments={"answer": "Done.", "memory_ids": ["mem-1"]})
-                    ],
-                    finish_reason="tool_calls",
-                ),
-            ]
-        )
-
-        result = await run_reflect_agent(
-            llm_config=mock_llm,
-            bank_id="test-bank",
-            query="test query",
-            bank_profile={"name": "Test", "mission": "Testing"},
-            has_mental_models=True,
-            budget="low",
-            max_iterations=10,
-            **mock_functions,
-        )
-
-        assert result.text == "Done."
-        choices = [c.kwargs["tool_choice"] for c in mock_llm.call_with_tools.call_args_list]
-        assert choices[:4] == [
-            LLMToolChoice.named("search_mental_models"),
-            LLMToolChoice.named("search_observations"),
-            LLMToolChoice.named("search_observations"),
-            LLMToolChoice.named("recall"),
-        ]
         mock_functions["search_observations_fn"].assert_called_once()
         mock_functions["recall_fn"].assert_called_once()
 
@@ -1997,15 +1949,8 @@ class TestReflectAgentMocked:
         assert "search for information first" in sent
 
 
-class TestMalformedDoneDocumentIsFedBack:
-    """A ``document`` whose shape the schema refuses is re-asked, never guessed (#4910).
-
-    ``str()`` of a block object is its Python repr, so a block emitted as
-    ``{"text": ...}`` used to be stored as the literal ``{'text': '...'}`` and
-    rendered into ``mental_models.content``. The payload is refused instead, and
-    the per-field errors go back as the done call's tool result so the model can
-    re-emit the same content in the declared shape.
-    """
+class TestOverBudgetDocumentTrim:
+    """A page over its length budget is trimmed as a document, or not at all (#4910)."""
 
     @pytest.fixture
     def mock_llm(self):
@@ -2039,151 +1984,11 @@ class TestMalformedDoneDocumentIsFedBack:
                 LLMToolCall(
                     id=call_id,
                     name="done",
-                    arguments={
-                        "document": {"sections": [{"heading": "Ops", "level": 2, "blocks": blocks}]},
-                        "mental_model_ids": ["mm-1"],
-                    },
+                    arguments={"markdown": "## Ops\n\n" + "\n\n".join(blocks), "mental_model_ids": ["mm-1"]},
                 )
             ],
             finish_reason="tool_calls",
         )
-
-    @pytest.mark.asyncio
-    async def test_object_blocks_are_rejected_and_the_retry_answers(self, mock_llm, mock_functions):
-        mock_llm.call_with_tools.side_effect = closing_echo(
-            [
-                LLMToolCallResult(
-                    tool_calls=[
-                        LLMToolCall(id="1", name="search_mental_models", arguments={"reason": "curated", "query": "q"})
-                    ],
-                    finish_reason="tool_calls",
-                ),
-                # The free turn's done is not parsed: the closing step writes the answer, and it
-                # is the closing reply that comes back malformed.
-                self._done("f", ["Intro."]),
-                self._done("2", [{"text": "Intro."}]),
-                self._done("3", ["Intro."]),
-            ]
-        )
-
-        result = await run_reflect_agent(
-            llm_config=mock_llm,
-            bank_id="test-bank",
-            query="q",
-            bank_profile={"name": "Test", "mission": ""},
-            has_mental_models=True,
-            budget="low",
-            max_iterations=5,
-            answer_as_document=True,
-            **mock_functions,
-        )
-
-        assert result.text == "## Ops\n\nIntro."
-        assert "{'text'" not in result.text
-        # The rejection went back as the done call's own tool result.
-        messages = mock_llm.call_with_tools.await_args_list[3].kwargs["messages"]
-        rejection = messages[-1]
-        assert rejection["role"] == "tool"
-        assert "sections[0].blocks[0]" in rejection["content"]
-
-    @pytest.mark.asyncio
-    async def test_a_model_that_keeps_the_bad_shape_fails_rather_than_storing_it(self, mock_llm, mock_functions):
-        mock_llm.call_with_tools.side_effect = closing_echo(
-            [
-                LLMToolCallResult(
-                    tool_calls=[
-                        LLMToolCall(id="1", name="search_mental_models", arguments={"reason": "curated", "query": "q"})
-                    ],
-                    finish_reason="tool_calls",
-                ),
-                self._done("2", [{"text": "Intro."}]),
-                self._done("3", [{"text": "Intro."}]),
-            ]
-        )
-
-        with pytest.raises(DocumentSectionsInvalidError):
-            await run_reflect_agent(
-                llm_config=mock_llm,
-                bank_id="test-bank",
-                query="q",
-                bank_profile={"name": "Test", "mission": ""},
-                has_mental_models=True,
-                budget="low",
-                max_iterations=5,
-                answer_as_document=True,
-                **mock_functions,
-            )
-
-    @pytest.mark.asyncio
-    async def test_the_closing_done_call_is_re_asked_not_answered_as_prose(self, mock_llm, mock_functions):
-        """The model stops with prose, the closing done() is malformed, and the re-ask lands.
-
-        The standalone prose synthesis (``llm.call``) must not be reached: it
-        would answer by re-reading markdown the model wrote, which is the one
-        thing document mode exists to avoid.
-        """
-        mock_llm.call_with_tools.side_effect = closing_echo(
-            [
-                LLMToolCallResult(
-                    tool_calls=[
-                        LLMToolCall(id="1", name="search_mental_models", arguments={"reason": "curated", "query": "q"})
-                    ],
-                    finish_reason="tool_calls",
-                ),
-                # Stops with prose -> the closing done() call is asked for.
-                LLMToolCallResult(tool_calls=[], content="I have enough to answer.", finish_reason="stop"),
-                self._done("2", [{"text": "Intro."}]),
-                self._done("3", ["Intro."]),
-            ]
-        )
-
-        result = await run_reflect_agent(
-            llm_config=mock_llm,
-            bank_id="test-bank",
-            query="q",
-            bank_profile={"name": "Test", "mission": ""},
-            has_mental_models=True,
-            budget="low",
-            max_iterations=5,
-            answer_as_document=True,
-            **mock_functions,
-        )
-
-        assert result.text == "## Ops\n\nIntro."
-        mock_llm.call.assert_not_called()
-        # The rejection was fed back on the same prefix.
-        retry_messages = mock_llm.call_with_tools.await_args_list[3].kwargs["messages"]
-        assert "sections[0].blocks[0]" in retry_messages[-1]["content"]
-
-    @pytest.mark.asyncio
-    async def test_a_closing_call_that_stays_malformed_never_answers_as_prose(self, mock_llm, mock_functions):
-        mock_llm.call_with_tools.side_effect = closing_echo(
-            [
-                LLMToolCallResult(
-                    tool_calls=[
-                        LLMToolCall(id="1", name="search_mental_models", arguments={"reason": "curated", "query": "q"})
-                    ],
-                    finish_reason="tool_calls",
-                ),
-                LLMToolCallResult(tool_calls=[], content="I have enough to answer.", finish_reason="stop"),
-                self._done("2", [{"text": "Intro."}]),
-                self._done("3", [{"text": "Intro."}]),
-            ]
-        )
-
-        with pytest.raises(DocumentSectionsInvalidError):
-            await run_reflect_agent(
-                llm_config=mock_llm,
-                bank_id="test-bank",
-                query="q",
-                bank_profile={"name": "Test", "mission": ""},
-                has_mental_models=True,
-                budget="low",
-                max_iterations=5,
-                answer_as_document=True,
-                **mock_functions,
-            )
-        mock_llm.call.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_an_over_budget_document_keeps_its_structure_when_the_trim_is_malformed(
@@ -2530,7 +2335,7 @@ class TestNoAnswerFailsHard:
     async def test_empty_document_mode_answer_raises(self, mock_llm, mock_functions):
         """Document mode that renders to nothing is the same failure as a blank answer."""
         mock_llm.call_with_tools.side_effect = closing_echo(
-            self._recall_then({"document": {"sections": []}, "memory_ids": ["mem-1"]})
+            self._recall_then({"markdown": "  ", "memory_ids": ["mem-1"]})
         )
 
         with pytest.raises(ReflectNoAnswerError):
@@ -2574,27 +2379,16 @@ class TestNoAnswerFailsHard:
         assert result.text == "The user has a cat named Luna."
 
 
-_DOCUMENT = {
-    "sections": [
-        {
-            "heading": "Ops",
-            "level": 2,
-            "blocks": ["Quarterly planning is owned by the platform team.", "- one\n- two"],
-        }
-    ]
-}
+_MARKDOWN = "## Ops\n\nQuarterly planning is owned by the platform team.\n\n- one\n- two"
 
 
-class TestDoneToolStringDocument:
-    """A string-encoded ``document`` argument in document mode must render like an object.
+class TestDoneMarkdownPage:
+    """A page's ``done`` carries one markdown string; a payload that does not parse is repaired or re-asked.
 
-    Models on OpenAI-compatible transports sometimes double-encode nested tool
-    arguments: the ``document`` arrives as a JSON *string* instead of an object.
-    In document mode the done tool has no ``answer`` field, so the dict-only
-    branch fell through to ``args.get("answer", "")`` -- always empty -- and
-    every well-formed-but-string-encoded completion was a deterministic
-    ReflectNoAnswerError misread as truncation. Same transport-artifact class
-    PR #899 fixed for MCP tool arguments.
+    Providers keep arguments they could not parse as ``{"_raw": ...}`` (#5272: a Qwen
+    emission with a dropped closing bracket). A completed generation is repaired; one
+    without a completion signal could be a cut-off body, so it is re-asked with the
+    parse error instead of repaired into a page that looks complete.
     """
 
     @pytest.fixture
@@ -2612,18 +2406,23 @@ class TestDoneToolStringDocument:
         return llm
 
     @staticmethod
-    def _recall_then(done_arguments: dict) -> list[LLMToolCallResult]:
-        """Gather evidence first, so ``done`` is not rejected by the evidence guardrail."""
-        return [
-            LLMToolCallResult(
-                tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "test query"})],
-                finish_reason="tool_calls",
-            ),
-            LLMToolCallResult(
-                tool_calls=[LLMToolCall(id="2", name="done", arguments=done_arguments)],
-                finish_reason="tool_calls",
-            ),
-        ]
+    def _recall() -> LLMToolCallResult:
+        return LLMToolCallResult(
+            tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "test query"})],
+            finish_reason="tool_calls",
+        )
+
+    @staticmethod
+    def _done(call_id: str, arguments: dict, finish_reason: str | None = "tool_calls") -> LLMToolCallResult:
+        return LLMToolCallResult(
+            tool_calls=[LLMToolCall(id=call_id, name="done", arguments=arguments)], finish_reason=finish_reason
+        )
+
+    @staticmethod
+    def _raw_with_dropped_bracket() -> str:
+        good = json.dumps({"markdown": _MARKDOWN, "memory_ids": ["mem-1"]})
+        assert good.endswith('"]}')
+        return good[:-3] + '"}'
 
     async def _run(self, mock_llm, mock_functions):
         return await run_reflect_agent(
@@ -2634,196 +2433,71 @@ class TestDoneToolStringDocument:
             has_mental_models=False,
             budget="low",
             max_iterations=5,
+            answer_as_document=True,
             **mock_functions,
         )
 
     @pytest.mark.asyncio
-    async def test_object_document_renders(self, mock_llm, mock_functions):
-        """Object form: the render path runs and returns the document markdown."""
+    async def test_the_markdown_page_is_split_into_sections(self, mock_llm, mock_functions):
         mock_llm.call_with_tools.side_effect = closing_echo(
-            self._recall_then({"document": _DOCUMENT, "memory_ids": ["mem-1"]})
+            [self._recall(), self._done("2", {"markdown": _MARKDOWN, "memory_ids": ["mem-1"]})]
         )
 
         result = await self._run(mock_llm, mock_functions)
 
-        assert "## Ops" in result.text
+        assert [s.heading for s in result.document.sections] == ["Ops"]
         assert "Quarterly planning is owned by the platform team." in result.text
 
     @pytest.mark.asyncio
-    async def test_string_document_renders_identically(self, mock_llm, mock_functions):
-        """The bug: a JSON-string-encoded ``document`` must render exactly like the object form."""
+    async def test_an_empty_page_raises(self, mock_llm, mock_functions):
         mock_llm.call_with_tools.side_effect = closing_echo(
-            self._recall_then({"document": json.dumps(_DOCUMENT), "memory_ids": ["mem-1"]})
-        )
-
-        result = await self._run(mock_llm, mock_functions)
-
-        mock_llm.call_with_tools.side_effect = closing_echo(
-            self._recall_then({"document": _DOCUMENT, "memory_ids": ["mem-1"]})
-        )
-        expected = await self._run(mock_llm, mock_functions)
-        assert result.text == expected.text
-
-    @pytest.mark.asyncio
-    async def test_empty_document_still_raises(self, mock_llm, mock_functions):
-        """Document mode that renders to nothing is unchanged: it raises."""
-        mock_llm.call_with_tools.side_effect = closing_echo(
-            self._recall_then({"document": {"sections": []}, "memory_ids": ["mem-1"]})
+            [self._recall(), self._done("2", {"markdown": "", "memory_ids": ["mem-1"]})]
         )
 
         with pytest.raises(ReflectNoAnswerError):
             await self._run(mock_llm, mock_functions)
 
-    @staticmethod
-    def _swapped_closers() -> str:
-        """The #5272 Qwen emission: complete, but the final ``"]}]}`` written as ``"}]}]``."""
-        good = json.dumps(_DOCUMENT)
-        assert good.endswith('"]}]}')
-        return good[:-5] + '"}]}]'
-
-    def _done(self, call_id: str, document: str, finish_reason: str | None) -> LLMToolCallResult:
-        return LLMToolCallResult(
-            tool_calls=[
-                LLMToolCall(id=call_id, name="done", arguments={"document": document, "memory_ids": ["mem-1"]})
-            ],
-            finish_reason=finish_reason,
-        )
-
-    @pytest.mark.asyncio
-    async def test_swapped_closers_from_a_completed_call_are_repaired(self, mock_llm, mock_functions):
-        """#5272: a finished generation with mis-ordered closing brackets renders, no re-ask."""
-        mock_llm.call_with_tools.side_effect = closing_echo(
-            [
-                self._recall_then({})[0],
-                self._done("2", self._swapped_closers(), "tool_calls"),
-            ]
-        )
-
-        result = await self._run(mock_llm, mock_functions)
-
-        mock_llm.call_with_tools.side_effect = closing_echo(
-            self._recall_then({"document": _DOCUMENT, "memory_ids": ["mem-1"]})
-        )
-        expected = await self._run(mock_llm, mock_functions)
-        assert result.text == expected.text
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("finish_reason", [None, "length"])
-    async def test_swapped_closers_without_a_completion_signal_are_re_asked(
-        self, mock_llm, mock_functions, finish_reason
-    ):
-        """No completed finish_reason, no repair (it could be a cut-off body): re-ask with the parse error."""
-        mock_llm.call_with_tools.side_effect = closing_echo(
-            [
-                self._recall_then({})[0],
-                self._done("f", json.dumps(_DOCUMENT), "tool_calls"),  # free turn: not parsed
-                self._done("2", self._swapped_closers(), finish_reason),
-                self._done("3", json.dumps(_DOCUMENT), "tool_calls"),
-            ]
-        )
-
-        result = await self._run(mock_llm, mock_functions)
-
-        assert "Quarterly planning is owned by the platform team." in result.text
-        rejection = mock_llm.call_with_tools.await_args_list[3].kwargs["messages"][-1]
-        assert rejection["role"] == "tool"
-        assert "not valid JSON" in rejection["content"]
-
-    @staticmethod
-    def _raw_with_dropped_bracket() -> str:
-        """The #5272 qwen3.8-flash emission: the whole payload unparseable, a block list closed ``"}``."""
-        good = json.dumps({"document": _DOCUMENT, "memory_ids": ["mem-1"]})
-        assert '"]}' in good
-        return good.replace('"]}', '"}', 1)
-
-    def _raw_done(self, call_id: str, finish_reason: str | None) -> LLMToolCallResult:
-        return LLMToolCallResult(
-            tool_calls=[LLMToolCall(id=call_id, name="done", arguments={"_raw": self._raw_with_dropped_bracket()})],
-            finish_reason=finish_reason,
-        )
-
     @pytest.mark.asyncio
     async def test_unparseable_payload_from_a_completed_call_is_repaired(self, mock_llm, mock_functions):
-        """#5272: the provider could not parse done's arguments at all; repair them, no re-ask."""
         mock_llm.call_with_tools.side_effect = closing_echo(
-            [self._recall_then({})[0], self._raw_done("2", "tool_calls")]
+            [self._recall(), self._done("2", {"_raw": self._raw_with_dropped_bracket()})]
         )
 
         result = await self._run(mock_llm, mock_functions)
 
         assert "Quarterly planning is owned by the platform team." in result.text
-        assert mock_llm.call_with_tools.await_count == 3  # recall, the free turn, the closing done
 
     @pytest.mark.asyncio
     async def test_unparseable_payload_without_a_completion_signal_is_re_asked(self, mock_llm, mock_functions):
         mock_llm.call_with_tools.side_effect = closing_echo(
             [
-                self._recall_then({})[0],
-                self._done("f", json.dumps(_DOCUMENT), "tool_calls"),  # free turn: not parsed
-                self._raw_done("2", None),
-                self._done("3", json.dumps(_DOCUMENT), "tool_calls"),
-            ]
-        )
-
-        result = await self._run(mock_llm, mock_functions)
-
-        assert "Quarterly planning is owned by the platform team." in result.text
-        rejection = mock_llm.call_with_tools.await_args_list[3].kwargs["messages"][-1]
-        assert "arguments: not valid JSON" in rejection["content"]
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "document",
-        [json.dumps(json.dumps(_DOCUMENT)), _DOCUMENT["sections"], json.dumps(_DOCUMENT["sections"])],
-        ids=["double-encoded", "bare-section-list", "string-encoded-section-list"],
-    )
-    async def test_recoverable_document_shapes_render(self, mock_llm, mock_functions, document):
-        """#5202: shapes with one clear reading render like the object form, no re-ask."""
-        mock_llm.call_with_tools.side_effect = closing_echo(
-            self._recall_then({"document": document, "memory_ids": ["mem-1"]})
-        )
-
-        result = await self._run(mock_llm, mock_functions)
-
-        assert "Quarterly planning is owned by the platform team." in result.text
-        assert mock_llm.call_with_tools.await_count == 3  # recall, the free turn, the closing done
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "document",
-        [json.dumps("just prose"), 42, {"title": "Ops", "content": "Quarterly planning."}],
-        ids=["string", "number", "object-without-sections"],
-    )
-    async def test_non_document_is_re_asked_with_its_shape(self, mock_llm, mock_functions, document):
-        """#5202: a document that is not one is re-asked, naming what arrived -- not a bare no-answer failure."""
-        mock_llm.call_with_tools.side_effect = closing_echo(
-            [
-                self._recall_then({})[0],
-                self._done("f", json.dumps(_DOCUMENT), "tool_calls"),  # free turn: not parsed
+                self._recall(),
                 LLMToolCallResult(
-                    tool_calls=[
-                        LLMToolCall(id="2", name="done", arguments={"document": document, "memory_ids": ["mem-1"]})
-                    ],
+                    tool_calls=[LLMToolCall(id="r", name="answer_ready", arguments={"answer_found": True})],
                     finish_reason="tool_calls",
                 ),
-                self._done("3", json.dumps(_DOCUMENT), "tool_calls"),
+                self._done("2", {"_raw": self._raw_with_dropped_bracket()}, None),
+                self._done("3", {"markdown": _MARKDOWN, "memory_ids": ["mem-1"]}),
             ]
         )
 
         result = await self._run(mock_llm, mock_functions)
 
         assert "Quarterly planning is owned by the platform team." in result.text
-        rejection = mock_llm.call_with_tools.await_args_list[3].kwargs["messages"][-1]
-        assert "expected an object with a sections array, got" in rejection["content"]
+        rejection = mock_llm.call_with_tools.await_args_list[-1].kwargs["messages"][-1]
+        assert rejection["role"] == "tool" and "arguments: not valid JSON" in rejection["content"]
 
     @pytest.mark.asyncio
-    async def test_unparseable_string_document_that_is_never_fixed_raises(self, mock_llm, mock_functions):
-        """A model that keeps sending garbage still fails the run loudly."""
+    async def test_a_payload_that_never_parses_raises(self, mock_llm, mock_functions):
         mock_llm.call_with_tools.side_effect = closing_echo(
             [
-                self._recall_then({})[0],
-                self._done("2", "not json", "tool_calls"),
-                self._done("3", "not json", "tool_calls"),
+                self._recall(),
+                LLMToolCallResult(
+                    tool_calls=[LLMToolCall(id="r", name="answer_ready", arguments={"answer_found": True})],
+                    finish_reason="tool_calls",
+                ),
+                self._done("2", {"_raw": "not json"}),
+                self._done("3", {"_raw": "not json"}),
             ]
         )
 
@@ -3386,9 +3060,9 @@ class TestReflectDropsUnseenIds:
     async def test_length_rewrite_that_garbles_a_document_citation(self, functions, monkeypatch):
         config = MagicMock(reflect_max_completion_tokens=None, llm_temperature_reflect=0.1)
         monkeypatch.setattr("hindsight_api.engine.reflect.agent.get_config", lambda: config)
-        document = {"sections": [{"heading": "Deploy", "blocks": ["detail " * 50 + "[f1]"]}]}
+        markdown = "## Deploy\n\n" + "detail " * 50 + "[f1]"
         rewrite = json.dumps({"sections": [{"heading": "Deploy", "blocks": [f"It failed [{self.FAKE}]."]}]})
-        llm = self._llm(_done({"document": document, "memory_ids": ["f1"]}), rewrite=rewrite)
+        llm = self._llm(_done({"markdown": markdown, "memory_ids": ["f1"]}), rewrite=rewrite)
 
         result = await self._run(llm, functions, max_tokens=8)
 
@@ -3507,82 +3181,6 @@ class TestReflectFinishesThroughDone:
         assert result.text == "synthesized"
         provider.call.assert_awaited()
 
-    @pytest.mark.asyncio
-    async def test_another_tool_answering_the_closing_call_is_redirected_to_done(self, mock_functions):
-        """Asked for done, the model calls the stop signal the system prompt still names.
-
-        An OpenAI-compatible server that does not enforce tool_choice lets it. One redirect on
-        the same prefix gets the document; the standalone prompt would write it from scratch.
-        """
-        provider = _ScriptedProvider(
-            scripted=[
-                *self._searches(),
-                LLMToolCallResult(content="here is the answer", finish_reason="stop"),
-                LLMToolCallResult(
-                    tool_calls=[LLMToolCall(id="r", name="answer_ready", arguments={"answer_found": True})],
-                    finish_reason="tool_calls",
-                ),
-                LLMToolCallResult(
-                    tool_calls=[LLMToolCall(id="9", name="done", arguments={"answer": "A", "memory_ids": ["f1"]})],
-                    finish_reason="tool_calls",
-                ),
-            ]
-        )
-        provider.call = AsyncMock(side_effect=AssertionError("the standalone prompt must not run"))
-
-        result = await run_reflect_agent(
-            llm_config=provider,
-            bank_id="b",
-            query="q",
-            bank_profile={"name": "T", "mission": "M"},
-            has_mental_models=False,
-            budget="high",
-            max_iterations=8,
-            **self._functions(mock_functions),
-        )
-
-        assert result.text == "A"
-        redirect, first_closing = provider.calls[-1], provider.calls[-2]
-        assert redirect["tool_choice"].function_name == "done"
-        # The wrong call and its answer are appended to the same conversation: two messages more.
-        assert redirect["n_messages"] == first_closing["n_messages"] + 2
-        assert [c.scope for c in result.llm_trace][-2:] == ["closing_done", "closing_done"]
-
-    @pytest.mark.asyncio
-    async def test_a_second_wrong_tool_falls_back_to_the_standalone_prompt(self, mock_functions):
-        """The redirect is tried once; a model that still will not call done gets the old fallback."""
-        wrong = LLMToolCallResult(
-            tool_calls=[LLMToolCall(id="r", name="answer_ready", arguments={"answer_found": True})],
-            finish_reason="tool_calls",
-        )
-        provider = _ScriptedProvider(
-            scripted=[
-                *self._searches(),
-                LLMToolCallResult(content="here is the answer", finish_reason="stop"),
-                wrong,
-                wrong.model_copy(),
-            ]
-        )
-        provider.call = AsyncMock(
-            return_value=LLMCallResult(
-                content="synthesized", usage=TokenUsage(input_tokens=1, output_tokens=1, total_tokens=2)
-            )
-        )
-
-        result = await run_reflect_agent(
-            llm_config=provider,
-            bank_id="b",
-            query="q",
-            bank_profile={"name": "T", "mission": "M"},
-            has_mental_models=False,
-            budget="high",
-            max_iterations=8,
-            **self._functions(mock_functions),
-        )
-
-        assert result.text == "synthesized"
-        provider.call.assert_awaited_once()
-
 
 class TestReflectKeepsItsPrefixStable:
     """Everything reflect re-sends each turn must be byte-identical to the last turn.
@@ -3619,7 +3217,8 @@ class TestReflectKeepsItsPrefixStable:
 
         async def _record(*, messages, tools, **kwargs):
             system = next((m["content"] for m in messages if m.get("role") == "system"), "")
-            sent.append((system, json.dumps(tools, sort_keys=True)))
+            # What the prompt declares; a turn may narrow what it may call (``tools``) without changing it.
+            sent.append((system, json.dumps(kwargs["declared_tools"], sort_keys=True)))
             return await original(messages=messages, tools=tools, **kwargs)
 
         provider.call_with_tools = _record
@@ -3844,7 +3443,9 @@ class TestFreeTurnsSignalReady:
         await self._reflect(llm, self._functions())
 
         first = llm.call_with_tools.await_args_list[0].kwargs
-        tools = {t["function"]["name"]: t["function"] for t in first["tools"]}
+        tools = {t["function"]["name"]: t["function"] for t in first["declared_tools"]}
+        # The free turn cannot pick done, only declare it: its page would be cut off at the loop cap.
+        assert "done" not in {t["function"]["name"] for t in first["tools"]}
         assert tools["answer_ready"]["parameters"]["required"] == ["answer_found"]
         assert "answer_ready" in tools["done"]["description"]
         # The "a topic match is not an answer" gate moved with the stop decision but stays on done:

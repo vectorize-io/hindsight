@@ -2,8 +2,7 @@
 Anthropic LLM provider using the Anthropic Python SDK.
 
 This provider enables using Claude models from Anthropic with support for:
-- Structured JSON output
-- Tool/function calling with proper format conversion
+- Structured JSON output (native ``output_config.format``)
 - Extended thinking mode
 - Retry logic with exponential backoff
 """
@@ -200,7 +199,7 @@ class AnthropicLLM(LLMInterface):
     """
     LLM provider using Anthropic's Claude models.
 
-    Supports structured output, tool calling, and extended thinking mode.
+    Supports structured output and extended thinking mode.
     Handles format conversion between OpenAI-style messages and Anthropic's format.
     """
 

@@ -1491,6 +1491,7 @@ class LLMProvider:
         initial_backoff: float | None = None,
         max_backoff: float | None = None,
         tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_REQUIRED,
+        declared_tools: list[dict[str, Any]] | None = None,
     ) -> "LLMToolCallResult":
         """One turn of a tool-using conversation: the call the model makes next.
 
@@ -1499,6 +1500,11 @@ class LLMProvider:
         names the function this turn must call, or leaves the model to pick one (``auto`` and
         ``required`` both mean "exactly one"). ``messages`` may hold earlier calls
         (``tool_calls`` on an assistant turn) and their results (``role: tool``).
+
+        ``declared_tools`` are the functions described in the system prompt, when they are
+        not just ``tools`` (the ones this turn may call): declaring the same functions on
+        every turn of a conversation keeps its prompt prefix, and the provider's cache of
+        it, the same while a turn narrows what it may call.
         """
         from .providers import tools_via_schema
         from .providers.mock_llm import MockLLM
@@ -1519,7 +1525,7 @@ class LLMProvider:
             )
         held = tools_via_schema.response_schema(tools, tool_choice)
         text_messages = [
-            *tools_via_schema.as_text_messages(messages, tools),
+            *tools_via_schema.as_text_messages(messages, declared_tools or tools),
             {"role": "user", "content": tools_via_schema.turn_request(tools, tool_choice)},
         ]
         for attempt in range(2):

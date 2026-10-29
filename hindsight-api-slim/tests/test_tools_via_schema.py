@@ -106,6 +106,24 @@ class TestTheCall:
         assert [(c.name, c.arguments) for c in result.tool_calls] == [("recall", {"query": "editors"})]
 
     @pytest.mark.asyncio
+    async def test_declared_tools_are_the_prompt_and_tools_the_choice(self):
+        """A turn may narrow what it calls and keep the prompt (and its cached prefix) unchanged."""
+        llm = LLMProvider(provider="openai", api_key="k", base_url="http://vllm:8000/v1", model="gemma-4")
+        llm._provider_impl.call = AsyncMock(return_value=_reply({"call": {"name": "recall", "arguments": {}}}))
+        await llm.call_with_tools(
+            messages=[{"role": "user", "content": "q"}],
+            tools=TOOLS[:1],
+            declared_tools=TOOLS,
+            tool_choice=LLM_TOOL_CHOICE_REQUIRED,
+            max_retries=0,
+        )
+
+        sent = llm._provider_impl.call.await_args.kwargs
+        assert '"name": "answer_ready"' in sent["messages"][0]["content"]
+        options = sent["response_format"].model_json_schema()["properties"]["call"]["anyOf"]
+        assert [o["properties"]["name"]["enum"] for o in options] == [["recall"]]
+
+    @pytest.mark.asyncio
     async def test_a_reply_naming_no_call_is_a_turn_without_one(self):
         result, _ = await _call(LLM_TOOL_CHOICE_REQUIRED, _reply({"call": {}}))
         assert result.tool_calls == []

@@ -20,17 +20,17 @@ logger = logging.getLogger(__name__)
 
 
 class LLMToolChoiceMode(StrEnum):
-    """Canonical tool-selection modes shared by every LLM provider."""
+    """What a tool-calling turn may call: one function of the model's choosing (``auto`` and
+    ``required`` both mean exactly one, see ``LLMProvider.call_with_tools``), or a named one."""
 
     AUTO = "auto"
-    NONE = "none"
     REQUIRED = "required"
     NAMED = "named"
 
 
 @dataclass(frozen=True, slots=True)
 class LLMToolChoice:
-    """Typed internal tool selection serialized only at provider boundaries."""
+    """A turn's tool selection; it shapes the turn's response schema and is never sent to a provider."""
 
     mode: LLMToolChoiceMode
     function_name: str | None = None
@@ -71,7 +71,6 @@ class PromptCachePrefix:
 
 
 LLM_TOOL_CHOICE_AUTO = LLMToolChoice(mode=LLMToolChoiceMode.AUTO)
-LLM_TOOL_CHOICE_NONE = LLMToolChoice(mode=LLMToolChoiceMode.NONE)
 LLM_TOOL_CHOICE_REQUIRED = LLMToolChoice(mode=LLMToolChoiceMode.REQUIRED)
 
 

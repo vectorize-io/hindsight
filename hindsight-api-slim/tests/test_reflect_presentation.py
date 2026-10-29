@@ -76,11 +76,11 @@ def test_aliases_cited_in_the_answer_become_real_ids():
     presenter.present(_observations("uuid-a", "uuid-b"))
     args = {
         "answer": "o1 contradicts o2 (see [o2]); c9 and vitamin C1 are untouched",
-        "document": {"sections": [{"heading": "o1", "level": 2, "blocks": ["o2 supersedes o1."]}]},
+        "markdown": "## o1\n\no2 supersedes o1.",
     }
     assert presenter.resolve(args) == {
         "answer": "uuid-a contradicts uuid-b (see [uuid-b]); c9 and vitamin C1 are untouched",
-        "document": {"sections": [{"heading": "uuid-a", "level": 2, "blocks": ["uuid-b supersedes uuid-a."]}]},
+        "markdown": "## uuid-a\n\nuuid-b supersedes uuid-a.",
     }
     assert presenter.resolve_text("o10 is not o1") == "o10 is not uuid-a"
 
