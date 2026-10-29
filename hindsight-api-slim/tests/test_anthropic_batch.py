@@ -93,12 +93,13 @@ class _AsyncIter:
             raise StopAsyncIteration from None
 
 
-def _succeeded_entry(custom_id: str, tool_input: dict) -> SimpleNamespace:
-    block = SimpleNamespace(type="tool_use", name="structured_response", input=tool_input, text=None)
+def _succeeded_entry(custom_id: str, reply: dict) -> SimpleNamespace:
+    # A strict request is constrained by output_config, so the reply is its JSON as text.
+    block = SimpleNamespace(type="text", text=json.dumps(reply))
     message = SimpleNamespace(
         content=[block],
         usage=SimpleNamespace(input_tokens=100, output_tokens=40, cache_read_input_tokens=60),
-        stop_reason="tool_use",
+        stop_reason="end_turn",
     )
     return SimpleNamespace(custom_id=custom_id, result=SimpleNamespace(type="succeeded", message=message))
 
@@ -134,9 +135,9 @@ async def test_submit_batch_translates_openai_requests():
     assert params["max_tokens"] == 2000
     # temperature is dropped, mirroring the sync call() path.
     assert "temperature" not in params
-    # strict=True → forced tool_use (native constrained decoding).
-    assert params["tools"][0]["input_schema"] == _SCHEMA
-    assert params["tool_choice"] == {"type": "tool", "name": "structured_response"}
+    # strict=True → native structured output, no tools.
+    assert params["output_config"] == {"format": {"type": "json_schema", "schema": _SCHEMA}}
+    assert "tools" not in params and "tool_choice" not in params
 
     assert metadata["batch_id"] == "msgbatch_test1"
     assert metadata["status"] == "in_progress"

@@ -484,7 +484,7 @@ def create_llm_provider(
     timeout: float | None = None,
     ollama_num_ctx: int | None = None,
     cache_affinity: str | None = None,
-    structured_output_forced_tool: bool = False,
+    structured_output_in_prompt: bool = False,
     # Appended rather than inserted: some callers still pass the older settings
     # positionally (guarded by the positional-compatibility tests in
     # tests/test_llm_wrapper.py), so a parameter added mid-list silently steals
@@ -524,10 +524,10 @@ def create_llm_provider(
             OpenAI-compatible wire format): "none" (default), "xai_conv_id",
             "openai_prompt_cache_key", or "auto". Providers on other branches do their own
             cache work or none at all. See ``engine/cache_affinity.py``.
-        structured_output_forced_tool: Ask the LiteLLM-backed providers (``litellm``,
-            ``litellmrouter``, ``bedrock``) for structured output via a forced tool call
+        structured_output_in_prompt: Give the LiteLLM-backed providers (``litellm``,
+            ``litellmrouter``, ``bedrock``) the structured-output schema in the prompt
             instead of ``response_format``. For backends that reject the response_format
-            route — see ``HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_FORCED_TOOL``. Other
+            route — see ``HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_IN_PROMPT``. Other
             providers ignore it.
         vertexai_project_id: Vertex AI project ID (for VertexAI provider).
         vertexai_region: Vertex AI region (for VertexAI provider).
@@ -655,7 +655,7 @@ def create_llm_provider(
             extra_body=extra_body,
             default_headers=default_headers,
             timeout=timeout,
-            structured_output_forced_tool=structured_output_forced_tool,
+            structured_output_in_prompt=structured_output_in_prompt,
         )
 
     elif provider_lower == "litellmrouter":
@@ -676,7 +676,7 @@ def create_llm_provider(
             extra_body=extra_body,
             default_headers=default_headers,
             timeout=timeout,
-            structured_output_forced_tool=structured_output_forced_tool,
+            structured_output_in_prompt=structured_output_in_prompt,
         )
 
     elif provider_lower == "bedrock":
@@ -692,7 +692,7 @@ def create_llm_provider(
             default_headers=default_headers,
             bedrock_service_tier=bedrock_service_tier,
             timeout=timeout,
-            structured_output_forced_tool=structured_output_forced_tool,
+            structured_output_in_prompt=structured_output_in_prompt,
         )
 
     elif provider_lower == "llamacpp":
@@ -866,7 +866,7 @@ class LLMProvider:
         max_backoff: float | None = None,
         ollama_num_ctx: int | None = None,
         cache_affinity: str | None = None,
-        structured_output_forced_tool: bool = False,
+        structured_output_in_prompt: bool = False,
         # Appended rather than inserted — see the note on ``create_llm_provider``:
         # callers that pass these positionally would otherwise have one argument
         # land in the wrong slot.
@@ -918,9 +918,9 @@ class LLMProvider:
                 ``max_retries``. ``None`` keeps each method's own fallback.
             max_backoff: Default maximum retry backoff (seconds), same resolution as
                 ``max_retries``. ``None`` keeps each method's own fallback.
-            structured_output_forced_tool: Structured output via a forced tool call
+            structured_output_in_prompt: The structured-output schema in the prompt
                 instead of ``response_format``, for the LiteLLM-backed providers - from
-                config (``HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_FORCED_TOOL``).
+                config (``HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_IN_PROMPT``).
             codex_home: Codex credentials directory for ``provider="openai-codex"`` — the
                 directory holding the ``auth.json`` this provider authenticates with. ``None``
                 uses the process-wide ``CODEX_HOME`` (else ``~/.codex``). Set it per member of a
@@ -959,7 +959,7 @@ class LLMProvider:
         self.gemini_service_tier = gemini_service_tier
         # Structured-output transport for the LiteLLM-backed providers. Used verbatim —
         # the caller resolves the server-level default, like the fields above.
-        self.structured_output_forced_tool = structured_output_forced_tool
+        self.structured_output_in_prompt = structured_output_in_prompt
         self.ollama_num_ctx = _validate_ollama_num_ctx(ollama_num_ctx)
         # Gemini safety settings (instance default; can be overridden per-request via context var)
         self.gemini_safety_settings = gemini_safety_settings
@@ -1125,7 +1125,7 @@ class LLMProvider:
                 ollama_num_ctx=self.ollama_num_ctx,
                 timeout=self.timeout,
                 cache_affinity=self.cache_affinity,
-                structured_output_forced_tool=self.structured_output_forced_tool,
+                structured_output_in_prompt=self.structured_output_in_prompt,
             )
         except ProviderUnavailableError as e:
             from .providers.none_llm import UnavailableLLM
@@ -1879,7 +1879,7 @@ class LLMProvider:
             vertexai_region=config.llm_vertexai_region,
             vertexai_service_account_key=config.llm_vertexai_service_account_key,
             timeout=config.llm_timeout,
-            structured_output_forced_tool=config.llm_structured_output_forced_tool,
+            structured_output_in_prompt=config.llm_structured_output_in_prompt,
         )
 
 

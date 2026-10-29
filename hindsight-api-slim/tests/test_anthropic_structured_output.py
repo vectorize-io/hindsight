@@ -1,15 +1,16 @@
-"""Regression tests for issue #1002 — Anthropic structured output via forced tool_use.
+"""Regression tests for issue #1002 — Anthropic structured output, natively constrained.
 
-When strict_schema=True, AnthropicLLM.call() must request the schema through a single
-forced tool_use tool (tool_choice={"type":"tool",...}) and read the validated args from
-the tool_use block, NOT inject the schema as text and json.loads() the reply (which caused
-a ~1:1 invalid-JSON retry storm / OOM in production).
+When strict_schema=True, AnthropicLLM.call() must constrain the reply with Anthropic's
+native structured output (``output_config.format``), NOT inject the schema as text and
+json.loads() a free reply (which caused a ~1:1 invalid-JSON retry storm / OOM in production).
+It used to force a single ``tool_use`` tool; Hindsight sends no tools any more.
 """
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class _Decision(BaseModel):
@@ -32,23 +33,22 @@ def _make_anthropic_provider():
     return provider
 
 
-def _tool_use_response(args: dict):
+def _json_response(args: dict):
     block = MagicMock()
-    block.type = "tool_use"
-    block.name = "structured_response"
-    block.input = args
+    block.type = "text"
+    block.text = json.dumps(args)
     resp = MagicMock()
     resp.content = [block]
     resp.usage = MagicMock(input_tokens=5, output_tokens=2, cache_read_input_tokens=0, cache_creation_input_tokens=0)
-    resp.stop_reason = "tool_use"
+    resp.stop_reason = "end_turn"
     return resp
 
 
 @pytest.mark.asyncio
-async def test_strict_schema_uses_forced_tool_choice():
-    """strict_schema=True ⇒ a single tool is defined and tool_choice forces it (no schema text-injection)."""
+async def test_strict_schema_uses_native_structured_output():
+    """strict_schema=True ⇒ the schema goes as output_config, no tools and no schema text-injection."""
     provider = _make_anthropic_provider()
-    provider._client.messages.create = AsyncMock(return_value=_tool_use_response({"action": "skip", "reason": "dup"}))
+    provider._client.messages.create = AsyncMock(return_value=_json_response({"action": "skip", "reason": "dup"}))
     with patch("hindsight_api.engine.providers.anthropic_llm.get_metrics_collector"):
         result = (
             await provider.call(
@@ -60,21 +60,22 @@ async def test_strict_schema_uses_forced_tool_choice():
             )
         ).content
     kwargs = provider._client.messages.create.call_args.kwargs
-    # forced tool_use requested
-    assert "tools" in kwargs and len(kwargs["tools"]) == 1
-    assert kwargs["tool_choice"] == {"type": "tool", "name": "structured_response"}
+    assert "tools" not in kwargs and "tool_choice" not in kwargs
+    fmt = kwargs["output_config"]["format"]
+    assert fmt["type"] == "json_schema"
+    assert set(fmt["schema"]["properties"]) == {"action", "reason"}
+    assert fmt["schema"]["additionalProperties"] is False
     # schema NOT injected as text into the system prompt
     assert "valid JSON matching this schema" not in (kwargs.get("system") or "")
-    # validated model returned straight from tool_use.input
     assert isinstance(result, _Decision)
     assert result.action == "skip"
 
 
 @pytest.mark.asyncio
-async def test_strict_schema_tool_use_never_hits_json_retry_loop():
-    """A tool_use response is structurally valid → no second messages.create call (no retry storm)."""
+async def test_strict_schema_never_hits_json_retry_loop():
+    """A constrained reply is valid JSON → no second messages.create call (no retry storm)."""
     provider = _make_anthropic_provider()
-    create = AsyncMock(return_value=_tool_use_response({"action": "keep", "reason": "novel"}))
+    create = AsyncMock(return_value=_json_response({"action": "keep", "reason": "novel"}))
     provider._client.messages.create = create
     with patch("hindsight_api.engine.providers.anthropic_llm.get_metrics_collector"):
         await provider.call(
@@ -110,9 +111,39 @@ async def test_non_strict_keeps_text_injection_fallback():
             )
         ).content
     kwargs = provider._client.messages.create.call_args.kwargs
-    assert "tools" not in kwargs  # no forced tool when not strict
+    assert "output_config" not in kwargs  # not constrained when not strict
     # system is a cache_control-marked block list; the schema text-injection
     # lands inside the (single) block.
     system_text = "".join(block["text"] for block in (kwargs.get("system") or []))
     assert "valid JSON matching this schema" in system_text
     assert isinstance(result, _Decision)
+
+
+@pytest.mark.asyncio
+async def test_keywords_native_output_refuses_are_dropped():
+    """Anthropic 400s on maxItems / string lengths / minItems > 1 ("For 'array' type, property
+    'maxItems' is not supported"); a property merely named like one survives."""
+
+    class _Bounded(BaseModel):
+        ids: list[str] = Field(max_length=3, min_length=2)
+        maxItems: str = Field(max_length=10)  # noqa: N815 - a property named like the keyword
+
+    provider = _make_anthropic_provider()
+    provider._client.messages.create = AsyncMock(return_value=_json_response({"ids": ["a", "b"], "maxItems": "x"}))
+    with patch("hindsight_api.engine.providers.anthropic_llm.get_metrics_collector"):
+        await provider.call(
+            messages=[{"role": "user", "content": "x"}], response_format=_Bounded, strict_schema=True, max_retries=0
+        )
+    schema = provider._client.messages.create.call_args.kwargs["output_config"]["format"]["schema"]
+    assert schema["properties"]["ids"] == {"items": {"type": "string"}, "title": "Ids", "type": "array"}
+    assert "maxLength" not in schema["properties"]["maxItems"]
+
+
+def test_a_refused_schema_keyword_is_not_a_refused_output_config():
+    """Only an endpoint without output_config switches to the prompt for good."""
+    from hindsight_api.engine.providers.anthropic_llm import _rejects_output_format
+
+    assert _rejects_output_format(Exception("output_config: Extra inputs are not permitted"))
+    assert not _rejects_output_format(
+        Exception("output_config.format.schema: For 'array' type, property 'maxItems' is not supported")
+    )

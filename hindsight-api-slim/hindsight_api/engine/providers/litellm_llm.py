@@ -73,10 +73,6 @@ def _litellm_timeout_exc() -> type[BaseException]:
 
 logger = logging.getLogger(__name__)
 
-# Name of the single tool used when structured output is routed through a forced
-# tool call instead of ``response_format`` (see ``structured_output_forced_tool``).
-_STRUCTURED_TOOL_NAME = "structured_response"
-
 
 def _usage_from_litellm_response(response: Any) -> LLMResponseUsage:
     """Extract input / visible-output / cached / reasoning counts from a LiteLLM (OpenAI-shaped) usage block."""
@@ -87,22 +83,6 @@ def _usage_from_litellm_response(response: Any) -> LLMResponseUsage:
         cached_tokens=usage.cached_tokens,
         thoughts_tokens=usage.thoughts_tokens,
     )
-
-
-def _forced_tool_arguments(message: Any) -> str | None:
-    """Return the structured-output tool call's arguments as a JSON string.
-
-    ``None`` when the model answered with plain text instead — some gateways drop
-    ``tool_choice`` — so the caller can fall back to parsing the message content.
-    """
-    for tool_call in message.tool_calls or []:
-        if tool_call.function.name != _STRUCTURED_TOOL_NAME:
-            continue
-        # LiteLLM normalizes to the OpenAI shape (a JSON string), but some
-        # providers hand back an already-decoded object.
-        arguments = tool_call.function.arguments
-        return arguments if isinstance(arguments, str) else json.dumps(arguments)
-    return None
 
 
 # LiteLLM backends that authenticate with the ``api_key`` of the call (see
@@ -163,7 +143,7 @@ class LiteLLMLLM(LLMInterface):
         extra_body: dict[str, Any] | None = None,
         bedrock_service_tier: str | None = None,
         default_headers: dict[str, Any] | None = None,
-        structured_output_forced_tool: bool = False,
+        structured_output_in_prompt: bool = False,
         **kwargs: Any,
     ):
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
@@ -185,12 +165,11 @@ class LiteLLMLLM(LLMInterface):
         # copy is handed to each call below to avoid cross-request contamination.
         self._default_headers: dict[str, Any] = dict(default_headers or {})
         self.bedrock_service_tier = bedrock_service_tier
-        # Ask for structured output via a single forced tool call instead of
-        # ``response_format``. Opt-in (HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_FORCED_TOOL)
-        # for backends that reject the response_format route — Bedrock Claude's
-        # Converse layer refuses the translated ``outputConfig`` in some regions but
-        # accepts the same schema as a tool (#3300).
-        self.structured_output_forced_tool = structured_output_forced_tool
+        # Give the structured-output schema in the prompt instead of ``response_format``.
+        # Opt-in (HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_IN_PROMPT) for backends that reject
+        # the response_format route — Bedrock Claude's Converse layer refuses the
+        # translated ``outputConfig`` in some regions (#3300).
+        self.structured_output_in_prompt = structured_output_in_prompt
 
         try:
             import litellm
@@ -350,29 +329,26 @@ class LiteLLMLLM(LLMInterface):
         call_kwargs = self._build_common_kwargs(messages, max_completion_tokens, temperature)
 
         # Add JSON schema response format if provided
-        use_forced_tool = False
         if response_format is not None and hasattr(response_format, "model_json_schema"):
             schema = strict_json_schema(response_format) if strict_schema else provider_json_schema(response_format)
             schema_name = response_format.__name__ if hasattr(response_format, "__name__") else "response"
-            if self.structured_output_forced_tool:
-                # The schema travels as the tool's parameters and the model is forced
-                # to call it; the arguments are substituted for the message content
-                # below, so the parse/validate, retry and usage paths are unchanged.
-                use_forced_tool = True
-                call_kwargs["tools"] = [
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": _STRUCTURED_TOOL_NAME,
-                            "description": f"Return the structured response ({schema_name}).",
-                            "parameters": schema,
-                        },
-                    }
-                ]
-                call_kwargs["tool_choice"] = {
-                    "type": "function",
-                    "function": {"name": _STRUCTURED_TOOL_NAME},
-                }
+            if self.structured_output_in_prompt:
+                # A backend that rejects response_format (Bedrock Claude in some regions,
+                # #3300) gets the schema in the prompt; the reply is parsed below as usual.
+                schema_msg = (
+                    f"\n\nYou must respond with valid JSON matching this schema:\n"
+                    f"{json.dumps(schema, indent=2, ensure_ascii=False)}"
+                )
+                # A copy: the list is the caller's.
+                messages_in = call_kwargs["messages"] = list(call_kwargs["messages"])
+                if (
+                    messages_in
+                    and messages_in[0].get("role") == "system"
+                    and isinstance(messages_in[0].get("content"), str)
+                ):
+                    messages_in[0] = {**messages_in[0], "content": messages_in[0]["content"] + schema_msg}
+                else:
+                    messages_in.insert(0, {"role": "system", "content": schema_msg.strip()})
             else:
                 call_kwargs["response_format"] = {
                     "type": "json_schema",
@@ -406,14 +382,6 @@ class LiteLLMLLM(LLMInterface):
                 content = message.content or ""
                 finish_reason = choice.finish_reason
                 model_name = self._resolve_completion_model(response)
-
-                if use_forced_tool:
-                    # Forced tool call: its arguments ARE the structured response.
-                    # Absent (a gateway that drops tool_choice) -> keep the text
-                    # content so the existing parse path still has a chance.
-                    forced_arguments = _forced_tool_arguments(message)
-                    if forced_arguments is not None:
-                        content = forced_arguments
 
                 # Check for length-limited output
                 if finish_reason == "length":

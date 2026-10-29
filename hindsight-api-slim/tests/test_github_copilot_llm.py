@@ -234,17 +234,10 @@ async def test_plain_call_isolates_session_and_reports_usage(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_structured_call_uses_terminal_schema_tool(monkeypatch):
-    from copilot.session_events import AssistantMessageToolRequest
-
-    request = AssistantMessageToolRequest(
-        name="structured_response",
-        tool_call_id="structured-1",
-        arguments={"answer": "captured"},
-    )
+async def test_structured_call_asks_for_the_schema_in_the_prompt(monkeypatch):
+    """The SDK takes no response schema: it goes in the system prompt, and no tools are offered."""
     provider, client = _provider(
-        monkeypatch,
-        [_assistant_event("", [request]), _usage_event()],
+        monkeypatch, [_assistant_event('```json\n{"answer": "captured"}\n```'), _usage_event()]
     )
 
     result = (
@@ -256,19 +249,13 @@ async def test_structured_call_uses_terminal_schema_tool(monkeypatch):
     ).content
 
     assert result == _StructuredAnswer(answer="captured")
-    tool = client.create_kwargs["tools"][0]
-    assert tool.name == "structured_response"
-    assert tool.parameters == _StructuredAnswer.model_json_schema()
-    assert tool.is_terminal is True
-    assert tool.skip_permission is True
-    assert client.create_kwargs["available_tools"] == ["custom:structured_response"]
+    assert client.create_kwargs["tools"] == [] and client.create_kwargs["available_tools"] == []
+    assert '"answer"' in client.create_kwargs["system_message"]["content"]
 
 
 @pytest.mark.asyncio
 async def test_schema_format_reply_is_returned_as_the_dict(monkeypatch):
-    """A tool turn's schema (``tools_via_schema.schema_format``) rides the structured-response tool."""
-    from copilot.session_events import AssistantMessageToolRequest
-
+    """A tool turn's schema (``tools_via_schema.schema_format``) is asked for in the prompt."""
     tools = [
         {
             "type": "function",
@@ -280,10 +267,7 @@ async def test_schema_format_reply_is_returned_as_the_dict(monkeypatch):
         }
     ]
     held = tools_via_schema.response_schema(tools, LLMToolChoice.named("recall"))
-    request = AssistantMessageToolRequest(
-        name="structured_response", tool_call_id="structured-1", arguments={"query": "project decisions"}
-    )
-    provider, client = _provider(monkeypatch, [_assistant_event("", [request]), _usage_event()])
+    provider, client = _provider(monkeypatch, [_assistant_event('{"query": "project decisions"}'), _usage_event()])
 
     result = await provider.call(
         messages=[{"role": "user", "content": "Find project decisions."}],
@@ -294,7 +278,7 @@ async def test_schema_format_reply_is_returned_as_the_dict(monkeypatch):
     )
 
     assert result.content == {"query": "project decisions"}
-    assert client.create_kwargs["tools"][0].parameters == held.schema
+    assert client.create_kwargs["tools"] == []
 
 
 @pytest.mark.asyncio

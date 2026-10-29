@@ -7,8 +7,10 @@ had its own quirks: a server that parsed tool calls without enforcing ``tool_cho
 endpoint that took only "auto", a model that rejected reasoning effort next to tools. A
 provider ``call_with_tools`` is that path coming back, so it fails here.
 
-A provider may still force a single tool *inside* ``call`` when that is how its API enforces
-a response schema (Anthropic, LiteLLM on Bedrock); that is structured output, not tool calling.
+No provider sends tools for structured output either: Anthropic uses its native
+``output_config``, and a backend without a response schema gets the schema in the prompt.
+Passing ``tools=[]`` to turn an SDK's own built-in tools off (Claude Code, Copilot) is the
+one shape allowed.
 """
 
 import ast
@@ -45,6 +47,34 @@ def test_only_the_wrapper_makes_tool_calls():
         f"call_with_tools defined in {sorted(unexpected)}: tool turns go through LLMProvider.call_with_tools "
         "and the provider's call with a response schema, never a provider's own tool calling"
     )
+
+
+#: Request keys and keyword arguments that hand a model tools to call.
+_TOOL_FIELDS = {"tools", "tool_choice", "functions", "function_call", "tool_config"}
+
+
+def _is_empty(node: ast.expr) -> bool:
+    return isinstance(node, ast.List | ast.Tuple) and not node.elts
+
+
+def test_no_provider_sends_tools():
+    found = []
+    for path in sorted((_ROOT / "engine" / "providers").glob("*.py")):
+        if path.name == "mock_llm.py":
+            continue  # the test double: it records the tool names it is handed, sends nothing
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Dict):
+                pairs = zip(node.keys, node.values)
+            elif isinstance(node, ast.Call):
+                pairs = ((ast.Constant(k.arg), k.value) for k in node.keywords if k.arg)
+            elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store):
+                pairs = [(node.slice, ast.Constant(None))]
+            else:
+                continue
+            for key, value in pairs:
+                if isinstance(key, ast.Constant) and key.value in _TOOL_FIELDS and not _is_empty(value):
+                    found.append(f"{path.name}:{node.lineno} {key.value}")
+    assert not found, f"tools sent to a model: {found}"
 
 
 def test_the_allowlist_is_not_stale():

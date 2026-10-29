@@ -72,9 +72,8 @@ async def test_anthropic_sends_the_schema_as_its_structured_output():
         from hindsight_api.engine.providers.anthropic_llm import AnthropicLLM
 
         provider = AnthropicLLM(provider="anthropic", api_key="k", base_url="", model="claude-sonnet-4-20250514")
-    block = MagicMock(type="tool_use", input=_REPLY)
-    block.name = "structured_response"
-    response = MagicMock(content=[block], stop_reason="tool_use")
+    block = MagicMock(type="text", text=json.dumps(_REPLY))
+    response = MagicMock(content=[block], stop_reason="end_turn")
     response.usage = MagicMock(
         input_tokens=1, output_tokens=1, cache_read_input_tokens=0, cache_creation_input_tokens=0
     )
@@ -84,10 +83,11 @@ async def test_anthropic_sends_the_schema_as_its_structured_output():
     with patch("hindsight_api.engine.providers.anthropic_llm.get_metrics_collector"):
         assert await _call(provider) == _REPLY
     kwargs = provider._client.messages.create.call_args.kwargs
-    # The one tool is the provider's schema carrier, holding exactly the turn's schema.
-    assert [t["name"] for t in kwargs["tools"]] == ["structured_response"]
+    # Native structured output carries exactly the turn's schema; no tools are sent.
+    assert "tools" not in kwargs
     assert (
-        kwargs["tools"][0]["input_schema"] == tools_via_schema.response_schema(_TOOLS, LLM_TOOL_CHOICE_REQUIRED).schema
+        kwargs["output_config"]["format"]["schema"]
+        == tools_via_schema.response_schema(_TOOLS, LLM_TOOL_CHOICE_REQUIRED).schema
     )
 
 

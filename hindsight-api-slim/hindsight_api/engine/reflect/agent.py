@@ -2395,7 +2395,9 @@ def _with_cited_handles(tools: list[dict[str, Any]], presenter: ToolResultPresen
                 properties[field] = {
                     **properties[field],
                     "items": {"type": "string", **({"enum": handles} if handles else {})},
-                    "maxItems": len(handles),
+                    # Gated like every maxItems (HINDSIGHT_API_LLM_SUPPORTS_MAX_ITEMS): Bedrock
+                    # and Anthropic's native structured output reject the keyword.
+                    **({"maxItems": len(handles)} if get_config().llm_supports_max_items else {}),
                 }
         limited.append(tool)
     return limited

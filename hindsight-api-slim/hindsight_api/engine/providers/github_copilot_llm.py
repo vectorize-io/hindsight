@@ -16,7 +16,7 @@ import shutil
 import tempfile
 import threading
 import time
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable
 from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,7 +29,8 @@ from hindsight_api.engine.llm_interface import (
     ProviderUnavailableError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
-from hindsight_api.engine.response_models import LLMToolCall, TokenUsage
+from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences
+from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
@@ -41,9 +42,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from copilot import CopilotClient
     from copilot.session_events import AssistantMessageData, SessionEvent
-    from copilot.tools import Tool
 
-_STRUCTURED_TOOL_NAME = "structured_response"
 _DEFAULT_TIMEOUT_SECONDS = 120.0
 _RUNTIME_CLEANUP_TIMEOUT_SECONDS = 5.0
 _SESSION_CLEANUP_TIMEOUT_SECONDS = 2.0
@@ -92,7 +91,6 @@ class _TurnCapture:
 @dataclass
 class _InvocationResult:
     content: str
-    tool_calls: list[LLMToolCall]
     usage: TokenUsage
     finish_reason: str | None
 
@@ -301,18 +299,6 @@ def _build_prompt(messages: list[dict[str, Any]]) -> _PromptParts:
     return _PromptParts(system_prompt=system_prompt, user_prompt=user_prompt)
 
 
-def _normalize_tool_arguments(arguments: Any) -> dict[str, Any]:
-    if arguments is None:
-        return {}
-    if isinstance(arguments, Mapping):
-        return dict(arguments)
-    if isinstance(arguments, str):
-        parsed = json.loads(arguments)
-        if isinstance(parsed, dict):
-            return parsed
-    raise ValueError(f"GitHub Copilot returned non-object tool arguments: {type(arguments).__name__}")
-
-
 def _is_authentication_error(error: Exception) -> bool:
     text = str(error).lower()
     return any(
@@ -421,8 +407,6 @@ class GitHubCopilotLLM(LLMInterface):
     async def _invoke(
         self,
         messages: list[dict[str, Any]],
-        sdk_tools: list[Any],
-        available_tools: list[str],
         system_suffix: str = "",
         timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
     ) -> _InvocationResult:
@@ -451,8 +435,10 @@ class GitHubCopilotLLM(LLMInterface):
                 lambda: client.create_session(
                     model=self.model,
                     reasoning_effort=self.reasoning_effort,
-                    tools=sdk_tools,
-                    available_tools=available_tools,
+                    # No tools at all, the SDK's built-in agent tools included: this is a
+                    # completion backend, and structured output is asked for in the prompt.
+                    tools=[],
+                    available_tools=[],
                     system_message={"mode": "replace", "content": system_prompt},
                     enable_experimental_mode=False,
                     enable_session_telemetry=False,
@@ -490,27 +476,13 @@ class GitHubCopilotLLM(LLMInterface):
                 if isinstance(response.data, AssistantMessageData) and response.data not in capture.assistant_messages:
                     capture.assistant_messages.append(response.data)
 
-            tool_calls: list[LLMToolCall] = []
-            seen_call_ids: set[str] = set()
             content = ""
             for assistant_message in capture.assistant_messages:
                 if assistant_message.content:
                     content = assistant_message.content
-                for request in assistant_message.tool_requests or []:
-                    if request.tool_call_id in seen_call_ids:
-                        continue
-                    seen_call_ids.add(request.tool_call_id)
-                    tool_calls.append(
-                        LLMToolCall(
-                            id=request.tool_call_id,
-                            name=request.name,
-                            arguments=_normalize_tool_arguments(request.arguments),
-                        )
-                    )
 
             return _InvocationResult(
                 content=content,
-                tool_calls=tool_calls,
                 usage=capture.token_usage(),
                 finish_reason=capture.finish_reason,
             )
@@ -565,27 +537,6 @@ class GitHubCopilotLLM(LLMInterface):
             logger.warning("Failed to clean up transient Copilot session %s", session_id, exc_info=True)
             return False
 
-    @staticmethod
-    def _terminal_tool(name: str, description: str, parameters: dict[str, Any]) -> Tool:
-        from copilot.tools import Tool, ToolInvocation, ToolResult
-
-        async def capture_tool(_invocation: ToolInvocation) -> ToolResult:
-            # The assistant.message event carries the full tool request. Marking
-            # this tool terminal prevents Copilot's own agent loop from feeding
-            # this placeholder result back to the model; Hindsight executes the
-            # real tool in its outer reflect loop.
-            return ToolResult(text_result_for_llm="Tool call captured.", result_type="success")
-
-        return Tool(
-            name=name,
-            description=description,
-            parameters=parameters,
-            handler=capture_tool,
-            skip_permission=True,
-            defer="never",
-            is_terminal=True,
-        )
-
     async def call(
         self,
         messages: list[dict[str, str]],
@@ -604,30 +555,21 @@ class GitHubCopilotLLM(LLMInterface):
 
         for attempt in range(max_retries + 1):
             try:
-                sdk_tools: list[Any] = []
-                available_tools: list[str] = []
                 system_suffix = ""
-
                 if response_format is not None:
+                    # The SDK takes no response schema, so it goes in the prompt and the reply is
+                    # parsed. It used to be a terminal SDK tool whose arguments were the reply;
+                    # Hindsight sends no tools any more (providers/tools_via_schema.py).
                     schema = provider_json_schema(response_format)
-                    sdk_tools = [
-                        self._terminal_tool(
-                            _STRUCTURED_TOOL_NAME,
-                            "Return the structured response matching the required schema.",
-                            schema,
-                        )
-                    ]
-                    available_tools = [f"custom:{_STRUCTURED_TOOL_NAME}"]
                     system_suffix = (
-                        f"You MUST call the {_STRUCTURED_TOOL_NAME!r} tool exactly once. Do not answer with prose."
+                        "Respond with only valid JSON matching this schema, no prose and no code fence:\n"
+                        + json.dumps(schema, indent=2, ensure_ascii=False)
                     )
 
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.github_copilot.{scope}.attempt={attempt + 1}/{max_retries + 1}")
                     invocation = await self._invoke(
                         messages=list(messages),
-                        sdk_tools=sdk_tools,
-                        available_tools=available_tools,
                         system_suffix=system_suffix,
                         timeout_seconds=self._timeout_seconds(),
                     )
@@ -642,17 +584,8 @@ class GitHubCopilotLLM(LLMInterface):
                 )
 
                 if response_format is not None:
-                    structured_call = next(
-                        (call for call in invocation.tool_calls if call.name == _STRUCTURED_TOOL_NAME),
-                        None,
-                    )
-                    if structured_call is None:
-                        raise RuntimeError("GitHub Copilot did not return the required structured_response tool call")
-                    result = (
-                        structured_call.arguments
-                        if skip_validation
-                        else response_format.model_validate(structured_call.arguments)
-                    )
+                    data = json.loads(_strip_code_fences(invocation.content.strip()))
+                    result = data if skip_validation else response_format.model_validate(data)
                 else:
                     if not invocation.content:
                         raise RuntimeError("GitHub Copilot returned an empty response")
@@ -731,10 +664,6 @@ class GitHubCopilotLLM(LLMInterface):
                 duration=duration,
                 finish_reason=invocation.finish_reason,
                 error=None,
-                tool_calls=[
-                    {"id": call.id, "name": call.name, "arguments": call.arguments} for call in invocation.tool_calls
-                ]
-                or None,
             )
         except Exception:
             logger.debug("GitHub Copilot span recording failed", exc_info=True)

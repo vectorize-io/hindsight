@@ -192,11 +192,11 @@ ENV_LLM_STRICT_SCHEMA_REFLECT = "HINDSIGHT_API_LLM_STRICT_SCHEMA_REFLECT"
 ENV_LLM_STRICT_SCHEMA_CONSOLIDATION = "HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION"
 ENV_LLM_SUPPORTS_MAX_ITEMS = "HINDSIGHT_API_LLM_SUPPORTS_MAX_ITEMS"
 ENV_LLM_SUPPORTS_STRING_PATTERN = "HINDSIGHT_API_LLM_SUPPORTS_STRING_PATTERN"
-# Route structured output through a forced function tool instead of the
+# Give the structured-output schema in the prompt instead of the
 # OpenAI-style ``response_format`` on the LiteLLM-backed providers (``litellm``,
 # ``litellmrouter``, ``bedrock``). Off by default; see
-# DEFAULT_LLM_STRUCTURED_OUTPUT_FORCED_TOOL.
-ENV_LLM_STRUCTURED_OUTPUT_FORCED_TOOL = "HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_FORCED_TOOL"
+# DEFAULT_LLM_STRUCTURED_OUTPUT_IN_PROMPT.
+ENV_LLM_STRUCTURED_OUTPUT_IN_PROMPT = "HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_IN_PROMPT"
 # Whether the configured LLM accepts image parts in a user message. Tri-state:
 # unset lets each provider answer for itself (see LLMInterface.supports_vision),
 # while an explicit true/false overrides it in both directions. The escape hatch
@@ -1263,16 +1263,17 @@ DEFAULT_LLM_SUPPORTS_MAX_ITEMS = True
 # only grammar-constrained backends that accept it do, so it is opt-in.
 DEFAULT_LLM_SUPPORTS_STRING_PATTERN = False
 
-# True = ask LiteLLM-backed providers for structured output via a single forced
-# function tool (the response schema becomes the tool's parameters) instead of
-# the OpenAI-style ``response_format``. Needed where the backend rejects the
-# response_format route outright — notably Bedrock Claude, whose Converse layer
-# refuses the translated ``outputConfig`` ("Extra inputs are not permitted") while
-# accepting the identical schema as a tool (issue #3300). Verified region-dependent:
+# True = give LiteLLM-backed providers the structured-output schema in the prompt and
+# parse the reply, instead of the OpenAI-style ``response_format``. Needed where the
+# backend rejects the response_format route outright — notably Bedrock Claude, whose
+# Converse layer refuses the translated ``outputConfig`` ("Extra inputs are not
+# permitted", issue #3300). It used to send the schema as a single forced function
+# tool, which Bedrock accepted; Hindsight sends no tools any more
+# (providers/tools_via_schema.py), and the prompt is what every CLI provider already uses. Verified region-dependent:
 # ap-southeast-2 / au.* rejects it, us-east-1 / us.* accepts it, so this is opt-in
 # rather than keyed off the provider. Default False keeps ``response_format``, which
 # every other LiteLLM backend handles natively.
-DEFAULT_LLM_STRUCTURED_OUTPUT_FORCED_TOOL = False
+DEFAULT_LLM_STRUCTURED_OUTPUT_IN_PROMPT = False
 
 DEFAULT_LLM_MAX_CONCURRENT = 32
 DEFAULT_LLM_MAX_RETRIES = 3  # Max retry attempts for LLM API calls
@@ -3322,10 +3323,10 @@ class HindsightConfig:
         default=DEFAULT_LLM_SUPPORTS_STRING_PATTERN,
         kw_only=True,
     )  # Whether structured-output schemas accept JSON Schema pattern
-    llm_structured_output_forced_tool: bool = field(
-        default=DEFAULT_LLM_STRUCTURED_OUTPUT_FORCED_TOOL,
+    llm_structured_output_in_prompt: bool = field(
+        default=DEFAULT_LLM_STRUCTURED_OUTPUT_IN_PROMPT,
         kw_only=True,
-    )  # LiteLLM-backed providers: structured output via a forced tool call, not response_format
+    )  # LiteLLM-backed providers: the structured-output schema in the prompt, not response_format
     # Tags outbound OpenAI-compatible LLM + embedding calls with `user=<bank_id>` for
     # per-bank cost attribution. Downstream cost gateways (OpenRouter usage accounting,
     # LiteLLM, Helicone) key attribution on the OpenAI `user` field. Opt-in; never
@@ -4614,9 +4615,9 @@ class HindsightConfig:
                 ENV_LLM_SUPPORTS_STRING_PATTERN,
                 DEFAULT_LLM_SUPPORTS_STRING_PATTERN,
             ),
-            llm_structured_output_forced_tool=_parse_boolean_env(
-                ENV_LLM_STRUCTURED_OUTPUT_FORCED_TOOL,
-                DEFAULT_LLM_STRUCTURED_OUTPUT_FORCED_TOOL,
+            llm_structured_output_in_prompt=_parse_boolean_env(
+                ENV_LLM_STRUCTURED_OUTPUT_IN_PROMPT,
+                DEFAULT_LLM_STRUCTURED_OUTPUT_IN_PROMPT,
             ),
             llm_send_bank_as_user=os.getenv(ENV_LLM_SEND_BANK_AS_USER, str(DEFAULT_LLM_SEND_BANK_AS_USER)).lower()
             in ("true", "1"),
