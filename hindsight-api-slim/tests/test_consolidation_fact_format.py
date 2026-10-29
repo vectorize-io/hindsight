@@ -25,7 +25,7 @@ POOL = {"o-port": "ledger-sink listens on port 8444.", "o-fav": "The user's favo
 
 
 def _answer(*facts: dict[str, Any], ids: tuple[str, ...] = ("f1", "f2", "f3")) -> Any:
-    return _build_fact_response_model(list(ids), list(POOL)).model_validate({"facts": list(facts)})
+    return _build_fact_response_model(list(ids)).model_validate({"facts": list(facts)})
 
 
 def _actions(
@@ -128,6 +128,16 @@ def test_an_earlier_state_that_repeats_the_observation_is_added_once() -> None:
         later={("f1", "o-fav")},
     )
     assert [u.text for u in actions.updates] == ["The user's favorite framework is Svelte. Before that, React."]
+
+
+def test_a_note_that_goes_on_past_the_observation_is_kept_whole() -> None:
+    """A note opening with the observation's words but a longer value is no copy of it."""
+    note = "ledger-sink listens on port 84435 before the move."
+    actions = _actions(
+        _answer({"fact_id": "f1", "kind": "lasting", "existing": [_change("o-port", "changes", note)]}),
+        later={("f1", "o-port")},
+    )
+    assert [u.text for u in actions.updates] == [f"{POOL['o-port']} {note}"]
 
 
 def test_a_repeat_after_a_change_keeps_the_change() -> None:
@@ -257,8 +267,8 @@ def test_a_broken_entry_costs_only_itself() -> None:
 
 
 def test_the_schema_pins_ids_and_verdicts() -> None:
-    schema = str(_build_fact_response_model(["f1"], ["o-port"]).model_json_schema())
-    for value in ("'f1'", "'o-port'", "'lasting'", "'momentary'", "'unrelated'", "'repeats'", "'changes'", "'ends'"):
+    schema = str(_build_fact_response_model(["f1"]).model_json_schema())
+    for value in ("'f1'", "'lasting'", "'momentary'", "'unrelated'", "'repeats'", "'changes'", "'ends'"):
         assert value in schema
 
 
@@ -285,11 +295,17 @@ async def test_the_prompt_uses_short_ids_oldest_first_and_marks_later_observatio
             answer = {
                 "facts": [
                     {
+                        "fact_id": "F1",
+                        "kind": "lasting",
+                        "existing": [{"observation_id": "O1", "effect": "changes", "text": "Before, Vue."}],
+                        "adds": "no",
+                    },
+                    {
                         "fact_id": "F2",
                         "kind": "lasting",
                         "existing": [{"observation_id": "O1", "effect": "changes", "text": "Now React."}],
                         "adds": "no",
-                    }
+                    },
                 ]
             }
             return LLMCallResult(content=kwargs["response_format"].model_validate(answer))
@@ -327,9 +343,10 @@ async def test_the_prompt_uses_short_ids_oldest_first_and_marks_later_observatio
     )
     assert "closest existing observations: O1\n" in user + "\n"  # F2 is the more recent: unmarked
     assert '"id": "O1"' in user
-    # The answer's short ids come back as the real ones.
+    # The answer's short ids come back as the real ones. F1 was marked older than O1, so its change
+    # is an earlier state added after the text; F2, the newer, then rewrites it.
     assert [(u.observation_id, u.source_fact_ids, u.text) for u in result.updates] == [
-        ("o-fav", ["f-new"], "Now React.")
+        ("o-fav", ["f-old", "f-new"], "Now React.")
     ]
     assert sent["messages"][0]["content"] == build_consolidation_system_prompt()
     # A full scope is told in the answer's own terms: no `new` sentences.

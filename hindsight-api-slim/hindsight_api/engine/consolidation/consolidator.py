@@ -998,9 +998,10 @@ class _FactBatchResponse(BaseModel):
                 f.fact_id = f.fact_id or fid
         creates: dict[str, _CreateAction] = {}
         all_creates: list[_CreateAction] = []
-        # One update per observation: when one fact changes it and another repeats it, the repeat
-        # is more evidence for the change. Two updates would be merged keeping the last text — a
-        # repeat after a change put the old text back.
+        # One update per observation, carrying every fact that touched it: a repeat after a change
+        # is more evidence for the change, not a second write of the old text. A newer change after
+        # an older fact's earlier-state note replaces the note — the newer value wins, and the
+        # older fact stays cited.
         updates: dict[str, _UpdateAction] = {}
         skips: list[_SkipAction] = []
 
@@ -1460,18 +1461,23 @@ def _without_echo(note: str, observation: str) -> str:
     earlier state, gemini-3.1-flash-lite opened it with the whole observation, and the note added
     after the observation's text said everything twice."""
     note, head = note.strip(), observation.strip().rstrip(".")
-    if note.lower().startswith(head.lower()):
-        note = note[len(head) :].lstrip(" .,;:")
-    return note[:1].upper() + note[1:]
+    rest = note[len(head) :]
+    # Only a whole copy: "port 84" opening a note about "port 8443" is not one.
+    if note.lower().startswith(head.lower()) and (not rest or rest[0] in ".,;:"):
+        rest = rest.lstrip(" .,;:")
+        return rest[:1].upper() + rest[1:]
+    return note
 
 
-def _build_fact_response_model(fact_ids: list[str], observation_ids: list[str]) -> type[_FactBatchResponse]:
-    """:class:`_FactBatchResponse` with this batch's ids and the verdicts pinned to enums. An
-    observation id may also be a fact id: a model naming the fact itself is read as a new
-    observation (:meth:`_FactBatchResponse.to_actions`)."""
+def _build_fact_response_model(fact_ids: list[str]) -> type[_FactBatchResponse]:
+    """:class:`_FactBatchResponse` with this batch's fact ids and the verdicts pinned to enums.
+
+    ``observation_id`` is left free on purpose: gemma-4 names an observation this same answer
+    creates with an id of its own, which :meth:`_FactBatchResponse.to_actions` matches by its
+    copied text — pinned to the pool's ids, a schema-enforcing model would have to pick a real,
+    wrong observation instead."""
 
     class _Change(_ObservationChange):
-        observation_id: str = Field(json_schema_extra={"enum": [*observation_ids, *fact_ids]})
         effect: str = Field(default="", json_schema_extra={"enum": ["unrelated", "repeats", "changes", "ends"]})
 
     class _Fact(_FactDecision):
@@ -3902,8 +3908,8 @@ async def _consolidate_batch_with_llm(
         if remaining_observation_slots == 0:
             observation_capacity_note = (
                 f"OBSERVATION LIMIT REACHED ({max_observations_per_scope}/{max_observations_per_scope}). "
-                'Write no `new` sentences (set `adds` to "no"): record each fact by changing an existing '
-                "observation it touches."
+                'Write no `new` sentences (set `adds` to "no"): a fact that repeats, changes or ends no '
+                "existing observation is not recorded."
             )
         elif remaining_observation_slots <= len(memories):
             observation_capacity_note = (
@@ -3935,9 +3941,7 @@ async def _consolidate_batch_with_llm(
     prompt_cache = PromptCachePrefix(system_instruction=system_prompt)
 
     # Constrain the schema: fact_id to this batch's ids, and the verdicts to their enums.
-    response_model = _build_fact_response_model(
-        [_short(str(m["id"])) for m in ordered], [_short(str(o.id)) for o in union_observations]
-    )
+    response_model = _build_fact_response_model([_short(str(m["id"])) for m in ordered])
 
     max_attempts = config.consolidation_max_attempts
     inner_max_retries = config.consolidation_llm_max_retries
