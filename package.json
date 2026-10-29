@@ -11,7 +11,7 @@
     "prepare": "./scripts/setup-hooks.sh"
   },
   "overrides": {
-    "qs": ">=6.16.0 <7.0.0",
+    "qs": ">=6.16.1 <7.0.0",
     "fast-xml-parser": ">=5.5.6",
     "serialize-javascript": "^7.1.3",
     "minimatch": "^3.1.4",
