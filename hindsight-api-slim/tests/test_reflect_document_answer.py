@@ -1,9 +1,11 @@
-"""The reflect agent can answer with a document instead of markdown.
+"""The reflect agent can answer with a document instead of a plain answer.
 
-A document that is generated as markdown has to be read back to work out its
-structure, and reading markdown back is where #3361 destroyed tables. In
-document mode the model states the structure and the markdown is rendered from
-it, so nothing the model writes is ever parsed to find out what it meant.
+In document mode the closing ``done`` carries the page as one markdown string,
+which ``split_markdown`` cuts into sections at its headings and into blocks at
+its blank lines, losslessly. It used to be a section array the model filled in
+(the answer to #3361, where reading markdown back destroyed tables); held to a
+response schema, models wrote that array thinner than the same page as
+markdown, and the lossless split keeps tables intact.
 
 Most of these are pure-Python tests of the schema, the prompt text and the
 parsing of the tool call — the mechanics. ``TestRealModelFillsTheDocumentShape``
@@ -19,7 +21,6 @@ import pytest
 
 from hindsight_api.engine.reflect.structured_doc import (
     DocumentSectionsInvalidError,
-    document_from_sections,
     render_document,
 )
 from hindsight_api.engine.reflect.prompts import (
@@ -99,6 +100,15 @@ class TestDocumentPromptStatesTheShape:
 
         prompt = build_system_prompt_for_tools(bank_profile={"name": "T", "mission": ""})
         assert "## Output Format: Markdown Document" not in prompt
+
+    def test_the_closing_turn_states_the_page_shape_in_markdown_terms(self):
+        """A blank line splits a markdown list into blocks, so the rule says so, not "one block"."""
+        from hindsight_api.engine.reflect.prompts import build_done_request_prompt
+
+        page = build_done_request_prompt("Q", as_document=True)
+        assert "## Document shape" in page
+        assert "no blank lines between its items" in page
+        assert "## Document shape" not in build_done_request_prompt("Q")
 
 
 class TestOverBudgetRewrite:

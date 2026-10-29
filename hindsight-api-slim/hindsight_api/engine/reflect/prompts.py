@@ -954,12 +954,17 @@ def build_final_prompt(
 #: per block (a delta "rewriting the list" rewrites only its first item, so a
 #: removed member stays listed). Replayed benchmark pages had each about a third
 #: of the time; the done tool's field descriptions alone did not move that.
+#: Written for the markdown page, which ``split_markdown`` cuts into sections at
+#: its headings and into blocks at its blank lines: the rules were first written
+#: for the section-array page, whose "blocks" a markdown page does not have.
 _DOCUMENT_SHAPE_INSTRUCTIONS = (
     "\n## Document shape\n"
-    "- Only the first section may have an empty heading. Every other section has a real heading.\n"
-    "- Items of one kind (bugs, releases, customers, components) are blocks of ONE section under one "
-    "heading — never an untitled section per item.\n"
-    "- A list is ONE block holding all its items ('- a\\n- b\\n- c'), never one block per item."
+    "- Only an opening summary may come before the first heading. Everything after it sits under a "
+    "real '## ' heading.\n"
+    "- Items of one kind (bugs, releases, customers, components) go under ONE heading together — "
+    "never a heading per item, and never items left after the summary without a heading.\n"
+    "- Write a list with no blank lines between its items ('- a\\n- b\\n- c'): a blank line splits it "
+    "into separate lists."
 )
 
 
@@ -974,8 +979,8 @@ def build_done_request_prompt(
 
     Sent inside the tool-loop conversation, so it carries only what the answer
     needs beyond the evidence already there: stop retrieving, the question, the
-    instructions and the length target — and, when the answer is a page's
-    structured document, the shape rules that keep it editable.
+    instructions and the length target — and, when the answer is a page,
+    the shape rules that keep it editable.
     """
     parts = [
         "## Answer now",
