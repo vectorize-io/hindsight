@@ -3,7 +3,7 @@ title: "Your OpenBot Agents Forget Between Threads. Give Them Shared Memory."
 authors: [benfrank241]
 date: 2026-10-29
 tags: [openbot, memory, integrations, mcp, tutorial]
-description: "Hindsight is now an app in OpenBot's marketplace. Connect an agent to a bank over MCP and its memory outlives the thread, survives compaction, and is shared with every teammate."
+description: "Connect an OpenBot agent to a Hindsight bank over MCP and its memory outlives the thread, survives compaction, and is shared with every teammate."
 image: /img/blog/openbot-persistent-memory.png
 hide_table_of_contents: true
 ---
@@ -18,11 +18,11 @@ OpenBot memory is not persistent in the same way. It lives inside a thread, and 
 
 ## TL;DR
 
-- Hindsight is now an app in OpenBot's **Apps marketplace**, connected over MCP
+- Connect an OpenBot agent to a Hindsight **bank** over MCP, by adding one URL MCP server
 - Point an agent at a bank and it gets `recall`, `retain`, `sync_retain` and `reflect`, plus mental-model and document tools
 - Memory outlives the thread, survives context compaction, and survives restarts
 - Every agent pointed at the **same bank reads the same memory**, so what Codex learns, Claude knows
-- Setup is a URL and a header, or one click from the marketplace
+- Setup is a URL and a header
 - Works with [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) or a self-hosted server
 
 ---
@@ -43,7 +43,7 @@ OpenBot does ship its own memory, the `remember` and `search_memories` tools, an
 
 [Hindsight](https://github.com/vectorize-io/hindsight) is an open-source long-term memory engine for agents. It extracts facts from conversations, retrieves them semantically, and can reason over an entire store rather than fetching the nearest few chunks. Memory is organized into **banks**.
 
-The integration is a Hindsight listing in OpenBot's Apps marketplace, exposed over MCP. Connect an agent to a bank and it gains:
+The integration connects an OpenBot agent to Hindsight over MCP. Connect an agent to a bank and it gains:
 
 - **`recall`** to search memory semantically, across every thread that bank has seen
 - **`retain`** and **`sync_retain`** to write facts back, from any thread
@@ -57,14 +57,14 @@ Two things are worth separating here. The MCP connection is a **capability**: yo
 
 ## Set it up in two minutes
 
-From the marketplace: open **Apps** in OpenBot, find Hindsight, click **Connect**, paste your MCP URL and API key, then enable it for the agents you want.
-
-Or add it as a custom URL MCP server directly:
+In OpenBot, open the **Local** server's settings → **MCP** → **Connect to a custom MCP**, pick **Streamable HTTP**, and enter the server URL and an `Authorization` header:
 
 ```
 URL:    https://api.hindsight.vectorize.io/mcp/<bank>/
 Header: Authorization: Bearer hsk_your_key
 ```
+
+The connection is added at the server level, so its tools reach every agent; enable the memory skill on the agents you want using it.
 
 That URL defaults to [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup). Self-hosting is the same shape with a different host:
 
@@ -145,7 +145,7 @@ The real fix is upstream. There is an open feature request ([#3682](https://gith
 ## Next steps
 
 - **[Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)** and generate a key, which takes about a minute
-- Install Hindsight from OpenBot's Apps marketplace, or add the MCP URL by hand
+- Add the Hindsight MCP URL in OpenBot's Local server settings (**MCP → Connect to a custom MCP**)
 - Enable the Hindsight Memory skill on the agents you care about
 - Read the [OpenBot integration reference](https://hindsight.vectorize.io/sdks/integrations/openbot) for the full tool list and self-hosting detail
 - Point two different agents at one bank and run the walkthrough above
