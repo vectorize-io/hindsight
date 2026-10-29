@@ -51,6 +51,7 @@ from ..config import (
     DEFAULT_STORE_DOCUMENT_TEXT,
     ENV_MODEL_INIT_TIMEOUT,
     LLM_STRATEGY_METADATA,
+    SYSTEM_ONE_DECISION_MODEL_PROVIDERS,
     ConfigLike,
     HindsightConfig,
     LLMMemberConfig,
@@ -15657,18 +15658,18 @@ class MemoryEngine(MemoryEngineInterface):
         pool is shared across reflects. It is a TypeSafeCrossEncoder because pruning needs
         that class's rank-and-cut; the sufficiency question is one more call on it.
 
-        That client speaks only TypeSafe's System One endpoint, so another provider (cloudflare,
-        openai) leaves reflect on agent turns instead of failing every reflect's first round.
+        That client speaks only the System One endpoint (typesafe, hindsight), so another provider
+        (cloudflare, openai) leaves reflect on agent turns instead of failing every reflect's first round.
         """
         if self._reflect_decision_model_client is None:
             setup = get_config().decision_model_config("reflect")
             if setup is None:
                 return None
-            if setup.provider != "typesafe":
+            if setup.provider not in SYSTEM_ONE_DECISION_MODEL_PROVIDERS:
                 if not self._reflect_decision_model_unsupported_logged:
                     self._reflect_decision_model_unsupported_logged = True
                     logger.warning(
-                        "Reflect's decision model supports only the typesafe provider, not %r: "
+                        "Reflect's decision model supports only the typesafe and hindsight providers, not %r: "
                         "reflect keeps agent turns.",
                         setup.provider,
                     )

@@ -192,6 +192,7 @@ include = [
 include = [
     "hindsight_api/**/*.py",
     "hindsight_api/alembic/**/*",
+    "hindsight_api/engine/providers/cloud_logo.png",
 ]
 
 [tool.pytest.ini_options]

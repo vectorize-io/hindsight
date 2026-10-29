@@ -748,6 +748,11 @@ ENV_DECISION_MODEL_MAX_REQUEST_TOKENS = "HINDSIGHT_API_DECISION_MODEL_MAX_REQUES
 ENV_DECISION_MODEL_TOKENIZER = "HINDSIGHT_API_DECISION_MODEL_TOKENIZER"
 ENV_RECALL_DECISION_MODEL_PRUNE = "HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE"
 ENV_RECALL_DECISION_MODEL_DEDUP = "HINDSIGHT_API_RECALL_DECISION_MODEL_DEDUP"
+# Where `hindsight-admin cloud login` saves its key (default ~/.hindsight/cloud), and the
+# Hindsight Cloud it signs in to (default https://ui.hindsight.vectorize.io).
+ENV_CLOUD_HOME = "HINDSIGHT_API_CLOUD_HOME"
+ENV_CLOUD_URL = "HINDSIGHT_API_CLOUD_URL"
+DEFAULT_CLOUD_HOME = "~/.hindsight/cloud"
 
 ENV_VECTOR_EXTENSION = "HINDSIGHT_API_VECTOR_EXTENSION"
 ENV_ANN_ITERATIVE_SCAN = "HINDSIGHT_API_ANN_ITERATIVE_SCAN"
@@ -1587,16 +1592,28 @@ class _DecisionProviderDefaults:
     #: The vocabulary the model counts its window in; None when unknown, which counts
     #: with HINDSIGHT_API_TOKENIZER_ENCODING.
     tokenizer: str | None = None
+    #: Most tokens one request may carry, sized for the model's window; None takes
+    #: DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS.
+    max_request_tokens: int | None = None
 
 
 # "none": no decision model; operations that could use one keep their LLM-only path.
-# typesafe and cloudflare speak the System One API; openai has its own Decisions API.
+# hindsight, typesafe and cloudflare speak the System One API; openai has its own Decisions API.
+# hindsight is Hindsight Inference: its key comes from HINDSIGHT_API_DECISION_MODEL_API_KEY or,
+# when unset, from `hindsight-admin cloud login`. hs-decision-1 has a 64k window; the margin is
+# for counting it with o200k_base, not its own vocabulary.
 DECISION_MODEL_PROVIDER_DEFAULTS = {
+    "hindsight": _DecisionProviderDefaults(
+        model="hs-decision-1", base_url="https://inference.hindsight.vectorize.io", max_request_tokens=54_000
+    ),
     "typesafe": _DecisionProviderDefaults(model="jev-latest", base_url="https://api.typesafe.ai", tokenizer="jev"),
     "cloudflare": _DecisionProviderDefaults(model="clef", base_url=None),
     "openai": _DecisionProviderDefaults(model="gpt-6-luna", base_url="https://api.openai.com"),
 }
 DECISION_MODEL_PROVIDERS = ("none", *DECISION_MODEL_PROVIDER_DEFAULTS)
+# Providers whose endpoint is System One itself (<base_url>/v1/systemone), which reflect's
+# client (TypeSafeCrossEncoder) speaks.
+SYSTEM_ONE_DECISION_MODEL_PROVIDERS = frozenset({"hindsight", "typesafe"})
 DEFAULT_DECISION_MODEL_PROVIDER = "none"
 DEFAULT_DECISION_MODEL_TIMEOUT = 60.0
 DEFAULT_DECISION_MODEL_MAX_CONCURRENT = 24
@@ -4013,8 +4030,13 @@ class HindsightConfig:
     decision_model_base_url: str | None = None
     decision_model_timeout: float = DEFAULT_DECISION_MODEL_TIMEOUT
     decision_model_max_concurrent: int = DEFAULT_DECISION_MODEL_MAX_CONCURRENT
-    decision_model_max_request_tokens: int = DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS
+    # None: the provider's default (DecisionModelConfig.max_request_tokens holds the resolved value).
+    decision_model_max_request_tokens: int | None = None
     decision_model_tokenizer: str | None = None
+    # `hindsight-admin cloud login`: where its key is saved (None = ~/.hindsight/cloud), and
+    # the Hindsight Cloud it signs in to. Server-level only, like llm_chatgpt_home.
+    cloud_home: str | None = None
+    cloud_url: str | None = None
     recall_decision_model_provider: str | None = None
     recall_decision_model_api_key: str | None = None
     recall_decision_model_model: str | None = None
@@ -4111,6 +4133,8 @@ class HindsightConfig:
         "consolidation_decision_model_base_url",
         # chatgpt: points at a directory holding an OAuth grant.
         "llm_chatgpt_home",
+        # hindsight decision model: a directory holding the Cloud login's key.
+        "cloud_home",
     }
 
     # CONFIGURABLE_FIELDS: Safe behavioral settings that can be customized per-tenant/bank
@@ -5188,10 +5212,14 @@ class HindsightConfig:
             decision_model_max_concurrent=int(
                 os.getenv(ENV_DECISION_MODEL_MAX_CONCURRENT) or DEFAULT_DECISION_MODEL_MAX_CONCURRENT
             ),
-            decision_model_max_request_tokens=int(
-                os.getenv(ENV_DECISION_MODEL_MAX_REQUEST_TOKENS) or DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS
+            decision_model_max_request_tokens=(
+                int(max_request_tokens)
+                if (max_request_tokens := os.getenv(ENV_DECISION_MODEL_MAX_REQUEST_TOKENS))
+                else None
             ),
             decision_model_tokenizer=os.getenv(ENV_DECISION_MODEL_TOKENIZER) or None,
+            cloud_home=os.getenv(ENV_CLOUD_HOME, "").strip() or None,
+            cloud_url=os.getenv(ENV_CLOUD_URL, "").strip() or None,
             **{
                 f"{operation}_decision_model_{setting.lower()}": os.getenv(_decision_model_env(operation, setting))
                 or None
@@ -5881,6 +5909,16 @@ class HindsightConfig:
             )
         if provider == "none":
             return None
+        # Hindsight's decision model is set up for consolidation, reflect and pages. Recall keeps
+        # its reranker unless the recall override names it: on recall the reranker evaluated better.
+        if provider == "hindsight" and operation == "recall" and own_provider is None:
+            return None
+        defaults = DECISION_MODEL_PROVIDER_DEFAULTS[provider]
+        max_request_tokens = (
+            self.decision_model_max_request_tokens
+            or defaults.max_request_tokens
+            or DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS
+        )
         # Checked here, not on the first request: a ceiling no request fits, or a cap no
         # request gets through, would otherwise surface as every decision failing.
         if self.decision_model_timeout <= 0:
@@ -5889,10 +5927,10 @@ class HindsightConfig:
             raise ValueError(
                 f"{ENV_DECISION_MODEL_MAX_CONCURRENT} must be at least 1, not {self.decision_model_max_concurrent}"
             )
-        if self.decision_model_max_request_tokens < MIN_DECISION_MODEL_MAX_REQUEST_TOKENS:
+        if max_request_tokens < MIN_DECISION_MODEL_MAX_REQUEST_TOKENS:
             raise ValueError(
                 f"{ENV_DECISION_MODEL_MAX_REQUEST_TOKENS} must be at least {MIN_DECISION_MODEL_MAX_REQUEST_TOKENS}, "
-                f"not {self.decision_model_max_request_tokens}"
+                f"not {max_request_tokens}"
             )
         inherits_global = provider == (self.decision_model_provider or "").lower()
 
@@ -5910,7 +5948,6 @@ class HindsightConfig:
                 )
             return value
 
-        defaults = DECISION_MODEL_PROVIDER_DEFAULTS[provider]
         # The endpoint's model, not the provider, decides the vocabulary: a System One
         # endpoint serving another model than Jev sets it.
         tokenizer = self.decision_model_tokenizer or defaults.tokenizer
@@ -5921,14 +5958,26 @@ class HindsightConfig:
                 check_encoding(tokenizer)
             except ValueError as err:
                 raise ValueError(f"{ENV_DECISION_MODEL_TOKENIZER}: {err}") from err
+        api_key = setting("api_key")
+        if not api_key and provider == "hindsight":
+            from pathlib import Path
+
+            from .engine.providers.cloud_auth import saved_api_key
+
+            api_key = saved_api_key(Path(self.cloud_home or DEFAULT_CLOUD_HOME).expanduser())
+            if not api_key:
+                raise ValueError(
+                    "The hindsight decision model needs a key: run `hindsight-admin cloud login`, "
+                    f"or set HINDSIGHT_API_DECISION_MODEL_API_KEY (or {_decision_model_env(operation, 'API_KEY')})"
+                )
         return DecisionModelConfig(
             provider=provider,
-            api_key=required(setting("api_key"), "API_KEY"),
+            api_key=required(api_key, "API_KEY"),
             model=setting("model") or defaults.model,
             base_url=required(setting("base_url") or defaults.base_url, "BASE_URL"),
             timeout=self.decision_model_timeout,
             max_concurrent=self.decision_model_max_concurrent,
-            max_request_tokens=self.decision_model_max_request_tokens,
+            max_request_tokens=max_request_tokens,
             tokenizer=tokenizer,
         )
 

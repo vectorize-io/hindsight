@@ -1719,6 +1719,19 @@ def chatgpt(ctx: typer.Context):
     raise typer.Exit(chatgpt_main(ctx.args))
 
 
+# Not listed in --help yet.
+@app.command(
+    name="cloud",
+    hidden=True,
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True, "help_option_names": []},
+)
+def cloud(ctx: typer.Context):
+    """Sign in to Hindsight Cloud for the hindsight decision model (login | status | logout)."""
+    from ..engine.providers.cloud_auth import main as cloud_main
+
+    raise typer.Exit(cloud_main(ctx.args))
+
+
 def main():
     load_dotenv_for_entrypoint()
     app()
