@@ -155,9 +155,6 @@ class NousLLM(OpenAICompatibleLLM):
     async def call(self, *args: Any, **kwargs: Any) -> LLMCallResult:
         return await self._with_auth_retry(super().call, "call", *args, **kwargs)
 
-    async def call_with_tools(self, *args: Any, **kwargs: Any) -> Any:
-        return await self._with_auth_retry(super().call_with_tools, "call_with_tools", *args, **kwargs)
-
     async def cleanup(self) -> None:
         await self._auth.close()
         parent_cleanup = getattr(super(), "cleanup", None)

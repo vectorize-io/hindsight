@@ -210,7 +210,6 @@ def build_system_prompt_for_tools(
     answer_as_document: bool = False,
     llm_output_language: str | None = None,
     answer_ready: bool = False,
-    document_as_markdown: bool = False,
 ) -> str:
     """
     Build the system prompt for tool-calling reflect agent.
@@ -232,9 +231,8 @@ def build_system_prompt_for_tools(
         has_mental_models: Whether the bank has any mental models (skip if not)
         include_observations: Whether search_observations is in the tool list.
         budget: Search depth budget - "low", "mid", or "high". Controls exploration thoroughness.
-        answer_as_document: Whether done() takes a structured document instead of markdown.
-        document_as_markdown: With answer_as_document, done() takes that document as one
-            markdown string (see tools_schema's markdown document tool).
+        answer_as_document: Whether done() takes the answer as a markdown document, split into
+            sections by its headings (see tools_schema's markdown document tool).
         llm_output_language: Configured output language; drops the default language rule
             (the directive itself goes on the user message, see build_agent_user_prompt).
     """
@@ -565,7 +563,7 @@ def build_system_prompt_for_tools(
     parts.extend(f"{idx}. {step}" for idx, step in enumerate(steps, 1))
 
     non_conversational_rule = "- CRITICAL: This is a NON-CONVERSATIONAL system. NEVER ask follow-up questions, offer further assistance, or suggest next steps. Your answer must be complete and self-contained. The user cannot reply."
-    if answer_as_document and document_as_markdown:
+    if answer_as_document:
         # The document again, written as markdown: its headings are its sections. The
         # section-array instructions below must not appear here -- told to "state the
         # structure, do NOT write markdown" and then asked for markdown, the model gets
@@ -579,43 +577,6 @@ def build_system_prompt_for_tools(
                 "- Give every section the specifics, numbers, names, dates and examples the results "
                 "hold: the structure is how the answer is laid out, NOT a reason to say less",
                 "- Prefer several paragraphs and lists over one paragraph that summarises them away",
-                f"- {NO_IDS_IN_TEXT_RULE}",
-                non_conversational_rule,
-            ]
-        )
-    elif answer_as_document:
-        # The document is stored as structure and the markdown is rendered from
-        # it, so asking for "a markdown answer" here would be asking for the one
-        # thing the caller does not want (see tools_schema's document tool).
-        parts.extend(
-            [
-                "",
-                "## Output Format: Structured Document",
-                "Call done() with a 'document' field. Do NOT write a markdown document — "
-                "state its structure and the markdown is generated from it.",
-                # Name the wrapper and show it. Every field of a *section* was spelled out
-                # here — heading, level, blocks — and the array holding them never was, so
-                # the prose described a section while the tool schema described a document
-                # containing sections. Models resolved that disagreement in favour of the
-                # prose and emitted the bare section, which parsed to zero sections, an
-                # empty render, and a failed refresh. A shape stated in one place and shown
-                # in another is a shape that gets filled correctly.
-                "- 'document' holds a 'sections' array — one entry per section, in order. "
-                'Shape: {"sections": [{"heading": "Overview", "level": 2, "blocks": '
-                '["First paragraph.", "- a list item\\n- another"]}]}',
-                "- Even a one-section document uses the 'sections' array; never emit a bare section",
-                "- Each section carries its heading text (no '#') and a level; the heading is NOT a block",
-                "- 'blocks' holds the section's content, ONE block per paragraph, list, table or code fence",
-                "- Never put two paragraphs in one block, and never put a heading inside a block",
-                "- Inside a block, write list items and table rows on their own lines as usual",
-                # Stating the structure is a more clerical task than writing prose, and a
-                # model doing clerical work gets terse: measured against the markdown
-                # answer it replaced, the first version of this produced noticeably
-                # shorter documents that judges liked less. Say plainly that the
-                # structure is the shape, not a budget.
-                "- The structure is how the answer is laid out, NOT a reason to say less: give each "
-                "block the same specifics, numbers, names and examples you would write in prose",
-                "- Prefer a section with several blocks over one block that summarises them away",
                 f"- {NO_IDS_IN_TEXT_RULE}",
                 non_conversational_rule,
             ]

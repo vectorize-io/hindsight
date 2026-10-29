@@ -213,35 +213,6 @@ async def test_caller_set_user_is_not_overridden():
     assert params["user"] == "explicit-user"
 
 
-async def test_user_injected_in_tool_calling_path():
-    """call_with_tools() builds its own call_params; attribution must reach it too."""
-    _set_flag(True)
-    llm = _llm()
-    tool_response = SimpleNamespace(
-        choices=[
-            SimpleNamespace(
-                finish_reason="stop",
-                message=SimpleNamespace(content="done", tool_calls=None, refusal=None, reasoning_content=None),
-            )
-        ],
-        usage=None,
-        error=None,
-    )
-    create = AsyncMock(return_value=tool_response)
-    llm._client.chat.completions.create = create
-    token = _current_bank_id.set("user-tools")
-    try:
-        with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-            await llm.call_with_tools(
-                messages=[{"role": "user", "content": "ping"}],
-                tools=[{"type": "function", "function": {"name": "noop", "parameters": {}}}],
-                max_retries=0,
-            )
-    finally:
-        _current_bank_id.reset(token)
-    assert create.call_args.kwargs["user"] == "user-tools"
-
-
 # ── Embeddings: user injection ─────────────────────────────────────────────────
 
 

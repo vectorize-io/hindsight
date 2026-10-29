@@ -23,7 +23,6 @@ from hindsight_api.engine.reflect.agent import (
     ReflectToolExecutionError,
     _all_mental_models_are_usable_and_fresh,
     _answer_found,
-    _cache_cleanup_tasks,
     _count_messages_tokens,
     _generate_structured_output,
     _is_context_overflow_error,
@@ -556,7 +555,6 @@ class TestReflectAgentMocked:
     @pytest.mark.asyncio
     async def test_done_tool_answer_respects_max_tokens(self, mock_llm, mock_functions, monkeypatch):
         config = MagicMock(
-            reflect_prompt_cache_enabled=False,
             reflect_max_completion_tokens=None,
             llm_temperature_reflect=0.17,
         )
@@ -615,7 +613,6 @@ class TestReflectAgentMocked:
         long-running questions that end there.
         """
         config = MagicMock(
-            reflect_prompt_cache_enabled=False,
             reflect_max_completion_tokens=None,
             llm_temperature_reflect=0.17,
         )
@@ -3244,157 +3241,25 @@ class TestMentalModelShortCircuitRealLLM:
         )
 
 
-class _StepCacheProvider:
-    """Fake provider that records the step-by-step incremental-cache protocol.
+class _ScriptedProvider:
+    """Fake LLM that plays scripted tool-call turns and records what each was asked.
 
-    Serves as both ``llm_config`` and its own ``_provider_impl``: the reflect loop
-    reaches the cache methods via ``llm_config._provider_impl`` and issues LLM
-    turns via ``llm_config.call_with_tools``. Every ``call_with_tools`` records the
-    ``cached_prefix`` / ``cached_prefix_message_count`` it was handed, so a test
-    can assert that each ``auto`` turn reuses exactly the previous turn's full
-    input and that the caches are torn down at the end.
+    Serves as ``llm_config``: the reflect loop issues its turns through
+    ``call_with_tools``, and each records the ``tool_choice`` and message count.
     """
 
     def __init__(self, scripted: list[LLMToolCallResult]):
         self._scripted = scripted
         self._reply = closing_echo(scripted)
         self._provider_impl = self
-        self.cache_counter = 0
-        self.created: list[tuple[str, int]] = []  # (session_id, #messages covered)
-        self.cache_tool_choices: list = []
-        self.deleted_sessions: list[str] = []
-        self.calls: list[dict] = []  # per call_with_tools: tool_choice / cached_prefix / count / #messages
+        self.calls: list[dict] = []  # per call_with_tools: tool_choice / #messages
 
-    # -- incremental cache capability --
-    def supports_incremental_prompt_cache(self) -> bool:
-        return True
-
-    async def create_incremental_cache(self, *, session_id, messages, tools=None, tool_choice=None):
-        self.cache_tool_choices.append(tool_choice)
-        self.cache_counter += 1
-        self.created.append((session_id, len(messages)))
-        return f"cache-{self.cache_counter}"
-
-    async def delete_cached_prefix(self, name):  # pragma: no cover - not exercised here
-        pass
-
-    async def delete_cache_session(self, session_id):
-        self.deleted_sessions.append(session_id)
-
-    # -- llm surface --
-    async def call_with_tools(
-        self,
-        *,
-        messages,
-        tools,
-        scope="tools",
-        tool_choice="auto",
-        cached_prefix=None,
-        cached_prefix_message_count=0,
-        **_,
-    ):
-        self.calls.append(
-            {
-                "tool_choice": tool_choice,
-                "cached_prefix": cached_prefix,
-                "cached_prefix_message_count": cached_prefix_message_count,
-                "n_messages": len(messages),
-            }
-        )
+    async def call_with_tools(self, *, messages, tools, scope="tools", tool_choice="auto", **_):
+        self.calls.append({"tool_choice": tool_choice, "n_messages": len(messages)})
         return self._reply(tool_choice=tool_choice)
 
     async def call(self, *args, **kwargs):  # final-synthesis fallback (unused on the happy path)
         return LLMCallResult(content="final", usage=TokenUsage(input_tokens=1, output_tokens=1, total_tokens=2))
-
-
-class TestReflectIncrementalCache:
-    """The step-by-step Gemini context cache: each free turn reuses the previous
-    turn's full input, and every per-reflect cache is deleted at the end."""
-
-    @pytest.mark.asyncio
-    async def test_each_free_turn_reuses_previous_step_cache_and_cleans_up(self, mock_functions):
-        functions = {
-            **mock_functions,
-            "search_observations_fn": AsyncMock(return_value={"observations": [{"id": "obs-1"}]}),
-            "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "x"}]}),
-        }
-
-        def _tc(cid, name):
-            # A real query arg so the stubbed tools return evidence (not an
-            # error), which lets the terminal ``done`` call be accepted.
-            return LLMToolCallResult(
-                tool_calls=[LLMToolCall(id=cid, name=name, arguments={"query": "q"})], finish_reason="tool_calls"
-            )
-
-        # Forced obs -> forced recall -> two free recalls -> done.
-        provider = _StepCacheProvider(
-            scripted=[
-                _tc("0", "search_observations"),
-                _tc("1", "recall"),
-                _tc("2", "recall"),
-                _tc("3", "recall"),
-                LLMToolCallResult(
-                    tool_calls=[LLMToolCall(id="4", name="done", arguments={"answer": "A", "memory_ids": ["mem-1"]})],
-                    finish_reason="tool_calls",
-                ),
-            ]
-        )
-
-        result = await run_reflect_agent(
-            llm_config=provider,
-            bank_id="cache-bank",
-            query="q",
-            bank_profile={"name": "T", "mission": "M"},
-            has_mental_models=False,
-            include_observations=True,
-            include_recall=True,
-            budget="high",  # keep the full forced path (no early release) so counts are deterministic
-            max_iterations=8,
-            **functions,
-        )
-        assert result.text == "A"
-
-        calls = provider.calls
-        # 2 forced turns (obs, recall), 3 free turns (recall, recall, done), then the closing done
-        # that writes the answer.
-        free = calls[2:-1]
-        assert [c["tool_choice"] for c in calls[:2]] == [
-            LLMToolChoice.named("search_observations"),
-            LLMToolChoice.named("recall"),
-        ]
-        assert all(c["tool_choice"] is LLM_TOOL_CHOICE_REQUIRED for c in free)
-        assert calls[-1]["tool_choice"] == LLMToolChoice.named("done")
-
-        # Forced turns never reference a cache (Gemini forbids cache + tool_config).
-        assert calls[0]["cached_prefix"] is None
-        assert calls[1]["cached_prefix"] is None
-
-        # Every free turn references a cache, and the count it was handed equals the
-        # PREVIOUS turn's full input length — i.e. it reuses the previous step entirely.
-        for i in range(2, 2 + len(free)):
-            assert calls[i]["cached_prefix"] is not None, f"free call {i} should use the cache"
-            assert calls[i]["cached_prefix_message_count"] == calls[i - 1]["n_messages"], (
-                f"free call {i} must cache exactly the previous step's input"
-            )
-        # Gemini refuses a tool_config on a request that uses a cache, so each cache is
-        # made for the choice of the turns that use it (#5832).
-        assert provider.cache_tool_choices == [LLM_TOOL_CHOICE_REQUIRED] * len(provider.created)
-
-        # Caches are created covering a strictly growing prefix, one per free turn.
-        assert [n for _, n in provider.created] == [
-            calls[1]["n_messages"],
-            calls[2]["n_messages"],
-            calls[3]["n_messages"],
-        ]
-        assert all(sid.startswith("reflect:") for sid, _ in provider.created)
-
-        # Ephemeral: the session is torn down exactly once when the reflect ends.
-        # Teardown is deliberately detached (the caller must not wait on deletes),
-        # so drain the background task before asserting it ran.
-        await asyncio.gather(*list(_cache_cleanup_tasks), return_exceptions=True)
-        assert len(provider.deleted_sessions) == 1
-        assert provider.deleted_sessions[0].startswith("reflect:")
-        assert provider.deleted_sessions[0] == provider.created[0][0]
 
 
 class TestReflectShortIdAliases:
@@ -3415,7 +3280,7 @@ class TestReflectShortIdAliases:
                 tool_calls=[LLMToolCall(id=cid, name=name, arguments={"query": "q"})], finish_reason="tool_calls"
             )
 
-        provider = _StepCacheProvider(
+        provider = _ScriptedProvider(
             scripted=[
                 _tc("0", "search_observations"),
                 _tc("1", "recall"),
@@ -3520,7 +3385,7 @@ class TestReflectDropsUnseenIds:
     @pytest.mark.asyncio
     async def test_length_rewrite_that_garbles_a_document_citation(self, functions, monkeypatch):
         config = MagicMock(
-            reflect_prompt_cache_enabled=False, reflect_max_completion_tokens=None, llm_temperature_reflect=0.1
+            reflect_max_completion_tokens=None, llm_temperature_reflect=0.1
         )
         monkeypatch.setattr("hindsight_api.engine.reflect.agent.get_config", lambda: config)
         document = {"sections": [{"heading": "Deploy", "blocks": ["detail " * 50 + "[f1]"]}]}
@@ -3578,7 +3443,7 @@ class TestReflectFinishesThroughDone:
 
     @pytest.mark.asyncio
     async def test_prose_stop_is_asked_to_say_it_through_done(self, mock_functions):
-        provider = _StepCacheProvider(
+        provider = _ScriptedProvider(
             scripted=[
                 *self._searches(),
                 # The model stops with prose instead of calling done.
@@ -3616,7 +3481,7 @@ class TestReflectFinishesThroughDone:
 
     @pytest.mark.asyncio
     async def test_a_provider_that_will_not_call_done_falls_back_to_the_standalone_prompt(self, mock_functions):
-        provider = _StepCacheProvider(
+        provider = _ScriptedProvider(
             scripted=[
                 *self._searches(),
                 LLMToolCallResult(content="here is the answer", finish_reason="stop"),
@@ -3651,7 +3516,7 @@ class TestReflectFinishesThroughDone:
         An OpenAI-compatible server that does not enforce tool_choice lets it. One redirect on
         the same prefix gets the document; the standalone prompt would write it from scratch.
         """
-        provider = _StepCacheProvider(
+        provider = _ScriptedProvider(
             scripted=[
                 *self._searches(),
                 LLMToolCallResult(content="here is the answer", finish_reason="stop"),
@@ -3692,7 +3557,7 @@ class TestReflectFinishesThroughDone:
             tool_calls=[LLMToolCall(id="r", name="answer_ready", arguments={"answer_found": True})],
             finish_reason="tool_calls",
         )
-        provider = _StepCacheProvider(
+        provider = _ScriptedProvider(
             scripted=[
                 *self._searches(),
                 LLMToolCallResult(content="here is the answer", finish_reason="stop"),
@@ -3740,7 +3605,7 @@ class TestReflectKeepsItsPrefixStable:
                 tool_calls=[LLMToolCall(id=cid, name=name, arguments={"query": "q"})], finish_reason="tool_calls"
             )
 
-        provider = _StepCacheProvider(
+        provider = _ScriptedProvider(
             scripted=[
                 _tc("0", "search_mental_models"),
                 _tc("1", "search_observations"),

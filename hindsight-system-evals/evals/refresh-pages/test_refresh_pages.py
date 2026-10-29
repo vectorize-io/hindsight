@@ -127,12 +127,22 @@ from pathlib import Path
 import pytest
 from hindsight_client import Hindsight
 
-from hindsight_system_evals import build_page, evaluate, provider_environment, questions, split_into_waves
+from hindsight_system_evals import (
+    Target,
+    build_page,
+    evaluate,
+    provider_environment,
+    questions,
+    split_into_waves,
+    wait_until_settled,
+)
 from hindsight_system_evals.corpus import HardFact, HardQuestion
 from hindsight_system_evals.delta_updates import CASES as DELTA_CASES
 from hindsight_system_evals.delta_updates import MINIMUM_ACCEPTANCE as DELTA_MINIMUM
 from hindsight_system_evals.delta_updates import DeltaUpdate
 from hindsight_system_evals.delta_updates import build as build_delta
+from hindsight_system_evals.orchestration import CASES as FOLLOW_UP_CASES
+from hindsight_system_evals.orchestration import FollowUpCase, server_with_scripted_decision_model
 from hindsight_system_evals.pages import PageOutcome, SettleFn, facts
 from hindsight_system_evals.refresh_cost import (
     FIXTURE,
@@ -617,8 +627,8 @@ async def _measure(client: Hindsight, bank: str, settled: SettleFn, pages: tuple
 def _report(request: pytest.FixtureRequest, results: list[RefreshCost]) -> None:
     model = provider_environment()["HINDSIGHT_API_LLM_MODEL"] if not request.config.getoption("--api-url") else "remote"
     price = PRICES.get(model)
-    # The server's own default unless this run overrode it.
-    explicit = os.getenv("HINDSIGHT_EVAL_SET_REFLECT_PROMPT_CACHE_ENABLED", "true").lower() != "false"
+    # Reflect builds no explicit per-step caches any more, so cached tokens are implicit hits.
+    explicit = False
     table = summary_table(results, price, explicit)
     log.info("refresh cost baseline:\n%s", table)
     out = request.config.getoption("--cost-output")
@@ -674,3 +684,52 @@ async def test_refresh_pages_benchmark_cost_all_pages(
     results = await _measure(client, bank, settled, tuple(PAGES))
     _report(request, results)
     _assert_measured(results)
+
+
+# Full runs only: each case starts a server of its own.
+@pytest.mark.parametrize("case", case_params(FOLLOW_UP_CASES, minimum=()))
+async def test_refresh_pages_follows_decision_model(target: Target, tmp_path: Path, case: FollowUpCase) -> None:
+    """A page refresh runs the follow-up search the decision model asks for.
+
+    Same scripted decision model as the reflect case (``hindsight_system_evals/orchestration.py``):
+    it always answers "the evidence answers part of the question", so the refresh must search a
+    second time before it writes the page.
+    """
+    if target.is_remote:
+        pytest.skip("starts its own server, with a scripted decision model")
+    with server_with_scripted_decision_model(tmp_path / "server.log") as orchestrated:
+        client = Hindsight(base_url=orchestrated.server.url)
+        try:
+            bank = f"syseval-{case.id}"
+            await client.aretain_batch(bank_id=bank, items=[{"content": text} for text in case.facts])
+            await wait_until_settled(client, bank)
+            created = await client.knowledge_base.create_knowledge_page(
+                bank,
+                {
+                    "name": f"eval {case.id}",
+                    "source_query": case.question,
+                    "trigger": {"mode": "full", "exclude_mental_models": True, "refresh_after_consolidation": False},
+                },
+            )
+            await wait_until_settled(client, bank)
+            orchestrated.decision_model.reset()
+            await client.arefresh_mental_model(bank_id=bank, mental_model_id=created.mental_model_id)
+            await wait_until_settled(client, bank)
+            verdicts = len(orchestrated.decision_model.verdicts)
+        finally:
+            await client.aclose()
+    followed = verdicts >= 2
+    reason = "" if followed else f"the decision model asked for a follow-up search; the refresh ran {verdicts - 1}"
+    RECORDED.append(
+        EvalRecord(
+            kind="knowledge_page",
+            question_id=case.id,
+            category=case.category,
+            correct=followed,
+            hit_trap=False,
+            bank_id=bank,
+            reason=reason,
+            page_id=created.page_id,
+        )
+    )
+    assert followed, f"{case.id}: {reason}"

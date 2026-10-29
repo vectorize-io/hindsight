@@ -11,8 +11,8 @@ import logging
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Callable
 
-from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, ProviderUnavailableError
-from ..response_models import LLMCallResult, LLMToolCallResult
+from ..llm_interface import LLMInterface, ProviderUnavailableError
+from ..response_models import LLMCallResult
 
 logger = logging.getLogger(__name__)
 
@@ -60,25 +60,6 @@ class NoneLLM(LLMInterface):
             "Set HINDSIGHT_API_LLM_PROVIDER to a real provider (e.g., openai, anthropic, gemini)."
         )
 
-    async def call_with_tools(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        max_completion_tokens: int | None = None,
-        temperature: float | None = None,
-        scope: str = "tools",
-        max_retries: int = 5,
-        initial_backoff: float = 1.0,
-        max_backoff: float = 30.0,
-        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
-        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> LLMToolCallResult:
-        """Raise LLMNotAvailableError — no LLM is configured."""
-        raise LLMNotAvailableError(
-            "LLM provider is set to 'none'. This operation requires an LLM. "
-            "Set HINDSIGHT_API_LLM_PROVIDER to a real provider (e.g., openai, anthropic, gemini)."
-        )
-
     async def cleanup(self) -> None:
         """No-op — nothing to clean up."""
         pass
@@ -105,7 +86,4 @@ class UnavailableLLM(NoneLLM):
         return None
 
     async def call(self, *args: Any, **kwargs: Any) -> LLMCallResult:
-        raise self._error
-
-    async def call_with_tools(self, *args: Any, **kwargs: Any) -> LLMToolCallResult:
         raise self._error

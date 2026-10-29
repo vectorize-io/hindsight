@@ -169,8 +169,8 @@ _COMPACTED_TOOL_RESULT = "[Earlier tool result omitted to fit the context budget
 #: rest of the iteration budget on it costs a reflect either way.
 _MAX_DOCUMENT_REJECTIONS = 1
 
-#: A loop turn's output cap under HINDSIGHT_API_LLM_TOOLS_VIA_SCHEMA, where it only names a
-#: search. The longest valid one measured was 130 tokens.
+#: A loop turn's output cap when the closing step writes the answer, so the turn only names
+#: a search (its reply is held to a response schema, see providers/tools_via_schema). The longest valid one measured was 130 tokens.
 _SCHEMA_LOOP_TURN_MAX_TOKENS = 1024
 
 #: What a tool other than done is told when it answers the closing request.
@@ -511,46 +511,6 @@ def _all_mental_models_are_usable_and_fresh(tool_output: dict[str, Any]) -> bool
     return True
 
 
-# Detached cache-teardown tasks. asyncio holds only weak references to tasks, so
-# a fire-and-forget task can be garbage-collected mid-flight — keep a strong
-# reference here until it finishes.
-_cache_cleanup_tasks: set[asyncio.Task] = set()
-
-
-def _spawn_cache_cleanup(
-    provider_impl: Any,
-    session_id: str,
-    cache_tasks: list[asyncio.Task],
-    reflect_id: str,
-) -> None:
-    """Delete a reflect's ephemeral context caches in the background.
-
-    The per-reflect caches are dead the moment the reflect returns — nothing ever
-    reuses them — so the caller must not wait on teardown: draining the in-flight
-    create plus the delete round-trips would add latency to every single answer.
-    Detach it instead. The short cache TTL is the backstop if the process dies
-    before the task runs.
-    """
-
-    async def _cleanup() -> None:
-        try:
-            # Let any overlapped create land first, so its cache is registered in
-            # the session and actually gets deleted rather than lingering to TTL.
-            if cache_tasks:
-                await asyncio.gather(*cache_tasks, return_exceptions=True)
-            await provider_impl.delete_cache_session(session_id)
-        except Exception:
-            logger.debug("[REFLECT %s] cache session teardown failed (will age out on TTL)", reflect_id)
-
-    try:
-        task = asyncio.create_task(_cleanup())
-    except RuntimeError:
-        # No running loop to detach onto (not expected in the server); TTL cleans up.
-        return
-    _cache_cleanup_tasks.add(task)
-    task.add_done_callback(_cache_cleanup_tasks.discard)
-
-
 async def run_reflect_agent(
     llm_config: "AnyLLMProvider",
     bank_id: str,
@@ -579,47 +539,19 @@ async def run_reflect_agent(
     best-effort and never allowed to fail a reflect.
     """
     reflect_id = reflect_id or f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"  # noqa: TID251
-    provider_impl = getattr(llm_config, "_provider_impl", None)
-    # Reflect step-by-step caching needs the provider to support it AND the
-    # dedicated reflect flag (on by default; distinct from the global prompt-cache
-    # switch so it can be turned off for reflect alone).
-    # Lazy: importing the extensions package here would be circular.
-    from ...extensions.llm_request import installed_llm_request_extension
-
-    # Off under an LLM request extension: the cache is created on the server's own LLM
-    # outside any call the extension decides, so it would upload a reflect the extension
-    # sends elsewhere (or refuses) to the server's account.
-    incremental_caching = (
-        provider_impl is not None
-        and provider_impl.supports_incremental_prompt_cache()
-        and get_config().reflect_prompt_cache_enabled
-        and installed_llm_request_extension() is None
+    return await _run_reflect_agent_inner(
+        llm_config,
+        bank_id,
+        query,
+        bank_profile,
+        search_mental_models_fn,
+        read_mental_models_fn,
+        search_observations_fn,
+        recall_fn,
+        expand_fn,
+        reflect_id=reflect_id,
+        **kwargs,
     )
-    cache_session_id = f"reflect:{reflect_id}"
-    # In-flight cache-create tasks (scheduled to overlap tool execution). Awaited
-    # before teardown so every created cache is tracked and deleted — no orphans.
-    cache_tasks: list[asyncio.Task] = []
-    try:
-        return await _run_reflect_agent_inner(
-            llm_config,
-            bank_id,
-            query,
-            bank_profile,
-            search_mental_models_fn,
-            read_mental_models_fn,
-            search_observations_fn,
-            recall_fn,
-            expand_fn,
-            reflect_id=reflect_id,
-            provider_impl=provider_impl,
-            incremental_caching=incremental_caching,
-            cache_session_id=cache_session_id,
-            cache_tasks=cache_tasks,
-            **kwargs,
-        )
-    finally:
-        if incremental_caching and provider_impl is not None:
-            _spawn_cache_cleanup(provider_impl, cache_session_id, cache_tasks, reflect_id)
 
 
 async def _run_reflect_agent_inner(
@@ -651,10 +583,6 @@ async def _run_reflect_agent_inner(
     prune_evidence_fn: Callable[[str, list[str]], Awaitable[list[bool]]] | None = None,
     *,
     reflect_id: str,
-    provider_impl: Any,
-    incremental_caching: bool,
-    cache_session_id: str,
-    cache_tasks: list[asyncio.Task],
 ) -> ReflectAgentResult:
     """
     Execute the reflect agent loop using native tool calling.
@@ -728,15 +656,12 @@ async def _run_reflect_agent_inner(
     # as-is (see the done handling below). Then a free turn only has to say "enough", and
     # the cheap way to say it is answer_ready (one bool), not an answer that is discarded.
     closing_step_answers = evidence_is_sufficient_fn is None or answer_as_document
-    # A forced done asked for through a response schema takes the page as markdown: held to
-    # the grammar, the nested section array came out thinner (see tools_schema).
-    document_as_markdown = answer_as_document and get_config().llm_tools_via_schema
     # A loop turn through a response schema only names its next search when the closing
     # step writes the answer, so it is capped: under load a schema-held reply can fall into
     # a repetition loop ("ranking service squad owner ranking service squad owner ..."),
     # which uncapped ran to 12,288 tokens and the request timeout.
     loop_turn_max_completion_tokens = synthesis_max_completion_tokens
-    if get_config().llm_tools_via_schema and closing_step_answers:
+    if closing_step_answers:
         loop_turn_max_completion_tokens = min(
             synthesis_max_completion_tokens or _SCHEMA_LOOP_TURN_MAX_TOKENS, _SCHEMA_LOOP_TURN_MAX_TOKENS
         )
@@ -749,7 +674,6 @@ async def _run_reflect_agent_inner(
         answer_as_document=answer_as_document,
         llm_output_language=llm_output_language,
         answer_ready=closing_step_answers,
-        document_as_markdown=document_as_markdown,
     )
     # Build set of enabled tool names to guard against LLM hallucinating disabled tool calls
     enabled_tools: frozenset[str] = frozenset(t["function"]["name"] for t in tools if t.get("type") == "function")
@@ -765,7 +689,6 @@ async def _run_reflect_agent_inner(
         answer_as_document=answer_as_document,
         llm_output_language=llm_output_language,
         answer_ready=closing_step_answers,
-        document_as_markdown=document_as_markdown,
     )
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
@@ -778,76 +701,6 @@ async def _run_reflect_agent_inner(
     # the answer may repeat.
     for message in messages:
         presenter.see(message["content"])
-
-    # Step-by-step context caching for the agentic tool loop.
-    #
-    # Caching only the static system+tools prefix wins little here: it's dwarfed
-    # by the tool results (recall/observations) that get re-sent on every turn.
-    # Instead we roll a cache forward one step at a time — after each turn the
-    # cache is extended to cover that turn's FULL input, so the next free turn
-    # reuses the entire prior conversation at the cached rate and sends only its
-    # own new tool results as the delta. Note what this costs on Gemini: a cache
-    # CREATE is billed at the full input rate plus storage, and each rolling cache is
-    # read once, so the whole prior conversation is paid in full at every step anyway
-    # — measured at ~4.6% more than running uncached. See the note on
-    # DEFAULT_REFLECT_PROMPT_CACHE_ENABLED in config.py.
-    #
-    # The cache create for turn N+1 covers turn N's input, which is fully known the
-    # moment turn N's LLM call returns — so we kick it off as a background task that
-    # runs CONCURRENTLY with turn N's tool execution (``_schedule_cache``) and only
-    # await it (``_resolve_pending_cache``) right before the next free call,
-    # hiding the create latency behind work we'd do anyway.
-    #
-    # ``rolling_cache_boundary`` is the number of leading ``messages`` baked into
-    # the adopted ``rolling_cache_name``. ``incremental_caching`` is False for
-    # providers/config without explicit caching, so every branch below is a no-op.
-    rolling_cache_name: str | None = None
-    rolling_cache_boundary = 0
-    pending_cache_task: asyncio.Task | None = None
-    pending_cache_boundary = 0
-
-    async def _resolve_pending_cache() -> None:
-        """Adopt the overlapped next-cache once it's ready as the rolling cache.
-
-        Best-effort: a failed/``None`` create just leaves the previous (smaller)
-        cache in place, so the next call sends a larger delta but stays correct.
-        """
-        nonlocal rolling_cache_name, rolling_cache_boundary, pending_cache_task
-        if pending_cache_task is None:
-            return
-        task = pending_cache_task
-        pending_cache_task = None
-        try:
-            new_name = await task
-        except Exception:
-            new_name = None
-        if new_name is not None:
-            rolling_cache_name = new_name
-            rolling_cache_boundary = pending_cache_boundary
-
-    def _schedule_cache(upto: int) -> None:
-        """Start building the cache covering ``messages[:upto]`` in the background
-        so it overlaps the tool execution that follows this turn."""
-        nonlocal pending_cache_task, pending_cache_boundary
-        # ``messages[:upto]`` is snapshotted now, so appends during tool execution
-        # can't change what gets cached. ``ensure_future`` raises if the provider
-        # didn't return a coroutine (e.g. a test double) — caching is a soft
-        # optimisation and must never break a reflect, so swallow and skip.
-        try:
-            task = asyncio.ensure_future(
-                provider_impl.create_incremental_cache(
-                    session_id=cache_session_id,
-                    messages=messages[:upto],
-                    tools=tools,
-                    # Only free turns use the cache (see ``next_is_free``).
-                    tool_choice=LLM_TOOL_CHOICE_REQUIRED,
-                )
-            )
-        except Exception:
-            return
-        pending_cache_boundary = upto
-        pending_cache_task = task
-        cache_tasks.append(task)
 
     # Tracking
     total_tools_called = 0
@@ -1066,7 +919,7 @@ async def _run_reflect_agent_inner(
                     },
                     *feedback,
                 ],
-                tools=_with_cited_handles(tools, presenter) if document_as_markdown else tools,
+                tools=_with_cited_handles(tools, presenter) if answer_as_document else tools,
                 scope="reflect",
                 tool_choice=LLMToolChoice.named("done"),
                 temperature=get_config().llm_temperature_reflect,
@@ -1498,24 +1351,6 @@ async def _run_reflect_agent_inner(
         # Call LLM with tools
         llm_start = time.perf_counter()
 
-        # Will the NEXT turn be a free turn (the only kind that references a
-        # cache)? The cache we schedule this turn covers this turn's input and is
-        # used by the next turn, so we only bother building it when the next turn
-        # can use it — skipping the wasted creates between two forced turns.
-        next_is_free = not forced_step_pending or forced_steps_done + 1 >= len(forced_sequence)
-
-        # Before a free turn, adopt the cache that was being built in the
-        # background during the previous turn's tool execution. It covers that
-        # turn's full input, so THIS call reuses the entire prior conversation at
-        # the cached rate and sends only the turns appended since. Forced turns
-        # can't use a cache: Gemini rejects ``cached_content`` + ``tool_config``, so each
-        # cache holds the free turns' ``required`` and cannot carry a forced turn's choice;
-        # but the cache still advances underneath them, so the first free turn
-        # inherits a cache covering all the forced results.
-        if incremental_caching and iter_tool_choice is LLM_TOOL_CHOICE_REQUIRED:
-            await _resolve_pending_cache()
-
-        call_msg_count = len(messages)
         parallel_round = False
         if decision_orchestrated and iteration == 0 and forced_sequence:
             # Decision-orchestrated: every forced layer at once, with one query. In agent mode each of
@@ -1578,13 +1413,6 @@ async def _run_reflect_agent_inner(
                     # through a response schema with a closing step (see its definition).
                     max_completion_tokens=loop_turn_max_completion_tokens,
                 )
-                if (
-                    incremental_caching
-                    and iter_tool_choice is LLM_TOOL_CHOICE_REQUIRED
-                    and rolling_cache_name is not None
-                ):
-                    ct_kwargs["cached_prefix"] = rolling_cache_name
-                    ct_kwargs["cached_prefix_message_count"] = rolling_cache_boundary
                 result = await llm_config.call_with_tools(**ct_kwargs)
                 llm_duration = int((time.perf_counter() - llm_start) * 1000)
                 queued_ms = int(queue_wait.seconds * 1000)
@@ -1932,16 +1760,6 @@ async def _run_reflect_agent_inner(
                 )
 
             other_tools = allowed_tools
-
-            # Kick off the next-turn cache (covering THIS call's input) so it
-            # builds concurrently with the tool execution below — hiding the
-            # create latency. Only schedule when the next turn is free (the
-            # only kind that references it); the next turn's pre-call resolve then
-            # adopts it. Resolve any prior in-flight create first so we don't drop
-            # its handle. Not after compaction: no free turn follows it.
-            if incremental_caching and next_is_free and not compacted:
-                await _resolve_pending_cache()
-                _schedule_cache(call_msg_count)
 
             # Ceiling for this batch: the fixed cap, tightened by whatever is left of
             # the context budget and shared across the calls running in parallel. The between-iteration budget check below only reacts once a

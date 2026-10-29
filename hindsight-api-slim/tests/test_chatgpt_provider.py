@@ -33,6 +33,7 @@ from hindsight_api.engine.providers import chatgpt_auth as auth
 from hindsight_api.engine.providers import chatgpt_llm as plan
 from hindsight_api.engine.providers.chatgpt_llm import ChatGPTLLM, ChatGPTRequestError
 from hindsight_api.engine.providers.openai_responses_llm import RetryableResponsesError
+from hindsight_api.engine.providers.tools_via_schema import ResponseSchema, schema_format
 from tests.aiohttp_stub import stub_server
 
 ISSUED_CLIENT_ID = "oaiapp_test123"
@@ -782,21 +783,28 @@ async def test_call_streams_to_completion_and_shapes_request(make_llm):
     assert upstream.auth_headers[0] == f"Bearer {stored_token}"
 
 
-async def test_call_with_tools_parses_function_calls(make_llm):
-    call_item = {
-        "type": "function_call",
-        "id": "fc1",
-        "call_id": "call_1",
-        "name": "recall",
-        "arguments": '{"query": "x"}',
-        "status": "completed",
+async def test_a_tool_turn_schema_is_sent_as_text_format_and_returns_the_dict(make_llm):
+    """Reflect's tool turns go through ``call`` with a raw JSON schema; no tools are sent."""
+    schema = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+        "additionalProperties": False,
     }
-    upstream = _Upstream([(200, _completed([call_item]))])
+    item = {**_TEXT_ITEM, "content": [{"type": "output_text", "text": '{"query": "x"}', "annotations": []}]}
+    upstream = _Upstream([(200, _completed([item]))])
     llm = await make_llm(upstream)
-    tools = [{"type": "function", "function": {"name": "recall", "parameters": {"type": "object"}}}]
-    result = await llm.call_with_tools(messages=[{"role": "user", "content": "q"}], tools=tools, max_retries=0)
-    assert [(c.id, c.name, c.arguments) for c in result.tool_calls] == [("call_1", "recall", {"query": "x"})]
-    assert upstream.requests[0]["tools"] == [{"type": "function", "name": "recall", "parameters": {"type": "object"}}]
+    result = await llm.call(
+        messages=[{"role": "user", "content": "q"}],
+        response_format=schema_format(ResponseSchema(name="recall", schema=schema)),
+        strict_schema=True,
+        skip_validation=True,
+        max_retries=0,
+    )
+    assert result.content == {"query": "x"}
+    sent = upstream.requests[0]
+    assert sent["text"]["format"]["schema"] == schema
+    assert not {"tools", "tool_choice"} & sent.keys()
 
 
 async def test_usage_limit_in_stream_defers(make_llm):

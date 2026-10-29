@@ -11,15 +11,12 @@ The Responses API models the chain-of-thought as a first-class reasoning item, s
 reasoning and function tools coexist. This provider issues requests against
 ``responses.create``, translating the engine's chat-shaped inputs:
 
-- chat messages → Responses ``input`` items (assistant ``tool_calls`` →
-  ``function_call`` items, ``role="tool"`` results → ``function_call_output``),
-- nested ``{"type":"function","function":{...}}`` tools → flattened
-  ``{"type":"function","name":...,"parameters":...}``,
+- chat messages → Responses ``input`` message items,
 - the flat ``reasoning_effort`` scalar → a ``reasoning={"effort": ...}`` object,
 - ``response_format`` → ``text={"format": {...}}``,
 
-and reads ``response.output_text`` plus ``function_call`` items out of
-``response.output``.
+and reads ``response.output_text``. No request carries tools: reflect's tool calls
+are replies to a response schema (see ``tools_via_schema``).
 
 It is OpenAI-only (unlike the multi-vendor ``OpenAICompatibleLLM``, it carries no
 groq/ollama/deepseek special-casing) and stands alone on ``LLMInterface`` so the
@@ -36,19 +33,16 @@ import json
 import logging
 import time
 from contextlib import AbstractAsyncContextManager, nullcontext
-from typing import Any, Callable, cast
+from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse, urlunparse
 
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI
 
 from hindsight_api.config import get_config
 from hindsight_api.engine.bank_attribution import apply_bank_attribution
-from hindsight_api.engine.cache_affinity import apply_opencode_session, is_opencode_host
+from hindsight_api.engine.cache_affinity import apply_opencode_session
 from hindsight_api.engine.llm_interface import (
-    LLM_TOOL_CHOICE_AUTO,
     LLMInterface,
-    LLMToolChoice,
-    LLMToolChoiceMode,
     OutputTooLongError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
@@ -65,7 +59,7 @@ from hindsight_api.engine.providers.openai_compatible_llm import (
     _strip_reasoning_tags,
 )
 from hindsight_api.engine.remote_retry import jittered_backoff
-from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
@@ -82,75 +76,11 @@ class RetryableResponsesError(Exception):
     """
 
 
-def _tools_to_responses(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert chat/completions tool schemas to the flattened Responses shape.
-
-    Chat nests the function under a ``function`` key; Responses lifts ``name`` /
-    ``description`` / ``parameters`` to the top level. Anything already flattened
-    (or a built-in tool) is passed through unchanged.
-    """
-    converted: list[dict[str, Any]] = []
-    for tool in tools:
-        function = tool.get("function") if isinstance(tool, dict) else None
-        if tool.get("type") == "function" and isinstance(function, dict):
-            item: dict[str, Any] = {
-                "type": "function",
-                "name": function.get("name"),
-                "parameters": function.get("parameters", {}),
-            }
-            if function.get("description") is not None:
-                item["description"] = function["description"]
-            if "strict" in function:
-                item["strict"] = function["strict"]
-            converted.append(item)
-        else:
-            converted.append(tool)
-    return converted
-
-
 def _messages_to_responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert chat/completions messages to Responses ``input`` items.
-
-    - ``role="tool"`` result → ``function_call_output`` keyed by ``call_id``,
-    - assistant ``tool_calls`` → ``function_call`` items (plus a message item when
-      the assistant turn also carried text),
-    - every other message → a role/content message item.
-    """
-    items: list[dict[str, Any]] = []
-    for message in messages:
-        role = message.get("role")
-
-        if role == "tool":
-            content = message.get("content")
-            items.append(
-                {
-                    "type": "function_call_output",
-                    "call_id": message.get("tool_call_id"),
-                    "output": content if isinstance(content, str) else json.dumps(content, ensure_ascii=False),
-                }
-            )
-            continue
-
-        if role == "assistant" and message.get("tool_calls"):
-            text = message.get("content")
-            if isinstance(text, str) and text:
-                items.append({"role": "assistant", "content": text})
-            for tool_call in message["tool_calls"]:
-                function = tool_call.get("function", {})
-                arguments = function.get("arguments")
-                items.append(
-                    {
-                        "type": "function_call",
-                        "call_id": tool_call.get("id"),
-                        "name": function.get("name"),
-                        "arguments": arguments if isinstance(arguments, str) else json.dumps(arguments or {}),
-                    }
-                )
-            continue
-
-        content = message.get("content")
-        items.append({"role": role, "content": content if content is not None else ""})
-    return items
+    """Convert chat/completions messages to Responses ``input`` message items."""
+    return [
+        {"role": m.get("role"), "content": m.get("content") if m.get("content") is not None else ""} for m in messages
+    ]
 
 
 def _inject_schema_into_input(input_items: list[dict[str, Any]], schema: dict[str, Any]) -> list[dict[str, Any]]:
@@ -320,9 +250,8 @@ class OpenAIResponsesLLM(LLMInterface):
         span_messages: list[dict[str, Any]],
         response_content: Any,
         finish_reason: str,
-        tool_calls_dict: list[dict[str, Any]] | None = None,
     ) -> None:
-        """Record metrics + a trace span for a successful call (shared by both paths)."""
+        """Record metrics + a trace span for a successful call."""
         get_metrics_collector().record_llm_call(
             provider=self.provider,
             model=self.model,
@@ -350,7 +279,6 @@ class OpenAIResponsesLLM(LLMInterface):
             error=None,
             cached_tokens=usage.cached_tokens,
             thoughts_tokens=usage.thoughts_tokens,
-            tool_calls=tool_calls_dict,
         )
 
     async def _create_response(self, params: dict[str, Any]) -> Any:
@@ -540,139 +468,6 @@ class OpenAIResponsesLLM(LLMInterface):
                     f"input_tokens={usage.input_tokens}, output_tokens={usage.output_tokens}, time={duration:.3f}s"
                 )
             return LLMCallResult(content=result, usage=usage)
-
-        return await self._run_with_retries(
-            params,
-            scope=scope,
-            parse=parse,
-            max_retries=max_retries,
-            initial_backoff=initial_backoff,
-            max_backoff=max_backoff,
-            attempt_context=attempt_context,
-        )
-
-    async def call_with_tools(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        max_completion_tokens: int | None = None,
-        temperature: float | None = None,
-        scope: str = "tools",
-        max_retries: int = 5,
-        initial_backoff: float = 1.0,
-        max_backoff: float = 30.0,
-        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
-        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> LLMToolCallResult:
-        """Make a Responses API call with tools (see ``LLMInterface.call_with_tools``).
-
-        Unlike chat/completions, ``reasoning`` and ``tools`` are sent together —
-        the reason this provider exists.
-        """
-        start_time = time.perf_counter()
-        is_reasoning_model = self._supports_reasoning_model()
-
-        responses_tools = _tools_to_responses(tools)
-
-        request_tool_choice: str | dict[str, Any] | None
-        if tool_choice.mode is LLMToolChoiceMode.NAMED:
-            forced_name = tool_choice.selected_function_name
-            filtered = [tool for tool in responses_tools if tool.get("name") == forced_name]
-            if len(filtered) != 1:
-                raise ValueError(
-                    f"Named tool_choice must reference exactly one declared tool; "
-                    f"found {len(filtered)} definitions for {forced_name!r}"
-                )
-            responses_tools = filtered
-            request_tool_choice = {"type": "function", "name": forced_name}
-        elif tool_choice.mode is LLMToolChoiceMode.AUTO:
-            request_tool_choice = None
-        else:
-            request_tool_choice = tool_choice.mode.value
-
-        # OpenCode Go's /v1/responses rejects every tool_choice except the default
-        # with HTTP 400 ('only "auto" is supported'), so reflect's required/named
-        # choices failed every turn. Omit the field there. A named choice stays
-        # practically forced: its tools list was already narrowed to that one tool.
-        # Keyed on the host, not the provider name — deployments reach it as
-        # ``openai-responses`` with a custom base_url, and native OpenAI on the
-        # same provider name does honour these values.
-        if is_opencode_host(self.base_url) and tool_choice.mode is not LLMToolChoiceMode.AUTO:
-            request_tool_choice = None
-
-        params: dict[str, Any] = {
-            "model": self.model,
-            "input": _messages_to_responses_input(messages),
-            "tools": responses_tools,
-            "store": False,
-        }
-        if request_tool_choice is not None:
-            params["tool_choice"] = request_tool_choice
-        if max_completion_tokens is not None:
-            params["max_output_tokens"] = max_completion_tokens
-        if temperature is not None and not is_reasoning_model:
-            params["temperature"] = temperature
-        # Only when the operator configured a level: unset means the model runs at the
-        # Responses API's own default effort rather than one Hindsight picked.
-        if is_reasoning_model and self.reasoning_effort is not None:
-            params["reasoning"] = {"effort": self.reasoning_effort}
-        if self.openai_service_tier:
-            params["service_tier"] = self.openai_service_tier
-        if self._config_extra_body:
-            params["extra_body"] = {**self._config_extra_body}
-
-        apply_bank_attribution(params)
-        apply_opencode_session(params, base_url=self.base_url)
-
-        def parse(response: Any) -> LLMToolCallResult:
-            self._raise_if_truncated(response)
-            usage = self._extract_usage(response)
-            duration = time.perf_counter() - start_time
-
-            tool_calls: list[LLMToolCall] = []
-            for item in getattr(response, "output", None) or []:
-                if getattr(item, "type", None) != "function_call":
-                    continue
-                raw_args = getattr(item, "arguments", "") or ""
-                try:
-                    arguments = json.loads(raw_args) if raw_args else {}
-                except json.JSONDecodeError:
-                    arguments = {"_raw": raw_args}
-                tool_calls.append(
-                    # `call_id` is present on every function-call item this branch selects.
-                    LLMToolCall(
-                        id=cast(str, getattr(item, "call_id", None)),
-                        name=getattr(item, "name", ""),
-                        arguments=arguments,
-                    )
-                )
-
-            content = response.output_text or None
-            finish_reason = "tool_calls" if tool_calls else getattr(response, "status", "completed")
-
-            self._record_success(
-                scope=scope,
-                usage=usage,
-                duration=duration,
-                span_messages=params["input"],
-                response_content=content,
-                finish_reason=finish_reason,
-                tool_calls_dict=(
-                    [{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in tool_calls]
-                    if tool_calls
-                    else None
-                ),
-            )
-
-            return LLMToolCallResult(
-                content=content,
-                tool_calls=tool_calls,
-                finish_reason=finish_reason,
-                input_tokens=usage.input_tokens,
-                output_tokens=usage.output_tokens,
-                cached_tokens=usage.cached_tokens,
-                thoughts_tokens=usage.thoughts_tokens,
-            )
 
         return await self._run_with_retries(
             params,

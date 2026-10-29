@@ -22,10 +22,7 @@ from typing import Any, Callable
 
 from hindsight_api.config import get_config
 from hindsight_api.engine.llm_interface import (
-    LLM_TOOL_CHOICE_AUTO,
     LLMInterface,
-    LLMToolChoice,
-    LLMToolChoiceMode,
     OutputTooLongError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
@@ -40,7 +37,7 @@ from hindsight_api.engine.providers.openai_compatible_llm import (
     visible_token_usage,
 )
 from hindsight_api.engine.remote_retry import is_transient_remote_error, jittered_backoff
-from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
@@ -311,7 +308,7 @@ class LiteLLMLLM(LLMInterface):
             return None
 
     # ── hooks for Router-style subclasses ────────────────────────────────────
-    # The retry+parse loop in call() / call_with_tools() is shared by every
+    # The retry+parse loop in call() is shared by every
     # LiteLLM-backed provider. Subclasses override the small surface below to
     # swap the completion fn (direct vs Router) and rename the deployment that
     # actually answered the request.
@@ -571,172 +568,6 @@ class LiteLLMLLM(LLMInterface):
         if last_exception:
             raise last_exception
         raise RuntimeError("LiteLLM call failed after all retries")
-
-    async def call_with_tools(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        max_completion_tokens: int | None = None,
-        temperature: float | None = None,
-        scope: str = "tools",
-        max_retries: int = 5,
-        initial_backoff: float = 1.0,
-        max_backoff: float = 30.0,
-        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
-        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> LLMToolCallResult:
-        start_time = time.perf_counter()
-
-        call_kwargs = self._build_common_kwargs(messages, max_completion_tokens, temperature)
-        call_kwargs["tools"] = tools
-        call_kwargs["tool_choice"] = (
-            {
-                "type": "function",
-                "function": {"name": tool_choice.selected_function_name},
-            }
-            if tool_choice.mode is LLMToolChoiceMode.NAMED
-            else tool_choice.mode.value
-        )
-
-        last_exception = None
-        for attempt in range(max_retries + 1):
-            try:
-                async with attempt_context() if attempt_context is not None else nullcontext():
-                    set_stage(f"llm.{self._stage_label}.tools.attempt={attempt + 1}/{max_retries + 1}")
-                    response = await asyncio.wait_for(
-                        self._acompletion(**call_kwargs),
-                        timeout=self.timeout,
-                    )
-                # Stash usage before the tool-call argument parse below, which
-                # can raise json.JSONDecodeError locally even though the provider
-                # already billed for these tokens; without this the error trace
-                # records 0/0 tokens (#2387). Mirrors call() and the anthropic/
-                # gemini call_with_tools paths so the litellm tool path (and the
-                # LiteLLMRouterLLM subclass that inherits this method) completes
-                # the #2396 usage-on-error coverage.
-                stash_response_usage(_usage_from_litellm_response(response))
-
-                choice = response.choices[0]
-                _raise_if_generation_failed(response, choice, provider=self.provider, model=self.model, scope=scope)
-                message = choice.message
-                content = message.content
-                finish_reason = choice.finish_reason
-                model_name = self._resolve_completion_model(response)
-
-                # Extract tool calls
-                tool_calls: list[LLMToolCall] = []
-                if message.tool_calls:
-                    for tc in message.tool_calls:
-                        arguments = tc.function.arguments
-                        if isinstance(arguments, str):
-                            arguments = json.loads(arguments)
-                        tool_calls.append(
-                            LLMToolCall(
-                                id=tc.id,
-                                name=tc.function.name,
-                                arguments=arguments,
-                            )
-                        )
-
-                # Extract usage
-                response_usage = _usage_from_litellm_response(response)
-                input_tokens = response_usage.input_tokens
-                output_tokens = response_usage.output_tokens
-                thoughts_tokens = response_usage.thoughts_tokens
-
-                # Record metrics
-                duration = time.perf_counter() - start_time
-                metrics = get_metrics_collector()
-                metrics.record_llm_call(
-                    provider=self.provider,
-                    model=model_name,
-                    scope=scope,
-                    duration=duration,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    success=True,
-                    cached_input_tokens=response_usage.cached_tokens,
-                    thoughts_tokens=thoughts_tokens,
-                )
-
-                # Record trace span
-                from hindsight_api.tracing import get_span_recorder
-
-                span_recorder = get_span_recorder()
-                tool_calls_dict = (
-                    [{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in tool_calls]
-                    if tool_calls
-                    else None
-                )
-                span_recorder.record_llm_call(
-                    provider=self.provider,
-                    model=model_name,
-                    scope=scope,
-                    messages=messages,
-                    response_content=content,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    duration=duration,
-                    finish_reason=finish_reason,
-                    error=None,
-                    tool_calls=tool_calls_dict,
-                    cached_tokens=response_usage.cached_tokens,
-                    thoughts_tokens=thoughts_tokens,
-                    served_by=_served_by(response),
-                )
-
-                return LLMToolCallResult(
-                    content=content,
-                    tool_calls=tool_calls,
-                    finish_reason=finish_reason or ("tool_calls" if tool_calls else "stop"),
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    cached_tokens=response_usage.cached_tokens,
-                    thoughts_tokens=thoughts_tokens,
-                )
-
-            except (TimeoutError, asyncio.TimeoutError, _litellm_timeout_exc()) as e:
-                # See ``call`` — hard cap so a hung completion cannot block
-                # forever and pin a worker slot / concurrency permit.
-                last_exception = e
-                exc_name = type(e).__name__
-                if attempt < max_retries:
-                    logger.warning(
-                        f"LiteLLM tool call exceeded timeout={self.timeout}s ({exc_name}, scope={scope}), retrying..."
-                    )
-                    await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
-                    continue
-                logger.error(
-                    f"LiteLLM tool call timed out after {self.timeout}s on {attempt + 1} attempts "
-                    f"({exc_name}, scope={scope})"
-                )
-                raise
-
-            except Exception as e:
-                # Diagnostic dump (opt-in) of the exact request behind any 4xx.
-                dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_kwargs)
-
-                last_exception = e
-                # Status-based, same as call() (#5009).
-                if attempt < max_retries and _is_retryable(e):
-                    if isinstance(e, ProviderResponseError):
-                        record_retried_attempt(
-                            provider=self.provider,
-                            model=self.model,
-                            scope=scope,
-                            messages=messages,
-                            error=e,
-                            started=start_time,
-                        )
-                    await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
-                    continue
-
-                logger.error(f"LiteLLM tool call error after {attempt + 1} attempts: {e}")
-                raise
-
-        if last_exception:
-            raise last_exception
-        raise RuntimeError("LiteLLM tool call failed after all retries")
 
     async def cleanup(self) -> None:
         """Clean up resources."""

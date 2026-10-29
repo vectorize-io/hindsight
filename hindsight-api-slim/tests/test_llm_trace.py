@@ -386,15 +386,18 @@ async def test_openai_reasoning_tokens_reach_success_and_error_traces(registered
 async def test_openai_tool_trace_keeps_cached_and_reasoning_usage(registered_recorder):
     """A successful tool-capable reply must expose both reported usage details in its trace."""
     llm = LLMProvider(provider="openai", api_key="test-key", base_url="https://example.test/v1", model="qwen")
-    response = _openai_response_with_usage("done")
+    response = _openai_response_with_usage('{"call": {"name": "done", "arguments": {}}}')
     response.usage.prompt_tokens = 100
     response.usage.completion_tokens = 80
     response.usage.total_tokens = 180
     response.usage.prompt_tokens_details.cached_tokens = 30
     response.usage.completion_tokens_details = SimpleNamespace(reasoning_tokens=60)
     llm._provider_impl._client.chat.completions.create = AsyncMock(return_value=response)
+    done = {"type": "function", "function": {"name": "done", "parameters": {"type": "object", "properties": {}}}}
 
-    await llm.call_with_tools(messages=[{"role": "user", "content": "answer"}], tools=[], scope="tools", max_retries=0)
+    await llm.call_with_tools(
+        messages=[{"role": "user", "content": "answer"}], tools=[done], scope="tools", max_retries=0
+    )
 
     assert len(registered_recorder.records) == 1
     trace = registered_recorder.records[0]

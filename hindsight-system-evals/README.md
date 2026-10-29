@@ -586,7 +586,7 @@ To A/B a server setting, `HINDSIGHT_EVAL_SET_<X>=v` reaches the server as
 `HINDSIGHT_API_<X>=v` (the server's environment is otherwise wiped):
 
 ```bash
-HINDSIGHT_EVAL_SET_REFLECT_PROMPT_CACHE_ENABLED=true uv run pytest evals/refresh-pages -k benchmark_cost
+HINDSIGHT_EVAL_SET_LLM_PROMPT_CACHE_ENABLED=false uv run pytest evals/refresh-pages -k benchmark_cost
 ```
 
 ## The corpus

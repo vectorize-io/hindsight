@@ -46,6 +46,7 @@ from hindsight_api.engine.llm_trace import (
 from hindsight_api.engine.llm_wrapper import create_llm_provider, requires_api_key
 from hindsight_api.engine.providers import xai_oauth_auth as auth_mod
 from hindsight_api.engine.providers import xai_oauth_llm as llm_mod
+from hindsight_api.engine.providers.tools_via_schema import ResponseSchema, schema_format
 from hindsight_api.engine.providers.xai_oauth_auth import (
     DEFAULT_CLIENT_ID,
     DEFAULT_SCOPE,
@@ -1237,15 +1238,6 @@ async def test_a_none_reasoning_effort_is_omitted_rather_than_sent(tmp_path, mon
     assert "reasoning_effort" not in llm._client.calls[0]["json"]
 
 
-async def test_a_none_reasoning_effort_is_also_omitted_from_a_tool_call(tmp_path, monkeypatch):
-    llm = _make_llm(tmp_path, monkeypatch, reasoning_effort="none")
-    tools = [{"type": "function", "function": {"name": "search", "parameters": {}}}]
-
-    await llm.call_with_tools(messages=[{"role": "user", "content": "hi"}], tools=tools, max_retries=0)
-
-    assert "reasoning_effort" not in llm._client.calls[0]["json"]
-
-
 # ===========================================================================
 # 8. Token store
 # ===========================================================================
@@ -1546,7 +1538,7 @@ def test_the_provider_specific_base_url_override_wins(tmp_path, monkeypatch):
 
 
 # ===========================================================================
-# 11. Structured output and tool calls
+# 11. Structured output
 # ===========================================================================
 
 
@@ -1599,36 +1591,28 @@ async def test_structured_output_keeps_a_fence_marker_inside_a_json_value(tmp_pa
     assert result.answer == "wrap it in ```json fences"
 
 
-async def test_call_with_tools_returns_proposed_tool_calls(tmp_path, monkeypatch):
-    reply = _FakeResponse(
-        200,
-        json.dumps(
-            {
-                "choices": [
-                    {
-                        "message": {
-                            "content": None,
-                            "tool_calls": [
-                                {"id": "call_1", "function": {"name": "search", "arguments": '{"q": "hi"}'}}
-                            ],
-                        },
-                        "finish_reason": "tool_calls",
-                    }
-                ],
-                "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
-            }
-        ),
+async def test_a_tool_turn_schema_is_sent_as_the_strict_response_format(tmp_path, monkeypatch):
+    """Reflect's tool turns go through ``call`` with a raw JSON schema; no tools are sent."""
+    schema = {
+        "type": "object",
+        "properties": {"q": {"type": "string"}},
+        "required": ["q"],
+        "additionalProperties": False,
+    }
+    llm = _make_llm(tmp_path, monkeypatch, replies=[_ok_reply(json.dumps({"q": "hi"}))])
+
+    result = await llm.call(
+        messages=[{"role": "user", "content": "hi"}],
+        response_format=schema_format(ResponseSchema(name="search", schema=schema)),
+        strict_schema=True,
+        skip_validation=True,
+        max_retries=0,
     )
-    llm = _make_llm(tmp_path, monkeypatch, replies=[reply])
-    tools = [{"type": "function", "function": {"name": "search", "parameters": {}}}]
 
-    result = await llm.call_with_tools(messages=[{"role": "user", "content": "hi"}], tools=tools, max_retries=0)
-
-    assert result.finish_reason == "tool_calls"
-    assert len(result.tool_calls) == 1
-    assert result.tool_calls[0].name == "search"
-    assert result.tool_calls[0].arguments == {"q": "hi"}
-    assert llm._client.calls[0]["json"]["tools"] == tools
+    body = llm._client.calls[0]["json"]
+    assert body["response_format"]["json_schema"]["schema"] == schema
+    assert not {"tools", "tool_choice"} & body.keys()
+    assert result.content == {"q": "hi"}
 
 
 async def test_an_empty_completion_is_retried_then_fails(tmp_path, monkeypatch):
@@ -1763,29 +1747,6 @@ async def test_a_400_retry_does_not_recycle_the_connection(tmp_path, monkeypatch
         await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=3)
 
     assert llm._client is original_client
-
-
-async def test_call_with_tools_also_recycles_the_connection_on_a_5xx(tmp_path, monkeypatch):
-    async def _no_sleep(_: float) -> None:
-        return None
-
-    monkeypatch.setattr(llm_mod.asyncio, "sleep", _no_sleep)
-    ok_reply = _FakeResponse(
-        200,
-        json.dumps({"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}),
-    )
-    llm = _make_llm(tmp_path, monkeypatch, replies=[_FakeResponse(503, "unavailable")])
-    first_client = llm._client
-    second_client = _FakeAsyncHttp([ok_reply])
-    llm._new_client = lambda: second_client  # type: ignore[method-assign]
-    tools = [{"type": "function", "function": {"name": "search", "parameters": {}}}]
-
-    result = await llm.call_with_tools(messages=[{"role": "user", "content": "hi"}], tools=tools, max_retries=1)
-
-    assert result.content == "ok"
-    assert llm._client is second_client
-    assert len(first_client.calls) == 1
-    assert len(second_client.calls) == 1
 
 
 async def test_recycling_closes_the_stale_client(tmp_path, monkeypatch):
@@ -1976,29 +1937,6 @@ async def test_a_transient_refresh_failure_is_retried_like_any_other_blip(tmp_pa
     assert (await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=2)).content == "recovered"
     assert len(attempts) == 2
     assert len(llm._client.calls) == 1
-
-
-async def test_a_transient_refresh_failure_is_retried_in_the_tool_loop(tmp_path, monkeypatch):
-    async def _no_sleep(_: float) -> None:
-        return None
-
-    monkeypatch.setattr(llm_mod.asyncio, "sleep", _no_sleep)
-    llm = _make_llm(tmp_path, monkeypatch, replies=[_ok_reply("recovered")])
-    attempts: list[float] = []
-
-    async def _flaky(min_ttl: float) -> str:
-        attempts.append(min_ttl)
-        if len(attempts) == 1:
-            raise XaiOAuthRefreshError("xai-oauth refresh network error: ClientConnectorError")
-        return ACCESS_TOKEN
-
-    llm._auth.get_access_token = _flaky  # type: ignore[method-assign]
-    tools = [{"type": "function", "function": {"name": "search", "parameters": {}}}]
-
-    result = await llm.call_with_tools(messages=[{"role": "user", "content": "hi"}], tools=tools, max_retries=2)
-
-    assert result.content == "recovered"
-    assert len(attempts) == 2
 
 
 async def test_a_login_required_credential_is_still_fatal_on_the_first_attempt(tmp_path, monkeypatch):

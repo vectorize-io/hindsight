@@ -1,9 +1,9 @@
-"""A model that rejects a forced tool_choice still gets its tool calls (#5738).
+"""A model that rejects a forced tool_choice still gets structured output (#5738).
 
-Claude Opus 5.5 and Sonnet 5.5 answer a named or ``any`` tool_choice with a 400. Reflect forces
-tools on its first steps and its closing ``done`` call, so without a fallback every reflect and
-mental-model refresh failed on those models; with HINDSIGHT_API_LLM_STRICT_SCHEMA on, every
-structured call (retain, consolidation) failed the same way.
+Claude Opus 5.5 and Sonnet 5.5 answer a named or ``any`` tool_choice with a 400. Strict
+structured output is a forced tool on Anthropic, so with HINDSIGHT_API_LLM_STRICT_SCHEMA on
+every structured call (retain, consolidation, reflect's tool turns) failed on those models;
+it now falls back to the schema in the prompt.
 """
 
 from dataclasses import dataclass, field
@@ -64,36 +64,6 @@ def _provider(responses: list) -> _Fake:
     provider._client = MagicMock()
     provider._client.messages.create = create
     return fake
-
-
-@pytest.mark.parametrize("choice", [_NAMED, _REQUIRED])
-async def test_rejected_forced_choice_is_resent_as_auto_and_remembered(choice):
-    rejection = _bad_request('tool_choice: type "tool" and "any" are not supported for this model.')
-    fake = _provider([rejection, _response(), _response()])
-    provider, sent = fake.provider, fake.sent
-
-    with patch("hindsight_api.engine.providers.anthropic_llm.get_metrics_collector"):
-        first = await provider.call_with_tools([{"role": "user", "content": "q"}], _TOOLS, tool_choice=choice)
-        second = await provider.call_with_tools([{"role": "user", "content": "q"}], _TOOLS, tool_choice=choice)
-
-    assert [tc.name for tc in first.tool_calls] == ["done"]
-    assert [tc.name for tc in second.tool_calls] == ["done"]
-    # The rejected request, its resend, then the next call asks with auto straight away.
-    assert [c["type"] for c in sent] == [sent[0]["type"], "auto", "auto"]
-    assert sent[0]["type"] in ("tool", "any")
-
-
-async def test_other_bad_requests_are_not_masked():
-    fake = _provider([_bad_request("messages: roles must alternate")])
-    provider, sent = fake.provider, fake.sent
-
-    with patch("hindsight_api.engine.providers.anthropic_llm.get_metrics_collector"):
-        with pytest.raises(BadRequestError):
-            await provider.call_with_tools(
-                [{"role": "user", "content": "q"}], _TOOLS, tool_choice=_NAMED, max_retries=0
-            )
-
-    assert [c["type"] for c in sent] == ["tool"]
 
 
 class _Decision(BaseModel):

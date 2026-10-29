@@ -119,6 +119,7 @@ from hindsight_client_api.models.bank_config_update import BankConfigUpdate
 
 from hindsight_system_evals import (
     AnswerOutcome,
+    Target,
     ask,
     build_page,
     evaluate,
@@ -130,11 +131,14 @@ from hindsight_system_evals import (
     wait_until_settled,
 )
 from hindsight_system_evals.corpus import HardQuestion
+from hindsight_system_evals.orchestration import CASES as FOLLOW_UP_CASES
+from hindsight_system_evals.orchestration import FollowUpCase, server_with_scripted_decision_model
 from hindsight_system_evals.pages import SettleFn
 from hindsight_system_evals.pages import facts as page_facts
 from hindsight_system_evals.report import RECORDED, EvalRecord, case_params
 
 log = logging.getLogger(__name__)
+
 
 # ── Corpus questions: precision, update, aggregation, no_overreach ───────────
 async def _run(client: Hindsight, bank_id: str, settled: SettleFn, question: HardQuestion) -> AnswerOutcome:
@@ -511,3 +515,42 @@ async def test_reflect_benchmark_coding_agent_decision_model(
     assert decision_s < agent_s, (
         f"with the decision model reflect took {decision_s:.1f}s (median), agent {agent_s:.1f}s"
     )
+
+
+# Full runs only: each case starts a server of its own.
+@pytest.mark.parametrize("case", case_params(FOLLOW_UP_CASES, minimum=()))
+async def test_reflect_follows_decision_model(target: Target, tmp_path: Path, case: FollowUpCase) -> None:
+    """Reflect runs the follow-up search the decision model asks for.
+
+    The decision model here always answers "the evidence answers part of the question", so a
+    decision-orchestrated reflect must write one more search after the first round. A model
+    that answers that forced turn with ``done`` instead skips it, and the stub hears one
+    verdict instead of two.
+    """
+    if target.is_remote:
+        pytest.skip("starts its own server, with a scripted decision model")
+    with server_with_scripted_decision_model(tmp_path / "server.log") as orchestrated:
+        client = Hindsight(base_url=orchestrated.server.url)
+        try:
+            bank = f"syseval-{case.id}"
+            await client.aretain_batch(bank_id=bank, items=[{"content": text} for text in case.facts])
+            await wait_until_settled(client, bank)
+            orchestrated.decision_model.reset()
+            await client.areflect(bank_id=bank, query=case.question, budget="low")
+            verdicts = len(orchestrated.decision_model.verdicts)
+        finally:
+            await client.aclose()
+    followed = verdicts >= 2
+    reason = "" if followed else f"the decision model asked for a follow-up search; reflect ran {verdicts - 1}"
+    RECORDED.append(
+        EvalRecord(
+            kind="reflect",
+            question_id=case.id,
+            category=case.category,
+            correct=followed,
+            hit_trap=False,
+            bank_id=bank,
+            reason=reason,
+        )
+    )
+    assert followed, f"{case.id}: {reason}"

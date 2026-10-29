@@ -254,86 +254,6 @@ TOOL_DONE_ANSWER = {
 }
 
 
-# Document mode: the answer IS the stored document, so the model emits its
-# structure and the markdown is rendered from it. Nothing the model writes is
-# ever parsed back into structure, which is the whole point — a document that is
-# generated as markdown and read back is a document that can be misread, and was
-# (#3361). See ``structured_doc`` for the schema this mirrors.
-#
-# Deliberately flat: an array of sections, each an array of block strings. No
-# union types, no ``oneOf`` — a tool schema goes to the provider verbatim and not
-# every provider accepts a discriminated union (Gemini rejects ``oneOf``), and a
-# shape the model can fill without thinking is a shape it fills correctly.
-#
-# The heading and blocks descriptions name two shapes models produced that break
-# later delta refreshes: an untitled section per list item (a third of replayed
-# benchmark pages had them), whose blocks the delta then addresses under the
-# heading they visually sit under; and a list split one item per block, which a
-# delta "rewriting the list" rewrites only its first item of.
-_DONE_DOCUMENT_PROPERTY = {
-    "type": "object",
-    "description": (
-        "Your response as a structured document. The markdown the user reads is rendered "
-        "from this — do NOT write a markdown document yourself."
-    ),
-    "properties": {
-        "sections": {
-            "type": "array",
-            "description": "The document's sections, in order.",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "heading": {
-                        "type": "string",
-                        "description": (
-                            "Heading text WITHOUT any leading '#'. Empty string ONLY for the first "
-                            "section, as an opening summary with no heading; every other section has a "
-                            "real heading. Several items under one heading (bugs, releases, components) "
-                            "are blocks of that ONE section, not untitled sections of their own."
-                        ),
-                    },
-                    "level": {
-                        "type": "integer",
-                        "description": "Heading level, 1-6. Use 2 unless the document needs deeper nesting.",
-                    },
-                    "blocks": {
-                        "type": "array",
-                        "description": (
-                            "The section's content, one entry per block: a single paragraph, a single "
-                            "list, a single table, or a single fenced code block. Never put two "
-                            "paragraphs in one entry, and never put a heading in one — headings are the "
-                            "'heading' field. A list is ONE entry holding all its items, never one entry "
-                            "per item. Within an entry, write the content as you would in a "
-                            "document: '- one\n- two' for a list, "
-                            "'| a | b |\n| --- | --- |\n| 1 | 2 |' for a table. " + NO_IDS_IN_TEXT_RULE
-                        ),
-                        "items": {"type": "string"},
-                    },
-                },
-                "required": ["heading", "level", "blocks"],
-            },
-        }
-    },
-    "required": ["sections"],
-}
-
-
-def _done_tool_for_document(base: dict) -> dict:
-    """Swap a done tool's free-text ``answer`` for a structured ``document``."""
-    tool = copy.deepcopy(base)
-    params = tool["function"]["parameters"]
-    params["properties"].pop("answer", None)
-    params["properties"]["document"] = _DONE_DOCUMENT_PROPERTY
-    params["required"] = ["document"] + [name for name in params.get("required", []) if name != "answer"]
-    tool["function"]["description"] = (
-        "Signal completion with your final answer, as a structured document. Use this when you have "
-        "gathered enough information to answer the question." + _DONE_SUFFICIENCY_GATE
-    )
-    return tool
-
-
-TOOL_DONE_DOCUMENT = _done_tool_for_document(TOOL_DONE_ANSWER)
-
 # The same document, written as markdown and split into sections by its headings
 # (``structured_doc.split_markdown``, lossless). For a forced done asked for through a
 # response schema: a model held to the grammar wrote the nested section array thinner
@@ -490,7 +410,6 @@ def get_reflect_tools(
     answer_as_document: bool = False,
     llm_output_language: str | None = None,
     answer_ready: bool = False,
-    document_as_markdown: bool = False,
 ) -> list[dict]:
     """
     Get the list of tools for the reflect agent.
@@ -515,8 +434,6 @@ def get_reflect_tools(
             markdown that gets persisted.
         llm_output_language: Configured output language. Swaps ``done``'s default
             answer-in-the-question's-language rule for a directive to write in it.
-        document_as_markdown: With ``answer_as_document``, have ``done`` take the
-            document as one ``markdown`` string instead of a section array.
         answer_ready: Offer ``answer_ready``, the stop signal (one ``answer_found``
             bool), for a reflect whose answer the closing step writes.
 
@@ -545,12 +462,12 @@ def get_reflect_tools(
     else:
         done_tool = TOOL_DONE_ANSWER
     if answer_as_document:
-        done_tool = (_done_tool_for_markdown_document if document_as_markdown else _done_tool_for_document)(done_tool)
+        done_tool = _done_tool_for_markdown_document(done_tool)
     if answer_ready:
         done_tool = copy.deepcopy(done_tool)
         form = ""
         if answer_as_document:
-            form = ", as a markdown document" if document_as_markdown else ", as a structured document"
+            form = ", as a markdown document"
         # Keeps the sufficiency gate: dropping it with the rest of the old description let the
         # closing answer infer a value the evidence did not state (system eval hq-absent-2024).
         done_tool["function"]["description"] = (

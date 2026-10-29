@@ -2,8 +2,8 @@
 
 OpenRouter returns this shape when an upstream endpoint dies mid-generation: HTTP 200,
 ``finish_reason="error"``, a choice-level ``error`` object and no output. Read as a normal
-reply it became "the model chose no tool", which reflect handles as model behaviour and
-skips the forced retrieval step instead of retrying the request.
+reply it became an empty answer (once "the model chose no tool", which reflect handled as
+model behaviour and skipped the forced retrieval step) instead of a retried request.
 """
 
 from unittest.mock import AsyncMock, patch
@@ -13,12 +13,10 @@ import pytest
 from litellm.litellm_core_utils.llm_response_utils.convert_dict_to_response import convert_to_model_response_object
 from openai._models import construct_type
 from openai.types.chat import ChatCompletion
-from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_REQUIRED
+
 from hindsight_api.engine.providers.litellm_llm import LiteLLMLLM
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM, ProviderResponseError
 from hindsight_api.tracing import LLMSpanRecorder, register_span_recorder, unregister_span_recorder
-
-_TOOLS = [{"type": "function", "function": {"name": "recall", "parameters": {"type": "object", "properties": {}}}}]
 
 
 def _llm() -> OpenAICompatibleLLM:
@@ -27,12 +25,8 @@ def _llm() -> OpenAICompatibleLLM:
     )
 
 
-def _completion(finish_reason: str, *, content: str | None = None, tool_call: bool = False) -> ChatCompletion:
+def _completion(finish_reason: str, *, content: str | None = None) -> ChatCompletion:
     message: dict = {"role": "assistant", "content": content}
-    if tool_call:
-        message["tool_calls"] = [
-            {"id": "c1", "type": "function", "function": {"name": "recall", "arguments": '{"query": "x"}'}}
-        ]
     choice: dict = {"index": 0, "finish_reason": finish_reason, "message": message}
     if finish_reason == "error":
         choice["error"] = {"code": 502, "message": "upstream connection reset"}
@@ -49,30 +43,12 @@ def _completion(finish_reason: str, *, content: str | None = None, tool_call: bo
 
 
 @pytest.mark.asyncio
-async def test_tool_call_retries_an_error_finish_then_returns_the_real_answer():
-    llm = _llm()
-    with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as create:
-        create.side_effect = [_completion("error"), _completion("tool_calls", tool_call=True)]
-        result = await llm.call_with_tools(
-            messages=[{"role": "user", "content": "q"}],
-            tools=_TOOLS,
-            tool_choice=LLM_TOOL_CHOICE_REQUIRED,
-            max_retries=1,
-            initial_backoff=0,
-        )
-    assert create.await_count == 2
-    assert [tc.name for tc in result.tool_calls] == ["recall"]
-
-
-@pytest.mark.asyncio
-async def test_tool_call_raises_instead_of_returning_an_empty_result_when_retries_run_out():
+async def test_raises_instead_of_returning_an_empty_result_when_retries_run_out():
     llm = _llm()
     with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as create:
         create.return_value = _completion("error")
         with pytest.raises(ProviderResponseError, match="finish_reason=error") as exc:
-            await llm.call_with_tools(
-                messages=[{"role": "user", "content": "q"}], tools=_TOOLS, max_retries=0, initial_backoff=0
-            )
+            await llm.call(messages=[{"role": "user", "content": "q"}], max_retries=0, initial_backoff=0)
     # The served upstream and its error reach the message, so the failure can be attributed.
     assert "SomeUpstream" in str(exc.value)
     assert "upstream connection reset" in str(exc.value)
@@ -105,10 +81,8 @@ async def test_a_retried_attempt_is_traced_with_its_upstream():
     llm = _llm()
     try:
         with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as create:
-            create.side_effect = [_completion("error"), _completion("tool_calls", tool_call=True)]
-            await llm.call_with_tools(
-                messages=[{"role": "user", "content": "q"}], tools=_TOOLS, max_retries=1, initial_backoff=0
-            )
+            create.side_effect = [_completion("error"), _completion("stop", content="Paris.")]
+            await llm.call(messages=[{"role": "user", "content": "q"}], max_retries=1, initial_backoff=0)
     finally:
         unregister_span_recorder(recorder)
     failed, succeeded = recorder.records
@@ -142,33 +116,18 @@ def test_span_carries_the_upstream_from_the_error():
     assert span.attributes["hindsight.provider.served_by"] == "SomeUpstream"
 
 
-def _litellm_completion(finish_reason: str, *, tool_call: bool = False) -> litellm.ModelResponse:
+def _litellm_completion(finish_reason: str) -> litellm.ModelResponse:
     """Built the way LiteLLM builds it, which rewrites finish_reason "error" to "stop"."""
-    raw = _completion(finish_reason, tool_call=tool_call).model_dump(mode="json")
+    raw = _completion(finish_reason).model_dump(mode="json")
     return convert_to_model_response_object(response_object=raw, model_response_object=litellm.ModelResponse())
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tools", [False, True])
-async def test_litellm_retries_an_error_finish_it_rewrote_to_stop(tools):
+async def test_litellm_retries_an_error_finish_it_rewrote_to_stop():
     llm = LiteLLMLLM(provider="litellm", api_key="unused", base_url="http://localhost:0/v1", model="m")
-    responses = [_litellm_completion("error"), _litellm_completion("tool_calls", tool_call=True)]
+    responses = [_litellm_completion("error")]
     assert responses[0].choices[0].finish_reason == "stop"
     llm._acompletion = AsyncMock(side_effect=responses)  # type: ignore[method-assign]
-    messages = [{"role": "user", "content": "q"}]
-    if tools:
-        recorder = _Recorder()
-        register_span_recorder(recorder)
-        try:
-            result = await llm.call_with_tools(messages=messages, tools=_TOOLS, max_retries=1, initial_backoff=0)
-        finally:
-            unregister_span_recorder(recorder)
-        assert [tc.name for tc in result.tool_calls] == ["recall"]
-        assert [(r["error"] is not None, r["served_by"]) for r in recorder.records] == [
-            (True, "SomeUpstream"),
-            (False, "SomeUpstream"),
-        ]
-    else:
-        with pytest.raises(ProviderResponseError, match="served_by=SomeUpstream"):
-            await llm.call(messages=messages, max_retries=0, initial_backoff=0)
-    assert llm._acompletion.await_count == (2 if tools else 1)
+    with pytest.raises(ProviderResponseError, match="served_by=SomeUpstream"):
+        await llm.call(messages=[{"role": "user", "content": "q"}], max_retries=0, initial_backoff=0)
+    assert llm._acompletion.await_count == 1

@@ -25,14 +25,11 @@ from typing import TYPE_CHECKING, Any, Callable
 from pydantic import ValidationError
 
 from hindsight_api.engine.llm_interface import (
-    LLM_TOOL_CHOICE_AUTO,
     LLMInterface,
-    LLMToolChoice,
-    LLMToolChoiceMode,
     ProviderUnavailableError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
-from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.response_models import LLMToolCall, TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
@@ -695,119 +692,6 @@ class GitHubCopilotLLM(LLMInterface):
                 await asyncio.sleep(backoff)
 
         raise RuntimeError("GitHub Copilot call failed after all retries")
-
-    async def call_with_tools(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        max_completion_tokens: int | None = None,
-        temperature: float | None = None,
-        scope: str = "tools",
-        max_retries: int = 5,
-        initial_backoff: float = 1.0,
-        max_backoff: float = 30.0,
-        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
-        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> LLMToolCallResult:
-        start_time = time.perf_counter()
-
-        for attempt in range(max_retries + 1):
-            try:
-                selected_tools = tools
-                system_suffix = ""
-                if tool_choice.mode is LLMToolChoiceMode.NONE:
-                    selected_tools = []
-                elif tool_choice.mode is LLMToolChoiceMode.NAMED:
-                    selected_name = tool_choice.selected_function_name
-                    selected_tools = [tool for tool in tools if tool.get("function", {}).get("name") == selected_name]
-                    if not selected_tools:
-                        raise ValueError(f"Requested GitHub Copilot tool {selected_name!r} is not available")
-                    system_suffix = f"You MUST call the {selected_name!r} tool. Do not answer with prose."
-                elif tool_choice.mode is LLMToolChoiceMode.REQUIRED:
-                    system_suffix = "You MUST call at least one available tool. Do not answer with prose."
-
-                sdk_tools = []
-                available_tools = []
-                for tool in selected_tools:
-                    function = tool.get("function", {})
-                    name = function.get("name", "")
-                    if not name:
-                        continue
-                    sdk_tools.append(
-                        self._terminal_tool(
-                            name=name,
-                            description=function.get("description", ""),
-                            parameters=function.get("parameters", {}),
-                        )
-                    )
-                    available_tools.append(f"custom:{name}")
-
-                async with attempt_context() if attempt_context is not None else nullcontext():
-                    set_stage(f"llm.github_copilot.tools.attempt={attempt + 1}/{max_retries + 1}")
-                    invocation = await self._invoke(
-                        messages=messages,
-                        sdk_tools=sdk_tools,
-                        available_tools=available_tools,
-                        system_suffix=system_suffix,
-                        timeout_seconds=self._timeout_seconds(),
-                    )
-
-                stash_response_usage(
-                    LLMResponseUsage(
-                        input_tokens=invocation.usage.input_tokens,
-                        output_tokens=invocation.usage.output_tokens,
-                        cached_tokens=invocation.usage.cached_tokens,
-                        thoughts_tokens=invocation.usage.thoughts_tokens,
-                    )
-                )
-
-                if tool_choice.mode is LLMToolChoiceMode.NAMED:
-                    selected_name = tool_choice.selected_function_name
-                    if not any(call.name == selected_name for call in invocation.tool_calls):
-                        raise RuntimeError(f"GitHub Copilot did not call the required {selected_name!r} tool")
-                elif tool_choice.mode is LLMToolChoiceMode.REQUIRED and not invocation.tool_calls:
-                    raise RuntimeError("GitHub Copilot did not call any tool when a tool call was required")
-
-                duration = time.perf_counter() - start_time
-                result = LLMToolCallResult(
-                    content=invocation.content or None,
-                    tool_calls=invocation.tool_calls,
-                    finish_reason="tool_calls" if invocation.tool_calls else invocation.finish_reason or "stop",
-                    input_tokens=invocation.usage.input_tokens,
-                    output_tokens=invocation.usage.output_tokens,
-                    cached_tokens=invocation.usage.cached_tokens,
-                    thoughts_tokens=invocation.usage.thoughts_tokens,
-                )
-                self._record_success(
-                    messages=messages,
-                    result=result,
-                    invocation=invocation,
-                    scope=scope,
-                    duration=duration,
-                )
-                return result
-            except Exception as error:
-                if _is_configuration_error(error):
-                    raise RuntimeError(f"GitHub Copilot rejected the request configuration: {error}") from error
-                if _is_authentication_error(error):
-                    raise RuntimeError(
-                        "GitHub Copilot authentication failed. Start Copilot CLI and sign in, "
-                        "or set COPILOT_GITHUB_TOKEN, GH_TOKEN, or GITHUB_TOKEN."
-                    ) from error
-                if _is_quota_error(error):
-                    raise RuntimeError(f"GitHub Copilot usage limit reached: {error}") from error
-                if attempt >= max_retries:
-                    raise
-                backoff = min(initial_backoff * (2**attempt), max_backoff)
-                logger.warning(
-                    "GitHub Copilot tool-call error (attempt %d/%d): %s",
-                    attempt + 1,
-                    max_retries + 1,
-                    error,
-                )
-                await asyncio.sleep(backoff)
-
-        raise RuntimeError("GitHub Copilot tool call failed after all retries")
 
     def _record_success(
         self,

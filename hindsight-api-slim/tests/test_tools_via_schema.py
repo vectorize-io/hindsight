@@ -1,25 +1,25 @@
-"""Reflect's tool calls through a response schema (HINDSIGHT_API_LLM_TOOLS_VIA_SCHEMA).
+"""Tool calls as replies to a response schema: the one way every provider makes them.
 
-Some OpenAI-compatible servers parse tool calls but do not enforce ``tool_choice``:
-vLLM's gemma4 parser skips the grammar for "required" and named choices. Reflect's
-forced steps then come back as the stop signal or prose, and its closing ``done`` as
-another tool. Such servers do enforce a response schema, so with the setting on a named
-choice is asked for in words and through its arguments' schema, and the JSON reply is
-handed back as the call. In document mode ``done`` then takes the page as markdown.
+``LLMProvider.call_with_tools`` never sends ``tools`` or ``tool_choice``. It replays the
+conversation as plain turns with the functions declared in the system prompt, asks for the
+turn's call in words, and holds the reply to a schema through the provider's ``call``: a
+named choice to that function's arguments, a free one to "one of the functions, with its
+arguments". The JSON reply is handed back as the call. In document mode ``done`` takes the
+page as markdown.
 """
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
-from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_REQUIRED, LLMToolChoice
-from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
+from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_REQUIRED, LLMToolChoice, OutputTooLongError
+from hindsight_api.engine.llm_wrapper import LLMProvider
 from hindsight_api.engine.reflect.agent import run_reflect_agent
 from hindsight_api.engine.reflect.prompts import build_system_prompt_for_tools
 from hindsight_api.engine.reflect.tools_schema import get_reflect_tools
-from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult
-from tests.test_reflect_agent import _StepCacheProvider, mock_functions  # noqa: F401 - the fixture
+from hindsight_api.engine.response_models import LLMCallResult, LLMToolCall, LLMToolCallResult, TokenUsage
+from tests.test_reflect_agent import _ScriptedProvider, mock_functions  # noqa: F401 - the fixture
 
 TOOLS = [
     {
@@ -45,48 +45,31 @@ TOOLS = [
 ]
 
 
-@pytest.fixture
-def via_schema(monkeypatch):
-    monkeypatch.setenv("HINDSIGHT_API_LLM_TOOLS_VIA_SCHEMA", "true")
+def _reply(content) -> LLMCallResult:
+    return LLMCallResult(content=content, usage=TokenUsage(input_tokens=100, output_tokens=20, total_tokens=120))
 
 
-def _response(content: str | None, tool_calls=None, finish_reason: str = "stop") -> MagicMock:
-    resp = MagicMock()
-    resp.usage.prompt_tokens = 100
-    resp.usage.completion_tokens = 20
-    resp.usage.total_tokens = 120
-    resp.usage.completion_tokens_details = None
-    resp.error = None
-    resp.model_dump.return_value = {}
-    resp.choices[0].finish_reason = finish_reason
-    resp.choices[0].message.content = content
-    resp.choices[0].message.tool_calls = tool_calls
-    return resp
+async def _call(tool_choice, *replies, messages=None):
+    llm = LLMProvider(provider="openai", api_key="k", base_url="http://vllm:8000/v1", model="gemma-4")
+    llm._provider_impl.call = AsyncMock(side_effect=list(replies))
+    result = await llm.call_with_tools(
+        messages=messages or [{"role": "user", "content": "What does the user prefer?"}],
+        tools=TOOLS,
+        tool_choice=tool_choice,
+        max_retries=0,
+    )
+    return result, llm._provider_impl.call
 
 
-async def _call(tool_choice, reply: MagicMock):
-    llm = OpenAICompatibleLLM(provider="openai", api_key="k", base_url="http://vllm:8000/v1", model="gemma-4")
-    with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as create:
-        create.return_value = reply
-        result = await llm.call_with_tools(
-            messages=[{"role": "user", "content": "What does the user prefer?"}],
-            tools=TOOLS,
-            tool_choice=tool_choice,
-            max_retries=0,
-        )
-        return result, create.call_args.kwargs
-
-
-class TestTheProvider:
+class TestTheCall:
     @pytest.mark.asyncio
-    async def test_a_named_choice_is_asked_for_through_its_arguments_schema(self, via_schema):
-        result, sent = await _call(LLMToolChoice.named("recall"), _response('{"query": "tooling preferences"}'))
+    async def test_a_named_choice_is_asked_for_through_its_arguments_schema(self):
+        result, call = await _call(LLMToolChoice.named("recall"), _reply({"query": "tooling preferences"}))
 
-        # Every tool stays declared, so the prompt keeps the prefix the earlier turns cached.
-        assert [t["function"]["name"] for t in sent["tools"]] == ["recall", "answer_ready"]
-        assert sent["tool_choice"] == "none"
-        schema = sent["response_format"]["json_schema"]["schema"]
-        assert sent["response_format"]["json_schema"]["strict"] is True
+        sent = call.await_args.kwargs
+        assert "tools" not in sent and "tool_choice" not in sent
+        assert sent["strict_schema"] is True and sent["skip_validation"] is True
+        schema = sent["response_format"].model_json_schema()
         # Strict: every property required, optional ones nullable. The reason goes last: written
         # first, it sent Gemma 4 into a query that never closed.
         assert list(schema["properties"]) == ["query", "reason"]
@@ -97,23 +80,25 @@ class TestTheProvider:
         # Asked for in words too: a schema on a reply nobody asked for gave degenerate arguments.
         ask = sent["messages"][-1]
         assert ask["role"] == "user" and "`recall`" in ask["content"] and "Search raw facts" in ask["content"]
+        # The functions are declared in the system prompt instead of as native tools.
+        assert sent["messages"][0]["role"] == "system" and '"name": "answer_ready"' in sent["messages"][0]["content"]
 
         assert [(c.name, c.arguments) for c in result.tool_calls] == [("recall", {"query": "tooling preferences"})]
         assert result.content is None
+        assert (result.input_tokens, result.output_tokens) == (100, 20)
 
     @pytest.mark.asyncio
-    async def test_an_unparseable_reply_rides_as_raw_arguments(self, via_schema):
-        result, _ = await _call(LLMToolChoice.named("recall"), _response('{"query": "cut of', finish_reason="length"))
+    async def test_an_unparseable_reply_rides_as_raw_arguments(self):
+        result, _ = await _call(LLMToolChoice.named("recall"), _reply('{"query": "cut of'))
         assert result.tool_calls[0].arguments == {"_raw": '{"query": "cut of'}
-        assert result.finish_reason == "length"
 
     @pytest.mark.asyncio
-    async def test_a_free_turn_is_one_of_the_tools_with_its_arguments(self, via_schema):
-        reply = '{"call": {"name": "recall", "arguments": {"query": "editors", "reason": null}}}'
-        result, sent = await _call(LLM_TOOL_CHOICE_REQUIRED, _response(reply))
+    async def test_a_free_turn_is_one_of_the_tools_with_its_arguments(self):
+        reply = {"call": {"name": "recall", "arguments": {"query": "editors", "reason": None}}}
+        result, call = await _call(LLM_TOOL_CHOICE_REQUIRED, _reply(reply))
 
-        assert sent["tool_choice"] == "none"
-        options = sent["response_format"]["json_schema"]["schema"]["properties"]["call"]["anyOf"]
+        sent = call.await_args.kwargs
+        options = sent["response_format"].model_json_schema()["properties"]["call"]["anyOf"]
         assert [o["properties"]["name"]["enum"] for o in options] == [["recall"], ["answer_ready"]]
         # Strict subset: an argument the tool left optional is nullable, and a null is dropped.
         assert options[0]["properties"]["arguments"]["properties"]["reason"]["type"] == ["string", "null"]
@@ -121,39 +106,49 @@ class TestTheProvider:
         assert [(c.name, c.arguments) for c in result.tool_calls] == [("recall", {"query": "editors"})]
 
     @pytest.mark.asyncio
-    async def test_a_reply_naming_no_call_is_a_turn_without_one(self, via_schema):
-        result, _ = await _call(LLM_TOOL_CHOICE_REQUIRED, _response('{"call": {}}'))
+    async def test_a_reply_naming_no_call_is_a_turn_without_one(self):
+        result, _ = await _call(LLM_TOOL_CHOICE_REQUIRED, _reply({"call": {}}))
         assert result.tool_calls == []
 
     @pytest.mark.asyncio
-    async def test_a_reply_cut_off_at_the_cap_is_sampled_once_more(self, via_schema):
-        llm = OpenAICompatibleLLM(provider="openai", api_key="k", base_url="http://vllm:8000/v1", model="gemma-4")
-        looped = _response('{"query": "owner owner owner owner', finish_reason="length")
-        with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as create:
-            create.side_effect = [looped, _response('{"query": "ranking service owner"}')]
-            result = await llm.call_with_tools(
-                messages=[{"role": "user", "content": "Who owns ranking?"}],
-                tools=TOOLS,
-                tool_choice=LLMToolChoice.named("recall"),
-                max_retries=0,
-            )
-        assert create.await_count == 2
+    async def test_a_reply_cut_off_at_the_cap_is_sampled_once_more(self):
+        result, call = await _call(
+            LLMToolChoice.named("recall"), OutputTooLongError("cap"), _reply({"query": "ranking service owner"})
+        )
+        assert call.await_count == 2
         assert result.tool_calls[0].arguments == {"query": "ranking service owner"}
 
     @pytest.mark.asyncio
-    async def test_off_by_default_a_named_choice_narrows_the_tools(self):
-        _, sent = await _call(LLMToolChoice.named("recall"), _response(None))
-        assert [t["function"]["name"] for t in sent["tools"]] == ["recall"]
-        assert sent["tool_choice"] == "required"
-        assert "response_format" not in sent
+    async def test_earlier_calls_and_results_are_replayed_as_plain_turns(self):
+        history = [
+            {"role": "system", "content": "You are reflect."},
+            {"role": "user", "content": "What does the user prefer?"},
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {"name": "recall", "arguments": '{"query": "tools"}'}}
+                ],
+            },
+            {"role": "tool", "tool_call_id": "c1", "content": '{"memories": []}'},
+        ]
+        _, call = await _call(
+            LLM_TOOL_CHOICE_REQUIRED, _reply({"call": {"name": "answer_ready", "arguments": {}}}), messages=history
+        )
+
+        sent = call.await_args.kwargs["messages"]
+        assert sent[0]["content"].startswith("You are reflect.")
+        assert sent[2] == {
+            "role": "assistant",
+            "content": json.dumps({"call": {"name": "recall", "arguments": {"query": "tools"}}}),
+        }
+        assert sent[3] == {"role": "user", "content": 'Result of `recall`:\n{"memories": []}'}
+        assert all(set(m) == {"role", "content"} for m in sent)
 
 
 class TestTheMarkdownDocument:
     def test_done_takes_markdown_then_the_cited_ids(self):
         done = next(
-            t
-            for t in get_reflect_tools(answer_as_document=True, answer_ready=True, document_as_markdown=True)
-            if t["function"]["name"] == "done"
+            t for t in get_reflect_tools(answer_as_document=True, answer_ready=True) if t["function"]["name"] == "done"
         )
         params = done["function"]["parameters"]
         # Field order is writing order under a schema: the citations come after the text.
@@ -165,17 +160,15 @@ class TestTheMarkdownDocument:
         assert "as a markdown document" in done["function"]["description"]
 
     def test_the_system_prompt_asks_for_markdown_and_not_for_sections(self):
-        prompt = build_system_prompt_for_tools(
-            {"name": "B", "mission": ""}, answer_as_document=True, document_as_markdown=True
-        )
+        prompt = build_system_prompt_for_tools({"name": "B", "mission": ""}, answer_as_document=True)
         assert "Output Format: Markdown Document" in prompt
         assert "'sections' array" not in prompt
 
 
 class TestTheRefresh:
     @pytest.mark.asyncio
-    async def test_a_page_written_as_markdown_is_stored_as_its_sections(self, via_schema, mock_functions):  # noqa: F811
-        provider = _StepCacheProvider(
+    async def test_a_page_written_as_markdown_is_stored_as_its_sections(self, mock_functions):  # noqa: F811
+        provider = _ScriptedProvider(
             scripted=[
                 LLMToolCallResult(
                     tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "q"})],
@@ -236,60 +229,3 @@ class TestTheRefresh:
         assert cited["memory_ids"]["items"]["enum"] == ["f1"]
         assert cited["observation_ids"]["maxItems"] == 0
         assert json.dumps(closing_done).count('"markdown"') >= 1
-
-
-class TestCodex:
-    @pytest.mark.asyncio
-    async def test_codex_asks_for_the_call_through_text_format(self, via_schema):
-        from hindsight_api.engine.providers.codex_llm import CodexLLM, _CodexStreamReply
-        from tests.codex_stream_stub import stub_codex_stream
-
-        with patch.object(CodexLLM, "_load_codex_auth", return_value=("token", "account")):
-            llm = CodexLLM(provider="openai-codex", api_key="x", base_url="https://chatgpt.com/backend-api", model="m")
-        response = MagicMock()
-        response.status_code = 200
-        response.raise_for_status.return_value = None
-        with stub_codex_stream(llm, response) as stream:
-            with patch.object(llm, "_parse_sse_tool_stream", new_callable=AsyncMock) as parse:
-                parse.return_value = _CodexStreamReply(text='{"query": "editors"}', tool_calls=[], usage=None)
-                result = await llm.call_with_tools(
-                    messages=[{"role": "user", "content": "What editors?"}],
-                    tools=TOOLS,
-                    tool_choice=LLMToolChoice.named("recall"),
-                    max_retries=0,
-                )
-            sent = stream.call_args.kwargs["json"]
-
-        assert sent["tool_choice"] == "none"
-        assert [t["name"] for t in sent["tools"]] == ["recall", "answer_ready"], "the tools stay declared"
-        assert sent["text"]["format"]["type"] == "json_schema"
-        assert sent["input"][-1]["content"].startswith("Call `recall` now")
-        assert [(c.name, c.arguments) for c in result.tool_calls] == [("recall", {"query": "editors"})]
-
-
-@pytest.mark.asyncio
-async def test_codex_reads_a_schema_reply_streamed_as_output_text(via_schema):
-    """The Responses API streams text as response.output_text.delta: the tool-call parser
-    used to read only response.text.delta, so every schema-held reply came back empty."""
-    from hindsight_api.engine.providers.codex_llm import CodexLLM
-    from tests.codex_stream_stub import CodexReply, stub_codex_stream
-
-    with (
-        patch.object(CodexLLM, "_load_codex_auth", return_value=("token", "account")),
-        patch.object(CodexLLM, "_load_codex_refresh_token", return_value=None),
-    ):
-        llm = CodexLLM(provider="openai-codex", api_key="x", base_url="https://chatgpt.com/backend-api", model="m")
-    stream = "".join(
-        "event: response.output_text.delta\ndata: "
-        + json.dumps({"type": "response.output_text.delta", "delta": d})
-        + "\n\n"
-        for d in ('{"query": ', '"editors"}')
-    )
-    with stub_codex_stream(llm, CodexReply(text=stream)):
-        result = await llm.call_with_tools(
-            messages=[{"role": "user", "content": "What editors?"}],
-            tools=TOOLS,
-            tool_choice=LLMToolChoice.named("recall"),
-            max_retries=0,
-        )
-    assert [(c.name, c.arguments) for c in result.tool_calls] == [("recall", {"query": "editors"})]

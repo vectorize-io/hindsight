@@ -3,7 +3,7 @@
 Uses the OAuth access token from OpenAI's "Sign in with ChatGPT" flow for
 open-source apps (see ``chatgpt_auth.py``) as the bearer credential for
 ``POST https://api.openai.com/v1/responses``. Request translation, structured
-output, tool calls and usage accounting are inherited from
+output and usage accounting are inherited from
 ``OpenAIResponsesLLM``; this class only changes the transport:
 
 - every request is sent with ``store: false`` and ``stream: true`` and is

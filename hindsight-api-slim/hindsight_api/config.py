@@ -191,7 +191,6 @@ ENV_LLM_STRICT_SCHEMA_RETAIN = "HINDSIGHT_API_LLM_STRICT_SCHEMA_RETAIN"
 ENV_LLM_STRICT_SCHEMA_REFLECT = "HINDSIGHT_API_LLM_STRICT_SCHEMA_REFLECT"
 ENV_LLM_STRICT_SCHEMA_CONSOLIDATION = "HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION"
 ENV_LLM_SUPPORTS_MAX_ITEMS = "HINDSIGHT_API_LLM_SUPPORTS_MAX_ITEMS"
-ENV_LLM_TOOLS_VIA_SCHEMA = "HINDSIGHT_API_LLM_TOOLS_VIA_SCHEMA"
 ENV_LLM_SUPPORTS_STRING_PATTERN = "HINDSIGHT_API_LLM_SUPPORTS_STRING_PATTERN"
 # Route structured output through a forced function tool instead of the
 # OpenAI-style ``response_format`` on the LiteLLM-backed providers (``litellm``,
@@ -1109,7 +1108,6 @@ ENV_REFLECT_USE_DECISION_MODEL = "HINDSIGHT_API_REFLECT_USE_DECISION_MODEL"
 ENV_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL"
 ENV_MENTAL_MODEL_DELTA_USE_DECISION_MODEL = "HINDSIGHT_API_MENTAL_MODEL_DELTA_USE_DECISION_MODEL"
 ENV_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES = "HINDSIGHT_API_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES"
-ENV_REFLECT_PROMPT_CACHE_ENABLED = "HINDSIGHT_API_REFLECT_PROMPT_CACHE_ENABLED"
 ENV_REFLECT_MAX_CONTEXT_TOKENS = "HINDSIGHT_API_REFLECT_MAX_CONTEXT_TOKENS"
 ENV_REFLECT_WALL_TIMEOUT = "HINDSIGHT_API_REFLECT_WALL_TIMEOUT"
 ENV_REFLECT_MISSION = "HINDSIGHT_API_REFLECT_MISSION"
@@ -1251,18 +1249,6 @@ DEFAULT_LLAMACPP_EXTRA_ARGS = None  # Space-separated extra CLI args for llama.c
 # on parse retries.
 DEFAULT_LLM_STRICT_SCHEMA = False
 DEFAULT_LLM_SUPPORTS_MAX_ITEMS = True
-
-# True = reflect's tool calls go through a response schema instead of tool_choice: the
-# tools stay declared, tool_choice is "none", and each turn's reply is held to a JSON
-# schema -- a forced turn to its tool's arguments, a free turn to "one of the tools with
-# its arguments" -- and handed back as the call (engine/providers/tools_via_schema.py).
-# For servers that parse tool calls but do not enforce tool_choice: vLLM's gemma4
-# parser skips the grammar for "required" and named choices, and the model then answers
-# a forced search with the stop signal, or the closing call with another tool. Also has
-# a knowledge page's ``done`` take the page as markdown rather than a nested section
-# array: under the grammar, the nested form came out thinner. OpenAI-compatible and
-# Codex providers.
-DEFAULT_LLM_TOOLS_VIA_SCHEMA = False
 
 # True = the backend accepts the JSON Schema ``pattern`` keyword in a
 # structured-output schema. Retain uses it to constrain occurred_start /
@@ -2116,18 +2102,6 @@ DEFAULT_MENTAL_MODEL_DELTA_USE_DECISION_MODEL = True
 # Above this many new memories a delta refresh searches instead of asking about each: every
 # question is one decision-model request carrying the whole page.
 DEFAULT_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES = 200
-# Step-by-step context caching for the reflect tool loop (Gemini). On by default;
-# requires the global prompt cache (HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED) to also
-# be on. Set false to force reflect to run uncached even when prompt caching is on.
-#
-# Worth knowing before tuning it: Gemini bills an explicit cache's CREATION at the
-# full input rate, plus storage per token-hour, and the rolling cache each step
-# builds is read by exactly one later call. Measured on the refresh-cost eval, that
-# came to ~4.6% MORE than sending the same tokens uncached (and cache creation alone
-# was 38% of the bill on gemini-3.8-flash), while Gemini's implicit caching gives the
-# same read discount with no create or storage fee. Left on pending a cache that is
-# read more than once — `false` is the cheaper setting on Gemini today.
-DEFAULT_REFLECT_PROMPT_CACHE_ENABLED = True
 DEFAULT_REFLECT_MAX_CONTEXT_TOKENS = 100_000  # Max accumulated context tokens before forcing final prompt
 DEFAULT_REFLECT_WALL_TIMEOUT = 300  # Wall-clock timeout in seconds for the entire reflect operation (5 minutes)
 DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS = -1  # Token budget for source facts in search_observations (-1 = disabled)
@@ -3340,10 +3314,6 @@ class HindsightConfig:
     llm_strict_schema_retain: bool
     llm_strict_schema_reflect: bool
     llm_strict_schema_consolidation: bool
-    llm_tools_via_schema: bool = field(
-        default=DEFAULT_LLM_TOOLS_VIA_SCHEMA,
-        kw_only=True,
-    )  # Tool calls through a response schema (see DEFAULT_LLM_TOOLS_VIA_SCHEMA)
     llm_supports_max_items: bool = field(
         default=DEFAULT_LLM_SUPPORTS_MAX_ITEMS,
         kw_only=True,
@@ -3876,7 +3846,6 @@ class HindsightConfig:
     mental_model_delta_gate_max_memories: int
     reflect_max_context_tokens: int
     reflect_wall_timeout: int
-    reflect_prompt_cache_enabled: bool
     reflect_max_completion_tokens: int | None
 
     # OpenTelemetry tracing configuration
@@ -4637,7 +4606,6 @@ class HindsightConfig:
             llm_strict_schema_retain=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_RETAIN),
             llm_strict_schema_reflect=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_REFLECT),
             llm_strict_schema_consolidation=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_CONSOLIDATION),
-            llm_tools_via_schema=_parse_boolean_env(ENV_LLM_TOOLS_VIA_SCHEMA, DEFAULT_LLM_TOOLS_VIA_SCHEMA),
             llm_supports_max_items=_parse_boolean_env(
                 ENV_LLM_SUPPORTS_MAX_ITEMS,
                 DEFAULT_LLM_SUPPORTS_MAX_ITEMS,
@@ -5638,10 +5606,6 @@ class HindsightConfig:
                 os.getenv(ENV_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES),
                 DEFAULT_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES,
             ),
-            reflect_prompt_cache_enabled=os.getenv(
-                ENV_REFLECT_PROMPT_CACHE_ENABLED, str(DEFAULT_REFLECT_PROMPT_CACHE_ENABLED)
-            ).lower()
-            in ("1", "true", "yes", "on"),
             reflect_max_context_tokens=int(
                 os.getenv(ENV_REFLECT_MAX_CONTEXT_TOKENS, str(DEFAULT_REFLECT_MAX_CONTEXT_TOKENS))
             ),

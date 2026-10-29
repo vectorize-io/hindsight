@@ -61,7 +61,7 @@ def install():
     install_llm_request_extension(None)
 
 
-def _openai_provider(seen: list[httpx.Request]) -> LLMProvider:
+def _openai_provider(seen: list[httpx.Request], content: str = "ok") -> LLMProvider:
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         return httpx.Response(
@@ -71,7 +71,9 @@ def _openai_provider(seen: list[httpx.Request]) -> LLMProvider:
                 "object": "chat.completion",
                 "created": 0,
                 "model": "m",
-                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+                "choices": [
+                    {"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}
+                ],
                 "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
             },
         )
@@ -86,7 +88,7 @@ def _openai_provider(seen: list[httpx.Request]) -> LLMProvider:
     return llm
 
 
-def _anthropic_provider(seen: list[httpx.Request]) -> LLMProvider:
+def _anthropic_provider(seen: list[httpx.Request], content: str = "ok") -> LLMProvider:
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         return httpx.Response(
@@ -96,7 +98,7 @@ def _anthropic_provider(seen: list[httpx.Request]) -> LLMProvider:
                 "type": "message",
                 "role": "assistant",
                 "model": "m",
-                "content": [{"type": "text", "text": "ok"}],
+                "content": [{"type": "text", "text": content}],
                 "stop_reason": "end_turn",
                 "usage": {"input_tokens": 1, "output_tokens": 1},
             },
@@ -207,13 +209,18 @@ async def test_litellm_puts_the_key_in_its_call_kwargs(install):
 # ── a whole different LLM ─────────────────────────────────────────────────────
 
 
-def _chat_completion(model: str) -> dict:
+# A tool turn's reply: tool calls go through ``call`` with a response schema, so the
+# reply is the call itself as JSON.
+_DONE_REPLY = '{"call": {"name": "done", "arguments": {}}}'
+
+
+def _chat_completion(model: str, content: str = "ok") -> dict:
     return {
         "id": "x",
         "object": "chat.completion",
         "created": 0,
         "model": model,
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
         "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
     }
 
@@ -251,7 +258,7 @@ async def test_tool_calls_go_to_the_chosen_llm_too(install):
 
     async def handler(request: web.Request) -> web.StreamResponse:
         received.append((await request.json())["model"])
-        return web.json_response(_chat_completion("bank-model"))
+        return web.json_response(_chat_completion("bank-model", _DONE_REPLY))
 
     server_seen: list[httpx.Request] = []
     async with stub_server(handler) as base_url:
@@ -399,7 +406,7 @@ async def test_prompt_cache_goes_to_the_chosen_llm(install):
 async def test_tool_calls_send_the_bank_key(install, make_provider):
     install(LLMRequestOverrides(api_key="alice-key"))
     seen: list[httpx.Request] = []
-    configured = make_provider(seen).with_config(_bank_config(), bank_id="alice", operation="reflect")
+    configured = make_provider(seen, _DONE_REPLY).with_config(_bank_config(), bank_id="alice", operation="reflect")
     await configured.call_with_tools(
         messages=[{"role": "user", "content": "hi"}],
         tools=[{"type": "function", "function": {"name": "done", "parameters": {"type": "object"}}}],

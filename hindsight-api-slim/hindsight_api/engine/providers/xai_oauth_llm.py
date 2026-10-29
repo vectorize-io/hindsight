@@ -59,7 +59,7 @@ from hindsight_api.config import (
 )
 from hindsight_api.engine.aiohttp_session import LoopLocalSession
 from hindsight_api.engine.cache_affinity import XAI_CONV_ID_HEADER, cache_affinity_id
-from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
+from hindsight_api.engine.llm_interface import LLMInterface
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_transport import build_aiohttp_timeout
 from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences
@@ -71,7 +71,7 @@ from hindsight_api.engine.providers.xai_oauth_auth import (
     XaiOAuthManager,
     XaiOAuthRefreshError,
 )
-from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
@@ -153,19 +153,8 @@ class _ChatUsage(BaseModel):
     completion_tokens_details: _CompletionTokensDetails | None = None
 
 
-class _ChatToolCallFunction(BaseModel):
-    name: str = ""
-    arguments: str = ""
-
-
-class _ChatToolCall(BaseModel):
-    id: str = ""
-    function: _ChatToolCallFunction = Field(default_factory=_ChatToolCallFunction)
-
-
 class _ChatMessage(BaseModel):
     content: str | None = None
-    tool_calls: list[_ChatToolCall] | None = None
 
 
 class _ChatChoice(BaseModel):
@@ -626,7 +615,7 @@ class XaiOAuthLLM(LLMInterface):
         max_completion_tokens: int | None,
         temperature: float | None,
     ) -> dict[str, Any]:
-        """Assemble the OpenAI-shaped request body common to both call paths."""
+        """Assemble the OpenAI-shaped request body."""
         body: dict[str, Any] = {
             "model": self.model,
             "messages": [dict(message) for message in messages],
@@ -837,116 +826,6 @@ class XaiOAuthLLM(LLMInterface):
             raise last_exception
         raise RuntimeError("xai-oauth call failed after all retries with no exception captured")
 
-    async def call_with_tools(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        max_completion_tokens: int | None = None,
-        temperature: float | None = None,
-        scope: str = "tools",
-        max_retries: int = 5,
-        initial_backoff: float = 1.0,
-        max_backoff: float = 30.0,
-        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
-        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> LLMToolCallResult:
-        """Make a non-streaming tool-calling completion.
-
-        One round of the agentic loop the caller drives: tool calls are returned
-        as proposed, never executed here.
-        """
-        start_time = time.perf_counter()
-        body = self._build_body(list(messages), max_completion_tokens, temperature)
-
-        if tool_choice.mode is LLMToolChoiceMode.NAMED:
-            forced_name = tool_choice.selected_function_name
-            filtered = [tool for tool in tools if tool.get("function", {}).get("name") == forced_name]
-            if len(filtered) != 1:
-                raise ValueError(
-                    f"Named tool_choice must reference exactly one declared tool; "
-                    f"found {len(filtered)} definitions for {forced_name!r}"
-                )
-            body["tools"] = filtered
-            body["tool_choice"] = LLMToolChoiceMode.REQUIRED.value
-        else:
-            body["tools"] = tools
-            if tool_choice.mode is not LLMToolChoiceMode.AUTO:
-                body["tool_choice"] = tool_choice.mode.value
-
-        last_exception: Exception | None = None
-        for attempt in range(max_retries + 1):
-            try:
-                async with attempt_context() if attempt_context is not None else nullcontext():
-                    set_stage(f"llm.xai_oauth.tools.attempt={attempt + 1}/{max_retries + 1}")
-                    completion = await self._request_completion(body, body["messages"])
-
-                counts = _token_counts(completion.usage)
-                stash_response_usage(
-                    LLMResponseUsage(
-                        input_tokens=counts.input_tokens,
-                        output_tokens=counts.output_tokens,
-                        cached_tokens=counts.cached_tokens,
-                        thoughts_tokens=counts.thoughts_tokens,
-                    )
-                )
-                choice = completion.choices[0] if completion.choices else None
-                message = choice.message if choice is not None else None
-                content = message.content if message is not None else None
-                tool_calls: list[LLMToolCall] = []
-                for raw_call in (message.tool_calls or []) if message is not None else []:
-                    try:
-                        arguments = json.loads(raw_call.function.arguments) if raw_call.function.arguments else {}
-                    except json.JSONDecodeError:
-                        # Keep the raw payload so the caller can see what the
-                        # model emitted rather than a silently empty tool call.
-                        arguments = {"_raw": raw_call.function.arguments}
-                    tool_calls.append(LLMToolCall(id=raw_call.id, name=raw_call.function.name, arguments=arguments))
-
-                duration = time.perf_counter() - start_time
-                finish_reason = choice.finish_reason if choice is not None else None
-                self._record_success(scope=scope, duration=duration, counts=counts)
-                self._record_span(
-                    scope=scope,
-                    messages=body["messages"],
-                    response_content=content,
-                    counts=counts,
-                    duration=duration,
-                    finish_reason=finish_reason,
-                    tool_calls=tool_calls,
-                )
-
-                return LLMToolCallResult(
-                    content=content,
-                    tool_calls=tool_calls,
-                    finish_reason=finish_reason,
-                    input_tokens=counts.input_tokens,
-                    output_tokens=counts.output_tokens,
-                    cached_tokens=counts.cached_tokens,
-                    thoughts_tokens=counts.thoughts_tokens,
-                )
-
-            except (_UpstreamStatusError, aiohttp.ClientError, XaiOAuthRefreshError, TimeoutError) as e:
-                last_exception = e
-                retryable = e.retryable if isinstance(e, _UpstreamStatusError) else True
-                if retryable and attempt < max_retries:
-                    if isinstance(e, _UpstreamStatusError) and e.status_code is not None and e.status_code >= 500:
-                        await self._recycle_client()
-                    logger.warning(
-                        "xai-oauth tool call error (attempt %d/%d, scope=%s): %s",
-                        attempt + 1,
-                        max_retries + 1,
-                        scope,
-                        e,
-                    )
-                    await asyncio.sleep(self._backoff_seconds(e, attempt, initial_backoff, max_backoff))
-                    continue
-                logger.error("xai-oauth tool call failed (scope=%s, attempt %d): %s", scope, attempt + 1, e)
-                raise
-
-        if last_exception:
-            raise last_exception
-        raise RuntimeError("xai-oauth tool call failed after all retries with no exception captured")
-
     async def cleanup(self) -> None:
         """Close every HTTP client and the credential manager's own client.
 
@@ -1036,7 +915,6 @@ class XaiOAuthLLM(LLMInterface):
         counts: _TokenCounts,
         duration: float,
         finish_reason: str | None,
-        tool_calls: list[LLMToolCall] | None = None,
     ) -> None:
         """Record the GenAI span. Best-effort, but never silently swallowed."""
         try:
@@ -1055,11 +933,6 @@ class XaiOAuthLLM(LLMInterface):
                 error=None,
                 cached_tokens=counts.cached_tokens,
                 thoughts_tokens=counts.thoughts_tokens,
-                tool_calls=(
-                    [{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in tool_calls]
-                    if tool_calls
-                    else None
-                ),
             )
         except Exception as span_error:
             # Tracing stays best-effort, but instrumentation bugs that would

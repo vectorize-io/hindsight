@@ -36,6 +36,7 @@ from ..provider_auth import requires_api_key as requires_api_key
 from .cache_affinity import parse_cache_affinity
 from .llm_interface import (
     LLM_TOOL_CHOICE_AUTO,
+    LLM_TOOL_CHOICE_REQUIRED,
     LLMInterface,
     LLMToolChoice,
     LLMToolChoiceMode,
@@ -1489,20 +1490,23 @@ class LLMProvider:
         max_retries: int | None = None,
         initial_backoff: float | None = None,
         max_backoff: float | None = None,
-        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
-        cached_prefix: str | None = None,
-        cached_prefix_message_count: int = 0,
+        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_REQUIRED,
     ) -> "LLMToolCallResult":
-        """Make an LLM call with tool calling — see ``_call_with_tools`` for the arguments.
+        """One turn of a tool-using conversation: the call the model makes next.
 
-        Like ``call``, an installed LLM request extension decides first how it is sent.
+        Made through ``call`` with a response schema, for every provider — no provider is
+        sent ``tools`` or ``tool_choice`` (see ``providers/tools_via_schema.py``). ``tool_choice``
+        names the function this turn must call, or leaves the model to pick one (``auto`` and
+        ``required`` both mean "exactly one"). ``messages`` may hold earlier calls
+        (``tool_calls`` on an assistant turn) and their results (``role: tool``).
         """
-        from ..extensions.llm_request import bind_llm_request
+        from .providers import tools_via_schema
+        from .providers.mock_llm import MockLLM
+        from .response_models import LLMToolCallResult
 
-        bound = await bind_llm_request(self)
-        receiver = bound.llm or self
-        try:
-            return await receiver._call_with_tools(
+        if isinstance(self._provider_impl, MockLLM):
+            # The test double scripts calls directly; it sends nothing anywhere.
+            return await self._call_with_tools(
                 messages=messages,
                 tools=tools,
                 max_completion_tokens=max_completion_tokens,
@@ -1512,13 +1516,44 @@ class LLMProvider:
                 initial_backoff=initial_backoff,
                 max_backoff=max_backoff,
                 tool_choice=tool_choice,
-                # A cache handle belongs to the LLM that created it; another LLM
-                # cannot read it, so a delegated call sends its prefix uncached.
-                cached_prefix=cached_prefix if receiver is self else None,
-                cached_prefix_message_count=cached_prefix_message_count if receiver is self else 0,
             )
-        finally:
-            bound.reset()
+        held = tools_via_schema.response_schema(tools, tool_choice)
+        text_messages = [
+            *tools_via_schema.as_text_messages(messages, tools),
+            {"role": "user", "content": tools_via_schema.turn_request(tools, tool_choice)},
+        ]
+        for attempt in range(2):
+            try:
+                result = await self.call(
+                    messages=text_messages,
+                    response_format=tools_via_schema.schema_format(held),
+                    max_completion_tokens=max_completion_tokens,
+                    temperature=temperature,
+                    scope=scope,
+                    max_retries=max_retries,
+                    initial_backoff=initial_backoff,
+                    max_backoff=max_backoff,
+                    skip_validation=True,
+                    strict_schema=True,
+                )
+                break
+            except OutputTooLongError:
+                # A held reply that loops (whitespace, a digit run) until the cap is a sampling
+                # accident: one more sample came back whole in every case measured on Gemma 4.
+                if attempt:
+                    raise
+                logger.warning(f"[{scope}] schema reply hit the token cap; sampling once more")
+        reply = result.content if isinstance(result.content, str) else json.dumps(result.content, ensure_ascii=False)
+        tool_calls = tools_via_schema.calls_from_reply(reply, tools, tool_choice)
+        return LLMToolCallResult(
+            content=None if tool_calls else reply,
+            tool_calls=tool_calls,
+            finish_reason="tool_calls" if tool_calls else "stop",
+            input_tokens=result.usage.input_tokens,
+            output_tokens=result.usage.output_tokens,
+            cached_tokens=result.usage.cached_tokens,
+            thoughts_tokens=result.usage.thoughts_tokens,
+        )
 
     async def _call_with_tools(
         self,
@@ -1531,11 +1566,9 @@ class LLMProvider:
         initial_backoff: float | None = None,
         max_backoff: float | None = None,
         tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
-        cached_prefix: str | None = None,
-        cached_prefix_message_count: int = 0,
     ) -> "LLMToolCallResult":
         """
-        Make an LLM API call with tool/function calling support.
+        The mock provider's scripted tool call, with the wrapper's permits and tracing.
 
         Args:
             messages: List of message dicts. Can include tool results with role='tool'.
@@ -1606,15 +1639,6 @@ class LLMProvider:
                     # `attempt=N` stamp (see call() above, #3002).
                     set_stage(base_stage)
 
-                # cached_prefix is only set for providers that returned a handle
-                # from get_or_create_cached_prefix() / create_incremental_cache();
-                # forward it (plus how many leading messages it covers) only when
-                # present so non-caching providers keep their signature.
-                cache_kwarg = (
-                    {"cached_prefix": cached_prefix, "cached_prefix_message_count": cached_prefix_message_count}
-                    if cached_prefix is not None
-                    else {}
-                )
                 try:
                     # Delegate to provider implementation
                     attempt_kwarg = {"attempt_context": lambda: _attempt_permits(scope)} if attempt_gated else {}
@@ -1628,7 +1652,6 @@ class LLMProvider:
                         initial_backoff=initial_backoff,
                         max_backoff=max_backoff,
                         tool_choice=tool_choice,
-                        **cache_kwarg,
                         **attempt_kwarg,
                     )
                 except Exception as e:

@@ -15,7 +15,6 @@ import re
 import time
 from contextlib import AbstractAsyncContextManager, nullcontext
 from contextvars import ContextVar
-from dataclasses import dataclass
 from typing import Any, Callable, cast
 
 from google import genai
@@ -23,17 +22,15 @@ from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 
 from hindsight_api.engine.llm_interface import (
-    LLM_TOOL_CHOICE_AUTO,
     LLMInterface,
-    LLMToolChoice,
-    LLMToolChoiceMode,
     ProviderContentPolicyError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
+from hindsight_api.engine.providers.tools_via_schema import SchemaFormat
 from hindsight_api.engine.remote_retry import jittered_backoff
-from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.structured_output import has_tagged_union, provider_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
@@ -43,16 +40,9 @@ from ..response_models import LLMCallResult
 logger = logging.getLogger(__name__)
 
 # Per-request Gemini safety settings override.
-# Set exclusively by ConfiguredLLMProvider.call() / call_with_tools() via token-based
+# Set exclusively by ConfiguredLLMProvider.call() via token-based
 # set/reset, so it is properly scoped to each individual LLM call and never leaks.
 _safety_settings_ctx: ContextVar[list | None] = ContextVar("gemini_safety_settings", default=None)
-
-# Google's documented placeholder for functionCall parts that never had a thought
-# signature (history transferred from another model, or injected by hand). Gemini 3
-# requires a signature on every functionCall part of the current turn.
-# https://ai.google.dev/gemini-api/docs/thought-signatures
-_SKIP_THOUGHT_SIGNATURE_VALIDATOR = b"skip_thought_signature_validator"
-
 
 # Vertex AI imports (optional)
 try:
@@ -184,104 +174,6 @@ def _to_gemini_parts(content: Any, genai_types: Any) -> list[Any]:
     return parts
 
 
-@dataclass(frozen=True)
-class _GeminiConversation:
-    """A message list converted to Gemini's request shape."""
-
-    system_instruction: str | None
-    contents: list["genai_types.Content"]
-
-
-def _convert_messages_to_gemini(msg_list: list[dict[str, Any]]) -> _GeminiConversation:
-    """Convert OpenAI-style messages to a Gemini (system_instruction, contents) pair.
-
-    Shared by ``call_with_tools`` (request body) and the incremental cache
-    builder so a cached prefix and the live request serialise turns identically —
-    any drift would fingerprint differently and defeat the cache. Consecutive
-    ``role="tool"`` messages are grouped into a single ``user`` Content with
-    multiple FunctionResponse parts, matching Gemini's multi-turn requirement.
-    """
-    system_instruction: str | None = None
-    gemini_contents: list[genai_types.Content] = []
-    pending_tool_names_by_call_id: dict[str, str] = {}
-    i = 0
-    while i < len(msg_list):
-        msg = msg_list[i]
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
-
-        if role != "tool" and pending_tool_names_by_call_id:
-            missing_ids = ", ".join(sorted(pending_tool_names_by_call_id))
-            raise ValueError(f"Gemini assistant tool calls require results before the next message: {missing_ids}")
-
-        if role == "system":
-            system_instruction = (system_instruction + "\n\n" + content) if system_instruction else content
-            i += 1
-        elif role == "tool":
-            parts = []
-            while i < len(msg_list) and msg_list[i].get("role") == "tool":
-                tool_msg = msg_list[i]
-                tool_content = tool_msg.get("content", "")
-                tool_call_id = tool_msg["tool_call_id"]
-                tool_name = pending_tool_names_by_call_id.pop(tool_call_id, None)
-                if tool_name is None:
-                    raise ValueError(f"Gemini tool result references unknown tool_call_id {tool_call_id!r}")
-                parts.append(
-                    genai_types.Part(
-                        function_response=genai_types.FunctionResponse(
-                            name=tool_name,
-                            response={"result": tool_content},
-                        )
-                    )
-                )
-                i += 1
-            if pending_tool_names_by_call_id:
-                missing_ids = ", ".join(sorted(pending_tool_names_by_call_id))
-                raise ValueError(f"Gemini assistant tool calls are missing results: {missing_ids}")
-            gemini_contents.append(genai_types.Content(role="user", parts=parts))
-        elif role == "assistant":
-            tool_calls_in_msg = msg.get("tool_calls", [])
-            if tool_calls_in_msg:
-                parts = []
-                if content:
-                    parts.append(genai_types.Part(text=content))
-                for tc in tool_calls_in_msg:
-                    tool_call_id = tc["id"]
-                    fn = tc["function"]
-                    fn_name = fn["name"]
-                    if tool_call_id in pending_tool_names_by_call_id:
-                        raise ValueError(
-                            f"Gemini assistant tool call id {tool_call_id!r} must be unique within its turn"
-                        )
-                    pending_tool_names_by_call_id[tool_call_id] = fn_name
-                    fn_args_str = fn.get("arguments", "{}")
-                    fn_args = parse_llm_json(fn_args_str)
-                    thought_signature = tc.get("thought_signature")
-                    fc_kwargs: dict[str, Any] = {"name": fn_name, "args": fn_args}
-                    part_kwargs: dict[str, Any] = {"function_call": genai_types.FunctionCall(**fc_kwargs)}
-                    if thought_signature:
-                        part_kwargs["thought_signature"] = base64.b64decode(thought_signature)
-                    else:
-                        # Tool calls replayed from another provider (failover mid tool loop)
-                        # carry no signature, and Gemini 3 rejects the turn with HTTP 400.
-                        # Google documents this literal as the bypass for exactly that case.
-                        part_kwargs["thought_signature"] = _SKIP_THOUGHT_SIGNATURE_VALIDATOR
-                    parts.append(genai_types.Part(**part_kwargs))
-                gemini_contents.append(genai_types.Content(role="model", parts=parts))
-            else:
-                gemini_contents.append(genai_types.Content(role="model", parts=[genai_types.Part(text=content)]))
-            i += 1
-        else:
-            gemini_contents.append(genai_types.Content(role="user", parts=[genai_types.Part(text=content)]))
-            i += 1
-
-    if pending_tool_names_by_call_id:
-        missing_ids = ", ".join(sorted(pending_tool_names_by_call_id))
-        raise ValueError(f"Gemini assistant tool calls are missing results: {missing_ids}")
-
-    return _GeminiConversation(system_instruction=system_instruction, contents=gemini_contents)
-
-
 # Fallback per-request deadline when the caller resolved no timeout. A safety net
 # for network hangs; valid slow responses are well under this.
 #: How many times a deadline abort is retried, over and above the API-error ladder.
@@ -293,21 +185,6 @@ def _convert_messages_to_gemini(msg_list: list[dict[str, Any]]) -> _GeminiConver
 _TIMEOUT_RETRIES = 2
 
 _DEFAULT_GEMINI_TIMEOUT = 90.0
-
-
-def _gemini_tool_config(tool_choice: LLMToolChoice) -> "genai_types.ToolConfig | None":
-    """The FunctionCallingConfig for an OpenAI-style tool choice; None for ``auto`` (the default)."""
-    if tool_choice.mode is LLMToolChoiceMode.REQUIRED:
-        return genai_types.ToolConfig(function_calling_config=genai_types.FunctionCallingConfig(mode="ANY"))
-    if tool_choice.mode is LLMToolChoiceMode.NAMED:
-        return genai_types.ToolConfig(
-            function_calling_config=genai_types.FunctionCallingConfig(
-                mode="ANY", allowed_function_names=[tool_choice.selected_function_name]
-            )
-        )
-    if tool_choice.mode is LLMToolChoiceMode.NONE:
-        return genai_types.ToolConfig(function_calling_config=genai_types.FunctionCallingConfig(mode="NONE"))
-    return None
 
 
 class GeminiLLM(LLMInterface):
@@ -565,9 +442,15 @@ class GeminiLLM(LLMInterface):
                 # ``oneOf`` + ``discriminator`` and ``types.Schema`` forbids both keys,
                 # so the SDK raises before the request leaves the process. Serializing
                 # it ourselves rewrites the union to the ``anyOf`` the SDK accepts.
-                config_kwargs["response_schema"] = (
-                    _gemini_dict_schema(response_format) if has_tagged_union(response_format) else response_format
-                )
+                if isinstance(response_format, type) and issubclass(response_format, SchemaFormat):
+                    # A raw JSON schema (a tool-using turn, see tools_via_schema) goes out as
+                    # full JSON Schema: ``response_schema`` is Gemini's OpenAPI subset, which
+                    # has no ``additionalProperties`` and no type lists for nullable fields.
+                    config_kwargs["response_json_schema"] = provider_json_schema(response_format)
+                else:
+                    config_kwargs["response_schema"] = (
+                        _gemini_dict_schema(response_format) if has_tagged_union(response_format) else response_format
+                    )
             if temperature is not None:
                 config_kwargs["temperature"] = temperature
             # Gemini's equivalent of OpenAI-style max_completion_tokens is max_output_tokens.
@@ -847,337 +730,6 @@ class GeminiLLM(LLMInterface):
             raise last_exception
         raise RuntimeError("Gemini call failed after all retries")
 
-    async def call_with_tools(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        max_completion_tokens: int | None = None,
-        temperature: float | None = None,
-        scope: str = "tools",
-        max_retries: int = 5,
-        initial_backoff: float = 1.0,
-        max_backoff: float = 30.0,
-        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
-        cached_prefix: str | None = None,
-        cached_prefix_message_count: int = 0,
-        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> LLMToolCallResult:
-        """
-        Make a Gemini/VertexAI API call with tool/function calling support.
-
-        Args:
-            messages: List of message dicts. Can include tool results with role='tool'.
-            tools: List of tool definitions in OpenAI format.
-            max_completion_tokens: Maximum tokens (mapped to Gemini's max_output_tokens).
-            temperature: Sampling temperature.
-            scope: Scope identifier for tracking.
-            max_retries: Maximum retry attempts.
-            initial_backoff: Initial backoff time in seconds.
-            max_backoff: Maximum backoff time in seconds.
-            tool_choice: Canonical tool-selection policy.
-            cached_prefix: Optional CachedContent resource name (from
-                ``GeminiCacheManager.get_or_create`` or ``create_incremental``).
-                When set, the system_instruction and tool definitions are assumed
-                to live in the cache; this call will skip resending them and
-                the cached prefix is billed at the cached-input rate. The
-                ``tools`` argument is still required (the caller may pass
-                an empty list when the cache holds them) so existing call
-                sites don't break.
-            cached_prefix_message_count: Number of leading ``messages`` already
-                baked into ``cached_prefix`` (the step-by-step reflect cache holds
-                a growing conversation prefix, not just system+tools). Only the
-                messages AFTER this index are sent as request contents — the rest
-                come from the cache and bill at the cached rate. 0 means the cache
-                holds only the static prefix (system+tools), so the full
-                conversation is still sent (legacy behaviour).
-
-        Returns:
-            LLMToolCallResult with content and/or tool_calls.
-        """
-        start_time = time.perf_counter()
-        using_cache = cached_prefix is not None
-
-        # Convert tools to Gemini format. While the cache is in use the tool
-        # definitions live in the CachedContent and the SDK rejects re-sending
-        # them alongside ``cached_content`` (see ``_build_tools_config``), but we
-        # still build them unconditionally so the cached-call-failed fallback —
-        # which drops the cache and re-sends prefix + tools inline — has real
-        # tools to send rather than an empty list.
-        gemini_tools = []
-        for tool in tools:
-            func = tool.get("function", {})
-            gemini_tools.append(
-                genai_types.Tool(
-                    function_declarations=[
-                        genai_types.FunctionDeclaration(
-                            name=func.get("name", ""),
-                            description=func.get("description", ""),
-                            parameters=func.get("parameters"),
-                        )
-                    ]
-                )
-            )
-
-        # Convert messages. ``system_instruction`` and the FULL contents are always
-        # computed: _build_tools_config omits system/tools from the request while
-        # the cache carries the prefix, but the cached-call-failed safety net must
-        # be able to re-send the whole prefix + tools inline.
-        converted = _convert_messages_to_gemini(list(messages))
-        system_instruction = converted.system_instruction
-        full_contents = converted.contents
-
-        # Step-by-step reflect cache: when the cache already holds the first
-        # ``cached_prefix_message_count`` messages, send ONLY the newer turns as
-        # request contents — the cached prefix supplies the rest at the cached
-        # rate. The split is always at a whole-turn boundary (the reflect loop
-        # advances the cache one completed turn at a time), so slicing the raw
-        # messages before conversion never splits a grouped tool turn.
-        if using_cache and cached_prefix_message_count > 0:
-            delta_contents = _convert_messages_to_gemini(list(messages)[cached_prefix_message_count:]).contents
-        else:
-            delta_contents = full_contents
-
-        # Apply safety settings: context var (per-request bank override) takes precedence over instance default
-        effective_safety_settings = _safety_settings_ctx.get()
-        if effective_safety_settings is None:
-            effective_safety_settings = self._safety_settings
-
-        # When using a cached prefix, the API rejects re-sending system_instruction,
-        # tools or tool_config alongside ``cached_content`` — the cache IS the
-        # prefix, and holds the tool choice it was created for (see
-        # ``create_incremental_cache``). Built as a closure so we can rebuild it
-        # WITHOUT the cache and retry inline if a stale/invalid cache makes the call fail.
-        def _build_tools_config(use_cache: bool) -> "genai_types.GenerateContentConfig":
-            # Seed with user-configured extra params; explicit settings below win.
-            config_kwargs: dict[str, Any] = dict(self._extra_body)
-            self._apply_service_tier(config_kwargs)
-            if use_cache:
-                config_kwargs["cached_content"] = cached_prefix
-            else:
-                config_kwargs["tools"] = gemini_tools
-                if system_instruction:
-                    config_kwargs["system_instruction"] = system_instruction
-            if temperature is not None:
-                config_kwargs["temperature"] = temperature
-            # See note in `call`: Gemini's max_output_tokens is the equivalent of
-            # OpenAI-style max_completion_tokens.
-            if max_completion_tokens is not None:
-                config_kwargs["max_output_tokens"] = max_completion_tokens
-
-            tool_config = _gemini_tool_config(tool_choice)
-            if tool_config is not None and not use_cache:
-                config_kwargs["tool_config"] = tool_config
-
-            if effective_safety_settings is not None:
-                config_kwargs["safety_settings"] = [
-                    genai_types.SafetySetting(category=s["category"], threshold=s["threshold"])
-                    for s in effective_safety_settings
-                ]
-            return genai_types.GenerateContentConfig(**config_kwargs)
-
-        cache_active = using_cache
-        config = _build_tools_config(cache_active)
-
-        last_exception = None
-        # Separate from `max_retries`, which is the API-error ladder — see
-        # _TIMEOUT_RETRIES for why a deadline abort gets its own small budget.
-        timeout_retries_left = _TIMEOUT_RETRIES
-        for attempt in range(max_retries + 1):
-            try:
-                # With the cache active, send only the un-cached tail (delta);
-                # on the uncached fallback path send the full conversation so the
-                # re-inlined system+tools prefix has its whole context.
-                active_contents = delta_contents if cache_active else full_contents
-                async with attempt_context() if attempt_context is not None else nullcontext():
-                    set_stage(f"llm.gemini.tools.attempt={attempt + 1}/{max_retries + 1}")
-                    response = await asyncio.wait_for(
-                        self._client.aio.models.generate_content(
-                            model=self.model,
-                            contents=cast("list", active_contents),
-                            config=config,
-                        ),
-                        timeout=self._request_timeout,
-                    )
-                stash_response_usage(_usage_from_gemini_response(response))
-
-                _raise_if_content_blocked(response)
-
-                # Extract content and tool calls
-                content = None
-                tool_calls: list[LLMToolCall] = []
-
-                if response.candidates and response.candidates[0].content:
-                    parts = response.candidates[0].content.parts
-                    if parts:
-                        for part in parts:
-                            if hasattr(part, "text") and part.text:
-                                content = part.text
-                            if hasattr(part, "function_call") and part.function_call:
-                                fc = part.function_call
-                                _raw_ts = getattr(part, "thought_signature", None)
-                                thought_signature = (
-                                    base64.b64encode(_raw_ts).decode("ascii") if isinstance(_raw_ts, bytes) else _raw_ts
-                                )
-                                tool_calls.append(
-                                    LLMToolCall(
-                                        id=f"gemini_{len(tool_calls)}",
-                                        # The SDK types the name optional; a function call always carries one.
-                                        name=cast(str, fc.name),
-                                        arguments=dict(fc.args) if fc.args else {},
-                                        thought_signature=thought_signature,
-                                    )
-                                )
-
-                finish_reason = "tool_calls" if tool_calls else "stop"
-
-                # Extract token usage. ``cached_content_token_count`` and
-                # ``thoughts_token_count`` are populated on the Gemini 2.5+
-                # family; absent fields are treated as 0.
-                input_tokens = 0
-                output_tokens = 0
-                cached_input_tokens = 0
-                thoughts_tokens = 0
-                if response.usage_metadata:
-                    input_tokens = response.usage_metadata.prompt_token_count or 0
-                    output_tokens = response.usage_metadata.candidates_token_count or 0
-                    cached_input_tokens = getattr(response.usage_metadata, "cached_content_token_count", 0) or 0
-                    thoughts_tokens = getattr(response.usage_metadata, "thoughts_token_count", 0) or 0
-
-                # Record metrics
-                duration = time.perf_counter() - start_time
-                metrics = get_metrics_collector()
-                metrics.record_llm_call(
-                    provider=self.provider,
-                    model=self.model,
-                    scope=scope,
-                    duration=duration,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    success=True,
-                    cached_input_tokens=cached_input_tokens,
-                    thoughts_tokens=thoughts_tokens,
-                )
-
-                # Record OpenTelemetry span
-                from hindsight_api.tracing import get_span_recorder
-
-                span_recorder = get_span_recorder()
-                # Convert LLMToolCall objects to dicts for span recording
-                tool_calls_dict = (
-                    [{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in tool_calls]
-                    if tool_calls
-                    else None
-                )
-                span_recorder.record_llm_call(
-                    provider=self.provider,
-                    model=self.model,
-                    scope=scope,
-                    messages=messages,
-                    response_content=content,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    duration=duration,
-                    finish_reason=finish_reason,
-                    error=None,
-                    tool_calls=tool_calls_dict,
-                    cached_tokens=cached_input_tokens,
-                    thoughts_tokens=thoughts_tokens,
-                )
-
-                return LLMToolCallResult(
-                    content=content,
-                    tool_calls=tool_calls,
-                    finish_reason=finish_reason,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    cached_tokens=cached_input_tokens,
-                    thoughts_tokens=thoughts_tokens,
-                )
-
-            except genai_errors.APIError as e:
-                # Cached-request safety net (see ``call``): a stale/invalid cache or
-                # a cache+tool_config conflict surfaces as a 400, a deleted or expired
-                # cache as a 403. Drop the cache, invalidate it for later operations,
-                # and retry THIS call inline with the prefix + tools re-sent. Caching
-                # must never break a call. Handled before the auth and 400 fail-fasts
-                # below so a recoverable cache error isn't mistaken for either.
-                if cache_active and e.code in (400, 403):
-                    logger.warning(f"Gemini cached tool call failed ({e.code}); retrying uncached. Reason: {str(e)}")
-                    if self._cache_manager is not None and cached_prefix is not None:
-                        self._cache_manager.invalidate(cached_prefix)
-                    cache_active = False
-                    config = _build_tools_config(cache_active)
-                    continue
-
-                # Fast fail on auth errors
-                if e.code in (401, 403):
-                    logger.error(f"Gemini auth error (HTTP {e.code}), not retrying: {str(e)}")
-                    raise
-
-                # Diagnostic dump of the exact request behind any 4xx. Forced on for a
-                # non-recoverable 400 so its content-free structural profile is always
-                # in the log on first occurrence; other 4xx dump only under the opt-in
-                # HINDSIGHT_API_LLM_DEBUG_DUMP_4XX flag.
-                dump_request_on_4xx(
-                    scope=scope,
-                    provider=self.provider,
-                    model=self.model,
-                    err=e,
-                    request=config,
-                    messages=active_contents,
-                    force=e.code == 400,
-                )
-
-                # HTTP 400 INVALID_ARGUMENT is a deterministic client-side rejection;
-                # now that the recoverable cache-400 is ruled out, retrying it — and
-                # the batch retry ladder above — just repeats an identical rejected
-                # call, so fail fast instead of burning the retry budget (#3256).
-                if e.code == 400:
-                    logger.error(f"Gemini rejected tool request (HTTP 400 INVALID_ARGUMENT), not retrying: {str(e)}")
-                    raise
-
-                # Retry on retryable errors
-                last_exception = e
-                if attempt < max_retries:
-                    backoff = min(initial_backoff * (2**attempt), max_backoff)
-                    await asyncio.sleep(backoff)
-                    continue
-                raise
-
-            except TimeoutError as e:
-                # The per-request deadline fired: this call produced nothing at all.
-                # That is the most transient failure there is — a healthy Gemini tool call
-                # answers in well under a second, so a stall is the provider dropping
-                # this one request and the retry almost always lands immediately.
-                # Before this, the generic handler below re-raised it and a stall was
-                # terminal: the caller paid the whole deadline and still got an error,
-                # which is how a single hung reflect iteration cost 120s and left the
-                # agent to answer from a degraded forced pass.
-                #
-                # A small fixed budget of such retries, tracked separately from the
-                # API-error ladder, so the worst case stays bounded arithmetic the
-                # operation's wall budget can be checked against (see _TIMEOUT_RETRIES).
-                # No backoff — the server never answered, so there is nothing to give
-                # room to, and the deadline already spent the time.
-                last_exception = e
-                if timeout_retries_left > 0 and attempt < max_retries:
-                    timeout_retries_left -= 1
-                    logger.warning(
-                        f"Gemini tool call hit its {self._request_timeout}s deadline with no response; "
-                        f"retrying ({timeout_retries_left} left)"
-                    )
-                    continue
-                logger.error(f"Gemini tool call hit its {self._request_timeout}s deadline; giving up")
-                raise
-
-            except Exception as e:
-                logger.error(f"Unexpected error during Gemini tool call: {type(e).__name__}: {str(e)}")
-                raise
-
-        if last_exception:
-            raise last_exception
-        raise RuntimeError("Gemini tool call failed")
-
     def supports_prompt_caching(self) -> bool:
         """True when explicit Gemini context caching is enabled for this instance.
 
@@ -1191,19 +743,12 @@ class GeminiLLM(LLMInterface):
         *,
         system_instruction: str,
         response_schema: Any | None = None,
-        tools: list[dict[str, Any]] | None = None,
     ) -> str | None:
         """Return a CachedContent resource name for the given prefix, or
         ``None`` if context caching is disabled, the provider doesn't
         support it, or Gemini rejects the create (prefix too small, etc.).
 
-        ``tools`` is the OpenAI-style tools list; pass it when caching a
-        prefix that will be used by ``call_with_tools()``. The fingerprint
-        includes the tool definitions so a loop that swaps a tool gets a
-        fresh cache automatically.
-
-        Callers pass the returned name to ``call(cached_prefix=...)``
-        or ``call_with_tools(cached_prefix=...)`` and treat ``None``
+        Callers pass the returned name to ``call(cached_prefix=...)`` and treat ``None``
         as "cache unavailable — use the normal path". That fallback is
         essential: the system must continue to work if caching is disabled,
         if Gemini's caching API has an outage, or if the prefix is below
@@ -1223,64 +768,7 @@ class GeminiLLM(LLMInterface):
             model=self.model,
             system_instruction=system_instruction,
             response_schema=response_schema,
-            tools=tools,
         )
-
-    # ── Step-by-step incremental prompt caching (reflect tool loop) ──────────
-
-    def supports_incremental_prompt_cache(self) -> bool:
-        """True when explicit caching is on — the reflect loop can then roll a
-        per-step CachedContent that grows with the conversation."""
-        return self._prompt_cache_enabled
-
-    def _ensure_cache_manager(self) -> Any:
-        if self._cache_manager is None:
-            from hindsight_api.engine.providers.gemini_cache import GeminiCacheManager
-
-            self._cache_manager = GeminiCacheManager(self._client)
-        return self._cache_manager
-
-    async def create_incremental_cache(
-        self,
-        *,
-        session_id: str,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
-        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
-    ) -> str | None:
-        """Cache ``system + tools + messages`` as a conversation prefix and return
-        its resource name (or ``None`` — caller falls back to an uncached call).
-
-        ``tool_choice`` is stored in the cache: Gemini rejects ``tool_config`` on a
-        request that uses ``cached_content`` (400 "CachedContent can not be used
-        with ... tool_config"), so the turns that use this cache get it from here.
-
-        The reflect loop calls this once per step with the growing message list so
-        each step's cache entirely contains the previous step's input; the next
-        model turn then references it and re-sends only its own delta. Caches are
-        tracked under ``session_id`` and torn down by ``delete_cache_session``.
-        """
-        if not self._prompt_cache_enabled or self._client is None:
-            return None
-        converted = _convert_messages_to_gemini(list(messages))
-        return await self._ensure_cache_manager().create_incremental(
-            session_id=session_id,
-            model=self.model,
-            system_instruction=converted.system_instruction or "",
-            contents=converted.contents,
-            tools=tools,
-            tool_config=_gemini_tool_config(tool_choice),
-        )
-
-    async def delete_cached_prefix(self, name: str) -> None:
-        """Best-effort delete of a single CachedContent (superseded reflect step)."""
-        if self._cache_manager is not None:
-            await self._cache_manager.delete(name)
-
-    async def delete_cache_session(self, session_id: str) -> None:
-        """Tear down every CachedContent created for a reflect session."""
-        if self._cache_manager is not None:
-            await self._cache_manager.delete_session(session_id)
 
     # ── Batch API (Gemini API only — not Vertex AI) ─────────────────────────
     #

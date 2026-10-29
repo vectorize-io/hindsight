@@ -1,20 +1,19 @@
-"""Tool calling through a response schema instead of ``tool_choice`` (HINDSIGHT_API_LLM_TOOLS_VIA_SCHEMA).
+"""Tool calling, for every provider: a turn's call is the reply to a response schema.
 
-The model never makes a native tool call. The tools stay declared, so it reads their
-names, descriptions and parameters as usual, but ``tool_choice`` is "none" and every
-turn's reply is held to a JSON schema: a forced (named) turn to that tool's arguments,
-a free ("required") turn to "one of the tools, with its arguments". The reply is then
-handed back as the call, so callers see ordinary tool calls.
+No provider is ever sent ``tools`` or ``tool_choice``. The functions are described in the
+system prompt, the turn asks for its call in words, and the reply is held to a JSON schema:
+a forced (named) turn to that function's arguments, a free ("required") turn to "one of the
+functions, with its arguments". The reply is handed back as an ordinary ``LLMToolCall``, so
+callers see tool calls as before. The conversation's earlier calls and their results are
+replayed as plain assistant and user turns.
 
-Why: a server can parse tool calls without enforcing ``tool_choice`` -- vLLM's gemma4
-parser skips the grammar for "required" and named choices -- and a small model then
-answers a forced search with the stop signal (75% of reflect's forced steps on Gemma 4)
-or a forced ``done`` with another tool. A response schema is what such servers do
-enforce. A turn is also asked for in words: a schema imposed on a reply the
-conversation never asked for gave degenerate arguments.
-
-Shared by the providers that implement it (OpenAI-compatible, Codex): the schema and
-the reply are provider-neutral, only the transport differs.
+Why one way, and this one: a response schema is the one thing every provider Hindsight
+supports enforces, while native ``tool_choice`` is not — vLLM's gemma4 parser parses tool
+calls but skips the grammar for "required" and named choices, and a small model then
+answered a forced search with the stop signal (75% of reflect's forced steps on Gemma 4) or a
+forced ``done`` with another tool. Small models had a long history of tool-calling quirks
+per provider; a model that can follow a schema is now all reflect asks for. A schema imposed
+on a reply the conversation never asked for gave degenerate arguments, hence the turn request.
 """
 
 from __future__ import annotations
@@ -170,3 +169,76 @@ def calls_from_reply(content: str | None, tools: list[dict[str, Any]], tool_choi
     else:
         arguments = {k: v for k, v in arguments.items() if v is not None}
     return [LLMToolCall(id=f"call_{name}_{uuid.uuid4().hex[:12]}", name=name, arguments=arguments)]
+
+
+class SchemaFormat:
+    """A raw JSON schema passed where providers take a Pydantic response model.
+
+    Providers read a response model through ``model_json_schema`` (via
+    ``structured_output``), ``__name__`` and ``model_validate``; this answers all three, so
+    every provider's structured-output path carries the schema unchanged. Built per turn by
+    ``schema_format``.
+    """
+
+    schema: dict[str, Any]
+
+    @classmethod
+    def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return copy.deepcopy(cls.schema)
+
+    @classmethod
+    def model_validate(cls, value: Any) -> Any:
+        return value
+
+
+def schema_format(held: ResponseSchema) -> type[SchemaFormat]:
+    return type(held.name, (SchemaFormat,), {"schema": held.schema})
+
+
+def _declarations(tools: list[dict[str, Any]]) -> str:
+    functions = [{k: v for k, v in _function(t).items() if k in ("name", "description", "parameters")} for t in tools]
+    return "## Functions\n\nYou act by calling these functions:\n\n" + json.dumps(
+        functions, ensure_ascii=False, indent=1
+    )
+
+
+def as_text_messages(messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The conversation as plain role/content turns, with the functions declared in the system prompt.
+
+    An earlier call is the assistant's reply as it was written (``{"call": {...}}``); its result
+    is a user turn naming the function. Turns are not merged, so the prefix of a longer
+    conversation renders to the prefix of its text.
+    """
+    names: dict[str, str] = {}
+    out: list[dict[str, Any]] = []
+    for message in messages:
+        role = message.get("role")
+        if role == "assistant" and message.get("tool_calls"):
+            calls = []
+            for call in message["tool_calls"]:
+                function = call.get("function", call)
+                names[call.get("id", "")] = function["name"]
+                arguments = function.get("arguments")
+                if isinstance(arguments, str):
+                    try:
+                        arguments = json.loads(arguments)
+                    except json.JSONDecodeError:
+                        pass
+                calls.append(
+                    json.dumps({"call": {"name": function["name"], "arguments": arguments}}, ensure_ascii=False)
+                )
+            text = "\n".join(calls)
+            if message.get("content"):
+                text = f"{message['content']}\n{text}"
+            out.append({"role": "assistant", "content": text})
+        elif role == "tool":
+            name = message.get("name") or names.get(message.get("tool_call_id", ""), "the function")
+            out.append({"role": "user", "content": f"Result of `{name}`:\n{message.get('content') or ''}"})
+        else:
+            out.append({k: v for k, v in message.items() if k in ("role", "content")})
+    declarations = _declarations(tools)
+    if out and out[0].get("role") == "system":
+        out[0] = {"role": "system", "content": f"{out[0].get('content') or ''}\n\n{declarations}"}
+    else:
+        out.insert(0, {"role": "system", "content": declarations})
+    return out
