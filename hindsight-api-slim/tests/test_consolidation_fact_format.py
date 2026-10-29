@@ -284,9 +284,18 @@ async def test_the_prompt_uses_short_ids_oldest_first_and_marks_later_observatio
     def at(day: int) -> datetime:
         return datetime(2026, 10, day, tzinfo=timezone.utc)
 
-    observation = SimpleNamespace(
-        id="o-fav", text=POOL["o-fav"], occurred_start=None, occurred_end=None, mentioned_at=at(20), source_fact_ids=[]
-    )
+    def observation(oid: str, text: str, day: int) -> SimpleNamespace:
+        return SimpleNamespace(
+            id=oid, text=text, occurred_start=None, occurred_end=None, mentioned_at=at(day), source_fact_ids=[]
+        )
+
+    # Facts are stated on day 10 (f-old) and 25 (f-new). O1 is in f-old's closest list and later
+    # than it; O2 is later than every fact; O3 is later than f-old but neither: unmarked.
+    pool = [
+        observation("o-fav", POOL["o-fav"], 20),
+        observation("o-lang", "The user codes in Rust.", 28),
+        observation("o-city", "The user lives in Lisbon.", 15),
+    ]
     sent: dict[str, Any] = {}
 
     class _LLM:
@@ -297,13 +306,11 @@ async def test_the_prompt_uses_short_ids_oldest_first_and_marks_later_observatio
                     {
                         "fact_id": "F1",
                         "kind": "lasting",
-                        "existing": [{"observation_id": "O1", "effect": "changes", "text": "Before, Vue."}],
-                        "adds": "no",
-                    },
-                    {
-                        "fact_id": "F2",
-                        "kind": "lasting",
-                        "existing": [{"observation_id": "O1", "effect": "changes", "text": "Now React."}],
+                        "existing": [
+                            {"observation_id": "O1", "effect": "changes", "text": "Before, Vue."},
+                            {"observation_id": "O2", "effect": "changes", "text": "Before, Go."},
+                            {"observation_id": "O3", "effect": "changes", "text": "The user lives in Rome."},
+                        ],
                         "adds": "no",
                     },
                 ]
@@ -326,7 +333,7 @@ async def test_the_prompt_uses_short_ids_oldest_first_and_marks_later_observatio
     result = await _consolidate_batch_with_llm(
         _LLM(),
         memories,
-        [observation],
+        pool,
         {},
         config,
         remaining_observation_slots=0,
@@ -343,10 +350,14 @@ async def test_the_prompt_uses_short_ids_oldest_first_and_marks_later_observatio
     )
     assert "closest existing observations: O1\n" in user + "\n"  # F2 is the more recent: unmarked
     assert '"id": "O1"' in user
-    # The answer's short ids come back as the real ones. F1 was marked older than O1, so its change
-    # is an earlier state added after the text; F2, the newer, then rewrites it.
+    assert '"id": "O2"' in user and '"newer_than_input_facts": true' in user
+    # The answer's short ids come back as the real ones. Where the prompt said the observation is
+    # newer (closest-list mark, or newer than every fact), the older fact's change is its earlier
+    # state, added after the text; where it did not, the observation keeps its text.
     assert [(u.observation_id, u.source_fact_ids, u.text) for u in result.updates] == [
-        ("o-fav", ["f-old", "f-new"], "Now React.")
+        ("o-fav", ["f-old"], f"{POOL['o-fav']} Before, Vue."),
+        ("o-lang", ["f-old"], "The user codes in Rust. Before, Go."),
+        ("o-city", ["f-old"], "The user lives in Lisbon."),
     ]
     assert sent["messages"][0]["content"] == build_consolidation_system_prompt()
     # A full scope is told in the answer's own terms: no `new` sentences.
