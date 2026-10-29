@@ -166,6 +166,7 @@ include = "Flattened into --include-chunks / --chunk-max-tokens (facts are alway
 tag_groups = "Complex nested tag filter not yet exposed in the CLI; use --tags / --tags-match for simple cases."
 min_scores = "Complex nested per-stage score floors (semantic/keyword/reranker/final) not yet exposed in the CLI."
 temporal_window = "Flattened into --window-start / --window-end on `memory recall`."
+rerank = "Per-call override of the bank's recall_decision_model_prune / _dedup; operators set those once per bank (config API / control plane) rather than per CLI invocation."
 
 [fields.reflect]
 include = "Flattened into --include-facts and related flags."
