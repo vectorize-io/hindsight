@@ -1,12 +1,15 @@
 """Recall's prune and dedup reach the reranker: the request wins, then the bank, then the server."""
 
+import asyncio
 import uuid
 
 import numpy as np
 import pytest
 
 from hindsight_api import MemoryEngine, RequestContext
-from hindsight_api.engine.search.reranking import RerankResult
+from hindsight_api.engine.cross_encoder import CrossEncoderModel
+from hindsight_api.engine.search.reranking import CrossEncoderReranker, RerankResult
+from hindsight_api.engine.search.types import MergedCandidate, RetrievalResult
 
 RC = RequestContext(tenant_id="default")
 
@@ -81,3 +84,68 @@ async def test_dedup_reads_the_candidates_embeddings(memory_no_llm_verify: Memor
 
     monkeypatch.setattr(memories.get_memories(), "unit_embeddings", broken)
     assert await engine._candidate_embeddings(bank_id, [a, b]) is None
+
+
+class _CrossEncoder(CrossEncoderModel):
+    """A plain cross-encoder: it only orders, and scores the last candidate 0.0."""
+
+    @property
+    def provider_name(self) -> str:
+        return "local"
+
+    async def initialize(self) -> None:
+        pass
+
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        return [(len(pairs) - 1 - i) / len(pairs) for i in range(len(pairs))]
+
+
+def _candidate(unit_id: str, text: str) -> MergedCandidate:
+    return MergedCandidate(
+        retrieval=RetrievalResult(id=unit_id, text=text, fact_type="world"), rrf_score=0.0, source_ranks={}
+    )
+
+
+async def test_a_reranker_without_prune_or_dedup_ignores_them():
+    """Asked of a cross-encoder, prune and dedup change nothing: a candidate scored 0.0 and a
+    repeated text both stay, in the same order, and the embeddings read is cancelled unawaited."""
+    reranker = CrossEncoderReranker(cross_encoder=_CrossEncoder())
+    candidates = [_candidate("a", "Marta likes sencha"), _candidate("b", "Marta likes sencha"), _candidate("c", "x")]
+    plain = await reranker.rerank("q", candidates)
+
+    async def never() -> None:
+        raise AssertionError("dedup read the embeddings for a cross-encoder")
+
+    embeddings = asyncio.create_task(never())
+    flagged = await reranker.rerank("q", candidates, prune=True, dedup=True, embeddings=embeddings)
+
+    assert [(r.id, r.weight) for r in flagged.results] == [(r.id, r.weight) for r in plain.results]
+    assert [r.id for r in flagged.results] == ["a", "b", "c"]
+    assert flagged.results[-1].weight == 0.0
+    with pytest.raises(asyncio.CancelledError):
+        await embeddings
+
+
+@pytest.mark.memory_backend_incompatible
+async def test_recall_with_prune_and_dedup_on_a_cross_encoder_returns_the_same(
+    memory_no_llm_verify: MemoryEngine, monkeypatch
+):
+    """End to end through recall: same results as without the flags, and no embeddings read."""
+    engine = memory_no_llm_verify
+    bank_id = f"test-flags-ignored-{uuid.uuid4().hex[:8]}"
+    await engine.ensure_bank_profile(bank_id, request_context=RC)
+    await engine.retain_batch_async(
+        bank_id=bank_id,
+        contents=[{"content": "Marta likes sencha."}, {"content": "Marta likes sencha."}, {"content": "Leo runs."}],
+        request_context=RC,
+    )
+    monkeypatch.setattr(engine._cross_encoder_reranker, "cross_encoder", _CrossEncoder())
+
+    async def no_read(*args, **kwargs):
+        raise AssertionError("dedup read the embeddings for a cross-encoder")
+
+    monkeypatch.setattr(engine, "_candidate_embeddings", no_read)
+    plain = await engine.recall_async(bank_id=bank_id, query="tea", request_context=RC)
+    flagged = await engine.recall_async(bank_id=bank_id, query="tea", request_context=RC, prune=True, dedup=True)
+    assert plain.results
+    assert [r.id for r in flagged.results] == [r.id for r in plain.results]
