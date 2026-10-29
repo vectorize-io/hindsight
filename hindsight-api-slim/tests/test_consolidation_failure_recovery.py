@@ -16,7 +16,7 @@ from hindsight_api.engine.consolidation.consolidator import run_consolidation_jo
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.providers.mock_llm import MockLLM
 from hindsight_api.engine.task_backend import SyncTaskBackend
-from tests.consolidation_answers import batch_fact_ids, fact_answer
+from tests.consolidation_answers import fact_answer
 
 # This module seeds every case with `_insert_memories`, an INSERT into `memory_units`. A MEMORIES extension owns those rows in its own store and leaves the Postgres
 # table empty, so the seed lands nowhere the code under test can see it: the failing cases find
@@ -80,7 +80,6 @@ def _make_failing_mock_llm(*, fail_first_n: int = 999) -> MockLLM:
             if call_count <= fail_first_n:
                 raise ValueError(f"Simulated LLM failure (call {call_count})")
         # Return empty response — no creates/updates/deletes
-        from hindsight_api.engine.consolidation.consolidator import _ConsolidationBatchResponse
 
         return fact_answer()
 
@@ -93,8 +92,6 @@ def _make_always_success_mock_llm() -> MockLLM:
     mock_llm = MockLLM(provider="mock", api_key="", base_url="", model="mock-model")
 
     def callback(messages, scope):
-        from hindsight_api.engine.consolidation.consolidator import _ConsolidationBatchResponse
-
         return fact_answer()
 
     mock_llm.set_response_callback(callback)

@@ -12,7 +12,7 @@ import pytest
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.response_models import Budget
 from tests.llm_judge import assert_meets_criteria
-from tests.consolidation_answers import batch_fact_ids, fact_answer
+from tests.consolidation_answers import fact_answer
 
 logger = logging.getLogger(__name__)
 
@@ -3270,8 +3270,6 @@ def _make_mock_llm_call():
     """Create a mock LLM call function that returns deterministic facts."""
 
     async def mock_llm_call(*args, **kwargs):
-        from hindsight_api.engine.consolidation.consolidator import _ConsolidationBatchResponse
-
         if kwargs.get("scope") == "consolidation":
             return LLMCallResult(
                 content=fact_answer(),

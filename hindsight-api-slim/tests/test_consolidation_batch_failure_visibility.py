@@ -17,7 +17,6 @@ transport-shaped retries stay separable from schema rejections.
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -29,7 +28,6 @@ from hindsight_api.engine.consolidation import consolidator as consolidator_modu
 from hindsight_api.engine.consolidation.consolidator import (
     _BatchFailureClass,
     _classify_batch_failure,
-    _ConsolidationBatchResponse,
     _CreateAction,
     run_consolidation_job,
 )

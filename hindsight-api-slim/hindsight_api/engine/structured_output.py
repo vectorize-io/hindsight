@@ -128,10 +128,9 @@ def _strip_ref_siblings(node: Any) -> Any:
 # fields of ``reflect/delta_ops.py`` and ``reflect/structured_doc.py``, but stripping
 # here rather than at each model keeps the next bounded field from reopening this.
 #
-# ``maxItems`` / ``minItems`` / ``pattern`` are deliberately NOT stripped: consolidation
-# and retain emit those on purpose, gated on HINDSIGHT_API_LLM_SUPPORTS_MAX_ITEMS and
-# HINDSIGHT_API_LLM_SUPPORTS_STRING_PATTERN, because a backend that accepts them does
-# grammar-enforce them.
+# ``pattern`` is deliberately NOT stripped: retain emits it on purpose, gated on
+# HINDSIGHT_API_LLM_SUPPORTS_STRING_PATTERN, because a backend that accepts it does
+# grammar-enforce it.
 _NUMERIC_BOUND_KEYWORDS = frozenset({"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf"})
 
 

@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -32,7 +31,6 @@ import pytest
 from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.consolidation import consolidator as consolidator_module
 from hindsight_api.engine.consolidation.consolidator import (
-    _ConsolidationBatchResponse,
     _CreateAction,
     _gather_or_cancel,
     run_consolidation_job,

@@ -39,7 +39,7 @@ _SYSTEM = (
     "You grade whether an answer satisfies a stated criterion. Judge ONLY the criterion "
     "given — not style, length, or anything else. Reply with a single JSON object: "
     '{"reasoning": "<one sentence>", "meets_criteria": true|false}, reasoning first, then the '
-    "verdict it leads to. A criterion may describe a mistake (\"Some observation states X\"): "
+    'verdict it leads to. A criterion may describe a mistake ("Some observation states X"): '
     "meets_criteria is true only when the answer actually contains what the criterion describes, "
     "and false when your reasoning finds it absent. No prose outside it."
 )

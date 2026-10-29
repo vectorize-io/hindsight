@@ -22,7 +22,7 @@ from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
 from hindsight_api.engine.task_backend import SyncTaskBackend
 from hindsight_api.engine.retain.fact_extraction import FactExtractionResponse, ExtractedFact
 from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
-from tests.consolidation_answers import batch_fact_ids, fact_answer
+from tests.consolidation_answers import fact_answer
 
 logger = logging.getLogger(__name__)
 
@@ -166,9 +166,7 @@ class TestLargeBatchRetain:
         call_tracker = {"count": 0, "facts": 0}
 
         async def mock_llm_call(*args, **kwargs):
-            from hindsight_api.engine.consolidation.consolidator import _ConsolidationBatchResponse
-
-            # Consolidation calls expect a _ConsolidationBatchResponse (not a raw dict),
+            # Consolidation calls expect a _FactBatchResponse (not a raw dict),
             # because consolidation does NOT use skip_validation=True.
             if kwargs.get("scope") == "consolidation":
                 return LLMCallResult(content=fact_answer(), usage=TokenUsage(input_tokens=0, output_tokens=0))
@@ -259,8 +257,6 @@ class TestLargeBatchRetain:
         logger.info(f"Created {num_items} items with {actual_total_chars:,} chars (should trigger chunking)")
 
         async def mock_llm_call(*args, **kwargs):
-            from hindsight_api.engine.consolidation.consolidator import _ConsolidationBatchResponse
-
             if kwargs.get("scope") == "consolidation":
                 return LLMCallResult(content=fact_answer(), usage=TokenUsage(input_tokens=0, output_tokens=0))
 

@@ -29,16 +29,6 @@ Write every observation in the language of its own source facts — never transl
 
 When an existing observation is written in a different language from the new facts updating it, do NOT edit its wording in place — that is what produces an English sentence with a Chinese detail bolted on. Discard the old phrasing and compose the merged observation from scratch in the new facts' language."""
 
-# Time comes before the rules because every UPDATE depends on it. Facts are handed over in
-# processing order, which is not the order things happened: imports and backfills deliver old
-# conversations late and in parallel. Small models read the "New facts" batch as the latest news
-# and let an older rule overwrite its newer amendment (#5938). Rule 10 alone did not stop it, nor did
-# this section plus a `reason` written first: flash-lite misread the times, or compared them right
-# and let "was updated" win. The code now makes the comparison (`newer_than_input_facts` in
-# consolidator._build_observations_for_llm, every time in one format) and this section says what
-# a marked observation means. Rule 10 still says "compare their `mentioned_at`" on purpose:
-# rewording it to match this section measured worse on flash-lite (noisy-bank evals 2/6, #5938
-# scenario failing), so the measured wording stays.
 _OBSERVATION_FIELDS = """- `id`: its identifier (`O1`, `O2`, …) — copy it into `observation_id`
 - `text`: the observation content
 - `proof_count`: how many source facts this observation has already merged
@@ -145,11 +135,15 @@ A lasting fact must end up somewhere: an existing observation it repeats, change
 
 `deletes` (rare): only when two EXISTING observations say exactly the same thing — delete one by its `observation_id`, with `merged_into` set to the other: `"deletes": [{{"observation_id": "O7", "merged_into": "O2"}}]`. Never delete because something changed or ended."""
 
+# Facts are handed over in processing order, which is not the order things happened: imports and
+# backfills deliver old conversations late. Small models read the batch as the latest news and let
+# an older rule overwrite its newer amendment (#5938), and they compare dates badly, so the code
+# makes the comparison and marks it; this section says what a mark means.
 _TIME_RULE = """## TIME
 
 Facts are NOT given in the order they happened: old conversations are imported late. What counts is when something was stated: `mentioned_at` (and `occurred_start` / `occurred_end` for when it happened). The most recently stated value is the current one — not the fact processed last, and not the one worded "now", "new", "amended" or "was updated": an older fact describing a change describes an EARLIER state.
 
-The comparison is done for you: in a fact's `closest existing observations`, the ones stated after that fact are marked `(stated after this fact)`, and an observation stated after every new fact carries `"newer_than_input_facts": true` — both mean the fact is older news for it. Unmarked means the fact is the more recent.
+The comparison is done for you: in a fact's `closest existing observations`, the ones stated after that fact are marked `(stated after this fact)`, and an observation stated after every new fact carries `"newer_than_input_facts": true` — both mean the fact is older news for it. Among a fact's closest observations, unmarked means the fact is the more recent.
 
 The new facts are listed oldest first. When two new facts disagree about the same thing, the LATER one in the list is current: the earlier one's `new` sentence says it as the earlier state ("Before 21 October 2026, small overages were not waived."), never as the current rule. An older fact is still recorded, as the earlier state — never dropped."""
 

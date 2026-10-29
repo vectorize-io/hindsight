@@ -1219,26 +1219,23 @@ def _make_consolidation_callback() -> tuple:
     def callback(messages: list[dict], scope: str):
         if scope == "consolidation":
             consolidation_counter[0] += 1
-            # Parse the fact IDs from the prompt to build realistic create actions.
-            # The prompt contains lines like "[<uuid>] fact text"
+            # One new observation per fact in the batch. The prompt lists them as "[F1] fact text";
+            # the ids repeat in every batch, so the observation is written from the text.
             import re
 
             prompt_text = messages[-1]["content"] if messages else ""
-            fact_ids = re.findall(r"\[([0-9a-f-]{36})\]", prompt_text)
+            facts = re.findall(r"^\[(F\d+)\] (.*)$", prompt_text, re.MULTILINE)
 
-            from hindsight_api.engine.consolidation.consolidator import (
-                _ConsolidationBatchResponse,
-                _CreateAction,
+            from hindsight_api.engine.consolidation.consolidator import _FactBatchResponse
+
+            return _FactBatchResponse.model_validate(
+                {
+                    "facts": [
+                        {"fact_id": fid, "kind": "lasting", "adds": "yes", "new": [f"Observation from {text}"]}
+                        for fid, text in facts
+                    ]
+                }
             )
-
-            creates = [
-                _CreateAction(
-                    text=f"Observation from fact {fid[:8]}",
-                    source_fact_ids=[fid],
-                )
-                for fid in fact_ids
-            ]
-            return _ConsolidationBatchResponse(creates=creates, updates=[], deletes=[])
         # Delegate all other scopes to the retain callback
         return fact_callback(messages, scope)
 

@@ -31,7 +31,6 @@ import pytest
 
 from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.consolidation.consolidator import (
-    _ConsolidationBatchResponse,
     _CreateAction,
     run_consolidation_job,
 )

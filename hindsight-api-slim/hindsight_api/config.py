@@ -190,7 +190,6 @@ ENV_LLM_STRICT_SCHEMA = "HINDSIGHT_API_LLM_STRICT_SCHEMA"
 ENV_LLM_STRICT_SCHEMA_RETAIN = "HINDSIGHT_API_LLM_STRICT_SCHEMA_RETAIN"
 ENV_LLM_STRICT_SCHEMA_REFLECT = "HINDSIGHT_API_LLM_STRICT_SCHEMA_REFLECT"
 ENV_LLM_STRICT_SCHEMA_CONSOLIDATION = "HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION"
-ENV_LLM_SUPPORTS_MAX_ITEMS = "HINDSIGHT_API_LLM_SUPPORTS_MAX_ITEMS"
 ENV_LLM_SUPPORTS_STRING_PATTERN = "HINDSIGHT_API_LLM_SUPPORTS_STRING_PATTERN"
 # Route structured output through a forced function tool instead of the
 # OpenAI-style ``response_format`` on the LiteLLM-backed providers (``litellm``,
@@ -1247,7 +1246,6 @@ DEFAULT_LLAMACPP_EXTRA_ARGS = None  # Space-separated extra CLI args for llama.c
 # (prose preambles, markdown fences, invalid JSON) — wedging retain/consolidation
 # on parse retries.
 DEFAULT_LLM_STRICT_SCHEMA = False
-DEFAULT_LLM_SUPPORTS_MAX_ITEMS = True
 
 # True = the backend accepts the JSON Schema ``pattern`` keyword in a
 # structured-output schema. Retain uses it to constrain occurred_start /
@@ -1255,9 +1253,8 @@ DEFAULT_LLM_SUPPORTS_MAX_ITEMS = True
 # reasoning inside the timestamp string and burning its whole completion budget.
 # Default False because provider support is narrow and failure is a hard 400 at
 # request time, not a degraded response: Bedrock validates schemas against an
-# allowlist that does not include ``pattern`` and rejects the request outright
-# (the same reason DEFAULT_LLM_SUPPORTS_MAX_ITEMS exists), and OpenAI errors on
-# any unsupported keyword when ``strict`` is set. Backends that neither enforce
+# allowlist that does not include ``pattern`` and rejects the request outright,
+# and OpenAI errors on any unsupported keyword when ``strict`` is set. Backends that neither enforce
 # nor reject it (native Anthropic tool schemas) gain nothing from it either --
 # only grammar-constrained backends that accept it do, so it is opt-in.
 DEFAULT_LLM_SUPPORTS_STRING_PATTERN = False
@@ -3322,10 +3319,6 @@ class HindsightConfig:
     llm_strict_schema_retain: bool
     llm_strict_schema_reflect: bool
     llm_strict_schema_consolidation: bool
-    llm_supports_max_items: bool = field(
-        default=DEFAULT_LLM_SUPPORTS_MAX_ITEMS,
-        kw_only=True,
-    )  # Whether structured-output schemas accept JSON Schema maxItems
     llm_supports_string_pattern: bool = field(
         default=DEFAULT_LLM_SUPPORTS_STRING_PATTERN,
         kw_only=True,
@@ -4610,10 +4603,6 @@ class HindsightConfig:
             llm_strict_schema_retain=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_RETAIN),
             llm_strict_schema_reflect=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_REFLECT),
             llm_strict_schema_consolidation=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_CONSOLIDATION),
-            llm_supports_max_items=_parse_boolean_env(
-                ENV_LLM_SUPPORTS_MAX_ITEMS,
-                DEFAULT_LLM_SUPPORTS_MAX_ITEMS,
-            ),
             llm_supports_string_pattern=_parse_boolean_env(
                 ENV_LLM_SUPPORTS_STRING_PATTERN,
                 DEFAULT_LLM_SUPPORTS_STRING_PATTERN,

@@ -14,6 +14,7 @@ from hindsight_api.engine.consolidation.consolidator import (
     _build_fact_response_model,
     _consolidate_batch_with_llm,
     _CreateAction,
+    _FactBatchResponse,
     _settle_skips,
     _SkipAction,
 )
@@ -24,11 +25,17 @@ POOL = {"o-port": "ledger-sink listens on port 8444.", "o-fav": "The user's favo
 
 
 def _answer(*facts: dict[str, Any], ids: tuple[str, ...] = ("f1", "f2", "f3")) -> Any:
-    return _build_fact_response_model(list(ids)).model_validate({"facts": list(facts)})
+    return _build_fact_response_model(list(ids), list(POOL)).model_validate({"facts": list(facts)})
 
 
-def _actions(answer: Any, later: set[tuple[str, str]] = frozenset(), ids: tuple[str, ...] = ("f1", "f2", "f3")) -> Any:
-    return answer.to_actions(POOL, list(ids), lambda f, o: (f, o) in later)
+def _actions(
+    answer: Any,
+    later: set[tuple[str, str]] = frozenset(),
+    ids: tuple[str, ...] = ("f1", "f2", "f3"),
+    unmarked: set[tuple[str, str]] = frozenset(),
+) -> Any:
+    """``later``: observations stated after the fact, marked so in the prompt unless also in ``unmarked``."""
+    return answer.to_actions(POOL, list(ids), lambda f, o: (f, o) in later, lambda f, o: (f, o) not in unmarked)
 
 
 def _change(oid: str, effect: str, text: str = "") -> dict[str, str]:
@@ -101,6 +108,53 @@ def test_an_older_fact_only_adds_the_earlier_state_and_creates_nothing() -> None
     assert actions.creates == []
 
 
+def test_two_older_facts_both_land_as_earlier_states() -> None:
+    actions = _actions(
+        _answer(
+            {"fact_id": "f1", "kind": "lasting", "existing": [_change("o-fav", "changes", "Before, Vue.")]},
+            {"fact_id": "f2", "kind": "lasting", "existing": [_change("o-fav", "changes", "Before that, React.")]},
+        ),
+        later={("f1", "o-fav"), ("f2", "o-fav")},
+    )
+    assert [(u.text, u.source_fact_ids) for u in actions.updates] == [
+        ("The user's favorite framework is Svelte. Before, Vue. Before that, React.", ["f1", "f2"])
+    ]
+
+
+def test_an_earlier_state_that_repeats_the_observation_is_added_once() -> None:
+    echo = "The user's favorite framework is Svelte; before that, React."
+    actions = _actions(
+        _answer({"fact_id": "f1", "kind": "lasting", "existing": [_change("o-fav", "changes", echo)]}),
+        later={("f1", "o-fav")},
+    )
+    assert [u.text for u in actions.updates] == ["The user's favorite framework is Svelte. Before that, React."]
+
+
+def test_a_repeat_after_a_change_keeps_the_change() -> None:
+    actions = _actions(
+        _answer(
+            {"fact_id": "f1", "kind": "lasting", "existing": [_change("o-port", "changes", "port 9443.")]},
+            {
+                "fact_id": "f2",
+                "kind": "lasting",
+                "existing": [_change("o-port", "repeats"), _change("o-port", "repeats")],
+            },
+        )
+    )
+    assert [(u.text, u.source_fact_ids) for u in actions.updates] == [("port 9443.", ["f1", "f2"])]
+
+
+def test_a_change_the_prompt_did_not_mark_as_older_keeps_the_newer_text() -> None:
+    """Outside a fact's closest list the model was not told the observation is newer: its rewrite
+    is the older fact written as current, so the observation keeps its text and only cites it."""
+    actions = _actions(
+        _answer({"fact_id": "f1", "kind": "lasting", "existing": [_change("o-fav", "changes", "Fav is React.")]}),
+        later={("f1", "o-fav")},
+        unmarked={("f1", "o-fav")},
+    )
+    assert [(u.text, u.source_fact_ids) for u in actions.updates] == [(POOL["o-fav"], ["f1"])]
+
+
 def test_a_momentary_fact_is_skipped_as_chatter_whatever_it_wrote() -> None:
     actions = _actions(
         _answer({"fact_id": "f1", "kind": "momentary", "adds": "yes", "new": ["The user is having coffee."]})
@@ -117,6 +171,42 @@ def test_a_restated_fact_joins_the_earlier_facts_create() -> None:
         )
     )
     assert [c.source_fact_ids for c in actions.creates] == [["f1", "f2"]]
+
+
+def test_a_restated_fact_that_also_wrote_new_joins_the_earlier_create() -> None:
+    actions = _actions(
+        _answer(
+            {"fact_id": "f1", "kind": "lasting", "adds": "yes", "new": ["ledger-sync listens on port 8443."]},
+            {
+                "fact_id": "f2",
+                "kind": "lasting",
+                "adds": "no",
+                "new": ["ledger-sync is on 8443."],
+                "same_as_fact": "f1",
+            },
+        )
+    )
+    assert [c.source_fact_ids for c in actions.creates] == [["f1", "f2"]]
+
+
+def test_short_ids_map_back_and_unknown_ids_stay() -> None:
+    answer = _FactBatchResponse.model_validate(
+        {
+            "facts": [
+                {
+                    "fact_id": "F1",
+                    "existing": [{"observation_id": "O1", "effect": "repeats"}],
+                    "same_as_fact": "F2",
+                },
+                {"fact_id": "zz", "existing": [{"observation_id": "made-up", "effect": "repeats"}]},
+            ],
+            "deletes": [{"observation_id": "O1", "merged_into": "O2"}],
+        }
+    ).with_real_ids({"F1": "f-1", "F2": "f-2", "O1": "o-1", "O2": "o-2"})
+    first, second = answer.facts
+    assert (first.fact_id, first.same_as_fact, first.existing[0].observation_id) == ("f-1", "f-2", "o-1")
+    assert (second.fact_id, second.existing[0].observation_id) == ("zz", "made-up")
+    assert (answer.deletes[0].observation_id, answer.deletes[0].merged_into) == ("o-1", "o-2")
 
 
 def test_a_repeat_of_this_answers_own_create_under_an_invented_id_joins_it() -> None:
@@ -167,8 +257,8 @@ def test_a_broken_entry_costs_only_itself() -> None:
 
 
 def test_the_schema_pins_ids_and_verdicts() -> None:
-    schema = str(_build_fact_response_model(["f1"]).model_json_schema())
-    for value in ("'f1'", "'lasting'", "'momentary'", "'unrelated'", "'repeats'", "'changes'", "'ends'"):
+    schema = str(_build_fact_response_model(["f1"], ["o-port"]).model_json_schema())
+    for value in ("'f1'", "'o-port'", "'lasting'", "'momentary'", "'unrelated'", "'repeats'", "'changes'", "'ends'"):
         assert value in schema
 
 
@@ -207,7 +297,6 @@ async def test_the_prompt_uses_short_ids_oldest_first_and_marks_later_observatio
     config = SimpleNamespace(
         llm_output_language=None,
         observations_mission=None,
-        llm_supports_max_items=True,
         consolidation_max_attempts=1,
         consolidation_llm_max_retries=None,
         llm_temperature_consolidation=0.0,
@@ -219,7 +308,14 @@ async def test_the_prompt_uses_short_ids_oldest_first_and_marks_later_observatio
         {"id": "f-old", "text": "older", "mentioned_at": at(10)},
     ]
     result = await _consolidate_batch_with_llm(
-        _LLM(), memories, [observation], {}, config, closest={"f-old": ["o-fav"], "f-new": ["o-fav"]}
+        _LLM(),
+        memories,
+        [observation],
+        {},
+        config,
+        remaining_observation_slots=0,
+        max_observations_per_scope=5,
+        closest={"f-old": ["o-fav"], "f-new": ["o-fav"]},
     )
 
     user = sent["messages"][-1]["content"]
@@ -236,3 +332,5 @@ async def test_the_prompt_uses_short_ids_oldest_first_and_marks_later_observatio
         ("o-fav", ["f-new"], "Now React.")
     ]
     assert sent["messages"][0]["content"] == build_consolidation_system_prompt()
+    # A full scope is told in the answer's own terms: no `new` sentences.
+    assert 'Write no `new` sentences (set `adds` to "no")' in user

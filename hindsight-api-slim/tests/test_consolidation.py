@@ -4,11 +4,9 @@ These tests exercise the real consolidation implementation with actual database 
 Note: Consolidation runs automatically after retain via SyncTaskBackend in tests.
 """
 
-from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 import uuid
 from datetime import datetime, timezone
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -2382,102 +2380,6 @@ class TestConsolidationSourceFactsConfig:
 # ---------------------------------------------------------------------------
 
 
-class TestDedupeUpdates:
-    """`_dedupe_updates` collapses LLM responses that target one observation_id
-    multiple times — without this, the second `_execute_update_action` call
-    silently overwrites the first (see horse-test trace, retain #9)."""
-
-    def _make_update(self, obs_id: str, text: str, source_fact_ids: list[str]):
-        from hindsight_api.engine.consolidation.consolidator import _UpdateAction
-
-        return _UpdateAction(text=text, observation_id=obs_id, source_fact_ids=source_fact_ids)
-
-    def test_empty_passes_through(self):
-        from hindsight_api.engine.consolidation.consolidator import _dedupe_updates
-
-        assert _dedupe_updates([], batch_label="t") == []
-
-    def test_single_update_passes_through(self):
-        from hindsight_api.engine.consolidation.consolidator import _dedupe_updates
-
-        u = self._make_update("obs-1", "one", ["fact-a"])
-        out = _dedupe_updates([u], batch_label="t")
-        assert len(out) == 1
-        assert out[0] is u  # same object, no copy on fast path
-
-    def test_distinct_observation_ids_kept_separately(self):
-        from hindsight_api.engine.consolidation.consolidator import _dedupe_updates
-
-        u1 = self._make_update("obs-1", "one", ["fact-a"])
-        u2 = self._make_update("obs-2", "two", ["fact-b"])
-        out = _dedupe_updates([u1, u2], batch_label="t")
-        ids = {u.observation_id for u in out}
-        assert ids == {"obs-1", "obs-2"}
-
-    def test_duplicate_observation_id_collapsed_keeping_last_text(self, caplog):
-        """The exact failure mode from horse-test retain #9: two updates to one
-        observation_id, both from the same fact, second silently clobbering
-        the first. After dedup we have one update with the last text and the
-        union of source_fact_ids."""
-        import logging
-
-        from hindsight_api.engine.consolidation.consolidator import _dedupe_updates
-
-        u1 = self._make_update("obs-shadow", "User owns a horse named Midnight.", ["fact-9"])
-        u2 = self._make_update("obs-shadow", "User owns a horse named Shadow.", ["fact-9"])
-
-        with caplog.at_level(logging.WARNING, logger="hindsight_api.engine.consolidation.consolidator"):
-            out = _dedupe_updates([u1, u2], batch_label="horse-batch-9")
-
-        assert len(out) == 1
-        merged = out[0]
-        assert merged.observation_id == "obs-shadow"
-        assert merged.text == "User owns a horse named Shadow.", "last text wins"
-        assert merged.source_fact_ids == ["fact-9"], "duplicate fact ids deduped via union"
-
-        # The collision must be logged loudly enough to surface in observability.
-        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert any("horse-batch-9" in r.message for r in warnings), (
-            "warning must include the batch label for traceability"
-        )
-        assert any("duplicate update" in r.message.lower() for r in warnings)
-
-    def test_source_fact_ids_union_preserves_order_and_deduplicates(self):
-        from hindsight_api.engine.consolidation.consolidator import _dedupe_updates
-
-        u1 = self._make_update("obs-1", "first", ["fact-a", "fact-b"])
-        u2 = self._make_update("obs-1", "second", ["fact-b", "fact-c"])
-        out = _dedupe_updates([u1, u2], batch_label="t")
-        assert len(out) == 1
-        assert out[0].source_fact_ids == ["fact-a", "fact-b", "fact-c"]
-
-    def test_three_way_collision_collapses_to_one(self):
-        from hindsight_api.engine.consolidation.consolidator import _dedupe_updates
-
-        u1 = self._make_update("obs-1", "v1", ["fact-a"])
-        u2 = self._make_update("obs-1", "v2", ["fact-b"])
-        u3 = self._make_update("obs-1", "v3", ["fact-c"])
-        out = _dedupe_updates([u1, u2, u3], batch_label="t")
-        assert len(out) == 1
-        assert out[0].text == "v3"
-        assert out[0].source_fact_ids == ["fact-a", "fact-b", "fact-c"]
-
-    def test_collisions_mixed_with_unique_updates(self):
-        from hindsight_api.engine.consolidation.consolidator import _dedupe_updates
-
-        u1 = self._make_update("obs-1", "one-a", ["fa1"])
-        u2 = self._make_update("obs-2", "two", ["fb"])
-        u3 = self._make_update("obs-1", "one-b", ["fa2"])
-        u4 = self._make_update("obs-3", "three", ["fc"])
-        out = _dedupe_updates([u1, u2, u3, u4], batch_label="t")
-        assert len(out) == 3
-        by_id = {u.observation_id: u for u in out}
-        assert by_id["obs-1"].text == "one-b"
-        assert by_id["obs-1"].source_fact_ids == ["fa1", "fa2"]
-        assert by_id["obs-2"].text == "two"
-        assert by_id["obs-3"].text == "three"
-
-
 def test_max_observations_per_scope_config():
     """Test that max_observations_per_scope is loaded from env and exposed as configurable."""
     import os
@@ -2569,7 +2471,6 @@ async def _insert_memories_with_tags(conn, bank_id: str, texts: list[str], tags:
 def _make_mock_llm_one_obs_per_fact():
     """Return a MockLLM that creates one observation per fact in the batch."""
     from hindsight_api.engine.consolidation.consolidator import (
-        _ConsolidationBatchResponse,
         _CreateAction,
     )
     from hindsight_api.engine.providers.mock_llm import MockLLM
@@ -2583,7 +2484,6 @@ def _make_mock_llm_one_obs_per_fact():
         # the user message(s): consolidation sends the facts there, while the
         # stable (cacheable) system message carries example UUIDs in its OUTPUT
         # FORMAT samples that must not be mistaken for real facts.
-        import re
 
         prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
         fact_ids = batch_fact_ids(prompt)
@@ -2647,7 +2547,7 @@ async def test_max_observations_per_scope_limits_creates(memory: MemoryEngine, r
                 count = await _count_observations_for_scope(conn, bank_id, ["scope:test"])
                 assert count == 2, f"Expected exactly 2 observations (limit=2), got {count}"
 
-                # Verify the LLM was called and some creates were blocked by the response model
+                # Verify the LLM was called and some creates were cut by the cap
                 consolidation_calls = [c for c in mock_llm.get_mock_calls() if c["scope"] == "consolidation"]
                 assert len(consolidation_calls) >= 1, "LLM should have been called at least once"
         finally:
@@ -2716,7 +2616,6 @@ async def test_max_observations_per_scope_zero_forbids_all_creates(memory: Memor
 async def test_max_observations_per_scope_allows_updates_at_capacity(memory: MemoryEngine, request_context):
     """At capacity, the LLM can still update existing observations."""
     from hindsight_api.engine.consolidation.consolidator import (
-        _ConsolidationBatchResponse,
         _CreateAction,
         _UpdateAction,
     )
@@ -2744,7 +2643,6 @@ async def test_max_observations_per_scope_allows_updates_at_capacity(memory: Mem
             if scope != "consolidation":
                 return fact_answer()
             call_count += 1
-            import re
 
             # Facts live in the user message; the system message (stable, cached)
             # carries example UUIDs in its OUTPUT samples — read user only.
@@ -3263,10 +3161,8 @@ def test_build_observations_for_llm_shows_each_source_once():
 @pytest.mark.memory_backend_incompatible
 async def test_repeated_source_ids_are_stored_once(memory: MemoryEngine, request_context):
     """Repeated ids in an LLM create/update, and duplicates already on the row, are stored once (#4799)."""
-    import re
 
     from hindsight_api.engine.consolidation.consolidator import (
-        _ConsolidationBatchResponse,
         _CreateAction,
         _UpdateAction,
     )
