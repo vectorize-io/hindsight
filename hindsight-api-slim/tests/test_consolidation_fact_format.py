@@ -35,7 +35,8 @@ def _actions(
     unmarked: set[tuple[str, str]] = frozenset(),
 ) -> Any:
     """``later``: observations stated after the fact, marked so in the prompt unless also in ``unmarked``."""
-    return answer.to_actions(POOL, list(ids), lambda f, o: (f, o) in later, lambda f, o: (f, o) not in unmarked)
+    texts = {fid: f"Fact {fid} says so" for fid in ids}
+    return answer.to_actions(POOL, texts, lambda f, o: (f, o) in later, lambda f, o: (f, o) not in unmarked)
 
 
 def _change(oid: str, effect: str, text: str = "") -> dict[str, str]:
@@ -96,14 +97,15 @@ def test_an_older_fact_only_adds_the_earlier_state_and_creates_nothing() -> None
         {
             "fact_id": "f1",
             "kind": "lasting",
-            "existing": [_change("o-fav", "changes", "Before that, their favorite was React.")],
+            "existing": [_change("o-fav", "changes", "Until it was removed, React.")],
             "adds": "yes",
             "new": ["The user's favorite framework is React."],
         }
     )
     actions = _actions(answer, later={("f1", "o-fav")})
+    # The note is the fact's own text, whatever the model wrote.
     assert [u.text for u in actions.updates] == [
-        "The user's favorite framework is Svelte. Before that, their favorite was React."
+        "The user's favorite framework is Svelte. (Earlier, replaced by the above: Fact f1 says so.)"
     ]
     assert actions.creates == []
 
@@ -117,27 +119,11 @@ def test_two_older_facts_both_land_as_earlier_states() -> None:
         later={("f1", "o-fav"), ("f2", "o-fav")},
     )
     assert [(u.text, u.source_fact_ids) for u in actions.updates] == [
-        ("The user's favorite framework is Svelte. Before, Vue. Before that, React.", ["f1", "f2"])
+        (
+            "The user's favorite framework is Svelte. (Earlier, replaced by the above: Fact f1 says so.) (Earlier, replaced by the above: Fact f2 says so.)",
+            ["f1", "f2"],
+        )
     ]
-
-
-def test_an_earlier_state_that_repeats_the_observation_is_added_once() -> None:
-    echo = "The user's favorite framework is Svelte; before that, React."
-    actions = _actions(
-        _answer({"fact_id": "f1", "kind": "lasting", "existing": [_change("o-fav", "changes", echo)]}),
-        later={("f1", "o-fav")},
-    )
-    assert [u.text for u in actions.updates] == ["The user's favorite framework is Svelte. Before that, React."]
-
-
-def test_a_note_that_goes_on_past_the_observation_is_kept_whole() -> None:
-    """A note opening with the observation's words but a longer value is no copy of it."""
-    note = "ledger-sink listens on port 84435 before the move."
-    actions = _actions(
-        _answer({"fact_id": "f1", "kind": "lasting", "existing": [_change("o-port", "changes", note)]}),
-        later={("f1", "o-port")},
-    )
-    assert [u.text for u in actions.updates] == [f"{POOL['o-port']} {note}"]
 
 
 def test_a_repeat_after_a_change_keeps_the_change() -> None:
@@ -355,8 +341,8 @@ async def test_the_prompt_uses_short_ids_oldest_first_and_marks_later_observatio
     # newer (closest-list mark, or newer than every fact), the older fact's change is its earlier
     # state, added after the text; where it did not, the observation keeps its text.
     assert [(u.observation_id, u.source_fact_ids, u.text) for u in result.updates] == [
-        ("o-fav", ["f-old"], f"{POOL['o-fav']} Before, Vue."),
-        ("o-lang", ["f-old"], "The user codes in Rust. Before, Go."),
+        ("o-fav", ["f-old"], f"{POOL['o-fav']} (Earlier, replaced by the above: older.)"),
+        ("o-lang", ["f-old"], "The user codes in Rust. (Earlier, replaced by the above: older.)"),
         ("o-city", ["f-old"], "The user lives in Lisbon."),
     ]
     assert sent["messages"][0]["content"] == build_consolidation_system_prompt()

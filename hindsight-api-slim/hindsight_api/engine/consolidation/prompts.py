@@ -116,18 +116,18 @@ For each fact:
    - `effect` — what this fact does to that observation:
      - `"unrelated"`: a different subject (a name a letter or a word apart — "ledger-sync" / "ledger-sink", "Paolo" / "Paola" — is a DIFFERENT subject), or the same subject but another facet the fact does not touch. Nothing changes.
      - `"repeats"`: the observation already says what the fact says.
-     - `"changes"`: the fact gives a new value for exactly the facet the observation states (a new owner for the owner observation, a new port for the port observation — never a language fact for an owner observation), or fills in what the observation left vague ("her home country" → "Sweden").
+     - `"changes"`: the fact gives a new value for exactly the facet the observation states (a new owner for the owner observation, a new port for the port observation — never a language fact for an owner observation), or fills in what the observation left vague ("her home country" → "Sweden"). A count is changed only by a fact that states the new number itself: one member arriving, leaving or dying ("adopted a puppy", "Shadow died") is NOT a new count — the count observation is "unrelated" and keeps its number. Never calculate.
      - `"ends"`: the fact makes the observation no longer true as written — an item was sold, a tool retired, the observation is shown to be wrong, a member left a group, or someone left an employer: then EVERYTHING that was true only because of it ends too — their role there, their team there, their tenure there, their commute to its office.
    - `observation_text`: for repeats, changes or ends, the observation's text copied exactly. Leave it out for unrelated.
    - `text`: the observation after this fact.
      - unrelated or repeats → empty: `""`.
-     - the observation is marked `(stated after this fact)` or `"newer_than_input_facts": true` → the fact is older news: write ONLY one short sentence saying what THIS FACT says, as the earlier state ("Before that, small overages were not waived."). Never restate the observation in it. It is added after the observation's text, which stays the current value.
+     - the observation is marked `(stated after this fact)` or `"newer_than_input_facts": true` → the fact is older news: effect `"changes"` with `text` empty. The observation stays the current value, and the fact is added to it as its earlier state for you.
      - changes → the new value; you may keep the old one as history ("The billing-gateway service is owned by team Nimbus; earlier by team Atlas."). A vague reference → the same sentence with the value filled in ("Lena plans to move back to Sweden next spring.").
      - ends, for a group or list → it goes on, present tense, naming the members who REMAIN, then who left ("The rotation is Ana, Ben and Dev; Cleo left it on 3 May 2025.").
      - ends, anything else → the past tense with the date, keeping what it said ("Alice commuted to the Google office in Zurich until she left Google in April 2026."). Shown to be wrong → say it was wrong and what is true.
 5. `adds`: does the fact say anything that none of the observations you marked repeats, changes or ends already says? `"yes"` or `"no"`. A fact that only repeats an observation is "no".
 6. `new`: when `adds` is "yes", one sentence per facet the fact states that no existing observation already says. Write what the fact says, as stated:
-   - Never calculate. "The user has 2 dogs" + "the user has a dog named Rex" → new "The user has a dog named Rex"; the count observation is "unrelated" and stays 2. A count changes only when a fact states a new count.
+   - Never calculate. "The user has 2 dogs" + "the user has a dog named Rex" → new "The user has a dog named Rex"; the count observation is "unrelated" and stays 2.
    - Empty when the fact changes an observation marked `(stated after this fact)`: its content is that observation's earlier state.
 7. `same_as_fact`: when this fact says the same as an EARLIER fact of this batch that already has a `new` observation, that fact's id — and leave `new` empty. Otherwise null.
 
@@ -189,13 +189,13 @@ Output:
       {{"observation_id": "O4", "observation_about": "the user's dogs", "effect": "unrelated", "text": ""}}],
     "adds": "yes", "new": ["The user has a dog named Rex."], "same_as_fact": null}},
   {{"fact_id": "F5", "about": "the user's favorite framework", "kind": "lasting", "existing": [
-      {{"observation_id": "O5", "observation_about": "the user's favorite framework", "effect": "changes", "observation_text": "The user's favorite framework is Svelte.", "text": "Before that, their favorite was React."}}],
+      {{"observation_id": "O5", "observation_about": "the user's favorite framework", "effect": "changes", "observation_text": "The user's favorite framework is Svelte.", "text": ""}}],
     "adds": "no", "new": [], "same_as_fact": null}},
   {{"fact_id": "F6", "about": "ledger-sink", "kind": "lasting", "existing": [], "adds": "no", "new": [], "same_as_fact": "F1"}}
 ],
 "deletes": []}}
 
-Why: O1, F1's closest, is about billing-sink, not ledger-sink: unrelated. The rotation's membership (O2) and Cleo's Mondays (O3) end; O3 was not among the closest but mentions Cleo, so it is found by scanning. Cleo's city (O6), a closest one, is another facet: unrelated. The dog count (O4) is not touched by a named dog: unrelated. Svelte was stated after React, so Svelte stays the favorite and React is added as the earlier state. F6 has no closest observations and repeats F1.
+Why: O1, F1's closest, is about billing-sink, not ledger-sink: unrelated. The rotation's membership (O2) and Cleo's Mondays (O3) end; O3 was not among the closest but mentions Cleo, so it is found by scanning. Cleo's city (O6), a closest one, is another facet: unrelated. The dog count (O4) is not touched by a named dog: unrelated. Svelte was stated after React, so F5 changes O5 with no text: Svelte stays the favorite and F5 is added as its earlier state. F6 has no closest observations and repeats F1.
 
 ### Text rules
 

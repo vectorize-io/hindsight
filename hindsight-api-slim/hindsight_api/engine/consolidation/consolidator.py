@@ -67,6 +67,7 @@ from .prompts import (
     build_consolidation_system_prompt,
 )
 from .triage import TriageResult, triage_facts, triage_model
+from .triage import _sentence as _fact_sentence
 
 if TYPE_CHECKING:
     # The engine's connection abstraction, which is what every caller passes; the annotations
@@ -979,7 +980,7 @@ class _FactBatchResponse(BaseModel):
     def to_actions(
         self,
         pool_text: dict[str, str],
-        fact_ids: list[str],
+        fact_text: dict[str, str],
         stated_after: Callable[[str, str], bool],
         marked: Callable[[str, str], bool],
     ) -> _ConsolidationBatchResponse:
@@ -987,11 +988,15 @@ class _FactBatchResponse(BaseModel):
 
         ``stated_after(fact_id, observation_id)``: the observation was stated after the fact — the
         code compares the times, gemma-4 got them wrong both ways. ``marked``: the prompt told the
-        model so (``(stated after this fact)`` or ``newer_than_input_facts``). A marked change is the
-        fact as the observation's earlier state, added after its text, and the fact creates nothing
-        — its ``new`` would restate that earlier state as current. An unmarked one was written as if
-        the fact were newer: the observation keeps its text and only cites the fact.
+        model so (``(stated after this fact)`` or ``newer_than_input_facts``). A marked change adds
+        the fact's own text after the observation's as its earlier state, and the fact creates
+        nothing — its ``new`` would restate that earlier state as current. The code writes that
+        note, not the model: asked for it, gemini-3.1-flash-lite wrote an older rule as the removal
+        of the newer one ("until it was removed"), or repeated the whole observation. An unmarked
+        change was written as if the fact were newer: the observation keeps its text and only
+        cites the fact. ``fact_text`` holds the batch's facts, in the order they were listed.
         """
+        fact_ids = list(fact_text)
         # gemma-4 sometimes leaves out every entry's fact_id; one entry per fact, in order, is what was asked.
         if len(self.facts) == len(fact_ids):
             for f, fid in zip(self.facts, fact_ids):
@@ -1038,11 +1043,20 @@ class _FactBatchResponse(BaseModel):
                 earlier = updates.get(oid)
                 base = earlier.text if earlier is not None else current
                 later = stated_after(f.fact_id, oid)
-                if change.effect == "repeats" or not change.text.strip() or (later and not marked(f.fact_id, oid)):
+                if change.effect == "repeats" or (later and not marked(f.fact_id, oid)):
                     text = base
                 elif later:
                     history = True
-                    text = f"{base.rstrip()} {_without_echo(change.text, current)}".rstrip()
+                    earlier_state = fact_text.get(f.fact_id, "").strip()
+                    # Parenthesised and pointing back: "Superseded earlier statement: <old rule>" was read
+                    # by a judge as the current rule being superseded.
+                    text = (
+                        f"{_sentence(base)} (Earlier, replaced by the above: {_sentence(earlier_state)})"
+                        if earlier_state
+                        else base
+                    )
+                elif not change.text.strip():
+                    text = base
                 else:
                     text = change.text
                 if earlier is not None:
@@ -1456,17 +1470,10 @@ def _config_for_scope(config: Any, fact_tags: list[str]) -> Any:
     return scoped
 
 
-def _without_echo(note: str, observation: str) -> str:
-    """``note`` without a leading copy of ``observation``. Asked for one sentence saying only the
-    earlier state, gemini-3.1-flash-lite opened it with the whole observation, and the note added
-    after the observation's text said everything twice."""
-    note, head = note.strip(), observation.strip().rstrip(".")
-    rest = note[len(head) :]
-    # Only a whole copy: "port 84" opening a note about "port 8443" is not one.
-    if note.lower().startswith(head.lower()) and (not rest or rest[0] in ".,;:"):
-        rest = rest.lstrip(" .,;:")
-        return rest[:1].upper() + rest[1:]
-    return note
+def _sentence(text: str) -> str:
+    """``text`` ending in a full stop, so a note added after it reads as its own sentence."""
+    text = text.strip()
+    return text if text[-1:] in ".!?)" else f"{text}."
 
 
 def _build_fact_response_model(fact_ids: list[str]) -> type[_FactBatchResponse]:
@@ -3988,7 +3995,7 @@ async def _consolidate_batch_with_llm(
             answer: _FactBatchResponse = batch_call.content
             response = answer.with_real_ids(real_id).to_actions(
                 {str(o.id): o.text for o in union_observations},
-                [str(m["id"]) for m in ordered],
+                {str(m["id"]): _fact_sentence(m) for m in ordered},
                 lambda fid, oid: bool((ft := fact_time.get(fid)) and (ot := obs_time.get(oid)) and ot > ft),
                 # What the prompt marked: a fact's closest observations, and those newer than every fact.
                 lambda fid, oid: oid in (closest or {}).get(fid, ())

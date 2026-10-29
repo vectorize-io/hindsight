@@ -60,6 +60,13 @@ async def test_real_model_ends_what_a_fact_makes_untrue_and_leaves_lookalikes_al
         [f"- CREATE: {c.text}" for c in result.creates]
         + [f"- UPDATE of '{observations.get(u.observation_id, '?')}' -> '{u.text}'" for u in result.updates]
         + [f"- DELETE of '{observations.get(d.observation_id, '?')}'" for d in result.deletes]
+        # Listed explicitly: with only the writes, the judge read a new ledger-sink observation as
+        # an update of the untouched billing-sink one.
+        + [
+            f"- UNCHANGED: '{text}'"
+            for oid, text in observations.items()
+            if oid not in {u.observation_id for u in result.updates} | {d.observation_id for d in result.deletes}
+        ]
     )
     await assert_meets_criteria(
         response=writes or "(no writes)",
