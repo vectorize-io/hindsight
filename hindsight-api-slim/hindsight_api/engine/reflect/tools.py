@@ -548,6 +548,9 @@ async def tool_recall(
         max_chunk_tokens=max_chunk_tokens,
     )
 
+    # A chunk is raw source text: "I signed up yesterday" means nothing without the date it was
+    # said on. Its facts carry that date, so the chunk borrows it from the first one.
+    chunk_dates = {m.chunk_id: m.mentioned_at for m in reversed(result.results) if m.chunk_id and m.mentioned_at}
     return {
         "query": query,
         "memories": [_drop_unread_fields(_prune_nulls(m.model_dump())) for m in result.results],
@@ -555,7 +558,10 @@ async def tool_recall(
         # chunk_text / chunk_index / truncated, so it holds none of the fields
         # above and the call would be a no-op. Pinned by
         # test_chunk_info_carries_no_unread_fields.
-        "chunks": {k: _prune_nulls(v.model_dump()) for k, v in (result.chunks or {}).items()},
+        "chunks": {
+            k: _prune_nulls({**v.model_dump(), "mentioned_at": chunk_dates.get(k)})
+            for k, v in (result.chunks or {}).items()
+        },
     }
 
 
@@ -713,14 +719,23 @@ async def tool_expand(
             results.append({"memory_id": mid, "error": f"Memory not found: {mid}"})
             continue
 
+        # Recall shows a memory's dates, so expand must too: without them "yesterday" in the
+        # memory, or in its chunk, cannot be placed in time.
+        dates = {
+            key: value.isoformat() if isinstance(value := memory.get(key), datetime) else value
+            for key in ("occurred_start", "occurred_end", "mentioned_at")
+        }
         item: dict[str, Any] = {
             "memory_id": mid,
-            "memory": {
-                "id": str(memory["id"]),
-                "text": memory["text"],
-                "type": memory["fact_type"],
-                "context": truncate_context_for_prompt(memory["context"]),
-            },
+            "memory": _prune_nulls(
+                {
+                    "id": str(memory["id"]),
+                    "text": memory["text"],
+                    "type": memory["fact_type"],
+                    "context": truncate_context_for_prompt(memory["context"]),
+                    **dates,
+                }
+            ),
         }
 
         if memory["id"] in withheld_ids:
@@ -731,12 +746,16 @@ async def tool_expand(
         # Add chunk if available
         if memory["chunk_id"] and memory["chunk_id"] in chunk_map:
             chunk = chunk_map[cast(str, memory["chunk_id"])]
-            item["chunk"] = {
-                "id": chunk["chunk_id"],
-                "text": chunk["chunk_text"],
-                "index": chunk["chunk_index"],
-                "document_id": chunk["document_id"],
-            }
+            item["chunk"] = _prune_nulls(
+                {
+                    "id": chunk["chunk_id"],
+                    "text": chunk["chunk_text"],
+                    "index": chunk["chunk_index"],
+                    "document_id": chunk["document_id"],
+                    # The chunk was said when its memory was mentioned (see tool_recall).
+                    "mentioned_at": dates["mentioned_at"],
+                }
+            )
             # Add document if depth=document
             if depth == "document" and chunk["document_id"] in doc_map:
                 doc = doc_map[chunk["document_id"]]

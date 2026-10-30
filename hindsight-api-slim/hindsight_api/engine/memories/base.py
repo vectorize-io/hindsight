@@ -4069,8 +4069,8 @@ class MemoriesExtension(Extension, ABC):
 
     async def expand_memories(self, *, conn, fq_table, bank_id: str, unit_ids: list[uuid.UUID]) -> list:
         """``id`` (a UUID), ``text``, ``chunk_id``, ``document_id``, ``fact_type``, ``context``,
-        ``tags`` for each of ``unit_ids`` that exists, as mappings. Postgres returns its rows as
-        they are."""
+        ``tags``, ``occurred_start``, ``occurred_end``, ``mentioned_at`` for each of ``unit_ids``
+        that exists, as mappings. Postgres returns its rows as they are."""
         stored = await self.get_memories(
             conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(u) for u in unit_ids]
         )
@@ -4083,6 +4083,9 @@ class MemoriesExtension(Extension, ABC):
                 "fact_type": s.fact_type,
                 "context": s.context,
                 "tags": s.tags,
+                "occurred_start": s.occurred_start,
+                "occurred_end": s.occurred_end,
+                "mentioned_at": s.mentioned_at,
             }
             for s in stored
         ]

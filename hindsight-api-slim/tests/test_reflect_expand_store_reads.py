@@ -33,7 +33,14 @@ async def test_expand_returns_chunk_and_document_for_whichever_store_holds_them(
     try:
         await memory.retain_batch_async(
             bank_id=bank_id,
-            contents=[{"content": body, "document_id": document_id, "metadata": metadata}],
+            contents=[
+                {
+                    "content": body,
+                    "document_id": document_id,
+                    "metadata": metadata,
+                    "event_date": "2024-01-15T00:00:00Z",
+                }
+            ],
             request_context=request_context,
         )
 
@@ -64,5 +71,10 @@ async def test_expand_returns_chunk_and_document_for_whichever_store_holds_them(
         with_chunks = [i for i in result["results"] if i.get("chunk")]
         assert with_chunks, "no result carried a chunk, so the chunk read is not being exercised"
         assert all(i["chunk"]["text"] for i in with_chunks), "a chunk came back without its text"
+
+        # Dates, as recall shows them: without them "yesterday" in a memory or its chunk cannot be
+        # placed in time. Read through the store, so a store that drops them fails here.
+        assert all(i["memory"]["mentioned_at"].startswith("2024-01-15") for i in result["results"])
+        assert all(i["chunk"]["mentioned_at"].startswith("2024-01-15") for i in with_chunks)
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
