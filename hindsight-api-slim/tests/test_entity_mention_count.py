@@ -13,6 +13,7 @@ drive it there and at the two API-level paths that reach it.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
@@ -190,7 +191,7 @@ class TestReleaseAtTheChokePoint:
             assert await _mention_count(conn, alice) == 1
             assert await _mention_count(conn, alice) == await _posting_count(conn, alice)
             assert await _mention_count(conn, bob) == 1
-            # The debit and the prune-candidate queueing are one statement, so
+            # The debit and the prune-candidate queueing are one operation, so
             # the queue is part of this path's contract, not a separate concern.
             queued = await conn.fetch("SELECT entity_id FROM entity_maintenance_queue WHERE bank_id = $1", bank_id)
             assert {str(r["entity_id"]) for r in queued} == {str(alice)}
@@ -263,6 +264,42 @@ class TestReleaseAtTheChokePoint:
 
             assert await _mention_count(conn, alice) == 0
             assert await _mention_count(conn, alice_elsewhere) == 1
+
+    @pytest.mark.asyncio
+    async def test_concurrent_releases_while_mentions_are_credited(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """Regression for #6175: two appends that both fall back to a full retain
+        release the same old units at once, while other retains credit mentions
+        to the same entities. The release used to be one statement whose queue
+        INSERT was a data-modifying CTE; Postgres's re-check of a concurrently
+        updated entity row re-ran parts of it and failed with "ModifyTable should
+        not be called during EvalPlanQual" or "ON CONFLICT DO UPDATE command
+        cannot affect row a second time". Every release must now succeed."""
+        bank_id = f"test-mc-race-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+        pool = await memory._get_pool()
+
+        async with pool.acquire() as conn:
+            entities = sorted([await _insert_entity(conn, bank_id, f"E{i}", mention_count=100) for i in range(8)])
+
+        async def release(unit: uuid.UUID) -> None:
+            async with pool.acquire() as conn, conn.transaction():
+                await enqueue_entity_prune_candidates(conn, bank_id, [str(unit)])
+                await conn.execute("DELETE FROM memory_units WHERE id = $1", unit)
+
+        async def credit() -> None:
+            # Ascending, like the retain-side mention flush, so it cannot deadlock.
+            async with pool.acquire() as conn, conn.transaction():
+                for entity in entities:
+                    await conn.execute("UPDATE entities SET mention_count = mention_count + 1 WHERE id = $1", entity)
+
+        for round_ in range(40):
+            async with pool.acquire() as conn:
+                unit = await _insert_unit(conn, bank_id, f"round {round_}")
+                for entity in entities:
+                    await _link(conn, unit, entity)
+            await asyncio.gather(release(unit), release(unit), release(unit), credit(), credit())
 
 
 class TestCurationPaths:

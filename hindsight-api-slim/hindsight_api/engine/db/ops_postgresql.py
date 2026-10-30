@@ -580,18 +580,42 @@ class PostgreSQLOps(DataAccessOps):
         bank_id: str,
         unit_ids: list,
     ) -> int:
+        # Three statements in the caller's transaction, deliberately not one
+        # (#6175). This used to be a single statement: the queue INSERT as a
+        # data-modifying CTE, feeding a FOR UPDATE scan of the entities and the
+        # UPDATE of their mention_count. When a concurrent transaction has just
+        # changed one of those entity rows — another retain crediting a mention,
+        # or a second append releasing the same old postings — Postgres
+        # re-checks the row (EvalPlanQual), and the re-check re-runs pieces of
+        # the plan that read the INSERT's output. Under concurrent appends that
+        # failed with "ModifyTable should not be called during EvalPlanQual" or
+        # "ON CONFLICT DO UPDATE command cannot affect row a second time". With
+        # the INSERT in a statement of its own, no re-check can reach it.
+        #
         # Read the candidates straight out of unit_entities rather than making
         # callers pass entity ids: every caller runs this immediately before the
-        # rows go, and the join they'd have to write is this one. `doomed` is
-        # that read, aggregated, so one scan serves both halves — the queue
-        # insert wants the ids, the mention release wants the counts.
-        #
-        # `enqueued`'s inner ORDER BY is load-bearing, not cosmetic: it makes the
-        # INSERT take the (bank_id, entity_id) row locks ascending, the same
-        # order claim_entity_maintenance_batch takes them, so a mutation
-        # enqueueing an overlapping candidate set cannot cycle against a worker
-        # draining it. (Same protocol as enqueue_graph_maintenance, which sorts
-        # in Python because its ids arrive as a bind array.)
+        # rows go, and the join they'd have to write is this one. The read is
+        # aggregated so one scan serves both halves — the queue insert wants the
+        # ids, the mention release wants the counts.
+        doomed = await conn.fetch(
+            f"""
+            SELECT entity_id, COUNT(*) AS n
+            FROM {ue_table}
+            WHERE unit_id = ANY($1::uuid[])
+            GROUP BY entity_id
+            ORDER BY entity_id
+            """,
+            unit_ids,
+        )
+        if not doomed:
+            return 0
+        entity_ids = [row["entity_id"] for row in doomed]
+
+        # The ascending order is load-bearing, not cosmetic: it makes the INSERT
+        # take the (bank_id, entity_id) row locks ascending, the same order
+        # claim_entity_maintenance_batch takes them, so a mutation enqueueing an
+        # overlapping candidate set cannot cycle against a worker draining it.
+        # (Same protocol as enqueue_graph_maintenance.)
         #
         # DO UPDATE (not DO NOTHING) on a duplicate — #3034. The SET is a
         # deliberate no-op preserving enqueued_at; its only purpose is to lock
@@ -601,63 +625,43 @@ class PostgreSQLOps(DataAccessOps):
         # would find the entity still referenced, keep it, and the re-enqueue
         # signal would be lost, stranding the orphan until some later delete
         # happened to name it again.
+        await conn.execute(
+            f"""
+            INSERT INTO {queue_table} (bank_id, entity_id)
+            SELECT $1, v FROM unnest($2::uuid[]) AS t(v)
+            ON CONFLICT (bank_id, entity_id)
+                DO UPDATE SET enqueued_at = {queue_table}.enqueued_at
+            """,
+            bank_id,
+            entity_ids,
+        )
+
+        # Every queue row is now locked, so this transaction holds each
+        # entity's queue row before its `entities` row — the order the drain
+        # takes them in, so a delete and a worker draining the queue cannot
+        # deadlock. The entity locks themselves are taken ascending, the order
+        # restore_entity_postings and prune_orphan_entities use.
         #
-        # Both halves are one statement so the postings are counted in the scan
-        # that already lists them, but the two lock sets still have to be
-        # ordered or a delete and a worker draining the queue deadlock on the
-        # same entity. The invariant is: *an entity's queue row is locked before
-        # its own `entities` row, and queue rows are locked ascending.*
-        #
-        # `victims` referencing `enqueued` is what enforces the first half — an
-        # entity cannot become a victim until the INSERT has produced it. The
-        # second half is `enqueued`'s inner ORDER BY. Together they hold under
-        # every plan shape the statement gets: EXPLAIN picks a nested-loop semi
-        # join here (queue and entity locks interleave per entity, ascending)
-        # and a hashed subplan or a sort under LockRows on other row counts
-        # (every queue lock taken before the first entity lock). Both are safe,
-        # because taking an `entities` row lock always means already holding
-        # that entity's queue row, and the drain takes them in that same order.
-        #
-        # What is deliberately NOT relied on: the order `victims` produces rows
-        # in. `ORDER BY e.id` asks for ascending entity locks, but a lazily
-        # pulled semi join takes them in `doomed` order instead. That is fine
-        # for the reason above — the ascending queue locks are the serialiser,
-        # so two concurrent deletes cannot hold entity rows in opposing orders.
-        #
-        # `victims` re-filters on bank_id even though a posting cannot name
+        # The bank_id filter is not redundant even though a posting cannot name
         # another bank's entity: mention_count is denormalised state, and
         # scoping the write is what keeps that true if the invariant slips.
         result = await conn.execute(
             f"""
-            WITH doomed AS (
-                SELECT ue.entity_id AS id, COUNT(*) AS n
-                FROM {ue_table} ue
-                WHERE ue.unit_id = ANY($2::uuid[])
-                GROUP BY ue.entity_id
-            ),
-            enqueued AS (
-                INSERT INTO {queue_table} (bank_id, entity_id)
-                SELECT $1, s.id FROM (SELECT id FROM doomed ORDER BY 1) s
-                ON CONFLICT (bank_id, entity_id)
-                    DO UPDATE SET enqueued_at = {queue_table}.enqueued_at
-                RETURNING entity_id
-            ),
-            victims AS (
-                SELECT e.id, d.n
-                FROM {entities_table} e
-                JOIN doomed d ON d.id = e.id
-                WHERE e.bank_id = $1
-                  AND e.id IN (SELECT entity_id FROM enqueued)
-                ORDER BY e.id
-                FOR UPDATE OF e
-            )
             UPDATE {entities_table} e
             SET mention_count = GREATEST(e.mention_count - v.n, 0)
-            FROM victims v
+            FROM (
+                SELECT l.id, d.n
+                FROM {entities_table} l
+                JOIN unnest($2::uuid[], $3::bigint[]) AS d(id, n) ON d.id = l.id
+                WHERE l.bank_id = $1
+                ORDER BY l.id
+                FOR UPDATE OF l
+            ) v
             WHERE e.id = v.id
             """,
             bank_id,
-            unit_ids,
+            entity_ids,
+            [row["n"] for row in doomed],
         )
         # asyncpg returns "UPDATE N". Every posting names an existing entity in
         # this bank (FK, and postings are intra-bank by construction), so the
@@ -675,40 +679,51 @@ class PostgreSQLOps(DataAccessOps):
     ) -> int:
         if not entity_ids:
             return 0
-        # One statement, because crediting a mention for a posting that was not
-        # written would be the same bug in the other direction: `posted` returns
-        # exactly the rows the insert added, and only those are credited. Some
-        # of `entity_ids` may have been swept as orphans while the memory sat
-        # archived, which `survivors` filters out, and DO NOTHING covers a
-        # posting that somehow already exists.
+        # Crediting a mention for a posting that was not written would be the
+        # same bug in the other direction: only the postings the insert actually
+        # added are credited. Some of `entity_ids` may have been swept as
+        # orphans while the memory sat archived, which the lock below filters
+        # out, and DO NOTHING covers a posting that somehow already exists.
         #
-        # `survivors` locks the entity rows in ascending id order, the order
+        # Three statements, not one with a modifying CTE, for the reason given
+        # in release_entity_postings (#6175): a concurrent change to one of
+        # these entity rows makes Postgres re-check it, and a re-check must not
+        # reach an INSERT. Locking the survivors first also means the final
+        # UPDATE only touches rows this transaction already holds.
+        #
+        # The entity rows are locked in ascending id order, the order
         # release_entity_postings and prune_orphan_entities take them. No queue
         # row is involved here, so there is no second lock set to sequence.
-        result = await conn.execute(
+        survivors = await conn.fetch(
             f"""
-            WITH survivors AS (
-                SELECT e.id
-                FROM {entities_table} e
-                WHERE e.bank_id = $1
-                  AND e.id = ANY($3::uuid[])
-                ORDER BY e.id
-                FOR UPDATE
-            ),
-            posted AS (
-                INSERT INTO {ue_table} (unit_id, entity_id)
-                SELECT $2, s.id FROM survivors s
-                ON CONFLICT DO NOTHING
-                RETURNING entity_id
-            )
-            UPDATE {entities_table} e
-            SET mention_count = e.mention_count + 1
-            FROM posted p
-            WHERE e.id = p.entity_id
+            SELECT id
+            FROM {entities_table}
+            WHERE bank_id = $1
+              AND id = ANY($2::uuid[])
+            ORDER BY id
+            FOR UPDATE
             """,
             bank_id,
-            unit_id,
             entity_ids,
+        )
+        if not survivors:
+            return 0
+        posted = await conn.fetch(
+            f"""
+            INSERT INTO {ue_table} (unit_id, entity_id)
+            SELECT $1, v FROM unnest($2::uuid[]) AS t(v)
+            ON CONFLICT DO NOTHING
+            RETURNING entity_id
+            """,
+            unit_id,
+            [row["id"] for row in survivors],
+        )
+        if not posted:
+            return 0
+        result = await conn.execute(
+            f"UPDATE {entities_table} SET mention_count = mention_count + 1 WHERE bank_id = $1 AND id = ANY($2::uuid[])",
+            bank_id,
+            [row["entity_id"] for row in posted],
         )
         return int(result.split()[-1]) if isinstance(result, str) and result.startswith("UPDATE") else 0
 
