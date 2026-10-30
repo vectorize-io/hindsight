@@ -1383,6 +1383,12 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
 
     async def _rank_once(self, query: str, docs: list[str], indices: list[int]) -> list[int]:
         """Rank one group of candidates, returning their indices best first."""
+        # Jev rejects a Choice with fewer than two options ("criteria must map 2 or more
+        # options"), and one candidate is already ranked. Guarded here, where every round
+        # (single pool, preliminaries, finals) asks, so a bank holding one memory does not
+        # fail recall with a 400.
+        if len(indices) < 2:
+            return list(indices)
         body = {
             "state": f"Question: {query}",
             "model": self.model,

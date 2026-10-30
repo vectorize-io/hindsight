@@ -317,6 +317,7 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
                 }
             elif question["type"] == "choice":
                 criteria = question["criteria"]
+                stubs.rerank.ranked.extend(text if isinstance(text, str) else str(text) for text in criteria.values())
                 scores = {
                     key: stubs.rerank.score(body["state"], text if isinstance(text, str) else str(text))
                     for key, text in criteria.items()

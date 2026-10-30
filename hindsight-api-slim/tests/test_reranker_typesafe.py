@@ -155,23 +155,23 @@ class TestRanking:
     @pytest.mark.asyncio
     async def test_candidates_are_the_options_and_the_query_is_the_question(self):
         encoder, session = _encoder({"c0": 1.0})
-        await encoder._predict([("who paid?", "Alice paid the bill")])
+        await encoder._predict([("who paid?", "Alice paid the bill"), ("who paid?", "Bob left early")])
 
         body = session.rank_requests[0]
         assert body["model"] == "jev-latest"
         assert "who paid?" in body["state"]
         question = body["questions"]["rank"]
         assert question["type"] == "choice"
-        assert question["criteria"] == {"c0": "Alice paid the bill"}
+        assert question["criteria"] == {"c0": "Alice paid the bill", "c1": "Bob left early"}
 
     @pytest.mark.asyncio
     async def test_each_query_is_ranked_in_its_own_pool(self):
         """Two queries cannot share a ranking: a Choice ranks against one question."""
         encoder, session = _encoder({"c0": 0.9, "c1": 0.1})
-        scores = await encoder._predict([("a", "doc-a"), ("b", "doc-b"), ("a", "doc-a2")])
+        scores = await encoder._predict([("a", "doc-a"), ("b", "doc-b"), ("a", "doc-a2"), ("b", "doc-b2")])
 
         assert len(session.rank_requests) == 2
-        assert len(scores) == 3
+        assert len(scores) == 4
         assert scores[0] > scores[2], "query a's own two candidates keep their order"
 
     @pytest.mark.asyncio
@@ -423,11 +423,20 @@ class TestFactory:
     @pytest.mark.asyncio
     async def test_base_url_is_honoured(self):
         encoder, session = _encoder({"c0": 1.0}, base_url="https://proxy.example.com/")
-        await encoder._predict([("q", "doc")])
+        await encoder._predict([("q", "doc"), ("q", "other doc")])
         assert session.urls == ["https://proxy.example.com/v1/systemone"]
 
 
 class TestTokenBudgetingAndOrder:
+    @pytest.mark.asyncio
+    async def test_one_candidate_is_ranked_without_a_choice(self):
+        """Jev rejects a one-option Choice, so a bank with one memory failed recall with a 400."""
+        encoder, session = _encoder({}, prune_candidates=True, cut_level=5)
+        scores = await encoder._predict([("q", "the only memory")])
+
+        assert session.rank_requests == []
+        assert scores == [1.0]
+
     @pytest.mark.asyncio
     async def test_single_round_fast_path_when_pool_fits(self):
         """When candidates <= 250 and within token limit, only 1 request is made (no finals)."""

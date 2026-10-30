@@ -494,10 +494,14 @@ class RerankStub:
     #: as (text in Memory A, text in Memory B). Every other pair is not a repeat.
     repeats: set[tuple[str, str]]
 
+    #: The candidates of every ranking question, as the decision model read them.
+    ranked: list[str]
+
     def __init__(self) -> None:
         self.verdicts = {}
         self.states = []
         self.repeats = set()
+        self.ranked = []
 
     def repeat(self, memory_a: str, memory_b: str) -> float:
         return 0.9 if any(a in memory_a and b in memory_b for a, b in self.repeats) else 0.1

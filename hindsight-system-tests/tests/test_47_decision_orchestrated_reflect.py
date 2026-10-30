@@ -17,6 +17,7 @@ evidence fully answers the question".
 from __future__ import annotations
 
 import contextlib
+import re
 import uuid
 from collections.abc import AsyncIterator
 
@@ -109,6 +110,48 @@ async def test_a_bank_that_opts_out_runs_agent_turns(typesafe_client, llm, stubs
     assert response.text == ANSWER
     assert not _rewrote_the_query(llm), "no query rewrite"
     assert _reflect_turns(llm) > 1, "the agent wrote its own searches"
+
+
+async def test_source_text_reaches_reflect_with_the_day_it_was_said(typesafe_client, llm, stubs):
+    """"Yesterday" in a conversation means nothing without the day it was said on.
+
+    Facts carried their dates, but the source text they came from reached reflect undated, so
+    the answer read "yesterday" against the question's date: on LoComo a July sign-up came back
+    as October. Both readers must see it: the decision model ranking the evidence, and the LLM
+    writing the answer.
+    """
+    bank = f"systest-{uuid.uuid4().hex[:12]}"
+    llm.on_step("extract_facts").returns(
+        extracted(
+            fact("Melanie signed up for a pottery class", who="Melanie", entities=["Melanie"]),
+            fact("Melanie is excited about pottery", who="Melanie", entities=["Melanie"]),
+        )
+    )
+    llm.on_step("consolidate").returns(consolidation())
+    await typesafe_client.aretain(
+        bank_id=bank,
+        content="Melanie: I just signed up for a pottery class yesterday. I am so excited about pottery!",
+        timestamp="2023-07-03T13:36:00Z",
+    )
+    await wait_until_settled(typesafe_client, bank)
+    stubs.rerank.cut_level = ENOUGH
+    llm.on_step("reflect_round_query").returns_text("pottery class")
+    llm.on_step("reflect", tool="done").returns_tool_call("done", answer="On July 2, 2023.")
+    stubs.rerank.ranked.clear()
+    llm.calls.clear()
+
+    try:
+        response = await typesafe_client.areflect(bank_id=bank, query="When did Melanie sign up for a pottery class?")
+    finally:
+        with contextlib.suppress(Exception):
+            await typesafe_client.banks.delete_bank(bank)
+
+    assert response.text == "On July 2, 2023."
+    source = [text for text in stubs.rerank.ranked if "yesterday" in text]
+    assert source, f"the decision model never ranked the source text: {stubs.rerank.ranked}"
+    assert all(text.startswith("[mentioned 2023-07-03") for text in source), source
+    answer_turn = next(call for call in llm.calls if anchor_for("reflect") in call.all_text)
+    assert re.search(r'yesterday[^}]*"mentioned_at": "2023-07-03', answer_turn.all_text), answer_turn.all_text
 
 
 def _rewrote_the_query(llm) -> bool:
