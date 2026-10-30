@@ -56,6 +56,7 @@ from hindsight_api.extensions import (
     ValidationResult,
 )
 from hindsight_api.webhooks.manager import WebhookManager
+from tests.llm_trace_drain import drain_traces
 from tests.retain_result_capture import RetainResultCapture
 
 
@@ -3100,6 +3101,11 @@ async def test_streamed_bank_archive_matches_the_built_one(memory, request_conte
         await _retain(memory, bank, "Grace shared a diagram of the Paris office.", request_context, "doc-1")
         await _retain(memory, bank, "Alan moved to Berlin in 2021.", request_context, "doc-2")
         await _seed_attachment(memory, bank, b"\x89PNG-parity", "b" * 64)
+        # Retain returns before its LLM trace and audit rows are written (they are
+        # fire-and-forget). Let them land, or one arrives between the two exports
+        # and the history sections differ for a reason that is not the format.
+        await drain_traces(memory)
+        await memory._audit_logger.drain()
         backend = await memory._get_backend()
         scope = TransferScope(data=True, bank_config=True, history=True)
         streamed = b"".join(
