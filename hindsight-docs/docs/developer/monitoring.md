@@ -120,7 +120,9 @@ only on deployments with few banks or tenants. The backlog gauges always carry `
 - `source`: Where the operation was triggered from (`api`, `reflect`, `internal`, `worker`)
 - `budget`: Budget level if specified (`low`, `mid`, `high`)
 - `max_tokens`: Max tokens if specified
-- `success`: Whether the operation succeeded (`true`, `false`)
+- `success`: How the operation ended: `true`, `false`, or `cancelled` when the client disconnected
+  before a recall or reflect finished. A cancellation is not a failure, so `success="false"` stays a
+  server-side signal; the `cancelled` duration shows how long clients waited before giving up.
 - `memories_backend`: The store serving the bank, when the memories extension names one
   (`MemoriesExtension.backend_name_for`). Absent by default, so existing series are unchanged; a
   deployment whose banks live in different stores uses it to compare their latency without

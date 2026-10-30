@@ -137,14 +137,14 @@ class TestMetricsCollector:
         attributes = call_args[0][1]
         assert attributes["success"] == "false"
 
-    def test_record_operation_cancellation_excluded_from_metric(self, collector):
+    def test_record_operation_cancellation_recorded_as_cancelled(self, collector):
         """A client-disconnect cancellation is neither a success nor a failure.
 
         Recall/reflect run the engine call inside record_operation; when the
         client disconnects the engine raises OperationCancelledError (issue
-        #2122). That abandoned request must not be recorded on
-        hindsight.operation.total at all -- inflating neither the failure nor
-        the success rate -- even though the exception still propagates.
+        #2122). That abandoned request is counted with success="cancelled", so
+        it shows up in hindsight.operation.total (and its time-until-cancel in
+        the duration histogram) without inflating the failure rate (#6126).
         """
         from hindsight_api.cancellation import OperationCancelledError
 
@@ -152,13 +152,13 @@ class TestMetricsCollector:
             with collector.record_operation("recall", bank_id="test_bank", source="api"):
                 raise OperationCancelledError("client disconnected")
 
-        collector.operation_total.add.assert_not_called()
-        collector.operation_duration.record.assert_not_called()
+        assert collector.operation_total.add.call_args[0][1]["success"] == "cancelled"
+        assert collector.operation_duration.record.call_args[0][1]["success"] == "cancelled"
 
-    def test_record_operation_http_499_from_cancellation_excluded(self, collector):
+    def test_record_operation_http_499_from_cancellation_recorded_as_cancelled(self, collector):
         """run_cancellable_on_disconnect re-raises the cancellation as
         ``HTTPException(499) from exc``; the cause chain marks it as a
-        cancellation, so it is excluded from the metric too."""
+        cancellation, so it is recorded as cancelled too."""
         from fastapi import HTTPException
 
         from hindsight_api.cancellation import OperationCancelledError
@@ -170,8 +170,7 @@ class TestMetricsCollector:
                 except OperationCancelledError as cancel:
                     raise HTTPException(status_code=499, detail="client disconnected") from cancel
 
-        collector.operation_total.add.assert_not_called()
-        collector.operation_duration.record.assert_not_called()
+        assert collector.operation_total.add.call_args[0][1]["success"] == "cancelled"
 
     def test_record_operation_unrelated_499_still_recorded_as_failure(self, collector):
         """A 499 that is NOT caused by a cancellation (no OperationCancelledError

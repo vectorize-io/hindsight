@@ -77,8 +77,8 @@ def _is_client_cancellation(exc: BaseException) -> bool:
     as a cancellation. Matching on the cause chain rather than a bare status
     code avoids misclassifying an unrelated 499 as a cancellation. Per the
     engine contract a cancellation is "not a failure to retry or report"
-    (cancellation.OperationCancelledError), so it must not be counted against
-    ``hindsight.operation.total``.
+    (cancellation.OperationCancelledError), so it is recorded on
+    ``hindsight.operation.total`` as ``success="cancelled"``, never ``"false"``.
     """
     # Imported lazily to avoid import-time coupling (cf. _get_tenant above).
     from hindsight_api.cancellation import OperationCancelledError
@@ -273,8 +273,13 @@ class MetricsCollectorBase:
         budget: str | None = None,
         max_tokens: int | None = None,
         memories_backend: str | None = None,
+        cancelled: bool = False,
     ):
-        """Record a single completed operation with an explicit success label."""
+        """Record a single completed operation with an explicit success label.
+
+        ``cancelled`` marks a client-disconnect cancellation; it is recorded with
+        ``success="cancelled"`` so it is counted without touching the failure rate.
+        """
         raise NotImplementedError
 
     def record_llm_call(
@@ -387,6 +392,7 @@ class NoOpMetricsCollector(MetricsCollectorBase):
         budget: str | None = None,
         max_tokens: int | None = None,
         memories_backend: str | None = None,
+        cancelled: bool = False,
     ):
         """No-op operation result recording."""
         pass
@@ -704,27 +710,28 @@ class MetricsCollector(MetricsCollectorBase):
             # A client disconnect cancels the operation cooperatively (#2122),
             # raised as OperationCancelledError and re-raised by the HTTP layer
             # as HTTPException(499) from it. An abandoned request is neither a
-            # success nor a failure, so it is excluded from the metric entirely
-            # rather than inflating either the failure or the success rate on
-            # hindsight.operation.total.
+            # success nor a failure: it is recorded as success="cancelled", so
+            # it is counted (with its time-until-cancel) without inflating the
+            # failure rate on hindsight.operation.total. Before #6126 it was
+            # dropped from the metric entirely (#2185), which left no way to see
+            # how often clients gave up, or how long they waited first.
             if _is_client_cancellation(exc):
                 cancelled = True
-            else:
-                success = False
+            success = False
             raise
         finally:
             _current_memories_backend.reset(backend_token)
-            if not cancelled:
-                self.record_operation_result(
-                    operation,
-                    bank_id,
-                    success=success,
-                    duration=time.perf_counter() - start_time,
-                    source=source,
-                    budget=budget,
-                    max_tokens=max_tokens,
-                    memories_backend=backend,
-                )
+            self.record_operation_result(
+                operation,
+                bank_id,
+                success=success,
+                duration=time.perf_counter() - start_time,
+                source=source,
+                budget=budget,
+                max_tokens=max_tokens,
+                memories_backend=backend,
+                cancelled=cancelled,
+            )
 
     def record_operation_result(
         self,
@@ -736,6 +743,7 @@ class MetricsCollector(MetricsCollectorBase):
         budget: str | None = None,
         max_tokens: int | None = None,
         memories_backend: str | None = None,
+        cancelled: bool = False,
     ):
         """Record a single completed operation (duration + count) with a success label.
 
@@ -756,7 +764,7 @@ class MetricsCollector(MetricsCollectorBase):
             attributes["budget"] = budget
         if max_tokens:
             attributes["max_tokens"] = str(max_tokens)
-        attributes["success"] = str(success).lower()
+        attributes["success"] = "cancelled" if cancelled else str(success).lower()
 
         # Record duration
         self.operation_duration.record(duration, attributes)
