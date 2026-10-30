@@ -117,19 +117,30 @@ _EPHEMERAL_CACHE = {"type": "ephemeral"}
 _DEFAULT_MAX_TOKENS = 64000
 
 
-def _cached_system_blocks(system_prompt: str) -> list[dict[str, Any]]:
-    """Render the system prompt as a block list with a cache_control marker.
+def _cached_system_blocks(system_prompt: str | None, schema_msg: str | None = None) -> list[dict[str, Any]]:
+    """Render the system prompt as a block list with cache_control markers.
 
-    Anthropic prompt caching is a prefix match: marking the (single) system
-    block caches tools + system together. The system prompt is stable per
-    scope — fact extraction reuses it across every chunk, reflect and
-    consolidation keep their stable instructions there — so repeat calls read
-    it at ~10% of the base input price. Markers below the model's minimum
-    cacheable prefix are silently ignored (no write premium), so marking is
-    safe unconditionally. This is the "inline-marker provider" strategy that
+    Anthropic prompt caching is a prefix match: marking the system block
+    caches tools + system together. The system prompt is stable per scope —
+    fact extraction reuses it across every chunk, reflect and consolidation
+    keep their stable instructions there — so repeat calls read it at ~10% of
+    the base input price. Markers below the model's minimum cacheable prefix
+    are silently ignored (no write premium), so marking is safe
+    unconditionally. This is the "inline-marker provider" strategy that
     ``LLMInterface.get_or_create_cached_prefix`` documents for Anthropic.
+
+    A prompt-injected response schema goes in its own second block and
+    marker rather than being appended to the first: consolidation builds its
+    schema per batch (it enumerates the batch's fact ids), and an appended
+    schema changed the cached prefix on every call, so the stable
+    instructions in front of it were never read back (#6187). A fixed schema
+    still caches through the second marker. 2 of the 4 allowed breakpoints.
     """
-    return [{"type": "text", "text": system_prompt, "cache_control": _EPHEMERAL_CACHE}]
+    return [
+        {"type": "text", "text": text, "cache_control": _EPHEMERAL_CACHE}
+        for text in (system_prompt, schema_msg)
+        if text
+    ]
 
 
 #: ``data:<media type>;base64,<payload>`` — the OpenAI-style image part's URL form.
@@ -362,6 +373,7 @@ class AnthropicLLM(LLMInterface):
         # now (see providers/tools_via_schema.py). Without strict_schema, or on an endpoint
         # that does not take output_config, the schema goes in the prompt and the reply is parsed.
         schema = None
+        schema_msg = None
         use_native_format = False
         if response_format is not None and hasattr(response_format, "model_json_schema"):
             if strict_schema and not self._output_format_rejected:
@@ -369,8 +381,7 @@ class AnthropicLLM(LLMInterface):
                 schema = _for_native_output(strict_json_schema(response_format))
             else:
                 schema = provider_json_schema(response_format)
-                schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2, ensure_ascii=False)}"
-                system_prompt = (system_prompt + schema_msg) if system_prompt else schema_msg
+                schema_msg = f"You must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2, ensure_ascii=False)}"
 
         # Prepare parameters
         call_params: dict[str, Any] = {
@@ -379,10 +390,11 @@ class AnthropicLLM(LLMInterface):
             "max_tokens": max_completion_tokens if max_completion_tokens is not None else _DEFAULT_MAX_TOKENS,
         }
 
-        if system_prompt:
+        if system_prompt or schema_msg:
             # One-shot calls share only the system prompt with each other, so
-            # that is the sole cache breakpoint on this path.
-            call_params["system"] = _cached_system_blocks(system_prompt)
+            # it is the cache breakpoint on this path; a prompt-injected schema
+            # gets its own, so a per-request schema can't break the first.
+            call_params["system"] = _cached_system_blocks(system_prompt, schema_msg)
 
         if use_native_format:
             call_params["output_config"] = {"format": {"type": "json_schema", "schema": schema}}
@@ -591,10 +603,10 @@ class AnthropicLLM(LLMInterface):
         it either — current Claude models reject non-default sampling params);
         an OpenAI ``response_format`` json_schema becomes ``output_config`` when strict
         (native structured output, issue #1002), else the schema is injected into the
-        system prompt.
+        system prompt (as its own system block, see ``_cached_system_blocks``).
 
-        The system prompt carries the same cache_control marker as the sync
-        one-shot path (its sole breakpoint): every request in a retain batch
+        The system prompt carries the same cache_control markers as the sync
+        one-shot path (system only, nothing on messages): every request in a retain batch
         shares the fact-extraction system prompt, so the first item's cache
         write serves the remaining items as best-effort reads — and the
         cache-read discount stacks with the 50% batch discount.
@@ -617,17 +629,17 @@ class AnthropicLLM(LLMInterface):
 
         json_schema = (body.get("response_format") or {}).get("json_schema") or {}
         schema = json_schema.get("schema")
+        schema_msg = None
         if schema is not None:
             if json_schema.get("strict"):
                 params["output_config"] = {"format": {"type": "json_schema", "schema": _for_native_output(schema)}}
             else:
-                schema_msg = "\n\nYou must respond with valid JSON matching this schema:\n" + json.dumps(
+                schema_msg = "You must respond with valid JSON matching this schema:\n" + json.dumps(
                     schema, indent=2, ensure_ascii=False
                 )
-                system_prompt = (system_prompt + schema_msg) if system_prompt else schema_msg
 
-        if system_prompt:
-            params["system"] = _cached_system_blocks(system_prompt)
+        if system_prompt or schema_msg:
+            params["system"] = _cached_system_blocks(system_prompt, schema_msg)
 
         # Batch params ARE the raw Messages body, so operator-configured extra
         # body params merge directly (the sync path routes them through the

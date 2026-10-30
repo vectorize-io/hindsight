@@ -79,28 +79,37 @@ async def test_call_marks_system_prompt_for_caching():
     assert params["messages"] == [{"role": "user", "content": "Chunk text."}]
 
 
-async def test_call_non_strict_schema_lands_inside_cached_system_block():
-    """Schema injection happens before marking, so the marked block includes it."""
+class _OtherOut(BaseModel):
+    observations: list[str]
+
+
+async def test_call_non_strict_schema_gets_its_own_cached_block():
+    """A per-request schema must not change the cached instructions block (#6187).
+
+    Consolidation builds its schema per batch; appended to the instructions it
+    made every call's cached prefix unique, so the instructions never hit.
+    """
     provider = _make_provider()
-    provider._client.messages.create = AsyncMock(return_value=_text_response('{"facts": []}'))
+    provider._client.messages.create = AsyncMock(return_value=_text_response('{"facts": [], "observations": []}'))
 
-    with patch("hindsight_api.engine.providers.anthropic_llm.get_metrics_collector"):
-        await provider.call(
-            messages=[
-                {"role": "system", "content": "Extract."},
-                {"role": "user", "content": "Text."},
-            ],
-            response_format=_Out,
-            scope="test",
-            max_retries=0,
-        )
+    systems = []
+    for response_format in (_Out, _OtherOut):
+        with patch("hindsight_api.engine.providers.anthropic_llm.get_metrics_collector"):
+            await provider.call(
+                messages=[
+                    {"role": "system", "content": "Extract."},
+                    {"role": "user", "content": "Text."},
+                ],
+                response_format=response_format,
+                scope="test",
+                max_retries=0,
+            )
+        systems.append(provider._client.messages.create.await_args.kwargs["system"])
 
-    params = provider._client.messages.create.await_args.kwargs
-    assert len(params["system"]) == 1
-    system_block = params["system"][0]
-    assert system_block["cache_control"] == EPHEMERAL
-    assert "Extract." in system_block["text"]
-    assert "valid JSON" in system_block["text"]
+    first, second = systems
+    assert first[0] == second[0] == {"type": "text", "text": "Extract.", "cache_control": EPHEMERAL}
+    assert first[1]["cache_control"] == second[1]["cache_control"] == EPHEMERAL
+    assert "facts" in first[1]["text"] and "observations" in second[1]["text"]
 
 
 async def test_call_without_system_prompt_sends_no_system_param():
