@@ -873,7 +873,7 @@ export type BankTemplateConfig = {
   /**
    * Consolidation Use Decision Model
    *
-   * When the server has a decision model, consolidation lets it settle restatements, new facets and chatter before the LLM call
+   * When the server has a decision model, consolidation lets it settle restatements and chatter before the LLM call
    */
   consolidation_use_decision_model?: boolean | null;
   /**

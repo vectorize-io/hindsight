@@ -1916,8 +1916,8 @@ DEFAULT_ENABLE_DOCUMENT_IMPORT_API = True
 # Observations defaults (consolidated knowledge from facts)
 DEFAULT_ENABLE_OBSERVATIONS = True  # Observations enabled by default
 DEFAULT_ENABLE_AUTO_CONSOLIDATION = True  # Auto-consolidation after retain enabled by default
-# When a decision model is set up for consolidation, it settles restatements, new facets and
-# chatter before the LLM call; only facts that change existing observations reach the LLM.
+# When a decision model is set up for consolidation, it settles restatements and chatter before
+# the LLM call; every other fact reaches the LLM, which alone writes observation text.
 DEFAULT_CONSOLIDATION_USE_DECISION_MODEL = True
 DEFAULT_ENABLE_OBSERVATION_HISTORY = True  # Observation history tracking enabled by default
 DEFAULT_ENABLE_MENTAL_MODEL_HISTORY = True  # Mental model history tracking enabled by default

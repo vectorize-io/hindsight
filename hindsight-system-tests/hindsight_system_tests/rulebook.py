@@ -517,27 +517,20 @@ class TriageStub:
 
     Triage asks TypeSafe, per new fact, how it relates to the observations shown
     (``relation``), which one it restates (``match`` / ``covers_oN``) and which it makes
-    should be reworded (``touches_oN``); under a bank's own mission also whether the mission
-    would keep the fact as stated (``keep_as``); every judgment is a choice. A story names the verdict for a
-    fact by a phrase in its text; every other fact gets "changes" with nothing flagged
-    and no mission fit, which hands it to the LLM — what an unconfigured stub must do so
+    should be reworded (``touches_oN``); every judgment is a choice. A story names the verdict
+    for a fact by a phrase in its text; every other fact gets "changes" with nothing flagged,
+    which hands it to the LLM — what an unconfigured stub must do so
     no story is settled by accident.
     """
 
     def __init__(self) -> None:
         self.verdicts: dict[str, str] = {}
-        #: Phrases of facts the bank's mission wants, worded as it allows.
-        self.fits_mission: set[str] = set()
 
     def relation(self, fact_text: str) -> str:
         return next((v for phrase, v in self.verdicts.items() if phrase in fact_text), "changes")
 
-    def fits(self, fact_text: str) -> bool:
-        return any(phrase in fact_text for phrase in self.fits_mission)
-
     def reset(self) -> None:
         self.verdicts.clear()
-        self.fits_mission.clear()
 
 
 @dataclass(frozen=True)

@@ -10027,7 +10027,7 @@
               }
             ],
             "title": "Consolidation Use Decision Model",
-            "description": "When the server has a decision model, consolidation lets it settle restatements, new facets and chatter before the LLM call"
+            "description": "When the server has a decision model, consolidation lets it settle restatements and chatter before the LLM call"
           },
           "consolidation_max_memories_per_round": {
             "anyOf": [

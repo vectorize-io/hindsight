@@ -68,13 +68,13 @@ stays out of the category counts.
 | recall | precision | 2 | the right budget among near-identical ones; a negation kept |
 | recall | duplicates | 2 | one sentence in four documents comes back four times (once, with dedup); reworded repeats collapse under dedup |
 | recall | distinct | 2 | facts that only look alike (four customers, three details of one offsite) all come back |
-| consolidation | merge | 2 | restatements update one observation; the same facts under two tags merge in a shared scope |
+| consolidation | merge | 3 | restatements update one observation; one fact told three ways in one batch is one observation; the same facts under two tags merge in a shared scope |
 | consolidation | update | 4 | a new employer, retired tools, a correction, a member leaving a list: the old belief stops reading as current |
 | consolidation | recency | 2 | recency is when a fact was stated, not when it was retained |
 | consolidation | counts | 2 | the horse farm; no arithmetic on counts |
 | consolidation | entities | 2 | a vague reference resolved by a later fact; lookalike people and numbers stay apart |
 | consolidation | language | 2 | Chinese facts give Chinese observations; a mixed update is rewritten, not patched |
-| consolidation | mission | 3 | without a mission chatter is dropped; a mission can keep ephemera or forbid names |
+| consolidation | mission | 4 | without a mission chatter is dropped, even in a topic's first batch; a mission can keep ephemera or forbid names |
 | consolidation | scale | 3 | 30 near-identical services, 20 lookalike-named people, the services under a mission |
 | reflect | precision | 3 | the answer differs from its near-misses by one attribute: a version, a service name, a number |
 | reflect | update | 2 | what is true now, when the bank also holds what was true before |
@@ -414,7 +414,7 @@ issue/PR history — and what grades it. "eval" = a `test_consolidation` scenari
 - Deleting or replacing a document removes and rebuilds its observations (#429, #3294) — system `test_25`; unit `test_delta_retain_orphan_observations.py`
 - Trigger, dedup and serialisation of consolidation jobs (#4368) — system `test_26`, `test_28`
 - Observations in recall, `prefer_observations`, source facts (#2311) — system `test_27`
-- Consolidation triage (a decision model, e.g. TypeSafe Jev): restatements, new facets and chatter settled without the LLM — unit `test_consolidation_triage.py`; system `test_22_consolidation_triage`; eval suite with triage on; under a bank's own mission it records only facts the mission wants as worded — eval `noisy-service-catalogue-mission`
+- Consolidation triage (a decision model, e.g. TypeSafe Jev): restatements and chatter settled without the LLM, which alone writes observation text — unit `test_consolidation_triage.py`; system `test_22_consolidation_triage`; eval suite with triage on; under a bank's own mission it records only facts the mission wants as worded — eval `noisy-service-catalogue-mission`
 
 **Out of scope here, deliberately** — speaker attribution is decided at retain (#4572, #1680)
 and belongs with the retain suites; operational behaviour (timeouts #3301/#4715, quota

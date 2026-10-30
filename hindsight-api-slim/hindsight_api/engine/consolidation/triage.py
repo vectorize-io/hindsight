@@ -1,13 +1,16 @@
 """Decide the easy consolidation cases with a decision model before the LLM sees them.
 
-Most facts reaching a bank fall in one of three easy cases: they restate what an
-observation already says, they add something no observation holds yet (a new entity,
-a new attribute of a known one), or they are chatter. None needs writing: attach the
-fact as evidence, record the fact as its own observation, or record nothing. A typed
-judgment tells them apart in under a second, so those facts never reach the LLM. Only
-a fact that affects what an existing observation says — a change, a correction, a
-count, a reference it resolves, an older state — needs the LLM's rewrite, and every
-fact whose answers disagree goes there too.
+Two easy cases need no writing: a fact that restates what an existing observation
+already says (attach it as evidence, the text stays as it is), and chatter next to
+existing observations (record nothing). A typed judgment tells them apart in under a
+second, so those facts never reach the LLM. Everything else goes to the LLM: a fact
+that affects what an observation says, a fact that says something new, a fact with no
+observation to compare against, and every fact whose answers disagree.
+
+The decision model never writes an observation's text. A fact recorded as stated
+would skip what only the LLM does: merge it with the facts beside it in the batch
+(they are not shown to the judgment), apply the bank's mission, drop the noise in it
+and resolve its relative dates.
 """
 
 from __future__ import annotations
@@ -76,40 +79,19 @@ _TOUCHES_NO = (
     "`existing_observations.{key}` stays right and complete as it is; `new_fact` is about something else, or "
     "adds only a separate detail."
 )
-#: Asked only under a bank's own mission. Previously two yes/no questions ("is it wanted", "does it
-#: break a wording rule as written"): the second assumed the fact is stored word for word, which
-#: nothing told the model. One choice of how the mission would keep it answers both.
-_KEEP_AS = (
-    "`mission` says what this memory keeps and how it words what it keeps. How should the knowledge in "
-    "`new_fact` be kept?"
-)
-_KEEP_AS_OPTIONS = {
-    "as_stated": (
-        "`mission` wants this knowledge, and `new_fact` as written already follows every rule in `mission`: it "
-        "can be kept exactly as it is."
-    ),
-    "reworded": (
-        "`mission` wants something from `new_fact`, but `new_fact` as written breaks a rule in `mission` (it "
-        "names a company or person `mission` says not to name, is more specific than `mission` allows, or is "
-        "not in the form `mission` requires), so it must be rewritten first."
-    ),
-    "not_wanted": "`mission` does not ask to keep anything in `new_fact`.",
-}
 
 
 @dataclass
 class TriageResult:
     #: fact id -> observation id the fact restates; attach it as evidence.
     restates: dict[str, str] = field(default_factory=dict)
-    #: fact id -> the fact's own sentence; record it as a new observation.
-    new: dict[str, str] = field(default_factory=dict)
     #: fact ids that are chatter; record nothing.
     chatter: set[str] = field(default_factory=set)
     input_tokens: int = 0
     seconds: float = 0.0
 
     def settled(self, fact_id: str) -> bool:
-        return fact_id in self.restates or fact_id in self.new or fact_id in self.chatter
+        return fact_id in self.restates or fact_id in self.chatter
 
 
 @lru_cache(maxsize=4)
@@ -157,9 +139,7 @@ def _dated(text: str, item: Any, *, stated: str) -> dict[str, Any]:
     return {"text": text, **{k: v for k, v in dates.items() if v}}
 
 
-async def _ask(
-    model: DecisionModel, fact: dict[str, Any], candidates: list[MemoryFact], mission: str
-) -> DecisionResponse:
+async def _ask(model: DecisionModel, fact: dict[str, Any], candidates: list[MemoryFact]) -> DecisionResponse:
     keys = [f"o{i}" for i in range(len(candidates))]
     questions: dict[str, DecisionQuestion] = {
         "relation": DecisionQuestion(
@@ -182,9 +162,6 @@ async def _ask(
         "new_fact": _dated(fact_sentence(fact), fact, stated="stated_on"),
         "existing_observations": {k: _dated(c.text, c, stated="last_stated_on") for k, c in zip(keys, candidates)},
     }
-    if mission:
-        state["mission"] = mission
-        questions["keep_as"] = DecisionQuestion(type="choice", instructions=_KEEP_AS, criteria=dict(_KEEP_AS_OPTIONS))
     # Traced like any LLM call, so its cost shows next to the consolidation calls it saves.
     return await model.ask(state, questions, scope="decision_consolidation_triage")
 
@@ -218,25 +195,21 @@ async def triage_facts(
     candidates_per_fact: list[list[MemoryFact]],
     model: DecisionModel,
     *,
-    entities_by_fact: dict[str, list[str]],
     mission: str,
-    may_create: bool,
 ) -> TriageResult:
     """One System One request per fact, in parallel. A failed request leaves its fact to the LLM.
 
-    ``mission``: the bank's own observations mission, empty for the built-in one. A bank's
-    mission may want chatter kept (#525) or a fact reworded (no names, trends only, #4619), so
-    under it the built-in "chatter" and "new" verdicts are not enough: nothing is dropped, and a
-    fact is stored as stated only when its own wording already follows the mission. Anything else
-    is the LLM's job. ``may_create``: false when the scope has an observation cap to respect.
+    A fact with no existing observation to compare against is not asked about: there is nothing
+    it could restate, and whether it is worth keeping is the LLM's call. ``mission``: the bank's
+    own observations mission, empty for the built-in one. A bank's mission may want chatter kept
+    (#525), so under it nothing is dropped.
     """
     result = TriageResult()
     started = time.monotonic()
-    pending = [(m, c[:MAX_CANDIDATES]) for m, c in zip(memories, candidates_per_fact)]
+    pending = [(m, c[:MAX_CANDIDATES]) for m, c in zip(memories, candidates_per_fact) if c]
     # return_exceptions: one failed request must not cancel the others; its fact goes to the LLM.
-    answers = await asyncio.gather(*(_ask(model, m, c, mission) for m, c in pending), return_exceptions=True)
+    answers = await asyncio.gather(*(_ask(model, m, c) for m, c in pending), return_exceptions=True)
 
-    new_candidates: list[dict[str, Any]] = []
     for (memory, candidates), answer in zip(pending, answers):
         if isinstance(answer, BaseException):
             logger.warning(f"[CONSOLIDATION][triage] request failed, fact goes to the LLM: {answer}")
@@ -244,10 +217,10 @@ async def triage_facts(
         result.input_tokens += answer.usage.input_tokens
         fact_id = str(memory["id"])
         relation = _picked(answer, "relation")
-        # The answers must agree: a fact that leaves an observation out of date is not "new", a
-        # restatement or chatter, whatever the relation says. Cross-checking replaces the
-        # confidence bars as the guard against a wrong verdict. An observation stated after the
-        # fact does not count: older news never rewrites a newer belief (prompt rule 10).
+        # The answers must agree: a fact that leaves an observation out of date is not a restatement
+        # or chatter, whatever the relation says. Cross-checking replaces the confidence bars as the
+        # guard against a wrong verdict. An observation stated after the fact does not count: older
+        # news never rewrites a newer belief (prompt rule 10).
         if any(
             _yes(answer, f"touches_o{i}") and not stated_after(c.mentioned_at, memory.get("mentioned_at"))
             for i, c in enumerate(candidates)
@@ -260,31 +233,14 @@ async def triage_facts(
             continue
         if relation == "chatter":
             result.chatter.add(fact_id)
-        elif relation == "restates" and candidates:
+        elif relation == "restates":
             target = _picked(answer, "match") or "o0"
             if _yes(answer, f"covers_{target}"):
                 result.restates[fact_id] = str(candidates[int(target[1:])].id)
-        elif (
-            relation == "new"
-            and may_create
-            and fact_sentence(memory)
-            and (not mission or _picked(answer, "keep_as") == "as_stated")
-        ):
-            new_candidates.append(memory)
-
-    # Two new facts about the same entity in one batch may restate each other (the same event
-    # told twice); recording both verbatim would make siblings. Those go to the LLM to merge.
-    entity_count: dict[str, int] = {}
-    for memory in new_candidates:
-        for entity in set(entities_by_fact.get(str(memory["id"]), [])):
-            entity_count[entity] = entity_count.get(entity, 0) + 1
-    for memory in new_candidates:
-        if all(entity_count.get(e, 0) == 1 for e in set(entities_by_fact.get(str(memory["id"]), []))):
-            result.new[str(memory["id"])] = fact_sentence(memory)
 
     result.seconds = time.monotonic() - started
     logger.info(
-        f"[CONSOLIDATION][triage] facts={len(memories)} restates={len(result.restates)} new={len(result.new)} "
+        f"[CONSOLIDATION][triage] facts={len(memories)} asked={len(pending)} restates={len(result.restates)} "
         f"chatter={len(result.chatter)} decision_input_tokens={result.input_tokens} seconds={result.seconds:.2f}"
     )
     return result

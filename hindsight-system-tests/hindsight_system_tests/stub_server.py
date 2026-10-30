@@ -277,13 +277,10 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
             # Consolidation triage: the verdict is scripted per fact (see TriageStub).
             fact_text = state["new_fact"]["text"]
             relation = stubs.triage.relation(fact_text)
-            fits = stubs.triage.fits(fact_text)
             yes = {"covers_o0": relation == "restates"}
             for question_id, question in body["questions"].items():
                 if question_id == "relation":
                     pick = relation
-                elif question_id == "keep_as":
-                    pick = "as_stated" if fits else "reworded"
                 elif set(question["criteria"]) == {"yes", "no"}:
                     pick = "yes" if yes.get(question_id, False) else "no"
                 else:

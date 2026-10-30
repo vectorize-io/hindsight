@@ -976,7 +976,7 @@ export class HindsightClient {
         | string[][];
       /** Consolidate automatically after retain() rather than on demand. */
       enableAutoConsolidation?: boolean;
-      /** When the server has a decision model, let it settle restatements, new facts and chatter before the consolidation LLM call. */
+      /** When the server has a decision model, let it settle restatements and chatter before the consolidation LLM call. */
       consolidationUseDecisionModel?: boolean;
       /** Number of LLM calls to batch during consolidation. */
       consolidationLlmBatchSize?: number;

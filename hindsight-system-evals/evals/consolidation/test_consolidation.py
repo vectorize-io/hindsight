@@ -102,6 +102,21 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         Scenario(
+            id="repeats-in-one-batch",
+            category="merge",
+            origin="one preference told three times in one batch, each naming the person differently, so no "
+            "two facts share an entity; a decision model that recorded each 'new' fact as stated kept three copies",
+            waves=(
+                _wave(
+                    Fact("Priya Shah prefers Postgres for new services.", "2026-06-02", ("Priya Shah",)),
+                    Fact("Priya likes PostgreSQL best for new services.", "2026-06-02", ("Priya",)),
+                    Fact("For a new service, P. Shah picks Postgres.", "2026-06-02", ("P. Shah",)),
+                ),
+            ),
+            must=("An observation records that Priya prefers Postgres for new services.",),
+            traps=("Two or more observations say Priya prefers Postgres, in different words.",),
+        ),
+        Scenario(
             id="employer-supersedes",
             category="update",
             origin="#1151: many old facts support 'Alice works at Google'; one newer fact says she left",
@@ -446,6 +461,25 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
             must=("An observation records the billing migration from Braintree to Stripe by Q4 2026.",),
             traps=("Some observation records the coffee break, what is on the user's screen, or the thank-you.",),
+        ),
+        Scenario(
+            id="noise-beside-a-routine",
+            category="mission",
+            origin="a grumble in the first batch about a topic, with no observation yet to compare it to; a "
+            "decision model that recorded it as stated kept it word for word, through every later wave",
+            waves=(
+                _wave(
+                    Fact("The team stand-up is at 9:30 in room B.", "2026-06-01", ("stand-up",)),
+                    Fact("Ugh, coffee machine broken again.", "2026-06-01", durable=False),
+                ),
+                _wave(
+                    Fact("Stand-up is 9:30, room B, as usual.", "2026-06-03", ("stand-up", "room B")),
+                    Fact("Thanks, see you there!", "2026-06-03", durable=False),
+                ),
+                _wave(Fact("From next Monday the stand-up moves to 10:00.", "2026-06-05", ("stand-up",))),
+            ),
+            must=("An observation records that the stand-up is at 10:00 in room B.",),
+            traps=("Some observation records the broken coffee machine or the thank-you.",),
         ),
         Scenario(
             id="mission-keeps-ephemeral",

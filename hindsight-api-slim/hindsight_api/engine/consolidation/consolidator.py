@@ -2804,17 +2804,11 @@ async def _process_memory_batch(
     # 2c. Triage: restatements and chatter are settled by a typed judgment, not the LLM.
     triage = TriageResult()
     if (decision_model := triage_model(config)) is not None:
-        async with acquire_with_retry(pool) as conn:
-            entities_by_fact = await get_memories().entities_for_units(
-                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(m["id"]) for m in memories]
-            )
         triage = await triage_facts(
             memories,
             [list(r.results) for r in per_fact_recalls],
             decision_model,
-            entities_by_fact=entities_by_fact,
             mission=(config.observations_mission or "").strip(),
-            may_create=remaining_observation_slots is None,
         )
     llm_memories = [m for m in memories if not triage.settled(str(m["id"]))]
 
@@ -3498,28 +3492,18 @@ async def _apply_create_action(
 
 
 def _apply_triage(llm_result: _BatchLLMResult, triage: TriageResult, union_observations: list["MemoryFact"]) -> None:
-    """Write the triage verdicts as actions: a new fact is a CREATE of its own sentence, and a
-    restatement is evidence for its observation — an UPDATE that keeps the text as it is.
+    """Write the triage verdicts as actions: a restatement is evidence for its observation — an
+    UPDATE that keeps the text as it is.
 
     Folded into the LLM's own update of that observation when there is one, since two
     updates of one observation in a response overwrite each other.
     """
     text_by_id = {str(o.id): o.text for o in union_observations}
-    id_by_text = {_norm_obs_text(o.text): str(o.id) for o in union_observations}
     # An update wins over a delete of the same observation, so evidence for one the LLM deleted
     # (retired, or merged away) on another fact's word would bring it back. A merged one's
     # evidence goes to the survivor; a retired one's goes nowhere, like the LLM's own facts.
     deleted = {d.observation_id: d.merged_into for d in llm_result.deletes}
     restates = dict(triage.restates)
-    for fact_id, sentence in triage.new.items():
-        # Recorded verbatim before, an exact copy would be dropped as a duplicate create and the
-        # fact left backing nothing: it is evidence for the observation that already says it.
-        if (twin := id_by_text.get(_norm_obs_text(sentence))) is not None:
-            restates[fact_id] = twin
-            continue
-        llm_result.creates.append(
-            _CreateAction(text=sentence, source_fact_ids=[fact_id], reason="triage: a new facet, recorded as stated")
-        )
     for fact_id, observation_id in restates.items():
         if observation_id in deleted:
             if (observation_id := deleted[observation_id]) is None:

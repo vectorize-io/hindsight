@@ -3,9 +3,9 @@
 With a decision model set up for consolidation (and ``consolidation_use_decision_model``
 on, its default), consolidation asks it, per new fact, how it relates to the
 observations it would be consolidated against. A restatement becomes evidence for its
-observation, a new entity or attribute becomes an observation of its own, chatter is
-dropped — none of them costs a consolidation
-call. Only a fact that changes what an observation says reaches the LLM.
+observation and chatter is dropped — neither costs a consolidation call. It never writes
+an observation's text: a new fact, and any fact with no observation to compare against,
+reaches the LLM.
 
 The verdicts are scripted (``stubs.triage``); what these stories pin is what the
 server does with each one, and that nothing reaches the LLM it did not need to —
@@ -30,17 +30,16 @@ async def _with_triage(client, bank: str, **updates) -> None:
     await client.banks.update_bank_config(bank, {"updates": {"consolidation_use_decision_model": True, **updates}})
 
 
-async def test_new_facts_and_restatements_never_reach_the_llm(client, llm, stubs, bank_id, settled):
+async def test_a_restatement_is_evidence_without_a_call(client, llm, stubs, bank_id, settled):
     await _with_triage(client, bank_id)
-    stubs.triage.verdicts.update({"moved to Berlin": "new", "lives in Berlin": "restates"})
-
+    stubs.triage.verdicts["lives in Berlin"] = "restates"
     llm.on_step("extract_facts", contains="Alice moved to Berlin.").returns(
         extracted(fact("Alice moved to Berlin", entities=["Alice", "Berlin"]))
     )
+    llm.on_step("consolidate").answers_with(observes("Alice lives in Berlin"))
     await client.aretain(bank_id=bank_id, content="Alice moved to Berlin.")
     await settled(bank_id)
-    [observation] = await _observations(client, bank_id)
-    assert observation.text == "Alice moved to Berlin", "a new fact is recorded as stated"
+    assert len(llm.prompts_for("consolidate")) == 1, "the first fact has nothing to compare against"
 
     llm.on_step("extract_facts", contains="Alice lives in Berlin.").returns(
         extracted(fact("Alice lives in Berlin", entities=["Alice", "Berlin"]))
@@ -48,36 +47,40 @@ async def test_new_facts_and_restatements_never_reach_the_llm(client, llm, stubs
     await client.aretain(bank_id=bank_id, content="Alice lives in Berlin.")
     await settled(bank_id)
     [observation] = await _observations(client, bank_id)
-    assert observation.text == "Alice moved to Berlin", "a restatement leaves the text alone"
+    assert observation.text == "Alice lives in Berlin", "a restatement leaves the text alone"
     assert observation.proof_count == 2, "and becomes its evidence"
+    assert len(llm.prompts_for("consolidate")) == 1
 
-    assert llm.prompts_for("consolidate") == []
 
-
-async def test_a_new_fact_already_stated_word_for_word_is_evidence(client, llm, stubs, bank_id, settled):
-    """Recorded verbatim, it would be dropped as a duplicate create and back nothing."""
+async def test_a_new_fact_is_written_by_the_llm(client, llm, stubs, bank_id, settled):
+    """Recorded as stated, it would keep its noise and skip the merge with the facts beside it."""
     await _with_triage(client, bank_id)
-    stubs.triage.verdicts["moved to Berlin"] = "new"
-    llm.on_step("extract_facts").returns(extracted(fact("Alice moved to Berlin", entities=["Alice", "Berlin"])))
+    stubs.triage.verdicts["Alice"] = "new"
+    llm.on_step("extract_facts").returns(extracted(fact("Ugh, Alice moved to Berlin", entities=["Alice", "Berlin"])))
+    llm.on_step("consolidate").answers_with(observes("Alice lives in Berlin"))
 
-    for _ in range(2):
-        await client.aretain(bank_id=bank_id, content="Alice moved to Berlin.")
-        await settled(bank_id)
+    await client.aretain(bank_id=bank_id, content="Ugh, Alice moved to Berlin.")
+    await settled(bank_id)
 
-    [observation] = await _observations(client, bank_id)
-    assert observation.proof_count == 2
+    assert [o.text for o in await _observations(client, bank_id)] == ["Alice lives in Berlin"]
 
 
 async def test_chatter_is_dropped_without_a_call(client, llm, stubs, bank_id, settled):
     await _with_triage(client, bank_id)
     stubs.triage.verdicts["coffee"] = "chatter"
-    llm.on_step("extract_facts").returns(extracted(fact("The user went for a coffee", entities=["user"])))
+    llm.on_step("extract_facts", contains="Berlin").returns(extracted(fact("The user lives in Berlin", entities=["user"])))
+    llm.on_step("consolidate").answers_with(observes("The user lives in Berlin"))
+    await client.aretain(bank_id=bank_id, content="I live in Berlin.")
+    await settled(bank_id)
 
+    llm.on_step("extract_facts", contains="coffee").returns(
+        extracted(fact("The user went for a coffee", entities=["user"]))
+    )
     await client.aretain(bank_id=bank_id, content="brb, coffee")
     await settled(bank_id)
 
-    assert await _observations(client, bank_id) == []
-    assert llm.prompts_for("consolidate") == []
+    assert [o.text for o in await _observations(client, bank_id)] == ["The user lives in Berlin"]
+    assert len(llm.prompts_for("consolidate")) == 1
 
 
 async def test_a_change_still_goes_to_the_llm(client, llm, stubs, bank_id, settled):
@@ -92,36 +95,3 @@ async def test_a_change_still_goes_to_the_llm(client, llm, stubs, bank_id, settl
 
     assert [o.text for o in await _observations(client, bank_id)] == ["Alice lives in Lisbon"]
     assert len(llm.prompts_for("consolidate")) == 1
-
-
-async def test_a_fact_worded_against_the_mission_goes_to_the_llm(client, llm, stubs, bank_id, settled):
-    """A mission may want a fact rephrased ("name no company"); recorded verbatim it
-    would ignore that, so a fact the judgment does not clear goes to the LLM."""
-    await _with_triage(client, bank_id, observations_mission="Record only industry trends. Name no company.")
-    stubs.triage.verdicts["Northwind"] = "new"
-    llm.on_step("extract_facts").returns(
-        extracted(fact("Northwind is moving off frontier models", entities=["Northwind"]))
-    )
-    llm.on_step("consolidate").answers_with(observes("Companies are moving off frontier models"))
-
-    await client.aretain(bank_id=bank_id, content="Northwind is moving off frontier models.")
-    await settled(bank_id)
-
-    assert [o.text for o in await _observations(client, bank_id)] == ["Companies are moving off frontier models"]
-
-
-async def test_a_fact_the_mission_wants_as_worded_never_reaches_the_llm(client, llm, stubs, bank_id, settled):
-    """The common case under a bank's own mission: the fact is on topic and breaks no
-    wording rule, so it is recorded as stated without a consolidation call."""
-    await _with_triage(client, bank_id, observations_mission="Keep a catalogue of services and who owns them.")
-    stubs.triage.verdicts["billing-api"] = "new"
-    stubs.triage.fits_mission.add("billing-api")
-    llm.on_step("extract_facts").returns(
-        extracted(fact("The billing-api service is owned by team Atlas", entities=["billing-api", "team Atlas"]))
-    )
-
-    await client.aretain(bank_id=bank_id, content="Team Atlas owns billing-api.")
-    await settled(bank_id)
-
-    assert [o.text for o in await _observations(client, bank_id)] == ["The billing-api service is owned by team Atlas"]
-    assert llm.prompts_for("consolidate") == []

@@ -1,9 +1,9 @@
 """Which facts consolidation triage settles, and which it leaves to the LLM.
 
-The judgments themselves are TypeSafe's; what is pinned here is the code around them —
-the thresholds, the guards that keep a verdict from applying where it would be wrong,
-and that anything uncertain or failed falls through to the LLM. The model's behaviour
-is graded end to end by ``hindsight-system-evals`` ``test_09``.
+The judgments themselves are TypeSafe's; what is pinned here is the code around them — the
+guards that keep a verdict from applying where it would be wrong, and that anything
+uncertain, new or failed falls through to the LLM. The model's behaviour is graded end to
+end by ``hindsight-system-evals`` ``evals/consolidation``.
 """
 
 from __future__ import annotations
@@ -58,12 +58,10 @@ def _answer(
     match: str | None = None,
     covers: bool = False,
     affected: tuple[str, ...] = (),
-    keep_as: str = "not_wanted",
 ):
     # Probabilities near 0.5 on purpose: only the picked answer may count, never its confidence.
     answers: dict[str, Any] = {
         "relation": {"probabilities": {relation: 0.4, "other": 0.3}},
-        "keep_as": {"probabilities": {keep_as: 0.4, "other": 0.3}},
     }
     if match is not None:
         answers["match"] = {"probabilities": {match: 0.55, "o9": 0.45}}
@@ -73,10 +71,10 @@ def _answer(
     return DecisionResponse.model_validate({"answers": answers, "usage": {"input_tokens": 10}})
 
 
-async def _run(monkeypatch, facts, candidates, answers, *, entities=None, mission="", may_create=True):
+async def _run(monkeypatch, facts, candidates, answers, *, mission=""):
     replies = iter(answers)
 
-    async def fake_ask(model, fact, cands, mission):
+    async def fake_ask(model, fact, cands):
         reply = next(replies)
         if isinstance(reply, BaseException):
             raise reply
@@ -87,9 +85,7 @@ async def _run(monkeypatch, facts, candidates, answers, *, entities=None, missio
         facts,
         candidates,
         DecisionModel.from_config(_setup()),
-        entities_by_fact=entities or {},
         mission=mission,
-        may_create=may_create,
     )
 
 
@@ -117,10 +113,21 @@ async def test_a_restatement_is_attached_only_when_the_match_is_confirmed(monkey
 
 
 @pytest.mark.asyncio
-async def test_a_new_fact_is_recorded_as_its_own_sentence(monkeypatch):
-    fact = _fact("The billing-api service is written in Kotlin. | Involving: billing-api")
-    result = await _run(monkeypatch, [fact], [[]], [_answer("new")])
-    assert result.new == {str(fact["id"]): "The billing-api service is written in Kotlin."}
+async def test_a_new_fact_goes_to_the_llm(monkeypatch):
+    """Triage never writes an observation's text: recorded as stated, a new fact would skip the
+    merge with the facts beside it in the batch, the mission, and the cleanup of its noise."""
+    obs = _Obs("obs-1", "The invoice-api service listens on port 8936.")
+    fact = _fact("The billing-api service is written in Kotlin.")
+    result = await _run(monkeypatch, [fact], [[obs]], [_answer("new")])
+    assert not result.settled(str(fact["id"]))
+
+
+@pytest.mark.asyncio
+async def test_a_fact_with_no_observation_to_compare_goes_to_the_llm_unasked(monkeypatch):
+    """Nothing to restate and nothing to cross-check a 'chatter' verdict against."""
+    fact = _fact("Ugh, coffee machine broken again.")
+    result = await _run(monkeypatch, [fact], [[]], [])
+    assert not result.settled(str(fact["id"]))
 
 
 @pytest.mark.asyncio
@@ -145,62 +152,20 @@ MISSION = "Record only generalized, industry-level trends. Name no specific comp
 
 
 @pytest.mark.asyncio
-async def test_under_a_mission_a_new_fact_is_stored_only_when_it_can_be_kept_as_stated(monkeypatch):
-    """#4619: 'Northwind cut inference spend' names a company the mission forbids naming."""
-    named, plain, off_topic = (
-        _fact("Northwind cut inference spend"),
-        _fact("Inference spend is falling across the industry"),
-        _fact("Dana likes hiking"),
-    )
-    result = await _run(
-        monkeypatch,
-        [named, plain, off_topic],
-        [[], [], []],
-        [
-            _answer("new", keep_as="reworded"),
-            _answer("new", keep_as="as_stated"),
-            _answer("new", keep_as="not_wanted"),
-        ],
-        mission=MISSION,
-    )
-    assert result.new == {str(plain["id"]): "Inference spend is falling across the industry"}
-
-
-@pytest.mark.asyncio
 async def test_under_a_mission_nothing_is_dropped(monkeypatch):
     """#525: a mission that tracks shell commands wants what the built-in rule calls chatter.
     Whether the mission keeps a fact is the LLM's call."""
+    obs = _Obs("obs-1", "The agent runs the test suite before each commit.")
     fact = _fact("At 14:02 the agent ran pytest, exit 1")
-    result = await _run(monkeypatch, [fact], [[]], [_answer("chatter")], mission=MISSION)
+    result = await _run(monkeypatch, [fact], [[obs]], [_answer("chatter")], mission=MISSION)
     assert not result.settled(str(fact["id"]))
 
 
 @pytest.mark.asyncio
-async def test_no_new_observation_past_a_scope_cap(monkeypatch):
-    result = await _run(
-        monkeypatch, [_fact("Marta is allergic to shellfish")], [[]], [_answer("new")], may_create=False
-    )
-    assert result.new == {}
-
-
-@pytest.mark.asyncio
-async def test_two_new_facts_about_one_entity_go_to_the_llm(monkeypatch):
-    """Told twice in one batch, they would become sibling observations; the LLM merges them."""
-    a, b, c = _fact("Donald told Athena she is sovereign"), _fact("Donald reaffirmed it"), _fact("Bob joined Acme")
-    result = await _run(
-        monkeypatch,
-        [a, b, c],
-        [[], [], []],
-        [_answer("new"), _answer("new"), _answer("new")],
-        entities={str(a["id"]): ["e-donald"], str(b["id"]): ["e-donald"], str(c["id"]): ["e-bob"]},
-    )
-    assert set(result.new) == {str(c["id"])}
-
-
-@pytest.mark.asyncio
 async def test_chatter_is_skipped(monkeypatch):
+    obs = _Obs("obs-1", "The user prefers dark mode.")
     fact = _fact("thanks!")
-    result = await _run(monkeypatch, [fact], [[]], [_answer("chatter")])
+    result = await _run(monkeypatch, [fact], [[obs]], [_answer("chatter")])
     assert result.chatter == {str(fact["id"])}
 
 
@@ -217,7 +182,7 @@ async def test_a_change_to_an_older_observation_goes_to_the_llm(monkeypatch):
 @pytest.mark.asyncio
 async def test_a_failed_request_leaves_the_fact_to_the_llm(monkeypatch):
     fact = _fact("anything")
-    result = await _run(monkeypatch, [fact], [[]], [RuntimeError("TypeSafe is down")])
+    result = await _run(monkeypatch, [fact], [[_Obs("obs-1", "x")]], [RuntimeError("TypeSafe is down")])
     assert not result.settled(str(fact["id"]))
 
 
@@ -225,7 +190,7 @@ async def test_a_failed_request_leaves_the_fact_to_the_llm(monkeypatch):
 async def test_an_answer_without_a_relation_leaves_the_fact_to_the_llm(monkeypatch):
     fact = _fact("anything")
     empty = DecisionResponse.model_validate({"answers": {}})
-    result = await _run(monkeypatch, [fact], [[]], [empty])
+    result = await _run(monkeypatch, [fact], [[_Obs("obs-1", "x")]], [empty])
     assert not result.settled(str(fact["id"]))
 
 
@@ -260,7 +225,7 @@ async def test_a_request_is_traced_in_the_shape_every_recorder_takes(monkeypatch
         )
 
     async with stub_server(handler) as base_url:
-        await triage._ask(DecisionModel.from_config(_setup(base_url)), _fact("x"), [], "")
+        await triage._ask(DecisionModel.from_config(_setup(base_url)), _fact("x"), [])
 
     [call] = calls
     assert call.arguments["scope"] == "decision_consolidation_triage"
