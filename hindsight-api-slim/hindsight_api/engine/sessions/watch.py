@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from typing import Any, Literal
 
@@ -508,8 +509,24 @@ def moment_key(m: Moment) -> str:
     ).hexdigest()
 
 
+# A check needs CPU for its search and rerank. On an overloaded host it times out anyway (beta: 75 of
+# 115 checks in an hour at load 98 on 14 cores), and each one still spent CPU before giving up, adding
+# to the load it was stuck behind. Above this 1-minute load per CPU, checks wait it out.
+BUSY_LOAD_PER_CPU = 4.0
+
+
+def host_busy() -> bool:
+    """Whether the host is too loaded for a check to finish in time. Unknown (no load average) -> not busy."""
+    try:
+        return os.getloadavg()[0] / (os.cpu_count() or 1) > BUSY_LOAD_PER_CPU
+    except OSError:
+        return False
+
+
 def skip_reason(state: WatchState, m: Moment) -> str | None:
     """Why the moment is not worth a reflect call, or None (and then it is recorded as judged)."""
+    if host_busy():
+        return "host busy"
     if state.request_notes >= MAX_NOTES:
         return "note limit reached"
     if m.trigger == "task" and len(_WORK_WORD.findall(_SLASH_OR_URL.sub(" ", m.text))) < MIN_REQUEST_WORDS:
@@ -533,8 +550,8 @@ NOTHING_TO_SAY = re.compile(r"^\W*(no conflicts?\b|no (relevant )?decision\b|(no
 # the rule" in a later one still goes out.
 AGREES_WITH_RULE = re.compile(
     r"\b(not|no|nothing|never) (contradict|conflict)\w*|\b(is|are|stays?|remains?) consistent with\b|\baligns? with\b"
-    r"|\b(are|is) (already )?following (your|the)( \w+){0,2} (request|decision|rule)\b"
-    r"|\b(this |it )?follows (your|the)( \w+){0,2} (request|decision|rule)\b",
+    r"|\b(are|is) (already )?following (your|the)( \w+){0,2} (request|decision|rule|instruction)s?\b"
+    r"|\b(this |it )?follows (your|the)( \w+){0,2} (request|decision|rule|instruction)s?\b",
     re.I,
 )
 

@@ -3,6 +3,8 @@
 Pure functions, no database: see test_sessions.py for the session store and the worker steps.
 """
 
+import pytest
+
 from hindsight_api.engine.sessions import watch as W
 
 
@@ -11,6 +13,12 @@ def _feed(state: W.WatchState, *events: tuple[str, str, dict]) -> None:
         step = W.step_of(kind, role, payload)
         if step is not None:
             W.read_step(state, step, i)
+
+
+@pytest.fixture(autouse=True)
+def _host_never_busy(monkeypatch):
+    """Checks skip on a loaded host (watch.host_busy); the tests must not depend on this machine's load."""
+    monkeypatch.setattr(W, "BUSY_LOAD_PER_CPU", float("inf"))
 
 
 def test_a_request_is_a_task_moment_and_becomes_the_goal():
@@ -447,3 +455,21 @@ def test_a_command_the_harness_refused_is_not_a_failure():
             ("tool_result", "tool", {"text": text, "call_id": "c", "is_error": True}),
         )
         assert s.pending is None or s.pending.trigger != "failure", text
+
+
+def test_a_busy_host_skips_checks(monkeypatch):
+    """At a load the check would time out under, it waits instead of adding to the load."""
+    s = W.WatchState()
+    cmd = W.Moment(trigger="command", text="make build", recent=[], diff="")
+    monkeypatch.setattr(W, "BUSY_LOAD_PER_CPU", 4.0)  # the autouse fixture turned it off
+    monkeypatch.setattr(W.os, "getloadavg", lambda: (98.0, 80.0, 70.0))
+    monkeypatch.setattr(W.os, "cpu_count", lambda: 14)
+    assert W.skip_reason(s, cmd) == "host busy"
+    monkeypatch.setattr(W.os, "getloadavg", lambda: (20.0, 20.0, 20.0))
+    assert W.skip_reason(s, cmd) is None
+
+
+def test_following_an_instruction_is_not_a_note():
+    s = W.WatchState()
+    cmd = W.Moment(trigger="command", text="gh pr checks 752", recent=[], diff="")
+    assert not W.accept_note(s, cmd, "You are following your latest instruction to also wait for PR #752.", ["m1"])

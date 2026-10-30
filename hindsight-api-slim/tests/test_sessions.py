@@ -80,6 +80,14 @@ def _reflect_stub(answers: list[tuple[str, list[str]]], calls: list[dict]):
     return reflect_async
 
 
+@pytest.fixture(autouse=True)
+def _host_never_busy(monkeypatch):
+    """Checks skip on a loaded host (watch.host_busy); the tests must not depend on this machine's load."""
+    from hindsight_api.engine.sessions import watch
+
+    monkeypatch.setattr(watch, "BUSY_LOAD_PER_CPU", float("inf"))
+
+
 async def test_append_is_ordered_and_a_retry_stores_nothing_twice(memory, request_context):
     bank = _bank()
     s = memory.sessions
