@@ -487,12 +487,12 @@ class TestConsolidationIntegration:
     async def test_consolidation_reduces_count_for_near_duplicate_facts(
         self, memory_real_llm: MemoryEngine, request_context
     ):
-        """Consolidation with a real LLM should merge near-duplicate facts.
+        """Consolidation with a real LLM should merge near-duplicate facts without losing any.
 
         MockLLM always emits one observation per fact — it never merges.  This test
         verifies that the real consolidation prompt actually collapses semantically
-        redundant information.  Three phrasings of the same email address should
-        yield fewer than three observations.
+        redundant information (three phrasings of the same email address) while every
+        distinct fact — the email, the role, the city — survives.
         """
         memory = memory_real_llm
         bank_id = f"test-consolidation-count-{uuid.uuid4().hex[:8]}"
@@ -525,15 +525,24 @@ class TestConsolidationIntegration:
                 )
             )["items"]
 
-            obs_count = len(observations)
-            obs_texts = [o["text"] for o in observations]
-
-            # 5 input facts, 3 are near-duplicates — real consolidation must merge some
-            assert obs_count < 5, (
-                f"Expected fewer than 5 observations after merging near-duplicates. Got {obs_count}: {obs_texts}"
+            texts = [o["text"] for o in observations]
+            observation_list = "\n".join(f"{n}. {t}" for n, t in enumerate(texts, 1))
+            # How the model groups facts into observations is its call — it may fold the role
+            # and the city into one sentence — so the count of observations is not asserted
+            # (#6109). What must hold either way: the restated email collapsed, and no
+            # distinct fact was lost. The address is an identifier copied verbatim, so its
+            # presence is checked exactly; a judge reading for it passed lists without it.
+            with_email = [t for t in texts if "sarah@example.com" in t.lower()]
+            assert with_email, f"Consolidation lost the email fact. Observations:\n{observation_list}"
+            assert len(with_email) < 3, f"The three restated emails were not merged:\n{observation_list}"
+            await assert_meets_criteria(
+                response=observation_list,
+                criteria=(
+                    "The observations say that Sarah is a product manager AND that Sarah is based in "
+                    "Austin, Texas. Fail if either of the two is missing."
+                ),
+                context="Several facts may be folded into one observation; that is fine.",
             )
-            # The two distinct facts should still have representation
-            assert obs_count >= 2, f"Expected at least 2 observations for distinct facts. Got {obs_count}: {obs_texts}"
         finally:
             await memory.delete_bank(bank_id, request_context=request_context)
 
