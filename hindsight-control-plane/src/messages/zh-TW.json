@@ -2261,6 +2261,8 @@
     "tagFilterTitle": "依標籤篩選",
     "endpointSearch": "搜尋",
     "endpointTree": "樹",
+    "endpointPage": "頁面",
+    "advancedMentalModelId": "心智模型 ID",
     "advancedSearchDescription": "在伺服器上試用知識庫端點：混合搜尋（BM25 + 向量）或頁面樹，使用與側邊欄相同的標籤篩選，並檢視原始回應。",
     "advancedQuery": "查詢",
     "advancedLimit": "數量上限",

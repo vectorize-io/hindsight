@@ -2261,6 +2261,8 @@
     "tagFilterTitle": "Nach Tags filtern",
     "endpointSearch": "Suche",
     "endpointTree": "Baum",
+    "endpointPage": "Seite",
+    "advancedMentalModelId": "Mentales-Modell-ID",
     "advancedSearchDescription": "Teste die Knowledge-Base-Endpunkte auf dem Server: hybride Suche (BM25 + Vektor) oder den Seitenbaum, mit demselben Tag-Filter wie in der Seitenleiste, und sieh dir die Rohantwort an.",
     "advancedQuery": "Suchanfrage",
     "advancedLimit": "Limit",

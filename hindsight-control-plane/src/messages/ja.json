@@ -2261,6 +2261,8 @@
     "tagFilterTitle": "タグで絞り込む",
     "endpointSearch": "検索",
     "endpointTree": "ツリー",
+    "endpointPage": "ページ",
+    "advancedMentalModelId": "メンタルモデル ID",
     "advancedSearchDescription": "サーバー上のナレッジベースのエンドポイントを試します：ハイブリッド検索（BM25 + ベクトル）またはページツリーを、サイドバーと同じタグフィルターで実行し、生のレスポンスを確認できます。",
     "advancedQuery": "クエリ",
     "advancedLimit": "件数上限",

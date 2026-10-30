@@ -2261,6 +2261,8 @@
     "tagFilterTitle": "태그로 필터",
     "endpointSearch": "검색",
     "endpointTree": "트리",
+    "endpointPage": "페이지",
+    "advancedMentalModelId": "멘탈 모델 ID",
     "advancedSearchDescription": "서버의 지식 베이스 엔드포인트를 시험해 보세요: 하이브리드 검색(BM25 + 벡터) 또는 페이지 트리를 사이드바와 같은 태그 필터로 실행하고 원시 응답을 확인합니다.",
     "advancedQuery": "질의",
     "advancedLimit": "개수 제한",

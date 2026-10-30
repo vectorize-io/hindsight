@@ -598,6 +598,7 @@ export function KnowledgeBaseView() {
               onTagFilterChange={setTagFilter}
               pathById={pathById}
               onOpenPage={openPage}
+              initialMentalModelId={selectedMmId}
             />
           )}
 

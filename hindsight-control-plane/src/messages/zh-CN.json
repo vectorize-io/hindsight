@@ -2261,6 +2261,8 @@
     "tagFilterTitle": "按标签筛选",
     "endpointSearch": "搜索",
     "endpointTree": "树",
+    "endpointPage": "页面",
+    "advancedMentalModelId": "心智模型 ID",
     "advancedSearchDescription": "在服务器上试用知识库接口：混合搜索（BM25 + 向量）或页面树，使用与侧边栏相同的标签筛选，并查看原始响应。",
     "advancedQuery": "查询",
     "advancedLimit": "数量上限",

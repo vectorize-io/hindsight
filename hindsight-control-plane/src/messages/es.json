@@ -2261,6 +2261,8 @@
     "tagFilterTitle": "Filtrar por etiquetas",
     "endpointSearch": "Búsqueda",
     "endpointTree": "Árbol",
+    "endpointPage": "Página",
+    "advancedMentalModelId": "ID del modelo mental",
     "advancedSearchDescription": "Prueba los endpoints de la base de conocimiento en el servidor: búsqueda híbrida (BM25 + vector) o el árbol de páginas, con el mismo filtro de etiquetas que la barra lateral, e inspecciona la respuesta sin procesar.",
     "advancedQuery": "Consulta",
     "advancedLimit": "Límite",
