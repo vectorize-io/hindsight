@@ -37,6 +37,7 @@ from hindsight_api.engine.llm_trace import (
 )
 from hindsight_api.engine.llm_wrapper import LLMProvider
 from hindsight_api.engine.providers.openai_compatible_llm import ProviderResponseError
+from tests.llm_trace_drain import drain_traces
 
 # ── serialization helpers ─────────────────────────────────────────────────────
 
@@ -767,7 +768,7 @@ async def test_llm_requests_read_returns_empty_on_oracle(trace_api_client, bank_
 
 
 @pytest.mark.asyncio
-async def test_retain_creates_trace_rows_with_tokens(trace_api_client, bank_id):
+async def test_retain_creates_trace_rows_with_tokens(trace_api_client, memory, bank_id):
     await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
     response = await trace_api_client.post(
         f"/v1/default/banks/{bank_id}/memories",
@@ -775,8 +776,10 @@ async def test_retain_creates_trace_rows_with_tokens(trace_api_client, bank_id):
     )
     assert response.status_code == 200
     # retain triggers fact extraction + consolidation (2 LLM calls → 2 trace
-    # writes); give the fire-and-forget tasks room under parallel test load.
-    await asyncio.sleep(1.5)
+    # writes), and the writes are fire-and-forget. Wait for every one of them,
+    # so the plain and grouped reads below see the same rows (a late row landing
+    # between them made the grouped total one higher).
+    await drain_traces(memory)
 
     # LLM calls only: the embedding calls retain also makes run outside the operation's
     # LLM trace, so they carry no trace ids (covered by test_embedding_and_rerank_calls_traced).
@@ -839,7 +842,7 @@ async def test_retain_creates_trace_rows_with_tokens(trace_api_client, bank_id):
 
 
 @pytest.mark.asyncio
-async def test_delta_reretain_binds_document_id(trace_api_client, bank_id):
+async def test_delta_reretain_binds_document_id(trace_api_client, memory, bank_id):
     """A delta re-retain (editing/appending a document) must tag its trace with
     the document_id, so the document accrues one trace per retain — not just the
     initial full retain. Regression: the delta path used a second extraction call
@@ -855,7 +858,7 @@ async def test_delta_reretain_binds_document_id(trace_api_client, bank_id):
         json={"items": [{"content": v1, "context": "people", "document_id": document_id}]},
     )
     assert resp.status_code == 200
-    await asyncio.sleep(1.5)
+    await drain_traces(memory)
 
     # v2: original content preserved + a new paragraph. The unchanged first chunk
     # forces the delta path (it needs ≥1 unchanged chunk), and the new chunk is
@@ -866,7 +869,7 @@ async def test_delta_reretain_binds_document_id(trace_api_client, bank_id):
         json={"items": [{"content": v2, "context": "people", "document_id": document_id}]},
     )
     assert resp.status_code == 200
-    await asyncio.sleep(1.5)
+    await drain_traces(memory)
 
     # The document_id filter must now return both the full retain and the delta
     # re-retain — i.e. ≥2 distinct retain trace_ids, every row tagged.
@@ -882,7 +885,7 @@ async def test_delta_reretain_binds_document_id(trace_api_client, bank_id):
 
 
 @pytest.mark.asyncio
-async def test_memory_ids_mapped_to_retain_and_consolidation(trace_api_client, bank_id):
+async def test_memory_ids_mapped_to_retain_and_consolidation(trace_api_client, memory, bank_id):
     """A retain trace maps to the facts it created; a consolidation trace maps to
     the source memories it consumed (and any observations it produced). These are
     attached to every row of the trace after the operation completes.
@@ -893,9 +896,9 @@ async def test_memory_ids_mapped_to_retain_and_consolidation(trace_api_client, b
         json={"items": [{"content": "Alice works at Google as a senior engineer.", "context": "people"}]},
     )
     assert resp.status_code == 200
-    # retain + the consolidation it triggers are fire-and-forget; give the trace
-    # writes and the post-operation memory_id UPDATE room under parallel load.
-    await asyncio.sleep(2.0)
+    # The trace writes and the post-operation memory_id UPDATE are
+    # fire-and-forget; wait for them before reading.
+    await drain_traces(memory)
 
     data = (await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests")).json()
     by_op = {item["operation"]: item for item in data["items"]}
@@ -925,13 +928,13 @@ async def test_memory_ids_mapped_to_retain_and_consolidation(trace_api_client, b
 
 
 @pytest.mark.asyncio
-async def test_filter_by_status_and_operation(trace_api_client, bank_id):
+async def test_filter_by_status_and_operation(trace_api_client, memory, bank_id):
     await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
     await trace_api_client.post(
         f"/v1/default/banks/{bank_id}/memories",
         json={"items": [{"content": "test content", "context": "test"}]},
     )
-    await asyncio.sleep(1.0)
+    await drain_traces(memory)
 
     response = await trace_api_client.get(
         f"/v1/default/banks/{bank_id}/llm-requests",
@@ -949,13 +952,13 @@ async def test_filter_by_status_and_operation(trace_api_client, bank_id):
 
 
 @pytest.mark.asyncio
-async def test_stats_endpoint_includes_tokens(trace_api_client, bank_id):
+async def test_stats_endpoint_includes_tokens(trace_api_client, memory, bank_id):
     await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
     await trace_api_client.post(
         f"/v1/default/banks/{bank_id}/memories",
         json={"items": [{"content": "stats content", "context": "test"}]},
     )
-    await asyncio.sleep(1.0)
+    await drain_traces(memory)
 
     response = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests/stats", params={"period": "1d"})
     assert response.status_code == 200
