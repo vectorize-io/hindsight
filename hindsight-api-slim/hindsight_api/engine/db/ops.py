@@ -846,9 +846,14 @@ class DataAccessOps(ABC):
         triggering transaction and BEFORE the delete or cascade fires, because
         afterwards there is nothing left to read them from.
 
-        Queue rows are locked before entity rows, matching the order
-        :meth:`claim_entity_maintenance_batch` and :meth:`prune_orphan_entities`
-        take them, so a delete cannot cycle against a worker draining the queue.
+        The postings are locked as they are read, and the caller must delete
+        them in the same transaction: a concurrent release of the same units
+        then waits and finds them gone, so each posting is debited once (#6229).
+
+        Postings are locked first, then queue rows, then entity rows. Queue
+        before entity matches the order :meth:`claim_entity_maintenance_batch`
+        and :meth:`prune_orphan_entities` take them, so a delete cannot cycle
+        against a worker draining the queue; neither locks a posting.
 
         The count floors at zero. The increment side counts *mentions* while a
         posting is per (unit, entity), so the two disagree by one whenever two

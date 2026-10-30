@@ -92,10 +92,12 @@ async def test_oracle_release_reads_the_postings_once_and_queues_before_it_debit
     conn = AsyncMock()
     id_a = "00000000-0000-0000-0000-00000000000a"
     id_b = "00000000-0000-0000-0000-00000000000b"
-    # Deliberately returned out of id order.
+    # One row per posting, deliberately out of id order.
     conn.fetch.return_value = [
-        {"entity_id": id_b, "n": 1},
-        {"entity_id": id_a, "n": 3},
+        {"entity_id": id_b},
+        {"entity_id": id_a},
+        {"entity_id": id_a},
+        {"entity_id": id_a},
     ]
 
     enqueued = await ops.release_entity_postings(
@@ -104,6 +106,9 @@ async def test_oracle_release_reads_the_postings_once_and_queues_before_it_debit
 
     assert enqueued == 2
     assert conn.fetch.await_count == 1, "both halves must come out of one scan of the postings"
+    # The scan locks what it counts, so a concurrent release of the same units
+    # waits and then finds them gone instead of debiting them again (#6229).
+    assert "FOR UPDATE" in conn.fetch.await_args.args[0]
 
     (queue_sql, queue_rows), (debit_sql, debit_rows) = (call.args for call in conn.executemany.await_args_list)
     assert "MERGE INTO entity_maintenance_queue" in queue_sql
@@ -301,6 +306,37 @@ class TestReleaseAtTheChokePoint:
                     await _link(conn, unit, entity)
             await asyncio.gather(release(unit), release(unit), release(unit), credit(), credit())
 
+    @pytest.mark.asyncio
+    async def test_concurrent_releases_of_one_unit_debit_its_postings_once(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """Regression for #6229: two transactions retiring the same unit both
+        read its postings before either deleted them, and both debited them, so
+        the count ended below the postings left. The sleep holds the first
+        release open between its read and its delete, which is the window."""
+        bank_id = f"test-mc-twice-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+        pool = await memory._get_pool()
+
+        async with pool.acquire() as conn:
+            alice = await _insert_entity(conn, bank_id, "Alice", mention_count=1)
+            await _link(conn, await _insert_unit(conn, bank_id, "stays"), alice)
+
+        async def release(unit: uuid.UUID) -> None:
+            async with pool.acquire() as conn, conn.transaction():
+                await enqueue_entity_prune_candidates(conn, bank_id, [str(unit)])
+                await asyncio.sleep(0.05)
+                await conn.execute("DELETE FROM memory_units WHERE id = $1", unit)
+
+        for round_ in range(5):
+            async with pool.acquire() as conn:
+                unit = await _insert_unit(conn, bank_id, f"round {round_}")
+                await _link(conn, unit, alice)
+                await conn.execute("UPDATE entities SET mention_count = mention_count + 1 WHERE id = $1", alice)
+            await asyncio.gather(release(unit), release(unit))
+            async with pool.acquire() as conn:
+                assert await _mention_count(conn, alice) == await _posting_count(conn, alice) == 1
+
 
 class TestCurationPaths:
     @pytest.mark.asyncio
@@ -410,6 +446,33 @@ class TestCurationPaths:
         async with pool.acquire() as conn:
             assert await _mention_count(conn, alice) == 1
             assert await _mention_count(conn, alice) == await _posting_count(conn, alice)
+
+    @pytest.mark.asyncio
+    async def test_racing_deletes_of_one_memory_give_back_its_mention_once(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """#6229 through the API: nothing serializes two deletes of one memory
+        (single and bulk), so each used to debit the same posting."""
+        bank_id = f"test-mc-deletes-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+        pool = await memory._get_pool()
+
+        async with pool.acquire() as conn:
+            alice = await _insert_entity(conn, bank_id, "Alice", mention_count=1)
+            await _link(conn, await _insert_unit(conn, bank_id, "stays"), alice)
+
+        for round_ in range(5):
+            async with pool.acquire() as conn:
+                unit = await _insert_unit(conn, bank_id, f"round {round_}")
+                await _link(conn, unit, alice)
+                await conn.execute("UPDATE entities SET mention_count = mention_count + 1 WHERE id = $1", alice)
+            await asyncio.gather(
+                memory.delete_memory_unit(str(unit), bank_id=bank_id, request_context=request_context),
+                memory.delete_memory_unit(str(unit), bank_id=bank_id, request_context=request_context),
+                memory.delete_memory_units([str(unit)], bank_id=bank_id, request_context=request_context),
+            )
+            async with pool.acquire() as conn:
+                assert await _mention_count(conn, alice) == await _posting_count(conn, alice) == 1
 
 
 class TestEndToEnd:

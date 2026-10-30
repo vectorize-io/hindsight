@@ -7,6 +7,7 @@ columns can't appear in GROUP BY).
 
 import json
 import uuid as uuid_mod
+from collections import Counter
 from datetime import UTC, datetime
 from typing import cast
 
@@ -447,20 +448,20 @@ class OracleOps(DataAccessOps):
         # express the whole thing as one statement the way the PG side does —
         # MERGE has no RETURNING to hang the second write off — so it stays two
         # executemany calls over this one result.
+        #
+        # The read locks the postings it counts, so two transactions retiring
+        # the same unit cannot both debit its postings (#6229, see the PG side).
+        # Oracle refuses FOR UPDATE with GROUP BY, so the rows come back one per
+        # posting and are counted here.
         rows = await conn.fetch(
-            f"""
-            SELECT entity_id, COUNT(*) AS n
-            FROM {ue_table}
-            WHERE unit_id = ANY($1::uuid[])
-            GROUP BY entity_id
-            """,
+            f"SELECT entity_id FROM {ue_table} WHERE unit_id = ANY($1::uuid[]) FOR UPDATE",
             unit_ids,
         )
         # Sorted for the same reason as enqueue_graph_maintenance: executemany
         # takes the row locks in array order, and claim_entity_maintenance_batch
         # deletes in that same order, so overlapping mutation/worker sets cannot
         # cycle.
-        deltas = sorted((str(row["entity_id"]), int(row["n"])) for row in rows)
+        deltas = sorted(Counter(str(row["entity_id"]) for row in rows).items())
         if not deltas:
             return 0
         # MERGE is the Oracle analogue of ON CONFLICT DO UPDATE: WHEN MATCHED
