@@ -13,7 +13,6 @@ were resolved into ``HindsightConfig`` but never reached the provider, so a conf
 (``LiteLLM call exceeded timeout=120.0s``) and the per-op retry knobs were inert.
 """
 
-from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 import pytest
 
 from hindsight_api.config import (
@@ -24,6 +23,7 @@ from hindsight_api.config import (
     _resolve_reflect_llm_timeout,
 )
 from hindsight_api.engine.llm_wrapper import LLMConfig
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 
 
 def _mock_llm(**kwargs) -> LLMConfig:
@@ -66,7 +66,7 @@ def test_openai_compatible_provider_impl_receives_timeout():
         ("llamacpp", {}),
     ],
 )
-def test_every_network_provider_receives_the_resolved_timeout(provider, extra, monkeypatch):
+async def test_every_network_provider_receives_the_resolved_timeout(provider, extra, monkeypatch):
     """Every provider carries the resolved timeout, whether or not it uses it (#3898).
 
     Codex had no ``timeout`` at all — the factory never passed one and the class
@@ -86,7 +86,12 @@ def test_every_network_provider_receives_the_resolved_timeout(provider, extra, m
         patch("hindsight_api.engine.providers.cursor_llm.shutil.which", return_value="/usr/bin/cursor-agent"),
     ):
         llm = LLMConfig(provider=provider, api_key="k", base_url="", model="m", timeout=222.0, **extra)
-    assert llm._provider_impl.timeout == 222.0
+    try:
+        assert llm._provider_impl.timeout == 222.0
+    finally:
+        # github-copilot registers a process-wide shared runtime; an unreleased one is
+        # reused by every later copilot provider and skips its sign-in check (#6114).
+        await llm.cleanup()
 
 
 def test_gemini_uses_the_resolved_timeout_at_the_call_site():
