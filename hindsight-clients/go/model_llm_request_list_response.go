@@ -26,6 +26,7 @@ type LLMRequestListResponse struct {
 	Limit int32 `json:"limit"`
 	Offset int32 `json:"offset"`
 	Items []LLMRequestEntry `json:"items"`
+	RetentionDays NullableInt32 `json:"retention_days,omitempty"`
 }
 
 type _LLMRequestListResponse LLMRequestListResponse
@@ -172,6 +173,48 @@ func (o *LLMRequestListResponse) SetItems(v []LLMRequestEntry) {
 	o.Items = v
 }
 
+// GetRetentionDays returns the RetentionDays field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *LLMRequestListResponse) GetRetentionDays() int32 {
+	if o == nil || IsNil(o.RetentionDays.Get()) {
+		var ret int32
+		return ret
+	}
+	return *o.RetentionDays.Get()
+}
+
+// GetRetentionDaysOk returns a tuple with the RetentionDays field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *LLMRequestListResponse) GetRetentionDaysOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.RetentionDays.Get(), o.RetentionDays.IsSet()
+}
+
+// HasRetentionDays returns a boolean if a field has been set.
+func (o *LLMRequestListResponse) HasRetentionDays() bool {
+	if o != nil && o.RetentionDays.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetRetentionDays gets a reference to the given NullableInt32 and assigns it to the RetentionDays field.
+func (o *LLMRequestListResponse) SetRetentionDays(v int32) {
+	o.RetentionDays.Set(&v)
+}
+// SetRetentionDaysNil sets the value for RetentionDays to be an explicit nil
+func (o *LLMRequestListResponse) SetRetentionDaysNil() {
+	o.RetentionDays.Set(nil)
+}
+
+// UnsetRetentionDays ensures that no value is present for RetentionDays, not even an explicit nil
+func (o *LLMRequestListResponse) UnsetRetentionDays() {
+	o.RetentionDays.Unset()
+}
+
 func (o LLMRequestListResponse) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -187,6 +230,9 @@ func (o LLMRequestListResponse) ToMap() (map[string]interface{}, error) {
 	toSerialize["limit"] = o.Limit
 	toSerialize["offset"] = o.Offset
 	toSerialize["items"] = o.Items
+	if o.RetentionDays.IsSet() {
+		toSerialize["retention_days"] = o.RetentionDays.Get()
+	}
 	return toSerialize, nil
 }
 

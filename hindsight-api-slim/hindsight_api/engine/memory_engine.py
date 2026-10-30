@@ -125,9 +125,11 @@ from .llm_interface import ProviderAuthError, ProviderContentPolicyError, Provid
 from .llm_trace import (
     LLMRequestEntry,
     LLMRequestListResponse,
+    LLMRequestSeriesSums,
     LLMRequestStatsBucket,
     LLMRequestStatsResponse,
     LLMRequestTokenSums,
+    LLMStatsSplit,
     LLMTraceRecorder,
     call_type_clause,
     current_trace_context,
@@ -14248,6 +14250,14 @@ class MemoryEngine(MemoryEngineInterface):
             metadata=conn.parse_json(row["metadata"]) if row["metadata"] is not None else {},
         )
 
+    @staticmethod
+    def _llm_trace_retention_days() -> int | None:
+        """Days the maintenance sweep keeps LLM requests, or None when it never deletes them."""
+        cfg = get_config()
+        if cfg.retention_sweep_interval_seconds > 0 and cfg.llm_trace_enabled and cfg.llm_trace_retention_days > 0:
+            return cfg.llm_trace_retention_days
+        return None
+
     async def list_llm_requests(
         self,
         bank_id: str,
@@ -14289,7 +14299,14 @@ class MemoryEngine(MemoryEngineInterface):
             # llm_requests is PostgreSQL-only (its migration omits the Oracle slot;
             # LLMTraceRecorder skips writes on Oracle). There is nothing to read, so
             # return an empty page rather than querying a non-existent table (ORA-00942).
-            return LLMRequestListResponse(bank_id=bank_id, total=0, limit=limit, offset=offset, items=[])
+            return LLMRequestListResponse(
+                bank_id=bank_id,
+                total=0,
+                limit=limit,
+                offset=offset,
+                items=[],
+                retention_days=self._llm_trace_retention_days(),
+            )
 
         where_clauses = ["bank_id = $1"]
         params: list[Any] = [bank_id]
@@ -14387,7 +14404,14 @@ class MemoryEngine(MemoryEngineInterface):
 
             items = [self._llm_request_entry(conn, row) for row in rows]
 
-        return LLMRequestListResponse(bank_id=bank_id, total=total, limit=limit, offset=offset, items=items)
+        return LLMRequestListResponse(
+            bank_id=bank_id,
+            total=total,
+            limit=limit,
+            offset=offset,
+            items=items,
+            retention_days=self._llm_trace_retention_days(),
+        )
 
     async def llm_request_stats(
         self,
@@ -14397,8 +14421,9 @@ class MemoryEngine(MemoryEngineInterface):
         operation: str | None = None,
         call_type: str | None = None,
         period: str = "7d",
+        split_by: LLMStatsSplit | None = None,
     ) -> LLMRequestStatsResponse | None:
-        """LLM request counts and token sums grouped by day, for charting.
+        """LLM request counts and token sums by hour (1d) or by day (7d, 30d), for charting.
 
         Returns None when the bank does not exist (mapped to 404 by the HTTP
         layer). Auth/tenant resolution happen in ``get_bank_profile``.
@@ -14411,7 +14436,11 @@ class MemoryEngine(MemoryEngineInterface):
         now = datetime.now(timezone.utc)
         trunc = "day"
         if period == "1d":
-            start = now - timedelta(days=1)
+            # Last 24 hours by hour: with the default 1-day retention this is the
+            # only period that shows more than one point. Start on the hour so it
+            # is 24 buckets, not 25 with the first and last labelled the same.
+            trunc = "hour"
+            start = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=23)
         elif period == "30d":
             start = now - timedelta(days=30)
         else:  # 7d default
@@ -14420,7 +14449,12 @@ class MemoryEngine(MemoryEngineInterface):
         if _is_oracle():
             # llm_requests is PostgreSQL-only — no rows on Oracle (see list_llm_requests).
             return LLMRequestStatsResponse(
-                bank_id=bank_id, period=period, trunc=trunc, start=start.isoformat(), buckets=[]
+                bank_id=bank_id,
+                period=period,
+                trunc=trunc,
+                start=start.isoformat(),
+                buckets=[],
+                retention_days=self._llm_trace_retention_days(),
             )
 
         where_clauses = ["bank_id = $1", "started_at >= $2"]
@@ -14435,12 +14469,16 @@ class MemoryEngine(MemoryEngineInterface):
         where_sql = " AND ".join(where_clauses)
         table = fq_table("llm_requests")
 
+        # split_by is a Literal, so interpolating the column name is safe.
+        series_sql = f"COALESCE({split_by}, 'unknown')" if split_by else "''"
+
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             rows = await conn.fetch(
                 f"""
                 SELECT date_trunc('{trunc}', started_at) AS bucket,
                        status,
+                       {series_sql} AS series,
                        COUNT(*) AS count,
                        COALESCE(SUM(input_tokens), 0) AS input_tokens,
                        COALESCE(SUM(output_tokens), 0) AS output_tokens,
@@ -14449,7 +14487,7 @@ class MemoryEngine(MemoryEngineInterface):
                        COALESCE(SUM(total_tokens), 0) AS total_tokens
                 FROM {table}
                 WHERE {where_sql}
-                GROUP BY bucket, status
+                GROUP BY bucket, status, series
                 ORDER BY bucket ASC
                 """,
                 *params,
@@ -14460,14 +14498,21 @@ class MemoryEngine(MemoryEngineInterface):
         # typed models below.
         statuses_by_bucket: dict[str, dict[str, int]] = {}
         tokens_by_bucket: dict[str, dict[str, int]] = {}
+        series_by_bucket: dict[str, dict[str, LLMRequestSeriesSums]] = {}
         order: list[str] = []
         for row in rows:
             key = row["bucket"].isoformat()
             if key not in statuses_by_bucket:
                 statuses_by_bucket[key] = {}
                 tokens_by_bucket[key] = {"input": 0, "output": 0, "cached": 0, "thoughts": 0, "total": 0}
+                series_by_bucket[key] = {}
                 order.append(key)
-            statuses_by_bucket[key][row["status"]] = row["count"]
+            statuses = statuses_by_bucket[key]
+            statuses[row["status"]] = statuses.get(row["status"], 0) + row["count"]
+            if split_by:
+                sums = series_by_bucket[key].setdefault(row["series"], LLMRequestSeriesSums(calls=0, tokens=0))
+                sums.calls += row["count"]
+                sums.tokens += row["total_tokens"] + row["thoughts_tokens"]
             tok = tokens_by_bucket[key]
             tok["input"] += row["input_tokens"]
             tok["output"] += row["output_tokens"]
@@ -14480,12 +14525,14 @@ class MemoryEngine(MemoryEngineInterface):
             period=period,
             trunc=trunc,
             start=start.isoformat(),
+            retention_days=self._llm_trace_retention_days(),
             buckets=[
                 LLMRequestStatsBucket(
                     time=k,
                     statuses=statuses_by_bucket[k],
                     total=sum(statuses_by_bucket[k].values()),
                     tokens=LLMRequestTokenSums(**tokens_by_bucket[k]),
+                    series=series_by_bucket[k] if split_by else None,
                 )
                 for k in order
             ],

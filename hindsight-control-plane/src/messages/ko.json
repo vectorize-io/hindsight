@@ -1511,13 +1511,8 @@
     "entryCount": "{count, plural, other {항목 #개}}"
   },
   "llmRequestsView": {
-    "callVolume": "호출 볼륨",
-    "tokenVolume": "토큰 볼륨",
     "metricCalls": "호출",
     "metricTokens": "토큰",
-    "tokenModeTotal": "합계",
-    "tokenModeBreakdown": "분류",
-    "cumulative": "누적",
     "tokensInput": "입력",
     "tokensOutput": "출력",
     "tokensThoughts": "추론",
@@ -1543,9 +1538,9 @@
     "callTypeDecision": "결정 모델",
     "inputCountTexts": "텍스트",
     "inputCountDocuments": "문서",
-    "periodToday": "오늘",
     "periodLast7Days": "최근 7일",
     "periodLast30Days": "최근 30일",
+    "retentionNote": "최근 {days}일만 보관",
     "dateRangeAll": "전체 기간",
     "dateRangeLastHour": "최근 1시간",
     "dateRangeLast24Hours": "최근 24시간",
@@ -1585,7 +1580,17 @@
     "groupByRunHint": "LLM 호출을 작업 실행별로 그룹화",
     "entryCount": "{count, plural, other {항목 #개}}",
     "memoriesCreated": "생성된 메모리 ({count}):",
-    "memoriesSource": "소스 메모리 ({count}):"
+    "memoriesSource": "소스 메모리 ({count}):",
+    "summaryCalls": "호출",
+    "summaryTokens": "토큰",
+    "periodLabel": "기간",
+    "showLabel": "표시",
+    "linesLabel": "선",
+    "splitNone": "전체",
+    "splitModel": "모델별",
+    "splitOperation": "작업별",
+    "splitTokenType": "토큰 유형별",
+    "runningTotal": "누적 합계"
   },
   "observationHistory": {
     "unchanged": "변경 없음",

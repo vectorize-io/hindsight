@@ -1511,13 +1511,8 @@
     "entryCount": "{count, plural, other {# 条记录}}"
   },
   "llmRequestsView": {
-    "callVolume": "调用量",
-    "tokenVolume": "Token 量",
     "metricCalls": "调用",
     "metricTokens": "Token",
-    "tokenModeTotal": "总计",
-    "tokenModeBreakdown": "明细",
-    "cumulative": "累计",
     "tokensInput": "输入",
     "tokensOutput": "输出",
     "tokensThoughts": "推理",
@@ -1543,9 +1538,9 @@
     "callTypeDecision": "决策模型",
     "inputCountTexts": "文本",
     "inputCountDocuments": "文档",
-    "periodToday": "今天",
     "periodLast7Days": "最近 7 天",
     "periodLast30Days": "最近 30 天",
+    "retentionNote": "仅保留最近 {days} 天",
     "dateRangeAll": "全部时间",
     "dateRangeLastHour": "最近 1 小时",
     "dateRangeLast24Hours": "最近 24 小时",
@@ -1585,7 +1580,17 @@
     "groupByRunHint": "按操作运行对 LLM 调用进行分组",
     "entryCount": "{count, plural, other {# 条记录}}",
     "memoriesCreated": "已创建记忆 ({count}):",
-    "memoriesSource": "来源记忆 ({count}):"
+    "memoriesSource": "来源记忆 ({count}):",
+    "summaryCalls": "次调用",
+    "summaryTokens": "个令牌",
+    "periodLabel": "时间段",
+    "showLabel": "显示",
+    "linesLabel": "曲线",
+    "splitNone": "全部",
+    "splitModel": "按模型",
+    "splitOperation": "按操作",
+    "splitTokenType": "按令牌类型",
+    "runningTotal": "累计"
   },
   "observationHistory": {
     "unchanged": "未更改",

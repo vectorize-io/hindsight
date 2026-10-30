@@ -1511,13 +1511,8 @@
     "entryCount": "{count, plural, one {# entrada} other {# entradas}}"
   },
   "llmRequestsView": {
-    "callVolume": "Volume de Chamadas",
-    "tokenVolume": "Volume de Tokens",
     "metricCalls": "Chamadas",
     "metricTokens": "Tokens",
-    "tokenModeTotal": "Total",
-    "tokenModeBreakdown": "Detalhamento",
-    "cumulative": "Cumulativo",
     "tokensInput": "Entrada",
     "tokensOutput": "Saída",
     "tokensThoughts": "Raciocínio",
@@ -1543,9 +1538,9 @@
     "callTypeDecision": "Modelo de decisão",
     "inputCountTexts": "Textos",
     "inputCountDocuments": "Documentos",
-    "periodToday": "Hoje",
     "periodLast7Days": "Últimos 7 dias",
     "periodLast30Days": "Últimos 30 dias",
+    "retentionNote": "Só {days, plural, one {o último dia é mantido} other {os últimos # dias são mantidos}}",
     "dateRangeAll": "Todo o período",
     "dateRangeLastHour": "Última hora",
     "dateRangeLast24Hours": "Últimas 24 horas",
@@ -1585,7 +1580,17 @@
     "groupByRunHint": "Agrupar chamadas de LLM por execução de operação",
     "entryCount": "{count, plural, one {# entrada} other {# entradas}}",
     "memoriesCreated": "Memórias criadas ({count}):",
-    "memoriesSource": "Memórias de origem ({count}):"
+    "memoriesSource": "Memórias de origem ({count}):",
+    "summaryCalls": "chamadas",
+    "summaryTokens": "tokens",
+    "periodLabel": "Período",
+    "showLabel": "Mostrar",
+    "linesLabel": "Linhas",
+    "splitNone": "Tudo",
+    "splitModel": "Por modelo",
+    "splitOperation": "Por operação",
+    "splitTokenType": "Por tipo de token",
+    "runningTotal": "Total acumulado"
   },
   "observationHistory": {
     "unchanged": "sem alteração",

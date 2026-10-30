@@ -85,3 +85,51 @@ async def test_deleting_a_bank_deletes_its_request_history(client, llm, bank_id,
 
     history = await traces.list_llm_requests(bank_id, limit=500)
     assert history.total == 0 and history.items == []
+
+
+async def test_request_stats_split_by_model_and_operation(client, llm, bank_id, settled):
+    # The usage chart draws one line per model or per operation from the stats endpoint,
+    # so each line must add up to exactly the calls the request list holds for it. Both
+    # say how many days of history the server keeps (the default is one), because a
+    # longer period silently covers only that window (#6149).
+    llm.on_step("extract_facts").returns(extracted(fact("Alice lives in Lisbon")))
+    llm.on_step("consolidate").returns(consolidation())
+
+    await client.aretain(bank_id=bank_id, content="Alice lives in Lisbon.")
+    await settled(bank_id)
+    await client.arecall(bank_id=bank_id, query="Where does Alice live?")
+
+    traces = LLMTracesApi(client._api_client)
+    # Rows are buffered and written in batches: read until the list and the stats agree.
+    for _ in range(50):
+        listing = await traces.list_llm_requests(bank_id, limit=500)
+        by_operation = await traces.llm_request_stats(bank_id, period="1d", split_by="operation")
+        by_model = await traces.llm_request_stats(bank_id, period="1d", split_by="model")
+        expected_operation: dict[str, int] = {}
+        expected_model: dict[str, int] = {}
+        for row in listing.items:
+            expected_operation[row.operation or "unknown"] = expected_operation.get(row.operation or "unknown", 0) + 1
+            expected_model[row.model or "unknown"] = expected_model.get(row.model or "unknown", 0) + 1
+        got_operation: dict[str, int] = {}
+        got_model: dict[str, int] = {}
+        for stats, got in ((by_operation, got_operation), (by_model, got_model)):
+            for bucket in stats.buckets:
+                for name, sums in (bucket.series or {}).items():
+                    got[name] = got.get(name, 0) + sums.calls
+        recall_written = "recall" in expected_operation
+        if recall_written and got_operation == expected_operation and got_model == expected_model:
+            break
+        await asyncio.sleep(0.1)
+    else:
+        raise AssertionError(f"split mismatch: {got_operation} vs {expected_operation}; {got_model} vs {expected_model}")
+
+    assert "retain" in got_operation
+    for stats in (by_operation, by_model):
+        assert stats.trunc == "hour" and len(stats.buckets) <= 24
+        # Each bucket's lines add up to its total.
+        assert all(sum(s.calls for s in (b.series or {}).values()) == b.total for b in stats.buckets)
+        assert stats.retention_days == 1
+    assert listing.retention_days == 1
+
+    plain = await traces.llm_request_stats(bank_id, period="1d")
+    assert all(b.series is None for b in plain.buckets)

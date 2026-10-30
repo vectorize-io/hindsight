@@ -570,6 +570,7 @@ export type {
   LlmOperationHealth,
   LlmRequestEntry,
   LlmRequestListResponse,
+  LlmRequestSeriesSums,
   LlmRequestStatsBucket,
   LlmRequestStatsData,
   LlmRequestStatsError,

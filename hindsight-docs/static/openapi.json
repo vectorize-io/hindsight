@@ -8077,7 +8077,7 @@
           "LLM Traces"
         ],
         "summary": "List LLM request traces",
-        "description": "List traced LLM requests for a bank, ordered by most recent first. Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED).",
+        "description": "List traced LLM requests for a bank, ordered by most recent first. Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED). Requests older than HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS are deleted; `retention_days` in the response says how many days are kept (null = forever).",
         "operationId": "list_llm_requests",
         "parameters": [
           {
@@ -8364,7 +8364,7 @@
           "LLM Traces"
         ],
         "summary": "LLM request statistics",
-        "description": "Get LLM request counts grouped by time bucket and status for charting.",
+        "description": "Get LLM request counts grouped by time bucket and status for charting. Only requests within HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS are kept, so a period longer than `retention_days` (in the response; null = kept forever) only covers the last `retention_days`.",
         "operationId": "llm_request_stats",
         "parameters": [
           {
@@ -8424,11 +8424,33 @@
             "required": false,
             "schema": {
               "type": "string",
-              "description": "Time period: 1d, 7d, or 30d",
+              "description": "Time period: 1d (by hour), 7d, or 30d (by day)",
               "default": "7d",
               "title": "Period"
             },
-            "description": "Time period: 1d, 7d, or 30d"
+            "description": "Time period: 1d (by hour), 7d, or 30d (by day)"
+          },
+          {
+            "name": "split_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "model",
+                    "operation"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Also split each bucket by model or by operation (returned in `series`)",
+              "title": "Split By"
+            },
+            "description": "Also split each bucket by model or by operation (returned in `series`)"
           },
           {
             "name": "authorization",
@@ -14013,6 +14035,17 @@
             },
             "type": "array",
             "title": "Items"
+          },
+          "retention_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retention Days"
           }
         },
         "type": "object",
@@ -14025,6 +14058,25 @@
         ],
         "title": "LLMRequestListResponse",
         "description": "Paginated list of LLM request traces for a bank."
+      },
+      "LLMRequestSeriesSums": {
+        "properties": {
+          "calls": {
+            "type": "integer",
+            "title": "Calls"
+          },
+          "tokens": {
+            "type": "integer",
+            "title": "Tokens"
+          }
+        },
+        "type": "object",
+        "required": [
+          "calls",
+          "tokens"
+        ],
+        "title": "LLMRequestSeriesSums",
+        "description": "Calls and tokens (total + reasoning) of one model or operation within a time bucket."
       },
       "LLMRequestStatsBucket": {
         "properties": {
@@ -14045,6 +14097,20 @@
           },
           "tokens": {
             "$ref": "#/components/schemas/LLMRequestTokenSums"
+          },
+          "series": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/LLMRequestSeriesSums"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Series"
           }
         },
         "type": "object",
@@ -14081,6 +14147,17 @@
             },
             "type": "array",
             "title": "Buckets"
+          },
+          "retention_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retention Days"
           }
         },
         "type": "object",

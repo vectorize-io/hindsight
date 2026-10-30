@@ -3446,6 +3446,26 @@ export type LlmRequestListResponse = {
    * Items
    */
   items: Array<LlmRequestEntry>;
+  /**
+   * Retention Days
+   */
+  retention_days?: number | null;
+};
+
+/**
+ * LLMRequestSeriesSums
+ *
+ * Calls and tokens (total + reasoning) of one model or operation within a time bucket.
+ */
+export type LlmRequestSeriesSums = {
+  /**
+   * Calls
+   */
+  calls: number;
+  /**
+   * Tokens
+   */
+  tokens: number;
 };
 
 /**
@@ -3469,6 +3489,12 @@ export type LlmRequestStatsBucket = {
    */
   total: number;
   tokens: LlmRequestTokenSums;
+  /**
+   * Series
+   */
+  series?: {
+    [key: string]: LlmRequestSeriesSums;
+  } | null;
 };
 
 /**
@@ -3497,6 +3523,10 @@ export type LlmRequestStatsResponse = {
    * Buckets
    */
   buckets: Array<LlmRequestStatsBucket>;
+  /**
+   * Retention Days
+   */
+  retention_days?: number | null;
 };
 
 /**
@@ -11960,9 +11990,15 @@ export type LlmRequestStatsData = {
     /**
      * Period
      *
-     * Time period: 1d, 7d, or 30d
+     * Time period: 1d (by hour), 7d, or 30d (by day)
      */
     period?: string;
+    /**
+     * Split By
+     *
+     * Also split each bucket by model or by operation (returned in `series`)
+     */
+    split_by?: "model" | "operation" | null;
   };
   url: "/v1/default/banks/{bank_id}/llm-requests/stats";
 };

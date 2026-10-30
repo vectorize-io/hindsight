@@ -40,7 +40,7 @@ from hindsight_api.engine.audit import (
     AuditLogStatsResponse,
 )
 from hindsight_api.engine.document_history import DocumentHistoryResponse
-from hindsight_api.engine.llm_trace import LLMCallType, LLMRequestListResponse, LLMRequestStatsResponse
+from hindsight_api.engine.llm_trace import LLMCallType, LLMRequestListResponse, LLMRequestStatsResponse, LLMStatsSplit
 from hindsight_api.extensions import AuthenticationError, PrecheckContext, PrecheckOperation
 
 
@@ -9922,7 +9922,9 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/llm-requests",
         summary="List LLM request traces",
         description="List traced LLM requests for a bank, ordered by most recent first. "
-        "Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED).",
+        "Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED). "
+        "Requests older than HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS are deleted; `retention_days` "
+        "in the response says how many days are kept (null = forever).",
         operation_id="list_llm_requests",
         tags=["LLM Traces"],
         response_model=LLMRequestListResponse,
@@ -9985,7 +9987,9 @@ def _register_routes(app: FastAPI):
     @app.get(
         "/v1/default/banks/{bank_id}/llm-requests/stats",
         summary="LLM request statistics",
-        description="Get LLM request counts grouped by time bucket and status for charting.",
+        description="Get LLM request counts grouped by time bucket and status for charting. "
+        "Only requests within HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS are kept, so a period longer than "
+        "`retention_days` (in the response; null = kept forever) only covers the last `retention_days`.",
         operation_id="llm_request_stats",
         tags=["LLM Traces"],
         response_model=LLMRequestStatsResponse,
@@ -9997,7 +10001,10 @@ def _register_routes(app: FastAPI):
         call_type: LLMCallType | None = Query(
             None, description="Filter by kind of model call: llm, embedding, rerank or decision"
         ),
-        period: str = Query("7d", description="Time period: 1d, 7d, or 30d"),
+        period: str = Query("7d", description="Time period: 1d (by hour), 7d, or 30d (by day)"),
+        split_by: LLMStatsSplit | None = Query(
+            None, description="Also split each bucket by model or by operation (returned in `series`)"
+        ),
         request_context: RequestContext = Depends(get_request_context),
     ):
         """Get LLM request counts grouped by time bucket and status."""
@@ -10008,6 +10015,7 @@ def _register_routes(app: FastAPI):
                 operation=operation,
                 call_type=call_type,
                 period=period,
+                split_by=split_by,
             )
             if result is None:
                 raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")

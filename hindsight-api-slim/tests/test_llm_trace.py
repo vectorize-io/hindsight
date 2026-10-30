@@ -669,6 +669,49 @@ async def test_reasoning_tokens_persist_in_bank_trace_and_stats(trace_api_client
 
 
 @pytest.mark.asyncio
+async def test_stats_split_by_model_and_operation(trace_api_client, memory, bank_id):
+    await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
+    for operation, model, tokens in (("retain", "model-a", 10), ("retain", "model-b", 20), ("reflect", "model-a", 30)):
+        token = set_trace_context(LLMTraceContext(bank_id=bank_id, operation=operation))
+        try:
+            memory._llm_recorder.record_llm_call(
+                provider="openai",
+                model=model,
+                scope=f"{operation}_call",
+                messages=[{"role": "user", "content": "x"}],
+                response_content="y",
+                input_tokens=tokens,
+                output_tokens=0,
+                duration=0.1,
+            )
+        finally:
+            llm_trace.reset_trace_context(token)
+    await memory._llm_recorder.flush()
+
+    def totals(split_by: str) -> dict[str, tuple[int, int]]:
+        out: dict[str, tuple[int, int]] = {}
+        for bucket in stats[split_by]["buckets"]:
+            for name, sums in bucket["series"].items():
+                calls, tok = out.get(name, (0, 0))
+                out[name] = (calls + sums["calls"], tok + sums["tokens"])
+        return out
+
+    stats = {}
+    for split_by in ("model", "operation"):
+        response = await trace_api_client.get(
+            f"/v1/default/banks/{bank_id}/llm-requests/stats", params={"period": "1d", "split_by": split_by}
+        )
+        assert response.status_code == 200
+        stats[split_by] = response.json()
+    assert totals("model") == {"model-a": (2, 40), "model-b": (1, 20)}
+    assert totals("operation") == {"retain": (2, 30), "reflect": (1, 30)}
+
+    plain = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests/stats", params={"period": "1d"})
+    assert all(b["series"] is None for b in plain.json()["buckets"])
+    assert sum(b["total"] for b in plain.json()["buckets"]) == 3
+
+
+@pytest.mark.asyncio
 async def test_list_empty(trace_api_client, bank_id):
     await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
     response = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests")
@@ -676,6 +719,33 @@ async def test_list_empty(trace_api_client, bank_id):
     data = response.json()
     assert data["items"] == []
     assert data["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_list_and_stats_report_retention_days(trace_api_client, bank_id, monkeypatch):
+    # The sweep deletes requests older than the retention, so a 30d stats period
+    # only covers the kept days. Both reads say how many days are kept, and null
+    # when nothing is ever deleted.
+    from types import SimpleNamespace
+
+    from hindsight_api.engine import memory_engine
+
+    await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
+    real_get_config = memory_engine.get_config
+    for days, sweep, expected in ((3, 3600, 3), (-1, 3600, None), (3, 0, None)):
+        cfg = SimpleNamespace(
+            **{
+                **vars(real_get_config()),
+                "llm_trace_enabled": True,
+                "llm_trace_retention_days": days,
+                "retention_sweep_interval_seconds": sweep,
+            }
+        )
+        monkeypatch.setattr(memory_engine, "get_config", lambda cfg=cfg: cfg)
+        listing = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests")
+        stats = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests/stats", params={"period": "30d"})
+        assert listing.json()["retention_days"] == expected
+        assert stats.json()["retention_days"] == expected
 
 
 @pytest.mark.asyncio
@@ -890,7 +960,7 @@ async def test_stats_endpoint_includes_tokens(trace_api_client, bank_id):
     response = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests/stats", params={"period": "1d"})
     assert response.status_code == 200
     data = response.json()
-    assert data["trunc"] == "day"
+    assert data["trunc"] == "hour"
     assert len(data["buckets"]) >= 1
     bucket = data["buckets"][0]
     assert "statuses" in bucket

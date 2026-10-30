@@ -1511,13 +1511,8 @@
     "entryCount": "{count, plural, other {# 條記錄}}"
   },
   "llmRequestsView": {
-    "callVolume": "呼叫量",
-    "tokenVolume": "Token 量",
     "metricCalls": "呼叫",
     "metricTokens": "Token",
-    "tokenModeTotal": "總計",
-    "tokenModeBreakdown": "明細",
-    "cumulative": "累積",
     "tokensInput": "輸入",
     "tokensOutput": "輸出",
     "tokensThoughts": "推理",
@@ -1543,9 +1538,9 @@
     "callTypeDecision": "決策模型",
     "inputCountTexts": "文字",
     "inputCountDocuments": "文件",
-    "periodToday": "今天",
     "periodLast7Days": "最近 7 天",
     "periodLast30Days": "最近 30 天",
+    "retentionNote": "僅保留最近 {days} 天",
     "dateRangeAll": "全部時間",
     "dateRangeLastHour": "最近 1 小時",
     "dateRangeLast24Hours": "最近 24 小時",
@@ -1585,7 +1580,17 @@
     "groupByRunHint": "依操作執行分組 LLM 呼叫",
     "entryCount": "{count, plural, other {# 條記錄}}",
     "memoriesCreated": "已建立記憶 ({count}):",
-    "memoriesSource": "來源記憶 ({count}):"
+    "memoriesSource": "來源記憶 ({count}):",
+    "summaryCalls": "次呼叫",
+    "summaryTokens": "個權杖",
+    "periodLabel": "時間段",
+    "showLabel": "顯示",
+    "linesLabel": "曲線",
+    "splitNone": "全部",
+    "splitModel": "依模型",
+    "splitOperation": "依操作",
+    "splitTokenType": "依權杖類型",
+    "runningTotal": "累計"
   },
   "observationHistory": {
     "unchanged": "未更改",

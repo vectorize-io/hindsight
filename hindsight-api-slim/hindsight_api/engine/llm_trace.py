@@ -540,6 +540,10 @@ class LLMRequestListResponse(BaseModel):
     limit: int
     offset: int
     items: list[LLMRequestEntry]
+    # Days of LLM requests the server keeps before deleting them; None = kept
+    # forever. A list or stats window longer than this only covers the last
+    # retention_days, whatever period or start date was asked for.
+    retention_days: int | None = None
 
 
 class LLMRequestTokenSums(BaseModel):
@@ -555,6 +559,13 @@ class LLMRequestTokenSums(BaseModel):
     total: int
 
 
+class LLMRequestSeriesSums(BaseModel):
+    """Calls and tokens (total + reasoning) of one model or operation within a time bucket."""
+
+    calls: int
+    tokens: int
+
+
 class LLMRequestStatsBucket(BaseModel):
     """A single time bucket in LLM request stats."""
 
@@ -562,6 +573,8 @@ class LLMRequestStatsBucket(BaseModel):
     statuses: dict[str, int]
     total: int
     tokens: LLMRequestTokenSums
+    # Only with ``split_by``: per model or per operation, keyed by its name.
+    series: dict[str, LLMRequestSeriesSums] | None = None
 
 
 class LLMRequestStatsResponse(BaseModel):
@@ -572,6 +585,10 @@ class LLMRequestStatsResponse(BaseModel):
     trunc: str
     start: str
     buckets: list[LLMRequestStatsBucket]
+    # Days of LLM requests the server keeps before deleting them; None = kept
+    # forever. A list or stats window longer than this only covers the last
+    # retention_days, whatever period or start date was asked for.
+    retention_days: int | None = None
 
 
 # ── recorder / writer ─────────────────────────────────────────────────────────
@@ -601,6 +618,8 @@ _CALL_TYPE_SQL = {
 # the row from every kind, where the control plane counts it as an LLM call.
 _CALL_TYPE_SQL["llm"] = "NOT (" + " OR ".join(_CALL_TYPE_SQL.values()).replace("scope", "COALESCE(scope, '')") + ")"
 LLMCallType = Literal["llm", "embedding", "rerank", "decision"]
+# Column the stats can be split by, one chart line per value.
+LLMStatsSplit = Literal["model", "operation"]
 
 
 def genai_operation_name(scope: str | None) -> str:
