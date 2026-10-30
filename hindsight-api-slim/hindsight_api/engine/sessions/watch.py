@@ -511,8 +511,9 @@ def moment_key(m: Moment) -> str:
 
 # A check needs CPU for its search and rerank. On an overloaded host it times out anyway (beta: 75 of
 # 115 checks in an hour at load 98 on 14 cores), and each one still spent CPU before giving up, adding
-# to the load it was stuck behind. Above this 1-minute load per CPU, checks wait it out.
-BUSY_LOAD_PER_CPU = 4.0
+# to the load it was stuck behind. Above this 1-minute load per CPU, checks wait it out. 4.0 came first;
+# checks still timed out at 3-3.5 per CPU (load 40-48 on 14 cores), so it is 3.0.
+BUSY_LOAD_PER_CPU = 3.0
 
 
 def host_busy() -> bool:
