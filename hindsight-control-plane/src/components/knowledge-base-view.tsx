@@ -69,7 +69,11 @@ import { buildPathIndex } from "@/lib/knowledge-path";
 import { isTagFilterActive } from "@/lib/tag-filter-params";
 import { downloadMarkdown, printPage } from "@/lib/page-download";
 import { UpdateMentalModelDialog } from "./mental-models-view";
-import { AttachmentStrip, type RetainedAttachment } from "@/components/ui/inline-attachment-text";
+import {
+  AttachmentStrip,
+  attachmentUrl,
+  type RetainedAttachment,
+} from "@/components/ui/inline-attachment-text";
 
 type PageDetail = Awaited<ReturnType<typeof client.getKnowledgePage>>;
 
@@ -711,6 +715,14 @@ export function KnowledgeBaseView() {
                               body: selected.body ?? "",
                               updatedAt: selected.timestamp,
                               tags: selected.tags,
+                              images: currentBank
+                                ? {
+                                    label: t("evidenceImages"),
+                                    urls: pageAttachments
+                                      .filter((a) => a.media_type?.startsWith("image/"))
+                                      .map((a) => attachmentUrl(currentBank, a)),
+                                  }
+                                : undefined,
                             })
                           }
                         >

@@ -51,7 +51,7 @@ function formatBytes(bytes?: number): string {
  * points at the dataplane, which the browser cannot authenticate against. The
  * proxy adds the credentials server-side.
  */
-function attachmentUrl(bankId: string, attachment: RetainedAttachment): string {
+export function attachmentUrl(bankId: string, attachment: RetainedAttachment): string {
   return `/api/banks/${encodeURIComponent(bankId)}/attachments/${attachment.id}`;
 }
 

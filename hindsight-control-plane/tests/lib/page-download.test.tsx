@@ -69,6 +69,28 @@ describe("printPage", () => {
     expect(w.print).toHaveBeenCalledOnce();
   });
 
+  it("prints the evidence images after the body", async () => {
+    const frame = document.createElement("iframe");
+    document.body.append(frame);
+    const w = frame.contentWindow!;
+    w.print = vi.fn();
+    w.focus = vi.fn();
+    vi.spyOn(window, "open").mockReturnValue(w);
+
+    await printPage({
+      name: "NES-CPU-07",
+      body: "The 1987 board.",
+      images: {
+        label: "Images from the evidence",
+        urls: ["/api/banks/nes/attachments/b732780ade05"],
+      },
+    });
+
+    const imgs = [...w.document.querySelectorAll("img")].map((i) => i.getAttribute("src"));
+    expect(imgs).toEqual(["/logo.png", "/api/banks/nes/attachments/b732780ade05"]);
+    expect(w.document.querySelector("h2")!.textContent).toBe("Images from the evidence");
+  });
+
   it("does nothing when the browser blocks the window", async () => {
     vi.spyOn(window, "open").mockReturnValue(null);
     await expect(printPage({ name: "x", body: "y" })).resolves.toBeUndefined();
