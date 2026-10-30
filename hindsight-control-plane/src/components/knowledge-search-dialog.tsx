@@ -182,7 +182,7 @@ export function KnowledgeSearchDialog({
                 behind it all live on its mental model, so that is what this reads. */}
             <div className="flex items-center justify-between gap-2 shrink-0 text-xs text-muted-foreground">
               <code className="truncate">
-                GET /v1/default/banks/{bankId}/mental-models/{pageResponse.id}
+                {`GET /v1/default/banks/${bankId}/mental-models/${pageResponse.id}`}
               </code>
               <span className="shrink-0">{tookMs ?? 0} ms</span>
             </div>
