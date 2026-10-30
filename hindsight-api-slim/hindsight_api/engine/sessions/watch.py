@@ -538,11 +538,21 @@ AGREES_WITH_RULE = re.compile(
 )
 
 
+CLAIMS_CONFLICT = re.compile(
+    r"\b(contradicts?|conflicts? with|violat\w*|breaks?|must not|should not|instead of)\b", re.I
+)
+
+
 def accept_note(state: WatchState, m: Moment, text: str, memory_ids: list[str]) -> bool:
     """Whether a note reaches the agent, recording it when it does: never the same memory twice.
     A heads-up does not use its memory up: going against it later is still worth saying."""
-    first = re.split(r"(?<=[.;!?])\s", text.strip(), maxsplit=1)[0]
-    if not text.strip() or NOTHING_TO_SAY.match(text) or AGREES_WITH_RULE.search(first):
+    # The agreement can come after a sentence that only narrates the step ("The user is adding scenarios
+    # to test_consolidation.py. This aligns with the rule ...", beta 11:22): look at the first two, and
+    # keep the note when it also claims a real conflict ("X is fine, but Y breaks the rule").
+    lead = " ".join(re.split(r"(?<=[.;!?])\s", text.strip(), maxsplit=2)[:2])
+    if not text.strip() or NOTHING_TO_SAY.match(text):
+        return False
+    if AGREES_WITH_RULE.search(lead) and not CLAIMS_CONFLICT.search(AGREES_WITH_RULE.sub("", text)):
         return False
     # The same words twice say nothing new, whatever the moment (a heads-up for a request the
     # client sent twice wrote the same note again).

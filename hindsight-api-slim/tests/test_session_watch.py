@@ -415,6 +415,10 @@ def test_an_answer_saying_there_is_nothing_to_say_is_not_a_note():
     assert not W.accept_note(s, cmd, decided, ["m8"])
     latest = "You are following your own latest request: 'never let the decision model write the final text'."
     assert not W.accept_note(s, cmd, latest, ["m9"])
+    narrated = (
+        "The user is adding scenarios to test_consolidation.py. This aligns with the rule that each op has one file."
+    )
+    assert not W.accept_note(s, cmd, narrated, ["m10"])
     later = "The header is fine. Deleting ~/dev/archive contradicts the recorded keep-list for that folder."
     assert W.accept_note(s, cmd, later, ["m6"])
 
