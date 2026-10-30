@@ -40,8 +40,12 @@ from typing import Any
 
 _ALIAS_RE = re.compile(r"^[fopc]\d+$")
 #: An alias cited in prose: a token of its own, not part of an identifier such as
-#: ``tra64-v1-c2-ui1``, ``o1-preview``, ``src/c2/x``, ``c2.example`` or ``admin@f5-1`` (#6150).
-#: Punctuation after it (``o1.``, ``o1:``, ``[o1]``) still ends a citation.
+#: ``tra64-v1-c2-ui1``, ``o1-preview``, ``src/c2/x``, ``c2.example`` or ``admin@f5-1``.
+#: Punctuation after it (``o1.``, ``o1:``, ``[o1]``) still ends a citation. This was
+#: ``\b[fopc]\d+\b`` (#5246), which also matched at ``-``, ``.``, ``/``, ``:`` and ``@``,
+#: and low aliases exist in nearly every reflect, so identifiers in the answer came back
+#: with a real id spliced into them (#6150). Only an explicit form like ``[o1]`` was not
+#: chosen instead: no prompt asks for brackets, and models cite aliases bare.
 _ALIAS_IN_TEXT_RE = re.compile(r"(?<![\w./:@-])[fopc]\d+(?![\w/@-]|[.:]\w)")
 _UUID_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE)
 #: What an id the model was never shown is replaced with in the answer.
