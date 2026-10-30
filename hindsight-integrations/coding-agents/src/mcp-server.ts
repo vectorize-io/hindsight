@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { type Config } from "./core/config";
+import { type Config, isLive } from "./core/config";
 import { resolveHostMemory } from "./core/host-client";
 import { HindsightClient } from "./core/hindsight";
 import { buildKnowledgeTools, type ToolSpec } from "./core/knowledge-tools";
@@ -27,7 +27,8 @@ import { buildRetainStamp } from "./core/retain-stamp";
  * Which tools this server should expose for a given config. Pure + SDK-free so the
  * disabled-flag behavior is unit-testable without spinning up a real MCP host: a disabled
  * Hindsight (mirrors the hooks' `cfg.disabled` check) exposes NO tools — the server still
- * connects, it just has nothing registered.
+ * connects, it just has nothing registered. A live session exposes none either: it is
+ * Hindsight-driven, memory reaches the agent only as the live session's notes.
  */
 export function selectTools(
   cfg: Config,
@@ -37,7 +38,7 @@ export function selectTools(
 ): ToolSpec[] {
   const cwd = opts.cwd ?? process.cwd();
   const harness = opts.harness ?? cfg.harness;
-  return cfg.disabled
+  return cfg.disabled || isLive(cfg, harness)
     ? []
     : buildKnowledgeTools(client, bankId, {
         repoDir: cwd,

@@ -259,9 +259,56 @@ bank's `knowledge_page_default_trigger`, instead (see
 [Mental Models](./mental-models.mdx)). A refresh always gets only the
 best-ranked page in full and the others as snippets, to keep its cost down.
 
+### abstain
+
+Allow an empty answer. For a caller that acts on any text it gets back — a memory
+watcher beside a coding agent, asking at every step whether memory holds something
+the agent must hear — "nothing applies" has to be silence, not a sentence. With
+`abstain: true`, when memory holds nothing that answers the query the response has
+an empty `text` and `abstained: true`, instead of reflect searching on or failing.
+
+With a decision model set up for reflect, the check costs no LLM call on most
+requests: after the first search the decision model is asked the query itself,
+about the request's `context`, over the best memories found ("which of these does
+the answer depend on, or none?"). A likely "none" returns at once; otherwise one
+short LLM call answers from only the memories it picked, and may still answer
+nothing. So word the query as the question to decide ("does my change go against
+a recorded decision?") and put what it is about in `context`. Without a decision
+model, reflect runs as usual and a "nothing found" answer comes back empty.
+`based_on` (with `include.facts`) names the memory an answer came from.
+
+### search_queries
+
+What the first retrieval round searches — each query through every retrieval
+layer, at once — instead of an LLM rewriting the query and context into one
+search. Up to 8. Saves that LLM call when the caller already knows what to look
+up, and lets it search several angles (a request's sentences that name code, its
+paragraphs, a diff described in words). Applies when reflect runs with a decision
+model; otherwise the agent writes its own searches.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={reflectPy} section="reflect-abstain" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={reflectMjs} section="reflect-abstain" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={reflectSh} section="reflect-abstain" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={reflectGo} section="reflect-abstain" language="go" />
+</TabItem>
+</Tabs>
+
 ---
 
 ## Response
+
+### abstained
+
+`true` when the request set `abstain` and memory held nothing that answers it;
+`text` is then empty. Always `false` otherwise.
 
 ### text
 

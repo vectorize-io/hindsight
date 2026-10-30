@@ -322,6 +322,13 @@ The lookup stops at the repository root. Only `bank_id` is read.
 - If the bank keeps no document text (`store_document_text` off), it can't append to a session document. The plugin then stops appending and stores the turns in a separate document per process instead.
 - An error that can never succeed (any other 4xx) is logged and the save is dropped.
 
+### Live session
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `live_session` | `false` | Stream the conversation into a live Hindsight session (the sessions API): the prompt when a turn starts, each tool call with its result as soon as the tool returns, and the rest of the turn's messages when it ends. Hindsight saves each turn into memory itself, so the per-turn retain above is skipped (with `auto_retain: false` the session only checks). It checks what the agent does against what memory records and writes a note when something conflicts; a note reaches the agent on the next tool result (or before the next turn), never delaying it, and the agent credits a note it used to you with a `🧠 From Hindsight memory (live session)` line. Needs a server with sessions; an older one falls back to the per-turn retain. |
+| `live_note_wait` | `0` | Seconds the start of a turn waits for the live session's check of the new prompt, so a heads-up reaches the agent in the same turn. `0` never delays a reply; the note then arrives with the next turn. |
+
 ### Integration
 
 | Key | Default | Description |
@@ -401,6 +408,8 @@ These are used **only when there is no config file at all**. Once `hermes memory
 | `HINDSIGHT_RETAIN_INDICATOR` | `false` hides the "saving to memory" status line (`retain_indicator`) |
 | `HINDSIGHT_RECALL_INDICATOR` | `false` hides the "recalled N memories" status line (`recall_indicator`) |
 | `HINDSIGHT_RECALL_SYNC` | `true` recalls against the current message before answering (`recall_sync`) |
+| `HINDSIGHT_LIVE_SESSION` | `true` streams the conversation into a live session (`live_session`) |
+| `HINDSIGHT_LIVE_NOTE_WAIT` | Seconds a turn waits for the live session's heads-up (`live_note_wait`) |
 
 ## Client Version
 

@@ -20,13 +20,14 @@
  * "Empty" means no git documents AND no survey-baseline marker: under `gitIngest: "none"` no git
  * document is ever written, and the markers are what show the repo was already surveyed (#5124).
  */
+import { LIVE_DECLARATION } from "./live";
 import { gitHeadSha, gitLogIsCurrent, hasGitHistory, commitsSince } from "./git";
 import { DEEPEN_DIFF_TARGET } from "./status";
 import { startBackgroundSeed } from "./seed";
 import { maybeAutoUpdate } from "./auto-update";
 import { syncCompanionSkill } from "./skill-sync";
 import { SURVEY_DOC_IDS, startCodebaseSurvey, type SurveyHarness } from "./survey";
-import { applyBankConfig, loadConfig } from "./config";
+import { applyBankConfig, loadConfig, isLive } from "./config";
 import { DAEMON_WAIT_SESSION_START_MS, ensureDaemon } from "./daemon";
 import type { Config } from "./config";
 import { deriveBankIdOrSkip } from "./bank";
@@ -342,19 +343,25 @@ export async function buildSessionStartContext(args: {
     }
   }
 
+  // A live session has no memory tools (see mcp-server.ts), so no tool guide or page roster either:
+  // only the declaration, since the live session's notes are trusted only when the agent knows they
+  // are coming (see LIVE_DECLARATION).
+  let additionalContext = LIVE_DECLARATION;
   let pages: PageRef[] = [];
-  try {
-    pages = parsePageList(await client.listPages());
-  } catch {
-    if (client.knowledgePagesSupported === false) {
-      diag(harness, "knowledge_pages_unavailable", { bank: bankId });
+  if (!isLive(cfg, harness)) {
+    try {
+      pages = parsePageList(await client.listPages());
+    } catch {
+      if (client.knowledgePagesSupported === false) {
+        diag(harness, "knowledge_pages_unavailable", { bank: bankId });
+      }
+      /* fail-open preamble */
     }
-    /* fail-open preamble */
+    additionalContext = buildKnowledgePreamble(pages, {
+      reflectOnNewGoals: cfg.autoInject !== "reflect",
+      extra: cfg.toolGuideExtra,
+    });
   }
-  const additionalContext = buildKnowledgePreamble(pages, {
-    reflectOnNewGoals: cfg.autoInject !== "reflect",
-    extra: cfg.toolGuideExtra,
-  });
   // An empty page roster is NOT an empty bank: a bank with memories and no pages still answers a
   // reflect (#5209), so only the confirmed-empty probe above defers it.
   const deferInitialReflect = bankEmpty;

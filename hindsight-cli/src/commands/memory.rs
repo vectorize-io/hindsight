@@ -402,6 +402,8 @@ pub fn reflect(
     fact_types: Option<Vec<String>>,
     exclude_mental_models: bool,
     exclude_mental_model_ids: Option<Vec<String>>,
+    abstain: bool,
+    search_queries: Vec<String>,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
@@ -465,6 +467,12 @@ pub fn reflect(
         // expose them (operators set them once per bank), so the bank default applies.
         reflect_search_observations_max_tokens: None,
         reflect_search_observations_include_entities: None,
+        abstain,
+        search_queries: if search_queries.is_empty() {
+            None
+        } else {
+            Some(search_queries)
+        },
         reflect_search_mental_models_max_tokens: None,
     };
 

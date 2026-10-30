@@ -3227,32 +3227,44 @@ class MemoryEngine(MemoryEngineInterface):
             else:
                 reflect_base_url = ""
 
-        _reflect_base_llm = LLMConfig(
-            provider=reflect_provider,
-            api_key=reflect_api_key,
-            base_url=reflect_base_url,
-            model=reflect_model,
-            reasoning_effort=config.reflect_llm_reasoning_effort or config.llm_reasoning_effort,
-            extra_body=config.reflect_llm_extra_body or config.llm_extra_body,
-            default_headers=config.llm_default_headers,
-            cache_affinity=config.reflect_llm_cache_affinity or config.llm_cache_affinity,
-            ollama_num_ctx=config.llm_ollama_num_ctx,
-            litellmrouter_config=config.reflect_llm_litellmrouter_config or config.llm_litellmrouter_config,
-            bedrock_service_tier=config.llm_bedrock_service_tier,
-            structured_output_in_prompt=config.llm_structured_output_in_prompt,
-            gemini_service_tier=config.llm_gemini_service_tier,
-            groq_service_tier=config.llm_groq_service_tier,
-            openai_service_tier=config.llm_openai_service_tier,
-            gemini_safety_settings=_llm_gemini_safety_settings,
-            prompt_cache_enabled=config.llm_prompt_cache_enabled,
-            codex_home=config.llm_codex_home,
-            vertexai_project_id=config.llm_vertexai_project_id,
-            vertexai_region=config.llm_vertexai_region,
-            vertexai_service_account_key=config.llm_vertexai_service_account_key,
-            **reflect_call_defaults.as_kwargs(),
-        )
+        def _reflect_llm(model: str, extra_body: dict[str, Any] | None) -> LLMConfig:
+            return LLMConfig(
+                provider=reflect_provider,
+                api_key=reflect_api_key,
+                base_url=reflect_base_url,
+                model=model,
+                reasoning_effort=config.reflect_llm_reasoning_effort or config.llm_reasoning_effort,
+                extra_body=extra_body,
+                default_headers=config.llm_default_headers,
+                cache_affinity=config.reflect_llm_cache_affinity or config.llm_cache_affinity,
+                ollama_num_ctx=config.llm_ollama_num_ctx,
+                litellmrouter_config=config.reflect_llm_litellmrouter_config or config.llm_litellmrouter_config,
+                bedrock_service_tier=config.llm_bedrock_service_tier,
+                structured_output_in_prompt=config.llm_structured_output_in_prompt,
+                gemini_service_tier=config.llm_gemini_service_tier,
+                groq_service_tier=config.llm_groq_service_tier,
+                openai_service_tier=config.llm_openai_service_tier,
+                gemini_safety_settings=_llm_gemini_safety_settings,
+                prompt_cache_enabled=config.llm_prompt_cache_enabled,
+                codex_home=config.llm_codex_home,
+                vertexai_project_id=config.llm_vertexai_project_id,
+                vertexai_region=config.llm_vertexai_region,
+                vertexai_service_account_key=config.llm_vertexai_service_account_key,
+                **reflect_call_defaults.as_kwargs(),
+            )
+
+        _reflect_base_llm = _reflect_llm(reflect_model, config.reflect_llm_extra_body or config.llm_extra_body)
         self._reflect_llm_config = _build_llm(_reflect_base_llm, config, "reflect_", reflect_call_defaults)
         self._reflect_llm_config_at_init = self._reflect_llm_config
+        # An abstain reflect whose decision model already picked the memories that answer has no judgement
+        # left, only the note to write, so a faster model can write it: the client-side memory watcher
+        # wrote its notes with flash-lite while the decision model chose. The reflect model's thinking
+        # settings (extra_body) need not fit another model, so it writes without them.
+        self._reflect_abstain_writer_llm = (
+            _reflect_llm(config.reflect_abstain_writer_llm_model, None)
+            if config.reflect_abstain_writer_llm_model
+            else None
+        )
 
         # Mental-model refresh LLM config - the automatic refresh runs the reflect
         # pipeline in the background, where a human is not waiting and the job must
@@ -3394,6 +3406,11 @@ class MemoryEngine(MemoryEngineInterface):
                 pool_getter=lambda: self._backend,
                 schema_getter=get_current_schema,
             )
+
+        from .sessions import SessionService
+
+        # Live conversations a client streams in, and the memory watcher that follows them.
+        self.sessions = SessionService(self)
 
         # Audit logger for feature usage tracking
         config = get_config()
@@ -5114,6 +5131,12 @@ class MemoryEngine(MemoryEngineInterface):
                     await self._handle_refresh_mental_model(task_dict)
                 elif task_type == "webhook_delivery":
                     await self._handle_webhook_delivery(task_dict)
+                elif task_type == "session_check":
+                    await self.sessions.run_check(task_dict)
+                elif task_type == "session_save":
+                    await self.sessions.run_save(task_dict)
+                elif task_type == "session_idle":
+                    await self.sessions.run_idle(task_dict)
                 else:
                     logger.error(f"Unknown task type: {task_type}")
                     # Don't retry unknown task types
@@ -11479,6 +11502,8 @@ class MemoryEngine(MemoryEngineInterface):
                 )
                 deleted = _deleted_doc.deleted
                 file_storage_key = _deleted_doc.file_storage_key
+                if deleted:
+                    await self.sessions.forget_saves(conn, bank_id, document_id)
 
                 # Its retain runs, and every run that created or consumed one of its memories,
                 # consolidation included.
@@ -12260,6 +12285,10 @@ class MemoryEngine(MemoryEngineInterface):
                         # The bank's rows go, and with them the only record of its pre-tenant-prefix
                         # file keys, which the store reads first for the sweep after the commit.
                         legacy_files = await _del_store.purge_bank_rows(conn=conn, fq_table=fq_table, bank_id=bank_id)
+                        # A cleared bank keeps its sessions (a deleted one cascades them away), but
+                        # not the documents they saved into: their next save starts over.
+                        if not delete_bank_profile:
+                            await self.sessions.forget_saves(conn, bank_id)
 
                         # Sweep extension-owned bank-scoped tables (audit receipts,
                         # per-bank policy state, ...). These scope by bank_id without
@@ -15825,12 +15854,12 @@ class MemoryEngine(MemoryEngineInterface):
             )
         return self._reflect_decision_model_client
 
-    async def _prune_reflect_evidence(self, query: str, texts: list[str]) -> list[bool]:
-        """Keep flags for the first retrieval of a decision-orchestrated reflect."""
+    async def _prune_reflect_evidence(self, query: str, texts: list[str]) -> list[float]:
+        """Rank scores for the first retrieval of a decision-orchestrated reflect: higher ranks
+        first, and 0.0 for a candidate the decision model cut."""
         model = self._reflect_decision_model()
         assert model is not None  # only wired when a decision model is configured
-        scores = await model.predict([(query, text) for text in texts])
-        return [score > 0.0 for score in scores]
+        return await model.predict([(query, text) for text in texts])
 
     def _llm_for_reflect_operation(self, operation_label: str) -> "LLMConfig | MultiLLMProvider":
         """Pick the LLM for a reflect-pipeline run: interactive, or background refresh.
@@ -15871,6 +15900,9 @@ class MemoryEngine(MemoryEngineInterface):
         created_after: datetime | None = None,
         created_before: datetime | None = None,
         answer_as_document: bool = False,
+        abstain: bool = False,
+        search_queries: list[str] | None = None,
+        abstain_at: float | None = None,
         _skip_span: bool = False,
         _operation_label: str = "reflect",
     ) -> ReflectResult:
@@ -16077,6 +16109,11 @@ class MemoryEngine(MemoryEngineInterface):
         reflect_source_facts_max_tokens = config_dict.get(
             "reflect_source_facts_max_tokens", DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS
         )
+        if abstain and reflect_source_facts_max_tokens == -1:
+            # An abstain answer reads the source text under the memory it picked (see the agent's
+            # _answer_picked), reached through the observation's source fact ids — which recall
+            # attaches only when source facts are on. A small budget: the ids are what is needed.
+            reflect_source_facts_max_tokens = 1000
 
         # Reflect options an operator can default per bank: caller arg (the reflect
         # request) → bank reflect_default_options →
@@ -16285,6 +16322,15 @@ class MemoryEngine(MemoryEngineInterface):
                         tool_token_limits=tool_token_limits,
                         evidence_is_sufficient_fn=decision_model.evidence_is_sufficient if decision_model else None,
                         prune_evidence_fn=self._prune_reflect_evidence if decision_model else None,
+                        abstain=abstain,
+                        search_queries=search_queries,
+                        pick_evidence_fn=decision_model.pick_answering if decision_model and abstain else None,
+                        abstain_at=abstain_at,
+                        settled_llm_config=self._reflect_abstain_writer_llm.with_config(
+                            resolved_reflect_config, bank_id=bank_id, operation=_operation_label
+                        )
+                        if self._reflect_abstain_writer_llm is not None and abstain
+                        else None,
                         reflect_id=reflect_id,
                     ),
                     timeout=wall_timeout,
@@ -16330,7 +16376,8 @@ class MemoryEngine(MemoryEngineInterface):
 
             # Convert agent LLM trace to LLMCallTrace objects
             llm_trace_result = [
-                LLMCallTrace(scope=lc.scope, duration_ms=lc.duration_ms) for lc in agent_result.llm_trace
+                LLMCallTrace(scope=lc.scope, duration_ms=lc.duration_ms, detail=lc.detail)
+                for lc in agent_result.llm_trace
             ]
 
             # Extract memories and observations from tool outputs - only include those the agent actually used
@@ -16352,7 +16399,9 @@ class MemoryEngine(MemoryEngineInterface):
                 "directives": [],
             }
             seen_memory_ids: set[str] = set()
-            for tc in agent_result.tool_trace:
+            # An abstained answer used nothing: what was retrieved did not answer the request.
+            answered_from = [] if agent_result.abstained else agent_result.tool_trace
+            for tc in answered_from:
                 if tc.tool in ("recall", "expand"):
                     for memory in returned_memories(tc.tool, tc.output):
                         # Only include memories that the agent declared as used (or all if none specified)
@@ -16404,7 +16453,7 @@ class MemoryEngine(MemoryEngineInterface):
                 for read_model in trace_call.output.get("mental_models", [])
                 if read_model.get("id")
             }
-            for tc in agent_result.tool_trace:
+            for tc in answered_from:
                 if tc.tool == "get_mental_model":
                     # Single model lookup (with full details)
                     if tc.output.get("found") and "model" in tc.output:
@@ -16485,6 +16534,7 @@ class MemoryEngine(MemoryEngineInterface):
             # Return response (compatible with existing API)
             result = ReflectResult(
                 text=agent_result.text,
+                abstained=agent_result.abstained,
                 document=agent_result.document,
                 based_on=based_on,
                 structured_output=agent_result.structured_output,

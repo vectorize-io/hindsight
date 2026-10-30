@@ -100,6 +100,10 @@ enum Commands {
     #[command(subcommand)]
     Operation(OperationCommands),
 
+    /// Live sessions: list, follow, append, delete
+    #[command(subcommand)]
+    Session(SessionCommands),
+
     /// Manage mental models (user-curated summaries)
     #[command(subcommand)]
     MentalModel(MentalModelCommands),
@@ -636,6 +640,14 @@ enum MemoryCommands {
         /// Exclude specific mental models by ID (comma-separated)
         #[arg(long, value_delimiter = ',')]
         exclude_mental_model_ids: Option<Vec<String>>,
+
+        /// Allow an empty answer when memory holds nothing that answers the query
+        #[arg(long)]
+        abstain: bool,
+
+        /// What the first retrieval round searches, instead of a rewrite of the query (repeatable, up to 8)
+        #[arg(long = "search-query")]
+        search_queries: Vec<String>,
     },
 
     /// Store (retain) a single memory
@@ -1058,6 +1070,108 @@ enum TagCommands {
         /// Offset for pagination
         #[arg(short = 's', long, default_value = "0")]
         offset: i64,
+    },
+}
+
+#[derive(Subcommand)]
+enum SessionCommands {
+    /// List a bank's sessions, most recently active first
+    List {
+        /// Bank ID
+        bank_id: String,
+
+        /// Match on the session id
+        #[arg(short = 'q', long)]
+        query: Option<String>,
+
+        /// Maximum number of results
+        #[arg(short = 'l', long, default_value = "50")]
+        limit: i64,
+
+        /// Offset for pagination
+        #[arg(short = 's', long, default_value = "0")]
+        offset: u64,
+    },
+
+    /// Show one session
+    Get {
+        /// Bank ID
+        bank_id: String,
+        /// Session ID
+        session_id: String,
+    },
+
+    /// Send events to a session (creating it), and print the notes it has for you
+    Append {
+        /// Bank ID
+        bank_id: String,
+        /// Session ID
+        session_id: String,
+
+        /// A JSON file holding an array of OpenAI-style messages, each with an `id`
+        /// (instead of one message from the flags)
+        #[arg(long)]
+        messages_file: Option<String>,
+
+        /// The message's own id: sending it again stores nothing twice (default: a fresh one)
+        #[arg(long)]
+        id: Option<String>,
+
+        /// Who said it: user, assistant, tool, system
+        #[arg(long, default_value = "user")]
+        role: String,
+
+        /// What was said (or, with --role tool, what the tool returned)
+        #[arg(long)]
+        text: Option<String>,
+
+        /// With --role tool: the tool call this answers
+        #[arg(long)]
+        tool_call_id: Option<String>,
+
+        /// The assistant finished its turn: the turn is saved into memory
+        #[arg(long)]
+        turn_end: bool,
+
+        /// Make it a live session: Hindsight follows it and may send notes back
+        #[arg(long)]
+        live: bool,
+
+        /// When the conversation is saved: turns, idle, off
+        #[arg(long)]
+        retain: Option<String>,
+
+        /// The seq of the last note you delivered: only notes after it come back
+        #[arg(long)]
+        ack: Option<u64>,
+    },
+
+    /// Print a session's log; with --follow, keep printing as it happens
+    Events {
+        /// Bank ID
+        bank_id: String,
+        /// Session ID
+        session_id: String,
+
+        /// Start after this position
+        #[arg(long, default_value = "0")]
+        after: u64,
+
+        /// Entries per request
+        #[arg(short = 'l', long, default_value = "200")]
+        limit: u64,
+
+        /// Keep following the session live (Ctrl-C to stop)
+        #[arg(short = 'f', long)]
+        follow: bool,
+    },
+
+    /// Delete a session and its log (the document it saved stays)
+    Delete {
+        /// Bank ID
+        bank_id: String,
+        /// Session ID
+        session_id: String,
     },
 }
 
@@ -1792,6 +1906,8 @@ fn run() -> Result<()> {
                 fact_types,
                 exclude_mental_models,
                 exclude_mental_model_ids,
+                abstain,
+                search_queries,
             } => commands::memory::reflect(
                 &client,
                 &bank_id,
@@ -1806,6 +1922,8 @@ fn run() -> Result<()> {
                 fact_types,
                 exclude_mental_models,
                 exclude_mental_model_ids,
+                abstain,
+                search_queries,
                 verbose,
                 output_format,
             ),
@@ -1963,6 +2081,67 @@ fn run() -> Result<()> {
                 verbose,
                 output_format,
             ),
+        },
+
+        // Session commands
+        Commands::Session(session_cmd) => match session_cmd {
+            SessionCommands::List {
+                bank_id,
+                query,
+                limit,
+                offset,
+            } => commands::session::list(&client, &bank_id, query, limit, offset, output_format),
+            SessionCommands::Get {
+                bank_id,
+                session_id,
+            } => commands::session::get(&client, &bank_id, &session_id, output_format),
+            SessionCommands::Append {
+                bank_id,
+                session_id,
+                messages_file,
+                id,
+                role,
+                text,
+                tool_call_id,
+                turn_end,
+                live,
+                retain,
+                ack,
+            } => commands::session::append(
+                &client,
+                &bank_id,
+                &session_id,
+                commands::session::MessageArgs {
+                    messages_file,
+                    id,
+                    role,
+                    text,
+                    tool_call_id,
+                    turn_end,
+                },
+                commands::session::SessionArgs { live, retain },
+                ack,
+                output_format,
+            ),
+            SessionCommands::Events {
+                bank_id,
+                session_id,
+                after,
+                limit,
+                follow,
+            } => commands::session::events(
+                &client,
+                &bank_id,
+                &session_id,
+                after,
+                limit,
+                follow,
+                output_format,
+            ),
+            SessionCommands::Delete {
+                bank_id,
+                session_id,
+            } => commands::session::delete(&client, &bank_id, &session_id, output_format),
         },
 
         // Chunk commands

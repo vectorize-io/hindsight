@@ -557,6 +557,8 @@ class BankImportResult:
     #: not reproduce are dropped rather than restored against a stale id.
     maintenance_queue_rows_imported: int = 0
     invalidated_memories_imported: int = 0
+    sessions_imported: int = 0
+    session_events_imported: int = 0
     #: Source document id -> new unit id per fact ordinal, for the post-retain hook (as on ImportResult).
     fact_unit_ids: dict[str, list[str | None]] = field(default_factory=dict)
 
@@ -993,6 +995,23 @@ def _finished_operations(rows: Iterable[dict]) -> Iterator[dict]:
     return (row for row in rows if row.get("status") not in _LIVE_OPERATION_STATUSES)
 
 
+def _imported_sessions(rows: Iterable[dict], document_id_map: dict[str, str]) -> Iterator[dict]:
+    """Session rows as the copy should hold them: saving into the document the import wrote, with
+    nothing in flight.
+
+    A planned save (``save_plan``) names a retain operation of the source bank, and a running check
+    or a settle timer (``checking_since``, ``pending_since``) is the source worker's — like the
+    in-flight operations in :func:`_finished_operations`, that work belongs to the bank that was
+    exported. The copy plans its next save from ``saved_seq`` afresh.
+    """
+    for row in rows:
+        row["document_id"] = _remapped_document_id(row, document_id_map)
+        row["save_plan"] = None
+        row["checking_since"] = None
+        row["pending_since"] = None
+        yield row
+
+
 async def _restore_attachments(
     conn: Any,
     bank_id: str,
@@ -1422,6 +1441,19 @@ async def _restore_bank(
                 _iter_data_rows(zf, "invalidated_memory_units", bank_id),
                 unit_id_map=unit_id_map,
                 document_id_map=document_id_map,
+                bank_rows_json_encoding=bank_rows_json_encoding,
+            )
+            # After the documents they save into; the log after its session (FK).
+            result.sessions_imported = await _restore_rows(
+                conn,
+                "sessions",
+                _imported_sessions(_iter_data_rows(zf, "sessions", bank_id), document_id_map),
+                bank_rows_json_encoding=bank_rows_json_encoding,
+            )
+            result.session_events_imported = await _restore_rows(
+                conn,
+                "session_events",
+                _iter_data_rows(zf, "session_events", bank_id),
                 bank_rows_json_encoding=bank_rows_json_encoding,
             )
 

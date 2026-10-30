@@ -3962,6 +3962,410 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/sessions/{session_id}/events": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Append to a live session",
+        "description": "Send the messages of a live session since the last append, and get back Hindsight's notes. The session is created on its first append.\n\nSafe to retry: each message carries the client's own `id`, and a message already stored is skipped. Messages are stored in the order sent, after the session's earlier ones.\n\nWith `live` on, each moment worth a check (a request, a plan, a command that changes things, an edit, a failure) queues one reflect in the background. The append never waits for it: its note comes back with a later append, or from `GET .../events`. `ack` is the `seq` of the last note this client delivered; the response carries the notes after it.",
+        "operationId": "append_session_events",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionAppendRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionAppendResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Read a session's log",
+        "description": "The session's log after position `after`, oldest first: the client's messages and Hindsight's checks, notes, handoffs and saves, in one order. Poll with `after` set to the last `seq` you saw to follow the session live.",
+        "operationId": "list_session_events",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Return entries with a seq above this",
+              "default": 0,
+              "title": "After"
+            },
+            "description": "Return entries with a seq above this"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionEventsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/sessions": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "List sessions",
+        "description": "The bank's sessions, most recently active first.",
+        "operationId": "list_sessions",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Case-insensitive match on the session id",
+              "title": "Q"
+            },
+            "description": "Case-insensitive match on the session id"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 0,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/sessions/{session_id}": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Get a session",
+        "operationId": "get_session",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Delete a session",
+        "description": "Delete the session and its log. The document it saved into the bank stays (delete it as a document); memories extracted from it are not touched.",
+        "operationId": "delete_session",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/documents/{document_id}/history": {
       "get": {
         "tags": [
@@ -11031,6 +11435,31 @@
         "title": "Content",
         "description": "The raw content to retain or extract from. Either a plain string or an ordered list of content blocks."
       },
+      "ContentPart": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "title": "ContentPart",
+        "description": "A part of a message's content, as in the OpenAI format. Only text parts are read."
+      },
       "CreateBankAliasRequest": {
         "properties": {
           "alias": {
@@ -13772,6 +14201,18 @@
             "type": "integer",
             "title": "Duration Ms",
             "description": "Execution time in milliseconds"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail",
+            "description": "What the call decided, when it is a decision"
           }
         },
         "type": "object",
@@ -18515,6 +18956,18 @@
             "type": "integer",
             "title": "Duration Ms",
             "description": "Execution time in milliseconds"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail",
+            "description": "What the call decided, when it is a decision: for an abstain reflect's decision_pick, the decision model's 'none' score, how many memories it kept, and which path follows"
           }
         },
         "type": "object",
@@ -18744,6 +19197,28 @@
             ],
             "title": "Exclude Mental Model Ids",
             "description": "Exclude specific mental models by ID from the reflect loop."
+          },
+          "abstain": {
+            "type": "boolean",
+            "title": "Abstain",
+            "description": "Allow an empty answer. When memory holds nothing that answers the query, the response has an empty `text` and `abstained: true`, instead of reflect searching on or failing. With a decision model, it is asked the query itself about the `context` and the best memories found: when it sees nothing the answer depends on, reflect returns with no LLM call; otherwise the answer reads only the memories it picked. Word the query as the question to decide (\"does my change go against a recorded decision?\"); `context` is what it is about. For callers that act on any text they get back, such as a live session that should speak only when memory has something to say.",
+            "default": false
+          },
+          "search_queries": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 8
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Queries",
+            "description": "What to search for in the first retrieval round, each query through every retrieval layer, instead of an LLM rewriting the query (and context) into one search. Applies when reflect runs with a decision model; otherwise the agent writes its own searches."
           }
         },
         "type": "object",
@@ -18789,6 +19264,12 @@
             "type": "string",
             "title": "Text",
             "description": "The reflect response as well-formatted markdown (headers, lists, bold/italic, code blocks, etc.)"
+          },
+          "abstained": {
+            "type": "boolean",
+            "title": "Abstained",
+            "description": "True when the request set `abstain` and memory held nothing that answers it: `text` is empty.",
+            "default": false
           },
           "based_on": {
             "anyOf": [
@@ -19329,6 +19810,572 @@
         "title": "RunSettingModel",
         "description": "A setting that shapes the operation without appearing in its prompt.\n\nChunk sizes decide how the input is cut before extraction runs, so they change\nwhat comes back while contributing no prompt text \u2014 they cannot be blocks, which\npartition the message, and these are in none of it."
       },
+      "SessionAppendRequest": {
+        "properties": {
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/SessionMessage"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "title": "Messages"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionState"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A snapshot of the work after these messages, said by no one. Never saved into memory."
+          },
+          "turn_end": {
+            "type": "boolean",
+            "title": "Turn End",
+            "description": "The assistant finished its turn after these messages: the turn is saved into memory (with `retain: turns`). Sent again with nothing new in between, it is the same turn end.",
+            "default": false
+          },
+          "ack": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ack",
+            "description": "The `seq` of the last note this client delivered. The response carries the notes after it. Omit it to get every note the session has not had acknowledged."
+          },
+          "session": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "SessionAppendRequest"
+      },
+      "SessionAppendResponse": {
+        "properties": {
+          "notes": {
+            "items": {
+              "$ref": "#/components/schemas/SessionNote"
+            },
+            "type": "array",
+            "title": "Notes",
+            "description": "Notes after `ack`, oldest first."
+          },
+          "checking": {
+            "type": "boolean",
+            "title": "Checking",
+            "description": "A check is queued or running: another note may still come."
+          }
+        },
+        "type": "object",
+        "required": [
+          "notes",
+          "checking"
+        ],
+        "title": "SessionAppendResponse"
+      },
+      "SessionEvent": {
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "title": "Seq"
+          },
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "client",
+              "hindsight"
+            ],
+            "title": "Source",
+            "description": "`client`: an event the client sent. `hindsight`: Hindsight's own entry: a `check`, a `note`, or a `save` of the conversation into its document."
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload"
+          }
+        },
+        "type": "object",
+        "required": [
+          "seq",
+          "event_id",
+          "source",
+          "kind",
+          "created_at",
+          "payload"
+        ],
+        "title": "SessionEvent"
+      },
+      "SessionEventsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SessionEvent"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "Oldest first: poll again with `after` set to the last `seq`."
+          },
+          "checking": {
+            "type": "boolean",
+            "title": "Checking"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "checking"
+        ],
+        "title": "SessionEventsResponse"
+      },
+      "SessionListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SessionSummary"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "SessionListResponse"
+      },
+      "SessionMessage": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Id",
+            "description": "The client's id for this message, unique in the session. Sending it again is a no-op: an append that is retried after a lost response stores nothing twice."
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant",
+              "tool",
+              "system"
+            ],
+            "title": "Role"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ContentPart"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content",
+            "description": "What was said: a string, or a list of parts whose text parts are read."
+          },
+          "tool_calls": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ToolCall"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Calls",
+            "description": "The tools an assistant message calls."
+          },
+          "tool_call_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Call Id",
+            "description": "On a `tool` message: the call it answers."
+          },
+          "is_error": {
+            "type": "boolean",
+            "title": "Is Error",
+            "description": "On a `tool` message: the tool failed.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "role"
+        ],
+        "title": "SessionMessage",
+        "description": "One message of the conversation, in the OpenAI chat format most agents already keep, plus the\nclient's own `id`. Unknown keys (a name, reasoning, ...) are ignored, so a client can send the\nmessages it already has as they are."
+      },
+      "SessionNote": {
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "title": "Seq",
+            "description": "Its position in the log: acknowledge it by sending it back as `ack`."
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionNoteSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "seq",
+          "text"
+        ],
+        "title": "SessionNote",
+        "description": "A note for the agent. What Hindsight checked and the memories it used are in the session's\nevent log (the note's `note` entry and its `check`)."
+      },
+      "SessionNoteSource": {
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "quote": {
+            "type": "string",
+            "title": "Quote",
+            "description": "The source's own sentence closest to the note, verbatim.",
+            "default": ""
+          },
+          "mentioned_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mentioned At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_id"
+        ],
+        "title": "SessionNoteSource",
+        "description": "Where a note comes from, so the agent can check it before acting on it."
+      },
+      "SessionOptions": {
+        "properties": {
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id",
+            "description": "The document the conversation is saved into. Defaults to `session:<session_id>`. Fixed once the session exists."
+          },
+          "live": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live",
+            "description": "Hindsight follows the session live and may send notes back when memory records a decision the work goes against. Off by default: the session is only saved."
+          },
+          "retain": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "turns",
+                  "idle",
+                  "off"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain",
+            "description": "When the conversation is saved into its document: at the end of each turn and when the session goes idle (`turns`, the default), only when the session goes idle (`idle`: one extraction for the whole session), or never (`off`)."
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags",
+            "description": "Tags the saved document gets."
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context",
+            "description": "How extraction should read the saved conversation (who is speaking). A generic user/assistant description by default."
+          },
+          "strategy": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy",
+            "description": "The retain strategy saves use."
+          },
+          "observation_scopes": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "per_tag",
+                  "combined",
+                  "all_combinations",
+                  "shared"
+                ]
+              },
+              {
+                "items": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observation Scopes",
+            "description": "How observations built from the saved conversation are scoped, as on retain. The bank's default when unset."
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata",
+            "description": "Free-form labels, merged across appends and copied onto the saved document. `harness` names the client (e.g. `claude-code`): the UI shows its logo."
+          }
+        },
+        "type": "object",
+        "title": "SessionOptions",
+        "description": "How the session is set up. Applied when an append creates the session; later appends that\ncarry options update the fields they set."
+      },
+      "SessionState": {
+        "properties": {
+          "diff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diff",
+            "description": "For a coding agent: the `git diff` of everything it changed so far. An edit is checked against it."
+          }
+        },
+        "type": "object",
+        "title": "SessionState"
+      },
+      "SessionSummary": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "live": {
+            "type": "boolean",
+            "title": "Live"
+          },
+          "retain": {
+            "type": "string",
+            "title": "Retain"
+          },
+          "event_count": {
+            "type": "integer",
+            "title": "Event Count"
+          },
+          "check_count": {
+            "type": "integer",
+            "title": "Check Count"
+          },
+          "note_count": {
+            "type": "integer",
+            "title": "Note Count"
+          },
+          "credit_count": {
+            "type": "integer",
+            "title": "Credit Count",
+            "description": "Notes the agent told the user it used, each counted once: assistant lines carrying `From Hindsight memory (live session #<note seq>)` or `**Thanks to Hindsight thought #<note seq>**`."
+          },
+          "dismissed_count": {
+            "type": "integer",
+            "title": "Dismissed Count",
+            "description": "Notes the agent told the user it did not need, each counted once: assistant lines carrying `Hindsight note (live session #<note seq>)` or `Hindsight thought #<note seq>, set aside` / `, already done`."
+          },
+          "last_seq": {
+            "type": "integer",
+            "title": "Last Seq"
+          },
+          "saved_seq": {
+            "type": "integer",
+            "title": "Saved Seq"
+          },
+          "acked_seq": {
+            "type": "integer",
+            "title": "Acked Seq"
+          },
+          "checking": {
+            "type": "boolean",
+            "title": "Checking"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "last_event_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Event At",
+            "description": "When the client last sent an event."
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "document_id",
+          "live",
+          "retain",
+          "event_count",
+          "check_count",
+          "note_count",
+          "credit_count",
+          "dismissed_count",
+          "last_seq",
+          "saved_seq",
+          "acked_seq",
+          "checking",
+          "created_at"
+        ],
+        "title": "SessionSummary"
+      },
       "SetBankAliasPrimaryRequest": {
         "properties": {
           "primary": {
@@ -19783,6 +20830,60 @@
           "output_tokens": 500,
           "total_tokens": 2000
         }
+      },
+      "ToolCall": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Id",
+            "description": "Matched by the `tool` message that answers it."
+          },
+          "type": {
+            "type": "string",
+            "const": "function",
+            "title": "Type",
+            "default": "function"
+          },
+          "function": {
+            "$ref": "#/components/schemas/ToolCallFunction"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "function"
+        ],
+        "title": "ToolCall"
+      },
+      "ToolCallFunction": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 256,
+            "title": "Name"
+          },
+          "arguments": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            ],
+            "title": "Arguments",
+            "description": "The tool's arguments: a JSON object, or the JSON string OpenAI sends."
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "arguments"
+        ],
+        "title": "ToolCallFunction"
       },
       "ToolCallsIncludeOptions": {
         "properties": {

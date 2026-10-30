@@ -546,6 +546,236 @@ on-topic memories without a sign anywhere but the page. Run it with the gate on 
 (`HINDSIGHT_EVAL_SET_MENTAL_MODEL_DELTA_USE_DECISION_MODEL=false`, same decision model);
 the gate is only worth its savings if this stays level.
 
+**`test_12` — a live session's note carries the project's decisions, and only them.** A live
+session checks the request and each action against memory and may send the agent a note. Every
+case is a kind of note seen in real use, rewritten in neutral terms, and the file is meant to
+grow: add a case when real use shows a new kind, diversified rather than fitted to one wording.
+Six traps where something local to one past session must not come back as a project rule (one
+run's own choice, the folder a session ran in, a past status, where one task's work lived, the
+agent's own earlier choice, the user's previous request), and four decisions the agent must hear
+(a decided value, a house rule from a commit message, who bumps versions, an amended rule in its
+amended form). Each case performs the agent's action too, since the conflict check it triggers is
+where the wrong notes came from. Expect the occasional red on a positive case (three runs: 9, 8
+and 10 of 10); re-run before reading it as a regression.
+
+**`test_08` — ranked retrieval on BEIR.** The only suite graded against labels
+nobody here wrote, and the only one that makes **no model call**. It records a
+*baseline*: what this pipeline scores on a public IR benchmark, and on what.
+
+It takes **BEIR SciFact** — scientific claims as queries, abstracts as documents,
+relevance judgements from the dataset — and reports the standard set at
+k = **1, 3, 5, 10, 20, 100**:
+
+| | |
+|---|---|
+| **nDCG@k** | `grade / log2(rank + 1)`, LINEAR gain, which is what `trec_eval` and therefore BEIR use |
+| **MAP@k** | divided by the TOTAL relevant (`pytrec_eval`'s `map_cut`), so MAP@1 cannot reach 1.0 on a 2-gold query |
+| **Recall@k**, **P@k** | P divides by k, not by what came back |
+| **MRR@k** | plus an untruncated MRR, because `MRR@10 == 0 < MRR` is exactly "returned, ranked too low" |
+| **Hit@k** | BEIR's Accuracy@k — what a user feels, and the first thing to saturate |
+| **R-precision** | P@R for that query's own R; cutoff-free, so a mostly-one-gold slice cannot flatter it |
+
+A unit test cross-checks all of them against `pytrec_eval` on 300 random graded
+runs — which is how we found nDCG had shipped with the exponential
+`2**grade - 1` gain instead of the linear one. Identical on binary qrels like
+SciFact, wrong by ~0.04 on the graded qrels of NFCorpus and TREC-COVID. Install
+it with `--extra reference-metrics`; without it that test skips.
+
+### It is a baseline, not a CI gate
+
+This package runs on perf-test's nightly cron, not on pull requests. The floors in
+the module exist so a nightly run says something when retrieval moves — not to
+block a merge. The measured numbers and the conditions behind them are recorded
+above those floors, and that record is the deliverable.
+
+It stays here rather than in `hindsight-system-tests` even though it makes no LLM
+call, which is normally that suite's whole criterion. That suite stubs the
+embedder AND the reranker with lexical stand-ins, and an nDCG measured over hashed
+word overlap is a fact about blake2b — it could never catch a real reranker or
+embedder regression. The models this grades have to be the ones that ship, which
+is what this package already runs.
+
+### Build once, evaluate many times
+
+```
+build (on purpose, ~500 model calls)            eval (every run, ZERO model calls)
+------------------------------------            ----------------------------------
+retain 500 abstracts, real extraction           import the archive
+export_bank -> fixtures/beir-scifact-bank.zip   recall each query, score vs. qrels
+```
+
+Re-ingesting per run would pay for extraction to measure something extraction is
+not under test for — and worse, would move the corpus underneath every
+comparison: a model that extracted different claims this afternoon changes the
+score with nothing in retrieval having changed. The archive makes the memories a
+constant, which is the only way an A/B on a retrieval setting means anything.
+
+| baked into the zip at build | free to A/B at eval time |
+|---|---|
+| extraction model and mode | embedder, reranker |
+| which claims each abstract became | `budget`, `max_tokens` |
+| observations / consolidation off | fusion and scoring settings |
+
+The embedder is on the right because **`export_bank` deliberately leaves
+embeddings out** — the importer regenerates them with its own model. That is the
+feature that makes the embedder itself a variable here.
+
+`fixtures/beir-scifact-bank.json` sits beside the archive and records which model
+wrote the memories, with the document and fact counts. Unknowable from the zip,
+and the single most important thing about it.
+
+Because nothing calls a model, this is the one suite that needs no credentials:
+
+```bash
+HINDSIGHT_EVAL_LLM_PROVIDER=none HINDSIGHT_EVAL_LLM_MODEL=none \
+  uv run pytest tests evals/test_08_retrieval_metrics.py        # ~2.5 minutes
+
+# rebuild the archive, against a server configured with the extraction model you want
+uv run python -m hindsight_system_evals.retrieval build --api-url http://localhost:8888
+```
+
+### Two things it asserts beyond the floors
+
+- **`mean documents returned` must exceed 100.** `recall` has no `k` — it budgets
+  by `max_tokens` — so every cutoff above the number of documents a response
+  reaches measures the *budget*, not the ranking, and would read as a flat,
+  flattering line across @20 and @100. The exception is a pruning reranker, which
+  returns a handful on purpose; that arm gets a Recall@10 floor instead, since the
+  only thing making aggressive pruning safe is keeping the gold document.
+- **Most queries must reach a gold document.** The scoring rests on `document_id`
+  surviving export and import; if the archive renumbered documents, every id would
+  miss the qrels and the run would read as a total retrieval collapse rather than
+  a broken fixture.
+
+### The committed slice, and what its number is for
+
+50 queries over 500 documents (51 gold), so a gold abstract beats ~475
+distractors. It was 200 first and that was a mistake worth recording: nDCG@10 read
+0.933, above SciFact's published ~0.70 over the full 5,183, because a gold hit
+only had ~190 distractors to beat. A benchmark that flatters is a floor that never
+trips. Documents cost one extraction call each and queries cost nothing but a
+`recall`, which is why the query count is generous and the document count is where
+the budget goes.
+
+A number here is **not** comparable to a published SciFact nDCG@10: 500 is not
+5,183, and this ranks extracted claims rather than the abstracts themselves.
+
+Re-cutting the slice invalidates the bank archive, which has to be rebuilt from it:
+
+```bash
+uv run python -m hindsight_system_evals.beir build          # re-downloads SciFact
+uv run python -m hindsight_system_evals.retrieval build ... # then rebuild the bank
+```
+
+`HINDSIGHT_EVAL_BEIR_QUERIES=5` trims the query set for a smoke run without
+touching the corpus, so the smoke run faces the same distractors.
+`HINDSIGHT_EVAL_BEIR_DIR` points at any unpacked BEIR directory (`corpus.jsonl`,
+`queries.jsonl`, `qrels/test.tsv`); the graded nDCG already handles NFCorpus's and
+TREC-COVID's 0/1/2 qrels.
+
+**`test_09` — consolidation.** Facts are retained in waves (as written, so only
+consolidation is graded) and the real consolidation runs after each one; the
+observations left behind are graded. Every scenario reproduces a failure that
+shipped or a rule the consolidation prompt promises:
+
+- restatements update one observation, never grow siblings (#1566, #3249);
+- a newer fact supersedes the old belief everywhere it appears (#1151, #3248, #3475);
+- recency is when a fact was *stated*, not when it was retained (#2550);
+- a correction retires the false belief (#3509);
+- one facet per observation, matched by entity, no arithmetic (#814, the horse farm);
+- a member leaving a list updates the list too; a vague reference gets resolved;
+- different people and different numbers stay apart (#5497);
+- observations keep their facts' language, and a mixed update is rewritten, not patched (#3166/#3181);
+- the mission wins: it can keep chatter (#525) or forbid names (#4619); without one, chatter is dropped;
+- the same facts under different tags in a `shared` scope merge (#2202, #3564);
+- in a bank of 30 near-identical services, every later fact is shown the
+  observation it belongs to (read from the LLM trace, so a recall miss and a
+  model miss are told apart), changes land as current, and the confusable
+  neighbours survive (#1907, #2000) — `--full` only, as it seeds ~130 facts; a second
+  bank of 20 people whose names come in lookalike pairs (Maria / Mario) checks the same on
+  personal memory.
+
+Each wave also runs deterministic checks: evidence exists and matches
+`proof_count` (#4955), dates come from the evidence (#501, #3477), no prompt
+metadata leaks into the text (#2544), every durable fact is cited (#5054), and a
+wave of pure restatements adds no observation. `HINDSIGHT_EVAL_CONSOLIDATION_DUMP=DIR`
+writes every consolidation call of each scenario (what the model was shown, what
+it answered) to `DIR/<scenario>.json` — the first thing to read on a failure.
+
+Each scenario also reports what consolidating it cost, read back from the server's
+LLM trace: calls, input / cached / output tokens, LLM seconds, and wall time from
+retain to settled. `HINDSIGHT_EVAL_CONSOLIDATION_COST=FILE` appends one JSON line per
+scenario with that and whether it passed, so two configurations can be compared on
+cost *and* outcome — a cheaper setting only counts at the same quality:
+
+```bash
+HINDSIGHT_EVAL_CONSOLIDATION_COST=/tmp/base.jsonl uv run pytest evals/test_09_consolidation.py --full
+# consolidation triage: a decision model (TypeSafe Jev) for consolidation, on for every bank
+HINDSIGHT_EVAL_SET_CONSOLIDATION_DECISION_MODEL_PROVIDER=typesafe HINDSIGHT_EVAL_SET_CONSOLIDATION_DECISION_MODEL_API_KEY=... \
+  HINDSIGHT_EVAL_CONSOLIDATION_COST=/tmp/triage.jsonl uv run pytest evals/test_09_consolidation.py --full
+```
+
+Triage requests are traced like LLM calls (scope `decision_consolidation_triage`) and
+reported apart from them, as `triage N calls, M in`. Speaker attribution is decided at
+retain and is out of scope; failure handling and scope mechanics are
+deterministic and live in `hindsight-system-tests`.
+
+### Consolidation capability inventory
+
+Everything consolidation promises, from the docs (`docs/developer/observations`), the
+prompt (`engine/consolidation/prompts.py`), the code (`engine/consolidation/`) and the
+issue/PR history — and what grades it. "eval" = a `test_09` scenario (real model);
+"system" = `hindsight-system-tests` (stub model); "unit" = `hindsight-api-slim/tests`.
+
+**What the model decides — graded by `test_09` on gemini-3.1-flash-lite**
+- Restatements update one observation; no near-duplicate siblings (rule 1; #1566, #3249, #1759) — eval `restatements-merge`, `shared-scope-merges-across-tags`
+- One facet per observation; a count is its own facet (rule 2; #814) — eval `horse-farm`
+- Match by entity, not topic: "sold Buttercup" never touches Daisy (rule 3; #814) — eval `horse-farm`
+- State changes are UPDATEs to the current state, keeping what was replaced (rule 4; #3248) — eval `retired-conventions`, `employer-supersedes`
+- A change cascades to every observation stating the old value, list members included (rule 5; #1151) — eval `employer-supersedes`, `cascade-to-group`, `noisy-service-catalogue`
+- Vague references are resolved by later facts (rule 6) — eval `resolve-reference`
+- Significant events are history, never deleted (rule 7; #814) — eval `horse-farm`
+- No arithmetic or deduction on counts (rule 8) — eval `no-arithmetic`, `horse-farm`
+- Different people, entities and numbers stay apart, lookalike names included (rule 9; #5497, #1725) — eval `distinct-entities-stay-apart`, `noisy-service-catalogue`
+- Recency is `mentioned_at`, not arrival order; older news never overwrites (rule 10; #2550) — eval `recency-is-when-stated`
+- Chatter is skipped under the default mission (rule 11) — eval `default-drops-chatter`
+- An update keeps everything the observation said (rule 12) — eval `noisy-service-catalogue` (neighbours, coverage)
+- Every durable fact lands in an observation (#5054) — eval coverage check on every wave
+- A correction retires a false belief (#3509) — eval `correction-retires-false-belief`
+- Retired settings and tools stop reading as current (#3248, #3475) — eval `retired-conventions`
+- The mission wins over the rules: it can keep ephemera (#525) or forbid names (#4619) — eval `mission-keeps-ephemeral`, `mission-forbids-names`
+- Observations keep their facts' language; a mixed update is rewritten (#3166, #3181, #4016) — eval `language-chinese`, `language-mixed-update`; unit `test_consolidation_output_language.py`
+- A configured output language overrides (#3776) — unit `test_consolidation_output_language.py`
+- Observation text carries no prompt metadata, JSON or asides (#2544) — eval leak check on every wave
+- In a large bank of near-identical entities the recall still surfaces the right observation (#1907) — eval `noisy-service-catalogue` (30 services) and `noisy-personal-contacts` (20 people in lookalike name pairs), `twin` check from the LLM trace
+
+**What the server guarantees — deterministic**
+- Source facts survive; observations cite evidence that resolves — system `test_20`; eval evidence check
+- `proof_count` equals the evidence count, including multi-fact creates (#4955) — eval evidence check
+- Dates come from the evidence: earliest start, latest mention, none invented (#501, #3477) — eval date check; unit `test_consolidation_temporal_merge.py`
+- One response is applied atomically with its `consolidated_at` stamps (#3876) — unit `test_consolidation_batch_atomicity.py`
+- Failed calls bisect, then mark failed; recovery is explicit (#601) — system `test_21`
+- Semantic near-twin merge on create and update, number- and negation-aware (#1977, #2000) — unit `test_consolidation_dedup.py`
+- Exact-text duplicate creates are dropped (#1907) — unit `test_consolidation_dedup.py`
+- Deletes must name an `observation_id`; a malformed one no longer voids the response (#4152, #4183) — unit `test_consolidation_delete_schema.py`, `test_consolidation_delete_prompt_llm.py`
+- A merge delete (`merged_into`) moves its evidence to the survivor, or re-queues it; a plain delete retires it — system `test_22_consolidation_safety_nets`
+- Facts a response ignores are re-asked (together, then alone) — system `test_22_consolidation_safety_nets`
+- Miscopied observation ids are repaired; an update aimed at a fact id becomes a create — unit `test_consolidation_id_repair.py`; system `test_22_consolidation_safety_nets`
+- Observation scopes (`combined`, `per_tag`, `all_combinations`, `shared`, explicit) and strategies (#2202, #4619) — system `test_24`, `test_29`
+- Per-scope observation caps (#729, #2163) — system `test_29`; unit `test_observation_scope_limit_resolution.py`
+- Observation history snapshots — unit `test_observation_history.py`
+- Deleting or replacing a document removes and rebuilds its observations (#429, #3294) — system `test_25`; unit `test_delta_retain_orphan_observations.py`
+- Trigger, dedup and serialisation of consolidation jobs (#4368) — system `test_26`, `test_28`
+- Observations in recall, `prefer_observations`, source facts (#2311) — system `test_27`
+- Consolidation triage (a decision model, e.g. TypeSafe Jev): restatements, new facets and chatter settled without the LLM — unit `test_consolidation_triage.py`; system `test_22_consolidation_triage`; eval suite with triage on; under a bank's own mission it records only facts the mission wants as worded — eval `noisy-service-catalogue-mission`
+
+**Out of scope here, deliberately** — speaker attribution is decided at retain (#4572, #1680)
+and belongs with the retain suites; operational behaviour (timeouts #3301/#4715, quota
+handling #4160, wall-clock ceilings) is not a quality property.
+
+### `test_10` — a changed value changes everywhere
+
+A pump page is built from a
 **Consistency** (`test_refresh_pages_consistency`). A pump page is built from a
 manual (wave one), then refreshed with a notice that changes the filter interval
 and the owner (wave two). The trap is a block the refresh left untouched that

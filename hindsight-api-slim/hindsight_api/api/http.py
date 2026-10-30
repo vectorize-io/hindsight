@@ -21,7 +21,8 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from urllib.parse import quote, unquote
 
 import orjson
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Path as FastAPIPath
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
@@ -41,6 +42,14 @@ from hindsight_api.engine.audit import (
 )
 from hindsight_api.engine.document_history import DocumentHistoryResponse
 from hindsight_api.engine.llm_trace import LLMCallType, LLMRequestListResponse, LLMRequestStatsResponse, LLMStatsSplit
+from hindsight_api.engine.sessions import SessionNotFoundError
+from hindsight_api.engine.sessions.models import (
+    SessionAppendRequest,
+    SessionAppendResponse,
+    SessionEventsResponse,
+    SessionListResponse,
+    SessionSummary,
+)
 from hindsight_api.extensions import AuthenticationError, PrecheckContext, PrecheckOperation
 
 
@@ -1590,6 +1599,34 @@ class ReflectRequest(ReflectDefaultOptions):
         default=None,
         description="Exclude specific mental models by ID from the reflect loop.",
     )
+    abstain: bool = Field(
+        default=False,
+        description="Allow an empty answer. When memory holds nothing that answers the query, the response "
+        "has an empty `text` and `abstained: true`, instead of reflect searching on or failing. With a "
+        "decision model, it is asked the query itself about the `context` and the best memories found: "
+        "when it sees nothing the answer depends on, reflect returns with no LLM call; otherwise the answer "
+        'reads only the memories it picked. Word the query as the question to decide ("does my change go '
+        'against a recorded decision?"); `context` is what it is about. For callers that act on any text '
+        "they get back, such as a live session that should speak only when memory has "
+        "something to say.",
+    )
+    search_queries: list[str] | None = Field(
+        default=None,
+        max_length=8,
+        description="What to search for in the first retrieval round, each query through every retrieval "
+        "layer, instead of an LLM rewriting the query (and context) into one search. Applies when reflect "
+        "runs with a decision model; otherwise the agent writes its own searches.",
+    )
+
+    @field_validator("search_queries")
+    @classmethod
+    def validate_search_queries(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        queries = [q.strip() for q in v if q.strip()]
+        if not queries:
+            raise ValueError("search_queries must hold at least one non-blank query. Use null to let reflect search.")
+        return queries
 
     @field_validator("fact_types")
     @classmethod
@@ -1692,6 +1729,11 @@ class ReflectLLMCall(BaseModel):
 
     scope: str = Field(description="Call scope: agent_1, agent_2, final, etc.")
     duration_ms: int = Field(description="Execution time in milliseconds")
+    detail: str | None = Field(
+        default=None,
+        description="What the call decided, when it is a decision: for an abstain reflect's decision_pick, "
+        "the decision model's 'none' score, how many memories it kept, and which path follows",
+    )
 
 
 class ReflectBasedOn(BaseModel):
@@ -1745,6 +1787,10 @@ class ReflectResponse(BaseModel):
 
     text: str = Field(
         description="The reflect response as well-formatted markdown (headers, lists, bold/italic, code blocks, etc.)"
+    )
+    abstained: bool = Field(
+        default=False,
+        description="True when the request set `abstain` and memory held nothing that answers it: `text` is empty.",
     )
     based_on: ReflectBasedOn | None = Field(
         default=None,
@@ -5607,9 +5653,12 @@ def _register_routes(app: FastAPI):
         metrics = get_metrics_collector()
 
         try:
-            # Handle deprecated context field by concatenating with query
-            query = request.query
-            if request.context:
+            # Handle deprecated context field by concatenating with query. An abstain request keeps
+            # it apart: its decision model is asked the question itself, about that context.
+            query, context = request.query, None
+            if request.context and request.abstain:
+                context = request.context
+            elif request.context:
                 query = f"{request.query}\n\nAdditional context: {request.context}"
 
             # Use the memory system's reflect_async method (record metrics)
@@ -5625,7 +5674,7 @@ def _register_routes(app: FastAPI):
                         bank_id=bank_id,
                         query=query,
                         budget=request.budget,
-                        context=None,  # Deprecated, now concatenated with query
+                        context=context,  # concatenated with query, except for abstain
                         max_tokens=request.max_tokens,
                         response_schema=request.response_schema,
                         request_context=request_context,
@@ -5638,6 +5687,8 @@ def _register_routes(app: FastAPI):
                         exclude_mental_model_ids=request.exclude_mental_model_ids,
                         reflect_search_observations_max_tokens_override=request.reflect_search_observations_max_tokens,
                         reflect_search_observations_include_entities_override=request.reflect_search_observations_include_entities,
+                        abstain=request.abstain,
+                        search_queries=request.search_queries,
                         reflect_search_mental_models_max_tokens_override=request.reflect_search_mental_models_max_tokens,
                     ),
                     operation="reflect",
@@ -5710,7 +5761,10 @@ def _register_routes(app: FastAPI):
                     )
                     for tc in core_result.tool_trace
                 ]
-                llm_calls = [ReflectLLMCall(scope=lc.scope, duration_ms=lc.duration_ms) for lc in core_result.llm_trace]
+                llm_calls = [
+                    ReflectLLMCall(scope=lc.scope, duration_ms=lc.duration_ms, detail=lc.detail)
+                    for lc in core_result.llm_trace
+                ]
                 trace_result = ReflectTrace(
                     tool_calls=tool_calls,
                     llm_calls=llm_calls,
@@ -5718,6 +5772,7 @@ def _register_routes(app: FastAPI):
 
             return ReflectResponse(
                 text=core_result.text,
+                abstained=core_result.abstained,
                 based_on=based_on_result,
                 structured_output=core_result.structured_output,
                 structured_output_error=core_result.structured_output_error,
@@ -7137,6 +7192,145 @@ def _register_routes(app: FastAPI):
             raise
         except Exception as e:
             raise _internal_error(e, f"/v1/default/banks/{bank_id}/documents/{document_id}/chunks")
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/sessions/{session_id}/events",
+        response_model=SessionAppendResponse,
+        summary="Append to a live session",
+        description=(
+            "Send the messages of a live session since the last append, and get back Hindsight's notes. "
+            "The session is created on its first append.\n\n"
+            "Safe to retry: each message carries the client's own `id`, and a message already stored is "
+            "skipped. Messages are stored in the order sent, after the session's earlier ones.\n\n"
+            "With `live` on, each moment worth a check (a request, a plan, a command that changes "
+            "things, an edit, a failure) queues one reflect in the background. The append never waits "
+            "for it: its note comes back with a later append, or from `GET .../events`. `ack` is the "
+            "`seq` of the last note this client delivered; the response carries the notes after it."
+        ),
+        operation_id="append_session_events",
+        tags=["Sessions"],
+    )
+    async def api_append_session_events(
+        bank_id: str,
+        session_id: str = FastAPIPath(min_length=1, max_length=256),
+        request: SessionAppendRequest = Body(...),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        try:
+            return await app.state.memory.sessions.append(bank_id, session_id, request, request_context=request_context)
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/sessions/{session_id}/events")
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/sessions/{session_id}/events",
+        response_model=SessionEventsResponse,
+        summary="Read a session's log",
+        description=(
+            "The session's log after position `after`, oldest first: the client's messages and "
+            "Hindsight's checks, notes, handoffs and saves, in one order. Poll with `after` set to the last `seq` you saw "
+            "to follow the session live."
+        ),
+        operation_id="list_session_events",
+        tags=["Sessions"],
+    )
+    async def api_list_session_events(
+        bank_id: str,
+        session_id: str,
+        after: int = Query(default=0, ge=0, description="Return entries with a seq above this"),
+        limit: int = Query(default=200, ge=1, le=1000),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        try:
+            return await app.state.memory.sessions.events(
+                bank_id, session_id, after=after, limit=limit, request_context=request_context
+            )
+        except SessionNotFoundError:
+            raise HTTPException(status_code=404, detail="Session not found")
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/sessions/{session_id}/events")
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/sessions",
+        response_model=SessionListResponse,
+        summary="List sessions",
+        description="The bank's sessions, most recently active first.",
+        operation_id="list_sessions",
+        tags=["Sessions"],
+    )
+    async def api_list_sessions(
+        bank_id: str,
+        q: str | None = Query(default=None, description="Case-insensitive match on the session id"),
+        limit: int = Query(default=50, ge=0, le=500),
+        offset: int = Query(default=0, ge=0),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        try:
+            return await app.state.memory.sessions.list(
+                bank_id, limit=limit, offset=offset, q=q, request_context=request_context
+            )
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/sessions")
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/sessions/{session_id}",
+        response_model=SessionSummary,
+        summary="Get a session",
+        operation_id="get_session",
+        tags=["Sessions"],
+    )
+    async def api_get_session(
+        bank_id: str,
+        session_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        try:
+            return await app.state.memory.sessions.get(bank_id, session_id, request_context=request_context)
+        except SessionNotFoundError:
+            raise HTTPException(status_code=404, detail="Session not found")
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/sessions/{session_id}")
+
+    @app.delete(
+        "/v1/default/banks/{bank_id}/sessions/{session_id}",
+        response_model=DeleteResponse,
+        summary="Delete a session",
+        description="Delete the session and its log. The document it saved into the bank stays (delete it as a "
+        "document); memories extracted from it are not touched.",
+        operation_id="delete_session",
+        tags=["Sessions"],
+    )
+    async def api_delete_session(
+        bank_id: str,
+        session_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        try:
+            await app.state.memory.sessions.delete(bank_id, session_id, request_context=request_context)
+            return DeleteResponse(success=True, message=f"Session '{session_id}' deleted")
+        except SessionNotFoundError:
+            raise HTTPException(status_code=404, detail="Session not found")
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/sessions/{session_id}")
 
     @app.get(
         "/v1/default/banks/{bank_id}/documents/{document_id:path}/history",

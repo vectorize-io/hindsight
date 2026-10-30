@@ -18,7 +18,7 @@ import re  # noqa: F401
 import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -28,7 +28,8 @@ class ReflectLLMCall(BaseModel):
     """ # noqa: E501
     scope: StrictStr = Field(description="Call scope: agent_1, agent_2, final, etc.")
     duration_ms: StrictInt = Field(description="Execution time in milliseconds")
-    __properties: ClassVar[List[str]] = ["scope", "duration_ms"]
+    detail: Optional[StrictStr] = None
+    __properties: ClassVar[List[str]] = ["scope", "duration_ms", "detail"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -69,6 +70,11 @@ class ReflectLLMCall(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # set to None if detail (nullable) is None
+        # and model_fields_set contains the field
+        if self.detail is None and "detail" in self.model_fields_set:
+            _dict['detail'] = None
+
         return _dict
 
     @classmethod
@@ -82,7 +88,8 @@ class ReflectLLMCall(BaseModel):
 
         _obj = cls.model_validate({
             "scope": obj.get("scope"),
-            "duration_ms": obj.get("duration_ms")
+            "duration_ms": obj.get("duration_ms"),
+            "detail": obj.get("detail")
         })
         return _obj
 

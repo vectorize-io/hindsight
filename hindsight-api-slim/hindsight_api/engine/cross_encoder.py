@@ -1205,9 +1205,29 @@ _PAGE_IMPACT_OPTIONS = {
     "no": "No, a different subject altogether: nothing this page covers or relies on",
 }
 
+# Follows the caller's own question, which is the pick's instruction. With a fixed, generic
+# instruction ("which memory does the answer depend on?") over a state that carried the question,
+# the decision model picked whichever memory shared the question's topic: on 30 sde-bench watcher
+# moments "none" fell below 0.3 on 17, where the client-side watcher, asking its question directly,
+# had 2. Asked this way it had 2 again, and 14 at 0.9 or more against the watcher's 12.
+_PICK_SUFFIX = (
+    " Pick the memory the answer depends on. Pick none when the answer is no or nothing, or when no memory "
+    "is about exactly what the question concerns."
+)
+_PICK_NONE = "none: the answer is no or nothing"
+# Each option is a memory's number and opening; the memory itself is in the state.
+_PICK_OPTION_CHARS = 300
+
 _OPTION_KEY_OVERHEAD = 7  # JSON envelope overhead per choice option: '"c249": "' + comma/newline
 _LISTING_ITEM_OVERHEAD = 10  # Formatting overhead per item in cut listing: "[1] ...\n\n"
 _MAX_QUERY_TOKENS = 2_000  # Defensive ceiling on query tokens in reranker
+
+
+class EvidencePick(BaseModel):
+    """A decision model's answer to "which candidate states what the question asks for, or none"."""
+
+    none: float
+    candidates: list[float]
 
 
 class TypeSafeCrossEncoder(CrossEncoderModel):
@@ -1538,6 +1558,40 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         else:
             level = round(float(answer["score"]))
         return level >= len(self.SUFFICIENCY_LEVELS) - 1
+
+    async def pick_answering(self, question: str, context: str | None, texts: list[str]) -> EvidencePick:
+        """Which of ``texts`` the answer to ``question`` depends on, or none: one Choice with a none option.
+
+        The shape :meth:`_rank` avoids on purpose -- "none" wins outright on a hard question -- is
+        the one a caller that may answer nothing wants: a reflect that ``abstain``s on a likely
+        "none" spends no LLM call on evidence that only shares the question's topic. ``question``
+        is the instruction, and ``context`` (what the question is about: the asker's situation)
+        opens the state, followed by the numbered memories.
+        """
+        if not texts:
+            return EvidencePick(none=1.0, candidates=[])
+        instructions = question + _PICK_SUFFIX
+        head = f"{context.strip()}\n\n" if context and context.strip() else ""
+        overhead = count_tokens(instructions) + count_tokens(_PICK_NONE) + count_tokens(head) + 50
+        options_tokens = len(texts) * (_PICK_OPTION_CHARS // 3 + _OPTION_KEY_OVERHEAD)
+        available = max(100, self.MAX_QUESTION_TOKENS - overhead - options_tokens)
+        cap = max(10, available // len(texts) - _LISTING_ITEM_OVERHEAD)
+        capped = [truncate_to_tokens(t, cap).text if count_tokens(t) > cap else t for t in texts]
+        state = head + "MEMORY:\n" + "\n".join(f"[{i + 1}] {t}" for i, t in enumerate(capped))
+        criteria: dict[str, str] = {"none": _PICK_NONE}
+        criteria.update({f"c{i}": f"memory [{i + 1}]: {t[:_PICK_OPTION_CHARS]}" for i, t in enumerate(capped)})
+        result = await self._ask(
+            {
+                "state": state,
+                "model": self.model,
+                "questions": {"pick": {"type": "choice", "instructions": instructions, "criteria": criteria}},
+            },
+            "decision_pick",
+        )
+        probabilities = {k: float(v) for k, v in (result["answers"]["pick"].get("probabilities") or {}).items()}
+        return EvidencePick(
+            none=probabilities.get("none", 0.0), candidates=[probabilities.get(f"c{i}", 0.0) for i in range(len(texts))]
+        )
 
     async def could_change_page(self, topic: str, page: str, memory: str) -> bool:
         """Whether ``memory`` could change a page about ``topic`` that reads ``page``: one Choice.

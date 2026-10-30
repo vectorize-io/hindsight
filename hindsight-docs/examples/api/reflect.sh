@@ -75,6 +75,15 @@ rm -f schema.json
 # [/docs:reflect-structured-output]
 
 
+# [docs:reflect-abstain]
+# Ask a question that may need no answer: with --abstain an empty text means memory has nothing to say.
+hindsight memory reflect my-bank \
+  "Does my change go against a recorded decision about Alice's role? If so, say which, briefly." \
+  --context "I am updating the team page to list Alice as a junior engineer." \
+  --abstain --search-query "Alice role" --search-query "Alice promotion"
+# [/docs:reflect-abstain]
+
+
 # =============================================================================
 # Cleanup (not shown in docs)
 # =============================================================================

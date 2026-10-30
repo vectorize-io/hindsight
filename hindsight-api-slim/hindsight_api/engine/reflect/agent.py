@@ -13,8 +13,10 @@ import json
 import logging
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
+
+from pydantic import BaseModel
 
 from ...cancellation import OperationCancelledError
 from ...config import DEFAULT_RECALL_CHUNKS_MAX_TOKENS, DEFAULT_RECALL_MAX_TOKENS, get_config
@@ -23,10 +25,12 @@ from ..llm_trace import LLMQueueWait, reset_queue_wait_sink, set_queue_wait_sink
 from ..llm_transport import describe_llm_error
 from ..response_models import LLMToolCall, LLMToolCallResult
 from .models import (
+    AbstainAnswer,
     DirectiveInfo,
     LengthRewrite,
     LLMCall,
     ReflectAgentResult,
+    SettledAbstainAnswer,
     StructuredOutputResult,
     TokenUsageSummary,
     ToolCall,
@@ -37,6 +41,8 @@ from .prompts import (
     CLAIMS_SYSTEM_PROMPT,
     ROUND_SEARCH_QUERY_SYSTEM_PROMPT,
     _extract_directive_rules,
+    build_abstain_answer_prompt,
+    build_abstain_answer_system_prompt,
     build_agent_user_prompt,
     build_chunk_claims_prompt,
     build_done_request_prompt,
@@ -147,10 +153,46 @@ def _build_directives_applied(directives: list[dict[str, Any]] | None) -> list[D
 
 
 if TYPE_CHECKING:
+    from ..cross_encoder import EvidencePick
     from ..llm_wrapper import AnyLLMProvider
     from ..response_models import TokenUsage
 
 logger = logging.getLogger(__name__)
+
+# What the round's query rewrite replies when the request asks for nothing a memory bank could
+# answer ("yes", "thanks", "go ahead"): reflect then returns an empty answer without searching.
+_NOTHING_TO_SEARCH = "NONE"
+
+# Closes the question when the caller accepts no answer (``abstain``): saying "nothing is
+# recorded" is still an answer, and that caller reads any text as something to act on.
+# An ``abstain`` reflect answers nothing, with no LLM call, when the decision model puts "none of
+# these states it" at or above this. Below it the LLM reads what was picked and may still answer
+# nothing: on sde-bench the watcher's no-conflict moments sat at 0.93-1.0, its real misses at 0.52-0.61.
+_ABSTAIN_AT = 0.9
+# A caller can lower it (``abstain_at``): a live session's heads-up at the start of a request scored
+# none 0.5-0.89 on every irrelevant one in beta, and <= 0.41 on every one that changed the work.
+# What an ``abstain`` reflect's answer reads: the candidates picked at least this likely (and the
+# likeliest one always), instead of the whole pruned round.
+_PICK_FLOOR = 0.1
+# Below this "none" the decision model has settled that the picked memories answer, and the LLM
+# only writes the answer; between it and _ABSTAIN_AT the LLM decides. Left to decide everywhere, it
+# turned down a heads-up the decision model was sure of (none 0.02) on 1 of 3 live sde-bench dedupe
+# runs, which then needed a correction. The bar was 0.3 (the client-side watcher's writer had no veto
+# below it) until the answer wrote its check first: forced at none 0.25, that check found nothing
+# wrong and the "answer" became "Nothing conflicts: ..." as a note. Heads-ups pick at none <= 0.03.
+_ANSWER_AT = 0.1
+# How much of the picked memories' source an abstain answer reads: the facts expanded to their
+# chunks, deduplicated, cut at the same 8000 characters the client-side watcher's writer read.
+_ANSWER_SOURCE_FACTS = 12
+_ANSWER_SOURCE_CHARS = 8000
+# How many candidates the pick chooses from: the head of the round, as the client-side watcher
+# offered its decision model the top 4 of one search, or the best 10 across several.
+_PICK_FROM = 8
+
+_ABSTAIN_DIRECTIVE = (
+    "\n\nIf what you retrieved does not state what this asks for, answer nothing: call done with "
+    "answer_found false and an empty answer. Never write an answer saying that nothing was found."
+)
 
 # A parallel round's recall, when the decision model will prune it: wide enough that a decision
 # the fused order ranks low still reaches the decision model, which re-ranks and cuts it.
@@ -569,7 +611,12 @@ async def _run_reflect_agent_inner(
     answer_as_document: bool = False,
     tool_token_limits: ReflectToolTokenLimits | None = None,
     evidence_is_sufficient_fn: Callable[[str, str], Awaitable[bool]] | None = None,
-    prune_evidence_fn: Callable[[str, list[str]], Awaitable[list[bool]]] | None = None,
+    prune_evidence_fn: Callable[[str, list[str]], Awaitable[list[float]]] | None = None,
+    abstain: bool = False,
+    search_queries: list[str] | None = None,
+    pick_evidence_fn: Callable[[str, str | None, list[str]], Awaitable["EvidencePick"]] | None = None,
+    abstain_at: float | None = None,
+    settled_llm_config: "AnyLLMProvider | None" = None,
     *,
     reflect_id: str,
 ) -> ReflectAgentResult:
@@ -606,9 +653,22 @@ async def _run_reflect_agent_inner(
             decision-orchestrated: the retrieval layers run in parallel rounds with one
             query each, instead of one LLM turn per layer writing its own, and this check
             ends retrieval after a round. Without it, reflect runs agent turns.
-        prune_evidence_fn: (question, candidate texts) -> keep flag per candidate. In a
+        prune_evidence_fn: (question, candidate texts) -> rank score per candidate, 0.0 for
+            one the decision model cut. In a
             decision-orchestrated reflect each round's observations, facts and chunks are
             pruned with it before the model (or the sufficiency check) reads them.
+        abstain: an empty answer (``abstained``) is a valid outcome. When the decision model
+            judges the first round not enough, reflect returns at once instead of searching
+            on with LLM turns; and a ``done`` reporting nothing found, or carrying no answer,
+            returns empty instead of failing.
+        search_queries: what the first decision-orchestrated round searches, each query
+            through every layer, in place of the LLM rewriting the request into one query.
+        pick_evidence_fn: (question, context, candidate texts) -> which candidate the answer
+            depends on, or none. With ``abstain``, asked of the first round in place of its pruning and the
+            sufficiency check: a likely "none" answers nothing with no LLM call, and otherwise
+            the answer reads only the picked candidates.
+        settled_llm_config: writes the answer of a settled pick (only the answer, see
+            ``_answer_picked``) in place of ``llm_config``; unset, ``llm_config`` writes it.
 
     Returns:
         ReflectAgentResult with final answer and metadata
@@ -689,6 +749,8 @@ async def _run_reflect_agent_inner(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": build_agent_user_prompt(query, llm_output_language, bank_profile.get("mission"))},
     ]
+    if abstain:
+        messages[1]["content"] += _ABSTAIN_DIRECTIVE
     # What the model reads of each tool result, and the alias table that maps the
     # short ids it writes back to real ones — see presentation.py.
     presenter = ToolResultPresenter()
@@ -729,6 +791,7 @@ async def _run_reflect_agent_inner(
                 duration_ms=c["duration_ms"],
                 input_tokens=c.get("input_tokens", 0),
                 output_tokens=c.get("output_tokens", 0),
+                detail=c.get("detail"),
             )
             for c in llm_trace
         ]
@@ -784,18 +847,22 @@ async def _run_reflect_agent_inner(
         system_prompt: str,
         completion_cap: int | None,
         temperature: float | None = None,
-    ) -> str:
+        response_format: type[BaseModel] | None = None,
+        llm: "AnyLLMProvider | None" = None,
+    ) -> Any:
         """One tool-less LLM call with usage/trace accounting folded in.
 
         ``temperature`` defaults to the reflect temperature, which is tuned for
         writing an answer; callers that extract rather than write override it.
+        With ``response_format`` the provider's structured reply is returned as it came
+        (a model or its JSON); otherwise the stripped text.
         """
         nonlocal total_input_tokens, total_output_tokens, total_cached_tokens, total_thoughts_tokens
         llm_start = time.perf_counter()
         queue_wait = LLMQueueWait()
         queue_token = set_queue_wait_sink(queue_wait)
         try:
-            call_result = await llm_config.call(
+            call_result = await (llm or llm_config).call(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
@@ -803,6 +870,7 @@ async def _run_reflect_agent_inner(
                 scope="reflect",
                 temperature=get_config().llm_temperature_reflect if temperature is None else temperature,
                 max_completion_tokens=completion_cap,
+                response_format=response_format,
             )
         finally:
             reset_queue_wait_sink(queue_token)
@@ -822,7 +890,7 @@ async def _run_reflect_agent_inner(
                 "output_tokens": usage.output_tokens,
             }
         )
-        return response.strip()
+        return response if response_format is not None else response.strip()
 
     def _document_rejection_messages(
         done_call: "LLMToolCall", exc: DocumentSectionsInvalidError
@@ -926,6 +994,105 @@ async def _run_reflect_agent_inner(
         )
         return result
 
+    def _abstained(iterations_completed: int) -> ReflectAgentResult:
+        """The empty answer an ``abstain`` caller asked for, in place of searching on or failing."""
+        logger.info(f"[REFLECT {reflect_id}] Abstained: what was retrieved does not answer the request.")
+        return ReflectAgentResult(
+            text="",
+            abstained=True,
+            iterations=iterations_completed,
+            tools_called=total_tools_called,
+            tool_trace=tool_trace,
+            llm_trace=_get_llm_trace(),
+            usage=_get_usage(),
+            directives_applied=directives_applied,
+        )
+
+    async def _answer_picked(iterations_completed: int, picked: list[Any], *, settled: bool) -> ReflectAgentResult:
+        """An ``abstain`` reflect's answer, from only what the decision model picked: one short call,
+        not the agent's closing turn, whose prompt and tool schemas tripled the input (6k tokens)."""
+        memories: list[str] = []
+        used_observation_ids: list[str] = []
+        used_memory_ids: list[str] = []
+        for output in picked:
+            if not isinstance(output, tuple) or not isinstance(output[0], dict) or "error" in output[0]:
+                continue
+            data = output[0]
+            facts = data.get("source_facts") or {}
+            for item in data.get("observations") or []:
+                used_observation_ids.append(str(item["id"]))
+                memories.append(f"- {_evidence_line(item)}")
+                for fact_id in item.get("source_fact_ids") or []:
+                    if str(fact_id) in facts:
+                        memories.append(f"  - source: {_evidence_line(facts[str(fact_id)])}")
+            for item in data.get("memories") or []:
+                used_memory_ids.append(str(item["id"]))
+                memories.append(f"- {_evidence_line(item)}")
+            for chunk in (data.get("chunks") or {}).values():
+                memories.append(f"- {chunk.get('chunk_text', '') if isinstance(chunk, dict) else chunk}")
+        # The source text under what was picked. An observation is a summary, and source facts are
+        # off by default (and, when on, spent on the top-ranked observations, not the picked one):
+        # from the observation alone the answer missed an amended detail ("rounded up") and said
+        # NONE on 2 of 3 sde-bench overage-amended heads-ups. The client-side watcher's writer read
+        # the decision's source document, capped the same way.
+        fact_ids = [
+            str(fid)
+            for output in picked
+            if isinstance(output, tuple) and isinstance(output[0], dict)
+            for item in output[0].get("observations") or []
+            for fid in item.get("source_fact_ids") or []
+        ][:_ANSWER_SOURCE_FACTS]
+        if fact_ids and store_document_text:
+            expanded = await expand_fn(fact_ids, "chunk")
+            chunks: dict[str, str] = {}
+            for result in expanded.get("results") or []:
+                chunk = result.get("chunk") if isinstance(result, dict) else None
+                if isinstance(chunk, dict) and chunk.get("text"):
+                    chunks.setdefault(str(chunk.get("id")), str(chunk["text"]))
+            source = "\n\n".join(chunks.values())[:_ANSWER_SOURCE_CHARS]
+            if source:
+                # A settled pick only words the answer, and worded it from whichever came first: after
+                # the summaries it copied them and dropped a rule only the source said (sde-bench
+                # deploywave: "dependencies are assumed already live"). A pick still to be judged keeps
+                # the summaries first: judged against the source first, flash read a summary of what
+                # the code does (listmerge) as "no decision" and went silent where the watcher spoke.
+                if settled:
+                    memories = [f"## Source text of these memories\n{source}\n\n## Summaries of it", *memories]
+                else:
+                    memories.append(f"\n## Source text of these memories\n{source}")
+        # Structured, not a sentinel: asked to reply NONE when nothing applies, flash still wrote
+        # "Nothing conflicts." now and then, and the watcher delivered it as a note.
+        # A settled pick writes the answer alone: its check and verdict were never read, and writing
+        # them first (about a third of the output) delayed the heads-up the watcher is waiting on.
+        reply = _abstain_answer_from(
+            await _tracked_llm_call(
+                build_abstain_answer_prompt(query, context, memories, llm_output_language, settled=settled),
+                "abstain_answer",
+                build_abstain_answer_system_prompt(
+                    bank_profile.get("mission"), llm_output_language, directives, settled=settled
+                ),
+                synthesis_max_completion_tokens,
+                response_format=SettledAbstainAnswer if settled else AbstainAnswer,
+                llm=settled_llm_config if settled else None,
+            ),
+            settled=settled,
+        )
+        answer = reply.answer.strip()
+        if not reply.applies or answer.strip("\"'`.*").upper() in ("", _NOTHING_TO_SEARCH):
+            return _abstained(iterations_completed)
+        logger.info(f"[REFLECT {reflect_id}] Answered from {len(memories)} picked memory lines.")
+        return ReflectAgentResult(
+            text=presenter.resolve_text(answer),
+            iterations=iterations_completed,
+            tools_called=total_tools_called,
+            tool_trace=tool_trace,
+            llm_trace=_get_llm_trace(),
+            usage=_get_usage(),
+            used_memory_ids=used_memory_ids,
+            used_observation_ids=used_observation_ids,
+            directives_applied=directives_applied,
+        )
+
     async def _finish(iterations_completed: int) -> ReflectAgentResult:
         """Produce the answer for a loop that has stopped retrieving.
 
@@ -945,6 +1112,8 @@ async def _run_reflect_agent_inner(
                     # written by another prompt without the run saying so.
                     raise DocumentSectionsInvalidError(["(closing done): the model would not re-emit the document"])
                 return await _forced_final_synthesis(iterations_completed)
+            if abstain and _says_nothing(closing.arguments):
+                return _abstained(iterations_completed)
             try:
                 return await _process_done_tool(
                     closing.model_copy(
@@ -1041,6 +1210,8 @@ async def _run_reflect_agent_inner(
             )
             answer = await _tracked_llm_call(prompt, "final", final_system, synthesis_max_completion_tokens)
 
+        if not (answer or "").strip() and abstain:
+            return _abstained(iterations_completed)
         if not (answer or "").strip():
             # Tools were disabled for this call and the model still returned nothing.
             # There is no answer to hand back, so the run failed -- see #2959 for why
@@ -1144,20 +1315,22 @@ async def _run_reflect_agent_inner(
     pages_answered = False
     round_landed = False
     decision_model_failed = False
+    # An abstain reflect's first round, after the decision model picked from it (see _pick_round).
+    picked_round: _PickedRound | None = None
     # After the first "not enough" verdict the next turn must search (see the tool choice below);
     # set by the verdict, spent by that turn.
     searched_after_not_enough = False
     follow_up_required = False
 
-    def _parallel_round(search_query: str, id_prefix: str) -> LLMToolCallResult:
-        """A decision-orchestrated retrieval round: every forced layer at once, with one query.
+    def _parallel_round(search_queries: list[str], id_prefix: str) -> LLMToolCallResult:
+        """A decision-orchestrated retrieval round: every forced layer at once, with each query.
 
         Recall hands the decision model a wider slice than the default to cut down from: the
         fact that states a decision can rank low (63 of 95 for sde-bench csvquote-history's in
         fused order), and the model keeps what bears on the question.
         """
 
-        def _arguments(tool: str) -> dict[str, Any]:
+        def _arguments(tool: str, search_query: str) -> dict[str, Any]:
             arguments: dict[str, Any] = {"query": search_query, "reason": "parallel round"}
             # Raised only when the bank's own recall size is smaller: a size passed as an argument is
             # capped like one the model asked for, while the bank's default applies uncapped. Like any
@@ -1172,7 +1345,13 @@ async def _run_reflect_agent_inner(
 
         return LLMToolCallResult(
             tool_calls=[
-                LLMToolCall(id=f"{id_prefix}{tool}", name=tool, arguments=_arguments(tool)) for tool in forced_sequence
+                LLMToolCall(
+                    id=f"{id_prefix}{tool}" + (f"_{n}" if n else ""),
+                    name=tool,
+                    arguments=_arguments(tool, search_query),
+                )
+                for n, search_query in enumerate(search_queries)
+                for tool in forced_sequence
             ],
             finish_reason="tool_calls",
         )
@@ -1225,12 +1404,21 @@ async def _run_reflect_agent_inner(
         # turns, where the LLM writes follow-up queries from what it has read.
         if decision_orchestrated and iteration == 1 and pages_answered:
             return await _finish(iteration)
+        if round_landed and picked_round is not None:
+            # An abstain round the decision model already judged: nothing states the answer, or
+            # the answer is written from what it picked. No sufficiency check, no follow-up search.
+            round_landed = False
+            if picked_round.nothing_answers:
+                return _abstained(iteration)
+            return await _answer_picked(iteration, picked_round.tool_results, settled=picked_round.none < _ANSWER_AT)
         if round_landed and evidence_is_sufficient_fn is not None and not decision_model_failed:
             round_landed = False
             evidence = "\n\n".join(m["content"] for m in messages if m.get("role") == "tool")
             if await _decision_says_sufficient(evidence, "decision_sufficiency"):
                 logger.info(f"[REFLECT {reflect_id}] Decision-orchestrated: the first retrieval answers the question.")
                 return await _finish(iteration)
+            if abstain and not decision_model_failed:
+                return _abstained(iteration)
             follow_up_required = not searched_after_not_enough and not decision_model_failed
 
         # Determine tool_choice for this iteration.
@@ -1323,29 +1511,34 @@ async def _run_reflect_agent_inner(
             # unset for reasoning models that refuse any. If the call fails, the request is searched
             # as written: losing the rewrite costs recall quality, failing would cost the answer.
             request = f"{query}\n\n## Context\n{context}" if context and context.strip() else query
-            try:
-                distilled = (
-                    (
-                        await _tracked_llm_call(
-                            request,
-                            "round_query",
-                            ROUND_SEARCH_QUERY_SYSTEM_PROMPT,
-                            None,
-                            temperature=_deterministic_temperature(),
+            if search_queries:
+                # The caller already knows what to look up: no LLM call before the search.
+                round_queries = search_queries
+            else:
+                try:
+                    distilled = (
+                        (
+                            await _tracked_llm_call(
+                                request,
+                                "round_query",
+                                ROUND_SEARCH_QUERY_SYSTEM_PROMPT,
+                                None,
+                                temperature=_deterministic_temperature(),
+                            )
                         )
+                        .strip()
+                        .strip('"')
                     )
-                    .strip()
-                    .strip('"')
-                )
-            except OperationCancelledError:
-                raise
-            except Exception as exc:
-                logger.warning(
-                    f"[REFLECT {reflect_id}] search-query rewrite failed, searching the request as written: "
-                    f"{describe_llm_error(exc)}"
-                )
-                distilled = ""
-            result = _parallel_round(distilled or query, "round_")
+                except OperationCancelledError:
+                    raise
+                except Exception as exc:
+                    logger.warning(
+                        f"[REFLECT {reflect_id}] search-query rewrite failed, searching the request as written: "
+                        f"{describe_llm_error(exc)}"
+                    )
+                    distilled = ""
+                round_queries = [distilled or query]
+            result = _parallel_round(round_queries, "round_")
             parallel_round = True
             forced_steps_done = len(forced_sequence) - 1  # the increment below completes the sequence
         else:
@@ -1519,6 +1712,8 @@ async def _run_reflect_agent_inner(
             # A document (a page refresh) still goes through the closing step: the page update
             # merges only the facts the answer cites, and the free turn's done cited fewer of them
             # (a Q2 count lost two of four new customers on the refresh-pages eval, hq-count-billing).
+            if abstain and _says_nothing(done_call.arguments):
+                return _abstained(iteration + 1)
             if not decision_orchestrated or decision_model_failed or answer_as_document:
                 return await (_forced_final_synthesis if compacted else _finish)(iteration + 1)
 
@@ -1584,7 +1779,7 @@ async def _run_reflect_agent_inner(
             if follow_up is not None:
                 # The turn's other calls (expand, read_mental_models) run with the
                 # round: replacing the turn with the round alone dropped them.
-                round_result = _parallel_round(str(follow_up.arguments["query"]), f"round{iteration + 1}_")
+                round_result = _parallel_round([str(follow_up.arguments["query"])], f"round{iteration + 1}_")
                 extra_calls = [
                     tc
                     for tc in result.tool_calls
@@ -1712,7 +1907,19 @@ async def _run_reflect_agent_inner(
                 else:
                     tool_results = pruned
             elif parallel_round:
-                tool_results = await _timed_prune(tool_results)
+                if abstain and pick_evidence_fn is not None and iteration == 0:
+                    pick_start = time.perf_counter()
+                    picked_round = await _pick_round(
+                        query, context, tool_results, pick_evidence_fn, reflect_id, abstain_at or _ABSTAIN_AT
+                    )
+                    llm_trace.append(
+                        {
+                            "scope": "decision_pick",
+                            "duration_ms": int((time.perf_counter() - pick_start) * 1000),
+                            "detail": picked_round.detail if picked_round else "failed: the round is pruned instead",
+                        }
+                    )
+                tool_results = picked_round.tool_results if picked_round else await _timed_prune(tool_results)
             round_landed = parallel_round
 
             # Process results and add to messages
@@ -1905,48 +2112,44 @@ def _evidence_line(item: dict[str, Any]) -> str:
     return f"[{when}] {item.get('text', '')}" if when else str(item.get("text", ""))
 
 
-async def _prune_round(
-    query: str,
-    tool_results: list[Any],
-    prune_evidence_fn: Callable[[str, list[str]], Awaitable[list[bool]]],
-    reflect_id: str,
-) -> list[Any]:
-    """Drop the observations, facts and chunks the decision model judges irrelevant.
+@dataclass
+class _EvidencePool:
+    """Every candidate of a round, in retrieval order: where it sits, and its text for the decision model."""
 
-    One pool across the whole first retrieval, so the model weighs a fact against an
-    observation saying the same thing. Mental-model pages are left whole: they are
-    few, curated, and already the first thing the answer should read. Source facts
-    survive only under an observation that survived. Results the model did not
-    produce (errors, exceptions) pass through untouched, and so does everything when
-    the decision model fails: pruning only ever saves tokens.
-    """
-    # (result index, list key, item key) for every candidate, in retrieval order.
-    slots: list[tuple[int, str, str]] = []
-    texts: list[str] = []
+    #: (result index, list key, item key). An item two queries both returned is listed once, at its first.
+    slots: list[tuple[int, str, str]] = field(default_factory=list)
+    texts: list[str] = field(default_factory=list)
+    #: Per search result, the positions in ``slots`` of what it returned, in its own order (repeats included).
+    by_result: list[list[int]] = field(default_factory=list)
+
+
+def _evidence_pool(tool_results: list[Any]) -> _EvidencePool:
+    pool = _EvidencePool()
+    seen: dict[tuple[str, str], int] = {}
+
+    def add(i: int, key: str, item_id: str, text: str) -> None:
+        if (key, item_id) not in seen:
+            seen[(key, item_id)] = len(pool.slots)
+            pool.slots.append((i, key, item_id))
+            pool.texts.append(text)
+        pool.by_result[-1].append(seen[(key, item_id)])
+
     for i, output in enumerate(tool_results):
         if not isinstance(output, tuple) or not isinstance(output[0], dict) or "error" in output[0]:
             continue
         data = output[0]
+        pool.by_result.append([])
         for key in ("observations", "memories"):
             for item in data.get(key) or []:
                 if isinstance(item, dict) and "id" in item:
-                    slots.append((i, key, str(item["id"])))
-                    texts.append(_evidence_line(item))
+                    add(i, key, str(item["id"]), _evidence_line(item))
         for chunk_id, chunk in (data.get("chunks") or {}).items():
-            slots.append((i, "chunks", str(chunk_id)))
-            texts.append(str(chunk.get("chunk_text", "")) if isinstance(chunk, dict) else str(chunk))
-    if len(texts) < 2:
-        return tool_results
-    try:
-        keep_flags = await prune_evidence_fn(query, texts)
-    except OperationCancelledError:
-        raise
-    except Exception as e:
-        logger.warning(f"[REFLECT {reflect_id}] Decision-orchestrated: pruning failed, keeping all evidence: {e}")
-        return tool_results
+            add(i, "chunks", str(chunk_id), str(chunk.get("chunk_text", "")) if isinstance(chunk, dict) else str(chunk))
+    return pool
 
-    kept = {slot for slot, keep in zip(slots, keep_flags) if keep}
-    logger.info(f"[REFLECT {reflect_id}] Decision-orchestrated: kept {len(kept)}/{len(slots)} evidence items.")
+
+def _keep_slots(tool_results: list[Any], kept: set[tuple[int, str, str]]) -> list[Any]:
+    """``tool_results`` with only the ``kept`` candidates, and the source facts those cite."""
     pruned: list[Any] = []
     for i, output in enumerate(tool_results):
         if not isinstance(output, tuple) or not isinstance(output[0], dict) or "error" in output[0]:
@@ -1963,6 +2166,114 @@ async def _prune_round(
             data["source_facts"] = {fid: f for fid, f in data["source_facts"].items() if str(fid) in cited}
         pruned.append((data, output[1]))
     return pruned
+
+
+async def _prune_round(
+    query: str,
+    tool_results: list[Any],
+    prune_evidence_fn: Callable[[str, list[str]], Awaitable[list[float]]],
+    reflect_id: str,
+) -> list[Any]:
+    """Drop the observations, facts and chunks the decision model judges irrelevant.
+
+    One pool across the whole first retrieval, so the model weighs a fact against an
+    observation saying the same thing. Mental-model pages are left whole: they are
+    few, curated, and already the first thing the answer should read. Source facts
+    survive only under an observation that survived. Results the model did not
+    produce (errors, exceptions) pass through untouched, and so does everything when
+    the decision model fails: pruning only ever saves tokens.
+    """
+    pool = _evidence_pool(tool_results)
+    if len(pool.texts) < 2:
+        return tool_results
+    try:
+        scores = await prune_evidence_fn(query, pool.texts)
+    except OperationCancelledError:
+        raise
+    except Exception as e:
+        logger.warning(f"[REFLECT {reflect_id}] Decision-orchestrated: pruning failed, keeping all evidence: {e}")
+        return tool_results
+
+    kept = {slot for slot, score in zip(pool.slots, scores) if score > 0}
+    logger.info(f"[REFLECT {reflect_id}] Decision-orchestrated: kept {len(kept)}/{len(pool.slots)} evidence items.")
+    return _keep_slots(tool_results, kept)
+
+
+@dataclass
+class _PickedRound:
+    """An ``abstain`` round after the decision model picked what states the answer."""
+
+    #: The round with only the picked candidates; nothing when the decision model picked none.
+    tool_results: list[Any]
+    nothing_answers: bool
+    #: How likely the decision model found it that none of the candidates answers.
+    none: float = 1.0
+    #: The pick in words, for the trace: the score, what was kept and the path that follows.
+    detail: str = ""
+
+
+def _round_robin(pool: _EvidencePool) -> list[int]:
+    """The pool's candidates in turn across its searches: each search's best, then each one's second.
+
+    Every search returns its results best first, so the head of this order holds the best of each
+    query, as a caller searching by several queries wants, with no ranking call of its own. A memory
+    two searches returned counts once, where it comes first.
+    """
+    order: list[int] = []
+    for row in range(max(map(len, pool.by_result), default=0)):
+        for column in pool.by_result:
+            if row < len(column) and column[row] not in order:
+                order.append(column[row])
+    return order
+
+
+async def _pick_round(
+    query: str,
+    context: str | None,
+    tool_results: list[Any],
+    pick_evidence_fn: Callable[[str, str | None, list[str]], Awaitable["EvidencePick"]],
+    reflect_id: str,
+    abstain_at: float = _ABSTAIN_AT,
+) -> _PickedRound | None:
+    """Keep only the candidates the decision model says the answer depends on, or report that none does.
+
+    The decision model chooses among the head of the round (see :func:`_round_robin`): offered a
+    whole round, "none" lost its weight to the many candidates sharing the question's topic. None
+    when the decision model fails: the round then goes on as if no pick was asked.
+    """
+    pool = _evidence_pool(tool_results)
+    head = _round_robin(pool)[:_PICK_FROM]
+    if not head:
+        return _PickedRound(tool_results=tool_results, nothing_answers=True, detail="nothing found: silent, no LLM")
+    try:
+        pick = await pick_evidence_fn(query, context, [pool.texts[i] for i in head])
+    except OperationCancelledError:
+        raise
+    except Exception as e:
+        logger.warning(f"[REFLECT {reflect_id}] Decision-orchestrated: the evidence pick failed: {e}")
+        return None
+    if pick.none >= abstain_at:
+        logger.info(
+            f"[REFLECT {reflect_id}] Decision-orchestrated: no evidence states the answer (none={pick.none:.2f})."
+        )
+        return _PickedRound(
+            tool_results=tool_results,
+            nothing_answers=True,
+            detail=f"none={pick.none:.2f} of {len(head)} offered: silent, no LLM",
+        )
+    best = max(pick.candidates, default=0.0)
+    kept = {pool.slots[i] for i, p in zip(head, pick.candidates) if p >= _PICK_FLOOR or (p == best and p > 0)}
+    logger.info(
+        f"[REFLECT {reflect_id}] Decision-orchestrated: picked {len(kept)}/{len(pool.slots)} evidence items "
+        f"(none={pick.none:.2f})."
+    )
+    path = "settled: the writer words the answer" if pick.none < _ANSWER_AT else "unsure: the reflect LLM judges"
+    return _PickedRound(
+        tool_results=_keep_slots(tool_results, kept),
+        nothing_answers=False,
+        none=pick.none,
+        detail=f"none={pick.none:.2f}, kept {len(kept)} of {len(head)} offered: {path}",
+    )
 
 
 def _unique_tool_call_ids(tool_calls: list["LLMToolCall"], already_emitted: set[str]) -> list[str]:
@@ -2234,6 +2545,34 @@ _SEARCH_FIRST_ERROR = (
 )
 
 
+def _abstain_answer_from(raw: Any, *, settled: bool = False) -> AbstainAnswer:
+    """The structured abstain answer; an unreadable reply is silence, never a guessed note.
+
+    ``settled``: the reply is a ``SettledAbstainAnswer`` (the answer, then whether it applies).
+    """
+    model: type[BaseModel] = SettledAbstainAnswer if settled else AbstainAnswer
+    try:
+        if isinstance(raw, str):
+            parsed = model.model_validate_json(raw)
+        elif isinstance(raw, BaseModel):
+            parsed = model.model_validate(raw.model_dump())
+        else:
+            parsed = model.model_validate(raw)
+    except ValueError:
+        logger.warning(f"Abstain answer did not parse, treating it as nothing to say: {str(raw)[:200]!r}")
+        return AbstainAnswer(applies=False)
+    if isinstance(parsed, SettledAbstainAnswer):
+        return AbstainAnswer(applies=parsed.applies, answer=parsed.answer)
+    assert isinstance(parsed, AbstainAnswer)
+    return parsed
+
+
+def _says_nothing(args: dict[str, Any]) -> bool:
+    """A ``done`` that reports nothing found, or carries neither an answer nor a document."""
+    answer = args.get("answer")
+    return not _answer_found(args) or (not (isinstance(answer, str) and answer.strip()) and not args.get("document"))
+
+
 def _answer_found(args: dict[str, Any]) -> bool:
     """``done``'s ``answer_found``, read leniently: only an explicit false counts as not found.
 
@@ -2289,19 +2628,19 @@ def _with_cited_handles(tools: list[dict[str, Any]], presenter: ToolResultPresen
         parameters = tool["function"]["parameters"]
         properties = parameters["properties"]
         required = parameters.setdefault("required", [])
-        for field, prefix in _CITED_ID_PREFIXES.items():
-            if field in properties:
+        for id_field, prefix in _CITED_ID_PREFIXES.items():
+            if id_field in properties:
                 handles = presenter.aliases(prefix)
-                properties[field] = {
-                    **properties[field],
+                properties[id_field] = {
+                    **properties[id_field],
                     "items": {"type": "string", **({"enum": handles} if handles else {})},
                     # Emitted like every other maxItems: providers that reject the keyword
                     # (Anthropic) strip it themselves. It used to be gated on
                     # llm_supports_max_items, which #6164 removed.
                     "maxItems": len(handles),
                 }
-                if field not in required:
-                    required.append(field)
+                if id_field not in required:
+                    required.append(id_field)
         limited.append(tool)
     return limited
 

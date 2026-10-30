@@ -232,6 +232,13 @@ def merge_json_array_parts(texts: list[str]) -> str | None:
     return json.dumps(merged, ensure_ascii=False)
 
 
+def _same_fields_but_content(items: list) -> bool:
+    """Whether the items differ only in their content: one caller item and copies of it (the
+    prepended stored body, a split append's slices)."""
+    rest = [{k: v for k, v in item.items() if k not in ("content", "attachment_filenames")} for item in items]
+    return all(r == rest[0] for r in rest[1:])
+
+
 def join_document_parts(texts: list[str]) -> str:
     """The single definition of how a document's content parts become its stored body."""
     merged = merge_json_array_parts(texts)
@@ -1905,6 +1912,17 @@ async def retain_batch(
             # are folded into this one call (`engine/retain/fold.py`); without merging here
             # their parts were newline-joined into `[...]\n[...]`.
             _merged_text = merge_json_array_parts([_item.get("content", "") for _item in contents_dicts])
+            if _merged_text is None and existing_text and _same_fields_but_content(contents_dicts):
+                # One new item onto a stored body (a conversation turn, a live session's save): ONE
+                # item with the very body join_document_parts stores, so this append is chunked the
+                # way the next append re-chunks the stored body. As two items each was chunked on
+                # its own — the old tail chunk stayed short, the new text began a fresh chunk — and
+                # the next append, chunking the whole body at once, shifted every boundary after the
+                # old tail and re-extracted the chunks this append wrote (beta: 678 such chunks
+                # against 253 new ones over 314 saves). Only when every item has the same fields but its
+                # content (the existing item copies the new one's; a split append's slices are
+                # copies too), so nothing is lost; items that differ keep their own fields.
+                _merged_text = join_document_parts([_item.get("content", "") for _item in contents_dicts])
             if _merged_text is not None:
                 merged_item = cast(RetainContentDict, {**first, "content": _merged_text})
                 merged_filenames: dict[str, str] = {}

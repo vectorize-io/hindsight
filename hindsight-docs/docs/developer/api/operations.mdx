@@ -95,6 +95,16 @@ Each run works in committed batches under a wall-clock budget. A backlog too lar
 
 **Triggers:** any delete that removes memory_units — `DELETE /documents/{id}`, `DELETE /memories/{id}`, and re-retaining an existing `document_id` (the upsert path). A full bank wipe (`delete_bank`) is a no-op: there's nothing left in the bank to maintain.
 
+### `session_check`, `session_save` and `session_idle`
+
+A [live session](./sessions) queues these. `session_check` runs Hindsight's check for the
+session's latest moment: it goes back in the queue until the session has settled (a deferral, not
+a failure), runs one reflect, and writes what it found into the session's log. `session_save`
+appends the conversation's new turns to the session's document through retain. `session_idle` is
+a timer: it waits in the queue until the session has been quiet for `HINDSIGHT_API_SESSION_IDLE_MS`,
+then queues a `session_save` for the turns not saved yet. Each runs one at a time per session, and
+at most one waits per session.
+
 ### `webhook_delivery`
 
 After certain operations complete (e.g., consolidation finishing on a bank with a registered webhook), Hindsight enqueues a `webhook_delivery` task. The handler POSTs the payload to the configured URL and retries on transient failures.
@@ -114,7 +124,7 @@ Query parameters:
 | Param | Description |
 |-------|-------------|
 | `status` | Filter by `pending`, `processing`, `completed`, `failed`, `cancelled`. |
-| `type` | Filter by `retain`, `file_convert_retain`, `consolidation`, `refresh_mental_model`, `graph_maintenance`, `webhook_delivery`. |
+| `type` | Filter by `retain`, `file_convert_retain`, `consolidation`, `refresh_mental_model`, `graph_maintenance`, `webhook_delivery`, `session_check`, `session_save`, `session_idle`. |
 | `limit` | 1–100, default 20. |
 | `offset` | Pagination offset. |
 | `exclude_parents` | Exclude parent batch operations from results (large `retain_batch` calls create one parent + N children). |

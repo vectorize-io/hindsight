@@ -6,6 +6,7 @@
  */
 import { runHook, type HookSpec } from "../core/hook";
 import { runRetainHook, type RetainHookSpec } from "../core/retain-hook";
+import { SESSION_HARNESSES } from "../core/session-events";
 import { runSessionStartHook, type SessionStartHookSpec } from "../core/session-start";
 import { ensureTraecodeWorkspaceMcp } from "../core/traecode-mcp";
 import { readCodexTranscript } from "../core/transcript-codex";
@@ -292,12 +293,21 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
       prompt: { event: "UserPromptSubmit", entry: "claude-hook.js", timeout: 30 },
       stop: { event: "Stop", entry: "claude-stop-hook.js", timeout: 60 },
     },
+    // The live session (autoInject: "live"; exits at once otherwise). Every tool, not only edits:
+    // a heads-up must reach the agent on its first read, before it has changed anything. The hook
+    // returns in milliseconds; the sync runs detached (see core/live-entry.ts).
+    additionalHooks: [
+      { event: "PostToolUse", entry: SESSION_HARNESSES["claude-code"].entry, timeout: 10 },
+    ],
     sessionStart: { ...standardSessionStart("claude-code"), accept: notGrokHosted },
     prompt: { ...claudePrompt, accept: notGrokHosted },
     retain: {
       hostTimeoutSec: 60,
       harness: "claude-code",
       accept: notGrokHosted,
+      // A late live-session note is shown to the user at once (`systemMessage`), and reaches the agent
+      // with the next prompt. Not `decision: "block"`: Claude Code labels that "Stop hook error".
+      stopShowsNotes: true,
       parse: (ev) => ({
         sessionId: ev.session_id as string | undefined,
         transcriptPath: ev.transcript_path as string | undefined,
@@ -305,6 +315,8 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
         // The transcript may not hold the final reply yet when Stop fires after a tool call (#5790).
         lastAssistantMessage: ev.last_assistant_message as string | undefined,
       }),
+      // Prose passes through; a content-block list becomes its text.
+      readLastMessage: dcodeAssistantText,
     },
   },
   codex: {
@@ -314,16 +326,21 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
       prompt: { event: "UserPromptSubmit", entry: "codex-hook.js", timeout: 30 },
       stop: { event: "Stop", entry: "codex-stop-hook.js", timeout: 60 },
     },
+    // The live session, as on Claude Code: Codex's PostToolUse hook speaks Claude's protocol.
+    additionalHooks: [{ event: "PostToolUse", entry: SESSION_HARNESSES.codex.entry, timeout: 10 }],
     sessionStart: standardSessionStart("codex"),
     prompt: codexPrompt,
     retain: {
       hostTimeoutSec: 60,
       harness: "codex",
+      // Codex's Stop hook shows no message: a late note just waits for the next prompt.
       parse: (ev) => ({
         sessionId: ev.session_id as string | undefined,
         transcriptPath: ev.transcript_path as string | undefined,
         cwd: ev.cwd as string | undefined,
+        lastAssistantMessage: ev.last_assistant_message as string | undefined,
       }),
+      readLastMessage: dcodeAssistantText,
       readTranscript: readCodexTranscript,
     },
   },

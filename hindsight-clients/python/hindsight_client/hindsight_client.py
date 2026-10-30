@@ -60,6 +60,7 @@ from hindsight_client_api.api import (
     mental_models_api,
     monitoring_api,
     operations_api,
+    sessions_api,
     webhooks_api,
 )
 from hindsight_client_api.models import (
@@ -257,6 +258,7 @@ class Hindsight:
         - ``client.mental_models``: Mental model management (MentalModelsApi)
         - ``client.directives``: Directive management (DirectivesApi)
         - ``client.operations``: Async operation tracking (OperationsApi)
+        - ``client.sessions``: Live sessions and the memory watcher's notes (SessionsApi)
         - ``client.webhooks``: Webhook management (WebhooksApi)
         - ``client.files``: File upload (FilesApi)
         - ``client.monitoring``: Health/version checks (MonitoringApi)
@@ -313,6 +315,7 @@ class Hindsight:
         self._documents_api = documents_api.DocumentsApi(self._api_client)
         self._entities_api = entities_api.EntitiesApi(self._api_client)
         self._operations_api = operations_api.OperationsApi(self._api_client)
+        self._sessions_api = sessions_api.SessionsApi(self._api_client)
         self._webhooks_api = webhooks_api.WebhooksApi(self._api_client)
         self._monitoring_api = monitoring_api.MonitoringApi(self._api_client)
         self._audit_api = audit_api.AuditApi(self._api_client)
@@ -397,6 +400,11 @@ class Hindsight:
     def operations(self) -> operations_api.OperationsApi:
         """Low-level Operations API — get status, list, cancel, retry async operations."""
         return self._operations_api
+
+    @property
+    def sessions(self) -> sessions_api.SessionsApi:
+        """Low-level Sessions API — stream a live conversation in, get the memory watcher's notes back."""
+        return self._sessions_api
 
     @property
     def webhooks(self) -> webhooks_api.WebhooksApi:
@@ -753,6 +761,8 @@ class Hindsight:
         exclude_mental_model_ids: list[str] | None = None,
         reflect_search_observations_max_tokens: int | None = None,
         reflect_search_observations_include_entities: bool | None = None,
+        abstain: bool = False,
+        search_queries: list[str] | None = None,
         reflect_search_mental_models_max_tokens: int | None = None,
     ) -> ReflectResponse:
         """
@@ -791,6 +801,12 @@ class Hindsight:
             reflect_search_observations_include_entities: Whether search_observations attaches
                 resolved entity names, which can be over half the tool payload. None uses the
                 bank default (enabled).
+            abstain: Allow an empty answer: when memory holds nothing that answers the query, the
+                response has empty ``text`` and ``abstained=True`` instead of reflect searching on or
+                failing (default: False).
+            search_queries: What the first retrieval round searches, each query through every layer,
+                instead of an LLM rewriting the query into one search. Applies on a server with a
+                decision model.
             reflect_search_mental_models_max_tokens: Token budget for the mental models the
                 agent's search_mental_models calls return in full. The best-ranked one is always in
                 full; the rest that do not fit come back as a snippet. None uses the bank's
@@ -821,6 +837,8 @@ class Hindsight:
                 exclude_mental_model_ids=exclude_mental_model_ids,
                 reflect_search_observations_max_tokens=reflect_search_observations_max_tokens,
                 reflect_search_observations_include_entities=reflect_search_observations_include_entities,
+                abstain=abstain,
+                search_queries=search_queries,
                 reflect_search_mental_models_max_tokens=reflect_search_mental_models_max_tokens,
             )
         )
@@ -1506,6 +1524,8 @@ class Hindsight:
         exclude_mental_model_ids: list[str] | None = None,
         reflect_search_observations_max_tokens: int | None = None,
         reflect_search_observations_include_entities: bool | None = None,
+        abstain: bool = False,
+        search_queries: list[str] | None = None,
         reflect_search_mental_models_max_tokens: int | None = None,
     ) -> ReflectResponse:
         """
@@ -1544,6 +1564,12 @@ class Hindsight:
             reflect_search_observations_include_entities: Whether search_observations attaches
                 resolved entity names, which can be over half the tool payload. None uses the
                 bank default (enabled).
+            abstain: Allow an empty answer: when memory holds nothing that answers the query, the
+                response has empty ``text`` and ``abstained=True`` instead of reflect searching on or
+                failing (default: False).
+            search_queries: What the first retrieval round searches, each query through every layer,
+                instead of an LLM rewriting the query into one search. Applies on a server with a
+                decision model.
             reflect_search_mental_models_max_tokens: Token budget for the mental models the
                 agent's search_mental_models calls return in full. The best-ranked one is always in
                 full; the rest that do not fit come back as a snippet. None uses the bank's
@@ -1588,6 +1614,8 @@ class Hindsight:
             exclude_mental_model_ids=exclude_mental_model_ids,
             reflect_search_observations_max_tokens=reflect_search_observations_max_tokens,
             reflect_search_observations_include_entities=reflect_search_observations_include_entities,
+            abstain=abstain or None,
+            search_queries=search_queries,
             reflect_search_mental_models_max_tokens=reflect_search_mental_models_max_tokens,
         )
 

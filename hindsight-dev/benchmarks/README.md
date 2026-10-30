@@ -92,6 +92,17 @@ uv run python -m benchmarks.multimodal_retain report benchmarks/results/multimod
 - `--out PATH` - Where to write the artifact
 - `--keep-banks` - Leave the benchmark banks behind for inspection
 
+### Reflect Abstain (decision model)
+
+Whether the decision model routes a memory watcher's moments right: silent, a note, or the LLM
+check. 118 labeled sde-bench moments, a `tuned` split to train on and a `heldout` one to evaluate.
+See [reflect_abstain/README.md](reflect_abstain/README.md).
+
+```bash
+cd hindsight-dev
+uv run python -m benchmarks.reflect_abstain.reflect_abstain_benchmark --mode pick
+```
+
 ### Token Counting (micro)
 
 Measures the token counting recall does per candidate fact, chunk and

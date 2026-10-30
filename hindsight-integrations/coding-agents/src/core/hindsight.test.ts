@@ -613,8 +613,13 @@ describe("every client-building entrypoint forwards observationScopes", () => {
     });
   }
 
+  /** Clients that never retain: the session client only appends, and the session's own scopes
+   *  ride in its options (sessionOptions in core/session-sync.ts). */
+  const NO_RETAIN = ["core/live-entry.ts"];
+
   it("has no module that builds a client without passing cfg.observationScopes", () => {
     const dropped = sourceFiles(SRC).filter((rel) => {
+      if (NO_RETAIN.includes(rel)) return false;
       const src = readFileSync(join(SRC, rel), "utf8");
       // `makeClient({` is the hook/session-start seam: the ClientOpts are built there even though
       // the constructor call itself is the injected default further up the file.

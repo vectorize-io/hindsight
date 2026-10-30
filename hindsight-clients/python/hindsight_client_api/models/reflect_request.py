@@ -46,7 +46,9 @@ class ReflectRequest(BaseModel):
     fact_types: Optional[List[StrictStr]] = None
     exclude_mental_models: Optional[StrictBool] = Field(default=False, description="If true, exclude all mental models from the reflect loop (skip search_mental_models tool).")
     exclude_mental_model_ids: Optional[List[StrictStr]] = None
-    __properties: ClassVar[List[str]] = ["reflect_search_observations_max_tokens", "reflect_search_observations_include_entities", "reflect_search_mental_models_max_tokens", "query", "budget", "context", "max_tokens", "include", "response_schema", "tags", "tags_match", "tag_groups", "apply_all_directives", "fact_types", "exclude_mental_models", "exclude_mental_model_ids"]
+    abstain: Optional[StrictBool] = Field(default=False, description="Allow an empty answer. When memory holds nothing that answers the query, the response has an empty `text` and `abstained: true`, instead of reflect searching on or failing. With a decision model, it is asked the query itself about the `context` and the best memories found: when it sees nothing the answer depends on, reflect returns with no LLM call; otherwise the answer reads only the memories it picked. Word the query as the question to decide (\"does my change go against a recorded decision?\"); `context` is what it is about. For callers that act on any text they get back, such as a live session that should speak only when memory has something to say.")
+    search_queries: Optional[Annotated[List[StrictStr], Field(max_length=8)]] = None
+    __properties: ClassVar[List[str]] = ["reflect_search_observations_max_tokens", "reflect_search_observations_include_entities", "reflect_search_mental_models_max_tokens", "query", "budget", "context", "max_tokens", "include", "response_schema", "tags", "tags_match", "tag_groups", "apply_all_directives", "fact_types", "exclude_mental_models", "exclude_mental_model_ids", "abstain", "search_queries"]
 
     @field_validator('tags_match')
     def tags_match_validate_enum(cls, value):
@@ -163,6 +165,11 @@ class ReflectRequest(BaseModel):
         if self.exclude_mental_model_ids is None and "exclude_mental_model_ids" in self.model_fields_set:
             _dict['exclude_mental_model_ids'] = None
 
+        # set to None if search_queries (nullable) is None
+        # and model_fields_set contains the field
+        if self.search_queries is None and "search_queries" in self.model_fields_set:
+            _dict['search_queries'] = None
+
         return _dict
 
     @classmethod
@@ -190,7 +197,9 @@ class ReflectRequest(BaseModel):
             "apply_all_directives": obj.get("apply_all_directives") if obj.get("apply_all_directives") is not None else False,
             "fact_types": obj.get("fact_types"),
             "exclude_mental_models": obj.get("exclude_mental_models") if obj.get("exclude_mental_models") is not None else False,
-            "exclude_mental_model_ids": obj.get("exclude_mental_model_ids")
+            "exclude_mental_model_ids": obj.get("exclude_mental_model_ids"),
+            "abstain": obj.get("abstain") if obj.get("abstain") is not None else False,
+            "search_queries": obj.get("search_queries")
         })
         return _obj
 

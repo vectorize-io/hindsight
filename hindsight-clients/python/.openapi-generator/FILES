@@ -16,6 +16,7 @@ hindsight_client_api/api/memory_api.py
 hindsight_client_api/api/mental_models_api.py
 hindsight_client_api/api/monitoring_api.py
 hindsight_client_api/api/operations_api.py
+hindsight_client_api/api/sessions_api.py
 hindsight_client_api/api/webhooks_api.py
 hindsight_client_api/api_client.py
 hindsight_client_api/api_response.py
@@ -23,6 +24,7 @@ hindsight_client_api/configuration.py
 hindsight_client_api/exceptions.py
 hindsight_client_api/models/__init__.py
 hindsight_client_api/models/add_background_request.py
+hindsight_client_api/models/arguments.py
 hindsight_client_api/models/async_operation_submit_response.py
 hindsight_client_api/models/audit_log_entry.py
 hindsight_client_api/models/audit_log_list_response.py
@@ -61,7 +63,9 @@ hindsight_client_api/models/consolidation_strategies_preview.py
 hindsight_client_api/models/consolidation_strategies_preview_request.py
 hindsight_client_api/models/consolidation_strategy_spec.py
 hindsight_client_api/models/content.py
+hindsight_client_api/models/content1.py
 hindsight_client_api/models/content_any_of_inner.py
+hindsight_client_api/models/content_part.py
 hindsight_client_api/models/create_bank_alias_request.py
 hindsight_client_api/models/create_bank_request.py
 hindsight_client_api/models/create_directive_request.py
@@ -164,6 +168,7 @@ hindsight_client_api/models/not1.py
 hindsight_client_api/models/observation_id_sample.py
 hindsight_client_api/models/observation_scope.py
 hindsight_client_api/models/observation_scopes.py
+hindsight_client_api/models/observation_scopes1.py
 hindsight_client_api/models/observation_scopes_response.py
 hindsight_client_api/models/operation_progress.py
 hindsight_client_api/models/operation_response.py
@@ -196,6 +201,17 @@ hindsight_client_api/models/retain_request.py
 hindsight_client_api/models/retain_response.py
 hindsight_client_api/models/retry_operation_response.py
 hindsight_client_api/models/run_setting_model.py
+hindsight_client_api/models/session_append_request.py
+hindsight_client_api/models/session_append_response.py
+hindsight_client_api/models/session_event.py
+hindsight_client_api/models/session_events_response.py
+hindsight_client_api/models/session_list_response.py
+hindsight_client_api/models/session_message.py
+hindsight_client_api/models/session_note.py
+hindsight_client_api/models/session_note_source.py
+hindsight_client_api/models/session_options.py
+hindsight_client_api/models/session_state.py
+hindsight_client_api/models/session_summary.py
 hindsight_client_api/models/set_bank_alias_primary_request.py
 hindsight_client_api/models/source_facts_include_options.py
 hindsight_client_api/models/strategy_preview.py
@@ -213,6 +229,8 @@ hindsight_client_api/models/temporal_window.py
 hindsight_client_api/models/text_content_block.py
 hindsight_client_api/models/timestamp.py
 hindsight_client_api/models/token_usage.py
+hindsight_client_api/models/tool_call.py
+hindsight_client_api/models/tool_call_function.py
 hindsight_client_api/models/tool_calls_include_options.py
 hindsight_client_api/models/update_directive_request.py
 hindsight_client_api/models/update_disposition_request.py

@@ -106,6 +106,12 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
+          id: 'developer/api/sessions',
+          label: 'Sessions',
+          customProps: { icon: 'lu-message-circle' },
+        },
+        {
+          type: 'doc',
           id: 'developer/api/mental-models',
           label: 'Mental Models',
           customProps: { icon: 'lu-layers' },
