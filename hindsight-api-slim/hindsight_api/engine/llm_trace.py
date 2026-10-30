@@ -67,6 +67,18 @@ def _llm_requests_persistable() -> bool:
     return not _is_oracle()
 
 
+def llm_requests_locked_in_id_order(table: str, where: str) -> str:
+    """A ``target`` CTE that locks the ``llm_requests`` rows matching ``where``, by id.
+
+    Every statement that updates or deletes several of these rows takes their locks through
+    this. Left to the planner, a bank delete scans by ``(bank_id, started_at DESC)`` while the
+    memory-id patch scans one trace by ``started_at`` ascending, so the two lock the rows they
+    share in opposite orders and deadlock (#6191, #6006). Locking by id first gives every
+    writer the same order. Join the statement to ``target`` on ``id``.
+    """
+    return f"WITH target AS MATERIALIZED (SELECT id FROM {table} WHERE {where} ORDER BY id FOR UPDATE)"
+
+
 # ── bank/operation attribution (carried across the async call chain) ──────────
 
 
@@ -1027,7 +1039,8 @@ class LLMTraceRecorder:
             table = f"{schema}.llm_requests"
             async with acquire_with_retry(pool, max_retries=1) as conn:
                 await conn.execute(
-                    f"UPDATE {table} SET metadata = metadata || $3::jsonb WHERE bank_id = $1 AND trace_id = $2",
+                    f"{llm_requests_locked_in_id_order(table, 'bank_id = $1 AND trace_id = $2')} "
+                    f"UPDATE {table} t SET metadata = t.metadata || $3::jsonb FROM target WHERE t.id = target.id",
                     bank_id,
                     trace_id,
                     json.dumps(patch),

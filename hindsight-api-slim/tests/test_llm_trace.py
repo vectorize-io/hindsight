@@ -1440,6 +1440,62 @@ async def test_deleting_bank_deletes_its_request_history(trace_api_client, memor
 
 
 @pytest.mark.asyncio
+async def test_bank_delete_and_memory_id_patch_lock_rows_in_id_order(
+    memory, request_context, bank_id, pg0_db_url, caplog
+):
+    # #6191/#6006: the memory-id patch is fire-and-forget, so it can still be running when the
+    # bank is deleted. Each statement used to lock the rows in whatever order its plan read them
+    # (storage order, started_at descending, started_at ascending), and two that disagreed
+    # deadlocked. Which plans CI's shared table gets is not something a test can pin, so this
+    # checks the order itself: with the lowest-id row held, a writer that locks by id is stuck
+    # on its very first row and holds nothing else, while any other order grabs rows first.
+    import asyncpg
+
+    trace_id = f"t-{bank_id}"
+    gate = await asyncpg.connect(pg0_db_url)
+    probe = await asyncpg.connect(pg0_db_url)
+    try:
+        await gate.execute(
+            "INSERT INTO llm_requests (bank_id, trace_id, status, started_at) "
+            "SELECT $1, $2, 'success', now() - make_interval(secs => g) FROM generate_series(1, 300) g",
+            bank_id,
+            trace_id,
+        )
+        gate_tx = gate.transaction()
+        await gate_tx.start()
+        await gate.execute("SELECT 1 FROM llm_requests WHERE bank_id = $1 ORDER BY id LIMIT 1 FOR UPDATE", bank_id)
+        with caplog.at_level(logging.WARNING, logger=llm_trace.__name__):
+            racing = asyncio.gather(
+                memory.delete_bank(bank_id, request_context=request_context),
+                memory._llm_recorder._attach_memory_ids(bank_id, trace_id, {"memory_ids": ["m"]}),
+            )
+            try:
+                async with asyncio.timeout(10):
+                    while (
+                        await probe.fetchval(
+                            "SELECT count(*) FROM pg_stat_activity "
+                            "WHERE wait_event_type = 'Lock' AND query LIKE '%llm_requests%'"
+                        )
+                        < 2
+                    ):
+                        await asyncio.sleep(0.01)
+                async with probe.transaction():
+                    free = await probe.fetchval(
+                        "SELECT count(*) FROM (SELECT 1 FROM llm_requests WHERE bank_id = $1 FOR UPDATE SKIP LOCKED) s",
+                        bank_id,
+                    )
+                assert free == 299, "a writer locked rows before reaching the lowest id"
+            finally:
+                await gate_tx.rollback()
+                await racing
+        assert "memory_id attach failed" not in caplog.text
+    finally:
+        await gate.execute("DELETE FROM llm_requests WHERE bank_id = $1", bank_id)
+        await gate.close()
+        await probe.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("delete_with_document", [False, True])
 async def test_deleting_document_deletes_its_request_history_when_enabled(
     trace_api_client, memory, bank_id, monkeypatch, delete_with_document

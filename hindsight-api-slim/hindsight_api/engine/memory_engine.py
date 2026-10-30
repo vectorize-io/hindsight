@@ -11483,14 +11483,17 @@ class MemoryEngine(MemoryEngineInterface):
                 # Its retain runs, and every run that created or consumed one of its memories,
                 # consolidation included.
                 if deleted and delete_traces:
+                    from .llm_trace import llm_requests_locked_in_id_order  # noqa: PLC0415
+
+                    _llm_table = fq_table("llm_requests")
+                    _traced = llm_requests_locked_in_id_order(
+                        _llm_table,
+                        "bank_id = $1 AND (metadata->>'document_id' = $2"
+                        " OR metadata->'memory_ids' ?| $3::text[]"
+                        " OR metadata->'source_memory_ids' ?| $3::text[])",
+                    )
                     await conn.execute(
-                        f"""
-                        DELETE FROM {fq_table("llm_requests")}
-                        WHERE bank_id = $1
-                          AND (metadata->>'document_id' = $2
-                               OR metadata->'memory_ids' ?| $3::text[]
-                               OR metadata->'source_memory_ids' ?| $3::text[])
-                        """,
+                        f"{_traced} DELETE FROM {_llm_table} t USING target WHERE t.id = target.id",
                         bank_id,
                         document_id,
                         [str(u) for u in unit_ids],
@@ -12288,11 +12291,17 @@ class MemoryEngine(MemoryEngineInterface):
                             # The bank's request history holds its prompts and model output (memory
                             # text included) and has no FK to banks, so it goes with the bank rather
                             # than waiting for the retention sweep (#5839). PG-only table.
-                            from .llm_trace import _llm_requests_persistable  # noqa: PLC0415
+                            from .llm_trace import (  # noqa: PLC0415
+                                _llm_requests_persistable,
+                                llm_requests_locked_in_id_order,
+                            )
 
                             if _llm_requests_persistable():
+                                _llm_table = fq_table("llm_requests")
                                 await conn.execute(
-                                    f"DELETE FROM {fq_table('llm_requests')} WHERE bank_id = $1", bank_id
+                                    f"{llm_requests_locked_in_id_order(_llm_table, 'bank_id = $1')} "
+                                    f"DELETE FROM {_llm_table} t USING target WHERE t.id = target.id",
+                                    bank_id,
                                 )
                             # Delete the bank profile and retrieve internal_id for HNSW index cleanup
                             internal_id = await conn.fetchval(
