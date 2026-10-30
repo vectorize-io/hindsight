@@ -3104,6 +3104,16 @@ class MemoryEngine(MemoryEngineInterface):
         # more expensive for the text-only chunks that are the vast majority.
         if config.vlm_provider or config.vlm_model or config.vlm_api_key or config.vlm_base_url:
             vlm_provider = config.vlm_provider or retain_provider
+            # Each HINDSIGHT_API_VLM_* knob overrides its retain value. A vision
+            # model rarely wants the extraction model's settings: a small text
+            # model at `xhigh` made every image call run the vision model at
+            # `xhigh` too, past the retain timeout (#6202).
+            vlm_call_defaults = _LLMCallDefaults(
+                **{
+                    field: retain_value if (vlm_value := getattr(config, f"vlm_{field}")) is None else vlm_value
+                    for field, retain_value in retain_call_defaults.as_kwargs().items()
+                }
+            )
             _vlm_base_llm = LLMConfig(
                 provider=vlm_provider,
                 api_key=config.vlm_api_key or retain_api_key,
@@ -3116,10 +3126,14 @@ class MemoryEngine(MemoryEngineInterface):
                     or (_provider_default_base_url(vlm_provider) if config.vlm_provider else retain_base_url)
                 ),
                 model=config.vlm_model or retain_model,
-                reasoning_effort=config.retain_llm_reasoning_effort or config.llm_reasoning_effort,
-                extra_body=config.retain_llm_extra_body or config.llm_extra_body,
+                reasoning_effort=(
+                    config.vlm_reasoning_effort or config.retain_llm_reasoning_effort or config.llm_reasoning_effort
+                ),
+                extra_body=config.vlm_extra_body or config.retain_llm_extra_body or config.llm_extra_body,
                 default_headers=config.llm_default_headers,
-                cache_affinity=config.retain_llm_cache_affinity or config.llm_cache_affinity,
+                cache_affinity=config.vlm_cache_affinity
+                or config.retain_llm_cache_affinity
+                or config.llm_cache_affinity,
                 ollama_num_ctx=config.llm_ollama_num_ctx,
                 bedrock_service_tier=config.llm_bedrock_service_tier,
                 structured_output_in_prompt=config.llm_structured_output_in_prompt,
@@ -3132,7 +3146,7 @@ class MemoryEngine(MemoryEngineInterface):
                 vertexai_project_id=config.llm_vertexai_project_id,
                 vertexai_region=config.llm_vertexai_region,
                 vertexai_service_account_key=config.llm_vertexai_service_account_key,
-                **retain_call_defaults.as_kwargs(),
+                **vlm_call_defaults.as_kwargs(),
             )
             # Deliberately NOT run through `_build_llm`: that would make the
             # vision model member 0 of the *retain* chain and append the retain

@@ -453,6 +453,13 @@ ENV_VLM_PROVIDER = "HINDSIGHT_API_VLM_PROVIDER"
 ENV_VLM_API_KEY = "HINDSIGHT_API_VLM_API_KEY"
 ENV_VLM_MODEL = "HINDSIGHT_API_VLM_MODEL"
 ENV_VLM_BASE_URL = "HINDSIGHT_API_VLM_BASE_URL"
+ENV_VLM_REASONING_EFFORT = "HINDSIGHT_API_VLM_REASONING_EFFORT"
+ENV_VLM_EXTRA_BODY = "HINDSIGHT_API_VLM_EXTRA_BODY"
+ENV_VLM_CACHE_AFFINITY = "HINDSIGHT_API_VLM_CACHE_AFFINITY"
+ENV_VLM_TIMEOUT = "HINDSIGHT_API_VLM_TIMEOUT"
+ENV_VLM_MAX_RETRIES = "HINDSIGHT_API_VLM_MAX_RETRIES"
+ENV_VLM_INITIAL_BACKOFF = "HINDSIGHT_API_VLM_INITIAL_BACKOFF"
+ENV_VLM_MAX_BACKOFF = "HINDSIGHT_API_VLM_MAX_BACKOFF"
 ENV_RETAIN_LLM_MAX_CONCURRENT = "HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT"
 ENV_RETAIN_LLM_MAX_RETRIES = "HINDSIGHT_API_RETAIN_LLM_MAX_RETRIES"
 ENV_RETAIN_LLM_INITIAL_BACKOFF = "HINDSIGHT_API_RETAIN_LLM_INITIAL_BACKOFF"
@@ -3420,6 +3427,13 @@ class HindsightConfig:
     vlm_api_key: str | None
     vlm_model: str | None
     vlm_base_url: str | None
+    vlm_reasoning_effort: str | None
+    vlm_extra_body: dict | None
+    vlm_cache_affinity: str | None
+    vlm_timeout: float | None
+    vlm_max_retries: int | None
+    vlm_initial_backoff: float | None
+    vlm_max_backoff: float | None
     retain_llm_max_concurrent: int | None
     retain_llm_max_retries: int | None
     retain_llm_initial_backoff: float | None
@@ -4695,6 +4709,13 @@ class HindsightConfig:
             vlm_api_key=os.getenv(ENV_VLM_API_KEY) or None,
             vlm_model=os.getenv(ENV_VLM_MODEL) or _env_default_model(ENV_VLM_PROVIDER),
             vlm_base_url=os.getenv(ENV_VLM_BASE_URL) or None,
+            vlm_reasoning_effort=os.getenv(ENV_VLM_REASONING_EFFORT) or None,
+            vlm_extra_body=json.loads(os.getenv(ENV_VLM_EXTRA_BODY, "null")),
+            vlm_cache_affinity=os.getenv(ENV_VLM_CACHE_AFFINITY) or None,
+            vlm_timeout=_env_float(ENV_VLM_TIMEOUT),
+            vlm_max_retries=_env_int(ENV_VLM_MAX_RETRIES),
+            vlm_initial_backoff=_env_float(ENV_VLM_INITIAL_BACKOFF),
+            vlm_max_backoff=_env_float(ENV_VLM_MAX_BACKOFF),
             fireworks_account_id=os.getenv(ENV_FIREWORKS_ACCOUNT_ID) or None,
             fireworks_batch_base_url=os.getenv(ENV_FIREWORKS_BATCH_BASE_URL) or DEFAULT_FIREWORKS_BATCH_BASE_URL,
             fireworks_batch_max_wait_seconds=int(

@@ -295,6 +295,13 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 | `HINDSIGHT_API_VLM_API_KEY` | API key for the vision slot. | Retain LLM's |
 | `HINDSIGHT_API_VLM_MODEL` | Model for the vision slot. This is the model `HINDSIGHT_API_LLM_VISION` and the `422` vision check apply to, since it is the one that will actually be handed the attachment. | Retain LLM's |
 | `HINDSIGHT_API_VLM_BASE_URL` | Base URL for the vision slot. Follows `HINDSIGHT_API_VLM_PROVIDER`'s own default when that is set and this is not — it never inherits the retain provider's host, which would send the request to the wrong endpoint with the wrong key. | Provider default |
+| `HINDSIGHT_API_VLM_REASONING_EFFORT` | Reasoning effort for the vision slot. Lets a cheap extraction model run at `xhigh` while the vision model runs at `low`. Like the rows below, it applies only once the vision slot is configured by one of the four settings above. | Retain LLM's |
+| `HINDSIGHT_API_VLM_EXTRA_BODY` | Extra request body (JSON) for the vision slot. | Retain LLM's |
+| `HINDSIGHT_API_VLM_CACHE_AFFINITY` | Cache affinity for the vision slot. | Retain LLM's |
+| `HINDSIGHT_API_VLM_TIMEOUT` | Timeout for vision slot requests (seconds). | Retain LLM's |
+| `HINDSIGHT_API_VLM_MAX_RETRIES` | Max retries for vision slot requests. | Retain LLM's |
+| `HINDSIGHT_API_VLM_INITIAL_BACKOFF` | Initial retry backoff for the vision slot (seconds). | Retain LLM's |
+| `HINDSIGHT_API_VLM_MAX_BACKOFF` | Max retry backoff for the vision slot (seconds). | Retain LLM's |
 | `HINDSIGHT_API_LLM_SEND_BANK_AS_USER` | Tag outbound LLM and embedding calls with `user=<bank_id>` so gateways (OpenRouter usage accounting, LiteLLM, Helicone) can attribute spend per bank. When enabled, the bank id is transmitted to the upstream provider as the end-user identifier. | `false` |
 | `HINDSIGHT_API_LLM_GROQ_SERVICE_TIER` | Groq service tier: `on_demand`, `flex`, `auto` | `auto` |
 | `HINDSIGHT_API_LLM_OPENAI_SERVICE_TIER` | OpenAI service tier: `flex` for 50% cost savings (OpenAI Flex Processing) | None (default) |
