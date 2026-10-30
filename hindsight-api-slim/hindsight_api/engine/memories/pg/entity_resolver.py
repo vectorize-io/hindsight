@@ -522,7 +522,7 @@ class EntityResolver:
         self._pending_stats.pop(key, None)
         self._pending_cooccurrences.pop(key, None)
 
-    async def flush_pending_stats(self, conn=None) -> None:
+    async def flush_pending_stats(self, conn: Any | None = None) -> None:
         """
         Flush accumulated entity stats and co-occurrence counts for the current task.
 
