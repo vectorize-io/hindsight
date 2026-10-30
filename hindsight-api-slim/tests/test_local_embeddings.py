@@ -68,3 +68,43 @@ async def test_local_embeddings_read_the_dimension_on_every_supported_version(me
         await embeddings.initialize()
 
     assert embeddings.dimension == 8
+
+
+async def test_local_embeddings_run_on_a_fixed_pool_and_keep_the_callers_context(monkeypatch):
+    """#6110: every thread that runs torch keeps its own native pools for life, so
+    forward passes must stay on the model's own fixed pool, however many callers come
+    in at once — not spread over the default executor's threads."""
+    import asyncio
+    import contextvars
+    import threading
+    import time
+
+    monkeypatch.setattr(LocalSTEmbeddings, "_executor", None, raising=False)
+    bank: contextvars.ContextVar[str] = contextvars.ContextVar("bank")
+    threads: set[int] = set()
+    seen_banks: set[str] = set()
+
+    def encode_query(texts, **_):
+        threads.add(threading.get_ident())
+        seen_banks.add(bank.get())
+        time.sleep(0.01)  # hold the thread so callers pile up
+        return np.zeros((len(texts), 1), dtype=np.float32)
+
+    model = MagicMock()
+    model.encode_query.side_effect = encode_query
+    embeddings = LocalSTEmbeddings(max_concurrent=2)
+    embeddings._model = model
+
+    async def caller(i: int) -> None:
+        bank.set(f"bank-{i}")
+        await embeddings.encode_query([f"q{i}"])
+
+    try:
+        with patch("hindsight_api.engine.embeddings.release_local_inference_memory"):
+            await asyncio.gather(*(caller(i) for i in range(20)))
+    finally:
+        if LocalSTEmbeddings._executor is not None:
+            LocalSTEmbeddings._executor.shutdown(wait=True)
+
+    assert len(threads) <= 2
+    assert seen_banks == {f"bank-{i}" for i in range(20)}
