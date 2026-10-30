@@ -415,18 +415,15 @@ def _row_json_default(obj: Any) -> Any:
 
 # The key each table dumped by _dump_bank_rows is ordered by (its primary key
 # within a bank). Without an ORDER BY the rows come back in heap order, which
-# moves whenever a row is updated (e.g. an LLM trace row getting its memory ids
-# patched in), so two exports of an unchanged bank could differ. A table missing
-# here fails loudly rather than silently exporting in arbitrary order.
+# moves whenever a row is updated (e.g. a mental model refresh), so two exports
+# of an unchanged bank could differ (#5998). The paged history tables are
+# already read in key order (_PAGED_ROW_KEYS). A table missing here fails
+# loudly rather than silently exporting in arbitrary order.
 _DUMP_ORDER_BY = {
     "banks": "bank_id",
     "directives": "id",
     "webhooks": "id",
     "mental_models": "id",
-    "audit_log": "id",
-    "llm_requests": "id",
-    "async_operations": "operation_id",
-    "graph_maintenance_queue": "unit_id",
 }
 
 

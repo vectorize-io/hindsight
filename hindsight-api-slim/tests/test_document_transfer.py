@@ -287,6 +287,14 @@ async def test_documents_written_in_one_batch_keep_their_own_facts_chunks_and_ca
         await memory.delete_bank(dst, request_context=request_context)
 
 
+def test_every_dumped_table_has_an_export_order():
+    """_dump_bank_rows orders by _DUMP_ORDER_BY[table]; a carried table missing from it would
+    only fail at export time (#5998)."""
+    from hindsight_api.engine.transfer.export import _BANK_ROW_TABLES, _DUMP_ORDER_BY
+
+    assert set(_DUMP_ORDER_BY) == set(_BANK_ROW_TABLES)
+
+
 def test_export_bank_covers_schema():
     """Every bank-scoped table must be classified by export_bank — logical, carried,
     history, or explicitly skipped — so a future migration can't silently drop one."""
