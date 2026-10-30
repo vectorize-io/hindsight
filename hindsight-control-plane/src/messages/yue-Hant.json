@@ -2263,7 +2263,7 @@
     "endpointTree": "樹",
     "endpointPage": "頁面",
     "advancedMentalModelId": "心智模型 ID",
-    "advancedSearchDescription": "喺伺服器上試用知識庫端點：混合搜尋（BM25 + 向量）或者頁面樹，用同側邊欄一樣嘅標籤篩選，再睇原始回應。",
+    "advancedSearchDescription": "試吓伺服器嘅知識庫端點：混合搜尋（BM25 + 向量）、頁面樹，或者單一頁面嘅完整記錄，用同側邊欄一樣嘅標籤篩選，再睇原始回應。",
     "advancedQuery": "查詢",
     "advancedLimit": "數量上限",
     "advancedRun": "執行",

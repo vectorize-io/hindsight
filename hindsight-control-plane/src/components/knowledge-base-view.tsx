@@ -342,6 +342,9 @@ export function KnowledgeBaseView() {
       return;
     }
     let cancelled = false;
+    // Clear now, not on arrival: until this page's evidence loads, the strip
+    // would otherwise keep showing the previous page's images.
+    setPageAttachments([]);
     client
       .getMentalModel(currentBank, mmId)
       .then((mm) => {

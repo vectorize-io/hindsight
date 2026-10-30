@@ -2263,7 +2263,7 @@
     "endpointTree": "트리",
     "endpointPage": "페이지",
     "advancedMentalModelId": "멘탈 모델 ID",
-    "advancedSearchDescription": "서버의 지식 베이스 엔드포인트를 시험해 보세요: 하이브리드 검색(BM25 + 벡터) 또는 페이지 트리를 사이드바와 같은 태그 필터로 실행하고 원시 응답을 확인합니다.",
+    "advancedSearchDescription": "서버의 지식 베이스 엔드포인트를 사용해 보세요: 하이브리드 검색(BM25 + 벡터), 페이지 트리 또는 한 페이지의 전체 레코드를 사이드바와 같은 태그 필터로 조회하고 원본 응답을 확인합니다.",
     "advancedQuery": "질의",
     "advancedLimit": "개수 제한",
     "advancedRun": "실행",

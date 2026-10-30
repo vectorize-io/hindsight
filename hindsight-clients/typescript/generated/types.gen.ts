@@ -4840,7 +4840,7 @@ export type MentalModelResponse = {
   /**
    * Reflect Response
    *
-   * Full reflect API response payload including based_on facts and observations
+   * Full reflect API response payload including based_on facts and observations. On a single-model read, each world/experience/observation entry in based_on also carries `attachments`: the retained images and files that memory was extracted from.
    */
   reflect_response?: {
     [key: string]: unknown;

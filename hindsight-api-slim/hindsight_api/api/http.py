@@ -3308,7 +3308,11 @@ class MentalModelResponse(BaseModel):
     )
     reflect_response: dict | None = Field(
         default=None,
-        description="Full reflect API response payload including based_on facts and observations",
+        description=(
+            "Full reflect API response payload including based_on facts and observations. On a "
+            "single-model read, each world/experience/observation entry in based_on also carries "
+            "`attachments`: the retained images and files that memory was extracted from."
+        ),
     )
     is_stale: bool | None = Field(
         default=None,

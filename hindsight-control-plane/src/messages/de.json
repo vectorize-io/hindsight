@@ -2263,7 +2263,7 @@
     "endpointTree": "Baum",
     "endpointPage": "Seite",
     "advancedMentalModelId": "Mentales-Modell-ID",
-    "advancedSearchDescription": "Teste die Knowledge-Base-Endpunkte auf dem Server: hybride Suche (BM25 + Vektor) oder den Seitenbaum, mit demselben Tag-Filter wie in der Seitenleiste, und sieh dir die Rohantwort an.",
+    "advancedSearchDescription": "Teste die Wissensbasis-Endpunkte des Servers: Hybridsuche (BM25 + Vektor), den Seitenbaum oder den vollständigen Datensatz einer Seite, mit demselben Tag-Filter wie die Seitenleiste, und prüfe die Rohantwort.",
     "advancedQuery": "Suchanfrage",
     "advancedLimit": "Limit",
     "advancedRun": "Ausführen",

@@ -2263,7 +2263,7 @@
     "endpointTree": "Tree",
     "endpointPage": "Page",
     "advancedMentalModelId": "Mental model ID",
-    "advancedSearchDescription": "Try the knowledge-base endpoints on the server: hybrid search (BM25 + vector) or the page tree, with the same tag filter as the sidebar, and inspect the raw response.",
+    "advancedSearchDescription": "Try the knowledge-base endpoints on the server: hybrid search (BM25 + vector), the page tree, or one page's full record, with the same tag filter as the sidebar, and inspect the raw response.",
     "advancedQuery": "Query",
     "advancedLimit": "Limit",
     "advancedRun": "Run",

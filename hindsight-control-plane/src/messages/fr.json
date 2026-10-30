@@ -2263,7 +2263,7 @@
     "endpointTree": "Arbre",
     "endpointPage": "Page",
     "advancedMentalModelId": "ID du modèle mental",
-    "advancedSearchDescription": "Testez les endpoints de la base de connaissances sur le serveur : recherche hybride (BM25 + vecteur) ou arbre des pages, avec le même filtre de tags que la barre latérale, et inspectez la réponse brute.",
+    "advancedSearchDescription": "Testez les endpoints de la base de connaissances du serveur : recherche hybride (BM25 + vecteur), l'arborescence des pages ou la fiche complète d'une page, avec le même filtre de tags que la barre latérale, et examinez la réponse brute.",
     "advancedQuery": "Requête",
     "advancedLimit": "Limite",
     "advancedRun": "Exécuter",
