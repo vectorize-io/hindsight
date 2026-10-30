@@ -984,6 +984,7 @@ class OpenAIEmbeddings(Embeddings):
         query_prefix: str = "",
         passage_prefix: str = "",
         timeout: float = 60.0,
+        extra_body: dict[str, Any] | None = None,
     ):
         """
         Initialize OpenAI embeddings client.
@@ -998,6 +999,8 @@ class OpenAIEmbeddings(Embeddings):
             query_prefix: Prefix prepended to recall/search queries (default: none)
             passage_prefix: Prefix prepended to retained document text (default: none)
             timeout: Request timeout in seconds (default: 60.0)
+            extra_body: Extra request-body params sent on every embeddings call
+                (e.g. OpenRouter ``provider`` routing preferences)
         """
         self.api_key = api_key
         self.model = model
@@ -1008,6 +1011,7 @@ class OpenAIEmbeddings(Embeddings):
         self.timeout = timeout
         self.query_prefix = query_prefix
         self.passage_prefix = passage_prefix
+        self.extra_body = extra_body
         # OpenAI's own embedding models tokenize with cl100k_base, which counts slightly
         # more tokens on English/markdown than the o200k_base default — enough that an
         # input truncated to exactly 8192 still drew a 400 (#5234). Only for a model we
@@ -1082,10 +1086,10 @@ class OpenAIEmbeddings(Embeddings):
             self._dimension = self.MODEL_DIMENSIONS[self.model]
         else:
             # Do a test embedding to detect dimension
-            response = await self._loop_client().embeddings.create(
-                model=self.model,
-                input=["test"],
-            )
+            request: dict[str, Any] = {"model": self.model, "input": ["test"]}
+            if self.extra_body:
+                request["extra_body"] = self.extra_body
+            response = await self._loop_client().embeddings.create(**request)
             if response.data:
                 self._dimension = len(response.data[0].embedding)
 
@@ -1117,6 +1121,8 @@ class OpenAIEmbeddings(Embeddings):
         }
         if self.dimensions is not None:
             request["dimensions"] = self.dimensions
+        if self.extra_body:
+            request["extra_body"] = self.extra_body
         apply_bank_attribution(request)
 
         from openai import RateLimitError
@@ -2475,6 +2481,7 @@ def create_embeddings_from_env() -> Embeddings:
                 max_retries=config.embeddings_max_retries,
                 query_prefix=query_prefix,
                 passage_prefix=passage_prefix,
+                extra_body=config.embeddings_openai_extra_body,
             ),
             config,
         )
@@ -2508,6 +2515,7 @@ def create_embeddings_from_env() -> Embeddings:
                 max_retries=config.embeddings_max_retries,
                 query_prefix=query_prefix,
                 passage_prefix=passage_prefix,
+                extra_body=config.embeddings_openai_extra_body,
             ),
             config,
         )
@@ -2528,6 +2536,7 @@ def create_embeddings_from_env() -> Embeddings:
                 max_retries=config.embeddings_max_retries,
                 query_prefix=query_prefix,
                 passage_prefix=passage_prefix,
+                extra_body=config.embeddings_openai_extra_body,
             ),
             config,
         )

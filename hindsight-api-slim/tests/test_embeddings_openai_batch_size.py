@@ -25,6 +25,7 @@ def setup_test_env():
         "HINDSIGHT_API_EMBEDDINGS_OPENAI_BATCH_SIZE",
         "HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS",
         "HINDSIGHT_API_EMBEDDINGS_OPENROUTER_API_KEY",
+        "HINDSIGHT_API_EMBEDDINGS_OPENAI_EXTRA_BODY",
         "HINDSIGHT_API_LLM_API_KEY",
         "HINDSIGHT_API_LLM_PROVIDER",
     ]
@@ -231,3 +232,31 @@ async def test_openai_encode_passes_configured_dimensions():
     assert calls == [384]
     assert len(vectors) == 2
     assert len(vectors[0]) == 384
+
+
+async def test_openrouter_extra_body_reaches_every_embeddings_request(monkeypatch):
+    """HINDSIGHT_API_EMBEDDINGS_OPENAI_EXTRA_BODY rides on dimension detection and batch calls (#6209)."""
+    from types import SimpleNamespace
+
+    from hindsight_api.engine.embeddings import create_embeddings_from_env
+
+    extra = {"provider": {"zdr": True, "only": ["deepinfra/us"]}}
+    os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
+    os.environ["HINDSIGHT_API_EMBEDDINGS_PROVIDER"] = "openrouter"
+    os.environ["HINDSIGHT_API_EMBEDDINGS_OPENROUTER_API_KEY"] = "sk-or-test"
+    os.environ["HINDSIGHT_API_EMBEDDINGS_OPENAI_EXTRA_BODY"] = json.dumps(extra)
+
+    emb = create_embeddings_from_env()
+    calls: list[dict | None] = []
+
+    async def fake_create(*, model, input, extra_body=None):
+        calls.append(extra_body)
+        return SimpleNamespace(data=[SimpleNamespace(index=i, embedding=[0.0] * 4) for i in range(len(input))])
+
+    fake_client = SimpleNamespace(api_key="sk-or-test", embeddings=SimpleNamespace(create=fake_create))
+    monkeypatch.setattr("openai.AsyncOpenAI", lambda **_: fake_client)
+
+    await emb.initialize()  # unknown model -> probes the dimension with one request
+    await emb.encode(["x"])
+
+    assert calls == [extra, extra]

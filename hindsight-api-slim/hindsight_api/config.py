@@ -561,6 +561,7 @@ ENV_EMBEDDINGS_OPENAI_MODEL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL"
 ENV_EMBEDDINGS_OPENAI_BASE_URL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL"
 ENV_EMBEDDINGS_OPENAI_BATCH_SIZE = "HINDSIGHT_API_EMBEDDINGS_OPENAI_BATCH_SIZE"
 ENV_EMBEDDINGS_OPENAI_DIMENSIONS = "HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS"
+ENV_EMBEDDINGS_OPENAI_EXTRA_BODY = "HINDSIGHT_API_EMBEDDINGS_OPENAI_EXTRA_BODY"
 
 # How many embedding requests a remote provider keeps in flight for one encode()
 # call. Applies to every remote provider, not just one.
@@ -3948,6 +3949,7 @@ class HindsightConfig:
     embeddings_max_concurrent_requests: int = DEFAULT_EMBEDDINGS_MAX_CONCURRENT_REQUESTS
     embeddings_gemini_batch_size: int = DEFAULT_EMBEDDINGS_GEMINI_BATCH_SIZE
     embeddings_openai_dimensions: int | None = None
+    embeddings_openai_extra_body: dict | None = None
     embeddings_query_prefix: str = DEFAULT_EMBEDDINGS_QUERY_PREFIX
     embeddings_passage_prefix: str = DEFAULT_EMBEDDINGS_PASSAGE_PREFIX
     embeddings_zeroentropy_api_key: str | None = None
@@ -4882,6 +4884,7 @@ class HindsightConfig:
                 ENV_EMBEDDINGS_OPENAI_DIMENSIONS,
                 os.getenv(ENV_EMBEDDINGS_OPENAI_DIMENSIONS),
             ),
+            embeddings_openai_extra_body=json.loads(os.getenv(ENV_EMBEDDINGS_OPENAI_EXTRA_BODY, "null")),
             embeddings_query_prefix=os.getenv(ENV_EMBEDDINGS_QUERY_PREFIX, DEFAULT_EMBEDDINGS_QUERY_PREFIX),
             embeddings_passage_prefix=os.getenv(ENV_EMBEDDINGS_PASSAGE_PREFIX, DEFAULT_EMBEDDINGS_PASSAGE_PREFIX),
             embeddings_max_retries=_parse_non_negative_int(
