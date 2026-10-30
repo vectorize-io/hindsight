@@ -533,7 +533,7 @@ NOTHING_TO_SAY = re.compile(r"^\W*(no conflicts?\b|no (relevant )?decision\b|(no
 # the rule" in a later one still goes out.
 AGREES_WITH_RULE = re.compile(
     r"\b(not|no|nothing|never) (contradict|conflict)\w*|\b(is|are|stays?|remains?) consistent with\b|\baligns? with\b"
-    r"|\b(are|is) (already )?following (your|the) (own |recorded )?(request|decision|rule)\b",
+    r"|\b(are|is) (already )?following (your|the)( \w+){0,2} (request|decision|rule)\b",
     re.I,
 )
 
