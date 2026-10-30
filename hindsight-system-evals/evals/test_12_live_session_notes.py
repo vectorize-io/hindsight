@@ -376,6 +376,36 @@ CASES = (
         ),
         expect_note=False,
     ),
+    Case(
+        id="a-value-for-another-dataset",
+        history=(
+            Memory(
+                _chat(
+                    ("user", "what's our reproducible score on the 100k support-tickets set?"),
+                    (
+                        "assistant",
+                        "On the 100k support-tickets set the reproducible score is 0.677 across 400 queries, "
+                        "answered by model-a and judged by judge-b. Keep this as the baseline for that set.",
+                    ),
+                ),
+                at="2026-05-10T09:00:00Z",
+            ),
+        ),
+        request=(
+            "run the retrieval eval on the 10k product-reviews set and change the context builder to add chunk "
+            "metadata"
+        ),
+        action=Action(
+            "Edit",
+            {"file_path": "evals/context.py", "old_string": "parts = [text]", "new_string": "parts = [text, meta]"},
+            "--- a/evals/context.py\n+++ b/evals/context.py\n-    parts = [text]\n+    parts = [text, meta]",
+        ),
+        criteria=(
+            "No note presents the support-tickets baseline (0.677, model-a, judge-b) as a rule or target for the "
+            "product-reviews work: that value belongs to a different dataset." + NO_NOTE_OK
+        ),
+        expect_note=False,
+    ),
     # ---------------------------------------------------------------- a request that changes nothing
     Case(
         id="a-question-only",
