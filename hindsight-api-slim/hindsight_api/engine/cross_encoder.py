@@ -1511,25 +1511,31 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
             count_tokens(_SUFFICIENCY_INSTRUCTIONS) + sum(count_tokens(level) for level in self.SUFFICIENCY_LEVELS) + 50
         )
         prefix = f"Question: {query}\n\nEvidence:\n"
+        policy = self.retry_policy or RetryPolicy()
 
         async def ask(question_budget: int) -> dict:
             budget = max(100, question_budget - overhead - count_tokens(prefix))
             # ponytail: keeps the head of the evidence; the agent's own results come
             # first (pages, then observations, then facts), so the tail is raw facts.
             fitted = truncate_to_tokens(evidence, budget).text if count_tokens(evidence) > budget else evidence
-            return await self._ask(
-                {
-                    "state": f"{prefix}{fitted}",
-                    "model": self.model,
-                    "questions": {
-                        "sufficient": {
-                            "type": "score",
-                            "instructions": _SUFFICIENCY_INSTRUCTIONS,
-                            "criteria": self.SUFFICIENCY_LEVELS,
-                        }
-                    },
+            body = {
+                "state": f"{prefix}{fitted}",
+                "model": self.model,
+                "questions": {
+                    "sufficient": {
+                        "type": "score",
+                        "instructions": _SUFFICIENCY_INSTRUCTIONS,
+                        "criteria": self.SUFFICIENCY_LEVELS,
+                    }
                 },
-                "decision_evidence_sufficiency",
+            }
+            # Retried as the page-impact question is: a rate limit read as "not enough" bought
+            # the agent turns the decision model exists to save.
+            return await acall_with_retry(
+                lambda: self._ask(body, "decision_evidence_sufficiency"),
+                policy=policy,
+                budget=policy.new_budget(),
+                provider=self.provider_name,
             )
 
         result = await self._within_window(ask)

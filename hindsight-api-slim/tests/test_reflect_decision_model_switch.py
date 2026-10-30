@@ -145,4 +145,8 @@ def test_a_system_one_provider_drives_reflect(engine, monkeypatch, provider):
     )
     monkeypatch.setattr(engine, "_reflect_decision_model_client", None)
 
-    assert engine._reflect_decision_model() is not None
+    client = engine._reflect_decision_model()
+    assert client is not None
+    # Its cut and verdict are retried like the shared decision model's calls: a single 429 used
+    # to drop them, and that round answered like agent mode.
+    assert client.retry_policy is not None

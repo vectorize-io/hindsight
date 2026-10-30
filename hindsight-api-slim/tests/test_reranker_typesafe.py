@@ -20,6 +20,7 @@ from hindsight_api.engine.cross_encoder import (
     create_cross_encoder_from_env,
 )
 from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
+from hindsight_api.engine.remote_retry import RetryPolicy
 from hindsight_api.engine.token_encoding import count_tokens
 
 
@@ -290,7 +291,27 @@ class _SufficiencySession(_FakeSession):
         yield _FakeResponse({"answers": {"sufficient": answer}})
 
 
+class _RateLimitedOnceSession(_SufficiencySession):
+    """Refuses the first request with a 429, as a shared endpoint under load does."""
+
+    def post(self, url, headers=None, json=None):
+        if not self.refused:
+            self.refused.append(json)
+            raise UpstreamHTTPError(429, "Too Many Requests", {}, url)
+        return super().post(url, headers=headers, json=json)
+
+
 class TestSufficiency:
+    @pytest.mark.asyncio
+    async def test_a_rate_limit_is_retried_not_read_as_not_enough(self):
+        """A 429 used to fail the verdict, and reflect then ran the agent turns it exists to save."""
+        encoder = TypeSafeCrossEncoder(api_key="k")
+        encoder.retry_policy = RetryPolicy(initial_backoff=0.01, max_backoff=0.01)
+        encoder._session = _RateLimitedOnceSession(2.0, {"0": 0.0, "1": 0.1, "2": 0.9})
+
+        assert await encoder.evidence_is_sufficient("q", "evidence") is True
+        assert len(encoder._session.refused) == 1 and len(encoder._session.posted) == 1
+
     @staticmethod
     async def _verdict(score: float, probabilities: dict[str, float] | None) -> bool:
         encoder = TypeSafeCrossEncoder(api_key="k")

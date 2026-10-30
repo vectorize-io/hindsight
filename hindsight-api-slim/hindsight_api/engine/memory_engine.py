@@ -726,7 +726,7 @@ from .reflect.tools import (
     tool_search_mental_models,
     tool_search_observations,
 )
-from .remote_retry import is_transient_remote_error, status_code_of
+from .remote_retry import RetryPolicy, is_transient_remote_error, status_code_of
 from .response_models import (
     VALID_RECALL_FACT_TYPES,
     Budget,
@@ -15823,6 +15823,11 @@ class MemoryEngine(MemoryEngineInterface):
                 shortlist=25,
                 min_keep=15,
             )
+            # Retried like the shared decision model (DecisionModel.ask): without it a single 429
+            # dropped the cut (every item kept) or the "is this enough?" verdict (an agent turn)
+            # for that round. On a shared endpoint under load it was 30% of reflects in a LoComo
+            # run, which then quietly answered like agent mode.
+            self._reflect_decision_model_client.retry_policy = RetryPolicy()
         return self._reflect_decision_model_client
 
     async def _prune_reflect_evidence(self, query: str, texts: list[str]) -> list[bool]:
