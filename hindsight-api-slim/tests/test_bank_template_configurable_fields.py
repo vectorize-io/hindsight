@@ -54,6 +54,7 @@ NEW_FIELDS: list[tuple[str, object]] = [
     ("recall_budget_max", 1500),
     ("audit_log_enabled", True),
     ("store_document_text", False),
+    ("default_timezone", "Asia/Shanghai"),
 ]
 
 

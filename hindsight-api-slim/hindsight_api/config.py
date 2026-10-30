@@ -13,6 +13,7 @@ import sys
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from typing import Any, Literal, Union, cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dotenv import find_dotenv, load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -945,6 +946,7 @@ ENV_FILE_CONVERSION_MAX_BATCH_SIZE = "HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SI
 ENV_ENABLE_FILE_UPLOAD_API = "HINDSIGHT_API_ENABLE_FILE_UPLOAD_API"
 ENV_FILE_DELETE_AFTER_RETAIN = "HINDSIGHT_API_FILE_DELETE_AFTER_RETAIN"
 ENV_STORE_DOCUMENT_TEXT = "HINDSIGHT_API_STORE_DOCUMENT_TEXT"
+ENV_DEFAULT_TIMEZONE = "HINDSIGHT_API_DEFAULT_TIMEZONE"
 
 # Document transfer (export/import documents between banks without re-running the LLM)
 ENV_ENABLE_DOCUMENT_EXPORT_API = "HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API"
@@ -1916,6 +1918,7 @@ DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE = 10  # Max files per batch upload
 DEFAULT_ENABLE_FILE_UPLOAD_API = True  # Enable file upload endpoint
 DEFAULT_FILE_DELETE_AFTER_RETAIN = True  # Delete file bytes after retain (saves storage)
 DEFAULT_STORE_DOCUMENT_TEXT = True  # Persist raw source text in documents.original_text / chunks.chunk_text
+DEFAULT_DEFAULT_TIMEZONE = "UTC"  # IANA zone a retain timestamp with no UTC offset is read in
 
 # Document transfer defaults (export/import enabled by default; gated independently)
 DEFAULT_ENABLE_DOCUMENT_EXPORT_API = True
@@ -2533,6 +2536,19 @@ def _validate_extraction_mode(mode: str) -> str:
         )
         return DEFAULT_RETAIN_EXTRACTION_MODE
     return mode_lower
+
+
+def _validate_default_timezone(name: str) -> str:
+    """Return ``name`` if it is a known IANA zone, else fall back to UTC with a warning."""
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.warning(
+            f"Invalid {ENV_DEFAULT_TIMEZONE} '{name}', must be an IANA zone name such as 'Europe/Rome'. "
+            f"Defaulting to '{DEFAULT_DEFAULT_TIMEZONE}'."
+        )
+        return DEFAULT_DEFAULT_TIMEZONE
+    return name
 
 
 def _validate_recall_budget_function(function: str) -> str:
@@ -3742,6 +3758,7 @@ class HindsightConfig:
     enable_file_upload_api: bool
     file_delete_after_retain: bool
     store_document_text: bool  # When False, store NULL original_text / empty chunk_text
+    default_timezone: str  # IANA zone for retain times that carry no UTC offset
     enable_document_export_api: bool
     enable_document_import_api: bool
 
@@ -4152,6 +4169,9 @@ class HindsightConfig:
         # Per-bank so a data-minimizing bank can keep only derived facts while
         # others retain the raw source for expansion/re-extraction.
         "store_document_text",
+        # The zone a retain timestamp with no UTC offset is read in. Per bank, since
+        # one server can hold banks for users in different zones.
+        "default_timezone",
         # Retention settings (behavioral)
         "retain_chunk_size",
         "retain_structured_chunk_size",
@@ -5457,6 +5477,7 @@ class HindsightConfig:
             ).lower()
             == "true",
             store_document_text=os.getenv(ENV_STORE_DOCUMENT_TEXT, str(DEFAULT_STORE_DOCUMENT_TEXT)).lower() == "true",
+            default_timezone=_validate_default_timezone(os.getenv(ENV_DEFAULT_TIMEZONE, DEFAULT_DEFAULT_TIMEZONE)),
             enable_document_export_api=os.getenv(
                 ENV_ENABLE_DOCUMENT_EXPORT_API, str(DEFAULT_ENABLE_DOCUMENT_EXPORT_API)
             ).lower()

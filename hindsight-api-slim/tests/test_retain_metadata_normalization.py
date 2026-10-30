@@ -13,6 +13,8 @@ than re-extracting them, are covered on a real database by
 test_delta_retain.py::test_delta_retain_drops_null_metadata_values.
 """
 
+from datetime import UTC
+
 from hindsight_api.engine.metadata_utils import as_string_metadata, drop_null_values
 from hindsight_api.engine.retain.orchestrator import _build_contents
 from hindsight_api.engine.retain.types import RetainContent
@@ -52,5 +54,6 @@ def test_build_contents_normalizes_null_metadata_from_api():
     contents = _build_contents(
         [{"content": "hi", "metadata": {"ocr_engine": None, "n": 5, "source": "slack"}}],
         None,
+        UTC,
     )
     assert contents[0].metadata == {"n": 5, "source": "slack"}

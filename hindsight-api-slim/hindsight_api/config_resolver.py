@@ -16,6 +16,7 @@ from dataclasses import dataclass, fields, replace
 from functools import lru_cache
 from types import UnionType
 from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from hindsight_api.config import (
     RECALL_BUDGET_FUNCTIONS,
@@ -626,6 +627,16 @@ class ConfigResolver:
 
         # Validate recall budget fields
         _validate_recall_budget_updates(normalized_updates)
+
+        # A zone name nothing can load would break every retain on the bank.
+        if normalized_updates.get("default_timezone") is not None:
+            try:
+                ZoneInfo(normalized_updates["default_timezone"])
+            except (ZoneInfoNotFoundError, ValueError, TypeError):
+                raise ValueError(
+                    f"default_timezone must be an IANA zone name such as 'Europe/Rome', "
+                    f"got {normalized_updates['default_timezone']!r}"
+                ) from None
 
         # Validate disposition trait fields (1-5 integer scale)
         _validate_disposition_updates(normalized_updates)

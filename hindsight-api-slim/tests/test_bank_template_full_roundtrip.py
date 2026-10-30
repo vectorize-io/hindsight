@@ -128,6 +128,7 @@ _SAMPLE_VALUES: dict[str, Any] = {
     "recall_budget_max": 1500,
     "audit_log_enabled": True,
     "store_document_text": False,
+    "default_timezone": "Asia/Shanghai",
     "enable_auto_consolidation": False,
     "consolidation_use_decision_model": False,
     "consolidation_max_memories_per_round": 42,

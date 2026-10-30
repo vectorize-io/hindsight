@@ -230,6 +230,11 @@ class BankTemplateConfig(BaseModel):
         description="Persist raw source text (documents.original_text / chunks.chunk_text). "
         "Set false to keep only derived facts.",
     )
+    default_timezone: str | None = Field(
+        default=None,
+        description="IANA zone (e.g. 'Europe/Rome') a retain timestamp, or a time the LLM extracts, "
+        "is read in when it carries no UTC offset.",
+    )
     enable_auto_consolidation: bool | None = Field(
         default=None, description="Automatically consolidate observations after retain"
     )

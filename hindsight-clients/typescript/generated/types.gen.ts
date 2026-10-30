@@ -865,6 +865,12 @@ export type BankTemplateConfig = {
    */
   store_document_text?: boolean | null;
   /**
+   * Default Timezone
+   *
+   * IANA zone (e.g. 'Europe/Rome') a retain timestamp, or a time the LLM extracts, is read in when it carries no UTC offset.
+   */
+  default_timezone?: string | null;
+  /**
    * Enable Auto Consolidation
    *
    * Automatically consolidate observations after retain
