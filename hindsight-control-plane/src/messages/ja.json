@@ -2244,6 +2244,7 @@
     "generating": "生成中…",
     "howDerived": "このページの生成根拠",
     "backedBy": "{count} 件の記憶に基づく",
+    "evidenceImages": "根拠の画像",
     "mentalModelOptions": "メンタルモデルのオプション",
     "searchPlaceholder": "ページを検索…",
     "clearSearch": "検索をクリア",

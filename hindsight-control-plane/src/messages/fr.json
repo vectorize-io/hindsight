@@ -2244,6 +2244,7 @@
     "generating": "Génération…",
     "howDerived": "Comment cette page est générée",
     "backedBy": "Basé sur {count} mémoires",
+    "evidenceImages": "Images issues des sources",
     "mentalModelOptions": "Options du modèle mental",
     "searchPlaceholder": "Rechercher des pages…",
     "clearSearch": "Effacer la recherche",

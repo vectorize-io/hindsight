@@ -2244,6 +2244,7 @@
     "generating": "생성 중…",
     "howDerived": "이 페이지의 생성 근거",
     "backedBy": "{count}개의 기억에 기반함",
+    "evidenceImages": "근거 이미지",
     "mentalModelOptions": "멘탈 모델 옵션",
     "searchPlaceholder": "페이지 검색…",
     "clearSearch": "검색 초기화",

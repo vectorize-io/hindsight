@@ -2244,6 +2244,7 @@
     "generating": "正在提炼生成…",
     "howDerived": "页面生成依据与源查询",
     "backedBy": "由 {count} 条记忆沉淀支撑",
+    "evidenceImages": "证据中的图片",
     "mentalModelOptions": "心智模型选项",
     "searchPlaceholder": "搜索知识页…",
     "clearSearch": "清除搜索",
