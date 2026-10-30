@@ -634,9 +634,13 @@ class TestReconcileMechanics:
                 names = await _expected_index_names(conn, bank_id)
                 # Recreate the FIRST expected name with the WRONG definition: a
                 # plain btree with no partial predicate. Name matches, shape does
-                # not. CONCURRENTLY so the decoy never takes ACCESS EXCLUSIVE.
+                # not. A plain build, not CONCURRENTLY (#6189): CONCURRENTLY waits out every
+                # older snapshot while holding a lock that blocks other workers' bank creates,
+                # whose own plain CREATE INDEX holds a snapshot while it waits — a deadlock
+                # this setup step cannot retry out of. A plain build takes a SHARE lock, which
+                # those builds share, and waits on no snapshot, so it has no such cycle.
                 bogus = names[0]
-                await conn.execute(f"CREATE INDEX CONCURRENTLY {bogus} ON memory_units (bank_id)")
+                await conn.execute(f"CREATE INDEX {bogus} ON memory_units (bank_id)")
                 assert not await _index_is_partial_vector(conn, bogus)
 
                 result = await _reconcile(conn, bank_id)
