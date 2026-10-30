@@ -92,23 +92,23 @@ async def test_oracle_release_reads_the_postings_once_and_queues_before_it_debit
     conn = AsyncMock()
     id_a = "00000000-0000-0000-0000-00000000000a"
     id_b = "00000000-0000-0000-0000-00000000000b"
-    # One row per posting, deliberately out of id order.
+    # Deliberately returned out of id order.
     conn.fetch.return_value = [
-        {"entity_id": id_b},
-        {"entity_id": id_a},
-        {"entity_id": id_a},
-        {"entity_id": id_a},
+        {"entity_id": id_b, "n": 1},
+        {"entity_id": id_a, "n": 3},
     ]
 
     enqueued = await ops.release_entity_postings(
-        conn, "entity_maintenance_queue", "entities", "unit_entities", "bank-1", ["u1", "u2"]
+        conn, "entity_maintenance_queue", "entities", "unit_entities", "memory_units", "bank-1", ["u2", "u1"]
     )
 
     assert enqueued == 2
     assert conn.fetch.await_count == 1, "both halves must come out of one scan of the postings"
-    # The scan locks what it counts, so a concurrent release of the same units
-    # waits and then finds them gone instead of debiting them again (#6229).
-    assert "FOR UPDATE" in conn.fetch.await_args.args[0]
+    # The memories are locked before their postings are read, one row at a time
+    # in ascending id order — Oracle's multi-row FOR UPDATE has no lock order (#6229).
+    locks = [call.args for call in conn.fetchrow.await_args_list]
+    assert [args[1] for args in locks] == ["u1", "u2"]
+    assert all("FROM memory_units" in args[0] and "FOR UPDATE" in args[0] for args in locks)
 
     (queue_sql, queue_rows), (debit_sql, debit_rows) = (call.args for call in conn.executemany.await_args_list)
     assert "MERGE INTO entity_maintenance_queue" in queue_sql
@@ -125,7 +125,7 @@ async def test_oracle_release_of_units_with_no_postings_writes_nothing():
     conn.fetch.return_value = []
 
     released = await ops.release_entity_postings(
-        conn, "entity_maintenance_queue", "entities", "unit_entities", "bank-1", ["u1"]
+        conn, "entity_maintenance_queue", "entities", "unit_entities", "memory_units", "bank-1", ["u1"]
     )
 
     assert released == 0
@@ -473,6 +473,49 @@ class TestCurationPaths:
             )
             async with pool.acquire() as conn:
                 assert await _mention_count(conn, alice) == await _posting_count(conn, alice) == 1
+
+    @pytest.mark.asyncio
+    async def test_racing_entity_edits_of_one_memory_keep_counts_matching_postings(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """#6229 through the edit path. Edits replacing one memory's entities ran
+        unserialized, so the memory could end up posted to every racing edit's
+        entities at once, and no edit ever credited the mentions it posted. Edits
+        of one memory now wait for each other and credit in their transaction:
+        one posting left, every count equal to its postings."""
+        bank_id = f"test-mc-edits-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+        pool = await memory._get_pool()
+
+        async with pool.acquire() as conn:
+            unit = await _insert_unit(conn, bank_id, "Alice met Bob in Paris.")
+
+        for round_ in range(4):
+            await asyncio.gather(
+                *(
+                    memory.update_memory_unit(
+                        bank_id,
+                        str(unit),
+                        entities=[f"Person{round_}-{i}"],
+                        resolve_entities=False,
+                        request_context=request_context,
+                    )
+                    for i in range(3)
+                )
+            )
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT e.canonical_name, e.mention_count,
+                           (SELECT COUNT(*) FROM unit_entities ue WHERE ue.entity_id = e.id) AS postings
+                    FROM entities e WHERE e.bank_id = $1
+                    """,
+                    bank_id,
+                )
+            assert [r["canonical_name"] for r in rows if r["mention_count"] != r["postings"]] == [], [
+                dict(r) for r in rows
+            ]
+            assert sum(r["postings"] for r in rows) == 1
 
 
 class TestEndToEnd:

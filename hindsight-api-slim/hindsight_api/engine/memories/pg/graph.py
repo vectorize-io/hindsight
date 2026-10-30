@@ -861,7 +861,9 @@ async def enqueue_entity_prune_candidates(
     queue_table = fq_table("entity_maintenance_queue")
     ue_table = fq_table("unit_entities")
     entities_table = fq_table("entities")
-    unit_uuids = _as_uuids(list(affected_unit_ids))
+    # Sorted before chunking: each chunk locks its memory rows ascending, so the
+    # whole call does too and two overlapping bulk releases cannot cycle (#6229).
+    unit_uuids = sorted(_as_uuids(list(affected_unit_ids)))
 
     # Chunked because a bulk delete can hand in thousands of unit ids and the
     # lookup binds them with `= ANY(...)`, which ops_oracle expands into a
@@ -873,6 +875,7 @@ async def enqueue_entity_prune_candidates(
             queue_table,
             entities_table,
             ue_table,
+            fq_table("memory_units"),
             bank_id,
             unit_uuids[start : start + _ENQUEUE_LOOKUP_CHUNK],
         )

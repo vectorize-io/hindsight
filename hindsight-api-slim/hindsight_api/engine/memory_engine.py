@@ -13044,6 +13044,12 @@ class MemoryEngine(MemoryEngineInterface):
 
                         # --- Apply edit (live rows only) ---
                         if edit_plan is not None and live2:
+                            # Sweep first, before the entity postings below are released: the
+                            # release locks this memory's row (#6229), and the sweep must take its
+                            # rows in its own id order with nothing of ours held, as every delete
+                            # path does (see delete_document). The sweep after the edit stays for
+                            # racing inserts.
+                            await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
                             if edit_plan.entity_names_for_store is not None:
                                 # The store owns its entity registry: apply_edit below resolves + mints
                                 # these names and rewrites the memory's entity ids. There are no SQL
@@ -13074,6 +13080,11 @@ class MemoryEngine(MemoryEngineInterface):
                                         conn=conn,
                                         bank_id=bank_id,
                                     )
+                                    # Credit the new mentions and cooccurrences in this transaction.
+                                    # Nothing else ever flushed what Phase 1 resolution queued, so an
+                                    # edit's new postings were never counted; and a flush after commit
+                                    # would let a waiting edit release them first (#6229).
+                                    await self.entity_resolver.flush_pending_stats(conn=conn)
                                 edit_embedding = edit_plan.embedding
                             else:
                                 # Entities NOT changing: the precomputed embedding used the Phase-1
@@ -13095,9 +13106,6 @@ class MemoryEngine(MemoryEngineInterface):
                                     )
                                 else:
                                     edit_embedding = edit_plan.embedding
-                            # Sweep before this memory's row is written, in the sweep's lock order (see
-                            # delete_document); the sweep after the edit stays for racing inserts.
-                            await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
                             # Capture relink victims before this memory's links change, then apply the
                             # field edit through the store: it resets consolidation, stamps the edit, and
                             # drops the derived links (rebuilt with victims — the edit leaves the unit
@@ -13204,6 +13212,9 @@ class MemoryEngine(MemoryEngineInterface):
 
                     phase2_committed = True
         finally:
+            # What Phase 1 resolution queued and Phase 2 did not flush (the edit did not apply)
+            # describes postings that were never written; drop it rather than leak it.
+            self.entity_resolver.discard_pending_stats()
             # Entities were resolved (and possibly autocommitted) in Phase 1 but the edit did not
             # durably apply (row concurrently invalidated → live2 None, or Phase 2 raised), so the
             # edit's own enqueues rolled back with it. Kick a job for whatever else the bank has

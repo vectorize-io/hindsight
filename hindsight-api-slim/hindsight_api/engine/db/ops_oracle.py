@@ -7,7 +7,6 @@ columns can't appear in GROUP BY).
 
 import json
 import uuid as uuid_mod
-from collections import Counter
 from datetime import UTC, datetime
 from typing import cast
 
@@ -438,6 +437,7 @@ class OracleOps(DataAccessOps):
         queue_table: str,
         entities_table: str,
         ue_table: str,
+        units_table: str,
         bank_id: str,
         unit_ids: list,
     ) -> int:
@@ -449,19 +449,31 @@ class OracleOps(DataAccessOps):
         # MERGE has no RETURNING to hang the second write off — so it stays two
         # executemany calls over this one result.
         #
-        # The read locks the postings it counts, so two transactions retiring
-        # the same unit cannot both debit its postings (#6229, see the PG side).
-        # Oracle refuses FOR UPDATE with GROUP BY, so the rows come back one per
-        # posting and are counted here.
+        # The memories are locked first, so two transactions retiring one memory
+        # cannot both debit its postings (#6229, see the PG side for why the
+        # memory row is the lock that matters). One row per statement, in
+        # ascending id order: an Oracle SELECT ... FOR UPDATE locks every row it
+        # matches when the cursor opens, and ORDER BY does not govern that
+        # order, so a multi-row lock could take overlapping sets in different
+        # orders and cycle. Same per-row loop as bulk_reassert_entities.
+        # ponytail: one round trip per memory; a PL/SQL block if bulk deletes on
+        # Oracle get slow.
+        for unit_id in sorted(str(u) for u in unit_ids):
+            await conn.fetchrow(f"SELECT id FROM {units_table} WHERE id = $1 FOR UPDATE", unit_id)
         rows = await conn.fetch(
-            f"SELECT entity_id FROM {ue_table} WHERE unit_id = ANY($1::uuid[]) FOR UPDATE",
+            f"""
+            SELECT entity_id, COUNT(*) AS n
+            FROM {ue_table}
+            WHERE unit_id = ANY($1::uuid[])
+            GROUP BY entity_id
+            """,
             unit_ids,
         )
         # Sorted for the same reason as enqueue_graph_maintenance: executemany
         # takes the row locks in array order, and claim_entity_maintenance_batch
         # deletes in that same order, so overlapping mutation/worker sets cannot
         # cycle.
-        deltas = sorted(Counter(str(row["entity_id"]) for row in rows).items())
+        deltas = sorted((str(row["entity_id"]), int(row["n"])) for row in rows)
         if not deltas:
             return 0
         # MERGE is the Oracle analogue of ON CONFLICT DO UPDATE: WHEN MATCHED

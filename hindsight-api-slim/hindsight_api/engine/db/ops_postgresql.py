@@ -581,10 +581,11 @@ class PostgreSQLOps(DataAccessOps):
         queue_table: str,
         entities_table: str,
         ue_table: str,
+        units_table: str,
         bank_id: str,
         unit_ids: list,
     ) -> int:
-        # Three statements in the caller's transaction, deliberately not one
+        # Four statements in the caller's transaction, deliberately not one
         # (#6175). This used to be a single statement: the queue INSERT as a
         # data-modifying CTE, feeding a FOR UPDATE scan of the entities and the
         # UPDATE of their mention_count. When a concurrent transaction has just
@@ -602,27 +603,31 @@ class PostgreSQLOps(DataAccessOps):
         # aggregated so one scan serves both halves — the queue insert wants the
         # ids, the mention release wants the counts.
         #
-        # The read locks the postings it counts (#6229). Nothing above this
-        # serializes two transactions retiring the same unit — two deletes of
-        # one memory, a single delete racing a bulk one — and a plain read let
-        # both count the same postings and both debit them, leaving the count
-        # below the real number of mentions. With the rows locked, the second
-        # transaction waits here until the first commits its delete, then finds
-        # those rows gone and debits nothing for them. Every caller deletes the
-        # rows it releases in this same transaction, so what is locked here is
-        # exactly what this transaction removes. Locked ascending by
-        # (unit_id, entity_id) so two overlapping releases cannot cycle, and
-        # before any queue or entity row, which nothing locks ahead of a posting.
+        # The memories are locked before their postings are read (#6229). Their
+        # postings are only ever removed by a transaction retiring the memory,
+        # and every one of those comes through here, so holding the memory row
+        # means no one else can change its postings until this commits. Without
+        # it, two transactions retiring one memory (two deletes, a delete racing
+        # a bulk delete) both counted its postings and both debited them, and
+        # two edits replacing its entities had the second clear postings the
+        # first had just written without counting them. Now the second waits
+        # here, and its read below — a new statement — sees what the first left.
+        #
+        # Ascending id, FOR NO KEY UPDATE: the order and strength the
+        # stale-observation sweep locks these same rows with, which runs before
+        # this on every path. NO KEY UPDATE still lets the relinker's FK
+        # KEY SHARE through while it holds queue rows our caller may enqueue
+        # next (see delete_stale_observations). Memory rows come first, then
+        # queue rows, then entity rows.
+        await conn.execute(
+            f"SELECT id FROM {units_table} WHERE id = ANY($1::uuid[]) ORDER BY id FOR NO KEY UPDATE",
+            unit_ids,
+        )
         doomed = await conn.fetch(
             f"""
             SELECT entity_id, COUNT(*) AS n
-            FROM (
-                SELECT entity_id
-                FROM {ue_table}
-                WHERE unit_id = ANY($1::uuid[])
-                ORDER BY unit_id, entity_id
-                FOR UPDATE
-            ) p
+            FROM {ue_table}
+            WHERE unit_id = ANY($1::uuid[])
             GROUP BY entity_id
             ORDER BY entity_id
             """,
