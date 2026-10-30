@@ -39,7 +39,10 @@ import re
 from typing import Any
 
 _ALIAS_RE = re.compile(r"^[fopc]\d+$")
-_ALIAS_IN_TEXT_RE = re.compile(r"\b[fopc]\d+\b")
+#: An alias cited in prose: a token of its own, not part of an identifier such as
+#: ``tra64-v1-c2-ui1``, ``o1-preview``, ``src/c2/x``, ``c2.example`` or ``admin@f5-1`` (#6150).
+#: Punctuation after it (``o1.``, ``o1:``, ``[o1]``) still ends a citation.
+_ALIAS_IN_TEXT_RE = re.compile(r"(?<![\w./:@-])[fopc]\d+(?![\w/@-]|[.:]\w)")
 _UUID_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE)
 #: What an id the model was never shown is replaced with in the answer.
 _UNVERIFIED_ID = "[unverified id]"
@@ -118,7 +121,8 @@ class ToolResultPresenter:
         """Swap every alias cited in free text for its real id.
 
         Only tokens that are aliases of this reflect are touched, so a word like
-        ``c3`` that was never handed out stays as written.
+        ``c3`` that was never handed out stays as written. So does an alias inside
+        an identifier: the ``c2`` of ``tra64-v1-c2-ui1`` is not a citation.
         """
         return _ALIAS_IN_TEXT_RE.sub(lambda m: self._id_by_alias.get(m.group(0), m.group(0)), text)
 
