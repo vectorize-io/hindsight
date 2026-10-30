@@ -43,6 +43,7 @@ from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usag
 from hindsight_api.engine.llm_transport import build_aiohttp_timeout
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences
+from hindsight_api.engine.providers.openai_responses_llm import _to_responses_content
 from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
@@ -620,7 +621,7 @@ class CodexLLM(LLMInterface):
                 {
                     "type": "message",
                     "role": msg.get("role", "user"),
-                    "content": msg.get("content", ""),
+                    "content": _to_responses_content(msg.get("content", ""), msg.get("role", "user")),
                 }
                 for msg in user_messages
             ],

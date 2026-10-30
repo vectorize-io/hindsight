@@ -76,10 +76,51 @@ class RetryableResponsesError(Exception):
     """
 
 
+def _to_responses_content(content: Any, role: str | None) -> Any:
+    """Translate an OpenAI chat content-part list into Responses input parts.
+
+    Retain assembles multimodal messages in the chat part vocabulary (``text`` /
+    ``image_url`` / ``file``, see ``attachment_content._prompt_part``), which the
+    Responses API rejects with HTTP 400. Text becomes ``input_text``
+    (``output_text`` on an assistant turn), ``image_url`` becomes ``input_image``
+    with the URL as a plain string, and ``file`` becomes ``input_file`` with its
+    fields lifted to the top level.
+
+    A plain string, which is what every text-only call sends, passes straight
+    through; parts of any other type (including ones already in Responses shape)
+    are left untouched.
+    """
+    if not isinstance(content, list):
+        return content
+
+    text_type = "output_text" if role == "assistant" else "input_text"
+    parts: list[Any] = []
+    for part in content:
+        kind = part.get("type") if isinstance(part, dict) else None
+        if kind == "text":
+            parts.append({"type": text_type, "text": part.get("text", "")})
+        elif kind == "image_url":
+            image = part.get("image_url")
+            url = image.get("url") if isinstance(image, dict) else image
+            detail = (image.get("detail") if isinstance(image, dict) else None) or "auto"
+            parts.append({"type": "input_image", "image_url": url, "detail": detail})
+        elif kind == "file":
+            file = part.get("file") or {}
+            fields = {key: file[key] for key in ("file_id", "file_data", "filename") if key in file}
+            parts.append({"type": "input_file", **fields})
+        else:
+            parts.append(part)
+    return parts
+
+
 def _messages_to_responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert chat/completions messages to Responses ``input`` message items."""
     return [
-        {"role": m.get("role"), "content": m.get("content") if m.get("content") is not None else ""} for m in messages
+        {
+            "role": m.get("role"),
+            "content": _to_responses_content(m.get("content"), m.get("role")) if m.get("content") is not None else "",
+        }
+        for m in messages
     ]
 
 
