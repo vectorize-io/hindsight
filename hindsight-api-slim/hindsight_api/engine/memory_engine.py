@@ -11352,7 +11352,8 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
     ) -> dict[str, int]:
         """
-        Delete a document and all its associated memory units and links.
+        Delete a document and all its associated memory units and links, plus its LLM request
+        history when ``HINDSIGHT_API_LLM_TRACE_DELETE_WITH_DOCUMENT`` is on.
 
         Args:
             document_id: Document ID to delete
@@ -11424,6 +11425,25 @@ class MemoryEngine(MemoryEngineInterface):
                 )
                 deleted = _deleted_doc.deleted
                 file_storage_key = _deleted_doc.file_storage_key
+
+                # Opt-in (#6098): the prompts and answers that quote this document — its retain
+                # runs, and every run that created or consumed one of its memories, consolidation
+                # included — go with it instead of waiting for the retention sweep. PG-only table.
+                from .llm_trace import _llm_requests_persistable  # noqa: PLC0415
+
+                if deleted and get_config().llm_trace_delete_with_document and _llm_requests_persistable():
+                    await conn.execute(
+                        f"""
+                        DELETE FROM {fq_table("llm_requests")}
+                        WHERE bank_id = $1
+                          AND (metadata->>'document_id' = $2
+                               OR metadata->'memory_ids' ?| $3::text[]
+                               OR metadata->'source_memory_ids' ?| $3::text[])
+                        """,
+                        bank_id,
+                        document_id,
+                        [str(u) for u in unit_ids],
+                    )
 
                 # Invalidate observations referencing these (now-deleted) memories
                 if unit_ids:

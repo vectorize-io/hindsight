@@ -1179,6 +1179,7 @@ ENV_LLM_TRACE_SCOPES = "HINDSIGHT_API_LLM_TRACE_SCOPES"
 ENV_LLM_TRACE_EXCLUDE_SCOPES = "HINDSIGHT_API_LLM_TRACE_EXCLUDE_SCOPES"
 ENV_LLM_TRACE_RETENTION_DAYS = "HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS"
 ENV_LLM_TRACE_MAX_CHARS = "HINDSIGHT_API_LLM_TRACE_MAX_CHARS"
+ENV_LLM_TRACE_DELETE_WITH_DOCUMENT = "HINDSIGHT_API_LLM_TRACE_DELETE_WITH_DOCUMENT"
 
 # Background maintenance settings
 ENV_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS = "HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS"
@@ -2201,6 +2202,7 @@ DEFAULT_LLM_TRACE_SCOPES = ""  # Empty = trace all call scopes
 DEFAULT_LLM_TRACE_EXCLUDE_SCOPES = ""  # Empty = exclude nothing
 DEFAULT_LLM_TRACE_RETENTION_DAYS = 1  # Retain trace rows for 1 day by default
 DEFAULT_LLM_TRACE_MAX_CHARS = 50000  # Truncate stored input/output beyond this many chars
+DEFAULT_LLM_TRACE_DELETE_WITH_DOCUMENT = False  # Keep a deleted document's trace rows until the retention sweep
 
 # Background maintenance defaults
 # Periodic reconcile that re-schedules consolidation for banks with eligible-but-unscheduled
@@ -3903,6 +3905,7 @@ class HindsightConfig:
     llm_trace_exclude_scopes: list[str]  # Call scopes never traced; wins over the allowlist
     llm_trace_retention_days: int  # -1 = keep forever, >0 = delete after N days
     llm_trace_max_chars: int  # Truncate stored input/output beyond this many chars
+    llm_trace_delete_with_document: bool  # Deleting a document also deletes the trace rows that quote it
 
     # Background maintenance configuration (static - server-level only)
     # Interval for the periodic sweep that re-schedules consolidation for banks with
@@ -5738,6 +5741,10 @@ class HindsightConfig:
                 os.getenv(ENV_LLM_TRACE_RETENTION_DAYS, str(DEFAULT_LLM_TRACE_RETENTION_DAYS))
             ),
             llm_trace_max_chars=int(os.getenv(ENV_LLM_TRACE_MAX_CHARS, str(DEFAULT_LLM_TRACE_MAX_CHARS))),
+            llm_trace_delete_with_document=os.getenv(
+                ENV_LLM_TRACE_DELETE_WITH_DOCUMENT, str(DEFAULT_LLM_TRACE_DELETE_WITH_DOCUMENT)
+            ).lower()
+            == "true",
             # Background maintenance configuration (static, server-level only)
             consolidation_reconcile_interval_seconds=int(
                 os.getenv(

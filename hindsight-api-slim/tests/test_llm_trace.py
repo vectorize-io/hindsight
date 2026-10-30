@@ -8,6 +8,7 @@ success/error paths, and the HTTP read API (list / stats / tokens).
 """
 
 import asyncio
+import dataclasses
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -1366,3 +1367,55 @@ async def test_deleting_bank_deletes_its_request_history(trace_api_client, memor
 
     assert (await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests")).json()["total"] == 0
     assert (await trace_api_client.get(f"/v1/default/banks/{other}/llm-requests")).json()["total"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delete_with_document", [False, True])
+async def test_deleting_document_deletes_its_request_history_when_enabled(
+    trace_api_client, memory, bank_id, monkeypatch, delete_with_document
+):
+    # #6098: with HINDSIGHT_API_LLM_TRACE_DELETE_WITH_DOCUMENT on, a deleted document's prompts go
+    # with it (its retain runs, and runs that consumed its memories); off, they wait for the sweep.
+    base = f"/v1/default/banks/{bank_id}"
+    await trace_api_client.put(base, json={"name": "Trace Bank"})
+    resp = await trace_api_client.post(
+        f"{base}/memories", json={"items": [{"content": "Alice likes cats", "document_id": "doc-1"}]}
+    )
+    assert resp.status_code == 200
+    listed = (await trace_api_client.get(f"{base}/memories/list")).json()["items"]
+    unit_id = next(m["id"] for m in listed if m.get("document_id") == "doc-1")
+
+    def record(trace_id: str, call_metadata: dict | None = None) -> LLMTraceContext:
+        ctx = LLMTraceContext(bank_id=bank_id, operation="retain", trace_id=trace_id)
+        token = set_trace_context(ctx)
+        meta_token = llm_trace.set_call_metadata(call_metadata)
+        try:
+            memory._llm_recorder.record_llm_call(
+                provider="mock", model="mock", scope="memory", messages=[{"role": "user", "content": "x"}], duration=0.1
+            )
+        finally:
+            llm_trace.reset_call_metadata(meta_token)
+            llm_trace.reset_trace_context(token)
+        return ctx
+
+    record("t-retain", {"document_id": "doc-1"})
+    consolidation = record("t-consolidation")
+    record("t-other", {"document_id": "doc-2"})
+    await memory._llm_recorder.flush()
+    memory._llm_recorder.attach_memory_ids(consolidation, source=[unit_id])
+    await memory._llm_recorder.flush()
+
+    from hindsight_api.config import _get_raw_config
+    from hindsight_api.engine import memory_engine as memory_engine_mod
+
+    config = dataclasses.replace(_get_raw_config(), llm_trace_delete_with_document=delete_with_document)
+    monkeypatch.setattr(memory_engine_mod, "get_config", lambda: config)
+    assert (await trace_api_client.delete(f"{base}/documents/doc-1")).status_code == 200
+
+    async def trace_total(trace_id: str) -> int:
+        return (await trace_api_client.get(f"{base}/llm-requests", params={"trace_id": trace_id})).json()["total"]
+
+    expected = 0 if delete_with_document else 1
+    assert await trace_total("t-retain") == expected
+    assert await trace_total("t-consolidation") == expected
+    assert await trace_total("t-other") == 1

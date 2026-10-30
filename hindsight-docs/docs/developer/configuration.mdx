@@ -2762,7 +2762,7 @@ Rows are buffered in memory and written in batches (at most every 0.5s, or once 
 
 **LLM request tracing is enabled by default**, with traced rows retained for 1 day. To disable it entirely set `HINDSIGHT_API_LLM_TRACE_ENABLED=false` and restart the API — the `llm_requests` table then stays empty and `/llm-requests` returns `{"total": 0, "items": []}` regardless of activity.
 
-> **Note:** Traced rows contain the full prompt and model output, which may include sensitive memory content and can be large. Use `HINDSIGHT_API_LLM_TRACE_MAX_CHARS` to bound how much of each payload is stored, tighten `HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS`, or set `HINDSIGHT_API_LLM_TRACE_ENABLED=false` to turn tracing off in sensitive environments. Deleting a bank deletes its trace rows with it.
+> **Note:** Traced rows contain the full prompt and model output, which may include sensitive memory content and can be large. Use `HINDSIGHT_API_LLM_TRACE_MAX_CHARS` to bound how much of each payload is stored, tighten `HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS`, or set `HINDSIGHT_API_LLM_TRACE_ENABLED=false` to turn tracing off in sensitive environments. Deleting a bank deletes its trace rows with it. Set `HINDSIGHT_API_LLM_TRACE_DELETE_WITH_DOCUMENT=true` to also delete a document's trace rows when the document is deleted.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -2771,6 +2771,7 @@ Rows are buffered in memory and written in batches (at most every 0.5s, or once 
 | `HINDSIGHT_API_LLM_TRACE_EXCLUDE_SCOPES` | Comma-separated call scopes never to trace, applied after the allowlist; `*` prefix patterns as above (e.g. `embedding_*,rerank` keeps only LLM and decision-model calls). | `""` |
 | `HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS` | Number of days to retain trace rows. `-1` = keep forever. | `1` |
 | `HINDSIGHT_API_LLM_TRACE_MAX_CHARS` | Truncate stored input/output beyond this many characters (keeps the row, stores a truncated preview). | `50000` |
+| `HINDSIGHT_API_LLM_TRACE_DELETE_WITH_DOCUMENT` | Deleting a document also deletes the trace rows that quote it: its retain runs, and every run that created or consumed one of its memories (consolidation included). Off, they stay until the retention sweep removes them. Turn it on when a document delete must erase its text everywhere. | `false` |
 
 ### Background Maintenance {#background-maintenance}
 
