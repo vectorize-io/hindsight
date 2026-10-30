@@ -297,7 +297,11 @@ class PostgreSQLOps(DataAccessOps):
                     LEAST(ml.from_unit_id, ml.to_unit_id),
                     GREATEST(ml.from_unit_id, ml.to_unit_id),
                     ml.link_type,
-                    COALESCE(ml.entity_id, '00000000-0000-0000-0000-000000000000'::uuid)
+                    COALESCE(ml.entity_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                    -- Without this the key ties for a pair written both ways (x->y and
+                    -- y->x), so two writers could lock the pair's rows in opposite
+                    -- orders and deadlock (#6051). Must stay in step with retain.py.
+                    ml.from_unit_id
                 FOR UPDATE OF ml
             )
             DELETE FROM {table} ml
