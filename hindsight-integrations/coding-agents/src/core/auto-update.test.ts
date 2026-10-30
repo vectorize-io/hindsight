@@ -84,6 +84,12 @@ describe("npmViewVersion", () => {
     expect(opts.timeout).toBe(5000);
   });
 
+  it("reads npm 12's one-element array as the version (#6135)", async () => {
+    expect(await npmViewVersion("@x/y", asRealSpawn(npmSpawn(0, '[\n  "0.8.2"\n]\n')))).toBe(
+      "0.8.2"
+    );
+  });
+
   // #5366: on Windows npm is npm.cmd, which spawn cannot run without a shell (`spawn npm ENOENT`).
   it("runs npm through a shell on Windows", async () => {
     const platform = Object.getOwnPropertyDescriptor(process, "platform")!;

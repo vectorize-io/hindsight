@@ -24,11 +24,13 @@ import { type PiEntry, type PiMessage, readPiEntries, readPiMessages } from "../
 // Declared locally so this package takes no dependency on the fast-moving pi / Prime Agent SDKs;
 // the real runtime passes a compatible object at load time.
 
-interface BeforeAgentStartEvent {
-  type: "before_agent_start";
-  /** The raw user prompt text. */
-  prompt: string;
-}
+/** pi 1.3+ sends a union: a user run carries `prompt`, a custom-message run (`pi.sendMessage(…,
+ *  { triggerTurn: true })`, pi's own goal resume) carries `message` and no prompt. Older pi-family
+ *  hosts send `prompt` without `messageType`. */
+type PiRunTrigger =
+  | { messageType?: "user"; prompt: string }
+  | { messageType: "custom"; prompt?: undefined; message: unknown };
+type BeforeAgentStartEvent = { type: "before_agent_start" } & PiRunTrigger;
 
 interface AgentEndEvent {
   type: "agent_end";
@@ -143,7 +145,7 @@ export function createPiHooks(
   let sessionStartAwaited = false;
   return {
     async beforeAgentStart(
-      event: Omit<BeforeAgentStartEvent, "type">,
+      event: PiRunTrigger,
       sessionId: string
     ): Promise<BeforeAgentStartResult | undefined> {
       if (!sessionStartAwaited) {
@@ -154,7 +156,8 @@ export function createPiHooks(
         await sessionStart;
       }
       // Called on an empty prompt too, so the core drops the previous turn's block (see onPrompt).
-      await core.onPrompt(sessionId, event.prompt.trim());
+      // A custom-message run has no prompt, and its message is not the user's words (#5592).
+      await core.onPrompt(sessionId, typeof event.prompt === "string" ? event.prompt.trim() : "");
       const injection = core.getInjection(sessionId);
       if (!injection) {
         diag(harness, "inject_empty", { session: sessionId });

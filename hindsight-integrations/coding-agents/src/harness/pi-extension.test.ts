@@ -47,6 +47,30 @@ describe("pi extension adapter", () => {
     expect(result).toBeUndefined();
   });
 
+  it("handles a custom-message run, which has no prompt, without throwing (#5592)", async () => {
+    // pi's goal resume and `pi.sendMessage(…, { triggerTurn: true })` start a run with
+    // `messageType: "custom"` and `message` instead of `prompt`.
+    const onPrompt = vi.fn(async () => {});
+    const core = {
+      onPrompt,
+      getInjection: vi.fn(() => undefined),
+      onTranscript: vi.fn(async () => {}),
+    };
+    const hooks = createPiHooks(core as never, "pi");
+
+    await hooks.beforeAgentStart(
+      { messageType: "custom", message: { content: "Goal resumed" } },
+      "s"
+    );
+    await hooks.beforeAgentStart({ messageType: "user", prompt: " next " }, "s");
+
+    // The custom message is not the user's words: no recall for it, and the last block is dropped.
+    expect(onPrompt.mock.calls).toEqual([
+      ["s", ""],
+      ["s", "next"],
+    ]);
+  });
+
   it("waits for the shared SessionStart decision before the first reflect", async () => {
     let releaseSessionStart: (() => void) | undefined;
     const sessionStart = new Promise<void>((resolve) => {
