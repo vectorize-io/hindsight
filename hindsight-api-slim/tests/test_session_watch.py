@@ -411,6 +411,8 @@ def test_an_answer_saying_there_is_nothing_to_say_is_not_a_note():
     assert not W.accept_note(s, cmd, agrees, ["m5"])
     following = 'You are following your request to update the pricing in INTERNAL.md to: "decision $0.02/M".'
     assert not W.accept_note(s, cmd, following, ["m7"])
+    decided = 'You are following the decision that "Graphiti will not receive a separate article".'
+    assert not W.accept_note(s, cmd, decided, ["m8"])
     later = "The header is fine. Deleting ~/dev/archive contradicts the recorded keep-list for that folder."
     assert W.accept_note(s, cmd, later, ["m6"])
 
