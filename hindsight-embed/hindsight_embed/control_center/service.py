@@ -363,7 +363,9 @@ def stop_daemon(name: str) -> DaemonActionResult:
     ok = daemon_client.stop_daemon(name)
     return DaemonActionResult(
         ok=ok,
-        running=daemon_client.is_daemon_running(name),
+        # Not is_daemon_running: a busy daemon that refused to stop fails /health
+        # too, and would read as stopped. A failed stop means it is still there.
+        running=not ok,
         url=None,
         message="Daemon stopped." if ok else "Failed to stop daemon.",
     )

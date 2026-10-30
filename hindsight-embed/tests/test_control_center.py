@@ -457,9 +457,10 @@ class TestServer:
     def test_failed_stop_is_reported(self, server, monkeypatch, action):
         from hindsight_embed import daemon_client
 
+        # A busy daemon: fails /health and refuses to stop. It must still read as running.
         started = []
         monkeypatch.setattr(daemon_client, "stop_daemon", lambda profile=None: False)
-        monkeypatch.setattr(daemon_client, "is_daemon_running", lambda profile=None: True)
+        monkeypatch.setattr(daemon_client, "is_daemon_running", lambda profile=None: False)
         monkeypatch.setattr(daemon_client, "ensure_daemon_running", lambda *a, **k: started.append(1) or True)
         monkeypatch.setattr(daemon_client, "get_daemon_url", lambda profile=None: "http://127.0.0.1:8888")
         r = httpx.post(f"{server}/api/profiles/default/daemon/{action}", headers=_auth()).json()
