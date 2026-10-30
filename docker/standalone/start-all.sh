@@ -310,11 +310,13 @@ cleanup() {
             kill -TERM "$pid" 2>/dev/null
         fi
     done
-    # Give processes time to shut down cleanly (pg0 needs to flush WAL).
-    # NOTE: Docker's default stop_grace_period is 10s. If you use the default,
-    # either set stop_grace_period: 30s in your compose file / docker stop -t 30,
-    # or Docker will SIGKILL the container before this timeout expires.
-    local timeout=30
+    # Give processes time to shut down cleanly (pg0 needs to flush WAL, and
+    # hindsight-api drains in-flight worker tasks for 30s, cancels the rest for
+    # up to 5s, then hands them back to 'pending' — ~45s worst case).
+    # NOTE: Docker's default stop_grace_period is 10s. Set stop_grace_period: 75s
+    # in your compose file / docker stop -t 75 so it outlasts this wait, or
+    # Docker will SIGKILL the container before this timeout expires.
+    local timeout=60
     for ((i=1; i<=timeout; i++)); do
         local all_stopped=true
         for pid in "${PIDS[@]}"; do

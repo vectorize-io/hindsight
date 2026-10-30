@@ -11,8 +11,6 @@ import pytest
 
 from hindsight_api.engine.providers.litellm_llm import LiteLLMLLM
 
-_TOOLS = [{"type": "function", "function": {"name": "noop", "parameters": {"type": "object", "properties": {}}}}]
-
 
 def _bedrock_503() -> Exception:
     return litellm.ServiceUnavailableError(
@@ -32,7 +30,7 @@ def _bad_request_400() -> Exception:
     return litellm.BadRequestError(message="max_tokens exceeds the model limit", llm_provider="bedrock", model="m")
 
 
-async def _attempts(monkeypatch: pytest.MonkeyPatch, error: Exception, *, tools: bool) -> int:
+async def _attempts(monkeypatch: pytest.MonkeyPatch, error: Exception) -> int:
     provider = LiteLLMLLM(provider="litellm", api_key="unused", base_url="http://localhost:0/v1", model="m")
     calls = 0
 
@@ -44,17 +42,13 @@ async def _attempts(monkeypatch: pytest.MonkeyPatch, error: Exception, *, tools:
     monkeypatch.setattr(provider, "_acompletion", _fail)
     messages = [{"role": "user", "content": "hi"}]
     with pytest.raises(type(error)):
-        if tools:
-            await provider.call_with_tools(messages=messages, tools=_TOOLS, max_retries=2, initial_backoff=0.0)
-        else:
-            await provider.call(messages=messages, max_retries=2, initial_backoff=0.0)
+        await provider.call(messages=messages, max_retries=2, initial_backoff=0.0)
     return calls
 
 
-@pytest.mark.parametrize("tools", [False, True])
 @pytest.mark.parametrize(
     ("make_error", "expected_attempts"),
     [(_bedrock_503, 3), (_auth_401, 1), (_bad_request_400, 1)],
 )
-async def test_retry_follows_status_code(monkeypatch, make_error, expected_attempts, tools):
-    assert await _attempts(monkeypatch, make_error(), tools=tools) == expected_attempts
+async def test_retry_follows_status_code(monkeypatch, make_error, expected_attempts):
+    assert await _attempts(monkeypatch, make_error()) == expected_attempts

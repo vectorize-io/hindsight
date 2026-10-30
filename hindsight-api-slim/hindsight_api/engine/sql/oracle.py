@@ -293,6 +293,9 @@ class OracleDialect(SQLDialect):
             f"   {tags_clause}"
             f"   {groups_clause}"
             f"   {extra_where}"
+            # No `id` tie-breaker, unlike the native PG arm (#6056): Oracle Text can
+            # push ORDER BY SCORE into the domain index, and a second key may lose
+            # that. Ties at the cut stay unordered until its plan is checked.
             f" ORDER BY SCORE({label}) DESC"
             f" FETCH FIRST {limit_param} ROWS ONLY) t{arm_index}"
         )

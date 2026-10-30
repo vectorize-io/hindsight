@@ -87,14 +87,15 @@ async def test_the_read_is_scoped_to_the_bank():
     assert params[0] == "bank-1"
 
 
-class TestSearchReturnsTopHitWholeAndTheRestAsSnippets:
+class TestSearchPacksWholePagesUnderABudget:
     """The compromise the measurements forced.
 
     Snippets alone cut a refresh 29% (gemini-2.5-flash-lite) and 55% (a local 35B),
     but the model sometimes answered from a snippet without ever reading the page —
-    a graded failure in the system-evals story ``test_06_reflect_reads_pages``.
-    Returning the BEST-ranked page whole keeps one page always readable, and costs
-    one page in the prompt instead of five.
+    a graded failure in the system-evals story ``test_reflect_from_page``.
+    Whole pages in rank order up to a token budget keep the best pages readable while
+    bounding what five unbounded pages cost; one whole page under a fixed limit left
+    banks with large pages, or answers spread across pages, with none (#5787).
     """
 
     @staticmethod
@@ -125,26 +126,39 @@ class TestSearchReturnsTopHitWholeAndTheRestAsSnippets:
         }
 
     @pytest.mark.asyncio
-    async def test_the_best_hit_comes_back_whole_and_the_others_as_snippets(self):
-        rows = [self._row("mm-a", "A" * 1000, 0.9), self._row("mm-b", "B" * 1000, 0.5)]
+    async def test_pages_come_back_whole_in_rank_order_until_the_budget_and_the_rest_as_snippets(self):
+        page = "word " * 100  # ~100 tokens
+        rows = [self._row("mm-a", page, 0.9), self._row("mm-b", page, 0.8), self._row("mm-c", page, 0.7)]
 
-        out = await self._search(rows)
+        out = await self._search(rows, full_pages_max_tokens=250)
 
-        top, second = out["mental_models"]
-        assert top["content"] == "A" * 1000, "the best-ranked page must arrive readable"
-        assert "snippet" not in top
-        assert second["snippet"] == "B" * 280, "the rest are snippets, matching the page-search API"
-        assert second["content_chars"] == 1000, "so the model can see what it would be reading"
-        assert "content" not in second
+        first, second, third = out["mental_models"]
+        assert first["content"] == page and second["content"] == page
+        assert "snippet" not in first and "snippet" not in second
+        assert third["snippet"] == page[:280].strip(), "past the budget, a snippet like the page-search API"
+        assert third["content_chars"] == len(page), "so the model can see what it would be reading"
+        assert "content" not in third
 
     @pytest.mark.asyncio
-    async def test_a_top_hit_too_large_to_send_whole_is_a_snippet_like_the_rest(self):
-        """Otherwise the one page the model did not choose could still blow the budget
-        — which is the failure this whole change is about."""
-        rows = [self._row("mm-huge", "word " * 5000, 0.9)]
+    async def test_the_best_hit_is_whole_even_alone_over_the_budget(self):
+        """A snippet of it would leave the search with no page at all, the #5787 failure."""
+        big = "word " * 5000
+        rows = [self._row("mm-huge", big, 0.9), self._row("mm-small", "tiny", 0.5)]
 
-        out = await self._search(rows, top_result_max_tokens=100)
+        out = await self._search(rows, full_pages_max_tokens=100)
 
-        (only,) = out["mental_models"]
-        assert "content" not in only
-        assert only["snippet"] and only["content_chars"] == len("word " * 5000)
+        top, small = out["mental_models"]
+        assert top["content"] == big
+        assert "content" not in small, "the budget is spent, so the rest are snippets"
+
+    @pytest.mark.asyncio
+    async def test_a_page_that_does_not_fit_does_not_stop_a_smaller_one_after_it(self):
+        rows = [
+            self._row("mm-a", "word " * 100, 0.9),
+            self._row("mm-big", "word " * 1000, 0.8),
+            self._row("mm-c", "small page", 0.7),
+        ]
+
+        out = await self._search(rows, full_pages_max_tokens=200)
+
+        assert ["content" in m for m in out["mental_models"]] == [True, False, True]

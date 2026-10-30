@@ -9,9 +9,10 @@ import pytest
 from pydantic import BaseModel
 
 from hindsight_api.config import PROVIDER_DEFAULT_MODELS
-from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_REQUIRED, LLMToolChoice
+from hindsight_api.engine.llm_interface import LLMToolChoice
 from hindsight_api.engine.llm_wrapper import create_llm_provider, requires_api_key
 from hindsight_api.engine.providers import github_copilot_llm as provider_module
+from hindsight_api.engine.providers import tools_via_schema
 from hindsight_api.engine.providers.github_copilot_llm import GitHubCopilotLLM
 
 
@@ -233,17 +234,10 @@ async def test_plain_call_isolates_session_and_reports_usage(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_structured_call_uses_terminal_schema_tool(monkeypatch):
-    from copilot.session_events import AssistantMessageToolRequest
-
-    request = AssistantMessageToolRequest(
-        name="structured_response",
-        tool_call_id="structured-1",
-        arguments={"answer": "captured"},
-    )
+async def test_structured_call_asks_for_the_schema_in_the_prompt(monkeypatch):
+    """The SDK takes no response schema: it goes in the system prompt, and no tools are offered."""
     provider, client = _provider(
-        monkeypatch,
-        [_assistant_event("", [request]), _usage_event()],
+        monkeypatch, [_assistant_event('```json\n{"answer": "captured"}\n```'), _usage_event()]
     )
 
     result = (
@@ -255,112 +249,36 @@ async def test_structured_call_uses_terminal_schema_tool(monkeypatch):
     ).content
 
     assert result == _StructuredAnswer(answer="captured")
-    tool = client.create_kwargs["tools"][0]
-    assert tool.name == "structured_response"
-    assert tool.parameters == _StructuredAnswer.model_json_schema()
-    assert tool.is_terminal is True
-    assert tool.skip_permission is True
-    assert client.create_kwargs["available_tools"] == ["custom:structured_response"]
+    assert client.create_kwargs["tools"] == [] and client.create_kwargs["available_tools"] == []
+    assert '"answer"' in client.create_kwargs["system_message"]["content"]
 
 
 @pytest.mark.asyncio
-async def test_named_tool_choice_exposes_only_requested_tool(monkeypatch):
-    from copilot.session_events import AssistantMessageToolRequest
-
-    request = AssistantMessageToolRequest(
-        name="recall",
-        tool_call_id="recall-1",
-        arguments={"query": "project decisions"},
-    )
-    provider, client = _provider(
-        monkeypatch,
-        [_assistant_event("", [request]), _usage_event()],
-    )
+async def test_schema_format_reply_is_returned_as_the_dict(monkeypatch):
+    """A tool turn's schema (``tools_via_schema.schema_format``) is asked for in the prompt."""
     tools = [
         {
             "type": "function",
             "function": {
                 "name": "recall",
                 "description": "Recall memories",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"query": {"type": "string"}},
-                    "required": ["query"],
-                },
+                "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
             },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "done",
-                "description": "Finish",
-                "parameters": {"type": "object", "properties": {}},
-            },
-        },
+        }
     ]
+    held = tools_via_schema.response_schema(tools, LLMToolChoice.named("recall"))
+    provider, client = _provider(monkeypatch, [_assistant_event('{"query": "project decisions"}'), _usage_event()])
 
-    result = await provider.call_with_tools(
+    result = await provider.call(
         messages=[{"role": "user", "content": "Find project decisions."}],
-        tools=tools,
-        tool_choice=LLMToolChoice.named("recall"),
+        response_format=tools_via_schema.schema_format(held),
+        strict_schema=True,
+        skip_validation=True,
         max_retries=0,
     )
 
-    assert result.finish_reason == "tool_calls"
-    assert result.tool_calls[0].name == "recall"
-    assert result.tool_calls[0].arguments == {"query": "project decisions"}
-    assert [tool.name for tool in client.create_kwargs["tools"]] == ["recall"]
-    assert client.create_kwargs["available_tools"] == ["custom:recall"]
-    assert "MUST call the 'recall' tool" in client.create_kwargs["system_message"]["content"]
-
-
-@pytest.mark.asyncio
-async def test_named_tool_choice_retries_then_rejects_prose(monkeypatch):
-    provider, client = _provider(monkeypatch, [_assistant_event("I will answer directly."), _usage_event()])
-    tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "recall",
-                "description": "Recall memories",
-                "parameters": {"type": "object", "properties": {}},
-            },
-        }
-    ]
-
-    with pytest.raises(RuntimeError, match="did not call the required 'recall' tool"):
-        await provider.call_with_tools(
-            messages=[{"role": "user", "content": "Recall first."}],
-            tools=tools,
-            tool_choice=LLMToolChoice.named("recall"),
-            max_retries=1,
-            initial_backoff=0,
-        )
-
-    assert client.create_count == 2
-
-
-@pytest.mark.asyncio
-async def test_required_tool_choice_rejects_prose(monkeypatch):
-    provider, _client = _provider(monkeypatch, [_assistant_event("No tool needed."), _usage_event()])
-    tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "recall",
-                "description": "Recall memories",
-                "parameters": {"type": "object", "properties": {}},
-            },
-        }
-    ]
-
-    with pytest.raises(RuntimeError, match="did not call any tool"):
-        await provider.call_with_tools(
-            messages=[{"role": "user", "content": "Use a tool."}],
-            tools=tools,
-            tool_choice=LLM_TOOL_CHOICE_REQUIRED,
-            max_retries=0,
-        )
+    assert result.content == {"query": "project decisions"}
+    assert client.create_kwargs["tools"] == []
 
 
 @pytest.mark.asyncio
@@ -512,30 +430,6 @@ async def test_shared_runtime_stops_only_after_last_release(monkeypatch, tmp_pat
     runtime_a.stop.assert_awaited_once()
 
 
-def test_prompt_serializes_tool_history():
-    prompt = provider_module._build_prompt(
-        [
-            {"role": "system", "content": "Use memory tools."},
-            {"role": "user", "content": "What changed?"},
-            {
-                "role": "assistant",
-                "tool_calls": [
-                    {
-                        "id": "call-1",
-                        "type": "function",
-                        "function": {"name": "recall", "arguments": '{"query":"changes"}'},
-                    }
-                ],
-            },
-            {"role": "tool", "tool_call_id": "call-1", "content": '{"memories":["A"]}'},
-        ]
-    )
-
-    assert prompt.system_prompt == "Use memory tools."
-    assert '"tool_call_id": "call-1"' in prompt.user_prompt
-    assert '"name": "recall"' in prompt.user_prompt
-
-
 class JsonRpcError(RuntimeError):
     """Stand-in for the SDK error class, which is matched by name."""
 
@@ -553,23 +447,6 @@ async def test_configuration_error_is_terminal_and_spares_the_runtime(monkeypatc
 
     with pytest.raises(RuntimeError, match="rejected the request configuration"):
         await provider.call(messages=[{"role": "user", "content": "hi"}], max_retries=3, initial_backoff=0)
-
-    assert client.create_count == 1
-    assert provider._runtime.invalidations == []
-
-
-@pytest.mark.asyncio
-async def test_configuration_error_is_terminal_for_tool_calls(monkeypatch):
-    error = JsonRpcError("Model is not available.")
-    provider, client = _provider(monkeypatch, [], error=error)
-
-    with pytest.raises(RuntimeError, match="rejected the request configuration"):
-        await provider.call_with_tools(
-            messages=[{"role": "user", "content": "hi"}],
-            tools=[{"type": "function", "function": {"name": "noop", "parameters": {}}}],
-            max_retries=3,
-            initial_backoff=0,
-        )
 
     assert client.create_count == 1
     assert provider._runtime.invalidations == []

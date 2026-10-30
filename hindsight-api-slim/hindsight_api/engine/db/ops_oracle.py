@@ -1366,7 +1366,7 @@ class OracleOps(DataAccessOps):
         if claimed_ids:
             return await conn.fetch(
                 f"""
-                SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+                SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id, o.created_at
                 FROM {table} o
                 WHERE o.status = 'pending'
                   AND o.task_payload IS NOT NULL
@@ -1383,7 +1383,7 @@ class OracleOps(DataAccessOps):
             )
         return await conn.fetch(
             f"""
-            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id, o.created_at
             FROM {table} o
             WHERE o.status = 'pending'
               AND o.task_payload IS NOT NULL
@@ -1424,7 +1424,7 @@ class OracleOps(DataAccessOps):
         extra = " AND ".join(conditions)
         return await conn.fetch(
             f"""
-            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id, o.created_at
             FROM {table} o
             WHERE o.status = 'pending'
               AND o.task_payload IS NOT NULL
@@ -1466,7 +1466,7 @@ class OracleOps(DataAccessOps):
         extra_clause = (" AND " + " AND ".join(conditions)) if conditions else ""
         return await conn.fetch(
             f"""
-            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id, o.created_at
             FROM {table} o
             WHERE o.status = 'pending'
               AND o.task_payload IS NOT NULL
@@ -1484,7 +1484,7 @@ class OracleOps(DataAccessOps):
         """Claim rows of one operation type against that type's reserved pool."""
         return await conn.fetch(
             f"""
-            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id, o.created_at
             FROM {table} o
             WHERE o.status = 'pending'
               AND o.task_payload IS NOT NULL
@@ -1522,7 +1522,7 @@ class OracleOps(DataAccessOps):
         if claimed_ids:
             return await conn.fetch(
                 f"""
-                SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+                SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id, o.created_at
                 FROM {table} o
                 WHERE o.status = 'pending'
                   AND o.task_payload IS NOT NULL
@@ -1540,7 +1540,7 @@ class OracleOps(DataAccessOps):
             )
         return await conn.fetch(
             f"""
-            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id, o.created_at
             FROM {table} o
             WHERE o.status = 'pending'
               AND o.task_payload IS NOT NULL

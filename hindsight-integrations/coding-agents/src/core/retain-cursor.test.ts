@@ -5,6 +5,8 @@ import {
   PENDING_MAX_AGE_MS,
   PENDING_MAX_BYTES,
   advancePaths,
+  advanceSegments,
+  bankTurns,
   fingerprintTurns,
   memoryCursorStore,
   planRetain,
@@ -96,6 +98,21 @@ describe("planRetain", () => {
     expect(planRetain(all, cursorFor(all, 3), { ...SUPPORTED, bank: "other-repo" })).toEqual({
       mode: "replace",
     });
+  });
+
+  it("appends when the session comes back to a bank it already wrote to (#5812)", () => {
+    // The old bank holds the session's earlier stretch; replacing would clobber it, and the turns
+    // written to the other bank in between must not be sent here at all.
+    const all = turns(5);
+    const cursor = {
+      ...cursorFor(all, 3),
+      bank: "other-repo",
+      segments: [
+        { bank: BANK, from: 0 },
+        { bank: "other-repo", from: 2 },
+      ],
+    };
+    expect(planRetain(all, cursor, SUPPORTED)).toEqual({ mode: "append", fromTurn: 3 });
   });
 
   it("appends a continuation FILE whole instead of replacing the document with it", () => {
@@ -199,5 +216,22 @@ describe("memoryCursorStore", () => {
     store.write("b", { turns: 7, fingerprint: "g", bank: "b1" });
     expect(store.read("a")).toEqual({ turns: 2, fingerprint: "f", bank: "b1" });
     expect(store.read("b")).toEqual({ turns: 7, fingerprint: "g", bank: "b1" });
+  });
+});
+
+describe("advanceSegments / bankTurns", () => {
+  it("opens a stretch where the last write-back stopped, and gives each bank only its stretches", () => {
+    const all = turns(6);
+    const a = advanceSegments({ ...cursorFor(all, 2), bank: "a" }, "b");
+    expect(a).toEqual([
+      { bank: "a", from: 0 },
+      { bank: "b", from: 2 },
+    ]);
+    const back = advanceSegments({ ...cursorFor(all, 4), bank: "b", segments: a }, "a");
+    expect(bankTurns(all, back, "a")).toEqual([turn(0), turn(1), turn(4), turn(5)]);
+    expect(bankTurns(all, back, "b")).toEqual([turn(2), turn(3)]);
+    // No move, no segments: the whole transcript is the bank's.
+    expect(advanceSegments({ ...cursorFor(all, 2), bank: "a" }, "a")).toBeUndefined();
+    expect(bankTurns(all, undefined, "a")).toEqual(all);
   });
 });

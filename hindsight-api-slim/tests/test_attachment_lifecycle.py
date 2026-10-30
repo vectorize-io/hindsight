@@ -189,8 +189,8 @@ async def test_renaming_the_bank_moves_its_blobs_so_deleting_it_leaves_nothing(a
     sweep no longer looks at — the bank goes and its objects stay, still billed.
     """
     from hindsight_api.admin.cli import _run_rename_bank
-    from hindsight_api.engine.memory_engine import get_current_schema
     from hindsight_api.engine.retain.attachment_store import attachment_storage_key
+    from hindsight_api.schema_context import get_current_schema
 
     old_id = f"life-{uuid.uuid4().hex[:8]}"
     new_id = f"{old_id}-renamed"
@@ -213,8 +213,8 @@ async def test_renaming_the_bank_moves_its_blobs_so_deleting_it_leaves_nothing(a
 @pytest.mark.asyncio
 async def test_attachment_keys_are_scoped_to_the_tenant_and_the_document(memory):
     """Object stores share one bucket across tenant schemas; the key must say whose it is."""
-    from hindsight_api.engine.memory_engine import get_current_schema
     from hindsight_api.engine.retain.attachment_store import attachment_storage_key
+    from hindsight_api.schema_context import get_current_schema
 
     prefix = f"tenants/{get_current_schema()}/banks"
     assert attachment_storage_key("b", "d", "abc") == f"{prefix}/b/documents/d/attachments/sha256-abc"

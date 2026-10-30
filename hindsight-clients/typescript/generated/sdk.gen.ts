@@ -2032,7 +2032,7 @@ export const getAuditLog = <ThrowOnError extends boolean = false>(
 /**
  * List LLM request traces
  *
- * List traced LLM requests for a bank, ordered by most recent first. Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED).
+ * List traced LLM requests for a bank, ordered by most recent first. Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED). Requests older than HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS are deleted; `retention_days` in the response says how many days are kept (null = forever).
  */
 export const listLlmRequests = <ThrowOnError extends boolean = false>(
   options: Options<ListLlmRequestsData, ThrowOnError>
@@ -2045,7 +2045,7 @@ export const listLlmRequests = <ThrowOnError extends boolean = false>(
 /**
  * LLM request statistics
  *
- * Get LLM request counts grouped by time bucket and status for charting.
+ * Get LLM request counts grouped by time bucket and status for charting. Only requests within HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS are kept, so a period longer than `retention_days` (in the response; null = kept forever) only covers the last `retention_days`.
  */
 export const llmRequestStats = <ThrowOnError extends boolean = false>(
   options: Options<LlmRequestStatsData, ThrowOnError>

@@ -324,8 +324,10 @@ export async function npmViewVersion(
       child.on("close", (code, signal) => {
         if (code !== 0) return done("", `npm view exited ${code ?? signal}`);
         try {
-          const v = JSON.parse(out.trim()) as unknown;
-          // --json on one field is a quoted string; anything else is not a version to pin.
+          const parsed = JSON.parse(out.trim()) as unknown;
+          // --json on one field is a quoted string, or a one-element array on npm 12 (#6135);
+          // anything else is not a version to pin.
+          const v = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : parsed;
           if (typeof v !== "string")
             return done("", `unparsable npm output: ${out.trim().slice(0, 80)}`);
           // Whitelist: the value reaches a spawn argv, and isNewer("1.2.3 && calc", ...) is true.

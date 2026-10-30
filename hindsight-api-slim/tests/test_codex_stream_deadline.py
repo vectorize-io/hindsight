@@ -96,25 +96,6 @@ async def test_configured_timeout_bounds_a_runaway_stream():
         server.close()
 
 
-async def test_deadline_also_bounds_the_tool_call_path():
-    """``call_with_tools`` is a second request path — reflect runs through it."""
-    server, base_url = await _sse_server(chunks_per_second=4)
-    llm = _build_llm(base_url, timeout=2.0)
-    try:
-        started = time.monotonic()
-        with pytest.raises(CodexRunawayStreamError):
-            await llm.call_with_tools(
-                messages=[{"role": "user", "content": "hi"}],
-                tools=[],
-                max_retries=0,
-            )
-        elapsed = time.monotonic() - started
-        assert elapsed < 10.0, f"tool call ran {elapsed:.1f}s despite a 2s deadline"
-    finally:
-        await llm.cleanup()
-        server.close()
-
-
 async def test_runaway_is_retryable_transport_error():
     """The deadline must land in the existing retry path, not escape as a hard failure."""
     assert issubclass(CodexRunawayStreamError, aiohttp.ClientError)

@@ -545,6 +545,8 @@ class TestWorkerPoller:
         for task in my_claims:
             assert task.operation_id is not None
             assert task.task_dict is not None
+            # When it was queued: the operation runs it executes report their wait from it.
+            assert task.queued_at is not None and task.queued_at.tzinfo is not None
 
         # Verify tasks are marked as processing with worker_id
         rows = await pool.fetch(
@@ -554,6 +556,28 @@ class TestWorkerPoller:
         for row in rows:
             assert row["status"] == "processing"
             assert row["worker_id"] == "test-worker-1"
+
+        # Runs opened by the executor carry the task's id and queue time.
+        from hindsight_api import operation_runs
+
+        runs = []
+        operation_runs.set_sink(runs.append)
+
+        async def run_one(task_dict):
+            with operation_runs.timed_operation("retain", bank_id):
+                pass
+
+        poller._executor = run_one
+        try:
+            await poller.execute_task(my_claims[0])  # runs in the background
+            for _ in range(100):
+                if runs:
+                    break
+                await asyncio.sleep(0.05)
+        finally:
+            operation_runs.set_sink(None)
+        [run] = runs
+        assert run.task_id == my_claims[0].operation_id and run.queued_at == my_claims[0].queued_at
 
     @pytest.mark.asyncio
     async def test_claim_batch_cannot_see_rows_outside_this_files_schema(self, pool, clean_operations):
@@ -2422,6 +2446,54 @@ class TestTaskReleaseOnStop:
         )
         assert row["status"] == "processing", "another live worker's row must be left alone"
         assert row["worker_id"] == "other-worker"
+
+    @pytest.mark.asyncio
+    async def test_shutdown_release_visits_only_schemas_it_claimed_in(self, pool, backend, clean_operations):
+        """With many tenant schemas, shutdown must not walk them all.
+
+        One reclaim per schema across thousands of tenants outlasts a typical
+        termination grace period, so the process is killed before the release
+        (and the rest of the teardown) finishes. The worker can only own rows
+        where it claimed, so those schemas are the only ones it visits.
+        """
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        op_id = await self._insert_pending(pool, bank_id)
+
+        started = asyncio.Event()
+        block = asyncio.Event()
+
+        async def blocking_executor(task_dict):
+            started.set()
+            await block.wait()
+
+        poller = WorkerPoller(backend=backend, worker_id="release-worker", executor=blocking_executor)
+        task = await self._claim_ours(poller, op_id)
+        await poller.execute_task(task)
+        await asyncio.wait_for(started.wait(), timeout=5)
+
+        # From here on the deployment has thousands of tenants.
+        async def many_schemas():
+            return [None] + [f"tenant_{i}" for i in range(5000)]
+
+        poller._get_schemas = many_schemas
+        visited: list[str | None] = []
+        real_reclaim = poller._reclaim_own_processing_tasks
+
+        async def spy_reclaim(schema, **kwargs):
+            visited.append(schema)
+            return await real_reclaim(schema, **kwargs)
+
+        poller._reclaim_own_processing_tasks = spy_reclaim
+
+        await poller.shutdown_graceful(timeout=0.1)
+
+        assert visited == [task.schema], "shutdown must visit only the schemas this worker claimed in"
+        row = await pool.fetchrow("SELECT status, worker_id FROM async_operations WHERE operation_id = $1", op_id)
+        assert row["status"] == "pending", "the claimed row must still be handed back"
+        assert row["worker_id"] is None
 
     @pytest.mark.asyncio
     async def test_failed_terminal_write_is_retried_until_it_lands(self, pool, backend, clean_operations):
@@ -5721,7 +5793,7 @@ class TestTerminalOperationRetention:
     @pytest.mark.asyncio
     async def test_oracle_backend_resets_default_schema_on_pooled_connection(self):
         from hindsight_api.engine.db.oracle import OracleBackend
-        from hindsight_api.engine.memory_engine import _current_schema
+        from hindsight_api.schema_context import _current_schema
 
         backend = OracleBackend()
         backend._default_schema = "APP_USER"
@@ -5749,7 +5821,7 @@ class TestTerminalOperationRetention:
     @pytest.mark.asyncio
     async def test_oracle_backend_discovers_session_user_before_first_schema_switch(self):
         from hindsight_api.engine.db.oracle import OracleBackend
-        from hindsight_api.engine.memory_engine import _current_schema
+        from hindsight_api.schema_context import _current_schema
 
         backend = OracleBackend()
         cursor = MagicMock()

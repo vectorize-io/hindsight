@@ -1,6 +1,6 @@
 /**
  * Lightweight note normalization: split YAML frontmatter from the body and lift
- * a few well-known keys (tags, aliases, created/date) into Hindsight
+ * a few well-known keys (tags, aliases, created/date, updated/modified) into Hindsight
  * tags/metadata. Intentionally dependency-free and conservative — we do not try
  * to fully parse YAML, only the simple key/value and list forms Obsidian writes.
  */
@@ -12,6 +12,8 @@ export interface NormalizedNote {
   tags: string[];
   /** ISO 8601 timestamp lifted from `created`/`date`, if present. */
   timestamp?: string;
+  /** Last-edit time lifted from `updated`/`modified`, if present (kept in metadata too). */
+  updated?: string;
   /** String metadata (folder, plus any lifted scalars). */
   metadata: Record<string, string>;
 }
@@ -46,6 +48,7 @@ export function normalizeNote(raw: string, folder: string): NormalizedNote {
   const metadata: Record<string, string> = {};
   if (folder) metadata.folder = folder;
   let timestamp: string | undefined;
+  let updated: string | undefined;
   let body = raw;
 
   const match = raw.match(FRONTMATTER_RE);
@@ -79,11 +82,12 @@ export function normalizeNote(raw: string, folder: string): NormalizedNote {
       } else {
         const v = stripQuotes(value);
         if (v) metadata[key] = v;
+        if (v && (key === "updated" || key === "modified") && !updated) updated = v;
       }
     }
   }
 
   // Dedupe tags while preserving order.
   const uniqueTags = [...new Set(tags)];
-  return { body: body.trim(), tags: uniqueTags, timestamp, metadata };
+  return { body: body.trim(), tags: uniqueTags, timestamp, updated, metadata };
 }

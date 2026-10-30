@@ -14,6 +14,15 @@ cd "$PROJECT_ROOT" || exit 1
 # Do NOT rely on NODE_ENV for this — it's unreliable across hot-reload paths.
 export INCLUDE_CURRENT_VERSION=true
 
+# Light mode (default): pages compile only when first opened and there are no
+# source maps (plugins/dev-light) — about 1 GB instead of ~3.6 GB.
+# Pass --full to compile every page up front, as `docusaurus build` does.
+if [ "$1" = "--full" ]; then
+    shift
+else
+    export DOCS_LIGHT=true
+fi
+
 echo "Starting documentation server..."
 echo ""
 echo "Starting Docusaurus development server..."

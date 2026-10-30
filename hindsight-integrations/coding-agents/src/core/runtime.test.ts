@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -49,6 +50,26 @@ describe("RuntimeCore", () => {
     await runtime.onPrompt("runtime-shared-lifecycle", "second prompt");
     expect(client.reflect).toHaveBeenCalledTimes(1);
     expect(runtime.getInjection("runtime-shared-lifecycle")).toContain("shared reflect");
+  });
+
+  it("hands out a block once per turn: no other session's, and none on a prompt with no text", async () => {
+    // Every host now stores the block in the user message, so a stale or borrowed one would be
+    // stored twice — the fallback to the most recent block was only for v1's system.transform.
+    const client = {
+      listDocumentIds: vi.fn(async () => new Set(["git:existing"])),
+      listPages: vi.fn(async () => ({ items: [] })),
+      reflect: vi.fn(async () => "a memory"),
+    } as unknown as HindsightClient;
+    const runtime = new RuntimeCore(client, "bank-1", resolveConfig({}));
+
+    // Fresh ids: the once-per-session cache lives in the OS tempdir and outlives a test run.
+    const a = `session-a-${randomUUID()}`;
+    await runtime.onPrompt(a, "first prompt");
+    expect(runtime.getInjection(a)).toContain("a memory");
+    expect(runtime.getInjection(`session-b-${randomUUID()}`)).toBeUndefined();
+
+    await runtime.onPrompt(a, "   ");
+    expect(runtime.getInjection(a)).toBeUndefined();
   });
 
   it("the knowledge roster tracks the pages a SESSION sees, not the ones plugin load saw", async () => {

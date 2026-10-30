@@ -52,8 +52,12 @@ _JUDGE_CALL_ATTEMPTS = int(os.getenv("HINDSIGHT_TEST_JUDGE_CALL_ATTEMPTS", "3"))
 
 
 class JudgeVerdict(BaseModel):
-    meets_criteria: bool
+    # Reasoning before the verdict: field order is generation order. Verdict first, the judge
+    # decided and then argued — it failed a correct consolidation whose text said the old rule was
+    # "replaced by the above" as if the new rule were the one replaced. The system evals' judge
+    # had the same flaw (hindsight_system_evals/judge.py).
     reasoning: str
+    meets_criteria: bool
 
 
 _judge_instance = None
@@ -105,7 +109,8 @@ def build_judge_messages(response: str, criteria: str, context: str | None) -> l
                 "Judge ONLY the text inside <response></response>. A <context></context> block "
                 "is background on how that response was produced — it is never the thing being "
                 "judged, and must never be treated as part of the response. "
-                'Respond with JSON: {"meets_criteria": true/false, "reasoning": "brief explanation"}'
+                'Respond with JSON: {"reasoning": "brief explanation", "meets_criteria": true/false}, '
+                "reasoning first, then the verdict it leads to."
             ),
         },
         {

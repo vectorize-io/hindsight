@@ -21,7 +21,8 @@ import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
-from hindsight_api.api.http import BankTemplateConfig, _bank_template_config_from_overrides
+from hindsight_api.api.http import _bank_template_config_from_overrides
+from hindsight_api.engine.bank_templates import BankTemplateConfig
 
 STRATEGIES: list[dict[str, Any]] = [
     {

@@ -32,6 +32,7 @@ from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.engine.consolidation.consolidator import run_consolidation_job
 from hindsight_api.engine.llm_trace import LLMRequestEntry
 from hindsight_api.engine.llm_wrapper import LLMConfig
+from tests.llm_trace_drain import drain_traces
 
 _GEMINI_API_KEY = os.getenv("HINDSIGHT_GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 _RUN = os.getenv("HINDSIGHT_RUN_GEMINI_EVALS") == "1" and bool(_GEMINI_API_KEY)
@@ -127,23 +128,6 @@ async def _gemini_engine(memory_no_llm_verify: MemoryEngine) -> MemoryEngine:
     return memory_no_llm_verify
 
 
-async def _drain_traces(mem: MemoryEngine) -> None:
-    """Wait for the recorder's fire-and-forget trace writes to land.
-
-    record_llm_call schedules each INSERT as a detached asyncio task tracked by
-    the recorder's ``PendingWrites``. Drain them so the rows are queryable.
-    Loop a few times because consolidation's attach_memory_ids can spawn a
-    follow-up write after the first drain.
-    """
-    await mem.wait_for_background_tasks()
-    await mem._llm_recorder.flush()
-    writes = mem._llm_recorder._writes
-    for _ in range(10):
-        if not writes.in_flight():
-            break
-        await writes.drain_all(timeout=30)
-
-
 def _report(scope: str, rows: list[LLMRequestEntry]) -> float:
     """Print the cached/input token ratio for a scope and return it.
 
@@ -224,7 +208,7 @@ class TestGeminiCacheRatioPerOperation:
                 request_context=request_context,
                 document_id=f"doc-{i}",
             )
-        await _drain_traces(mem)
+        await drain_traces(mem)
 
         rows = await self._fetch(mem, bank_id, request_context, "retain_extract_facts")
         self._assert("retain_extract_facts", rows, min_calls=_CHUNKS, min_ratio=0.5)
@@ -254,7 +238,7 @@ class TestGeminiCacheRatioPerOperation:
             query="Who were the early pioneers of computing in these memories, and what is each one known for?",
             request_context=request_context,
         )
-        await _drain_traces(mem)
+        await drain_traces(mem)
 
         rows = await self._fetch(mem, bank_id, request_context, "reflect_tool_call")
         if not rows:
@@ -291,7 +275,7 @@ class TestGeminiCacheRatioPerOperation:
         await mem.wait_for_background_tasks()
 
         await run_consolidation_job(mem, bank_id, request_context)
-        await _drain_traces(mem)
+        await drain_traces(mem)
 
         rows = await self._fetch(mem, bank_id, request_context, "consolidation")
         if not rows:

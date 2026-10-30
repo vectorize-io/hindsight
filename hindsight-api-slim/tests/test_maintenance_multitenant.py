@@ -15,9 +15,10 @@ import pytest
 import pytest_asyncio
 
 from hindsight_api.engine.maintenance import MaintenanceLoop
-from hindsight_api.engine.memory_engine import MemoryEngine, _current_schema
+from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.extensions.builtin.tenant import DefaultTenantExtension
 from hindsight_api.extensions.tenant import Tenant
+from hindsight_api.schema_context import _current_schema
 
 N_TENANTS = 100
 _CLONED_TABLES = ("banks", "memory_units", "async_operations", "audit_log", "llm_requests")

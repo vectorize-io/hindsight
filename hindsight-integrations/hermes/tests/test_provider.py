@@ -520,6 +520,30 @@ def test_version_probe_sends_plugin_user_agent(monkeypatch):
     assert plugin._USER_AGENT != "hindsight-hermes/0.0.0"
 
 
+def test_version_probe_reads_a_bounded_body(monkeypatch):
+    """#5598: a misconfigured URL serving a huge page must not be read whole."""
+    import io
+    import urllib.request
+
+    body = io.BytesIO(b'{"version": "0.10.3"}' + b" " * 200_000)
+    reads = []
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, size=-1):
+            reads.append(size)
+            return body.read(size)
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout: _Resp())
+    plugin._fetch_hindsight_api_version("http://hs.test")
+    assert reads and all(0 < size <= 65536 for size in reads)
+
+
 class _VersionServer:
     """urlopen stand-in: maps a path to a JSON body, an HTTP status, or an exception."""
 
@@ -752,6 +776,49 @@ def test_retain_cron_opts_cron_runs_back_in(provider):
     cron.sync_turn("daily digest", "here is the news")
     cron.shutdown()
     assert len(fake.retains) == 1
+
+
+@pytest.mark.parametrize("agent_context", ["subagent", "kanban"])
+def test_subagent_and_kanban_runs_are_not_auto_retained(provider, agent_context):
+    """#5555: delegated children and kanban workers would fill the bank with task chatter."""
+    child, fake = provider({}, agent_context=agent_context)
+    child.sync_turn("work kanban task t_1", "done")
+    child.shutdown()
+    assert fake.retains == []
+
+
+def test_a_kanban_worker_is_recognised_from_the_env(provider, monkeypatch):
+    """#5555: Hermes starts kanban workers as "primary" CLI runs and marks them only in the env."""
+    monkeypatch.setenv("HERMES_KANBAN_TASK", "t_1")
+    worker, fake = provider({}, agent_context="primary")
+    worker.sync_turn("work kanban task t_1", "done")
+    worker.shutdown()
+    assert fake.retains == []
+
+
+def test_a_late_prefetch_for_a_previous_session_is_ignored(provider, monkeypatch):
+    """#5628: the stale call would start a recall under the new session's generation."""
+    instance, _ = provider({"prefetch_waits_for_retain": False})
+    calls = []
+    monkeypatch.setattr(instance, "_do_recall", lambda query: calls.append(query) or ("", 0))
+    instance.on_session_switch("session-2")
+    instance.queue_prefetch("old query", session_id="session-1")
+    instance.queue_prefetch("new query", session_id="session-2")
+    instance._prefetch_thread.join(5)
+    instance.shutdown()
+    assert calls == ["new query"]
+
+
+def test_plugin_version_reads_plugin_yaml_as_utf8(monkeypatch):
+    """#5704: on a cp936/cp932 Windows locale the default decoding broke plugin load."""
+    real_read_text = plugin.Path.read_text
+
+    def read_text(self, encoding=None, errors=None):
+        assert encoding == "utf-8"
+        return real_read_text(self, encoding=encoding, errors=errors)
+
+    monkeypatch.setattr(plugin.Path, "read_text", read_text)
+    assert plugin._plugin_version() != "0.0.0"
 
 
 def test_primary_runs_are_auto_retained(provider):

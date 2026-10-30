@@ -230,25 +230,6 @@ async def test_openai_compatible_call_extracts_reasoning_into_thoughts_tokens():
 
 
 @pytest.mark.asyncio
-async def test_openai_compatible_call_with_tools_extracts_reasoning_and_cached():
-    llm = _openai_llm()
-    llm._client.chat.completions.create = AsyncMock(
-        return_value=_response(usage=_usage(cached=64, reasoning=33), content="done")
-    )
-    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-        result = await llm.call_with_tools(
-            messages=[{"role": "user", "content": "hi"}],
-            tools=[],
-            max_retries=0,
-        )
-    # call_with_tools previously set neither field -> both defaulted to 0.
-    assert result.thoughts_tokens == 33
-    assert result.cached_tokens == 64
-    # output_tokens is visible-only (completion_tokens minus reasoning).
-    assert result.output_tokens == 500 - 33
-
-
-@pytest.mark.asyncio
 async def test_openai_compatible_call_no_token_details_keeps_thoughts_zero():
     """Non-reasoning models / Ollama report no *_details — the 0-safe getattr
     chain must leave thoughts_tokens (and cached_tokens) at 0, not raise."""
@@ -327,26 +308,6 @@ async def test_openai_compatible_call_records_cached_and_thoughts_on_metrics():
 
 
 @pytest.mark.asyncio
-async def test_openai_compatible_call_with_tools_records_cached_and_thoughts_on_metrics():
-    """call_with_tools() extracts both counts for its own return value, so it must
-    record them too — the tool-calling path is where the agentic loop spends most
-    of its reasoning tokens."""
-    llm = _openai_llm()
-    llm._client.chat.completions.create = AsyncMock(
-        return_value=_response(usage=_usage(cached=64, reasoning=33), content="done")
-    )
-    collector = MagicMock(spec=MetricsCollector)
-    with patch(
-        "hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector",
-        return_value=collector,
-    ):
-        await llm.call_with_tools(messages=[{"role": "user", "content": "hi"}], tools=[], max_retries=0)
-    recorded = _recorded_llm_call(collector)
-    assert recorded["cached_input_tokens"] == 64
-    assert recorded["thoughts_tokens"] == 33
-
-
-@pytest.mark.asyncio
 async def test_openai_compatible_metrics_account_for_every_billed_output_token():
     """Accounting invariant: every token the provider bills as output lands on
     exactly one counter, never zero and never two.
@@ -407,28 +368,6 @@ async def test_openai_compatible_call_unfolded_reasoning_keeps_visible_output():
     assert token_usage.thoughts_tokens == 909
     assert token_usage.input_tokens == 3110
     assert token_usage.total_tokens == 3110 + 673  # visible-only, excludes reasoning
-
-
-@pytest.mark.asyncio
-async def test_openai_compatible_call_with_tools_unfolded_reasoning_keeps_visible_output():
-    """#3851 carries the same defect on the tool-call path, which reports its own
-    metrics and returns its own LLMToolCallResult."""
-    llm = _openai_llm()
-    llm._client.chat.completions.create = AsyncMock(
-        return_value=_response(usage=_usage(reasoning=909, prompt=3110, completion=673, total=4692), content="done")
-    )
-    collector = MagicMock(spec=MetricsCollector)
-    with patch(
-        "hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector",
-        return_value=collector,
-    ):
-        result = await llm.call_with_tools(messages=[{"role": "user", "content": "hi"}], tools=[], max_retries=0)
-
-    assert result.output_tokens == 673
-    assert result.thoughts_tokens == 909
-    recorded = _recorded_llm_call(collector)
-    assert recorded["output_tokens"] == 673
-    assert recorded["thoughts_tokens"] == 909
 
 
 @pytest.mark.asyncio

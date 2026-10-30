@@ -53,6 +53,14 @@ class ChatRequest:
     def all_text(self) -> str:
         return "\n".join(_text_of(m.get("content")) for m in self.messages)
 
+    def has_result_of(self, tool: str) -> bool:
+        """Whether an earlier turn of this conversation called ``tool`` and got its result.
+
+        Hindsight replays a tool conversation as plain turns, a result as a user turn
+        opening "Result of `<tool>`:" (``providers/tools_via_schema.as_text_messages``).
+        """
+        return f"Result of `{tool}`:" in self.user_text
+
 
 def _text_of(content: Any) -> str:
     """The text of a message, whether it is a string or OpenAI content parts."""
@@ -486,9 +494,17 @@ class RerankStub:
     #: model was told besides the memory.
     states: list[str]
 
+    #: Pairs a dedup question ("Memory B is a repeat of Memory A") answers yes for, each
+    #: as (text in Memory A, text in Memory B). Every other pair is not a repeat.
+    repeats: set[tuple[str, str]]
+
     def __init__(self) -> None:
         self.verdicts = {}
         self.states = []
+        self.repeats = set()
+
+    def repeat(self, memory_a: str, memory_b: str) -> float:
+        return 0.9 if any(a in memory_a and b in memory_b for a, b in self.repeats) else 0.1
 
     def verdict(self, state: str, memory: str) -> float:
         scripted = next((score for text, score in self.verdicts.items() if text in memory), None)
@@ -583,6 +599,7 @@ class Stubs:
         self.rerank.pick_none = RerankStub.pick_none
         self.rerank.verdicts = {}
         self.rerank.states = []
+        self.rerank.repeats = set()
         self.triage.reset()
         self.rejected_requests.clear()
         self.webhooks.clear()

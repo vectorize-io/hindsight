@@ -36,6 +36,7 @@ from typing import Any
 
 from ....config import get_config
 from ...db.base import DatabaseConnection
+from ...db_utils import acquire_with_retry
 from ...search.tags import TagGroup, TagsMatch, build_tag_filter_clause
 from ..base import GRAPH_MAX_EDGES, EntityPrunePassResult, RelinkPassResult
 from .links import (
@@ -665,8 +666,6 @@ async def relink_pass(
             drained = False
             break
 
-        from ...memory_engine import acquire_with_retry
-
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
                 unit_ids = await ops.claim_graph_maintenance_batch(
@@ -790,8 +789,6 @@ async def _relink_batch(
         if counts.get((r["id"], "semantic"), 0) < MAX_SEMANTIC_LINKS_PER_UNIT and r["embedding"] is not None
     ]
     if semantic_needs:
-        from ...memory_engine import acquire_with_retry
-
         seed_ids = [r["id"] for r in semantic_needs]
         seed_embs = [r["embedding"] for r in semantic_needs]
         seed_ftypes = [r["fact_type"] for r in semantic_needs]
@@ -936,7 +933,6 @@ async def entity_prune_pass(
         deadline stopped the drain with rows still queued.
     """
     from ...db_utils import retry_with_backoff
-    from ...memory_engine import acquire_with_retry
 
     examined = 0
     orphans_pruned = 0

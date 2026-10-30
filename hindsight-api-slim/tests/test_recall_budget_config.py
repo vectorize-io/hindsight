@@ -21,23 +21,23 @@ from hindsight_api.config import (
     DEFAULT_RECALL_BUDGET_FIXED_HIGH,
     DEFAULT_RECALL_BUDGET_FIXED_LOW,
     DEFAULT_RECALL_BUDGET_FIXED_MID,
+    DEFAULT_RECALL_BUDGET_FUNCTION,
     DEFAULT_RECALL_BUDGET_MAX,
     DEFAULT_RECALL_BUDGET_MIN,
-    DEFAULT_RECALL_BUDGET_FUNCTION,
     ENV_RECALL_BUDGET_ADAPTIVE_LOW,
     ENV_RECALL_BUDGET_ADAPTIVE_MID,
     ENV_RECALL_BUDGET_FIXED_HIGH,
     ENV_RECALL_BUDGET_FIXED_LOW,
     ENV_RECALL_BUDGET_FIXED_MID,
+    ENV_RECALL_BUDGET_FUNCTION,
     ENV_RECALL_BUDGET_MAX,
     ENV_RECALL_BUDGET_MIN,
-    ENV_RECALL_BUDGET_FUNCTION,
     RECALL_BUDGET_FUNCTIONS,
     HindsightConfig,
 )
 from hindsight_api.config_resolver import _validate_recall_budget_updates
-from hindsight_api.engine.memory_engine import Budget, _resolve_thinking_budget
-
+from hindsight_api.engine.memory_engine import _resolve_thinking_budget
+from hindsight_api.engine.response_models import Budget
 
 _BUDGET_FIELD_NAMES = (
     "recall_budget_function",

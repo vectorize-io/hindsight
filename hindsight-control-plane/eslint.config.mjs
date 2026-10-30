@@ -1,37 +1,32 @@
 import js from "@eslint/js";
-import tseslint from "typescript-eslint";
-import reactPlugin from "eslint-plugin-react";
-import reactHooksPlugin from "eslint-plugin-react-hooks";
+import nextVitals from "eslint-config-next/core-web-vitals";
+import nextTs from "eslint-config-next/typescript";
 
 export default [
   js.configs.recommended,
-  ...tseslint.configs.recommended,
+  ...nextVitals,
+  ...nextTs,
   {
-    files: ["**/*.{ts,tsx}"],
-    plugins: {
-      react: reactPlugin,
-      "react-hooks": reactHooksPlugin,
-    },
-    languageOptions: {
-      parserOptions: {
-        ecmaFeatures: {
-          jsx: true,
-        },
-      },
-    },
     rules: {
       "@typescript-eslint/no-unused-vars": "warn",
       "@typescript-eslint/no-explicit-any": "warn",
-      "react/react-in-jsx-scope": "off",
       "no-case-declarations": "off",
-    },
-    settings: {
-      react: {
-        version: "detect",
-      },
+      // React Compiler rules from react-hooks v7. The app does not run the
+      // compiler, so these are advice for now: warn until the existing hits
+      // are refactored, then promote to error.
+      "react-hooks/set-state-in-effect": "warn",
+      "react-hooks/purity": "warn",
+      "react-hooks/immutability": "warn",
+      "react-hooks/preserve-manual-memoization": "warn",
+      "react-hooks/refs": "warn",
     },
   },
   {
-    ignores: [".next/", "node_modules/"],
+    // The published CLI launcher is plain CommonJS run by node.
+    files: ["bin/**/*.js"],
+    rules: { "@typescript-eslint/no-require-imports": "off" },
+  },
+  {
+    ignores: [".next*/", "out/", "build/", "standalone/", "coverage/", "next-env.d.ts"],
   },
 ];

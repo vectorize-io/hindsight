@@ -195,6 +195,55 @@ async def test_request_overrides_win_over_bank_reflect_default_options(engine, m
     assert captured["include_entities"] is True
 
 
+async def _capture_mental_models_search_budget(engine, monkeypatch, **reflect_kwargs) -> int:
+    """Run reflect and report the whole-page budget its search_mental_models tool would use."""
+    from contextlib import asynccontextmanager
+
+    from hindsight_api.engine.reflect.models import ReflectAgentResult
+
+    captured: dict = {}
+
+    async def fake_tool_search_mental_models(*args, **kwargs):
+        captured.update(kwargs)
+        return {"mental_models": []}
+
+    async def fake_run_reflect_agent(**kwargs):
+        await kwargs["search_mental_models_fn"]("q", 5)
+        return ReflectAgentResult(text="ok")
+
+    @asynccontextmanager
+    async def acquire():
+        yield SimpleNamespace(fetchval=AsyncMock(return_value=1))
+
+    engine._get_backend = AsyncMock(return_value=SimpleNamespace(acquire=acquire))
+    monkeypatch.setattr(
+        "hindsight_api.engine.retain.embedding_utils.generate_embeddings_batch", AsyncMock(return_value=[[0.1]])
+    )
+    monkeypatch.setattr("hindsight_api.engine.memory_engine.tool_search_mental_models", fake_tool_search_mental_models)
+    monkeypatch.setattr("hindsight_api.engine.memory_engine.run_reflect_agent", fake_run_reflect_agent)
+
+    await engine.reflect_async(bank_id="bank-1", query="test", request_context=RequestContext(), **reflect_kwargs)
+    return captured["full_pages_max_tokens"]
+
+
+@pytest.mark.asyncio
+async def test_mental_models_search_budget_resolves_request_then_bank_then_shipped(engine, monkeypatch):
+    """The whole-page budget was a constant nothing could change (#5787)."""
+    from hindsight_api.engine.reflect.tools import DEFAULT_MENTAL_MODELS_SEARCH_MAX_TOKENS
+
+    _with_bank_config(engine)
+    assert await _capture_mental_models_search_budget(engine, monkeypatch) == DEFAULT_MENTAL_MODELS_SEARCH_MAX_TOKENS
+
+    _with_bank_config(engine, reflect_default_options={"reflect_search_mental_models_max_tokens": 30000})
+    assert await _capture_mental_models_search_budget(engine, monkeypatch) == 30000
+    assert (
+        await _capture_mental_models_search_budget(
+            engine, monkeypatch, reflect_search_mental_models_max_tokens_override=2000
+        )
+        == 2000
+    )
+
+
 @pytest.mark.asyncio
 async def test_reflect_response_keeps_cached_and_thoughts_tokens(engine, monkeypatch):
     """The agent's cached/thinking token totals must reach the reflect response (#5487)."""

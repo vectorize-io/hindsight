@@ -8481,7 +8481,7 @@
           "LLM Traces"
         ],
         "summary": "List LLM request traces",
-        "description": "List traced LLM requests for a bank, ordered by most recent first. Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED).",
+        "description": "List traced LLM requests for a bank, ordered by most recent first. Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED). Requests older than HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS are deleted; `retention_days` in the response says how many days are kept (null = forever).",
         "operationId": "list_llm_requests",
         "parameters": [
           {
@@ -8768,7 +8768,7 @@
           "LLM Traces"
         ],
         "summary": "LLM request statistics",
-        "description": "Get LLM request counts grouped by time bucket and status for charting.",
+        "description": "Get LLM request counts grouped by time bucket and status for charting. Only requests within HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS are kept, so a period longer than `retention_days` (in the response; null = kept forever) only covers the last `retention_days`.",
         "operationId": "llm_request_stats",
         "parameters": [
           {
@@ -8828,11 +8828,33 @@
             "required": false,
             "schema": {
               "type": "string",
-              "description": "Time period: 1d, 7d, or 30d",
+              "description": "Time period: 1d (by hour), 7d, or 30d (by day)",
               "default": "7d",
               "title": "Period"
             },
-            "description": "Time period: 1d, 7d, or 30d"
+            "description": "Time period: 1d (by hour), 7d, or 30d (by day)"
+          },
+          {
+            "name": "split_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "model",
+                    "operation"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Also split each bucket by model or by operation (returned in `series`)",
+              "title": "Split By"
+            },
+            "description": "Also split each bucket by model or by operation (returned in `series`)"
           },
           {
             "name": "authorization",
@@ -10409,6 +10431,18 @@
             "title": "Store Document Text",
             "description": "Persist raw source text (documents.original_text / chunks.chunk_text). Set false to keep only derived facts."
           },
+          "default_timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Timezone",
+            "description": "IANA zone (e.g. 'Europe/Rome') a retain timestamp, or a time the LLM extracts, is read in when it carries no UTC offset."
+          },
           "enable_auto_consolidation": {
             "anyOf": [
               {
@@ -10480,6 +10514,30 @@
             ],
             "title": "Recall Prefer Observations",
             "description": "Default for recall prefer_observations when the request omits it"
+          },
+          "recall_decision_model_prune": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Decision Model Prune",
+            "description": "Default for recall prune when the request omits it (decision-model reranker only)"
+          },
+          "recall_decision_model_dedup": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Decision Model Dedup",
+            "description": "Default for recall dedup when the request omits it (decision-model reranker only)"
           },
           "recall_max_tokens": {
             "anyOf": [
@@ -14430,6 +14488,17 @@
             },
             "type": "array",
             "title": "Items"
+          },
+          "retention_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retention Days"
           }
         },
         "type": "object",
@@ -14442,6 +14511,25 @@
         ],
         "title": "LLMRequestListResponse",
         "description": "Paginated list of LLM request traces for a bank."
+      },
+      "LLMRequestSeriesSums": {
+        "properties": {
+          "calls": {
+            "type": "integer",
+            "title": "Calls"
+          },
+          "tokens": {
+            "type": "integer",
+            "title": "Tokens"
+          }
+        },
+        "type": "object",
+        "required": [
+          "calls",
+          "tokens"
+        ],
+        "title": "LLMRequestSeriesSums",
+        "description": "Calls and tokens (total + reasoning) of one model or operation within a time bucket."
       },
       "LLMRequestStatsBucket": {
         "properties": {
@@ -14462,6 +14550,20 @@
           },
           "tokens": {
             "$ref": "#/components/schemas/LLMRequestTokenSums"
+          },
+          "series": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/LLMRequestSeriesSums"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Series"
           }
         },
         "type": "object",
@@ -14498,6 +14600,17 @@
             },
             "type": "array",
             "title": "Buckets"
+          },
+          "retention_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retention Days"
           }
         },
         "type": "object",
@@ -18042,6 +18155,17 @@
             "title": "Prefer Observations",
             "description": "When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact that an observation in the results was consolidated from, so the observation supersedes it and you don't get duplicate content. The freed slots are backfilled with the next results, keeping the result count at the requested budget. When omitted, uses the bank/global recall_prefer_observations config (false unless configured). No effect unless 'observation' and at least one raw type are both requested."
           },
+          "rerank": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RerankOptions"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the decision-model reranker does beyond ordering: drop results that do not help (`prune`) or that repeat a better-ranked one (`dedup`). Each field left unset uses the bank/global config. No effect unless a decision model is set up for recall."
+          },
           "budget": {
             "$ref": "#/components/schemas/Budget",
             "default": "mid"
@@ -18914,6 +19038,19 @@
             "title": "Reflect Search Observations Include Entities",
             "description": "Whether search_observations attaches resolved entity names to each observation. Entities can be more than half the serialized tool payload; turning them off keeps the same observations and ranking with a much smaller context. None means enabled."
           },
+          "reflect_search_mental_models_max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflect Search Mental Models Max Tokens",
+            "description": "Token budget for the mental models search_mental_models returns in full, packed in rank order. The best-ranked one is always in full; the others that do not fit come back as a snippet the model can read with read_mental_models. Raise it for banks with long pages or answers spread across pages; lower it to cut the reflect context. None means use the shipped default (16000)."
+          },
           "query": {
             "type": "string",
             "title": "Query"
@@ -19423,6 +19560,37 @@
         ],
         "title": "ReprocessDocumentResponse",
         "description": "Response model for reprocess document endpoint."
+      },
+      "RerankOptions": {
+        "properties": {
+          "prune": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prune",
+            "description": "Drop the results the decision model judges no help to the query, instead of only ranking them last. Costs no extra request. When omitted, uses the bank/global recall_decision_model_prune config (false unless configured)."
+          },
+          "dedup": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dedup",
+            "description": "Drop a result that repeats a better-ranked one, so the same fact comes back once. Costs one more decision-model request after the ranking one. When omitted, uses the bank/global recall_decision_model_dedup config (false unless configured)."
+          }
+        },
+        "type": "object",
+        "title": "RerankOptions",
+        "description": "What the decision-model reranker does beyond ordering. Each field left unset (null) uses the\nbank/global config; neither has any effect unless a decision model is set up for recall."
       },
       "RetainRequest": {
         "properties": {

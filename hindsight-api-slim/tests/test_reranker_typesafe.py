@@ -362,7 +362,14 @@ class TestPageImpact:
         body = (await self._ask({"choice": "yes"})).request
         state = body["state"]
         assert "Who is on call?" in state and "Dana left the company." in state and "Dana is on call." in state
-        assert set(body["questions"]["impact"]["criteria"]) == {"yes", "no"}
+        criteria = set(body["questions"]["impact"]["criteria"])
+        assert {"yes", "no"} <= criteria and len(criteria) > 2
+
+    @pytest.mark.asyncio
+    async def test_a_hedged_answer_keeps_it(self):
+        """Every option but "no" keeps the memory, so a doubt split across them never drops it."""
+        assert (await self._ask({"choice": "maybe"})).verdict is True
+        assert (await self._ask({"choice": "no"})).verdict is False
 
     @pytest.mark.asyncio
     async def test_an_oversized_page_keeps_its_head(self):
@@ -384,7 +391,7 @@ class TestMinKeep:
 
 
 class TestFactory:
-    def test_provider_is_built_from_config(self):
+    def test_provider_is_built_from_config(self, caplog):
         config = _make_config(
             reranker_provider="typesafe",
             reranker_typesafe_api_key="k",
@@ -399,6 +406,8 @@ class TestFactory:
         assert encoder.provider_name == "typesafe"
         assert encoder.model == "jev-latest"
         assert encoder.prunes_candidates is True
+        # Deprecated in favour of the shared decision model; building it says so.
+        assert "HINDSIGHT_API_DECISION_MODEL_PROVIDER" in caplog.text
 
     def test_missing_api_key_names_its_env_var(self):
         config = _make_config(reranker_provider="typesafe")

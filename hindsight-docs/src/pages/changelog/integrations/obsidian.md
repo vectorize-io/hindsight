@@ -10,6 +10,18 @@ For the source code, see [`hindsight-integrations/obsidian`](https://github.com/
 
 ← [Back to main changelog](/changelog)
 
+## [0.4.0](https://github.com/vectorize-io/hindsight/tree/integrations/obsidian/v0.4.0)
+
+[Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/obsidian/v0.4.0)
+
+**Features**
+
+- Added an option to date extracted facts using a note's last-edited time.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/nicoloboschi.png?size=40" alt="@nicoloboschi" width="18" height="18" style={{borderRadius: "50%"}} />@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/a97284c86" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>a97284c86</a>
+
+**Bug Fixes**
+
+- Fixed sync getting stuck when notes had already been deleted.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/nicoloboschi.png?size=40" alt="@nicoloboschi" width="18" height="18" style={{borderRadius: "50%"}} />@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/a97284c86" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>a97284c86</a>
+
 ## [0.3.1](https://github.com/vectorize-io/hindsight/tree/integrations/obsidian/v0.3.1)
 
 [Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/obsidian/v0.3.1)

@@ -19,7 +19,8 @@ from alembic.script import ScriptDirectory
 
 from hindsight_api.alembic import _owned
 from hindsight_api.engine.memories import get_memories
-from hindsight_api.engine.memory_engine import MemoryEngine, fq_table
+from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.schema import fq_table
 from hindsight_api.engine.transfer.importer import FactLifecycle
 from tests.store_seed import store_write_facts
 

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from hindsight_api.engine import memory_engine
-from hindsight_api.engine.memory_engine import Budget
+from hindsight_api.engine.response_models import Budget
 from hindsight_api.engine.search.reranking import RerankResult
 from hindsight_api.engine.search.retrieval import MultiFactTypeRetrievalResult, ParallelRetrievalResult
 from hindsight_api.engine.search.types import RetrievalResult, ScoredResult
@@ -25,7 +25,7 @@ class _Reranker:
     async def ensure_initialized(self) -> None:
         return None
 
-    async def rerank(self, _query: str, candidates: list[Any], now=None) -> RerankResult:
+    async def rerank(self, _query: str, candidates: list[Any], now=None, **_options) -> RerankResult:
         return RerankResult(
             results=[
                 ScoredResult(

@@ -3,7 +3,7 @@ Regression test for the hard timeout on the LiteLLM provider.
 
 A completion that never returns — a connection held open with no token
 progress, or one straggler inside a concurrent ``asyncio.gather`` fan-out —
-must not block forever. ``call`` / ``call_with_tools`` wrap the request in
+must not block forever. ``call`` wraps the request in
 ``asyncio.wait_for`` so it is cancelled after ``timeout`` seconds and surfaced
 as a retryable ``TimeoutError`` instead of pinning a worker slot and a
 concurrency permit indefinitely.
@@ -54,24 +54,6 @@ async def test_call_cancels_hung_completion(monkeypatch):
     assert calls == 2
     # Bounded by ~2 * timeout + backoff — nowhere near hanging forever.
     assert elapsed < 2.0
-
-
-async def test_call_with_tools_cancels_hung_completion(monkeypatch):
-    provider = _make_provider(timeout=0.1)
-
-    async def _hang(**kwargs):
-        await asyncio.Event().wait()
-
-    monkeypatch.setattr(provider, "_acompletion", _hang)
-
-    with pytest.raises((TimeoutError, asyncio.TimeoutError)):
-        await provider.call_with_tools(
-            messages=[{"role": "user", "content": "hi"}],
-            tools=[],
-            max_retries=0,
-            initial_backoff=0.01,
-            max_backoff=0.01,
-        )
 
 
 async def test_unset_timeout_falls_back_to_default(monkeypatch):

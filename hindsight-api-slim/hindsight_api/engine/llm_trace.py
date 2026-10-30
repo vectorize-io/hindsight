@@ -44,6 +44,7 @@ from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel
 
+from ..schema_context import get_current_bank_id
 from ..tracing import get_span_recorder
 from .background_writes import PendingWrites
 from .db_utils import acquire_with_retry
@@ -64,6 +65,18 @@ def _llm_requests_persistable() -> bool:
     from .schema import _is_oracle
 
     return not _is_oracle()
+
+
+def llm_requests_locked_in_id_order(table: str, where: str) -> str:
+    """A ``target`` CTE that locks the ``llm_requests`` rows matching ``where``, by id.
+
+    Every statement that updates or deletes several of these rows takes their locks through
+    this. Left to the planner, a bank delete scans by ``(bank_id, started_at DESC)`` while the
+    memory-id patch scans one trace by ``started_at`` ascending, so the two lock the rows they
+    share in opposite orders and deadlock (#6191, #6006). Locking by id first gives every
+    writer the same order. Join the statement to ``target`` on ``id``.
+    """
+    return f"WITH target AS MATERIALIZED (SELECT id FROM {table} WHERE {where} ORDER BY id FOR UPDATE)"
 
 
 # ── bank/operation attribution (carried across the async call chain) ──────────
@@ -311,6 +324,34 @@ def current_call_metadata() -> dict[str, Any] | None:
     return _call_metadata_ctx.get()
 
 
+@dataclass(frozen=True)
+class SchemaToolTurn:
+    """The tool turn an in-flight ``call`` makes through a response schema.
+
+    ``LLMProvider.call_with_tools`` makes a turn as an ordinary ``call``, so the model-call
+    record built inside it sees only the JSON reply. Bound for that call, this lets the
+    record carry the turn's tool calls, as it did when providers made them natively.
+    """
+
+    tools: list[dict[str, Any]]
+    tool_choice: Any
+
+
+_schema_tool_turn_ctx: ContextVar[SchemaToolTurn | None] = ContextVar("hindsight_schema_tool_turn_ctx", default=None)
+
+
+def set_schema_tool_turn(turn: SchemaToolTurn | None) -> Token:
+    return _schema_tool_turn_ctx.set(turn)
+
+
+def reset_schema_tool_turn(token: Token) -> None:
+    _schema_tool_turn_ctx.reset(token)
+
+
+def current_schema_tool_turn() -> SchemaToolTurn | None:
+    return _schema_tool_turn_ctx.get()
+
+
 def current_trace_context() -> LLMTraceContext | None:
     """Return the active trace attribution, or None outside a traced context."""
     return _trace_ctx.get()
@@ -391,13 +432,6 @@ def record_source_memory_ids(ids: Iterable[str]) -> None:
     ctx = _trace_ctx.get()
     if ctx is not None:
         ctx.source_memory_ids.extend(str(i) for i in ids)
-
-
-def _current_bank_id() -> str | None:
-    # Lazy: memory_engine imports this module.
-    from .memory_engine import get_current_bank_id
-
-    return get_current_bank_id()
 
 
 # ── serialization helpers ─────────────────────────────────────────────────────
@@ -518,6 +552,10 @@ class LLMRequestListResponse(BaseModel):
     limit: int
     offset: int
     items: list[LLMRequestEntry]
+    # Days of LLM requests the server keeps before deleting them; None = kept
+    # forever. A list or stats window longer than this only covers the last
+    # retention_days, whatever period or start date was asked for.
+    retention_days: int | None = None
 
 
 class LLMRequestTokenSums(BaseModel):
@@ -533,6 +571,13 @@ class LLMRequestTokenSums(BaseModel):
     total: int
 
 
+class LLMRequestSeriesSums(BaseModel):
+    """Calls and tokens (total + reasoning) of one model or operation within a time bucket."""
+
+    calls: int
+    tokens: int
+
+
 class LLMRequestStatsBucket(BaseModel):
     """A single time bucket in LLM request stats."""
 
@@ -540,6 +585,8 @@ class LLMRequestStatsBucket(BaseModel):
     statuses: dict[str, int]
     total: int
     tokens: LLMRequestTokenSums
+    # Only with ``split_by``: per model or per operation, keyed by its name.
+    series: dict[str, LLMRequestSeriesSums] | None = None
 
 
 class LLMRequestStatsResponse(BaseModel):
@@ -550,6 +597,10 @@ class LLMRequestStatsResponse(BaseModel):
     trunc: str
     start: str
     buckets: list[LLMRequestStatsBucket]
+    # Days of LLM requests the server keeps before deleting them; None = kept
+    # forever. A list or stats window longer than this only covers the last
+    # retention_days, whatever period or start date was asked for.
+    retention_days: int | None = None
 
 
 # ── recorder / writer ─────────────────────────────────────────────────────────
@@ -579,6 +630,8 @@ _CALL_TYPE_SQL = {
 # the row from every kind, where the control plane counts it as an LLM call.
 _CALL_TYPE_SQL["llm"] = "NOT (" + " OR ".join(_CALL_TYPE_SQL.values()).replace("scope", "COALESCE(scope, '')") + ")"
 LLMCallType = Literal["llm", "embedding", "rerank", "decision"]
+# Column the stats can be split by, one chart line per value.
+LLMStatsSplit = Literal["model", "operation"]
 
 
 def genai_operation_name(scope: str | None) -> str:
@@ -772,7 +825,7 @@ class LLMTraceRecorder:
             ended_at=ended_at,
             # Outside any operation run (a call no operation binds one for) the bank still
             # comes from the bank-scoped engine call that is running.
-            bank_id=(ctx.bank_id if ctx else None) or _current_bank_id(),
+            bank_id=(ctx.bank_id if ctx else None) or get_current_bank_id(),
             operation=ctx.operation if ctx else None,
             # OTel-style hierarchy: all calls of one operation invocation share
             # the context's trace_id and point at its operation span; this call
@@ -986,7 +1039,8 @@ class LLMTraceRecorder:
             table = f"{schema}.llm_requests"
             async with acquire_with_retry(pool, max_retries=1) as conn:
                 await conn.execute(
-                    f"UPDATE {table} SET metadata = metadata || $3::jsonb WHERE bank_id = $1 AND trace_id = $2",
+                    f"{llm_requests_locked_in_id_order(table, 'bank_id = $1 AND trace_id = $2')} "
+                    f"UPDATE {table} t SET metadata = t.metadata || $3::jsonb FROM target WHERE t.id = target.id",
                     bank_id,
                     trace_id,
                     json.dumps(patch),

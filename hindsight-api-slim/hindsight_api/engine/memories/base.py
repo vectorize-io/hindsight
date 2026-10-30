@@ -3699,9 +3699,10 @@ class MemoriesExtension(Extension, ABC):
 
     async def unit_embeddings(self, *, conn, fq_table, bank_id: str, unit_ids: list[str]) -> list:
         """``(id, embedding, fact_type)`` rows, embedding as pgvector text, for the end-of-retain
-        semantic-link pass. Empty here, so the pass links nothing: that pass writes SQL links, and
-        a store that owns its memories derives its own (and sets
-        :attr:`derives_semantic_links_internally`, which skips the pass altogether)."""
+        semantic-link pass and recall's dedup. Empty here, so the pass links nothing: that pass
+        writes SQL links, and a store that owns its memories derives its own (and sets
+        :attr:`derives_semantic_links_internally`, which skips the pass altogether). Recall's
+        dedup then asks every pair among the kept candidates."""
         return []
 
     # ------------------------------------------------------------------ retain links and entity resolution

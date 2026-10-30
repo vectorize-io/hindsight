@@ -13,7 +13,7 @@ print_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 print_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-VALID_INTEGRATIONS=("ag2" "agent-framework" "agent-plugin" "agentcore" "agno" "aider" "ai-sdk" "autogen" "chat" "claude-agent-sdk" "claude-code" "cline" "cloudflare-oauth-proxy" "coding-agents" "codex" "composio" "continue" "copilot-cli" "crewai" "cursor" "cursor-cli" "devin-desktop" "dify" "eliza" "eve" "flowise" "gemini-spark" "github-copilot" "google-adk" "grok-bot" "haystack" "hermes" "langgraph" "litellm" "llamaindex" "meta-muse" "n8n" "nemoclaw" "obsidian" "omo" "openai-agents" "openclaw" "opencode" "openhands" "paperclip" "pipecat" "pydantic-ai" "roo-code" "smolagents" "strands" "superagent" "vapi" "zcode" "zed")
+VALID_INTEGRATIONS=("ag2" "agent-framework" "agent-plugin" "agentcore" "agno" "aider" "ai-sdk" "autogen" "chat" "claude-agent-sdk" "cloudflare-oauth-proxy" "coding-agents" "composio" "continue" "crewai" "cursor" "devin-desktop" "dify" "eliza" "eve" "flowise" "gemini-spark" "github-copilot" "google-adk" "grok-bot" "haystack" "hermes" "langgraph" "litellm" "llamaindex" "meta-muse" "n8n" "nemoclaw" "obsidian" "omo" "openai-agents" "openclaw" "openhands" "paperclip" "pipecat" "pydantic-ai" "roo-code" "smolagents" "strands" "superagent" "vapi" "zed")
 
 usage() {
     print_error "Usage: $0 <integration> <version>"
@@ -167,6 +167,8 @@ elif [ -f "$INTEGRATION_DIR/package.json" ]; then
     # was born with (coding-agents still said 0.0.5 at v0.3.2). `npm version` rewrites exactly
     # those two fields and nothing else; `--package-lock-only` was rejected because it re-resolves
     # dependencies, which would smuggle dependency bumps into a release commit.
+    # It also runs the package's own `version` lifecycle script, which obsidian relies on to bump
+    # manifest.json + versions.json (#5969) — so never add --ignore-scripts here.
     if [ -f "$INTEGRATION_DIR/package-lock.json" ]; then
         print_info "Syncing $INTEGRATION_DIR/package-lock.json"
         (cd "$INTEGRATION_DIR" && npm version "$VERSION" --no-git-tag-version --allow-same-version >/dev/null)
@@ -206,19 +208,7 @@ else
     exit 1
 fi
 
-# The Claude Code plugin ships via the marketplace manifest (no package
-# registry). `claude plugin marketplace add vectorize-io/hindsight` only ever
-# reads the root .claude-plugin/marketplace.json, so its "version" must be
-# bumped in lockstep with the plugin so the published catalog reflects the new
-# release (see #2386).
-if [ "$INTEGRATION" = "claude-code" ]; then
-    MARKETPLACE_FILE=".claude-plugin/marketplace.json"
-    print_info "Updating marketplace version in $MARKETPLACE_FILE"
-    sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$MARKETPLACE_FILE"
-    rm "$MARKETPLACE_FILE.bak"
-fi
-
-# Same for the Cursor Marketplace, which Grok Bot installs from: it reads the root
+# The Cursor Marketplace, which Grok Bot installs from, reads the root
 # .cursor-plugin/marketplace.json, so its "version" is what the published catalog card
 # shows and must move with the plugin manifest. The sed is file-wide, which is correct
 # while the catalog lists one plugin — test_marketplace_lists_this_plugin asserts the two
@@ -249,8 +239,8 @@ print_info "Regenerating docs skill..."
 # Commit version bump + changelog + regenerated skill together
 print_info "Committing changes..."
 git add "hindsight-integrations/$INTEGRATION/" "hindsight-docs/src/pages/changelog/integrations/$INTEGRATION.md" "skills/"
-# claude-code and grok-bot also bump a root marketplace manifest (no-op stage for the others)
-git add ".claude-plugin/marketplace.json" ".cursor-plugin/marketplace.json"
+# grok-bot also bumps a root marketplace manifest (no-op stage for the others)
+git add ".cursor-plugin/marketplace.json"
 git commit --no-verify -m "release($INTEGRATION): v$VERSION"
 
 # Create annotated tag

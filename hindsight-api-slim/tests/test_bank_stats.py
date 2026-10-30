@@ -15,6 +15,7 @@ import pytest_asyncio
 
 from hindsight_api import RequestContext
 from hindsight_api.api import create_app
+from hindsight_api.engine.memory_engine import get_current_schema
 
 
 @pytest_asyncio.fixture
@@ -69,7 +70,7 @@ async def test_bank_stats_exposes_memory_write_watermark(api_client, memory, tes
 
         mem_id = await _insert_memory(memory, test_bank_id, "A memory lands in the bank.")
         # The 60s TTL would otherwise serve the pre-insert (empty) payload.
-        await memory._bank_stats_cache.clear()
+        await memory._bank_stats_cache.invalidate(get_current_schema(), test_bank_id)
 
         response = await api_client.get(f"/v1/default/banks/{test_bank_id}/stats")
         assert response.status_code == 200
@@ -77,7 +78,7 @@ async def test_bank_stats_exposes_memory_write_watermark(api_client, memory, tes
             written_at = await conn.fetchval("SELECT updated_at FROM memory_units WHERE id = $1::uuid", mem_id)
         assert datetime.fromisoformat(response.json()["last_memory_write_at"]) == written_at
     finally:
-        await memory._bank_stats_cache.clear()
+        await memory._bank_stats_cache.invalidate(get_current_schema(), test_bank_id)
         async with memory._pool.acquire() as conn:
             await conn.execute("DELETE FROM memory_units WHERE bank_id = $1", test_bank_id)
 
@@ -366,7 +367,7 @@ async def test_get_bank_freshness_returns_only_consolidation_fields(memory, test
         assert freshness["pending_consolidation"] == 1
         assert freshness["failed_consolidation"] == 1
     finally:
-        await memory._bank_stats_cache.clear()
+        await memory._bank_stats_cache.invalidate(get_current_schema(), test_bank_id)
         async with memory._pool.acquire() as conn:
             await conn.execute("DELETE FROM memory_units WHERE bank_id = $1", test_bank_id)
 
@@ -395,7 +396,7 @@ async def test_reflect_uses_freshness_not_bank_stats(memory, test_bank_id):
 
         memory._compute_bank_stats = counting_compute  # type: ignore[method-assign]
         try:
-            await memory._bank_stats_cache.clear()
+            await memory._bank_stats_cache.invalidate(get_current_schema(), test_bank_id)
             try:
                 await memory.reflect(
                     test_bank_id,
@@ -411,7 +412,7 @@ async def test_reflect_uses_freshness_not_bank_stats(memory, test_bank_id):
         finally:
             memory._compute_bank_stats = original_compute  # type: ignore[method-assign]
     finally:
-        await memory._bank_stats_cache.clear()
+        await memory._bank_stats_cache.invalidate(get_current_schema(), test_bank_id)
         async with memory._pool.acquire() as conn:
             await conn.execute("DELETE FROM memory_units WHERE bank_id = $1", test_bank_id)
 
@@ -440,7 +441,7 @@ async def test_bank_stats_served_from_cache_on_repeat_call(api_client, memory, t
             return await original(bank_id)
 
         # Make sure no stale entry exists from prior test ordering.
-        await memory._bank_stats_cache.clear()
+        await memory._bank_stats_cache.invalidate(get_current_schema(), test_bank_id)
         memory._compute_bank_stats = counting_compute  # type: ignore[method-assign]
         try:
             first = await api_client.get(f"/v1/default/banks/{test_bank_id}/stats")
@@ -451,6 +452,6 @@ async def test_bank_stats_served_from_cache_on_repeat_call(api_client, memory, t
             assert call_count == 1
         finally:
             memory._compute_bank_stats = original  # type: ignore[method-assign]
-            await memory._bank_stats_cache.clear()
+            await memory._bank_stats_cache.invalidate(get_current_schema(), test_bank_id)
     finally:
         await api_client.delete(f"/v1/default/banks/{test_bank_id}")

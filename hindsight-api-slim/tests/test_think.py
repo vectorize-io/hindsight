@@ -2,10 +2,12 @@
 Test reflect (think) function.
 """
 
-import pytest
 from datetime import datetime, timezone
-from hindsight_api.engine.memory_engine import Budget
+
+import pytest
+
 from hindsight_api import RequestContext
+from hindsight_api.engine.response_models import Budget
 
 
 @pytest.mark.asyncio

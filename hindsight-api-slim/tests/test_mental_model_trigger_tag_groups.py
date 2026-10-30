@@ -1,4 +1,4 @@
-from hindsight_api.api.http import MentalModelTrigger
+from hindsight_api.engine.response_models import MentalModelTrigger
 from hindsight_api.engine.search.tags import TagGroupOr
 
 

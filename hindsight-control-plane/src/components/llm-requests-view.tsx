@@ -4,9 +4,15 @@ import { useState, useEffect, useCallback } from "react";
 import { useTranslations } from "next-intl";
 import { resolveDateRangePreset } from "@/lib/date-range-preset";
 import { useBank } from "@/lib/bank-context";
-import { client, LLMCallType, LLMRequestEntry, LLMRequestStatsBucket } from "@/lib/api";
+import {
+  client,
+  LLMCallType,
+  LLMRequestEntry,
+  LLMRequestStatsBucket,
+  LLMStatsSplit,
+} from "@/lib/api";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -26,6 +32,8 @@ import {
 } from "@/components/ui/select";
 import { ChevronLeft, ChevronRight, CheckCircle, RefreshCw, XCircle } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
+import { Switch } from "@/components/ui/switch";
+import { Segmented } from "@/components/form-layout";
 import { ToneChip, type ChipTone } from "@/components/ui/facet-chip";
 import { LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
@@ -137,7 +145,7 @@ function KindBreakdown({ rows, t }: { rows: LLMRequestEntry[]; t: TranslateFn })
 
 function getPeriodOptions(t: TranslateFn) {
   return [
-    { value: "1d", label: t("periodToday") },
+    { value: "1d", label: t("dateRangeLast24Hours") },
     { value: "7d", label: t("periodLast7Days") },
     { value: "30d", label: t("periodLast30Days") },
   ];
@@ -203,6 +211,17 @@ function formatDateTime(ts: string | null): string {
     second: "2-digit",
   });
 }
+
+const SERIES_COLORS = [
+  "var(--chart-1, #3b82f6)",
+  "var(--chart-2, #22c55e)",
+  "var(--chart-3, #f59e0b)",
+  "var(--chart-4, #a855f7)",
+  "var(--chart-5, #ef4444)",
+  "#06b6d4",
+  "#ec4899",
+  "#84cc16",
+];
 
 function formatChartLabel(ts: string, trunc: string): string {
   const date = new Date(ts);
@@ -637,7 +656,9 @@ function LLMRequestChart({ bankId }: { bankId: string }) {
   const t = useTranslations("llmRequestsView");
   const operationOptions = getOperationOptions(t);
   const periodOptions = getPeriodOptions(t);
-  const [period, setPeriod] = useState("7d");
+  // 24 hours by default: with the default 1-day retention it is the only period
+  // that is not mostly empty.
+  const [period, setPeriod] = useState("1d");
   const [chartOperation, setChartOperation] = useState<string | null>(null);
   const [chartCallType, setChartCallType] = useState<LLMCallType | null>(null);
   const callTypeOptions = getCallTypeOptions(t);
@@ -645,14 +666,18 @@ function LLMRequestChart({ bankId }: { bankId: string }) {
   const [trunc, setTrunc] = useState("day");
   const [loading, setLoading] = useState(false);
   const [metric, setMetric] = useState<"calls" | "tokens">("calls");
-  const [tokenMode, setTokenMode] = useState<"total" | "breakdown">("total");
   const [cumulative, setCumulative] = useState(false);
+  const [retentionDays, setRetentionDays] = useState<number | null>(null);
+  // One line overall, one per model / operation (split server-side), or — for
+  // tokens — one per token type.
+  const [split, setSplit] = useState<"none" | LLMStatsSplit | "tokenType">("none");
 
   const loadStats = useCallback(
     async (
       p: string = period,
       o: string | null = chartOperation,
-      c: LLMCallType | null = chartCallType
+      c: LLMCallType | null = chartCallType,
+      sp: "none" | LLMStatsSplit | "tokenType" = split
     ) => {
       setLoading(true);
       try {
@@ -660,16 +685,18 @@ function LLMRequestChart({ bankId }: { bankId: string }) {
           period: p,
           operation: o || undefined,
           call_type: c || undefined,
+          split_by: sp === "model" || sp === "operation" ? sp : undefined,
         });
         setBuckets(data.buckets || []);
         setTrunc(data.trunc || "day");
+        setRetentionDays(data.retention_days ?? null);
       } catch (error) {
         console.error("Error loading LLM request stats:", error);
       } finally {
         setLoading(false);
       }
     },
-    [bankId, period, chartOperation, chartCallType]
+    [bankId, period, chartOperation, chartCallType, split]
   );
 
   useEffect(() => {
@@ -699,6 +726,23 @@ function LLMRequestChart({ bankId }: { bankId: string }) {
     return { time: formatChartLabel(b.time, trunc), ...v };
   });
 
+  // Split lines: one series per model / operation, by name so each keeps its
+  // color across periods and metrics. Keys are prefixed so a name like "calls"
+  // can't collide with the fields above.
+  const seriesNames = [...new Set(buckets.flatMap((b) => Object.keys(b.series ?? {})))].sort();
+  const seriesRunning: Record<string, number> = {};
+  const splitData = buckets.map((b) => {
+    const point: Record<string, string | number> = { time: formatChartLabel(b.time, trunc) };
+    for (const name of seriesNames) {
+      const sums = b.series?.[name];
+      const v = sums ? (metric === "calls" ? sums.calls : sums.tokens) : 0;
+      seriesRunning[name] = (cumulative ? (seriesRunning[name] ?? 0) : 0) + v;
+      point[`s:${name}`] = seriesRunning[name];
+    }
+    return point;
+  });
+  const operationLabels = new Map(operationOptions.map((o) => [o.value, o.label]));
+
   const tooltipStyle = {
     backgroundColor: "var(--popover)",
     border: "1px solid var(--border)",
@@ -708,7 +752,35 @@ function LLMRequestChart({ bankId }: { bankId: string }) {
   };
 
   const renderChart = () => {
-    if (metric === "tokens" && tokenMode === "breakdown") {
+    if (split === "model" || split === "operation") {
+      return (
+        <LineChart data={splitData} margin={{ top: 5, right: 5, bottom: 0, left: 5 }}>
+          <XAxis dataKey="time" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
+          <YAxis
+            tick={{ fontSize: 10 }}
+            axisLine={false}
+            tickLine={false}
+            width={40}
+            allowDecimals={false}
+            tickFormatter={(v) => formatTokens(Number(v))}
+          />
+          <Tooltip contentStyle={tooltipStyle} />
+          <Legend wrapperStyle={{ fontSize: "10px" }} />
+          {seriesNames.map((name, i) => (
+            <Line
+              key={name}
+              type="monotone"
+              dataKey={`s:${name}`}
+              name={split === "operation" ? (operationLabels.get(name) ?? name) : name}
+              stroke={SERIES_COLORS[i % SERIES_COLORS.length]}
+              strokeWidth={2}
+              dot={false}
+            />
+          ))}
+        </LineChart>
+      );
+    }
+    if (metric === "tokens" && split === "tokenType") {
       // Unstacked lines, not the stacked areas this used to draw: cached is a
       // subset of input, so the stack height was never a meaningful total, and
       // adding reasoning to it would have compounded the double-count. The
@@ -787,123 +859,134 @@ function LLMRequestChart({ bankId }: { bankId: string }) {
     );
   };
 
-  const toggleBtn = (active: boolean): "default" | "outline" => (active ? "default" : "outline");
+  const periodTotal = buckets.reduce(
+    (sum, b) =>
+      sum + (metric === "calls" ? b.total : (b.tokens?.total ?? 0) + (b.tokens?.thoughts ?? 0)),
+    0
+  );
+  const periodLabel = periodOptions.find((o) => o.value === period)?.label ?? period;
+  const periodDays = parseInt(period);
+  const lineOptions = [
+    { value: "none" as const, label: t("splitNone") },
+    { value: "model" as const, label: t("splitModel") },
+    { value: "operation" as const, label: t("splitOperation") },
+    ...(metric === "tokens" ? [{ value: "tokenType" as const, label: t("splitTokenType") }] : []),
+  ];
+  const changeSplit = (sp: typeof split) => {
+    setSplit(sp);
+    // Only model / operation change what the server returns.
+    loadStats(period, chartOperation, chartCallType, sp);
+  };
 
   return (
     <Card>
-      <CardHeader className="pb-2 flex flex-row items-start justify-between space-y-0 gap-3">
-        <CardTitle className="text-sm font-semibold pt-1.5">
-          {metric === "calls" ? t("callVolume") : t("tokenVolume")}
-        </CardTitle>
-        <div className="flex gap-2 flex-wrap justify-end">
-          {/* Metric: calls vs tokens */}
-          <div className="flex gap-1">
-            <Button
-              variant={toggleBtn(metric === "calls")}
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() => setMetric("calls")}
-            >
-              {t("metricCalls")}
-            </Button>
-            <Button
-              variant={toggleBtn(metric === "tokens")}
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() => setMetric("tokens")}
-            >
-              {t("metricTokens")}
-            </Button>
-          </div>
-
-          {/* Token sub-mode: total vs breakdown */}
-          {metric === "tokens" && (
-            <div className="flex gap-1">
-              <Button
-                variant={toggleBtn(tokenMode === "total")}
-                size="sm"
-                className="h-8 text-xs"
-                onClick={() => setTokenMode("total")}
-              >
-                {t("tokenModeTotal")}
-              </Button>
-              <Button
-                variant={toggleBtn(tokenMode === "breakdown")}
-                size="sm"
-                className="h-8 text-xs"
-                onClick={() => setTokenMode("breakdown")}
-              >
-                {t("tokenModeBreakdown")}
-              </Button>
+      <CardHeader className="pb-2 space-y-4">
+        {/* Headline: the period's total, and the period picker */}
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-2xl font-semibold tabular-nums">
+              {loading ? "—" : periodTotal.toLocaleString()}
             </div>
-          )}
-
-          {/* Cumulative toggle */}
-          <Button
-            variant={toggleBtn(cumulative)}
-            size="sm"
-            className="h-8 text-xs"
-            onClick={() => setCumulative((c) => !c)}
-          >
-            {t("cumulative")}
-          </Button>
-
-          <Select
-            value={chartOperation || "all"}
-            onValueChange={(v) => {
-              const o = v === "all" ? null : v;
-              setChartOperation(o);
-              loadStats(period, o);
+            <div className="text-xs text-muted-foreground">
+              {metric === "calls" ? t("summaryCalls") : t("summaryTokens")} · {periodLabel}
+              {/* The server deletes older requests, so a longer period only covers the kept days. */}
+              {retentionDays !== null && (
+                <span
+                  className={
+                    periodDays > retentionDays ? "text-amber-600 dark:text-amber-400" : undefined
+                  }
+                >
+                  {" "}
+                  · {t("retentionNote", { days: retentionDays })}
+                </span>
+              )}
+            </div>
+          </div>
+          <Segmented
+            ariaLabel={t("periodLabel")}
+            value={period}
+            onChange={(p) => {
+              setPeriod(p);
+              loadStats(p);
             }}
-          >
-            <SelectTrigger className="w-[150px] h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent position="popper" className="max-h-[300px] overflow-y-auto">
-              {operationOptions.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            value={chartCallType || "all"}
-            onValueChange={(v) => {
-              const c = v === "all" ? null : (v as LLMCallType);
-              setChartCallType(c);
-              loadStats(period, chartOperation, c);
-            }}
-          >
-            <SelectTrigger className="w-[150px] h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent position="popper" className="max-h-[300px] overflow-y-auto">
-              {callTypeOptions.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {periodOptions.map((opt) => (
-            <Button
-              key={opt.value}
-              variant={toggleBtn(period === opt.value)}
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() => {
-                setPeriod(opt.value);
-                loadStats(opt.value, chartOperation);
+            options={periodOptions}
+          />
+        </div>
+
+        {/* What to plot, then which requests */}
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">{t("showLabel")}</span>
+            <Segmented
+              ariaLabel={t("showLabel")}
+              value={metric}
+              onChange={(m) => {
+                setMetric(m);
+                if (m === "calls" && split === "tokenType") changeSplit("none");
+              }}
+              options={[
+                { value: "calls", label: t("metricCalls") },
+                { value: "tokens", label: t("metricTokens") },
+              ]}
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">{t("linesLabel")}</span>
+            <Segmented
+              ariaLabel={t("linesLabel")}
+              value={split}
+              onChange={changeSplit}
+              options={lineOptions}
+            />
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <Switch checked={cumulative} onCheckedChange={setCumulative} />
+            <span className="text-muted-foreground">{t("runningTotal")}</span>
+          </label>
+          <div className="flex items-center gap-2 ml-auto">
+            <Select
+              value={chartOperation || "all"}
+              onValueChange={(v) => {
+                const o = v === "all" ? null : v;
+                setChartOperation(o);
+                loadStats(period, o);
               }}
             >
-              {opt.label}
-            </Button>
-          ))}
+              <SelectTrigger className="w-[150px] h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent position="popper" className="max-h-[300px] overflow-y-auto">
+                {operationOptions.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={chartCallType || "all"}
+              onValueChange={(v) => {
+                const c = v === "all" ? null : (v as LLMCallType);
+                setChartCallType(c);
+                loadStats(period, chartOperation, c);
+              }}
+            >
+              <SelectTrigger className="w-[150px] h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent position="popper" className="max-h-[300px] overflow-y-auto">
+                {callTypeOptions.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
-        <div className="h-[140px]">
+        <div className="h-[200px]">
           {loading ? (
             <div className="flex flex-col items-center justify-center gap-2 h-full text-muted-foreground text-sm">
               <Spinner size="md" />

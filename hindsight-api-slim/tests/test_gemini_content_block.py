@@ -57,23 +57,6 @@ async def test_call_content_block_fails_once(response):
 
 
 @pytest.mark.asyncio
-async def test_call_with_tools_content_block_fails_once():
-    provider = _make_gemini_provider()
-    generate = AsyncMock(return_value=_empty_response(finish_reason=genai_types.FinishReason.SAFETY))
-    provider._client.aio.models.generate_content = generate
-
-    with pytest.raises(ProviderContentPolicyError, match="SAFETY"):
-        await provider.call_with_tools(
-            messages=[{"role": "user", "content": "hi"}],
-            tools=[{"type": "function", "function": {"name": "f", "description": "d", "parameters": {}}}],
-            max_retries=3,
-            initial_backoff=0.0,
-        )
-
-    assert generate.call_count == 1
-
-
-@pytest.mark.asyncio
 async def test_call_empty_response_without_reason_still_retries():
     provider = _make_gemini_provider()
     generate = AsyncMock(return_value=_empty_response())

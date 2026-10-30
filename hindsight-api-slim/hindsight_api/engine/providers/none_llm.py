@@ -11,8 +11,8 @@ import logging
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Callable
 
-from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
-from ..response_models import LLMCallResult, LLMToolCallResult
+from ..llm_interface import LLMInterface, ProviderUnavailableError
+from ..response_models import LLMCallResult
 
 logger = logging.getLogger(__name__)
 
@@ -60,25 +60,30 @@ class NoneLLM(LLMInterface):
             "Set HINDSIGHT_API_LLM_PROVIDER to a real provider (e.g., openai, anthropic, gemini)."
         )
 
-    async def call_with_tools(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        max_completion_tokens: int | None = None,
-        temperature: float | None = None,
-        scope: str = "tools",
-        max_retries: int = 5,
-        initial_backoff: float = 1.0,
-        max_backoff: float = 30.0,
-        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
-        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> LLMToolCallResult:
-        """Raise LLMNotAvailableError — no LLM is configured."""
-        raise LLMNotAvailableError(
-            "LLM provider is set to 'none'. This operation requires an LLM. "
-            "Set HINDSIGHT_API_LLM_PROVIDER to a real provider (e.g., openai, anthropic, gemini)."
-        )
-
     async def cleanup(self) -> None:
         """No-op — nothing to clean up."""
         pass
+
+
+class UnavailableLLM(NoneLLM):
+    """Stand-in for a provider whose sign-in was missing when it was built.
+
+    Every call and verification raises the original error, so a failover chain
+    moves on to its next member and the error says which login to run. Unlike
+    ``NoneLLM`` it is not "no LLM": its provider name stays the real one, so
+    nothing treats it as chunk-only mode.
+    """
+
+    def __init__(self, error: ProviderUnavailableError, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._error = error
+
+    async def verify_connection(self) -> None:
+        raise self._error
+
+    def supports_vision(self) -> None:
+        # Unknown, not False: the real provider's answer is what matters once it is back.
+        return None
+
+    async def call(self, *args: Any, **kwargs: Any) -> LLMCallResult:
+        raise self._error

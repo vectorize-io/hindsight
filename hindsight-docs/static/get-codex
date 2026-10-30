@@ -62,9 +62,14 @@ print_banner() {
     echo -e "  ${BOLD}HINDSIGHT FOR CODEX CLI${NC}"
     echo -e "  ${DIM}Give your Codex agent persistent memory${NC}"
     echo ""
+    echo -e "  ${YELLOW}Retired:${NC} this installer is no longer maintained. Use the Coding Agents plugin instead:"
+    echo -e "    ${CYAN}npx @vectorize-io/hindsight-coding-agents install codex --import-conversations${NC}"
+    echo ""
 }
 
-GITHUB_RAW="https://raw.githubusercontent.com/vectorize-io/hindsight/main/hindsight-integrations/codex"
+# Retired: the Codex hooks were replaced by the Coding Agents plugin and their source removed
+# from main, so this installs (and uninstalls) the last version, pinned to the commit before removal.
+GITHUB_RAW="https://raw.githubusercontent.com/vectorize-io/hindsight/8674354f35adb1249c6d80cc1359aab8078858c4/hindsight-integrations/codex"
 INSTALL_DIR="${HOME}/.hindsight/codex"
 SCRIPTS_DIR="${INSTALL_DIR}/scripts"
 CODEX_DIR="${HOME}/.codex"

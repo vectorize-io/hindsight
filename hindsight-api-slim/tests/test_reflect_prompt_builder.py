@@ -141,7 +141,7 @@ You have access to THREE levels of knowledge. Use them in this order:
 ### 1. MENTAL MODELS (search_mental_models) - Try First
 - User-curated summaries about specific topics
 - HIGHEST quality - manually created and maintained
-- Search returns the best match in full and a SNIPPET of the others; call read_mental_models on any id whose snippet looks like it answers the question, and read it before answering from it
+- Search returns the best matches in full (`content`) and a SNIPPET of the others (`snippet`, only the page opening); call read_mental_models on any id whose snippet looks like it answers the question, and read it before answering from it
 - A FRESH mental model may fully answer the question — but only if it actually STATES the answer. One that shares the question's topic without stating the answer (e.g. it describes a process, or names the thing without its status) has not answered it: go to the next level
 - Check `is_stale` field - if stale, also verify with lower levels
 
@@ -173,7 +173,7 @@ You have access to TWO levels of knowledge. Use them in this order:
 ### 1. MENTAL MODELS (search_mental_models) - Try First
 - User-curated summaries about specific topics
 - HIGHEST quality - manually created and maintained
-- Search returns the best match in full and a SNIPPET of the others; call read_mental_models on any id whose snippet looks like it answers the question, and read it before answering from it
+- Search returns the best matches in full (`content`) and a SNIPPET of the others (`snippet`, only the page opening); call read_mental_models on any id whose snippet looks like it answers the question, and read it before answering from it
 - A FRESH mental model may fully answer the question — but only if it actually STATES the answer. One that shares the question's topic without stating the answer (e.g. it describes a process, or names the thing without its status) has not answered it: go to the next level
 - Check `is_stale` field - if stale, also verify with lower levels
 

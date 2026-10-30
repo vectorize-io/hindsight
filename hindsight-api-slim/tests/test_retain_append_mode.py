@@ -10,7 +10,8 @@ import httpx
 import pytest
 
 from hindsight_api.api import create_app
-from hindsight_api.engine.memory_engine import Budget, InvalidRetainRequestError, _is_non_retryable_task_error
+from hindsight_api.engine.memory_engine import InvalidRetainRequestError, _is_non_retryable_task_error
+from hindsight_api.engine.response_models import Budget
 
 logger = logging.getLogger(__name__)
 

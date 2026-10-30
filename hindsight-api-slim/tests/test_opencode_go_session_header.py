@@ -173,32 +173,6 @@ async def test_separate_operations_get_separate_session_ids():
 
 
 @pytest.mark.asyncio
-async def test_tool_calls_send_the_session_header():
-    llm = _llm()
-    response = SimpleNamespace(
-        choices=[
-            SimpleNamespace(
-                finish_reason="stop",
-                message=SimpleNamespace(content="done", tool_calls=None),
-            )
-        ],
-        usage=None,
-        error=None,
-    )
-    create = AsyncMock(return_value=response)
-    llm._client.chat.completions.create = create
-
-    with (
-        traced_operation("trace-tools"),
-        patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"),
-    ):
-        await llm.call_with_tools(messages=[{"role": "user", "content": "Hi"}], tools=[], max_retries=0)
-
-    (session_id,) = _sent_session_ids(create)
-    assert session_id, "call_with_tools must also send the session header"
-
-
-@pytest.mark.asyncio
 async def test_other_providers_do_not_send_the_header():
     """The header is opencode-go's own protocol, not a generic addition."""
     llm = _llm("openai")
@@ -343,27 +317,6 @@ async def test_openai_responses_sends_session_header_when_targeting_opencode():
     assert headers.get(OPENCODE_SESSION_HEADER), (
         "opencode-go's /v1/responses rejects requests without x-opencode-session"
     )
-
-
-@pytest.mark.asyncio
-async def test_openai_responses_call_with_tools_sends_session_header_when_targeting_opencode():
-    llm = OpenAIResponsesLLM(
-        provider="openai-responses",
-        api_key="test-key",
-        base_url="https://opencode.ai/zen/go/v1",
-        model="muse-spark-1.3-contributor",
-    )
-    create = AsyncMock(return_value=_responses_response())
-    llm._client.responses.create = create
-
-    with (
-        traced_operation("trace-muse-tools"),
-        patch("hindsight_api.engine.providers.openai_responses_llm.get_metrics_collector"),
-    ):
-        await llm.call_with_tools(messages=[{"role": "user", "content": "Hi"}], tools=[], max_retries=0)
-
-    headers = create.call_args.kwargs.get("extra_headers") or {}
-    assert headers.get(OPENCODE_SESSION_HEADER)
 
 
 @pytest.mark.asyncio

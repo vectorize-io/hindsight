@@ -2,11 +2,13 @@
 Tests for agent management API (profile, disposition).
 """
 
-import pytest
 import uuid
+
+import pytest
+
 from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.api import CreateBankRequest, DispositionTraits
-from hindsight_api.engine.memory_engine import Budget
+from hindsight_api.engine.response_models import Budget
 
 
 def unique_agent_id(prefix: str) -> str:

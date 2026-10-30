@@ -133,25 +133,18 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "langgraph": IntegrationMeta("hindsight-langgraph", "LangGraph"),
     "nemoclaw": IntegrationMeta("@vectorize-io/hindsight-nemoclaw", "NemoClaw"),
     "strands": IntegrationMeta("hindsight-strands", "Strands"),
-    "claude-code": IntegrationMeta("hindsight-memory", "Claude Code"),
     # Git-distributed plugin bundle (Agent Plugins standard), not a registry
     # package — its changelog links to the source tree (see _package_url).
     "agent-plugin": IntegrationMeta("hindsight-agent-plugin", "Agent Plugins"),
-    "zcode": IntegrationMeta("hindsight-zcode", "ZCode"),
     "claude-agent-sdk": IntegrationMeta("hindsight-claude-agent-sdk", "Claude Agent SDK"),
     "llamaindex": IntegrationMeta("hindsight-llamaindex", "LlamaIndex"),
-    "codex": IntegrationMeta("hindsight-codex", "Codex"),
     # npm-published under the @vectorize-io scope, unlike the PyPI integrations above.
     "coding-agents": IntegrationMeta("@vectorize-io/hindsight-coding-agents", "Coding Agents"),
     "github-copilot": IntegrationMeta("hindsight-copilot", "GitHub Copilot"),
-    "cline": IntegrationMeta("hindsight-cline", "Cline"),
-    "cursor-cli": IntegrationMeta("hindsight-cursor-cli", "Cursor CLI"),
-    "copilot-cli": IntegrationMeta("hindsight-copilot-cli", "GitHub Copilot CLI"),
     "cursor": IntegrationMeta("hindsight-cursor", "Cursor"),
     "autogen": IntegrationMeta("hindsight-autogen", "AutoGen"),
     "aider": IntegrationMeta("hindsight-aider", "Aider"),
     "paperclip": IntegrationMeta("@vectorize-io/hindsight-paperclip", "Paperclip"),
-    "opencode": IntegrationMeta("@vectorize-io/opencode-hindsight", "OpenCode"),
     "eve": IntegrationMeta("@vectorize-io/hindsight-eve", "Eve"),
     "cloudflare-oauth-proxy": IntegrationMeta("hindsight-cloudflare-oauth-proxy"),
     "openai-agents": IntegrationMeta("hindsight-openai-agents"),
@@ -1143,7 +1136,7 @@ def _get_package_name(integration: str) -> str:
 def _package_url(integration: str, package_name: str) -> str:
     # Git-distributed plugin bundles have no npm/pypi package — link to the
     # source tree instead of a registry page.
-    if integration in ("claude-code", "agent-plugin", "hermes", "grok-bot"):
+    if integration in ("agent-plugin", "hermes", "grok-bot"):
         return f"https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/{integration}"
     if package_name.startswith("@"):
         return f"https://www.npmjs.com/package/{package_name}"

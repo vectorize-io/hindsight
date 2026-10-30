@@ -18,14 +18,17 @@ from .rulebook import LLMStub
 def reflect_loop(llm: LLMStub, *, answer: str, query: str = "system test") -> None:
     """Climb every search turn, then answer with ``answer``.
 
-    Rules match in registration order, so `done` is registered first: the final
-    turn offers it *alongside* every search tool, and a rule that took the first
-    tool offered would search again, be offered the same choice again, and never
-    terminate.
+    Rules match in registration order, so `done` and `answer_ready` are registered
+    first: a free turn offers one of them *alongside* every search tool, and a rule
+    that took the first tool offered would search again, be offered the same choice
+    again, and never terminate.
     """
     # `done` carries the answer in its own argument — calling it bare ends the
     # loop with "the done tool returned no answer".
     llm.on_step("reflect", tool="done").returns_tool_call("done", answer=answer)
+    # A free turn whose answer the closing step writes offers answer_ready, not done: say
+    # "enough", and the closing turn (offering only done) takes the rule above.
+    llm.on_step("reflect", tool="answer_ready").returns_tool_call("answer_ready", answer_found=True)
     llm.on_step("reflect").calls_the_offered_tool(query=query)
     # The prose turn, matched by what it *lacks*. A bank with a reflect mission
     # replaces the default role on the answering prompt just as it does on the

@@ -29,12 +29,14 @@ describe("reflect search_observations options mapping", () => {
     const body = mockedReflect.mock.calls[0][0].body as Record<string, unknown>;
     expect(body.reflect_search_observations_max_tokens).toBeUndefined();
     expect(body.reflect_search_observations_include_entities).toBeUndefined();
+    expect(body.reflect_search_mental_models_max_tokens).toBeUndefined();
   });
 
-  test("both options reach the request body", async () => {
+  test("all options reach the request body", async () => {
     await client.reflect("bank-1", "what did we decide", {
       reflectSearchObservationsMaxTokens: 3000,
       reflectSearchObservationsIncludeEntities: false,
+      reflectSearchMentalModelsMaxTokens: 8000,
     });
 
     expect(mockedReflect).toHaveBeenCalledWith(
@@ -42,6 +44,7 @@ describe("reflect search_observations options mapping", () => {
         body: expect.objectContaining({
           reflect_search_observations_max_tokens: 3000,
           reflect_search_observations_include_entities: false,
+          reflect_search_mental_models_max_tokens: 8000,
         }),
       })
     );

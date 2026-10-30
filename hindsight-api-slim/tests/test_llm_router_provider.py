@@ -212,7 +212,7 @@ def _make_router_provider(config: dict[str, Any], mock_router: Any) -> LiteLLMRo
         provider.reasoning_effort = "low"
         provider.timeout = 300.0
         provider._default_headers = {}
-        provider.structured_output_forced_tool = False
+        provider.structured_output_in_prompt = False
         provider.config = config
         provider._litellm = fake_litellm
         provider._router = mock_router
@@ -343,32 +343,3 @@ class TestRouterCall:
         )
         kwargs = mock_router.acompletion.await_args.kwargs
         assert kwargs["max_completion_tokens"] == 64000
-
-    @pytest.mark.asyncio
-    async def test_call_with_tools(self, two_step_config):
-        response = MagicMock()
-        choice = MagicMock()
-        choice.message.content = None
-        tool_call = MagicMock()
-        tool_call.id = "call_1"
-        tool_call.function.name = "lookup"
-        tool_call.function.arguments = '{"q": "x"}'
-        choice.message.tool_calls = [tool_call]
-        choice.finish_reason = "tool_calls"
-        response.choices = [choice]
-        response.usage = _usage(5, 2)
-        response._hidden_params = {"model": "openai/gpt-4o-mini"}
-
-        mock_router = MagicMock()
-        mock_router.acompletion = AsyncMock(return_value=response)
-        provider = _make_router_provider(two_step_config, mock_router)
-
-        result = await provider.call_with_tools(
-            messages=[{"role": "user", "content": "use tool"}],
-            tools=[{"type": "function", "function": {"name": "lookup", "parameters": {}}}],
-            max_retries=0,
-        )
-        assert result.content is None
-        assert len(result.tool_calls) == 1
-        assert result.tool_calls[0].name == "lookup"
-        assert result.tool_calls[0].arguments == {"q": "x"}

@@ -353,14 +353,19 @@ def start_daemon(name: str) -> DaemonActionResult:
 
 
 def stop_daemon(name: str) -> DaemonActionResult:
-    """Stop the profile's daemon."""
+    """Stop the profile's daemon.
+
+    Always delegates to the manager, never gated on /health: a busy daemon fails
+    the health probe yet is still alive. The manager decides by port occupancy
+    and returns True when nothing is listening.
+    """
     name = normalize_profile(name)
-    if not daemon_client.is_daemon_running(name):
-        return DaemonActionResult(ok=True, running=False, url=None, message="Daemon was not running.")
     ok = daemon_client.stop_daemon(name)
     return DaemonActionResult(
         ok=ok,
-        running=daemon_client.is_daemon_running(name),
+        # Not is_daemon_running: a busy daemon that refused to stop fails /health
+        # too, and would read as stopped. A failed stop means it is still there.
+        running=not ok,
         url=None,
         message="Daemon stopped." if ok else "Failed to stop daemon.",
     )
@@ -369,9 +374,9 @@ def stop_daemon(name: str) -> DaemonActionResult:
 def restart_daemon(name: str) -> DaemonActionResult:
     """Restart the profile's daemon to pick up new config."""
     name = normalize_profile(name)
-    if daemon_client.is_daemon_running(name):
-        if not daemon_client.stop_daemon(name):
-            return DaemonActionResult(ok=False, running=True, url=None, message="Failed to stop daemon for restart.")
+    # Same as stop_daemon: no /health gate, or a busy daemon is never stopped.
+    if not daemon_client.stop_daemon(name):
+        return DaemonActionResult(ok=False, running=True, url=None, message="Failed to stop daemon for restart.")
     return start_daemon(name)
 
 
@@ -414,7 +419,6 @@ def write_env_file(name: str, content: str) -> EnvFileView:
 # --------------------------------------------------------------------------
 def get_profile_paths(name: str) -> ProfilePathsView:
     """Resolve the on-disk references and URLs for a profile."""
-    import os
     from pathlib import Path
 
     from .. import get_embed_manager
@@ -423,7 +427,7 @@ def get_profile_paths(name: str) -> ProfilePathsView:
     paths = ProfileManager().resolve_profile_paths(name)
 
     # Honor the same DB override the daemon uses, else the per-profile pg0.
-    database_url = os.getenv("HINDSIGHT_EMBED_API_DATABASE_URL") or get_embed_manager().get_database_url(name)
+    database_url = get_embed_manager().resolve_database_url(name)
     database_path: str | None = None
     if database_url.startswith("pg0://"):
         instance = database_url.removeprefix("pg0://")
@@ -498,7 +502,7 @@ def restart_ui(name: str) -> UiStatusView:
 
 
 def delete_profile(name: str) -> ProfileDeleteResult:
-    """Stop the profile's daemon (if running) and delete the profile.
+    """Stop the profile's daemon and UI, then delete the profile.
 
     The default profile cannot be deleted (it has no metadata entry and is the
     fallback) — ProfileManager raises, which we surface as a failure.
@@ -506,11 +510,15 @@ def delete_profile(name: str) -> ProfileDeleteResult:
     name = normalize_profile(name)
     if not name:
         return ProfileDeleteResult(ok=False, message="The default profile cannot be deleted.")
-    # Free the port / processes before removing the config it points at.
-    if daemon_client.is_daemon_running(name):
-        daemon_client.stop_daemon(name)
-    if daemon_client.is_ui_running(name):
-        daemon_client.stop_ui(name)
+    # Free the port / processes before removing the config it points at. If a
+    # stop fails, keep the profile: its config, logs and pid files are what the
+    # user needs to find and retry the process that is still running.
+    if not daemon_client.stop_daemon(name):
+        return ProfileDeleteResult(ok=False, message="Failed to stop the daemon; the profile was not deleted.")
+    if not daemon_client.stop_ui(name):
+        return ProfileDeleteResult(
+            ok=False, message="Failed to stop the control plane UI; the profile was not deleted."
+        )
     try:
         ProfileManager().delete_profile(name)
     except ValueError as exc:

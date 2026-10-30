@@ -70,7 +70,7 @@ To disable automatic migrations on API startup, set `HINDSIGHT_API_RUN_MIGRATION
 
 ### repair-bank
 
-Verify and repair a bank's per-`(bank, fact_type)` vector index coverage.
+Verify and repair a bank's derived state: its per-`(bank, fact_type)` vector index coverage, and observations whose source memories no longer exist.
 
 These partial indexes are normally created when a bank is first created (instant on an empty bank), and PostgreSQL maintains them incrementally as the bank grows. A bank that becomes **populated outside that create-time path** — via a logical restore, a cross-version upgrade, or a vector-extension switch — never gets them, so its bank-scoped recall silently falls back to a global index + post-filter. That fallback is both **slower** and can **under-return** results (the approximate nearest-neighbour search draws its candidates from every bank, then filters to yours afterward).
 
@@ -87,9 +87,9 @@ hindsight-admin repair-bank (--bank BANK_ID | --all) [OPTIONS]
 | `--bank`, `-b` | Bank id to repair. Mutually exclusive with `--all`. | — |
 | `--all` | Repair every bank in the base schema and all discovered tenant schemas. | — |
 | `--schema`, `-s` | Limit to a single schema. | All schemas |
-| `--dry-run` | Report what would be repaired without creating or dropping any index. | Off |
+| `--dry-run` | Report what would be repaired without creating, dropping or deleting anything. | Off |
 
-Exactly one of `--bank` or `--all` is required. No-op for backends that use a single global vector index (AlloyDB ScaNN, Oracle). It is idempotent — safe to re-run and safe to run while the API is serving traffic.
+Exactly one of `--bank` or `--all` is required. Index repair is skipped for backends that use a single global vector index (AlloyDB ScaNN); the observation cleanup below still runs. PostgreSQL only. It is idempotent — safe to re-run and safe to run while the API is serving traffic.
 
 It is also a no-op for a bank whose memories a custom store owns, this time decided
 per bank rather than per deployment: such a bank has no rows in `memory_units`, so it
@@ -113,6 +113,10 @@ Drop the last condition to list every per-bank index in the schema instead.
 Those indexes are empty, and Postgres plans against every index on a relation, so on
 a deployment with many store-owned banks they are charged to every other query that
 touches `memory_units`. Drop them with `DROP INDEX CONCURRENTLY` when you are ready.
+
+**Orphan observations.** An observation summarises the facts it was built from, so when one of those facts is deleted the observation is deleted too, and its other source facts are queued for consolidation again. Older releases missed this on some delete paths, leaving observations behind that cite facts that no longer exist. They keep showing up in recall and reflect, and `export-bank` skips them. `repair-bank` removes them using the same rule a normal delete uses. The surviving facts are consolidated again on the bank's next consolidation run. Use `--dry-run` to only count them.
+
+**Observation keyword index (VectorChord only).** With `HINDSIGHT_API_TEXT_SEARCH_EXTENSION=vchord`, older releases did not update an observation's keyword index when consolidation rewrote or merged its text, so keyword recall kept matching the old wording. `repair-bank` rebuilds the keyword index of every observation in the bank from its current text. A stale one cannot be told apart from an up-to-date one, so all of them are rebuilt. Other text-search backends have nothing to rebuild here. Use `--dry-run` to only count them.
 
 **Exit code.** `0` when every schema was reconciled. `1` when an index failed to build
 (the names are printed, and a re-run retries them), or when a schema was not fully

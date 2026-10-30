@@ -312,7 +312,7 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
         sessionId: ev.session_id as string | undefined,
         transcriptPath: ev.transcript_path as string | undefined,
         cwd: ev.cwd as string | undefined,
-        // The final reply: the transcript may not hold it yet when Stop runs (see syncSession).
+        // The transcript may not hold the final reply yet when Stop fires after a tool call (#5790).
         lastAssistantMessage: ev.last_assistant_message as string | undefined,
       }),
       // Prose passes through; a content-block list becomes its text.

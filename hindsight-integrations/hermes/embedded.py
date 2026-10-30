@@ -157,9 +157,13 @@ def _managed_uvx_dir(path: str) -> str | None:
     PATH (#5192). Only the helper's env gets it; the parent's PATH is left alone."""
     if shutil.which("uvx", path=path):
         return None
-    for candidate in sorted((Path.home() / ".hermes" / "tools").glob("uv-*"), reverse=True):
-        if shutil.which("uvx", path=str(candidate)):
-            return str(candidate)
+    # The Docker image keeps its uv under the install root instead (/opt/hermes/tools, next to the
+    # /opt/hermes/.venv this interpreter runs from) while HOME is /opt/data (#5580). Hermes' own
+    # pm.install.uv_launcher would name it directly, but the plugin must not import pm.
+    for tools in (Path.home() / ".hermes" / "tools", Path(sys.prefix).parent / "tools"):
+        for candidate in sorted(tools.glob("uv-*"), reverse=True):
+            if shutil.which("uvx", path=str(candidate)):
+                return str(candidate)
     return None
 
 
@@ -370,7 +374,10 @@ def _build_embedded_profile_env(config: dict[str, Any], *, llm_api_key: str | No
         llm_api_key = _embedded_llm_api_key(config)
     env_values = {
         "HINDSIGHT_API_LLM_PROVIDER": str(_daemon_llm_provider(config.get("llm_provider", ""))),
-        "HINDSIGHT_API_LLM_API_KEY": str(llm_api_key or ""),
+        # A keyless local OpenAI-style server still runs as "openai", which the server refuses without a key (#5603).
+        "HINDSIGHT_API_LLM_API_KEY": str(
+            llm_api_key or ("not-needed" if config.get("llm_provider") == "openai_compatible" else "")
+        ),
         "HINDSIGHT_API_LLM_MODEL": str(config.get("llm_model", "")),
         "HINDSIGHT_API_LOG_LEVEL": "info",
     }

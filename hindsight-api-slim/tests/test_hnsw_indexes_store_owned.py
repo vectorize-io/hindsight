@@ -29,7 +29,9 @@ Runs via: uv run pytest tests/test_hnsw_indexes_store_owned.py -v
 """
 
 import asyncio
+import logging
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
@@ -501,7 +503,16 @@ def test_both_reports_print_before_the_single_non_zero_exit(monkeypatch, pg0_db_
     # about. catch_exceptions=False for the same reason.
     monkeypatch.setenv("HINDSIGHT_API_DATABASE_URL", pg0_db_url)
 
-    result = CliRunner().invoke(cli.app, ["repair-bank", "--all"], catch_exceptions=False)
+    # Logging off for the call: a record logged inside CliRunner.invoke reaches pytest's live-log
+    # handler (log_cli = true), which swaps sys.stderr back to its own capture to print it. That
+    # drops CliRunner's stream, and collecting it closes the buffer the result is read from —
+    # "I/O operation on closed file". The config logs a warning whenever the optional local-ml
+    # extra is not installed, so without this the test fails on any install that lacks it.
+    logging.disable(logging.CRITICAL)
+    try:
+        result = CliRunner().invoke(cli.app, ["repair-bank", "--all"], catch_exceptions=False)
+    finally:
+        logging.disable(logging.NOTSET)
 
     assert result.exit_code == 1, result.output
     assert "idx_mu_emb_worl_dead" in result.output, f"failed index names were swallowed:\n{result.output}"
@@ -592,6 +603,15 @@ async def test_a_dead_connection_stops_the_sweep_instead_of_repeating_itself(mon
     monkeypatch.setattr(cli, "list_bank_ids", _dies_on_the_second_schema)
     monkeypatch.setattr(cli, "reconcile_bank_vector_indexes", _ok_reconcile)
     monkeypatch.setattr(cli, "drop_orphaned_bank_indexes", lambda conn, schema, dry_run=False: _returns([]))
+    # s1..s4 are not real schemas, so the orphan observation sweep has no tables to read.
+    monkeypatch.setattr(
+        cli,
+        "sql_memories",
+        lambda: SimpleNamespace(
+            admin_sweep_orphan_observations=lambda **kwargs: _returns(0),
+            admin_rebuild_observation_search_vectors=lambda **kwargs: _returns(0),
+        ),
+    )
 
     sweep = await cli._run_repair_bank(pg0_db_url, base_schema=_TEST_SCHEMA, schema=None, bank_id=None, dry_run=False)
 

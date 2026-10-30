@@ -5,7 +5,7 @@
  * opencode runs the SAME v2 surface as the Claude Code / Codex hook harnesses, just delivered
  * through opencode's plugin hooks instead of a fresh process per event:
  *   READ   — each user turn, recall on the prompt and PUSH a `<hindsight_memories>` block (with the
- *            attribution + user-feedback framing) into the system prompt.
+ *            attribution + user-feedback framing) into the user message.
  *   SEED   — on load, cold-check the bank and (if cold) start a background git-log seed + codebase
  *            survey. (The knowledge-page preamble is built per session, on the first prompt.)
  *   TOOLS  — register the hindsight_* knowledge/recall suite natively (no MCP server needed).

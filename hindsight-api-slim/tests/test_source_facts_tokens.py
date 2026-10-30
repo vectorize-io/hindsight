@@ -11,7 +11,8 @@ fewer source facts when the budget is tight vs. unlimited.
 import pytest
 
 from hindsight_api.config import _get_raw_config
-from hindsight_api.engine.memory_engine import Budget, count_tokens
+from hindsight_api.engine.memory_engine import count_tokens
+from hindsight_api.engine.response_models import Budget
 
 
 @pytest.fixture(autouse=True)

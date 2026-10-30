@@ -4,33 +4,9 @@ import type { ToolSpec } from "../core/knowledge-tools";
 import { createPiExtension, createPiHooks, toPiTool } from "./pi-extension";
 
 describe("pi extension adapter", () => {
-  it.each(["before", "after"])("preserves sections added %s memory injection", async (order) => {
-    const core = {
-      onPrompt: vi.fn(async () => {}),
-      getInjection: vi.fn(() => "<hindsight_memories>remember this</hindsight_memories>"),
-      onTranscript: vi.fn(async () => {}),
-      flush: vi.fn(async () => {}),
-    };
-    const hooks = createPiHooks(core, "pi");
-    const sections: Record<string, string> = { base: "You are pi." };
-    if (order === "before") sections.other = "SECTION-MARKER";
-    const result = await hooks.beforeAgentStart(
-      {
-        prompt: "hi",
-        systemPrompt: Object.values(sections).join("\n\n"),
-        systemPromptOptions: { sections },
-      },
-      "session-1"
-    );
-    if (order === "after") sections.other = "SECTION-MARKER";
-    const prompt = result?.systemPrompt ?? Object.values(sections).join("\n\n");
-    expect(prompt).toContain("You are pi.");
-    expect(prompt).toContain("SECTION-MARKER");
-    expect(prompt).toContain("<hindsight_memories>remember this</hindsight_memories>");
-    expect(result).toBeUndefined();
-  });
-
-  it("recalls on each prompt and appends the injection to the system prompt", async () => {
+  it("recalls on each prompt and adds the injection as a hidden message, not to the system prompt", async () => {
+    // The block changes between turns, so a system prompt carrying it broke the provider's prefix
+    // cache (#5914); returning a systemPrompt also dropped later extensions' sections (#4841).
     const onPrompt = vi.fn(async () => {});
     const core = {
       onPrompt,
@@ -38,17 +14,26 @@ describe("pi extension adapter", () => {
       onTranscript: vi.fn(async () => {}),
     };
     const hooks = createPiHooks(core as never, "pi");
+    const sections: Record<string, string> = { base: "You are pi." };
+    const event = {
+      prompt: "  plan the change  ",
+      systemPrompt: "You are pi.",
+      systemPromptOptions: { sections },
+    };
 
-    const result = await hooks.beforeAgentStart(
-      { prompt: "  plan the change  ", systemPrompt: "You are pi." },
-      "session-1"
-    );
+    const result = await hooks.beforeAgentStart(event, "session-1");
 
     expect(onPrompt).toHaveBeenCalledOnce();
     expect(onPrompt).toHaveBeenCalledWith("session-1", "plan the change");
-    expect(result?.systemPrompt).toBe(
-      "You are pi.\n\n<hindsight_memories>remember this</hindsight_memories>"
-    );
+    expect(result).toEqual({
+      message: {
+        customType: "hindsight",
+        content: "<hindsight_memories>remember this</hindsight_memories>",
+        display: false,
+      },
+    });
+    expect(result).not.toHaveProperty("systemPrompt");
+    expect(sections).toEqual({ base: "You are pi." });
   });
 
   it("injects nothing when the core has no injection for this turn", async () => {
@@ -58,8 +43,32 @@ describe("pi extension adapter", () => {
       onTranscript: vi.fn(async () => {}),
     };
     const hooks = createPiHooks(core as never, "pi");
-    const result = await hooks.beforeAgentStart({ prompt: "hi", systemPrompt: "sys" }, "session-1");
+    const result = await hooks.beforeAgentStart({ prompt: "hi" }, "session-1");
     expect(result).toBeUndefined();
+  });
+
+  it("handles a custom-message run, which has no prompt, without throwing (#5592)", async () => {
+    // pi's goal resume and `pi.sendMessage(…, { triggerTurn: true })` start a run with
+    // `messageType: "custom"` and `message` instead of `prompt`.
+    const onPrompt = vi.fn(async () => {});
+    const core = {
+      onPrompt,
+      getInjection: vi.fn(() => undefined),
+      onTranscript: vi.fn(async () => {}),
+    };
+    const hooks = createPiHooks(core as never, "pi");
+
+    await hooks.beforeAgentStart(
+      { messageType: "custom", message: { content: "Goal resumed" } },
+      "s"
+    );
+    await hooks.beforeAgentStart({ messageType: "user", prompt: " next " }, "s");
+
+    // The custom message is not the user's words: no recall for it, and the last block is dropped.
+    expect(onPrompt.mock.calls).toEqual([
+      ["s", ""],
+      ["s", "next"],
+    ]);
   });
 
   it("waits for the shared SessionStart decision before the first reflect", async () => {
@@ -73,10 +82,7 @@ describe("pi extension adapter", () => {
       onTranscript: vi.fn(async () => {}),
     };
     const hooks = createPiHooks(core as never, "pi", sessionStart);
-    const pending = hooks.beforeAgentStart(
-      { prompt: "first prompt", systemPrompt: "sys" },
-      "session-1"
-    );
+    const pending = hooks.beforeAgentStart({ prompt: "first prompt" }, "session-1");
 
     await Promise.resolve();
     expect(core.onPrompt).not.toHaveBeenCalled();
@@ -246,14 +252,8 @@ describe("pi extension factory", () => {
     pi.handlers.session_start({}, ctx("/repo-a", "s-a"));
     expect(pi.tools.map((t) => t.name)).toEqual(["hindsight_reflect"]);
 
-    await pi.handlers.before_agent_start(
-      { prompt: "hello a", systemPrompt: "sys" },
-      ctx("/repo-a", "s-a")
-    );
-    await pi.handlers.before_agent_start(
-      { prompt: "hello b", systemPrompt: "sys" },
-      ctx("/repo-b", "s-b")
-    );
+    await pi.handlers.before_agent_start({ prompt: "hello a" }, ctx("/repo-a", "s-a"));
+    await pi.handlers.before_agent_start({ prompt: "hello b" }, ctx("/repo-b", "s-b"));
     expect(cores.get("/repo-a")?.onPrompt).toHaveBeenCalledExactlyOnceWith("s-a", "hello a");
     expect(cores.get("/repo-b")?.onPrompt).toHaveBeenCalledExactlyOnceWith("s-b", "hello b");
 

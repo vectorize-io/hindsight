@@ -10,7 +10,7 @@ This test verifies the new behavior where:
 import pytest
 import pytest_asyncio
 
-from hindsight_api.engine.memory_engine import Budget
+from hindsight_api.engine.response_models import Budget
 
 
 @pytest.mark.asyncio

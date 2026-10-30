@@ -341,6 +341,27 @@ async def test_fresh_pages_that_answer_hide_the_lower_layers():
 
 
 @pytest.mark.asyncio
+async def test_the_pages_verdict_reads_only_the_pages_that_came_back_whole():
+    """A snippet is the page opening: judging it as an answer would end retrieval before
+    the page that holds it was ever read (#5787)."""
+    functions = _functions()
+    functions["search_mental_models_fn"] = AsyncMock(
+        return_value={
+            "mental_models": [
+                {"id": "mm-1", "content": "the page", "is_stale": False},
+                {"id": "mm-2", "snippet": "the opening", "content_chars": 90000, "is_stale": False},
+            ]
+        }
+    )
+    sufficient = AsyncMock(return_value=False)
+
+    await _reflect(_ScriptedProvider([_done()]), functions, sufficient)
+
+    pages_only = sufficient.await_args_list[0].args[1]
+    assert "the page" in pages_only and "the opening" not in pages_only
+
+
+@pytest.mark.asyncio
 async def test_fresh_pages_that_do_not_answer_keep_the_facts():
     """Fresh is not on topic: pages about the code must not hide a decision in the facts."""
     provider = _ScriptedProvider([_done()])
@@ -370,42 +391,15 @@ async def test_every_request_is_searched_with_a_rewritten_query():
 
 
 @pytest.mark.asyncio
-async def test_a_request_with_nothing_to_search_returns_empty_at_once():
-    provider = _ScriptedProvider([], search_query="NONE")
-    functions = _functions()
-    sufficient = AsyncMock(return_value=True)
-
-    result = await _reflect(provider, functions, sufficient)
-
-    assert result.text == ""
-    assert provider.tool_choices == [], "no agent turn and no answer call"
-    for fn in functions.values():
-        assert fn.await_count == 0
-    assert sufficient.await_count == 0
-    assert [c.scope for c in result.llm_trace] == ["round_query"]
-
-
-@pytest.mark.asyncio
-async def test_a_document_is_never_answered_empty():
-    """A refresh writes a page; "nothing to search" there would store an empty one."""
+async def test_the_query_rewrite_never_answers_empty():
+    """The rewrite used to end reflect on NONE, and a local model said it to real questions."""
     provider = _ScriptedProvider([_done()], search_query="NONE")
     functions = _functions()
 
-    await run_reflect_agent(
-        llm_config=provider,
-        bank_id="b",
-        query="yes",
-        bank_profile={"name": "T", "mission": "M"},
-        has_mental_models=True,
-        budget="mid",
-        max_iterations=6,
-        evidence_is_sufficient_fn=AsyncMock(return_value=True),
-        answer_as_document=True,
-        **functions,
-    )
+    result = await _reflect(provider, functions, AsyncMock(return_value=True))
 
+    assert result.text == "A"
     assert functions["recall_fn"].await_count == 1
-    assert functions["recall_fn"].await_args.args[0] == "yes", "the request is searched, never the word NONE"
 
 
 @pytest.mark.asyncio

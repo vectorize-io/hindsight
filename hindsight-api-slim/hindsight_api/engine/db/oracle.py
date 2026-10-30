@@ -23,6 +23,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, NamedTuple, cast
 
+from ...schema_context import get_current_schema
 from .pool_instrumentation import PoolStats, acquire_conn
 
 
@@ -1496,9 +1497,6 @@ class OracleBackend(DatabaseBackend):
         of PostgreSQL's SET search_path — fq_table() returns bare table names
         for Oracle, relying on this session-level setting for isolation.
         """
-        # Lazy import to avoid circular dependency (memory_engine → db → memory_engine).
-        from ..memory_engine import get_current_schema
-
         schema = get_current_schema()
         cursor = conn.cursor()
         try:

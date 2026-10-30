@@ -1026,3 +1026,30 @@ def test_configure_from_env_persists_every_api_var(temp_home, monkeypatch):
     assert "HINDSIGHT_API_LLM_BASE_URL=https://maas-api.example.com/v1" in active
     assert "HINDSIGHT_API_EMBEDDINGS_PROVIDER=tei" in active
     assert not any(line.startswith("HINDSIGHT_EMBED_API_URL=") for line in active)
+
+
+def test_api_database_url_is_not_replaced_by_pg0(temp_home, monkeypatch):
+    """Regression test for issue #6065.
+
+    On a Windows zh-CN machine pg0 cannot start, and the user's
+    HINDSIGHT_API_DATABASE_URL (in the shell or the profile) was overwritten
+    with the profile's pg0 URL, so there was no way to use an external server.
+    """
+    from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+
+    monkeypatch.delenv("HINDSIGHT_EMBED_API_DATABASE_URL", raising=False)
+    external = "postgresql://postgres:postgres@127.0.0.1:5433/postgres"
+
+    _write_profile(temp_home, "coding-agent", f"HINDSIGHT_API_DATABASE_URL={external}\n")
+    monkeypatch.delenv("HINDSIGHT_API_DATABASE_URL", raising=False)
+    env = _capture_daemon_env(DaemonEmbedManager(), "coding-agent", {})
+    assert env["HINDSIGHT_API_DATABASE_URL"] == external
+
+    _write_profile(temp_home, "coding-agent", "")
+    monkeypatch.setenv("HINDSIGHT_API_DATABASE_URL", external)
+    env = _capture_daemon_env(DaemonEmbedManager(), "coding-agent", {})
+    assert env["HINDSIGHT_API_DATABASE_URL"] == external
+
+    monkeypatch.delenv("HINDSIGHT_API_DATABASE_URL")
+    env = _capture_daemon_env(DaemonEmbedManager(), "coding-agent", {})
+    assert env["HINDSIGHT_API_DATABASE_URL"].startswith("pg0://")

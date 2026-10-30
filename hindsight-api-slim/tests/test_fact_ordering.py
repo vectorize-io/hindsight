@@ -6,11 +6,13 @@ their relative order is preserved via time offsets, allowing retrieval to
 distinguish between things said earlier vs later.
 """
 
-import pytest
-from datetime import datetime, timezone
-from hindsight_api import MemoryEngine, RequestContext
-from hindsight_api.engine.memory_engine import Budget
 import os
+from datetime import datetime, timezone
+
+import pytest
+
+from hindsight_api import MemoryEngine, RequestContext
+from hindsight_api.engine.response_models import Budget
 
 
 @pytest.mark.asyncio

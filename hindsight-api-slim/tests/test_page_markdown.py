@@ -1,11 +1,11 @@
 """Pure unit tests for the markdown (Open Knowledge Format) serializer.
 
-These exercise hindsight_api/api/page_markdown.py with plain dicts — no DB, no LLM — so
+These exercise hindsight_api/engine/page_markdown.py with plain dicts — no DB, no LLM — so
 they pin the markdown contract (frontmatter projection, type-from-tag, shared-tag
 graph) deterministically and fast.
 """
 
-from hindsight_api.api import page_markdown
+from hindsight_api.engine import page_markdown
 
 
 def _mm(**overrides):

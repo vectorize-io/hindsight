@@ -1,10 +1,11 @@
-"""Reflect is handed one page whole and the rest as snippets, and can read the rest.
+"""Reflect is handed whole pages up to a budget and the rest as snippets, and can read the rest.
 
 `search_mental_models` used to answer with every hit's full text, so a bank with
 five pages put all five into the prompt — and into every later turn of the loop.
-It now answers the way the knowledge-page search does: the best-ranked page in
-full, a snippet of the others, and `read_mental_models` for whatever else the
-model decides it needs.
+It now packs whole pages in rank order up to a token budget
+(`reflect_search_mental_models_max_tokens`), answers the rest the way the
+knowledge-page search does — a snippet — and offers `read_mental_models` for
+whatever else the model decides it needs. The best-ranked page is always whole.
 
 That is two capabilities meeting — the page layer and the reflect loop — so the
 story drives the published client end to end and asserts on the tool trace the
@@ -65,8 +66,8 @@ def _tool_calls(response, name: str) -> list:
     return [c for c in ((response.trace.tool_calls if response.trace else None) or []) if c.tool == name]
 
 
-async def test_a_search_returns_one_page_whole_and_the_others_as_snippets(client, llm, bank_with_two_pages):
-    """The bound that did not exist before: a second page costs a snippet, not a document."""
+async def test_pages_that_fit_the_budget_all_arrive_whole(client, llm, bank_with_two_pages):
+    """Two small pages fit the shipped budget, so neither is cut to its opening (#5787)."""
     llm.reset()
     reflect_loop(llm, answer="Alice lives in Berlin.")
 
@@ -77,12 +78,30 @@ async def test_a_search_returns_one_page_whole_and_the_others_as_snippets(client
     (search,) = _tool_calls(response, "search_mental_models")
     pages = search.output["mental_models"]
     assert len(pages) == 2, f"both pages should be found: {pages}"
-    whole = [p for p in pages if "content" in p]
-    snippets = [p for p in pages if "snippet" in p]
-    assert len(whole) == 1, "exactly the best-ranked page arrives in full"
-    assert len(snippets) == 1, "the runner-up arrives as a snippet"
-    assert snippets[0]["content_chars"] > 0, "with its size, so the model can judge what reading it would cost"
-    assert "content" not in snippets[0]
+    assert all("content" in p and "snippet" not in p for p in pages), pages
+
+
+async def test_past_the_budget_the_best_page_is_whole_and_the_rest_snippets(client, llm, bank_with_two_pages):
+    """The bound that did not exist before: a page past the budget costs a snippet, not a document.
+
+    The request's budget is below either page, which also proves the best hit stays
+    whole even alone over it — a snippet of it would leave the search with no page.
+    """
+    llm.reset()
+    reflect_loop(llm, answer="Alice lives in Berlin.")
+
+    response = await client.areflect(
+        bank_id=bank_with_two_pages,
+        query="Where does Alice live?",
+        include_tool_calls=True,
+        reflect_search_mental_models_max_tokens=1,
+    )
+
+    (search,) = _tool_calls(response, "search_mental_models")
+    top, runner_up = search.output["mental_models"]
+    assert "content" in top and "snippet" not in top, "the best-ranked page arrives in full"
+    assert "snippet" in runner_up and "content" not in runner_up, "the runner-up arrives as a snippet"
+    assert runner_up["content_chars"] > 0, "with its size, so the model can judge what reading it would cost"
 
 
 async def test_the_model_can_read_a_page_it_only_saw_as_a_snippet(client, llm, bank_with_two_pages):
@@ -96,8 +115,12 @@ async def test_the_model_can_read_a_page_it_only_saw_as_a_snippet(client, llm, b
     # The same search query in both runs, or a different page ranks top and the
     # page read below would be the one the search already returned whole.
     reflect_loop(llm, answer="checking", query=_SEARCH_QUERY)
+    # A budget below either page, so the runner-up is a snippet to read.
     first = await client.areflect(
-        bank_id=bank_with_two_pages, query="Where has Alice travelled?", include_tool_calls=True
+        bank_id=bank_with_two_pages,
+        query="Where has Alice travelled?",
+        include_tool_calls=True,
+        reflect_search_mental_models_max_tokens=1,
     )
     (search,) = _tool_calls(first, "search_mental_models")
     snippet_page = next(p for p in search.output["mental_models"] if "snippet" in p)
@@ -121,6 +144,7 @@ async def test_the_model_can_read_a_page_it_only_saw_as_a_snippet(client, llm, b
         query="Where has Alice travelled?",
         include_tool_calls=True,
         include_facts=True,
+        reflect_search_mental_models_max_tokens=1,
     )
 
     reads = _tool_calls(response, "read_mental_models")

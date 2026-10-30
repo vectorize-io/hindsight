@@ -32,6 +32,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { describeError, log } from "./log";
 
 /** How often the supervisor refreshes its lease. */
 export const LEASE_HEARTBEAT_MS = 5_000;
@@ -172,7 +173,8 @@ export function superviseSurvey(
     let child: ChildProcess;
     try {
       child = spawnFn(spec.bin, spec.args, { stdio: "ignore", windowsHide: true });
-    } catch {
+    } catch (e) {
+      log.warn("survey", `${spec.bin} failed to launch: ${describeError(e)}`);
       releaseLease(spec.lease);
       return resolve();
     }
@@ -189,8 +191,17 @@ export function superviseSurvey(
       child.kill(); // the lease now belongs to another survey
       finish(false);
     }, spec.heartbeatMs ?? LEASE_HEARTBEAT_MS);
-    child.on("error", () => finish(true));
-    child.once("exit", () => finish(true));
+    // The agent's output is ignored, so these lines are the only trace of a survey that never ran
+    // (#5710): an ENOENT here, or a config error that exits within a second.
+    child.on("error", (e) => {
+      log.warn("survey", `${spec.bin} failed to launch: ${describeError(e)}`);
+      finish(true);
+    });
+    child.once("exit", (code, signal) => {
+      if (code !== 0 && !finished)
+        log.warn("survey", `${spec.bin} exited with ${code === null ? signal : `code ${code}`}`);
+      finish(true);
+    });
     stop = () => {
       child.kill();
       finish(true);

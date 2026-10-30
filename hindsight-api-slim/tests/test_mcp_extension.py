@@ -1,5 +1,7 @@
 """Tests for MCPExtension loading and tool registration."""
 
+import subprocess
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -176,3 +178,20 @@ class TestMCPExtensionIntegration:
         assert "test_extension_tool" in tools
         # At least 29 core + 1 extension = 30 tools (may grow as new tools are added)
         assert len(tools) >= 30
+
+
+def test_server_starts_without_mcp_libraries_when_mcp_disabled():
+    """A broken or missing MCP install must not stop a server with MCP off (#5453)."""
+    # A fresh interpreter, because this one has already imported fastmcp. Setting a module to
+    # None in sys.modules makes importing it fail, as a broken fastmcp/mcp install does.
+    code = (
+        "import sys\n"
+        "from unittest.mock import MagicMock\n"
+        "sys.modules['fastmcp'] = None\n"
+        "sys.modules['mcp'] = None\n"
+        "import hindsight_api.main\n"
+        "from hindsight_api.api import create_app\n"
+        "create_app(MagicMock(), mcp_api_enabled=False, initialize_memory=False)\n"
+    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr[-2000:]

@@ -13,7 +13,7 @@ source of truth for what gets replayed.
 """
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -65,7 +65,7 @@ def test_unknown_event_date_survives_the_round_trip():
     item = {"content": "An undated note", "event_date": None}
     p = _params(**item)
     assert "event_date" in p and p["event_date"] is None
-    replayed = orch._build_contents([{"content": item["content"], **p}], None)[0]
+    replayed = orch._build_contents([{"content": item["content"], **p}], None, UTC)[0]
     assert replayed.event_date is None
     # An omitted date still means "now", and stays omitted.
     assert "event_date" not in _params(content="x")

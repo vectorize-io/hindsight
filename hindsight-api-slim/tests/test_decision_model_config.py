@@ -16,6 +16,7 @@ from hindsight_api.engine.decision_model import (
     DecisionResponse,
     DecisionUsage,
 )
+from hindsight_api.engine.decision_rerank_interface import MAX_QUESTIONS
 from hindsight_api.engine.remote_retry import RetryPolicy
 from hindsight_api.engine.token_encoding import count_tokens
 from tests.aiohttp_stub import stub_server
@@ -51,6 +52,7 @@ def test_global_setup_reaches_every_operation(monkeypatch):
             timeout=60.0,
             max_concurrent=24,
             max_request_tokens=26_000,
+            tokenizer="jev",
         )
 
 
@@ -317,9 +319,48 @@ async def test_openai_refusal_raises():
             )
 
 
+def test_typesafe_counts_in_jevs_own_vocabulary_by_default(monkeypatch):
+    """The window is Jev's, so its ceiling is counted the way Jev counts."""
+    assert _config(monkeypatch, _GLOBAL).decision_model_config("recall").tokenizer == "jev"
+
+
+def test_the_tokenizer_follows_the_model_not_the_provider(monkeypatch):
+    """A System One endpoint serving another model names that model's vocabulary."""
+    config = _config(monkeypatch, {**_GLOBAL, "HINDSIGHT_API_DECISION_MODEL_TOKENIZER": "qwen3.5"})
+    assert config.decision_model_config("recall").tokenizer == "qwen3.5"
+
+
+def test_an_unknown_tokenizer_fails_at_setup(monkeypatch):
+    with pytest.raises(ValueError, match="HINDSIGHT_API_DECISION_MODEL_TOKENIZER"):
+        _config(monkeypatch, {**_GLOBAL, "HINDSIGHT_API_DECISION_MODEL_TOKENIZER": "nope"}).decision_model_config(
+            "recall"
+        )
+
+
+def test_a_provider_with_no_known_vocabulary_counts_with_the_configured_one(monkeypatch):
+    config = _config(
+        monkeypatch, {"HINDSIGHT_API_DECISION_MODEL_PROVIDER": "openai", "HINDSIGHT_API_DECISION_MODEL_API_KEY": "k"}
+    )
+    assert config.decision_model_config("recall").tokenizer is None
+
+
+async def test_requests_are_split_in_the_models_own_vocabulary():
+    """'jev' counts mixed-script text well past o200k_base: a pool that fits one request by
+    o200k_base needs more than one by Jev's count, and each still fits by Jev's count."""
+    questions = _nouls(40, "東京 café naïve 🎉 " * 20)
+    by_o200k = DecisionModel("typesafe", "k", "jev-latest", "http://x", 5.0, 2, 26_000)
+    by_jev = DecisionModel("typesafe", "k", "jev-latest", "http://x", 5.0, 2, 26_000, tokenizer="jev")
+    assert len(by_o200k._split("q", questions)) == 1
+    parts = by_jev._split("q", questions)
+    assert len(parts) > 1
+    for part in parts:
+        body = {"model": "jev-latest", "state": "q", "questions": {k: q.system_one() for k, q in part.items()}}
+        assert count_tokens(json.dumps(body), "jev") <= 26_000
+
+
 def test_the_default_request_ceiling_fits_a_32k_window(monkeypatch):
-    """The endpoint counted 14% more than we do on the same body."""
-    assert _config(monkeypatch, {}).decision_model_max_request_tokens * 1.14 < 32_768
+    """The endpoint counted 14% more than o200k_base on the same body."""
+    assert _config(monkeypatch, _GLOBAL).decision_model_config("recall").max_request_tokens * 1.14 < 32_768
 
 
 @pytest.mark.parametrize(
@@ -397,10 +438,8 @@ async def test_every_request_fits_the_ceiling_counting_the_whole_body():
 async def test_a_pool_over_the_question_cap_is_split():
     upstream = _Answering()
     async with stub_server(upstream.handle) as base_url:
-        await _splitting_client(base_url).ask_all(
-            "q", _nouls(DecisionModel.MAX_QUESTIONS + 5, "x"), scope="decision_test"
-        )
-    assert sorted(len(body["questions"]) for body in upstream.bodies) == [5, DecisionModel.MAX_QUESTIONS]
+        await _splitting_client(base_url).ask_all("q", _nouls(MAX_QUESTIONS + 5, "x"), scope="decision_test")
+    assert sorted(len(body["questions"]) for body in upstream.bodies) == [5, MAX_QUESTIONS]
 
 
 async def test_a_rate_limited_request_is_retried():

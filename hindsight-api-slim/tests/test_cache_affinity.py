@@ -93,19 +93,6 @@ async def _call(llm: OpenAICompatibleLLM, create: AsyncMock, **kwargs):
     return create
 
 
-async def _call_with_tools(llm: OpenAICompatibleLLM, create: AsyncMock, **kwargs):
-    """Drive `call_with_tools()` against a mocked client."""
-    llm._client.chat.completions.create = create
-    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-        await llm.call_with_tools(
-            messages=[{"role": "user", "content": "ping"}],
-            tools=[{"type": "function", "function": {"name": "noop", "parameters": {}}}],
-            max_retries=0,
-            **kwargs,
-        )
-    return create
-
-
 @contextmanager
 def _bound_trace(trace_id: str):
     """Bind an operation trace context, as `ConfiguredLLMProvider` does per call."""
@@ -279,51 +266,6 @@ async def test_call_uses_the_fallback_hash_without_a_trace_context():
     create = await _call(llm, AsyncMock(return_value=_chat_response()))
     sent = create.call_args.kwargs["extra_headers"][XAI_CONV_ID_HEADER]
     assert sent == cache_affinity_id(create.call_args.kwargs["messages"])
-
-
-# ── AC6: call_with_tools parity ───────────────────────────────────────────────
-
-
-async def test_tools_path_sends_xai_header():
-    llm = _llm("xai_conv_id")
-    create = await _call_with_tools(llm, AsyncMock(return_value=_chat_response("done")))
-    assert _HEX32.match(create.call_args.kwargs["extra_headers"][XAI_CONV_ID_HEADER])
-
-
-async def test_tools_path_sends_prompt_cache_key():
-    llm = _llm("openai_prompt_cache_key")
-    create = await _call_with_tools(llm, AsyncMock(return_value=_chat_response("done")))
-    assert _HEX32.match(create.call_args.kwargs[OPENAI_PROMPT_CACHE_KEY_PARAM])
-
-
-async def test_tools_path_sends_nothing_by_default():
-    llm = _llm()
-    create = await _call_with_tools(llm, AsyncMock(return_value=_chat_response("done")))
-    kwargs = create.call_args.kwargs
-    assert "extra_headers" not in kwargs
-    assert OPENAI_PROMPT_CACHE_KEY_PARAM not in kwargs
-
-
-# ── AC13: fallback hash on the tools path ─────────────────────────────────────
-
-
-async def test_tools_path_fallback_hash_is_stable():
-    """`call_with_tools` builds its message list differently; its fallback id must
-    still derive from the first message and survive a growing conversation."""
-    llm = _llm("xai_conv_id")
-    create = AsyncMock(return_value=_chat_response("done"))
-    llm._client.chat.completions.create = create
-    tools = [{"type": "function", "function": {"name": "noop", "parameters": {}}}]
-    system = {"role": "system", "content": "you are helpful"}
-    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-        await llm.call_with_tools(messages=[system], tools=tools, max_retries=0)
-        first = create.call_args.kwargs["extra_headers"][XAI_CONV_ID_HEADER]
-        await llm.call_with_tools(
-            messages=[system, {"role": "user", "content": "and now?"}], tools=tools, max_retries=0
-        )
-        second = create.call_args.kwargs["extra_headers"][XAI_CONV_ID_HEADER]
-    assert _HEX32.match(first)
-    assert first == second
 
 
 # ── AC7: adjacent fix — default_headers reaches the SDK client ────────────────
@@ -513,7 +455,7 @@ def test_llm_provider_from_env_carries_affinity(clean_llm_env):
 
 async def test_bank_attribution_and_affinity_coexist(clean_llm_env):
     from hindsight_api.config import clear_config_cache
-    from hindsight_api.engine.memory_engine import _current_bank_id
+    from hindsight_api.schema_context import _current_bank_id
 
     clean_llm_env.setenv("HINDSIGHT_API_LLM_SEND_BANK_AS_USER", "true")
     clear_config_cache()

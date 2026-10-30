@@ -79,8 +79,11 @@ class EmbeddedPostgres:
             try:
                 loop = asyncio.get_event_loop()
                 info = await loop.run_in_executor(None, pg0.start)
-                # Get URI from pg0 (includes auto-assigned port)
+                # Get URI from pg0 (includes auto-assigned port). A start that
+                # reports no URI did not give us a server; retry it like any failure.
                 uri = info.uri
+                if not uri:
+                    raise RuntimeError("pg0 reported a start but returned no connection URI")
                 logger.info(f"PostgreSQL started: {uri}")
                 return uri
             except Exception as e:

@@ -6,6 +6,10 @@ function ok(json: unknown = {}) {
   return { status: 200, text: JSON.stringify(json), json };
 }
 
+function notFound(detail: string) {
+  return { status: 404, text: JSON.stringify({ detail }), json: { detail } };
+}
+
 // A fake transport records the requests the client makes so we can assert on
 // them, exactly as the real requestUrl/fetch transports would receive them.
 const mock = vi.fn<Transport>();
@@ -48,6 +52,28 @@ describe("HindsightClient", () => {
     expect(params.url).toBe(
       "https://api.example.com/v1/default/banks/b/documents/Folder/My%20Note.md"
     );
+  });
+
+  it("deleteDocument treats an already-missing document as deleted (#5067)", async () => {
+    const client = new HindsightClient("https://api.example.com", undefined, mock);
+    mock.mockResolvedValue(notFound("Document not found"));
+    await expect(client.deleteDocument("b", "Notes/old.md")).resolves.toBeUndefined();
+  });
+
+  it("deleteDocument still rejects auth, missing-bank and server errors", async () => {
+    const client = new HindsightClient("https://api.example.com", undefined, mock);
+    for (const resp of [
+      { status: 401, text: "", json: undefined },
+      { status: 403, text: "", json: undefined },
+      notFound("Bank 'b' not found"),
+      { status: 404, text: "<html>", json: undefined },
+      { status: 500, text: "boom", json: undefined },
+    ]) {
+      mock.mockResolvedValue(resp);
+      await expect(client.deleteDocument("b", "Notes/old.md")).rejects.toThrow(
+        `HTTP ${resp.status}`
+      );
+    }
   });
 
   it("reflect requests citations + trace when asked", async () => {

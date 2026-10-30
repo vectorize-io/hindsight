@@ -865,6 +865,12 @@ export type BankTemplateConfig = {
    */
   store_document_text?: boolean | null;
   /**
+   * Default Timezone
+   *
+   * IANA zone (e.g. 'Europe/Rome') a retain timestamp, or a time the LLM extracts, is read in when it carries no UTC offset.
+   */
+  default_timezone?: string | null;
+  /**
    * Enable Auto Consolidation
    *
    * Automatically consolidate observations after retain
@@ -900,6 +906,18 @@ export type BankTemplateConfig = {
    * Default for recall prefer_observations when the request omits it
    */
   recall_prefer_observations?: boolean | null;
+  /**
+   * Recall Decision Model Prune
+   *
+   * Default for recall prune when the request omits it (decision-model reranker only)
+   */
+  recall_decision_model_prune?: boolean | null;
+  /**
+   * Recall Decision Model Dedup
+   *
+   * Default for recall dedup when the request omits it (decision-model reranker only)
+   */
+  recall_decision_model_dedup?: boolean | null;
   /**
    * Recall Max Tokens
    *
@@ -3456,6 +3474,26 @@ export type LlmRequestListResponse = {
    * Items
    */
   items: Array<LlmRequestEntry>;
+  /**
+   * Retention Days
+   */
+  retention_days?: number | null;
+};
+
+/**
+ * LLMRequestSeriesSums
+ *
+ * Calls and tokens (total + reasoning) of one model or operation within a time bucket.
+ */
+export type LlmRequestSeriesSums = {
+  /**
+   * Calls
+   */
+  calls: number;
+  /**
+   * Tokens
+   */
+  tokens: number;
 };
 
 /**
@@ -3479,6 +3517,12 @@ export type LlmRequestStatsBucket = {
    */
   total: number;
   tokens: LlmRequestTokenSums;
+  /**
+   * Series
+   */
+  series?: {
+    [key: string]: LlmRequestSeriesSums;
+  } | null;
 };
 
 /**
@@ -3507,6 +3551,10 @@ export type LlmRequestStatsResponse = {
    * Buckets
    */
   buckets: Array<LlmRequestStatsBucket>;
+  /**
+   * Retention Days
+   */
+  retention_days?: number | null;
 };
 
 /**
@@ -5757,6 +5805,10 @@ export type RecallRequest = {
    * When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact that an observation in the results was consolidated from, so the observation supersedes it and you don't get duplicate content. The freed slots are backfilled with the next results, keeping the result count at the requested budget. When omitted, uses the bank/global recall_prefer_observations config (false unless configured). No effect unless 'observation' and at least one raw type are both requested.
    */
   prefer_observations?: boolean | null;
+  /**
+   * What the decision-model reranker does beyond ordering: drop results that do not help (`prune`) or that repeat a better-ranked one (`dedup`). Each field left unset uses the bank/global config. No effect unless a decision model is set up for recall.
+   */
+  rerank?: RerankOptions | null;
   budget?: Budget;
   /**
    * Max Tokens
@@ -6172,6 +6224,12 @@ export type ReflectRequest = {
    */
   reflect_search_observations_include_entities?: boolean | null;
   /**
+   * Reflect Search Mental Models Max Tokens
+   *
+   * Token budget for the mental models search_mental_models returns in full, packed in rank order. The best-ranked one is always in full; the others that do not fit come back as a snippet the model can read with read_mental_models. Raise it for banks with long pages or answers spread across pages; lower it to cut the reflect context. None means use the shipped default (16000).
+   */
+  reflect_search_mental_models_max_tokens?: number | null;
+  /**
    * Query
    */
   query: string;
@@ -6450,6 +6508,27 @@ export type ReprocessDocumentResponse = {
    * Items Count
    */
   items_count: number;
+};
+
+/**
+ * RerankOptions
+ *
+ * What the decision-model reranker does beyond ordering. Each field left unset (null) uses the
+ * bank/global config; neither has any effect unless a decision model is set up for recall.
+ */
+export type RerankOptions = {
+  /**
+   * Prune
+   *
+   * Drop the results the decision model judges no help to the query, instead of only ranking them last. Costs no extra request. When omitted, uses the bank/global recall_decision_model_prune config (false unless configured).
+   */
+  prune?: boolean | null;
+  /**
+   * Dedup
+   *
+   * Drop a result that repeats a better-ranked one, so the same fact comes back once. Costs one more decision-model request after the ranking one. When omitted, uses the bank/global recall_decision_model_dedup config (false unless configured).
+   */
+  dedup?: boolean | null;
 };
 
 /**
@@ -12582,9 +12661,15 @@ export type LlmRequestStatsData = {
     /**
      * Period
      *
-     * Time period: 1d, 7d, or 30d
+     * Time period: 1d (by hour), 7d, or 30d (by day)
      */
     period?: string;
+    /**
+     * Split By
+     *
+     * Also split each bucket by model or by operation (returned in `series`)
+     */
+    split_by?: "model" | "operation" | null;
   };
   url: "/v1/default/banks/{bank_id}/llm-requests/stats";
 };

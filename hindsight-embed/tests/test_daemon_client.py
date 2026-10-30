@@ -1,5 +1,6 @@
 """Tests for daemon_client module."""
 
+import sys
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -804,6 +805,39 @@ class TestProcessCommandLine:
         assert all(t > dem._PROBE_TIMEOUT_S for t in timeouts), (
             f"every Windows probe needs its own longer deadline, got {timeouts}"
         )
+
+    def test_windows_lookup_does_not_wait_on_powershell(self, monkeypatch):
+        """A slow PowerShell must not decide the answer when the kernel can.
+
+        The probe stands in for a cold PowerShell that outlasts its deadline: it
+        returns None, which used to reach the caller as "not one of our
+        processes" and stopped the manager from stopping its own daemon (#6017).
+        """
+        from hindsight_embed import daemon_embed_manager as dem
+
+        probes: list[list[str]] = []
+
+        def _slow_probe(cmd, timeout=dem._PROBE_TIMEOUT_S):
+            probes.append(cmd)
+            return None  # what _run_probe returns on TimeoutExpired
+
+        monkeypatch.setattr(dem.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(DaemonEmbedManager, "_run_probe", staticmethod(_slow_probe))
+        monkeypatch.setattr(
+            DaemonEmbedManager, "_windows_native_command_line", staticmethod(lambda _pid: _DAEMON_CMDLINE)
+        )
+
+        assert DaemonEmbedManager._process_command_line(1234) == _DAEMON_CMDLINE
+        assert DaemonEmbedManager._process_matches(1234, dem.DAEMON_PROCESS_MARKERS) is True
+        assert probes == []
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="reads the Windows kernel")
+    def test_windows_native_lookup_reads_a_live_process(self):
+        import os
+
+        cmdline = DaemonEmbedManager._windows_native_command_line(os.getpid())
+        assert cmdline is not None
+        assert os.path.basename(sys.executable).split(".")[0] in cmdline.lower()
 
     def test_returns_none_for_a_pid_that_does_not_exist(self):
         # Above the default pid_max on Linux and unused elsewhere, so no live

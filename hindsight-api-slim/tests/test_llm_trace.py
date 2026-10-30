@@ -8,6 +8,7 @@ success/error paths, and the HTTP read API (list / stats / tokens).
 """
 
 import asyncio
+import dataclasses
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -36,6 +37,7 @@ from hindsight_api.engine.llm_trace import (
 )
 from hindsight_api.engine.llm_wrapper import LLMProvider
 from hindsight_api.engine.providers.openai_compatible_llm import ProviderResponseError
+from tests.llm_trace_drain import drain_traces
 
 # ── serialization helpers ─────────────────────────────────────────────────────
 
@@ -386,15 +388,18 @@ async def test_openai_reasoning_tokens_reach_success_and_error_traces(registered
 async def test_openai_tool_trace_keeps_cached_and_reasoning_usage(registered_recorder):
     """A successful tool-capable reply must expose both reported usage details in its trace."""
     llm = LLMProvider(provider="openai", api_key="test-key", base_url="https://example.test/v1", model="qwen")
-    response = _openai_response_with_usage("done")
+    response = _openai_response_with_usage('{"call": {"name": "done", "arguments": {}}}')
     response.usage.prompt_tokens = 100
     response.usage.completion_tokens = 80
     response.usage.total_tokens = 180
     response.usage.prompt_tokens_details.cached_tokens = 30
     response.usage.completion_tokens_details = SimpleNamespace(reasoning_tokens=60)
     llm._provider_impl._client.chat.completions.create = AsyncMock(return_value=response)
+    done = {"type": "function", "function": {"name": "done", "parameters": {"type": "object", "properties": {}}}}
 
-    await llm.call_with_tools(messages=[{"role": "user", "content": "answer"}], tools=[], scope="tools", max_retries=0)
+    await llm.call_with_tools(
+        messages=[{"role": "user", "content": "answer"}], tools=[done], scope="tools", max_retries=0
+    )
 
     assert len(registered_recorder.records) == 1
     trace = registered_recorder.records[0]
@@ -533,23 +538,21 @@ def _litellm_tool_response_with_usage(arguments: str):
 
 @pytest.mark.asyncio
 async def test_litellm_tool_call_arg_parse_failure_keeps_usage(registered_recorder):
-    """The litellm tool path bills the provider response, then ``json.loads`` the
-    tool-call arguments locally; malformed args raise after billing, so the error
-    trace must keep the provider-reported tokens. Exercises the real
-    ``LiteLLMLLM.call_with_tools`` stash that ``LiteLLMRouterLLM`` also inherits
-    (the wrapper-level tools test uses a provider that already stashes)."""
+    """A tool turn whose reply is not JSON is billed all the same: the provider reported
+    the tokens before the reply was parsed. The turn comes back with no call (a model
+    that did not follow the schema), and the error trace keeps the provider's usage."""
     llm = LLMProvider(provider="litellm", api_key="test-key", base_url="https://example.test/v1", model="gpt-4o-mini")
-    # Valid response + usage, but the tool arguments are not valid JSON.
+    # Valid response + usage, but the reply is not valid JSON.
     llm._provider_impl._acompletion = AsyncMock(return_value=_litellm_tool_response_with_usage("{not valid json"))
 
-    with pytest.raises(json.JSONDecodeError):
-        await llm.call_with_tools(
-            messages=[{"role": "user", "content": "x"}],
-            tools=[],
-            scope="tools",
-            max_retries=0,
-        )
+    result = await llm.call_with_tools(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"type": "function", "function": {"name": "recall", "parameters": {"type": "object"}}}],
+        scope="tools",
+        max_retries=0,
+    )
 
+    assert result.tool_calls == []
     assert len(registered_recorder.records) == 1
     r = registered_recorder.records[0]
     assert r.status == "error"
@@ -667,6 +670,49 @@ async def test_reasoning_tokens_persist_in_bank_trace_and_stats(trace_api_client
 
 
 @pytest.mark.asyncio
+async def test_stats_split_by_model_and_operation(trace_api_client, memory, bank_id):
+    await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
+    for operation, model, tokens in (("retain", "model-a", 10), ("retain", "model-b", 20), ("reflect", "model-a", 30)):
+        token = set_trace_context(LLMTraceContext(bank_id=bank_id, operation=operation))
+        try:
+            memory._llm_recorder.record_llm_call(
+                provider="openai",
+                model=model,
+                scope=f"{operation}_call",
+                messages=[{"role": "user", "content": "x"}],
+                response_content="y",
+                input_tokens=tokens,
+                output_tokens=0,
+                duration=0.1,
+            )
+        finally:
+            llm_trace.reset_trace_context(token)
+    await memory._llm_recorder.flush()
+
+    def totals(split_by: str) -> dict[str, tuple[int, int]]:
+        out: dict[str, tuple[int, int]] = {}
+        for bucket in stats[split_by]["buckets"]:
+            for name, sums in bucket["series"].items():
+                calls, tok = out.get(name, (0, 0))
+                out[name] = (calls + sums["calls"], tok + sums["tokens"])
+        return out
+
+    stats = {}
+    for split_by in ("model", "operation"):
+        response = await trace_api_client.get(
+            f"/v1/default/banks/{bank_id}/llm-requests/stats", params={"period": "1d", "split_by": split_by}
+        )
+        assert response.status_code == 200
+        stats[split_by] = response.json()
+    assert totals("model") == {"model-a": (2, 40), "model-b": (1, 20)}
+    assert totals("operation") == {"retain": (2, 30), "reflect": (1, 30)}
+
+    plain = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests/stats", params={"period": "1d"})
+    assert all(b["series"] is None for b in plain.json()["buckets"])
+    assert sum(b["total"] for b in plain.json()["buckets"]) == 3
+
+
+@pytest.mark.asyncio
 async def test_list_empty(trace_api_client, bank_id):
     await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
     response = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests")
@@ -674,6 +720,33 @@ async def test_list_empty(trace_api_client, bank_id):
     data = response.json()
     assert data["items"] == []
     assert data["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_list_and_stats_report_retention_days(trace_api_client, bank_id, monkeypatch):
+    # The sweep deletes requests older than the retention, so a 30d stats period
+    # only covers the kept days. Both reads say how many days are kept, and null
+    # when nothing is ever deleted.
+    from types import SimpleNamespace
+
+    from hindsight_api.engine import memory_engine
+
+    await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
+    real_get_config = memory_engine.get_config
+    for days, sweep, expected in ((3, 3600, 3), (-1, 3600, None), (3, 0, None)):
+        cfg = SimpleNamespace(
+            **{
+                **vars(real_get_config()),
+                "llm_trace_enabled": True,
+                "llm_trace_retention_days": days,
+                "retention_sweep_interval_seconds": sweep,
+            }
+        )
+        monkeypatch.setattr(memory_engine, "get_config", lambda cfg=cfg: cfg)
+        listing = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests")
+        stats = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests/stats", params={"period": "30d"})
+        assert listing.json()["retention_days"] == expected
+        assert stats.json()["retention_days"] == expected
 
 
 @pytest.mark.asyncio
@@ -695,7 +768,7 @@ async def test_llm_requests_read_returns_empty_on_oracle(trace_api_client, bank_
 
 
 @pytest.mark.asyncio
-async def test_retain_creates_trace_rows_with_tokens(trace_api_client, bank_id):
+async def test_retain_creates_trace_rows_with_tokens(trace_api_client, memory, bank_id):
     await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
     response = await trace_api_client.post(
         f"/v1/default/banks/{bank_id}/memories",
@@ -703,8 +776,10 @@ async def test_retain_creates_trace_rows_with_tokens(trace_api_client, bank_id):
     )
     assert response.status_code == 200
     # retain triggers fact extraction + consolidation (2 LLM calls → 2 trace
-    # writes); give the fire-and-forget tasks room under parallel test load.
-    await asyncio.sleep(1.5)
+    # writes), and the writes are fire-and-forget. Wait for every one of them,
+    # so the plain and grouped reads below see the same rows (a late row landing
+    # between them made the grouped total one higher).
+    await drain_traces(memory)
 
     # LLM calls only: the embedding calls retain also makes run outside the operation's
     # LLM trace, so they carry no trace ids (covered by test_embedding_and_rerank_calls_traced).
@@ -767,7 +842,7 @@ async def test_retain_creates_trace_rows_with_tokens(trace_api_client, bank_id):
 
 
 @pytest.mark.asyncio
-async def test_delta_reretain_binds_document_id(trace_api_client, bank_id):
+async def test_delta_reretain_binds_document_id(trace_api_client, memory, bank_id):
     """A delta re-retain (editing/appending a document) must tag its trace with
     the document_id, so the document accrues one trace per retain — not just the
     initial full retain. Regression: the delta path used a second extraction call
@@ -783,7 +858,7 @@ async def test_delta_reretain_binds_document_id(trace_api_client, bank_id):
         json={"items": [{"content": v1, "context": "people", "document_id": document_id}]},
     )
     assert resp.status_code == 200
-    await asyncio.sleep(1.5)
+    await drain_traces(memory)
 
     # v2: original content preserved + a new paragraph. The unchanged first chunk
     # forces the delta path (it needs ≥1 unchanged chunk), and the new chunk is
@@ -794,7 +869,7 @@ async def test_delta_reretain_binds_document_id(trace_api_client, bank_id):
         json={"items": [{"content": v2, "context": "people", "document_id": document_id}]},
     )
     assert resp.status_code == 200
-    await asyncio.sleep(1.5)
+    await drain_traces(memory)
 
     # The document_id filter must now return both the full retain and the delta
     # re-retain — i.e. ≥2 distinct retain trace_ids, every row tagged.
@@ -810,7 +885,7 @@ async def test_delta_reretain_binds_document_id(trace_api_client, bank_id):
 
 
 @pytest.mark.asyncio
-async def test_memory_ids_mapped_to_retain_and_consolidation(trace_api_client, bank_id):
+async def test_memory_ids_mapped_to_retain_and_consolidation(trace_api_client, memory, bank_id):
     """A retain trace maps to the facts it created; a consolidation trace maps to
     the source memories it consumed (and any observations it produced). These are
     attached to every row of the trace after the operation completes.
@@ -821,9 +896,9 @@ async def test_memory_ids_mapped_to_retain_and_consolidation(trace_api_client, b
         json={"items": [{"content": "Alice works at Google as a senior engineer.", "context": "people"}]},
     )
     assert resp.status_code == 200
-    # retain + the consolidation it triggers are fire-and-forget; give the trace
-    # writes and the post-operation memory_id UPDATE room under parallel load.
-    await asyncio.sleep(2.0)
+    # The trace writes and the post-operation memory_id UPDATE are
+    # fire-and-forget; wait for them before reading.
+    await drain_traces(memory)
 
     data = (await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests")).json()
     by_op = {item["operation"]: item for item in data["items"]}
@@ -853,13 +928,13 @@ async def test_memory_ids_mapped_to_retain_and_consolidation(trace_api_client, b
 
 
 @pytest.mark.asyncio
-async def test_filter_by_status_and_operation(trace_api_client, bank_id):
+async def test_filter_by_status_and_operation(trace_api_client, memory, bank_id):
     await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
     await trace_api_client.post(
         f"/v1/default/banks/{bank_id}/memories",
         json={"items": [{"content": "test content", "context": "test"}]},
     )
-    await asyncio.sleep(1.0)
+    await drain_traces(memory)
 
     response = await trace_api_client.get(
         f"/v1/default/banks/{bank_id}/llm-requests",
@@ -877,18 +952,18 @@ async def test_filter_by_status_and_operation(trace_api_client, bank_id):
 
 
 @pytest.mark.asyncio
-async def test_stats_endpoint_includes_tokens(trace_api_client, bank_id):
+async def test_stats_endpoint_includes_tokens(trace_api_client, memory, bank_id):
     await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
     await trace_api_client.post(
         f"/v1/default/banks/{bank_id}/memories",
         json={"items": [{"content": "stats content", "context": "test"}]},
     )
-    await asyncio.sleep(1.0)
+    await drain_traces(memory)
 
     response = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests/stats", params={"period": "1d"})
     assert response.status_code == 200
     data = response.json()
-    assert data["trunc"] == "day"
+    assert data["trunc"] == "hour"
     assert len(data["buckets"]) >= 1
     bucket = data["buckets"][0]
     assert "statuses" in bucket
@@ -1343,3 +1418,168 @@ async def test_page_embedding_outside_a_run_gets_an_operation(trace_api_client, 
     )
     [row] = [r for r in resp.json()["items"] if r["input"] == {"texts": ["Alice Alice likes cats"]}]
     assert row["operation"] == "mental_model_write" and row["trace_id"]
+
+
+@pytest.mark.asyncio
+async def test_deleting_bank_deletes_its_request_history(trace_api_client, memory, bank_id):
+    # #5839: a deleted bank's prompts must not outlive it until the retention sweep.
+    other = f"{bank_id}_other"
+    for b in (bank_id, other):
+        await trace_api_client.put(f"/v1/default/banks/{b}", json={"name": "Trace Bank"})
+        token = set_trace_context(LLMTraceContext(bank_id=b, operation="retain", trace_id=f"t-{b}"))
+        try:
+            memory._llm_recorder.record_llm_call(
+                provider="mock", model="mock", scope="memory", messages=[{"role": "user", "content": "x"}], duration=0.1
+            )
+        finally:
+            llm_trace.reset_trace_context(token)
+    await memory._llm_recorder.flush()
+
+    assert (await trace_api_client.delete(f"/v1/default/banks/{bank_id}")).status_code == 200
+    await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
+
+    assert (await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests")).json()["total"] == 0
+    assert (await trace_api_client.get(f"/v1/default/banks/{other}/llm-requests")).json()["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_bank_delete_and_memory_id_patch_lock_rows_in_id_order(
+    memory, request_context, bank_id, pg0_db_url, caplog
+):
+    # #6191/#6006: the memory-id patch is fire-and-forget, so it can still be running when the
+    # bank is deleted. Each statement used to lock the rows in whatever order its plan read them
+    # (storage order, started_at descending, started_at ascending), and two that disagreed
+    # deadlocked. Which plans CI's shared table gets is not something a test can pin, so this
+    # checks the order itself: with the lowest-id row held, a writer that locks by id is stuck
+    # on its very first row and holds nothing else, while any other order grabs rows first.
+    import asyncpg
+
+    trace_id = f"t-{bank_id}"
+    gate = await asyncpg.connect(pg0_db_url)
+    probe = await asyncpg.connect(pg0_db_url)
+    try:
+        await gate.execute(
+            "INSERT INTO llm_requests (bank_id, trace_id, status, started_at) "
+            "SELECT $1, $2, 'success', now() - make_interval(secs => g) FROM generate_series(1, 300) g",
+            bank_id,
+            trace_id,
+        )
+        gate_tx = gate.transaction()
+        await gate_tx.start()
+        await gate.execute("SELECT 1 FROM llm_requests WHERE bank_id = $1 ORDER BY id LIMIT 1 FOR UPDATE", bank_id)
+        with caplog.at_level(logging.WARNING, logger=llm_trace.__name__):
+            racing = asyncio.gather(
+                memory.delete_bank(bank_id, request_context=request_context),
+                memory._llm_recorder._attach_memory_ids(bank_id, trace_id, {"memory_ids": ["m"]}),
+            )
+            try:
+                async with asyncio.timeout(10):
+                    while (
+                        await probe.fetchval(
+                            "SELECT count(*) FROM pg_stat_activity "
+                            "WHERE wait_event_type = 'Lock' AND query LIKE '%llm_requests%'"
+                        )
+                        < 2
+                    ):
+                        await asyncio.sleep(0.01)
+                async with probe.transaction():
+                    free = await probe.fetchval(
+                        "SELECT count(*) FROM (SELECT 1 FROM llm_requests WHERE bank_id = $1 FOR UPDATE SKIP LOCKED) s",
+                        bank_id,
+                    )
+                assert free == 299, "a writer locked rows before reaching the lowest id"
+            finally:
+                await gate_tx.rollback()
+                await racing
+        assert "memory_id attach failed" not in caplog.text
+    finally:
+        await gate.execute("DELETE FROM llm_requests WHERE bank_id = $1", bank_id)
+        await gate.close()
+        await probe.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delete_with_document", [False, True])
+async def test_deleting_document_deletes_its_request_history_when_enabled(
+    trace_api_client, memory, bank_id, monkeypatch, delete_with_document
+):
+    # #6098: with HINDSIGHT_API_LLM_TRACE_DELETE_WITH_DOCUMENT on, a deleted document's prompts go
+    # with it (its retain runs, and runs that consumed its memories); off, they wait for the sweep.
+    base = f"/v1/default/banks/{bank_id}"
+    await trace_api_client.put(base, json={"name": "Trace Bank"})
+    resp = await trace_api_client.post(
+        f"{base}/memories", json={"items": [{"content": "Alice likes cats", "document_id": "doc-1"}]}
+    )
+    assert resp.status_code == 200
+    listed = (await trace_api_client.get(f"{base}/memories/list")).json()["items"]
+    unit_id = next(m["id"] for m in listed if m.get("document_id") == "doc-1")
+
+    def record(trace_id: str, call_metadata: dict | None = None) -> LLMTraceContext:
+        ctx = LLMTraceContext(bank_id=bank_id, operation="retain", trace_id=trace_id)
+        token = set_trace_context(ctx)
+        meta_token = llm_trace.set_call_metadata(call_metadata)
+        try:
+            memory._llm_recorder.record_llm_call(
+                provider="mock", model="mock", scope="memory", messages=[{"role": "user", "content": "x"}], duration=0.1
+            )
+        finally:
+            llm_trace.reset_call_metadata(meta_token)
+            llm_trace.reset_trace_context(token)
+        return ctx
+
+    record("t-retain", {"document_id": "doc-1"})
+    consolidation = record("t-consolidation")
+    record("t-other", {"document_id": "doc-2"})
+    await memory._llm_recorder.flush()
+    memory._llm_recorder.attach_memory_ids(consolidation, source=[unit_id])
+    await memory._llm_recorder.flush()
+
+    from hindsight_api.config import _get_raw_config
+    from hindsight_api.engine import memory_engine as memory_engine_mod
+
+    config = dataclasses.replace(_get_raw_config(), llm_trace_delete_with_document=delete_with_document)
+    monkeypatch.setattr(memory_engine_mod, "get_config", lambda: config)
+    assert (await trace_api_client.delete(f"{base}/documents/doc-1")).status_code == 200
+
+    async def trace_total(trace_id: str) -> int:
+        return (await trace_api_client.get(f"{base}/llm-requests", params={"trace_id": trace_id})).json()["total"]
+
+    expected = 0 if delete_with_document else 1
+    assert await trace_total("t-retain") == expected
+    assert await trace_total("t-consolidation") == expected
+    assert await trace_total("t-other") == 1
+
+
+@pytest.mark.asyncio
+async def test_deleting_document_deletes_its_rows_still_buffered(trace_api_client, memory, bank_id, monkeypatch):
+    # #6098 follow-up: rows are buffered before they are written, so a retain answered just before
+    # the delete would land its row after the DELETE and outlive the document — unless the delete
+    # writes the buffer out first.
+    base = f"/v1/default/banks/{bank_id}"
+    await trace_api_client.put(base, json={"name": "Trace Bank"})
+    resp = await trace_api_client.post(
+        f"{base}/memories", json={"items": [{"content": "Alice likes cats", "document_id": "doc-1"}]}
+    )
+    assert resp.status_code == 200
+    await memory._llm_recorder.flush()
+
+    token = set_trace_context(LLMTraceContext(bank_id=bank_id, operation="retain", trace_id="t-buffered"))
+    meta_token = llm_trace.set_call_metadata({"document_id": "doc-1"})
+    try:
+        memory._llm_recorder.record_llm_call(
+            provider="mock", model="mock", scope="memory", messages=[{"role": "user", "content": "x"}], duration=0.1
+        )
+    finally:
+        llm_trace.reset_call_metadata(meta_token)
+        llm_trace.reset_trace_context(token)
+
+    from hindsight_api.config import _get_raw_config
+    from hindsight_api.engine import memory_engine as memory_engine_mod
+
+    config = dataclasses.replace(_get_raw_config(), llm_trace_delete_with_document=True)
+    monkeypatch.setattr(memory_engine_mod, "get_config", lambda: config)
+    assert (await trace_api_client.delete(f"{base}/documents/doc-1")).status_code == 200
+    await memory._llm_recorder.flush()
+
+    resp = await trace_api_client.get(f"{base}/llm-requests", params={"trace_id": "t-buffered"})
+    assert resp.json()["total"] == 0

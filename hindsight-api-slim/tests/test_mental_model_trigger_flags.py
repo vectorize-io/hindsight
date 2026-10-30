@@ -153,7 +153,7 @@ class TestRetrievalFlagsReachReflect:
 
     async def test_budget(self, memory, request_context, patch_reflect, patch_llm_call):
         """The per-model iteration budget (#4856) reaches reflect as the enum, not a string."""
-        from hindsight_api.engine.memory_engine import Budget
+        from hindsight_api.engine.response_models import Budget
 
         run = await _refresh_with_trigger(memory, request_context, patch_reflect, patch_llm_call, {"budget": "high"})
         assert run["reflect_kwargs"]["budget"] == Budget.HIGH
@@ -162,7 +162,8 @@ class TestRetrievalFlagsReachReflect:
         self, memory, request_context, patch_reflect, patch_llm_call
     ):
         """A refresh writes a whole document; halving reflect_max_iterations starves it (#4856)."""
-        from hindsight_api.engine.memory_engine import DEFAULT_MENTAL_MODEL_REFRESH_BUDGET, Budget
+        from hindsight_api.engine.memory_engine import DEFAULT_MENTAL_MODEL_REFRESH_BUDGET
+        from hindsight_api.engine.response_models import Budget
 
         run = await _refresh_with_trigger(memory, request_context, patch_reflect, patch_llm_call, {})
         assert run["reflect_kwargs"]["budget"] == DEFAULT_MENTAL_MODEL_REFRESH_BUDGET
@@ -403,7 +404,7 @@ class TestTriggerRoundTrip:
             trigger={"mode": "delta", "recall_max_tokens": 1234, "keep_trace": True},
             request_context=request_context,
         )
-        from hindsight_api.api.http import MentalModelTrigger
+        from hindsight_api.engine.response_models import MentalModelTrigger
 
         await memory.update_mental_model(
             bank_id=bank_id,

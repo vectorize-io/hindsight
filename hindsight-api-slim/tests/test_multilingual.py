@@ -5,12 +5,14 @@ Tests that the system correctly handles non-English input and produces
 output in the same language as the input.
 """
 
-import pytest
 import logging
 from datetime import datetime, timezone
-from hindsight_api.engine.memory_engine import Budget
+
+import pytest
+
 from hindsight_api import LLMConfig, RequestContext
 from hindsight_api.config import _get_raw_config
+from hindsight_api.engine.response_models import Budget
 from hindsight_api.engine.retain.fact_extraction import extract_facts_from_text
 from tests.llm_judge import assert_meets_criteria
 
@@ -534,7 +536,7 @@ async def test_english_coding_transcript_stays_english():
     The shape that regressed: a transcript dense with numbers, tool names and paths.
     Under the old "detect the language, then STRICTLY never switch" rule gpt-5.6-luna
     wrote French or Russian facts from it in ~18% of runs. The rate itself is tracked by
-    hindsight-system-evals ``test_03_retain_language``; this pins the behaviour on the
+    hindsight-system-evals ``test_retain_language``; this pins the behaviour on the
     CI model. Judged, because the language call is the model's and a word list would
     misread English tool names inside prose.
     """
@@ -558,7 +560,8 @@ async def test_english_coding_transcript_stays_english():
         response="\n".join(f"- {f.fact}" for f in facts),
         criteria=(
             "Every fact's main sentence (the text before the first ' | ') is written in English. "
-            "Ignore the ' | When: …' / ' | Involving: …' fields, proper nouns, identifiers and numbers."
+            "Ignore the ' | When: …' / ' | Where: …' / ' | Involving: …' fields, "
+            "proper nouns, identifiers and numbers."
         ),
         context="The input was an English conversation between a user and a coding assistant.",
         msg=f"English transcript must yield English facts: {[f.fact for f in facts]}",

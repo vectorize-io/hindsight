@@ -9,7 +9,7 @@ import logging
 
 from ...config import _get_raw_config
 from ..chunk_ids import build_chunk_id
-from ..memory_engine import fq_table
+from ..schema import fq_table
 from .types import ChunkMetadata
 
 logger = logging.getLogger(__name__)

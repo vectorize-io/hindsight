@@ -76,13 +76,52 @@ def test_aliases_cited_in_the_answer_become_real_ids():
     presenter.present(_observations("uuid-a", "uuid-b"))
     args = {
         "answer": "o1 contradicts o2 (see [o2]); c9 and vitamin C1 are untouched",
-        "document": {"sections": [{"heading": "o1", "level": 2, "blocks": ["o2 supersedes o1."]}]},
+        "markdown": "## o1\n\no2 supersedes o1.",
     }
     assert presenter.resolve(args) == {
         "answer": "uuid-a contradicts uuid-b (see [uuid-b]); c9 and vitamin C1 are untouched",
-        "document": {"sections": [{"heading": "uuid-a", "level": 2, "blocks": ["uuid-b supersedes uuid-a."]}]},
+        "markdown": "## uuid-a\n\nuuid-b supersedes uuid-a.",
     }
     assert presenter.resolve_text("o10 is not o1") == "o10 is not uuid-a"
+
+
+def test_an_alias_inside_an_identifier_is_left_alone():
+    """Low aliases are handed out in nearly every reflect, so a ``\\b`` match also hit
+    identifiers in the facts: ``tra64-v1-c2-ui1`` came back as ``tra64-v1-<chunk id>-ui1``
+    and ``admin@f5-1.example.org`` as ``admin@<uuid>-1.example.org`` (#6150)."""
+    presenter = ToolResultPresenter()
+    presenter.present({"memories": [{"id": f"fact-{n}", "text": "x"} for n in range(1, 6)]})
+    presenter.present(_observations("uuid-a"))
+    presenter.present({"chunks": {"bank_doc-a_0": {"chunk_text": "a"}, "bank_doc-b_0": {"chunk_text": "b"}}})
+    # A range is left as written too: it never named the aliases between its ends.
+    for text in (
+        "tra64-v1-c2-ui1",
+        "runtime tra64-v1-c2",
+        "o1-preview",
+        "src/c2/x",
+        "c2.example",
+        "ns:c2",
+        "c1-c2",
+        "ssh admin@f5-1.example.org",
+        "f5@host",
+        "user@f5",
+    ):
+        assert presenter.resolve_text(text) == text
+    # The done answer and a refreshed page's markdown go through the same path.
+    assert presenter.resolve(
+        {"answer": "Candidate tra64-v1-c2-ui1 (runtime tra64-v1-c2), cited [c2]", "markdown": "f5-2.example.org: f5"}
+    ) == {
+        "answer": "Candidate tra64-v1-c2-ui1 (runtime tra64-v1-c2), cited [bank_doc-b_0]",
+        "markdown": "f5-2.example.org: fact-5",
+    }
+
+
+def test_an_alias_followed_by_punctuation_still_resolves():
+    presenter = ToolResultPresenter()
+    presenter.present(_observations("uuid-a"))
+    assert presenter.resolve_text("o1, (o1), [o1], `o1`, o1's, o1: and o1.\n- o1") == (
+        "uuid-a, (uuid-a), [uuid-a], `uuid-a`, uuid-a's, uuid-a: and uuid-a.\n- uuid-a"
+    )
 
 
 def test_an_item_already_shown_is_referenced_not_repeated():
@@ -96,7 +135,7 @@ def test_an_item_already_shown_is_referenced_not_repeated():
 def test_reading_a_page_seen_as_a_snippet_returns_its_text():
     """The dedupe keys on the shape, not the id alone.
 
-    `search_mental_models` shows the best hit whole and the rest as snippets, so
+    `search_mental_models` shows the best hits whole and the rest as snippets, so
     the SAME page id legitimately comes back twice: once truncated, once in full
     from the `read_mental_models` the model then issues. Keying on the id alone
     answered that read with `already_shown` and an empty list — the model asked

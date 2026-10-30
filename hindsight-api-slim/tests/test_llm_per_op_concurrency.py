@@ -17,7 +17,6 @@ import pytest
 from openai import APIConnectionError
 
 from hindsight_api._cross_loop import CrossLoopSemaphore
-from hindsight_api.config import clear_config_cache
 from hindsight_api.engine import llm_wrapper
 from hindsight_api.engine.llm_trace import LLMTraceContext, reset_trace_context, set_trace_context
 from hindsight_api.engine.llm_wrapper import (
@@ -298,8 +297,7 @@ class TestSemaphoreEnforcement:
         assert peak == 1, f"refresh cap should serialize the refresh's reflect calls, peak={peak}"
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("with_tools", [False, True])
-    async def test_unrelated_call_can_run_while_retrying_call_backs_off(self, with_tools):
+    async def test_unrelated_call_can_run_while_retrying_call_backs_off(self):
         """A logical call's retry sleep must not occupy the global permit."""
         provider = LLMProvider(provider="openai", api_key="test", base_url="", model="test-model")
         entered_backoff = asyncio.Event()
@@ -317,15 +315,10 @@ class TestSemaphoreEnforcement:
                 await release_backoff.wait()
             return "ok"
 
-        method = "call_with_tools" if with_tools else "call"
-        setattr(provider._provider_impl, method, retrying_mock_call)
+        provider._provider_impl.call = retrying_mock_call
 
         async def invoke(content):
-            kwargs = {"messages": [{"role": "user", "content": content}], "scope": "retain"}
-            if with_tools:
-                kwargs["tools"] = []
-                return await provider.call_with_tools(**kwargs)
-            return await provider.call(**kwargs)
+            return await provider.call(messages=[{"role": "user", "content": content}], scope="retain")
 
         with patch.object(llm_wrapper, "_global_llm_semaphore", CrossLoopSemaphore(1)):
             retrying = asyncio.create_task(invoke("retrying"))

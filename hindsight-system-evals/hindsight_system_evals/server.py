@@ -126,6 +126,15 @@ def provider_environment() -> dict[str, str]:
 
     provider, model = pick("LLM_PROVIDER"), pick("LLM_MODEL")
     env = {"HINDSIGHT_API_LLM_PROVIDER": provider, "HINDSIGHT_API_LLM_MODEL": model}
+    # A/B switches for one run: HINDSIGHT_EVAL_SET_<X> becomes HINDSIGHT_API_<X>.
+    # Explicit, so a developer's own HINDSIGHT_API_* never leaks into a run by accident.
+    # Applied last on both returns, the model-free one included: a reranker A/B is
+    # exactly what a no-LLM suite runs.
+    overrides = {
+        "HINDSIGHT_API_" + key.removeprefix("HINDSIGHT_EVAL_SET_"): value
+        for key, value in os.environ.items()
+        if key.startswith("HINDSIGHT_EVAL_SET_")
+    }
 
     # `none` is a real provider: the server starts with no LLM and forces
     # retain_extraction_mode=chunks. It needs no credentials because it never calls
@@ -134,7 +143,7 @@ def provider_environment() -> dict[str, str]:
     # demanding a provider key would be asking for a secret nothing spends.
     # Every other suite still fails loudly without one.
     if provider == "none":
-        return env
+        return env | overrides
 
     if provider == "vertexai":
         for suffix in ("LLM_VERTEXAI_SERVICE_ACCOUNT_KEY", "LLM_VERTEXAI_PROJECT_ID", "LLM_VERTEXAI_REGION"):
@@ -166,12 +175,7 @@ def provider_environment() -> dict[str, str]:
     for suffix in ("LLM_BASE_URL", "LLM_EXTRA_BODY", "LLM_TEMPERATURE", "LLM_STRICT_SCHEMA"):
         if value := pick(suffix):
             env[f"HINDSIGHT_API_{suffix}"] = value
-    # A/B switches for one run: HINDSIGHT_EVAL_SET_<X> becomes HINDSIGHT_API_<X>.
-    # Explicit, so a developer's own HINDSIGHT_API_* never leaks into a run by accident.
-    for key, value in os.environ.items():
-        if key.startswith("HINDSIGHT_EVAL_SET_"):
-            env["HINDSIGHT_API_" + key.removeprefix("HINDSIGHT_EVAL_SET_")] = value
-    return env
+    return env | overrides
 
 
 def start_eval_server(*, log_path: Path) -> EvalServer:
@@ -188,7 +192,9 @@ def start_eval_server(*, log_path: Path) -> EvalServer:
     env.update(provider_environment())
     env.update(
         {
-            "HINDSIGHT_API_DATABASE_URL": f"pg0://{instance}",
+            # An explicit port: left to pg0, servers started together raced for the same one and
+            # one database died under the other's run ("Connection refused" mid-scenario).
+            "HINDSIGHT_API_DATABASE_URL": f"pg0://{instance}:{free_port()}",
             "HINDSIGHT_API_HOST": "127.0.0.1",
             "HINDSIGHT_API_PORT": str(port),
             "HINDSIGHT_API_LOG_LEVEL": "info",

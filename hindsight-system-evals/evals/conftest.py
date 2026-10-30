@@ -27,7 +27,7 @@ from hindsight_system_evals import (
 )
 from hindsight_system_evals.pages import SettleFn
 from hindsight_system_evals.target import ENV_API_KEY, ENV_API_URL
-from hindsight_system_evals.report import RECORDED, ModelConfig, ModelRef, RunReport, summarise
+from hindsight_system_evals.report import RECORDED, ModelConfig, ModelRef, RunReport, by_category, summarise
 
 BANK_PREFIX = "syseval-"
 
@@ -136,7 +136,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--retrieval-output",
         default=None,
         help=(
-            "write test_08's metric table as JSON here — how two reranker or embedder arms get "
+            "write the BEIR benchmark's metric table as JSON here — how two reranker or embedder arms get "
             "compared, since each needs its own server process and therefore its own run"
         ),
     )
@@ -186,6 +186,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         correct_rate=(overall.correct / overall.total) if overall.total else None,
         trap_count=overall.trap_count,
         by_kind={kind: summarise([r for r in RECORDED if r.kind == kind]) for kind in sorted({r.kind for r in RECORDED})},
+        by_category=by_category(RECORDED),
         items=RECORDED,
     )
     Path(output).write_text(report.to_json(), encoding="utf-8")

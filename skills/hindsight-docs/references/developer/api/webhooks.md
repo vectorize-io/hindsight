@@ -100,6 +100,8 @@ Fired after Hindsight finishes consolidating new memories into observations for 
 
 **`status` values:** `"completed"` or `"failed"`
 
+A consolidation that hits a temporary error while another consolidation is already pending for the same bank sends no event: it is not retried, the pending one does the same work and sends its own event.
+
 ---
 
 ### `retain.completed`

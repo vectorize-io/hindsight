@@ -1,9 +1,8 @@
 """Regression tests for #5505: a failed Codex stream must raise, not return empty content.
 
 The ChatGPT backend reports an overload after a 200 by streaming an ``error`` event and
-then ``response.failed``. Both SSE parsers used to skip those events, so ``call()`` ran
-``json.loads("")`` (a misleading ``JSONDecodeError``) and ``call_with_tools()`` returned
-no tool calls (a misleading ``ReflectToolCallError`` upstream).
+then ``response.failed``. The SSE parser used to skip those events, so ``call()`` ran
+``json.loads("")``, a misleading ``JSONDecodeError``.
 """
 
 from unittest.mock import patch
@@ -27,17 +26,6 @@ _FAILED_STREAM = (
     'data: {"response":{"status":"failed","error":{"code":"server_is_overloaded",'
     '"message":"Our servers are currently overloaded. Please try again later."}}}\n\n'
 )
-
-_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "recall",
-            "description": "Recall memories",
-            "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
-        },
-    }
-]
 
 
 class _Facts(BaseModel):
@@ -71,14 +59,3 @@ async def test_structured_call_raises_backend_error_and_retries():
         # Treated like any transport failure: retried within the budget.
         assert server.call_count == 2
     assert is_transient_remote_error(exc_info.value)
-
-
-async def test_tool_call_raises_backend_error():
-    llm = _build_llm()
-    with stub_codex_stream(llm, CodexReply(text=_FAILED_STREAM)):
-        with pytest.raises(CodexStreamError, match="Our servers are currently overloaded"):
-            await llm.call_with_tools(
-                messages=[{"role": "user", "content": "recall"}],
-                tools=_TOOLS,
-                max_retries=0,
-            )

@@ -45,17 +45,3 @@ async def test_call_refusal_is_not_retried(stop_reason):
             initial_backoff=0,
         )
     assert provider._client.messages.create.await_count == 1
-
-
-@pytest.mark.asyncio
-async def test_call_with_tools_refusal_is_not_retried():
-    provider = _make_provider()
-    provider._client.messages.create = AsyncMock(return_value=_refusal("refusal"))
-    with pytest.raises(ProviderContentPolicyError):
-        await provider.call_with_tools(
-            messages=[{"role": "user", "content": "x"}],
-            tools=[{"type": "function", "function": {"name": "f", "parameters": {"type": "object"}}}],
-            max_retries=3,
-            initial_backoff=0,
-        )
-    assert provider._client.messages.create.await_count == 1

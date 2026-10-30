@@ -1691,6 +1691,31 @@ describe("resolveAndCacheIdentity dispatch-surface gate (#1541)", () => {
       expect(skipReason?.kind).toBe("final");
     }
   });
+
+  it.each([
+    "agent:oncall:cron:triage",
+    "agent:oncall:heartbeat:node-1",
+    "agent:oncall:subagent:abc123",
+  ])(
+    "lets operational sessions through when skipOperationalSessions is false: %s",
+    (sessionKey) => {
+      // #5915: a static shared bank for a fleet of scheduled agents.
+      const result = getIdentitySkipReason(
+        { sessionKey },
+        { dynamicBankId: false, bankId: "team", skipOperationalSessions: false }
+      );
+      expect(result.reason).toBeUndefined();
+      expect(result.resolvedCtx?.senderId).toBe("agent-user:oncall");
+    }
+  );
+
+  it("keeps temp sessions skipped when skipOperationalSessions is false", () => {
+    const result = getIdentitySkipReason(
+      { sessionKey: "temp:compose:123" },
+      { skipOperationalSessions: false }
+    );
+    expect(result.reason?.kind).toBe("final");
+  });
 });
 
 // ---------------------------------------------------------------------------

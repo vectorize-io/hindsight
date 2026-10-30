@@ -124,6 +124,25 @@ The [`bank-llm-routing`](https://github.com/vectorize-io/hindsight/tree/main/hin
 
 ---
 
+### ModelCallExtension
+
+Receives every model call the server makes — LLM, embedding, rerank and decision-model calls, successes and failures — once it finishes, as a `ModelCall`: the tenant schema, bank, operation and trace it ran for, scope, provider and model, input / cached / output / thoughts tokens, duration, and the request and response themselves (plus the tool calls, when the model asked for tools). Use it to keep a per-call record of model spend and content outside the `llm_requests` table: object storage, a warehouse, an observability product.
+
+```bash
+HINDSIGHT_API_MODEL_CALL_EXTENSION=mypackage.calls:MyRecorder
+```
+
+Things to know:
+
+- **`record()` runs on the call path, synchronously.** Only buffer there: no I/O, nothing that blocks. Send from a background task. An exception it raises never fails the call; it is swallowed and logged at DEBUG only, so catch and report your own errors.
+- **Lifecycle:** `on_startup()` runs when the memory engine initializes, before any model call; `on_shutdown()` when it closes, after the workers have stopped, so a buffer can be written out completely.
+- **It sees the same calls `llm_requests` tracing sees**, whether or not that table is written, and in the API and the worker alike. Load it in both.
+- **`input` and `output` are the call's content** (prompts and memories included). Treat what you store accordingly.
+- **Operation runs (optional):** override `record_operation(run)` to also receive an `OperationRun` when each retain, recall, reflect, consolidation or mental-model refresh ends, wherever it started (HTTP, MCP or a queued task). It carries the run's wall time, its success or error, the model calls it made (count, summed time and tokens), its calls into the memories store (count and summed time, measured at the store's interface), the engine's timed phases, and for a queued task its id and when it was queued. Every `ModelCall` made inside a run carries the run's id as `operation_id`, so the two join. A run opened inside another (a mental-model refresh's reflect pass) is its own run with `parent_id` set, and keeps only its own figures. Same rule as `record()`: buffer and return.
+- **`current_operation_id()`** (`hindsight_api.operation_runs`) returns the run in progress, for a memories store that wants to tag its own requests with it.
+
+---
+
 ## Writing Custom Extensions
 
 ### Extension Basics
@@ -545,6 +564,50 @@ class PerCustomerLLMs(LLMRequestExtension):
 ```
 
 `resolve` runs on every LLM call, so cache anything slow. Bank ids are unique per tenant schema only — a multi-tenant deployment must key on `target.schema` too, or one tenant can name a bank after another tenant's and be billed to its key. `LLMRequestOverrides` keeps the LLM and key out of its `repr`; keep them out of your own logs as well.
+
+---
+
+### Example: Custom ModelCallExtension
+
+```python
+import asyncio
+
+from hindsight_api.extensions import ModelCall, ModelCallExtension
+
+
+class JsonlFileRecorder(ModelCallExtension):
+    """Appends every model call to a JSONL file, written once a second off the call path."""
+
+    def __init__(self, config: dict[str, str]) -> None:
+        super().__init__(config)
+        self.path = config.get("path", "model_calls.jsonl")
+        self.buffer: list[str] = []
+        self.task: asyncio.Task | None = None
+
+    def record(self, call: ModelCall) -> None:
+        self.buffer.append(call.model_dump_json())  # buffer only
+
+    async def on_startup(self) -> None:
+        self.task = asyncio.create_task(self._flush_forever())
+
+    async def on_shutdown(self) -> None:
+        if self.task:
+            self.task.cancel()
+        self._flush()
+
+    async def _flush_forever(self) -> None:
+        while True:
+            await asyncio.sleep(1)
+            self._flush()
+
+    def _flush(self) -> None:
+        lines, self.buffer = self.buffer, []
+        if lines:
+            with open(self.path, "a") as f:
+                f.write("\n".join(lines) + "\n")
+```
+
+Calls are recorded in the API and in every worker, from whichever event loop made them, so a production recorder should guard its buffer with a `threading.Lock` and write from a task of its own.
 
 ---
 

@@ -7,11 +7,10 @@ table, independent of bank size). The migration replaces it with a
 ``btree_gin`` composite that starts with ``bank_id``.
 
 Checks the index shape, that the resolver's own candidate query is served by it,
-and that downgrade restores the old index. Uses a dedicated pg0 instance
-(mirrors test_migration_entity_kind) so it never stamps the shared one.
+and that downgrade restores the old index. Uses a database of its
+own (the ``fresh_db_url`` fixture) so it never stamps the shared one.
 """
 
-import asyncio
 from pathlib import Path
 
 import pytest
@@ -59,28 +58,10 @@ def _index_def(conn, name: str) -> str | None:
 
 
 @pytest.fixture(scope="module")
-def head_db_url():
-    """pg0 migrated to head from an empty schema."""
-    from hindsight_api.pg0 import EmbeddedPostgres
-
-    pg0 = EmbeddedPostgres(name="hindsight-entities-bank-trgm-test", port=None)
-    loop = asyncio.new_event_loop()
-    try:
-        url = loop.run_until_complete(pg0.ensure_running())
-        # pg0 instances persist between runs; start from an empty schema each time.
-        engine = create_engine(url)
-        with engine.begin() as conn:
-            conn.execute(text("DROP SCHEMA public CASCADE"))
-            conn.execute(text("CREATE SCHEMA public"))
-        engine.dispose()
-
-        command.upgrade(_alembic_cfg(url), "heads")
-        yield url
-    finally:
-        # Stop the postmaster even when setup fails, so it cannot squat its port
-        # for an unrelated test later.
-        loop.run_until_complete(pg0.stop())
-        loop.close()
+def head_db_url(fresh_db_url):
+    """A database of its own, migrated to head."""
+    command.upgrade(_alembic_cfg(fresh_db_url), "heads")
+    return fresh_db_url
 
 
 def test_index_is_bank_scoped_partial_and_replaces_old_one(head_db_url):

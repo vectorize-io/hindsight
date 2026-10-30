@@ -666,6 +666,19 @@
           "description": "Persist raw source text (documents.original_text / chunks.chunk_text). Set false to keep only derived facts.",
           "title": "Store Document Text"
         },
+        "default_timezone": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "IANA zone (e.g. 'Europe/Rome') a retain timestamp, or a time the LLM extracts, is read in when it carries no UTC offset.",
+          "title": "Default Timezone"
+        },
         "enable_auto_consolidation": {
           "anyOf": [
             {
@@ -743,6 +756,32 @@
           "default": null,
           "description": "Default for recall prefer_observations when the request omits it",
           "title": "Recall Prefer Observations"
+        },
+        "recall_decision_model_prune": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Default for recall prune when the request omits it (decision-model reranker only)",
+          "title": "Recall Decision Model Prune"
+        },
+        "recall_decision_model_dedup": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Default for recall dedup when the request omits it (decision-model reranker only)",
+          "title": "Recall Decision Model Dedup"
         },
         "recall_max_tokens": {
           "anyOf": [

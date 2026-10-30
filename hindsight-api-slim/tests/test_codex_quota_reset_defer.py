@@ -39,8 +39,7 @@ def _quota_response(resets_at: object, *, private_detail: str = "private diagnos
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("method", ["call", "call_with_tools"])
-async def test_usage_limit_with_valid_reset_defers_both_call_paths_without_retry(method: str) -> None:
+async def test_usage_limit_with_valid_reset_defers_without_retry() -> None:
     llm = _build_llm()
     retry_at = (datetime.now(UTC) + timedelta(hours=2)).replace(microsecond=0)
     response = _quota_response(int(retry_at.timestamp()))
@@ -50,10 +49,7 @@ async def test_usage_limit_with_valid_reset_defers_both_call_paths_without_retry
         patch("hindsight_api.engine.providers.codex_llm.asyncio.sleep", new_callable=AsyncMock) as sleep,
         pytest.raises(ProviderRateLimitResetError) as exc_info,
     ):
-        if method == "call":
-            await llm.call(messages=[{"role": "user", "content": "x"}], max_retries=2)
-        else:
-            await llm.call_with_tools(messages=[{"role": "user", "content": "x"}], tools=[], max_retries=2)
+        await llm.call(messages=[{"role": "user", "content": "x"}], max_retries=2)
 
     assert stream.call_count == 1
     sleep.assert_not_awaited()
@@ -77,29 +73,14 @@ async def test_invalid_reset_timestamp_keeps_normal_call_retry_behavior() -> Non
 
 
 @pytest.mark.asyncio
-async def test_invalid_reset_timestamp_keeps_tool_call_http_error() -> None:
-    llm = _build_llm()
-    response = _quota_response(None)
-
-    with stub_codex_stream(llm, response) as stream, pytest.raises(UpstreamHTTPError):
-        await llm.call_with_tools(messages=[{"role": "user", "content": "x"}], tools=[])
-
-    assert stream.call_count == 1
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("method", ["call", "call_with_tools"])
-async def test_quota_defer_message_and_logs_do_not_expose_response_body(method: str, caplog) -> None:
+async def test_quota_defer_message_and_logs_do_not_expose_response_body(caplog) -> None:
     llm = _build_llm()
     retry_at = datetime.now(UTC) + timedelta(hours=2)
     private_detail = "customer-private-plan-marker"
     response = _quota_response(int(retry_at.timestamp()), private_detail=private_detail)
 
     with stub_codex_stream(llm, response), pytest.raises(ProviderRateLimitResetError) as exc_info:
-        if method == "call":
-            await llm.call(messages=[{"role": "user", "content": "x"}], max_retries=2)
-        else:
-            await llm.call_with_tools(messages=[{"role": "user", "content": "x"}], tools=[], max_retries=2)
+        await llm.call(messages=[{"role": "user", "content": "x"}], max_retries=2)
 
     assert private_detail not in str(exc_info.value)
     assert private_detail not in caplog.text

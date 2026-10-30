@@ -263,7 +263,7 @@ never ran".
 | `run.py` | the CLI that wires the five steps together |
 
 The metric itself is the one deterministic piece, so it has real tests:
-`uv run pytest evals/test_00_coding_agents_metric.py` — no server, no model.
+`uv run pytest evals/misc/test_coding_agents_metric.py` — no server, no model.
 
 The session runs with `--strict-mcp-config` and a Hindsight-only MCP config, so
 the account's connectors (Gmail, Drive, Claude Docs) stay out of the tool list.

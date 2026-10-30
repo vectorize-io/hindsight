@@ -42,6 +42,7 @@ import logging
 from typing import Any, Awaitable, Callable
 
 from ..config import get_config
+from ..schema_context import get_current_schema
 from .bank_stats_cache import BankStatsCache
 
 logger = logging.getLogger(__name__)
@@ -73,8 +74,6 @@ def _key(bank_id: str, kind: str) -> tuple[str, str]:
 
 def _schema() -> str:
     try:
-        from .memory_engine import get_current_schema
-
         return get_current_schema() or ""
     except Exception:
         # No schema context (a background loop, say). Cache under the empty key rather than

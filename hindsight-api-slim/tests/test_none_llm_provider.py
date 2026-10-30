@@ -10,19 +10,16 @@ Verifies that when HINDSIGHT_API_LLM_PROVIDER=none:
 """
 
 import asyncio
-import os
 from datetime import datetime, timezone
 
 import httpx
 import pytest
 import pytest_asyncio
 
-from hindsight_api import LLMConfig, LocalSTEmbeddings, MemoryEngine, RequestContext
+from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.api import create_app
-from hindsight_api.engine.cross_encoder import LocalSTCrossEncoder
-from hindsight_api.engine.memory_engine import Budget
 from hindsight_api.engine.providers.none_llm import LLMNotAvailableError, NoneLLM
-from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
+from hindsight_api.engine.response_models import Budget
 from hindsight_api.engine.task_backend import SyncTaskBackend
 
 
@@ -78,8 +75,10 @@ async def test_none_llm_call_raises():
 
 @pytest.mark.asyncio
 async def test_none_llm_call_with_tools_raises():
-    """NoneLLM.call_with_tools() should raise LLMNotAvailableError."""
-    llm = NoneLLM(provider="none", api_key="", base_url="", model="none")
+    """A tool call on the none provider goes through ``call`` and raises LLMNotAvailableError."""
+    from hindsight_api.engine.llm_wrapper import LLMProvider
+
+    llm = LLMProvider(provider="none", api_key="", base_url="", model="none")
     with pytest.raises(LLMNotAvailableError):
         await llm.call_with_tools(
             messages=[{"role": "user", "content": "hello"}],

@@ -192,6 +192,15 @@ Because observations are consolidated from raw facts, recalling `observation` al
 
 This lets you ask for everything without choosing between "raw facts only" (no consolidation) and "observations only" (which may lag behind the latest retains while consolidation catches up). Off unless the request or the bank turns it on. When a request leaves it out, the bank's `recall_prefer_observations` config decides (env `HINDSIGHT_API_RECALL_PREFER_OBSERVATIONS`, `false` unless configured), so a deployment can turn it on for clients that never pass it, such as MCP connectors. It has no effect unless both `observation` and at least one of `world`/`experience` are included in `types`.
 
+### rerank
+
+With a [decision model set up for recall](../configuration.md#decision-model), recall can drop results instead of only ranking them. Both options go in the `rerank` object, e.g. `"rerank": {"prune": true, "dedup": true}`:
+
+- `prune` drops the results judged no help to the query. It reuses the ranking answers, so it costs no extra request, and the best result always stays.
+- `dedup` drops a result that repeats a better-ranked one, so the same fact retained from several documents comes back once. It costs one more decision-model request, after the ranking one.
+
+When a request leaves either out, the bank's `recall_decision_model_prune` / `recall_decision_model_dedup` config decides (env `HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE` / `_DEDUP`, `false` unless configured). Both are ignored without a decision model.
+
 ### budget
 
 Controls retrieval depth and breadth. Accepted values are `low`, `mid` (default), and `high`. Use `low` for fast simple lookups, `mid` for balanced everyday queries, and `high` when you need to find indirect connections or exhaustive coverage.

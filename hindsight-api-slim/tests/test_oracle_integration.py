@@ -19,7 +19,7 @@ import pytest
 
 from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.engine.db import DatabaseConnection
-from hindsight_api.engine.memory_engine import Budget
+from hindsight_api.engine.response_models import Budget
 from hindsight_api.engine.retain.types import embedding_to_pgvector
 from tests import consolidation_actions
 from tests.test_bank_config_atomicity import (

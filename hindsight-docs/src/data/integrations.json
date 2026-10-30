@@ -176,7 +176,7 @@
       "description": "No-MCP long-term memory for ZCode (Z.ai's GLM desktop coding agent) via Hindsight hooks. Recalls relevant context before each prompt and retains conversations after each turn.",
       "type": "official",
       "by": "hindsight",
-      "category": "coding-agent",
+      "category": "legacy",
       "link": "/sdks/integrations/zcode",
       "icon": "/img/icons/zcode.svg"
     },
@@ -551,6 +551,16 @@
       "icon": "/img/icons/obsidian.svg"
     },
     {
+      "id": "openbot",
+      "name": "OpenBot",
+      "description": "Give your OpenBot teammates persistent long-term memory that outlives a single thread and is shared across the whole team — connect Hindsight's MCP server to any OpenBot agent.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "mcp",
+      "link": "/sdks/integrations/openbot",
+      "icon": "/img/icons/openbot.png"
+    },
+    {
       "id": "hindclaw",
       "name": "HindClaw",
       "description": "Production memory infrastructure for AI agents \u2014 server-side access control via Hindsight extensions, Terraform provider for users/groups/banks/permissions, and an OpenClaw plugin with auto-managed embed.",
@@ -679,6 +689,16 @@
       "category": "tool",
       "link": "https://github.com/Nyrest/notion-to-hindsight-sync",
       "icon": "/img/icons/notion.svg"
+    },
+    {
+      "id": "hindsight-ingestion",
+      "name": "Hindsight Ingestion",
+      "description": "Syncs documents from Notion, SiYuan, S3, WebDAV, Google Drive, OneDrive, email, SQL, the file system and more into Hindsight. Self-hosted with Docker, with incremental and multimodal sync.",
+      "type": "community",
+      "by": "Nyrest",
+      "category": "tool",
+      "link": "https://github.com/Nyrest/hindsight-ingestion",
+      "icon": "/img/icons/hindsight-ingestion.svg"
     }
   ]
 }

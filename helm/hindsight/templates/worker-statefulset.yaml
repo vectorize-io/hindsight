@@ -29,6 +29,7 @@ spec:
       {{- if .Values.serviceAccount.create }}
       serviceAccountName: {{ include "hindsight.serviceAccountName" . }}
       {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       {{- with .Values.worker.extraInitContainers }}

@@ -329,6 +329,7 @@ impl App {
                         trace: false,
                         query_timestamp: None,
                         prefer_observations: None,
+                        rerank: None,
                         include: None,
                         tags: None,
                         tags_match: TagsMatch::Any,
@@ -364,6 +365,7 @@ impl App {
                         reflect_search_observations_include_entities: None,
                         abstain: false,
                         search_queries: None,
+                        reflect_search_mental_models_max_tokens: None,
                     };
 
                     let result = client

@@ -59,9 +59,11 @@ describe("HOOK_HARNESSES lifecycle contract", () => {
       cwd: "/c",
       last_assistant_message: "[{'type': 'text', 'text': 'hi'}]",
     };
+    // Claude Code sends the reply's text, never a serialized block list.
+    const plainText = new Set<string>(["claude-code"]);
     for (const harness of HOOK_HARNESS_NAMES) {
       const spec = HOOK_HARNESSES[harness].retain;
-      if (spec.parse(probe).lastAssistantMessage === undefined) continue;
+      if (spec.parse(probe).lastAssistantMessage === undefined || plainText.has(harness)) continue;
       expect(
         spec.readLastMessage,
         `${harness} reads last_assistant_message but never decodes it`
@@ -188,6 +190,16 @@ describe("HOOK_HARNESSES lifecycle contract", () => {
       cwd: "/repo",
       lastAssistantMessage: "done",
     });
+
+    // Stop can fire before the final reply is flushed to the transcript (#5790).
+    expect(
+      HOOK_HARNESSES["claude-code"].retain.parse({
+        session_id: "s1",
+        transcript_path: "/tmp/s1.jsonl",
+        cwd: "/repo",
+        last_assistant_message: "done",
+      }).lastAssistantMessage
+    ).toBe("done");
 
     const droid = HOOK_HARNESSES["factory-droid"];
     expect(droid.additionalHooks).toEqual([

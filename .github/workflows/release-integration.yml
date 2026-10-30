@@ -75,7 +75,7 @@ jobs:
 
     # ── TypeScript integrations (ai-sdk, chat, openclaw) ────────────────────
 
-    # ── Plugin integrations (claude-code, grok-bot, hermes) — no package to publish ─
+    # ── Plugin integrations (grok-bot, hermes, omo) — no package to publish ─
 
     - name: Plugin release
       if: steps.type.outputs.type == 'plugin'

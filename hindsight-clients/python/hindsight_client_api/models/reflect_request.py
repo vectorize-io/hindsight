@@ -32,6 +32,7 @@ class ReflectRequest(BaseModel):
     """ # noqa: E501
     reflect_search_observations_max_tokens: Optional[Annotated[int, Field(strict=True, ge=1)]] = None
     reflect_search_observations_include_entities: Optional[StrictBool] = None
+    reflect_search_mental_models_max_tokens: Optional[Annotated[int, Field(strict=True, ge=1)]] = None
     query: StrictStr
     budget: Optional[Budget] = None
     context: Optional[StrictStr] = None
@@ -47,7 +48,7 @@ class ReflectRequest(BaseModel):
     exclude_mental_model_ids: Optional[List[StrictStr]] = None
     abstain: Optional[StrictBool] = Field(default=False, description="Allow an empty answer. When memory holds nothing that answers the query, the response has an empty `text` and `abstained: true`, instead of reflect searching on or failing. With a decision model, it is asked the query itself about the `context` and the best memories found: when it sees nothing the answer depends on, reflect returns with no LLM call; otherwise the answer reads only the memories it picked. Word the query as the question to decide (\"does my change go against a recorded decision?\"); `context` is what it is about. For callers that act on any text they get back, such as a live session that should speak only when memory has something to say.")
     search_queries: Optional[Annotated[List[StrictStr], Field(max_length=8)]] = None
-    __properties: ClassVar[List[str]] = ["reflect_search_observations_max_tokens", "reflect_search_observations_include_entities", "query", "budget", "context", "max_tokens", "include", "response_schema", "tags", "tags_match", "tag_groups", "apply_all_directives", "fact_types", "exclude_mental_models", "exclude_mental_model_ids", "abstain", "search_queries"]
+    __properties: ClassVar[List[str]] = ["reflect_search_observations_max_tokens", "reflect_search_observations_include_entities", "reflect_search_mental_models_max_tokens", "query", "budget", "context", "max_tokens", "include", "response_schema", "tags", "tags_match", "tag_groups", "apply_all_directives", "fact_types", "exclude_mental_models", "exclude_mental_model_ids", "abstain", "search_queries"]
 
     @field_validator('tags_match')
     def tags_match_validate_enum(cls, value):
@@ -129,6 +130,11 @@ class ReflectRequest(BaseModel):
         if self.reflect_search_observations_include_entities is None and "reflect_search_observations_include_entities" in self.model_fields_set:
             _dict['reflect_search_observations_include_entities'] = None
 
+        # set to None if reflect_search_mental_models_max_tokens (nullable) is None
+        # and model_fields_set contains the field
+        if self.reflect_search_mental_models_max_tokens is None and "reflect_search_mental_models_max_tokens" in self.model_fields_set:
+            _dict['reflect_search_mental_models_max_tokens'] = None
+
         # set to None if context (nullable) is None
         # and model_fields_set contains the field
         if self.context is None and "context" in self.model_fields_set:
@@ -178,6 +184,7 @@ class ReflectRequest(BaseModel):
         _obj = cls.model_validate({
             "reflect_search_observations_max_tokens": obj.get("reflect_search_observations_max_tokens"),
             "reflect_search_observations_include_entities": obj.get("reflect_search_observations_include_entities"),
+            "reflect_search_mental_models_max_tokens": obj.get("reflect_search_mental_models_max_tokens"),
             "query": obj.get("query"),
             "budget": obj.get("budget"),
             "context": obj.get("context"),

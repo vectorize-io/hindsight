@@ -107,6 +107,8 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `dynamicBankGranularity`   | `["agent", "channel", "user"]` | Fields used to derive bank ID. Options: `agent`, `channel`, `user`, `provider`                                                                                                                                                                                                                                   |
 | `excludeProviders`         | `["heartbeat"]`                | Message providers to skip for recall/retain (e.g. `heartbeat`, `slack`, `telegram`, `discord`)                                                                                                                                                                                                                   |
 | `autoRecall`               | `true`                         | Auto-inject memories before each turn. Set to `false` when the agent has its own recall tool.                                                                                                                                                                                                                    |
+| `memoryMode`               | `"hybrid"`                     | `hybrid`: auto-recall plus the `hindsight_retain` / `hindsight_recall` / `hindsight_reflect` tools. `context`: auto-recall only. `tools`: tools only, no auto-recall. See [Agent tools](#agent-tools).                                                                                                           |
+| `allowKnowledgeDelete`     | `false`                        | Offer `hindsight_delete_knowledge_node`, which deletes a knowledge folder or page and everything under it. Cannot be undone. See [Agent tools](#agent-tools).                                                                                                                                                    |
 | `autoRetain`               | `true`                         | Auto-retain conversations after each turn                                                                                                                                                                                                                                                                        |
 | `retainRoles`              | `["user", "assistant"]`        | Which message roles to retain. Options: `user`, `assistant`, `system`, `tool`                                                                                                                                                                                                                                    |
 | `retainFormat`             | `"json"`                       | Serialization format for retained conversation content. `"json"` emits a structured array of `{role, content}` messages (matches Claude Code). `"text"` emits legacy `[role: x] … [x:end]` markers.                                                                                                              |
@@ -130,6 +132,7 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `ignoreSessionPatterns`    | `[]`                           | Session key glob patterns to skip entirely — no recall, no retain (e.g. `["agent:*:cron:**"]`)                                                                                                                                                                                                                   |
 | `statelessSessionPatterns` | `[]`                           | Session key glob patterns for read-only sessions — retain is always skipped; recall is skipped when `skipStatelessSessions` is `true` (e.g. `["agent:*:subagent:**", "agent:*:heartbeat:**"]`)                                                                                                                   |
 | `skipStatelessSessions`    | `true`                         | When `true`, sessions matching `statelessSessionPatterns` also skip recall. Set to `false` to allow recall but still skip retain.                                                                                                                                                                                |
+| `skipOperationalSessions`  | `true`                         | When `true`, cron, heartbeat and subagent sessions skip recall and retain. Set to `false` to treat them like any other session; `ignoreSessionPatterns` and `statelessSessionPatterns` then decide what each kind does.                                                                                          |
 | `debugPerfTiming`          | `false`                        | Emit one info-level perf line per `before_prompt_build` (recall path) and `agent_end` (retain path) so you can spot whether latency is in the plugin or upstream. Off by default. Format: `perf: <hook> hook_total=Xms <hook-specific fields>`. Safe in production — uses the existing logger.                   |
 
 ### Per-agent bank mapping
@@ -207,12 +210,14 @@ Glob syntax:
 | Retain | Skipped                 | Always skipped                                  |
 | Recall | Skipped                 | Skipped only when `skipStatelessSessions: true` |
 
-**Example config** — exclude cron jobs from memory entirely, allow subagents to read but not write memories:
+Cron, heartbeat and subagent sessions are skipped entirely by default, whatever these patterns say. Set `skipOperationalSessions: false` to let the patterns decide for them too.
+
+**Example config** — give cron jobs full memory, and let heartbeats and subagents read but not write memories:
 
 ```json
 {
-  "ignoreSessionPatterns": ["agent:*:cron:**"],
-  "statelessSessionPatterns": ["agent:*:subagent:**"],
+  "skipOperationalSessions": false,
+  "statelessSessionPatterns": ["agent:*:heartbeat:**", "agent:*:subagent:**"],
   "skipStatelessSessions": false
 }
 ```
@@ -235,6 +240,34 @@ Two expected (non-error) messages on 2026.8.1+:
 - `openclaw plugins doctor` then reports `memory-core` is not selected for the memory slot — that is OpenClaw noting its built-in memory stepped aside.
 
 Upgrading from 0.11.1 or earlier: installs could fail with `npm error Cannot read properties of null (reading 'edgesOut')`. That was a packaging problem in the plugin, fixed in 0.12.0 — retry with the new version.
+
+## Agent tools
+
+The plugin gives the agent the same three memory tools the Hermes integration does:
+
+- `hindsight_retain` stores something the agent wants remembered (`content`, plus optional `context`, `tags` and `occurred_at`). Configured `retainTags` are added to its tags.
+- `hindsight_recall` searches memory with the same settings as auto-recall (`recallBudget`, `recallMaxTokens`, `recallTypes`, `preferObservations`, `recallMinScores`).
+- `hindsight_reflect` answers a question by reasoning over the memories.
+
+It also gives the agent Hindsight's knowledge-base tools, the same ones Hindsight's MCP server offers:
+
+- `hindsight_get_knowledge_base_tree`, `hindsight_search_knowledge_base` and `hindsight_get_knowledge_page` browse, search and read the knowledge pages.
+- `hindsight_create_knowledge_folder`, `hindsight_create_knowledge_page` and `hindsight_update_knowledge_node` organise them and create new pages, which Hindsight writes and keeps up to date from the memories.
+- `hindsight_delete_knowledge_node` deletes a folder or page and everything under it. It cannot be undone, so it is only offered with `allowKnowledgeDelete: true`.
+
+No tool takes a bank. Each call uses the bank this session's auto-recall and auto-retain use, so `agentBankMap` and per-agent, per-channel and per-user banks all apply, and an agent can't reach another agent's or user's memory. A session that auto-recall would skip (for example one with no stable sender when banks are keyed by user) gets an error instead of a guessed bank.
+
+The session filters apply too: a session matching `ignoreSessionPatterns` gets no tools, and one matching `statelessSessionPatterns` gets no tools while `skipStatelessSessions` is on, and only the reading tools (`hindsight_recall`, `hindsight_reflect` and the knowledge-base reads) when it is off.
+
+`memoryMode` decides what the agent gets, like Hermes's `memory_mode`:
+
+- `hybrid` (default): auto-recall and the tools.
+- `context`: auto-recall only, no tools.
+- `tools`: the tools only, no auto-recall.
+
+```bash
+openclaw config set plugins.entries.hindsight-openclaw.config.memoryMode tools
+```
 
 ## OpenClaw's memory page, status and search
 

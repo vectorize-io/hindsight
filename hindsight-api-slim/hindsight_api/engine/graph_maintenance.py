@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING
 
 from ..models import RequestContext
 from .db.base import DatabaseConnection
+from .db_utils import acquire_with_retry
 from .schema import fq_table
 
 if TYPE_CHECKING:
@@ -258,7 +259,6 @@ async def run_graph_maintenance_job(
     # after this body returns, so the row is still 'processing' now and the
     # widened predicate would otherwise dedup the hand-off against its own row and
     # silently do nothing.
-    from .memory_engine import acquire_with_retry
     from .task_backend import SyncTaskBackend
 
     if not result.queues_drained:

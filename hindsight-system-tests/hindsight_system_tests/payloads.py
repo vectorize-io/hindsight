@@ -14,7 +14,7 @@ import re
 from collections.abc import Callable
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer
 
 from .rulebook import ChatRequest
 
@@ -81,15 +81,79 @@ class ObservationDelete(BaseModel):
 
 
 class Consolidation(BaseModel):
-    """The three arrays consolidation must always return.
+    """The writes a consolidation answer must produce.
 
     All three default to empty, which is the honest answer for a story that is not
     about consolidation: the facts arrived and none warranted an observation. A test
     still has to say so — it is a declaration, not a silent default.
+
+    The model answers one entry per new fact (:class:`FactConsolidation`); a story
+    knows the writes it wants instead, so this serializes as the answer that
+    produces them: each write on its first source fact, the other source facts
+    pointing at it (``same_as_fact`` for a create, ``repeats`` for an update).
     """
 
     creates: list[Observation] = Field(default_factory=list)
     updates: list[ObservationUpdate] = Field(default_factory=list)
+    deletes: list[ObservationDelete] = Field(default_factory=list)
+
+    @model_serializer
+    def _as_answer(self) -> dict[str, object]:
+        entries: dict[str, FactEntry] = {}
+
+        def entry(fact_id: str) -> FactEntry:
+            return entries.setdefault(fact_id, FactEntry(fact_id=fact_id))
+
+        for c in self.creates:
+            if not c.source_fact_ids:
+                continue
+            first, *rest = c.source_fact_ids
+            entry(first).new.append(c.text)
+            entry(first).adds = "yes"
+            for other in rest:
+                if other != first:
+                    entry(other).same_as_fact = first
+        for u in self.updates:
+            if not u.source_fact_ids:
+                continue
+            first, *rest = u.source_fact_ids
+            entry(first).existing.append(
+                ObservationJudgement(observation_id=u.observation_id, effect="changes", text=u.text)
+            )
+            for other in rest:
+                if other != first:
+                    entry(other).existing.append(
+                        ObservationJudgement(observation_id=u.observation_id, effect="repeats")
+                    )
+        return FactConsolidation(facts=list(entries.values()), deletes=self.deletes).model_dump()
+
+
+class ObservationJudgement(BaseModel):
+    """One existing observation a consolidation answer entry judges."""
+
+    observation_id: str
+    observation_text: str = ""
+    observation_about: str = ""
+    effect: Literal["unrelated", "repeats", "changes", "ends"]
+    text: str = ""
+
+
+class FactEntry(BaseModel):
+    """What a consolidation answer does with one new fact."""
+
+    fact_id: str
+    about: str = ""
+    kind: Literal["lasting", "momentary"] = "lasting"
+    existing: list[ObservationJudgement] = Field(default_factory=list)
+    adds: Literal["yes", "no"] = "no"
+    new: list[str] = Field(default_factory=list)
+    same_as_fact: str | None = None
+
+
+class FactConsolidation(BaseModel):
+    """The consolidation answer: one entry per new fact."""
+
+    facts: list[FactEntry] = Field(default_factory=list)
     deletes: list[ObservationDelete] = Field(default_factory=list)
 
 
@@ -111,32 +175,30 @@ def consolidation(
     return Consolidation(creates=creates or [], updates=updates or [], deletes=deletes or [])
 
 
-FACT_ID_IN_PROMPT = re.compile(r"\[([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\]")
-
-
 def fact_ids_in(prompt: str) -> list[str]:
     """The fact ids the consolidation prompt is asking about.
 
-    Consolidation must cite the facts it drew on by id, and those ids are minted
-    by the server during the retain that just happened — a test cannot write them
-    down in advance. They arrive in the prompt as ``[uuid] fact text``, so a rule
-    reads them back out of the request it is answering.
+    Consolidation must cite the facts it drew on by id, and the prompt names them
+    per call (``[F1] fact text``) — a test cannot write them down in advance, so a
+    rule reads them back out of the request it is answering. Only the batch's
+    facts: the system prompt's worked example uses the same ids.
     """
-    return FACT_ID_IN_PROMPT.findall(prompt)
+    batch = prompt[prompt.rfind("### New facts") : prompt.rfind("### Existing observations")]
+    return re.findall(r"^\[(F\d+)\]", batch, re.MULTILINE)
 
 
 def batch_fact_ids(request: "ChatRequest") -> list[str]:
-    """The ids of the facts this consolidation call is about — the batch, not the
-    worked examples the system prompt also writes as ``[uuid] text``."""
-    text = request.user_text
-    return fact_ids_in(text[text.rfind("### New facts") : text.rfind("### Existing observations")])
+    """The ids of the facts this consolidation call is about."""
+    return fact_ids_in(request.user_text)
 
 
 def batch_fact_id(request: "ChatRequest", needle: str) -> str | None:
     """The id of the batch fact whose text contains ``needle``, if it is in this batch."""
     text = request.user_text
     facts = text[text.rfind("### New facts") : text.rfind("### Existing observations")]
-    return next((line[1:37] for line in facts.splitlines() if line.startswith("[") and needle in line), None)
+    return next(
+        (line[1 : line.index("]")] for line in facts.splitlines() if line.startswith("[") and needle in line), None
+    )
 
 
 def shown_observations(request: "ChatRequest") -> dict[str, str]:

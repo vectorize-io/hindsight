@@ -81,3 +81,10 @@ export interface ReflectOptions {
   /** Compound tag filter (mutually exclusive with `tags`). */
   tagGroups?: TagGroup[];
 }
+
+/**
+ * Which time a note's facts are dated with. `created` (default) suits journals;
+ * `updated` suits living documents, so edits aren't back-dated to creation (#5712).
+ */
+export const TIMESTAMP_SOURCES = ["created", "updated"] as const;
+export type TimestampSource = (typeof TIMESTAMP_SOURCES)[number];

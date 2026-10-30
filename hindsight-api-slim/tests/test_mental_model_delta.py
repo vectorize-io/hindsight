@@ -448,6 +448,33 @@ class TestDeltaRefreshPlumbing:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_refresh_reads_only_the_best_page_whole(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+    ):
+        """A refresh keeps the lean page budget; reflect's default raised its cost ~50% (#5787)."""
+        from hindsight_api.engine.reflect.tools import REFRESH_MENTAL_MODELS_SEARCH_MAX_TOKENS
+
+        bank_id = f"test-page-budget-{uuid.uuid4().hex[:8]}"
+        await memory.ensure_bank_profile(bank_id, request_context=request_context)
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="API Reference",
+            source_query="Document the API",
+            content="## Old\n\nOriginal.\n",
+            trigger={"mode": "full"},
+            request_context=request_context,
+        )
+        calls = patch_reflect(memory, text="# Team\n\nSomething.\n")
+
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
+
+        assert calls[0]["reflect_search_mental_models_max_tokens_override"] == REFRESH_MENTAL_MODELS_SEARCH_MAX_TOKENS
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
     async def test_plain_text_answer_still_produces_a_document(
         self,
         memory: MemoryEngine,

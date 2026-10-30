@@ -14,6 +14,7 @@ import {
 } from "@vectorize-io/hindsight-client";
 import { RetainQueue } from "./retain-queue.js";
 import { createMemoryProviderRuntime } from "./memory-provider.js";
+import { createHindsightTools, HINDSIGHT_TOOL_NAMES } from "./tools.js";
 import { compileSessionPatterns, matchesSessionPattern } from "./session-patterns.js";
 import { parseSessionFile } from "./session-file.js";
 import { createHash, randomUUID } from "crypto";
@@ -308,6 +309,9 @@ function toStringMetadata(
   return out;
 }
 const turnCountBySession = new Map<string, number>();
+// Where the running agent run started in each session's transcript, recorded by
+// before_prompt_build and consumed by agent_end. See runStartMarker.
+const runStartBySession = new Map<string, string | null>();
 const MAX_TRACKED_SESSIONS = 10_000;
 const DEFAULT_RECALL_TIMEOUT_MS = 10_000;
 
@@ -1545,9 +1549,12 @@ export function getIdentitySkipReason(
   const mappedBanking =
     pluginConfig !== undefined && mappedBankIdForAgent(resolvedCtx, pluginConfig) !== undefined;
   const allowCliSessions = agentBanking || staticBanking || mappedBanking;
+  // Cron, heartbeat and subagent sessions are skipped unless the operator opts
+  // them in; then ignoreSessionPatterns / statelessSessionPatterns decide (#5915).
+  const allowOperationalSessions = pluginConfig?.skipOperationalSessions === false;
 
   if (typeof sessionKey === "string") {
-    if (/^agent:[^:]+:(cron|heartbeat|subagent):/.test(sessionKey)) {
+    if (!allowOperationalSessions && /^agent:[^:]+:(cron|heartbeat|subagent):/.test(sessionKey)) {
       return { resolvedCtx, reason: finalSkipReason(`operational session ${sessionKey}`) };
     }
     if (!allowCliSessions && /^agent:[^:]+:main$/.test(sessionKey)) {
@@ -1558,9 +1565,10 @@ export function getIdentitySkipReason(
     }
   }
 
-  const operationalProviders = allowCliSessions
-    ? ["cron", "heartbeat", "subagent"]
-    : ["cron", "heartbeat", "subagent", "main"];
+  const operationalProviders = [
+    ...(allowOperationalSessions ? [] : ["cron", "heartbeat", "subagent"]),
+    ...(allowCliSessions ? [] : ["main"]),
+  ];
   if (resolvedCtx?.messageProvider && operationalProviders.includes(resolvedCtx.messageProvider)) {
     return {
       resolvedCtx,
@@ -2177,7 +2185,13 @@ export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
           ])
         )
       : ["heartbeat"],
-    autoRecall: config.autoRecall !== false, // Default: true (on) — backward compatible
+    // "tools" is Hermes's tools-only mode: the agent recalls through hindsight_recall instead.
+    autoRecall: config.autoRecall !== false && config.memoryMode !== "tools", // Default: true (on)
+    memoryMode:
+      config.memoryMode === "context" || config.memoryMode === "tools"
+        ? config.memoryMode
+        : "hybrid",
+    allowKnowledgeDelete: config.allowKnowledgeDelete === true,
     dynamicBankGranularity: Array.isArray(config.dynamicBankGranularity)
       ? config.dynamicBankGranularity
       : DEFAULT_DYNAMIC_BANK_GRANULARITY,
@@ -2229,6 +2243,7 @@ export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
       ? config.statelessSessionPatterns
       : [],
     skipStatelessSessions: config.skipStatelessSessions !== false,
+    skipOperationalSessions: config.skipOperationalSessions !== false,
     debug: config.debug ?? false,
     debugPerfTiming: config.debugPerfTiming === true,
     // Both were missing from this whitelist, so the logger always ran at
@@ -2706,6 +2721,20 @@ export default function (api: MoltbotPluginAPI) {
       const recallLifecycle = captureHookLifecycle();
       const isCurrentRecall = recallLifecycle.isCurrent;
       if (!isCurrentRecall()) return;
+      // Prompts are rebuilt inside a run (tool loops, a user message sent while the
+      // agent works), so only the first build of a run marks where it started.
+      const runSessionKey = ctx?.sessionKey;
+      if (
+        runSessionKey &&
+        !runStartBySession.has(runSessionKey) &&
+        Array.isArray(event?.messages)
+      ) {
+        setCappedMapValue(
+          runStartBySession,
+          runSessionKey,
+          runStartMarker(event.messages, event.currentUserMessage)
+        );
+      }
       // Optional perf instrumentation (#1406). Captured here at hook entry so
       // the early-return paths below don't influence the measurement of slow
       // recall calls — perf lines are only emitted on the recall path.
@@ -3004,6 +3033,14 @@ ${memoriesFormatted}
             ? ({ sessionKey: eventSessionKey } as PluginHookAgentContext)
             : undefined);
 
+        // Taken (and cleared) before any skip below, so the next run marks its own start.
+        const runStartKey = effectiveCtx?.sessionKey;
+        const runStart =
+          !force && runStartKey && runStartBySession.has(runStartKey)
+            ? runStartBySession.get(runStartKey)
+            : undefined;
+        if (!force && runStartKey) runStartBySession.delete(runStartKey);
+
         // Check if this provider is excluded
         if (
           effectiveCtx?.messageProvider &&
@@ -3202,10 +3239,19 @@ ${memoriesFormatted}
           })
         );
 
+        const runStartIdx = retainFullWindow
+          ? undefined
+          : retainStartIndex(messagesToRetain, runStart);
+        if (runStart !== undefined && runStartIdx === undefined) {
+          debug(
+            "[Hindsight Hook] Run start not found in transcript, retaining from the last user message"
+          );
+        }
         const retention = prepareRetentionTranscript(
           messagesToRetain,
           pluginConfig,
-          retainFullWindow
+          retainFullWindow,
+          runStartIdx
         );
         if (!retention) {
           debug("[Hindsight Hook] No messages to retain (filtered/short/no-user)");
@@ -3388,6 +3434,41 @@ ${memoriesFormatted}
         },
       }),
     });
+
+    // Hermes's agent tools on this session's own bank. (#5635)
+    api.registerTool?.(
+      (toolCtx) =>
+        createHindsightTools(
+          {
+            bankFor: (ctx) => {
+              const config = currentPluginConfig || pluginConfig;
+              // The same identity resolution auto-recall runs, so the tools land on its bank.
+              const { resolvedCtx, skipReason } = resolveAndCacheIdentity({
+                sessionKey: ctx.sessionKey,
+                ctx: {
+                  agentId: ctx.agentId,
+                  sessionKey: ctx.sessionKey,
+                  workspaceDir: ctx.workspaceDir,
+                },
+                senderIdHint: ctx.requesterSenderId,
+                pluginConfig: config,
+              });
+              return skipReason
+                ? { error: skipReason.detail }
+                : { bankId: deriveBankId(resolvedCtx, config) };
+            },
+            clientFor: async (bankId) => {
+              const live = await readyClient();
+              if (!live) throw new Error("Hindsight client is not initialized");
+              await ensureBankDefaultsApplied(bankId, currentPluginConfig || pluginConfig);
+              return live.client;
+            },
+            config: () => currentPluginConfig || pluginConfig,
+          },
+          toolCtx
+        ),
+      { names: HINDSIGHT_TOOL_NAMES }
+    );
   } catch (error) {
     log.error("plugin loading error", error);
     if (error instanceof Error) {
@@ -3506,10 +3587,67 @@ export function buildRetainRequest(
   };
 }
 
+/** A message's identity across hooks: the same message serializes the same way. */
+function messageFingerprint(message: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify(message) ?? "")
+    .digest("hex");
+}
+
+function messageText(message: any): string {
+  const content = message?.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((block: any) => block?.type === "text" && typeof block?.text === "string")
+    .map((block: any) => block.text)
+    .join("\n");
+}
+
+/**
+ * Where a run starts, from the messages before_prompt_build sees: the fingerprint
+ * of the last message the session already had, or null when it had none.
+ *
+ * Saving only from the last user message lost every message before it whenever
+ * one run held more than one user message — a user writing again while the agent
+ * was still working (OpenClaw steering) — so the first request and the agent's
+ * work on it never reached memory (#5569). agent_end saves from this marker instead.
+ * The current request may already be the last message; it belongs to this run.
+ */
+export function runStartMarker(messages: unknown[], currentUserMessage?: string): string | null {
+  let end = messages.length;
+  const last: any = messages[end - 1];
+  if (
+    last?.role === "user" &&
+    typeof currentUserMessage === "string" &&
+    messageText(last).trim() === currentUserMessage.trim()
+  ) {
+    end -= 1;
+  }
+  return end > 0 ? messageFingerprint(messages[end - 1]) : null;
+}
+
+/**
+ * The index of the run's first message in `messages`, or undefined when the run
+ * start is unknown or no longer in the transcript (compaction rewrote it).
+ */
+export function retainStartIndex(
+  messages: unknown[],
+  marker: string | null | undefined
+): number | undefined {
+  if (marker === undefined) return undefined;
+  if (marker === null) return 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messageFingerprint(messages[i]) === marker) return i + 1;
+  }
+  return undefined;
+}
+
 export function prepareRetentionTranscript(
   messages: any[],
   pluginConfig: PluginConfig,
-  retainFullWindow = false
+  retainFullWindow = false,
+  runStartIdx?: number
 ): { transcript: string; messageCount: number } | null {
   if (!messages || messages.length === 0) {
     return null;
@@ -3520,7 +3658,8 @@ export function prepareRetentionTranscript(
     // Chunked retention: retain the full sliding window (already sliced by caller)
     targetMessages = messages;
   } else {
-    // Default: retain only the last turn (user message + assistant responses)
+    // Default: retain this run — from its start when known, else from the last
+    // user message. Never later than the last user message.
     let lastUserIdx = -1;
     for (let i = messages.length - 1; i >= 0; i--) {
       if (messages[i].role === "user") {
@@ -3531,7 +3670,9 @@ export function prepareRetentionTranscript(
     if (lastUserIdx === -1) {
       return null; // No user message found in turn
     }
-    targetMessages = messages.slice(lastUserIdx);
+    targetMessages = messages.slice(
+      runStartIdx === undefined ? lastUserIdx : Math.min(runStartIdx, lastUserIdx)
+    );
   }
 
   const format = pluginConfig.retainFormat ?? "json";

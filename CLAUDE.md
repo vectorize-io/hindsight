@@ -73,7 +73,8 @@ cd hindsight-system-tests && uv run pytest tests/ -v
 
 ### Documentation Site (Docusaurus)
 ```bash
-./scripts/dev/start-docs.sh
+./scripts/dev/start-docs.sh          # pages compile on first visit (~1 GB)
+./scripts/dev/start-docs.sh --full   # compile every page up front, like the build (~3.5 GB)
 ```
 
 
@@ -251,7 +252,8 @@ migration file dispatches through `run_for_dialect`, which calls either
 
 **Always run the lint script after making Python or TypeScript/Node changes:**
 ```bash
-./scripts/hooks/lint.sh
+./scripts/hooks/lint.sh            # packages that differ from origin/main
+LINT_ALL=1 ./scripts/hooks/lint.sh # everything, as CI does
 ```
 
 Dead-code detection runs in CI (the `check-unused-code` job) at two levels:

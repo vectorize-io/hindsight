@@ -133,7 +133,7 @@ func (r ApiListLlmRequestsRequest) Execute() (*LLMRequestListResponse, *http.Res
 /*
 ListLlmRequests List LLM request traces
 
-List traced LLM requests for a bank, ordered by most recent first. Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED).
+List traced LLM requests for a bank, ordered by most recent first. Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED). Requests older than HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS are deleted; `retention_days` in the response says how many days are kept (null = forever).
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
@@ -291,6 +291,7 @@ type ApiLlmRequestStatsRequest struct {
 	operation *string
 	callType *string
 	period *string
+	splitBy *string
 	authorization *string
 }
 
@@ -306,9 +307,15 @@ func (r ApiLlmRequestStatsRequest) CallType(callType string) ApiLlmRequestStatsR
 	return r
 }
 
-// Time period: 1d, 7d, or 30d
+// Time period: 1d (by hour), 7d, or 30d (by day)
 func (r ApiLlmRequestStatsRequest) Period(period string) ApiLlmRequestStatsRequest {
 	r.period = &period
+	return r
+}
+
+// Also split each bucket by model or by operation (returned in &#x60;series&#x60;)
+func (r ApiLlmRequestStatsRequest) SplitBy(splitBy string) ApiLlmRequestStatsRequest {
+	r.splitBy = &splitBy
 	return r
 }
 
@@ -324,7 +331,7 @@ func (r ApiLlmRequestStatsRequest) Execute() (*LLMRequestStatsResponse, *http.Re
 /*
 LlmRequestStats LLM request statistics
 
-Get LLM request counts grouped by time bucket and status for charting.
+Get LLM request counts grouped by time bucket and status for charting. Only requests within HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS are kept, so a period longer than `retention_days` (in the response; null = kept forever) only covers the last `retention_days`.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
@@ -371,6 +378,9 @@ func (a *LLMTracesAPIService) LlmRequestStatsExecute(r ApiLlmRequestStatsRequest
 	} else {
 		var defaultValue string = "7d"
 		r.period = &defaultValue
+	}
+	if r.splitBy != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "split_by", r.splitBy, "form", "")
 	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}

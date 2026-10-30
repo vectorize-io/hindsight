@@ -81,31 +81,6 @@ async def test_call_503_still_consumes_full_retry_budget():
 
 
 @pytest.mark.asyncio
-async def test_call_with_tools_400_fails_fast():
-    """The tool path fails fast on 400 too."""
-    provider = _make_gemini_provider()
-    generate = AsyncMock(side_effect=_api_error(400))
-    provider._client.aio.models.generate_content = generate
-
-    with pytest.raises(genai_errors.APIError) as excinfo:
-        await provider.call_with_tools(
-            messages=[{"role": "user", "content": "hi"}],
-            tools=[
-                {
-                    "type": "function",
-                    "function": {"name": "noop", "description": "n", "parameters": {"type": "object"}},
-                }
-            ],
-            scope="consolidation",
-            max_retries=4,
-            initial_backoff=0.0,
-        )
-
-    assert excinfo.value.code == 400
-    assert generate.call_count == 1
-
-
-@pytest.mark.asyncio
 async def test_call_400_always_dumps_structural_profile(monkeypatch, caplog):
     """The structural profile is logged on a 400 even with the opt-in flag off,
     and carries no user content (only per-part sizes)."""

@@ -62,6 +62,7 @@ services:
 
   hindsight:
     image: ghcr.io/vectorize-io/hindsight:${HINDSIGHT_VERSION:-latest}
+    stop_grace_period: 75s  # outlasts start-all.sh's 60s shutdown wait
     container_name: hindsight-app
     ports:
       - "8888:8888"

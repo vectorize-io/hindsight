@@ -5,8 +5,11 @@
  */
 import { diag } from "./diag";
 import { RateLimitedError, type HindsightClient } from "./hindsight";
+import { log } from "./log";
 import {
   advancePaths,
+  advanceSegments,
+  bankTurns,
   fingerprintTurns,
   MAX_CURSOR_OPS,
   planRetain,
@@ -366,9 +369,21 @@ async function writeSession(
   const probed = Boolean(cursors) && cursor?.appendSupported !== true;
   const appendSupported =
     Boolean(cursors) && (cursor?.appendSupported === true || (await supportsAppend(client)));
-  // Only an append can build on a lost write; a replace already re-sends everything.
+  // The session followed its working folder into another bank (#5812): from here on its turns go
+  // there, and nothing the other bank's document holds or still owes is this bank's business.
+  const moved = Boolean(cursor && cursor.bank !== client.bank);
+  if (moved)
+    log.warn(harness ?? "", "session moved to another bank mid-session", {
+      session: sessionId,
+      from: cursor?.bank,
+      to: client.bank,
+      atTurn: cursor?.turns,
+    });
+  const segments = advanceSegments(cursor, client.bank);
+  // Only an append can build on a lost write; a replace already re-sends everything. The ops of a
+  // bank the session just left would be looked up in this one, so they are not checked.
   let ops: string[] = [];
-  if (appendSupported && cursor?.ops?.length && !cursor.dirty)
+  if (appendSupported && cursor?.ops?.length && !cursor.dirty && !moved)
     ({ cursor, ops } = await settleOps(client, cursor));
   const plan = planRetain(turns, cursor, {
     appendSupported,
@@ -389,8 +404,9 @@ async function writeSession(
       : advancePaths(cursor?.paths, transcriptPath);
   // Appends built but never confirmed. A replace rewrites the whole document from the same
   // transcript, so it SUBSUMES them; on every other path they go out first, oldest first, before
-  // anything new — the document only ever grows in transcript order.
-  const outbox = plan.mode === "replace" ? [] : (cursor?.pending ?? []);
+  // anything new — the document only ever grows in transcript order. Buffered appends of the bank
+  // the session just left belong to THAT document, so they are never replayed into this one.
+  const outbox = plan.mode === "replace" || moved ? [] : (cursor?.pending ?? []);
   if (plan.mode === "skip" && !outbox.length) return;
 
   /** Identity of ONE payload: a resubmission of the same bytes is collapsed server-side into the
@@ -412,6 +428,7 @@ async function writeSession(
     fingerprint: fingerprintTurns(turns, turns.length),
     bank: client.bank,
     ...(paths ? { paths } : {}),
+    ...(segments ? { segments } : {}),
     ...(appendSupported ? { appendSupported: true } : {}),
   };
   /** `next` plus the ops to check on the next write-back, with `id` newly accepted. */
@@ -427,12 +444,20 @@ async function writeSession(
   };
 
   if (plan.mode === "replace") {
-    const content = renderSessionJsonl(refId, turns, startTs);
+    // Only this bank's share: a session that moved here keeps its earlier turns in the bank they
+    // were written to (#5812). A move with nothing new since has no share to start a document with.
+    const share = bankTurns(turns, segments, client.bank);
+    if (!share.length) return;
+    const content = renderSessionJsonl(refId, share, startTs);
     // Nothing to buffer: replace is idempotent by construction, so a later one re-establishes the
     // same truth from the same transcript. Claim the position unconfirmed so an outcome we never
     // learn resolves to another replace rather than an append onto an unknown state.
+    // The id also names what the document held before, from the cursor: content alone repeats
+    // when a session returns to an earlier branch (A → B → A), and the server acknowledges a
+    // completed id without applying it, leaving B stored (#5845). A retry still has the same base.
+    const base = cursor ? `${cursor.turns}\n${cursor.fingerprint}` : "";
     cursors?.write(sessionId, { ...next, dirty: true });
-    const operationId = opId("replace", content);
+    const operationId = opId("replace", `${base}\n${content}`);
     await submitWithRetry(() => submit(content, operationId, false), stillOurs, retryUntil);
     ops = []; // the replace re-sends every turn, so nothing older can still lose any
     cursors?.write(sessionId, accepted(operationId));

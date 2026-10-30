@@ -94,6 +94,7 @@ class SearchTracer:
         self.retrieval_results: list[RetrievalMethodResults] = []
         self.rrf_merged: list[RRFMergeResult] = []
         self.reranked: list[RerankedResult] = []
+        self.reranker_provider: str | None = None
 
         # Tracking state
         self.current_step = 0
@@ -422,6 +423,7 @@ class SearchTracer:
             retrieval_results=self.retrieval_results,
             rrf_merged=self.rrf_merged,
             reranked=self.reranked,
+            reranker_provider=self.reranker_provider,
             entry_points=self.entry_points,
             visits=self.visits,
             summary=summary,

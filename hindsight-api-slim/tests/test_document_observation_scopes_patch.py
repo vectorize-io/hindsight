@@ -19,7 +19,8 @@ import pytest
 from hindsight_api import RequestContext
 from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.memories import FactRecord, get_memories
-from hindsight_api.engine.memory_engine import MemoryEngine, fq_table
+from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.schema import fq_table
 
 _SESSION_A = "Alice said she prefers dark roast coffee and drinks it every morning before work."
 _SESSION_B = "Alice mentioned she switched to dark roast coffee because light roast upsets her stomach."

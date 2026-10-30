@@ -687,3 +687,47 @@ def test_ceiling_shares_the_remaining_context_budget(remaining, calls, expected)
     split-synthesis path.
     """
     assert _resolve_tool_arg_ceiling(remaining, calls) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_ids", [True, None, 3])
+async def test_expand_with_non_list_memory_ids_is_a_tool_error(bad_ids) -> None:
+    """A non-list memory_ids is a tool error the model can retry, not a failed reflect (#5953)."""
+    args = {"memory_ids": bad_ids, "depth": "chunk"}
+    result = await _execute_tool(
+        "expand",
+        args,
+        _unexpected_tool_call,
+        _unexpected_tool_call,  # read_mental_models
+        _unexpected_tool_call,
+        _unexpected_tool_call,
+        _unexpected_tool_call,
+        _LIMITS,
+        _CEILING,
+    )
+
+    assert result == {"error": "expand requires memory_ids"}
+    assert _summarize_input("expand", args, _LIMITS, _CEILING) == "(memory_ids=[0 ids], depth=chunk)"
+
+
+@pytest.mark.asyncio
+async def test_expand_with_a_bare_string_memory_id_expands_that_id() -> None:
+    captured: dict[str, object] = {}
+
+    async def expand(memory_ids: list[str], depth: str) -> dict[str, object]:
+        captured["memory_ids"] = memory_ids
+        return {"results": []}
+
+    await _execute_tool(
+        "expand",
+        {"memory_ids": "mem-1"},
+        _unexpected_tool_call,
+        _unexpected_tool_call,  # read_mental_models
+        _unexpected_tool_call,
+        _unexpected_tool_call,
+        expand,
+        _LIMITS,
+        _CEILING,
+    )
+
+    assert captured == {"memory_ids": ["mem-1"]}

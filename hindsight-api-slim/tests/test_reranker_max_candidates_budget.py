@@ -8,7 +8,8 @@ Pure function — no DB, no LLM.
 
 from types import SimpleNamespace
 
-from hindsight_api.engine.memory_engine import Budget, _resolve_reranker_max_candidates
+from hindsight_api.engine.memory_engine import _resolve_reranker_max_candidates
+from hindsight_api.engine.response_models import Budget
 
 
 def _config(low: int = 0, mid: int = 0, high: int = 0, flat: int = 300) -> SimpleNamespace:

@@ -27,12 +27,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from hindsight_api.engine.memories.base import MemoriesExtension
-from hindsight_api.engine.memory_engine import Budget, MemoryEngine
+from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.providers.mock_llm import MockLLM
 from hindsight_api.engine.reflect.tools import tool_expand
-from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult
-from hindsight_api.engine.search.tags import TagGroupLeaf, TagGroupNot
-from hindsight_api.engine.search.tags import tag_filter_active
+from hindsight_api.engine.response_models import Budget, LLMToolCall, LLMToolCallResult
+from hindsight_api.engine.search.tags import TagGroupLeaf, TagGroupNot, tag_filter_active
 from hindsight_api.engine.source_scope import ids_passing, visible_document_ids
 
 # ---------------------------------------------------------------------------

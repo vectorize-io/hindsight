@@ -288,6 +288,12 @@ def read_credential(path: Path) -> ChatGPTCredential:
         ) from exc
 
 
+def _no_session_message(path: Path, credential: ChatGPTCredential) -> str:
+    """Why the stored session is gone, naming the refresh error that cleared it when known."""
+    cause = f" (the last token refresh failed with {credential.last_auth_error})" if credential.last_auth_error else ""
+    return f"ChatGPT plan credentials at {path} have no active session{cause}. Run `{LOGIN_COMMAND}`."
+
+
 def write_credential(path: Path, credential: ChatGPTCredential) -> None:
     _write_private(path, credential.model_dump_json(indent=2, exclude_none=True) + "\n")
 
@@ -796,9 +802,7 @@ class ChatGPTAuth:
         path = home / CREDENTIAL_FILE
         credential = read_credential(path)
         if not credential.is_active:
-            raise ChatGPTLoginRequiredError(
-                f"ChatGPT plan credentials at {path} have no active session. Run `{LOGIN_COMMAND}`."
-            )
+            raise ChatGPTLoginRequiredError(_no_session_message(path, credential))
         if not credential.has_plan_scope:
             raise ChatGPTLoginRequiredError(
                 f"ChatGPT plan usage is not enabled for this sign-in ({PLAN_SCOPE} was not granted). "
@@ -859,9 +863,7 @@ class ChatGPTAuth:
             if current.access_token and current.access_token != rejected_token and not needs_refresh(current):
                 return
             if not current.is_active:
-                raise ChatGPTLoginRequiredError(
-                    f"ChatGPT plan credentials at {self.path} have no refresh token. Run `{LOGIN_COMMAND}`."
-                )
+                raise ChatGPTLoginRequiredError(_no_session_message(self.path, current))
 
             logger.info("Refreshing ChatGPT plan access token")
             reply = await _post_form(

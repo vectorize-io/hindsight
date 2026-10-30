@@ -31,10 +31,17 @@ from google.genai import types
 _CONFIRMATIONS = int(os.getenv("HINDSIGHT_EVAL_JUDGE_CONFIRMATIONS", "2"))
 _CONFIRM_TEMPERATURE = float(os.getenv("HINDSIGHT_EVAL_JUDGE_CONFIRM_TEMPERATURE", "0.5"))
 
+# Reasoning before the verdict: field order is generation order. With the verdict first, the
+# judge sometimes decided and then reasoned the opposite — a horse-farm trap was "met" by 2 of 3
+# judges whose own reasoning read "None of the observations state a horse count that was not
+# explicitly mentioned by the user", failing a correct run.
 _SYSTEM = (
     "You grade whether an answer satisfies a stated criterion. Judge ONLY the criterion "
     "given — not style, length, or anything else. Reply with a single JSON object: "
-    '{"meets_criteria": true|false, "reasoning": "<one sentence>"}. No prose outside it.'
+    '{"reasoning": "<one sentence>", "meets_criteria": true|false}, reasoning first, then the '
+    'verdict it leads to. A criterion may describe a mistake ("Some observation states X"): '
+    "meets_criteria is true only when the answer actually contains what the criterion describes, "
+    "and false when your reasoning finds it absent. No prose outside it."
 )
 
 

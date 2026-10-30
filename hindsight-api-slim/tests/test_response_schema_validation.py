@@ -10,7 +10,8 @@ boundary; these are fast, deterministic unit tests (no DB, no LLM).
 import pytest
 from pydantic import ValidationError
 
-from hindsight_api.api.http import MentalModelTrigger, ReflectRequest
+from hindsight_api.api.http import ReflectRequest
+from hindsight_api.engine.response_models import MentalModelTrigger
 from hindsight_api.engine.structured_output import validate_response_schema
 
 _VALID_SCHEMA = {

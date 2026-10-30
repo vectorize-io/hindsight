@@ -404,9 +404,10 @@ class CostReport(BaseModel):
     timestamp: str
     model: str
     fixture: str
-    #: Whether reflect built explicit per-step caches (HINDSIGHT_API_REFLECT_PROMPT_CACHE_ENABLED),
-    #: which changes how cached tokens are billed — see ``RefreshCost.cost``.
-    explicit_cache: bool = True
+    #: Whether reflect built explicit per-step caches, which changes how cached tokens are
+    #: billed — see ``RefreshCost.cost``. True only in reports from before that cache was
+    #: removed (it was HINDSIGHT_API_REFLECT_PROMPT_CACHE_ENABLED).
+    explicit_cache: bool = False
     refreshes: list[RefreshCost]
 
 

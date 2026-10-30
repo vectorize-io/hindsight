@@ -16,11 +16,11 @@ from hindsight_api.config import (
     _get_raw_config,
     get_config,
 )
-from hindsight_api.engine.memory_engine import _current_schema
 from hindsight_api.extensions import MCPExtension, load_extension
 from hindsight_api.extensions.tenant import AuthenticationError
 from hindsight_api.mcp_tools import _ALL_TOOLS, MCPToolsConfig, register_mcp_tools
 from hindsight_api.models import RequestContext
+from hindsight_api.schema_context import _current_schema
 
 # Configure logging from the resolved config (HINDSIGHT_API_LOG_LEVEL).
 _log_level_str = get_config().log_level.lower()

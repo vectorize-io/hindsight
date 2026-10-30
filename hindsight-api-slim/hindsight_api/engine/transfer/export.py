@@ -414,13 +414,29 @@ def _row_json_default(obj: Any) -> Any:
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
+# The key each table dumped by _dump_bank_rows is ordered by (its primary key
+# within a bank). Without an ORDER BY the rows come back in heap order, which
+# moves whenever a row is updated (e.g. a mental model refresh), so two exports
+# of an unchanged bank could differ (#5998). The paged history tables are
+# already read in key order (_PAGED_ROW_KEYS). A table missing here fails
+# loudly rather than silently exporting in arbitrary order.
+_DUMP_ORDER_BY = {
+    "banks": "bank_id",
+    "directives": "id",
+    "webhooks": "id",
+    "mental_models": "id",
+}
+
+
 async def _dump_bank_rows(conn: Any, table: str, bank_id: str) -> list[dict]:
     """Dump all rows of a bank-scoped table as JSON-ready dicts (derived columns stripped).
 
     Embedding/search-vector columns are omitted so the target instance
     regenerates them with its own model/backend on import.
     """
-    rows = await conn.fetch(f"SELECT * FROM {fq_table(table)} WHERE bank_id = $1", bank_id)
+    rows = await conn.fetch(
+        f"SELECT * FROM {fq_table(table)} WHERE bank_id = $1 ORDER BY {_DUMP_ORDER_BY[table]}", bank_id
+    )
     return [{k: v for k, v in dict(row).items() if k not in _DERIVED_COLUMNS} for row in rows]
 
 

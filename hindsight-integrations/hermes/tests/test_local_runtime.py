@@ -225,6 +225,25 @@ def test_the_helper_finds_the_uvx_hermes_installed_when_path_has_none(tmp_path, 
     assert embedded._managed_uvx_dir(str(uv_dir)) is None  # already on PATH: leave it
 
 
+def test_the_helper_finds_the_uvx_under_the_hermes_install_root(tmp_path, monkeypatch):
+    """#5580: in the Docker image uv lives under /opt/hermes/tools, beside /opt/hermes/.venv."""
+    uv_dir = tmp_path / "opt" / "hermes" / "tools" / "uv-0.12.3-linux-x64"
+    uv_dir.mkdir(parents=True)
+    (uv_dir / "uvx").write_text("#!/bin/sh\n")
+    (uv_dir / "uvx").chmod(0o755)
+    monkeypatch.setattr(embedded.Path, "home", lambda: tmp_path / "data")
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / "opt" / "hermes" / ".venv"))
+
+    assert embedded._managed_uvx_dir(str(tmp_path / "empty")) == str(uv_dir)
+
+
+def test_a_keyless_openai_compatible_server_gets_a_placeholder_key():
+    """#5603: the daemon runs it as "openai", which the server refuses to start without a key."""
+    config = {"llm_provider": "openai_compatible", "llm_model": "m", "llm_base_url": "http://localhost:8000/v1"}
+    assert embedded._build_embedded_profile_env(config, llm_api_key="")["HINDSIGHT_API_LLM_API_KEY"] == "not-needed"
+    assert embedded._build_embedded_profile_env(config, llm_api_key="sk-1")["HINDSIGHT_API_LLM_API_KEY"] == "sk-1"
+
+
 def test_a_new_embed_is_left_to_scrub_the_env_itself(monkeypatch):
     calls = _fake_embed_module(monkeypatch, scrubs=True)
     monkeypatch.setattr(

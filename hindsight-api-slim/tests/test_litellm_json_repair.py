@@ -146,3 +146,41 @@ async def test_fence_marker_inside_a_json_value_is_kept(monkeypatch):
     # only survived by burning a retry and falling through to json_repair.
     assert calls == 1
     assert result == {"a": 1, "note": "wrap it in ```json fences"}
+
+
+async def test_schema_format_is_sent_as_the_json_schema_and_returned_as_the_dict(monkeypatch):
+    """A tool turn's schema (``tools_via_schema.schema_format``) goes out as ``response_format``, unchanged."""
+    from hindsight_api.engine.llm_interface import LLMToolChoice
+    from hindsight_api.engine.providers import tools_via_schema
+
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "recall",
+                "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+            },
+        }
+    ]
+    held = tools_via_schema.response_schema(tools, LLMToolChoice.named("recall"))
+    provider = _make_provider()
+    sent: dict = {}
+
+    async def _fake(**kwargs):
+        sent.update(kwargs)
+        return _make_response('{"query": "rome"}')
+
+    monkeypatch.setattr(provider, "_acompletion", _fake)
+
+    result = await provider.call(
+        messages=[{"role": "user", "content": "hi"}],
+        response_format=tools_via_schema.schema_format(held),
+        strict_schema=True,
+        skip_validation=True,
+        max_retries=0,
+    )
+
+    assert result.content == {"query": "rome"}
+    assert sent["response_format"]["json_schema"]["name"] == "recall"
+    assert sent["response_format"]["json_schema"]["schema"] == held.schema
+    assert "tools" not in sent and "tool_choice" not in sent

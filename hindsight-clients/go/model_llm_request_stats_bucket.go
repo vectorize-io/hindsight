@@ -25,6 +25,7 @@ type LLMRequestStatsBucket struct {
 	Statuses map[string]int32 `json:"statuses"`
 	Total int32 `json:"total"`
 	Tokens LLMRequestTokenSums `json:"tokens"`
+	Series map[string]LLMRequestSeriesSums `json:"series,omitempty"`
 }
 
 type _LLMRequestStatsBucket LLMRequestStatsBucket
@@ -146,6 +147,39 @@ func (o *LLMRequestStatsBucket) SetTokens(v LLMRequestTokenSums) {
 	o.Tokens = v
 }
 
+// GetSeries returns the Series field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *LLMRequestStatsBucket) GetSeries() map[string]LLMRequestSeriesSums {
+	if o == nil {
+		var ret map[string]LLMRequestSeriesSums
+		return ret
+	}
+	return o.Series
+}
+
+// GetSeriesOk returns a tuple with the Series field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *LLMRequestStatsBucket) GetSeriesOk() (map[string]LLMRequestSeriesSums, bool) {
+	if o == nil || IsNil(o.Series) {
+		return map[string]LLMRequestSeriesSums{}, false
+	}
+	return o.Series, true
+}
+
+// HasSeries returns a boolean if a field has been set.
+func (o *LLMRequestStatsBucket) HasSeries() bool {
+	if o != nil && !IsNil(o.Series) {
+		return true
+	}
+
+	return false
+}
+
+// SetSeries gets a reference to the given map[string]LLMRequestSeriesSums and assigns it to the Series field.
+func (o *LLMRequestStatsBucket) SetSeries(v map[string]LLMRequestSeriesSums) {
+	o.Series = v
+}
+
 func (o LLMRequestStatsBucket) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -160,6 +194,9 @@ func (o LLMRequestStatsBucket) ToMap() (map[string]interface{}, error) {
 	toSerialize["statuses"] = o.Statuses
 	toSerialize["total"] = o.Total
 	toSerialize["tokens"] = o.Tokens
+	if o.Series != nil {
+		toSerialize["series"] = o.Series
+	}
 	return toSerialize, nil
 }
 

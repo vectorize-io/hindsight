@@ -8,6 +8,31 @@ import PageHero from '@site/src/components/PageHero';
 
 [← OpenClaw integration](../../sdks/integrations/openclaw.md)
 
+## [1.2.0](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v1.2.0)
+
+[Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/openclaw/v1.2.0)
+
+**Features**
+
+- Adds Hindsight knowledge-base tools to OpenClaw agents for searching and accessing stored knowledge.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/c45498570" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>c45498570</a>
+
+## [1.1.1](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v1.1.1)
+
+[Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/openclaw/v1.1.1)
+
+**Bug Fixes**
+
+- OpenClaw now saves run memory from the conversation start instead of only from the most recent user message.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/95318b253" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>95318b253</a>
+
+## [1.1.0](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v1.1.0)
+
+[Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/openclaw/v1.1.0)
+
+**Features**
+
+- Agents can use Hermes’s Hindsight tools directly with their own memory bank.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/c8c7b99d8" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>c8c7b99d8</a>
+- Operators can opt cron, heartbeat, and subagent sessions into Hindsight memory.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/b194c799b" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>b194c799b</a>
+
 ## [1.0.0](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v1.0.0)
 
 [Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/openclaw/v1.0.0)

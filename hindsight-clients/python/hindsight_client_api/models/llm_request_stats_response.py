@@ -17,8 +17,8 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr
-from typing import Any, ClassVar, Dict, List
+from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
+from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.llm_request_stats_bucket import LLMRequestStatsBucket
 from typing import Optional, Set
 from typing_extensions import Self
@@ -32,7 +32,8 @@ class LLMRequestStatsResponse(BaseModel):
     trunc: StrictStr
     start: StrictStr
     buckets: List[LLMRequestStatsBucket]
-    __properties: ClassVar[List[str]] = ["bank_id", "period", "trunc", "start", "buckets"]
+    retention_days: Optional[StrictInt] = None
+    __properties: ClassVar[List[str]] = ["bank_id", "period", "trunc", "start", "buckets", "retention_days"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -80,6 +81,11 @@ class LLMRequestStatsResponse(BaseModel):
                 if _item_buckets:
                     _items.append(_item_buckets.to_dict())
             _dict['buckets'] = _items
+        # set to None if retention_days (nullable) is None
+        # and model_fields_set contains the field
+        if self.retention_days is None and "retention_days" in self.model_fields_set:
+            _dict['retention_days'] = None
+
         return _dict
 
     @classmethod
@@ -96,7 +102,8 @@ class LLMRequestStatsResponse(BaseModel):
             "period": obj.get("period"),
             "trunc": obj.get("trunc"),
             "start": obj.get("start"),
-            "buckets": [LLMRequestStatsBucket.from_dict(_item) for _item in obj["buckets"]] if obj.get("buckets") is not None else None
+            "buckets": [LLMRequestStatsBucket.from_dict(_item) for _item in obj["buckets"]] if obj.get("buckets") is not None else None,
+            "retention_days": obj.get("retention_days")
         })
         return _obj
 

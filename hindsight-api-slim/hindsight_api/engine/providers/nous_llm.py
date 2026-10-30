@@ -26,11 +26,13 @@ from typing import Any
 
 from openai import APIStatusError, AsyncOpenAI
 
+from hindsight_api.engine.llm_interface import ProviderUnavailableError
 from hindsight_api.engine.providers.nous_auth import (
     NousAuthManager,
     NousNotLoggedInError,
     NousRefreshExpiredError,
 )
+from hindsight_api.engine.providers.openai_compatible_headers import with_openai_compatible_user_agent
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
 
 from ..response_models import LLMCallResult
@@ -55,7 +57,7 @@ class NousLLM(OpenAICompatibleLLM):
         try:
             self._auth = NousAuthManager.from_file()
         except NousNotLoggedInError as e:
-            raise RuntimeError(
+            raise ProviderUnavailableError(
                 f"Failed to load Nous Portal credentials: {e}\n\n"
                 "To set up Nous authentication:\n"
                 "1. Install Hermes: https://hermes-agent.nousresearch.com\n"
@@ -99,6 +101,7 @@ class NousLLM(OpenAICompatibleLLM):
             base_url=self.base_url,
             max_retries=0,
             timeout=self.timeout,
+            default_headers=with_openai_compatible_user_agent(None),
         )
 
     async def _ensure_fresh_token(self) -> None:
@@ -151,9 +154,6 @@ class NousLLM(OpenAICompatibleLLM):
 
     async def call(self, *args: Any, **kwargs: Any) -> LLMCallResult:
         return await self._with_auth_retry(super().call, "call", *args, **kwargs)
-
-    async def call_with_tools(self, *args: Any, **kwargs: Any) -> Any:
-        return await self._with_auth_retry(super().call_with_tools, "call_with_tools", *args, **kwargs)
 
     async def cleanup(self) -> None:
         await self._auth.close()

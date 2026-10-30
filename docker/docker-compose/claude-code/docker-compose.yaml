@@ -10,6 +10,7 @@ name: hindsight-claude-code
 services:
   hindsight:
     image: ghcr.io/vectorize-io/hindsight:latest
+    stop_grace_period: 75s  # outlasts start-all.sh's 60s shutdown wait
     container_name: hindsight-claude-code
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     ports:

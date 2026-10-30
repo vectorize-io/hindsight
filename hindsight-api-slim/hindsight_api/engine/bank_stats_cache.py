@@ -177,10 +177,14 @@ class BankStatsCache:
 class DistributedBankStatsCache:
     """Table-backed (cross-process) TTL cache for `get_bank_stats`.
 
-    Same ``get_or_load`` / ``invalidate`` / ``clear`` contract as
-    :class:`BankStatsCache`, but the store is the per-schema ``bank_stats_cache``
-    table instead of a per-process dict — so one worker's computation is shared
-    with every other worker, and no caller recomputes while a fresh row exists.
+    Same ``get_or_load`` / ``invalidate`` contract as :class:`BankStatsCache`,
+    but the store is the per-schema ``bank_stats_cache`` table instead of a
+    per-process dict — so one worker's computation is shared with every other
+    worker, and no caller recomputes while a fresh row exists.
+
+    Deliberately no ``clear()``: the table is shared by every process on the
+    schema, so a table-wide DELETE would wipe rows other workers just computed
+    and are relying on. Drop one bank's row with ``invalidate`` instead.
 
     On a hit, a call is a single primary-key ``SELECT`` (sub-millisecond); only a
     miss runs the (expensive) ``loader`` and writes the row back. Concurrent
@@ -260,15 +264,3 @@ class DistributedBankStatsCache:
                 await conn.execute(f"DELETE FROM {self._qualified(schema)} WHERE bank_id = $1", bank_id)
         except Exception as exc:  # noqa: BLE001 — invalidation must never break the write path
             logger.debug("bank_stats_cache invalidate failed for %s.%s (%s)", schema, bank_id, exc)
-
-    async def clear(self) -> None:
-        """Drop all cached rows in the current schema (best-effort)."""
-        if not self.enabled:
-            return
-        from .memory_engine import get_current_schema
-
-        try:
-            async with acquire_with_retry(self._backend) as conn:
-                await conn.execute(f"DELETE FROM {self._qualified(get_current_schema())}")
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("bank_stats_cache clear failed (%s)", exc)

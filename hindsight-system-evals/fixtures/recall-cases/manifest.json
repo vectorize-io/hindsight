@@ -1,0 +1,78 @@
+{
+ "cause-chain": {
+  "llm": "gemini/gemini-2.5-flash-lite",
+  "recorded_at": "2026-10-28T15:29:31+00:00"
+ },
+ "chinese-last-week": {
+  "llm": "gemini/gemini-2.5-flash-lite",
+  "recorded_at": "2026-10-28T15:29:57+00:00"
+ },
+ "current-job": {
+  "llm": "gemini/gemini-2.5-flash-lite",
+  "recorded_at": "2026-10-28T15:29:17+00:00"
+ },
+ "employer-headquarters": {
+  "llm": "gemini/gemini-2.5-flash-lite",
+  "recorded_at": "2026-10-28T15:29:26+00:00"
+ },
+ "error-code": {
+  "llm": "gemini/gemini-2.5-flash-lite",
+  "recorded_at": "2026-10-28T15:28:45+00:00"
+ },
+ "intent-over-keywords": {
+  "llm": "gemini/gemini-2.5-flash-lite",
+  "recorded_at": "2026-10-28T15:28:40+00:00"
+ },
+ "italian": {
+  "llm": "gemini/gemini-2.5-flash-lite",
+  "recorded_at": "2026-10-28T15:29:53+00:00"
+ },
+ "last-month": {
+  "llm": "gemini/gemini-2.5-flash-lite",
+  "recorded_at": "2026-10-28T15:28:58+00:00"
+ },
+ "latest-decision": {
+  "llm": "gemini/gemini-2.5-flash-lite",
+  "recorded_at": "2026-10-28T15:29:21+00:00"
+ },
+ "named-week": {
+  "llm": "gemini/gemini-2.5-flash-lite",
+  "recorded_at": "2026-10-28T15:29:12+00:00"
+ },
+ "negation-kept": {
+  "llm": "gemini/gemini-2.5-flash-lite",
+  "recorded_at": "2026-10-28T15:30:07+00:00"
+ },
+ "no-shared-words": {
+  "llm": "gemini/gemini-2.5-flash-lite",
+  "recorded_at": "2026-10-28T15:28:36+00:00"
+ },
+ "number-among-numbers": {
+  "llm": "gemini/gemini-2.5-flash-lite",
+  "recorded_at": "2026-10-28T15:30:02+00:00"
+ },
+ "order-id": {
+  "llm": "gemini/gemini-2.5-flash-lite",
+  "recorded_at": "2026-10-28T15:28:49+00:00"
+ },
+ "paraphrase-dislike": {
+  "llm": "gemini/gemini-2.5-flash-lite",
+  "recorded_at": "2026-10-28T15:28:31+00:00"
+ },
+ "rare-surname": {
+  "llm": "gemini/gemini-2.5-flash-lite",
+  "recorded_at": "2026-10-28T15:28:54+00:00"
+ },
+ "relative-and-pet": {
+  "llm": "gemini/gemini-2.5-flash-lite",
+  "recorded_at": "2026-10-28T15:29:35+00:00"
+ },
+ "year-only-event": {
+  "llm": "gemini/gemini-2.5-flash-lite",
+  "recorded_at": "2026-10-28T15:29:08+00:00"
+ },
+ "yesterday": {
+  "llm": "gemini/gemini-2.5-flash-lite",
+  "recorded_at": "2026-10-28T15:29:03+00:00"
+ }
+}

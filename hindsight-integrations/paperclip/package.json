@@ -36,13 +36,13 @@
     "prepublishOnly": "npm run clean && npm run build"
   },
   "dependencies": {
-    "@paperclipai/plugin-sdk": "^2026.720.0"
+    "@paperclipai/plugin-sdk": "^2026.1023.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "esbuild": "^0.28.0",
     "typescript": "^5.3.0",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   },
   "engines": {
     "node": ">=20"

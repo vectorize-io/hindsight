@@ -1,12 +1,13 @@
 """Unit tests for pg0 URL parsing and MemoryEngine startup."""
 
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from hindsight_api import MemoryEngine
 from hindsight_api.engine.task_backend import SyncTaskBackend
-from hindsight_api.pg0 import Pg0Url, parse_pg0_url
+from hindsight_api.pg0 import EmbeddedPostgres, Pg0Url, parse_pg0_url
 
 
 class _StopInitialization(Exception):
@@ -161,3 +162,13 @@ async def test_memory_engine_forwards_pg0_url_fields(db_url: str, expected_extra
             await engine.initialize()
 
     embedded_postgres.assert_called_once_with(name="mydb", port=5544, **expected_extra)
+
+
+async def test_start_without_a_uri_fails_with_a_clear_error() -> None:
+    """A start that hands back no URI is a failed start (#5956), not a server at ``None``."""
+    pg0 = EmbeddedPostgres(name="no-uri", port=None)
+    pg0._pg0 = MagicMock(start=MagicMock(return_value=SimpleNamespace(uri=None)))
+
+    with pytest.raises(RuntimeError, match="returned no connection URI"):
+        await pg0.start(max_retries=2, retry_delay=0)
+    assert pg0._pg0.start.call_count == 2

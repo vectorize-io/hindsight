@@ -599,10 +599,7 @@ def do_daemon(args, config: dict, logger):
             status_text.append(f"{daemon_log_path}\n", style="")
 
             # Check if using pg0 and show database location
-            database_url = os.getenv("HINDSIGHT_EMBED_API_DATABASE_URL")
-            if not database_url:
-                # Default: use profile-specific pg0 (shared utility ensures consistency)
-                database_url = get_embed_manager().get_database_url(profile)
+            database_url = get_embed_manager().resolve_database_url(profile)
 
             if database_url.startswith("pg0://"):
                 pg0_name = database_url.replace("pg0://", "")
