@@ -18,9 +18,10 @@ from tests.conftest import _teardown_memory_engine
 
 
 class _FakeLLM:
-    def __init__(self, delay: float = 0.0, error: Exception | None = None, model: str = "m"):
+    def __init__(self, delay: float = 0.0, error: Exception | None = None, model: str = "m", base_url: str = "h1"):
         self.provider = "fake"
         self.model = model
+        self.base_url = base_url
         self.delay = delay
         self.error = error
         self.verified = False
@@ -43,7 +44,8 @@ def _short_probe_timeout(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_busy_backend_does_not_stall_startup(caplog):
-    busy, busy2, ok, broken = _FakeLLM(delay=30), _FakeLLM(delay=30), _FakeLLM(), _FakeLLM(error=RuntimeError("401"))
+    busy, busy2 = _FakeLLM(delay=30, model="busy"), _FakeLLM(delay=30, model="busy2")
+    ok, broken = _FakeLLM(model="ok"), _FakeLLM(error=RuntimeError("401"), model="broken")
 
     start = time.monotonic()
     await memory_engine.verify_llm_connections(
@@ -102,3 +104,22 @@ async def test_engine_starts_while_llm_backend_is_busy(
     finally:
         await _teardown_memory_engine(mem)
         clear_config_cache()
+
+
+@pytest.mark.asyncio
+async def test_each_distinct_model_is_probed_once():
+    calls: list[str] = []
+
+    class _Counting(_FakeLLM):
+        async def verify_connection(self) -> None:
+            calls.append(f"{self.model}@{self.base_url}")
+
+    shared, backup = _Counting(model="shared"), _Counting(model="backup")
+    second_host = _Counting(model="shared", base_url="h2")
+    chain = MultiLLMProvider([shared, backup, second_host], LLMStrategyConfig(mode=LLM_STRATEGY_FAILOVER))  # type: ignore[list-item]
+
+    # A plain config sharing the chain's primary must not hide the chain's other members,
+    # and the same model on a second host is a different endpoint to check.
+    await memory_engine.verify_llm_connections([("default", shared), ("retain", chain), ("reflect", shared)])  # type: ignore[list-item]
+
+    assert sorted(calls) == ["backup@h1", "shared@h1", "shared@h2"]
