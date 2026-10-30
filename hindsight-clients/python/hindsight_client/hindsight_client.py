@@ -2942,6 +2942,7 @@ class Hindsight:
         retain_strategies: dict[str, Any] | None = None,
         retain_chunk_batch_size: int | None = None,
         store_document_text: bool | None = None,
+        default_timezone: str | None = None,
         # Entity settings
         entity_labels: list[dict[str, Any]] | None = None,
         entities_allow_free_form: bool | None = None,
@@ -3017,6 +3018,7 @@ class Hindsight:
                 retain_strategies=retain_strategies,
                 retain_chunk_batch_size=retain_chunk_batch_size,
                 store_document_text=store_document_text,
+                default_timezone=default_timezone,
                 entity_labels=entity_labels,
                 entities_allow_free_form=entities_allow_free_form,
                 enable_observations=enable_observations,
@@ -3085,6 +3087,7 @@ class Hindsight:
         retain_strategies: dict[str, Any] | None = None,
         retain_chunk_batch_size: int | None = None,
         store_document_text: bool | None = None,
+        default_timezone: str | None = None,
         # Entity settings
         entity_labels: list[dict[str, Any]] | None = None,
         entities_allow_free_form: bool | None = None,
@@ -3164,6 +3167,7 @@ class Hindsight:
             retain_strategies: Named strategy definitions (dict of strategy name to config).
             retain_chunk_batch_size: Number of chunks per sub-batch in chunks extraction mode.
             store_document_text: Persist the original document text alongside extracted facts.
+            default_timezone: IANA zone (e.g. ``"Europe/Rome"``) a retain time with no UTC offset is read in.
             entity_labels: Controlled vocabulary for entity labels — a list of label-group
                 dicts, each with a ``key`` and a ``type``: ``"value"``/``"multi-values"`` pick
                 from the group's declared ``values``, while ``"text"``/``"multi-text"`` are
@@ -3249,6 +3253,7 @@ class Hindsight:
                 "retain_strategies": retain_strategies,
                 "retain_chunk_batch_size": retain_chunk_batch_size,
                 "store_document_text": store_document_text,
+                "default_timezone": default_timezone,
                 "entity_labels": entity_labels,
                 "entities_allow_free_form": entities_allow_free_form,
                 "enable_observations": enable_observations,

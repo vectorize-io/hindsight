@@ -77,11 +77,11 @@ async def test_infinite_bound_does_not_break_temporal_recall(memory, start_sql, 
 def test_extraction_drops_placeholder_years(placeholder):
     """An open-ended range written by the model as year 1 / 9999 is an unknown bound, not a
     date: kept, it is stored as infinity (or overflows the per-fact ordering offset)."""
-    assert _parse_datetime(placeholder) is None
+    assert _parse_datetime(placeholder, UTC) is None
 
 
 def test_extraction_keeps_real_dates():
-    assert _parse_datetime("2015-12-31T23:59:59") == datetime(2015, 12, 31, 23, 59, 59)
+    assert _parse_datetime("2015-12-31T23:59:59", UTC) == datetime(2015, 12, 31, 23, 59, 59, tzinfo=UTC)
 
 
 @pytest.mark.asyncio

@@ -962,6 +962,8 @@ export class HindsightClient {
       retainChunkBatchSize?: number;
       /** Persist the original document text alongside extracted facts. */
       storeDocumentText?: boolean;
+      /** IANA zone (e.g. "Europe/Rome") a retain time with no UTC offset is read in. */
+      defaultTimezone?: string;
       /** Cap on observations retained per scope (-1 for unlimited). */
       maxObservationsPerScope?: number;
       /** Per-scope observation caps, overriding maxObservationsPerScope. */
@@ -1083,6 +1085,7 @@ export class HindsightClient {
       updates.retain_chunk_batch_size = options.retainChunkBatchSize;
     if (options.storeDocumentText !== undefined)
       updates.store_document_text = options.storeDocumentText;
+    if (options.defaultTimezone !== undefined) updates.default_timezone = options.defaultTimezone;
     if (options.maxObservationsPerScope !== undefined)
       updates.max_observations_per_scope = options.maxObservationsPerScope;
     if (options.observationScopeLimits !== undefined)

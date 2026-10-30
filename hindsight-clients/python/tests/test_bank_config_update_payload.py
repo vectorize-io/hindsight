@@ -278,6 +278,7 @@ def test_update_bank_config_forwards_the_full_configurable_surface(monkeypatch):
         default_observation_scopes=[["topic:*", "user:*"]],
         retain_chunk_batch_size=64,
         store_document_text=False,
+        default_timezone="Asia/Shanghai",
         memory_defense={"redact_secrets": True},
         audit_log_enabled=True,
     )
@@ -308,6 +309,7 @@ def test_update_bank_config_forwards_the_full_configurable_surface(monkeypatch):
         "default_observation_scopes": [["topic:*", "user:*"]],
         "retain_chunk_batch_size": 64,
         "store_document_text": False,
+        "default_timezone": "Asia/Shanghai",
         "memory_defense": {"redact_secrets": True},
         "audit_log_enabled": True,
     }
