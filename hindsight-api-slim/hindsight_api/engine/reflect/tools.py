@@ -565,6 +565,11 @@ async def tool_recall(
     }
 
 
+def _iso(value: datetime | None) -> str | None:
+    """A stored date as recall's results carry it."""
+    return value.isoformat() if value else None
+
+
 def returned_memories(tool: str, output: dict[str, Any]) -> list[MemoryFact]:
     """The memories a `recall` or `expand` call actually handed back.
 
@@ -721,10 +726,7 @@ async def tool_expand(
 
         # Recall shows a memory's dates, so expand must too: without them "yesterday" in the
         # memory, or in its chunk, cannot be placed in time.
-        dates = {
-            key: value.isoformat() if isinstance(value := memory.get(key), datetime) else value
-            for key in ("occurred_start", "occurred_end", "mentioned_at")
-        }
+        mentioned_at = _iso(memory["mentioned_at"])
         item: dict[str, Any] = {
             "memory_id": mid,
             "memory": _prune_nulls(
@@ -733,7 +735,9 @@ async def tool_expand(
                     "text": memory["text"],
                     "type": memory["fact_type"],
                     "context": truncate_context_for_prompt(memory["context"]),
-                    **dates,
+                    "occurred_start": _iso(memory["occurred_start"]),
+                    "occurred_end": _iso(memory["occurred_end"]),
+                    "mentioned_at": mentioned_at,
                 }
             ),
         }
@@ -753,7 +757,7 @@ async def tool_expand(
                     "index": chunk["chunk_index"],
                     "document_id": chunk["document_id"],
                     # The chunk was said when its memory was mentioned (see tool_recall).
-                    "mentioned_at": dates["mentioned_at"],
+                    "mentioned_at": mentioned_at,
                 }
             )
             # Add document if depth=document

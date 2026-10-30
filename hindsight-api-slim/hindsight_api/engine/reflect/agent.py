@@ -1906,7 +1906,7 @@ def _evidence_line(item: dict[str, Any]) -> str:
     read against the second, and a question about an event against the first.
     """
     start, end, said = item.get("occurred_start"), item.get("occurred_end"), item.get("mentioned_at")
-    dates = []
+    dates: list[str] = []
     if start:
         dates.append(f"occurred {start}" + (f" to {end}" if end and end != start else ""))
     if said:

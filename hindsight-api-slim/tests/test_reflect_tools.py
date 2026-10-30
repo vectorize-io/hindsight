@@ -46,6 +46,9 @@ class _FakeReflectConnection:
                     "fact_type": "experience",
                     "context": "preference",
                     "tags": [],
+                    "occurred_start": None,
+                    "occurred_end": None,
+                    "mentioned_at": None,
                 }
             ]
 
@@ -98,6 +101,9 @@ class _FakeMultiMemoryConnection:
                     "fact_type": "experience",
                     "context": "preference",
                     "tags": [],
+                    "occurred_start": None,
+                    "occurred_end": None,
+                    "mentioned_at": None,
                 }
                 for memory_id in requested
                 if memory_id in self.texts

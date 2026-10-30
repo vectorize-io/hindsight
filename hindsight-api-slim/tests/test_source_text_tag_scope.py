@@ -228,6 +228,9 @@ def _mem(tags: list[str], document_id: str | None, chunk: bool = True) -> dict:
         "fact_type": "world",
         "context": None,
         "tags": tags,
+        "occurred_start": None,
+        "occurred_end": None,
+        "mentioned_at": None,
     }
 
 
