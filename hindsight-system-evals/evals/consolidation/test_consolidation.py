@@ -58,6 +58,7 @@ from hindsight_system_evals.consolidation import (
     Wave,
     noisy_personal_bank,
     noisy_service_bank,
+    repetitive_service_bank,
     run_scenario,
 )
 from hindsight_system_evals.pages import SettleFn
@@ -593,6 +594,136 @@ def _with_mission(scenario: Scenario) -> Scenario:
 #: under a mission.
 SCALE = (noisy_service_bank(), noisy_personal_bank(), _with_mission(noisy_service_bank()))
 
+def _session(day: str, *facts: Fact, chatter: tuple[str, ...] = ()) -> Wave:
+    """One session of a long-lived bank: what it restates, plus its small talk."""
+    return Wave((*facts, *(Fact(text, day, ("user",), durable=False) for text in chatter)))
+
+
+#: Steady-state traffic, the common case in a real bank: one session sets the facts, then
+#: session after session restates them in other words, among chatter, with a rare real change.
+#: Nothing here is new to the bank, so a model that adds an observation per session, keeps a
+#: line of small talk, or leaves the old value standing after the change fails.
+REPETITION = (
+    Scenario(
+        id="coding-agent-sessions",
+        category="repetition",
+        origin="a coding agent retains every session: the project's setup is restated each time, around "
+        "test runs and thanks; one session switches the test runner",
+        waves=(
+            _wave(
+                Fact("The web app uses pnpm as its package manager.", "2026-06-01", ("web app", "pnpm")),
+                Fact("The web app's tests run with Vitest.", "2026-06-01", ("web app", "Vitest")),
+                Fact(
+                    "The web app deploys to Fly.io from GitHub Actions on every merge to main.",
+                    "2026-06-01",
+                    ("web app", "Fly.io", "GitHub Actions"),
+                ),
+                Fact("The user prefers small pull requests with one change each.", "2026-06-01", ("user",)),
+                Fact("The user wants commit messages in the conventional-commits style.", "2026-06-01", ("user",)),
+            ),
+            _session(
+                "2026-06-03",
+                Fact("Install dependencies in the web app with pnpm install.", "2026-06-03", ("web app", "pnpm")),
+                Fact("The user asked again to keep each PR to a single change.", "2026-06-03", ("user",)),
+                Fact("Vitest is the web app's test runner.", "2026-06-03", ("web app", "Vitest")),
+                chatter=(
+                    "The user said good morning.",
+                    "The user said the tests are running now.",
+                    "The user said thanks, that fixed it.",
+                ),
+            ),
+            _session(
+                "2026-06-05",
+                Fact("Merges to main ship the web app to Fly.io.", "2026-06-05", ("web app", "Fly.io")),
+                Fact("Commit messages follow conventional commits, like 'fix: ...'.", "2026-06-05", ("user",)),
+                Fact("The web app is managed with pnpm, not npm.", "2026-06-05", ("web app", "pnpm")),
+                chatter=("The user is reading the CI logs right now.", "The user said they'd be back after lunch."),
+            ),
+            _session(
+                "2026-06-08",
+                Fact("The web app switched its tests from Vitest to Jest.", "2026-06-08", ("web app", "Jest", "Vitest")),
+                Fact("The user still wants small, single-purpose PRs.", "2026-06-08", ("user",)),
+                chatter=("The user said the build is running.", "The user said ok, sounds good."),
+            ),
+            _session(
+                "2026-06-10",
+                Fact("Run the web app's tests with Jest.", "2026-06-10", ("web app", "Jest")),
+                Fact("GitHub Actions deploys the web app to Fly.io after each merge.", "2026-06-10",
+                     ("web app", "GitHub Actions", "Fly.io")),
+                Fact("pnpm is the package manager for the web app.", "2026-06-10", ("web app", "pnpm")),
+                chatter=("The user said good morning.", "The user said thanks for the help.",
+                         "The user's screen showed the pull request page."),
+            ),
+        ),
+        must=(
+            "An observation states that the web app's tests run with Jest (it switched from Vitest).",
+            "Observations record pnpm, the Fly.io deploy from GitHub Actions, small PRs and conventional commits.",
+        ),
+        traps=(
+            "Some observation presents Vitest as the web app's current test runner, without saying it switched.",
+            "Some observation records small talk or momentary state: a greeting, thanks, tests running, lunch, the "
+            "CI logs or what is on the screen.",
+            "Two or more observations say the same thing (the package manager, the deploy, the PR size or the commit "
+            "style) in different words.",
+        ),
+    ),
+    Scenario(
+        id="assistant-daily-chats",
+        category="repetition",
+        origin="a personal assistant hears the user's profile again in every daily chat, among greetings; one "
+        "day the diet changes",
+        waves=(
+            _wave(
+                Fact("The user is vegetarian.", "2026-05-04", ("user",)),
+                Fact("The user's partner is called Sam.", "2026-05-04", ("user", "Sam")),
+                Fact("The user works as a nurse at the Royal Free hospital.", "2026-05-04", ("user", "Royal Free")),
+                Fact("The user goes running every Saturday morning.", "2026-05-04", ("user",)),
+                Fact("The user is learning Spanish.", "2026-05-04", ("user",)),
+            ),
+            _session(
+                "2026-05-05",
+                Fact("The user doesn't eat meat.", "2026-05-05", ("user",)),
+                Fact("Sam is the user's partner.", "2026-05-05", ("user", "Sam")),
+                chatter=("The user said good morning.", "The user is making coffee right now."),
+            ),
+            _session(
+                "2026-05-06",
+                Fact("The user has a nursing job at the Royal Free.", "2026-05-06", ("user", "Royal Free")),
+                Fact("The user practises Spanish most evenings.", "2026-05-06", ("user",)),
+                chatter=("The user said they were tired after a long shift.", "The user said thanks."),
+            ),
+            _session(
+                "2026-05-09",
+                Fact("The user does a run on Saturday mornings.", "2026-05-09", ("user",)),
+                Fact("The user started eating fish again, so they are pescatarian now, not vegetarian.",
+                     "2026-05-09", ("user",)),
+                chatter=("The user said good morning.", "The user asked to wait a minute."),
+            ),
+            _session(
+                "2026-05-11",
+                Fact("The user and Sam are together.", "2026-05-11", ("user", "Sam")),
+                Fact("The user eats fish but no meat.", "2026-05-11", ("user",)),
+                Fact("The user is still learning Spanish.", "2026-05-11", ("user",)),
+                chatter=("The user said see you tomorrow.", "The user is watching TV right now."),
+            ),
+        ),
+        must=(
+            "An observation states that the user is now pescatarian (eats fish, no meat).",
+            "Observations record Sam as the user's partner, the nursing job at the Royal Free, the Saturday runs "
+            "and learning Spanish.",
+        ),
+        traps=(
+            "Some observation presents the user as currently vegetarian, without saying they now eat fish.",
+            "Some observation records small talk or momentary state: a greeting, coffee, being tired, thanks, "
+            "watching TV.",
+            "Two or more observations say the same thing (the partner, the job, the runs or Spanish) in different "
+            "words.",
+        ),
+    ),
+    repetitive_service_bank(),
+)
+
+
 #: The failures that shipped and had to be fixed. Everything else runs with ``--full``.
 MINIMUM_ACCEPTANCE = (
     "restatements-merge",
@@ -635,6 +766,6 @@ async def _run(client: Hindsight, bank_id: str, settled: SettleFn, scenario: Sce
     assert outcome.passed, outcome.report()
 
 
-@pytest.mark.parametrize("scenario", case_params(SCENARIOS + SCALE, MINIMUM_ACCEPTANCE))
+@pytest.mark.parametrize("scenario", case_params(SCENARIOS + SCALE + REPETITION, MINIMUM_ACCEPTANCE))
 async def test_consolidation(client: Hindsight, bank_id: str, settled: SettleFn, scenario: Scenario) -> None:
     await _run(client, bank_id, settled, scenario)

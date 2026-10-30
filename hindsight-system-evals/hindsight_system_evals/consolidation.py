@@ -659,3 +659,98 @@ def noisy_personal_bank() -> Scenario:
             "Some observation says Mario moved to Bologna or Paola works as a pilot.",
         ),
     )
+
+
+#: What a busy team bank receives between real news: small talk, momentary state, thanks.
+_SESSION_CHATTER = (
+    "The user said good morning.",
+    "The user said they were grabbing a coffee.",
+    "The user said thanks, that fixed it.",
+    "The user's screen showed the CI pipeline page.",
+    "The user asked to pause for a quick call.",
+    "The user said the office wifi was slow again.",
+    "The user is reading the deploy logs right now.",
+    "The user said they would be back after lunch.",
+    "The user mentioned they were tired today.",
+    "The user said great, let's continue.",
+    "The user is looking at the Grafana dashboard.",
+    "The user said the build is running.",
+    "The user asked to wait a minute.",
+    "The user said see you tomorrow.",
+    "The user said ok, sounds good.",
+)
+
+
+def repetitive_service_bank() -> Scenario:
+    """A team bank in steady state: 12 services, then four waves that mostly repeat it.
+
+    The shape of real traffic, where most retained facts restate what the bank already
+    knows and much of the rest is chatter: each later wave brings 30 paraphrased
+    restatements and 15 lines of chatter, and wave 4 hides two real changes among them.
+    The changes must land as current, the neighbours must not move, and neither chatter
+    nor a repeat may become an observation of its own. This is the traffic a decision
+    model can settle without the LLM, so its cost line is the one to compare.
+    """
+    rng = random.Random(7310)
+    names = [f"{p}-{s}" for p in ("ledger", "billing", "invoice", "payout") for s in ("api", "worker", "sync")]
+    ports = rng.sample(range(8100, 8999), len(names))
+    spec = {n: _Service(rng.choice(_TEAMS), rng.choice(_LANGUAGES), port) for n, port in zip(names, ports, strict=True)}
+    spec["billing-api"] = _Service("Atlas", "Kotlin", 8211)
+    spec["billing-worker"] = _Service("Atlas", "Kotlin", 8212)
+
+    def stated(name: str, s: _Service, day: str) -> list[Fact]:
+        return [
+            Fact(f"The {name} service is owned by team {s.team}.", day, (name, f"team {s.team}")),
+            Fact(f"The {name} service is written in {s.language}.", day, (name,)),
+            Fact(f"The {name} service listens on port {s.port}.", day, (name,)),
+        ]
+
+    def restated(name: str, s: _Service, day: str) -> list[Fact]:
+        return [
+            Fact(f"Team {s.team} is responsible for {name}.", day, (name, f"team {s.team}")),
+            Fact(f"{name} belongs to team {s.team}.", day, (name, f"team {s.team}")),
+            Fact(f"{name} is implemented in {s.language}.", day, (name,)),
+            Fact(f"{name} is a {s.language} codebase.", day, (name,)),
+            Fact(f"{name} serves traffic on port {s.port}.", day, (name,)),
+            Fact(f"Port {s.port} is where {name} listens.", day, (name,)),
+        ]
+
+    seed = [f for name, s in spec.items() for f in stated(name, s, "2026-08-03")]
+    waves = [Wave(tuple(seed))]
+    for wave_no, day in enumerate(("2026-08-10", "2026-08-17", "2026-08-24", "2026-08-31"), 2):
+        if wave_no == 4:
+            spec["billing-api"] = _Service("Nimbus", "Kotlin", 8211)
+            spec["ledger-sync"] = _Service(spec["ledger-sync"].team, spec["ledger-sync"].language, 9443)
+        pool = [f for name, s in spec.items() for f in restated(name, s, day)]
+        facts = rng.sample(pool, 30) + [
+            Fact(text, day, ("user",), durable=False) for text in rng.sample(_SESSION_CHATTER, 15)
+        ]
+        if wave_no == 4:
+            facts += [
+                Fact(
+                    "Ownership of the billing-api service moved from team Atlas to team Nimbus.",
+                    day,
+                    ("billing-api", "team Nimbus", "team Atlas"),
+                ),
+                Fact("The ledger-sync service moved to port 9443.", day, ("ledger-sync",)),
+            ]
+        rng.shuffle(facts)
+        waves.append(Wave(tuple(facts)))
+    return Scenario(
+        category="repetition",
+        id="repetitive-service-catalogue",
+        origin="steady-state traffic: mostly restatements and chatter, a rare change",
+        waves=tuple(waves),
+        focus=("billing-api", "billing-worker", "ledger-sync", "coffee", "wifi", "thanks", "Grafana", "lunch"),
+        must=(
+            "An observation states that billing-api is currently owned by team Nimbus.",
+            "An observation states that ledger-sync currently listens on port 9443.",
+            "billing-worker is still recorded as owned by team Atlas.",
+        ),
+        traps=(
+            "Some observation presents billing-api as currently owned by team Atlas, without saying it moved.",
+            "Some observation records small talk or momentary state: a greeting, coffee, the wifi, thanks, lunch, "
+            "what is on the user's screen.",
+            "Two or more observations state the same owner, language or port of the same service in different words.",
+        ),
+    )

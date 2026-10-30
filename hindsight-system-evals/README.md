@@ -76,6 +76,7 @@ stays out of the category counts.
 | consolidation | language | 2 | Chinese facts give Chinese observations; a mixed update is rewritten, not patched |
 | consolidation | mission | 4 | without a mission chatter is dropped, even in a topic's first batch; a mission can keep ephemera or forbid names |
 | consolidation | scale | 3 | 30 near-identical services, 20 lookalike-named people, the services under a mission |
+| consolidation | repetition | 3 | steady-state traffic: a coding agent's sessions, an assistant's daily chats, a 12-service bank — mostly restatements and chatter, one rare change; no repeat or small talk becomes an observation |
 | reflect | precision | 3 | the answer differs from its near-misses by one attribute: a version, a service name, a number |
 | reflect | update | 2 | what is true now, when the bank also holds what was true before |
 | reflect | aggregation | 2 | a count across many facts; a rule together with its approved exception |
@@ -393,6 +394,7 @@ issue/PR history — and what grades it. "eval" = a `test_consolidation` scenari
 - Observations keep their facts' language; a mixed update is rewritten (#3166, #3181, #4016) — eval `language-chinese`, `language-mixed-update`; unit `test_consolidation_output_language.py`
 - A configured output language overrides (#3776) — unit `test_consolidation_output_language.py`
 - Observation text carries no prompt metadata, JSON or asides (#2544) — eval leak check on every wave
+- Steady-state traffic, where most facts restate what the bank knows and the rest is chatter, adds no observation per session, keeps no small talk, and still lands the rare change — eval `coding-agent-sessions`, `assistant-daily-chats`, `repetitive-service-catalogue`. The traffic a decision model can settle without the LLM, so compare their cost lines with and without one
 - In a large bank of near-identical entities the recall still surfaces the right observation (#1907) — eval `noisy-service-catalogue` (30 services) and `noisy-personal-contacts` (20 people in lookalike name pairs), `twin` check from the LLM trace
 
 **What the server guarantees — deterministic**
