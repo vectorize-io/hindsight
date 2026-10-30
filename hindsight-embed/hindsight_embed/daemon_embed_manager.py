@@ -653,13 +653,17 @@ class DaemonEmbedManager(EmbedManager):
     def _process_command_line(pid: int) -> str | None:
         """The command line of `pid`, or None when it cannot be determined."""
         if platform.system() == "Windows":
-            # Both Windows probes get a longer deadline than the default. wmic is
-            # gone from current Windows images, so it usually fails instantly and
-            # everything rests on PowerShell — whose cold start alone can exceed
-            # five seconds on a loaded machine, before Get-CimInstance has asked
-            # WMI anything. Timing out here is not harmless: the caller reads None
-            # as "not one of our processes" (see _process_matches), so the daemon
-            # manager refuses to stop a daemon it does in fact own.
+            # Ask the kernel first. The subprocess probes below are slow: wmic is
+            # gone from current Windows images, so the answer rests on a cold
+            # PowerShell, which can take longer than any fixed deadline on a loaded
+            # machine. A timeout there is not harmless — the caller reads None as
+            # "not one of our processes" (see _process_matches), so the manager
+            # refused to stop a daemon it owns (#6017).
+            native = DaemonEmbedManager._windows_native_command_line(pid)
+            if native:
+                return native
+            # Fallback for processes the native read cannot open. Both probes get
+            # a longer deadline than the default for the cold start above.
             output = DaemonEmbedManager._run_probe(
                 ["wmic", "process", "where", f"ProcessId={pid}", "get", "CommandLine", "/format:list"],
                 timeout=_WINDOWS_PROBE_TIMEOUT_S,
@@ -691,6 +695,68 @@ class DaemonEmbedManager(EmbedManager):
         # macOS (and Linux hosts without procfs).
         output = DaemonEmbedManager._run_probe(["ps", "-p", str(pid), "-o", "args="])
         return output.strip() if output and output.strip() else None
+
+    @staticmethod
+    def _windows_native_command_line(pid: int) -> str | None:
+        """`pid`'s command line read in-process from the kernel, or None.
+
+        Uses NtQueryInformationProcess(ProcessCommandLineInformation), available
+        since Windows 8.1, which needs only limited query access — enough for any
+        process of the same user, which is every daemon we started. No subprocess,
+        so it answers in microseconds however loaded the machine is.
+        """
+        import ctypes
+        from ctypes import wintypes
+
+        process_query_limited_information = 0x1000
+        process_command_line_information = 60
+
+        class _UnicodeString(ctypes.Structure):
+            _fields_ = [
+                ("Length", wintypes.USHORT),  # in bytes, without the terminator
+                ("MaximumLength", wintypes.USHORT),
+                ("Buffer", ctypes.c_void_p),
+            ]
+
+        win_dll = getattr(ctypes, "WinDLL", None)  # only defined on Windows
+        if win_dll is None:
+            return None
+        try:
+            kernel32 = win_dll("kernel32", use_last_error=True)
+            ntdll = win_dll("ntdll")
+        except OSError:
+            return None
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        query = ntdll.NtQueryInformationProcess
+        query.restype = ctypes.c_long  # NTSTATUS; negative means failure
+        query.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.ULONG,
+            ctypes.POINTER(wintypes.ULONG),
+        ]
+
+        handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+        if not handle:
+            return None
+        try:
+            # The first call only reports the size the answer needs.
+            size = wintypes.ULONG(0)
+            query(handle, process_command_line_information, None, 0, ctypes.byref(size))
+            if size.value < ctypes.sizeof(_UnicodeString):
+                return None
+            buffer = ctypes.create_string_buffer(size.value)
+            if query(handle, process_command_line_information, buffer, size, ctypes.byref(size)) < 0:
+                return None
+            text = _UnicodeString.from_buffer(buffer)
+            if not text.Buffer or not text.Length:
+                return None
+            return ctypes.wstring_at(text.Buffer, text.Length // 2).strip() or None
+        finally:
+            kernel32.CloseHandle(handle)
 
     @staticmethod
     def _process_matches(pid: int, markers: tuple[str, ...]) -> bool:
