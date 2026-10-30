@@ -557,6 +557,10 @@ AGREES_WITH_RULE = re.compile(
 )
 
 
+MIN_NOTE_WORDS = 3  # "Retries stay at 7." is a whole rule
+# A plain word, not a literal: no "=", "/", "$", "_" or digits in it.
+_PROSE_WORD = re.compile(r"(?<![\w=/$.-])[A-Za-z][a-z']+(?![\w=/$.-])")
+
 CLAIMS_CONFLICT = re.compile(
     r"\b(contradicts?|conflicts? with|violat\w*|breaks?|must not|should not|instead of|but|requires?)\b", re.I
 )
@@ -570,6 +574,10 @@ def accept_note(state: WatchState, m: Moment, text: str, memory_ids: list[str]) 
     # keep the note when it also claims a real conflict ("X is fine, but Y breaks the rule").
     lead = " ".join(re.split(r"(?<=[.;!?])\s", text.strip(), maxsplit=2)[:2])
     if not text.strip() or NOTHING_TO_SAY.match(text):
+        return False
+    # A bare literal is no note: "AMB_RECALL_MAX_CHUNK_TOKENS=0" or a lone shell loop came back with
+    # no word on what rule it stands for or why (beta), and the agent can't act on that.
+    if len(_PROSE_WORD.findall(re.sub(r"`[^`]*`", " ", text))) < MIN_NOTE_WORDS:
         return False
     if AGREES_WITH_RULE.search(lead) and not CLAIMS_CONFLICT.search(AGREES_WITH_RULE.sub("", text)):
         return False

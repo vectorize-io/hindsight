@@ -473,3 +473,10 @@ def test_following_an_instruction_is_not_a_note():
     s = W.WatchState()
     cmd = W.Moment(trigger="command", text="gh pr checks 752", recent=[], diff="")
     assert not W.accept_note(s, cmd, "You are following your latest instruction to also wait for PR #752.", ["m1"])
+
+
+def test_a_bare_literal_is_not_a_note():
+    s = W.WatchState()
+    cmd = W.Moment(trigger="command", text="make eval", recent=[], diff="")
+    assert not W.accept_note(s, cmd, "AMB_RECALL_MAX_CHUNK_TOKENS=0", ["m1"])
+    assert W.accept_note(s, cmd, "Keep `AMB_RECALL_MAX_CHUNK_TOKENS=0` so recall returns whole chunks.", ["m3"])
