@@ -358,8 +358,8 @@ class LocalSTEmbeddings(Embeddings):
             trust_remote_code: Allow loading models with custom code (security risk).
                               Required for some models with custom architectures.
                               Default: False (disabled for security)
-            max_concurrent: Threads that may run the model at once (fixed pool, shared by
-                           every instance).
+            max_concurrent: Threads that may run the model at once. The pool is shared
+                           by every instance and sized by the first one to encode.
         """
         self.model_name = model_name or DEFAULT_EMBEDDINGS_LOCAL_MODEL
         self.max_concurrent = max(1, max_concurrent)
@@ -724,6 +724,8 @@ class OnnxEmbeddings(Embeddings):
 
         Tokenization and the synchronous ORT call run in-process, so a worker thread
         keeps the event loop free on either device; to_thread copies contextvars.
+        The default executor is fine here, unlike LocalSTEmbeddings (#6110): ORT runs
+        on the session's own intra-op pool, so the calling thread grows no native pool.
         """
         return await asyncio.to_thread(self._encode_sync, texts)
 

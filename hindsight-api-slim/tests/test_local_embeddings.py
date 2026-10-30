@@ -1,3 +1,7 @@
+import asyncio
+import contextvars
+import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -74,18 +78,13 @@ async def test_local_embeddings_run_on_a_fixed_pool_and_keep_the_callers_context
     """#6110: every thread that runs torch keeps its own native pools for life, so
     forward passes must stay on the model's own fixed pool, however many callers come
     in at once — not spread over the default executor's threads."""
-    import asyncio
-    import contextvars
-    import threading
-    import time
-
-    monkeypatch.setattr(LocalSTEmbeddings, "_executor", None, raising=False)
+    monkeypatch.setattr(LocalSTEmbeddings, "_executor", None)
     bank: contextvars.ContextVar[str] = contextvars.ContextVar("bank")
-    threads: set[int] = set()
+    threads: set[str] = set()
     seen_banks: set[str] = set()
 
     def encode_query(texts, **_):
-        threads.add(threading.get_ident())
+        threads.add(threading.current_thread().name)
         seen_banks.add(bank.get())
         time.sleep(0.01)  # hold the thread so callers pile up
         return np.zeros((len(texts), 1), dtype=np.float32)
@@ -107,4 +106,5 @@ async def test_local_embeddings_run_on_a_fixed_pool_and_keep_the_callers_context
             LocalSTEmbeddings._executor.shutdown(wait=True)
 
     assert len(threads) <= 2
+    assert all(name.startswith("local-embeddings") for name in threads)
     assert seen_banks == {f"bank-{i}" for i in range(20)}
