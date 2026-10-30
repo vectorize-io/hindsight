@@ -11384,6 +11384,18 @@ class MemoryEngine(MemoryEngineInterface):
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         await self._require_writable(bank_id, request_context, document_id=document_id)
+        # Opt-in (#6098): the prompts and answers that quote this document go with it instead of
+        # waiting for the retention sweep. PG-only table.
+        from .llm_trace import _llm_requests_persistable  # noqa: PLC0415
+
+        delete_traces = get_config().llm_trace_delete_with_document and _llm_requests_persistable()
+        if delete_traces:
+            # The recorder holds new rows for up to 0.5s before writing them: a retain answered just
+            # before this delete would otherwise land its row after the DELETE below and outlive the
+            # document. This only covers this process; a worker's in-flight calls can still land
+            # late, and the retention sweep removes those. The memory-id patches that follow a run
+            # need no fence: they UPDATE rows already written, so a late one finds nothing to patch.
+            await self._llm_recorder.flush()
         backend = await self._get_backend()
         invalidated_obs = 0
         async with acquire_with_retry(backend) as conn:
@@ -11440,12 +11452,9 @@ class MemoryEngine(MemoryEngineInterface):
                 deleted = _deleted_doc.deleted
                 file_storage_key = _deleted_doc.file_storage_key
 
-                # Opt-in (#6098): the prompts and answers that quote this document — its retain
-                # runs, and every run that created or consumed one of its memories, consolidation
-                # included — go with it instead of waiting for the retention sweep. PG-only table.
-                from .llm_trace import _llm_requests_persistable  # noqa: PLC0415
-
-                if deleted and get_config().llm_trace_delete_with_document and _llm_requests_persistable():
+                # Its retain runs, and every run that created or consumed one of its memories,
+                # consolidation included.
+                if deleted and delete_traces:
                     await conn.execute(
                         f"""
                         DELETE FROM {fq_table("llm_requests")}

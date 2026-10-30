@@ -1419,3 +1419,38 @@ async def test_deleting_document_deletes_its_request_history_when_enabled(
     assert await trace_total("t-retain") == expected
     assert await trace_total("t-consolidation") == expected
     assert await trace_total("t-other") == 1
+
+
+@pytest.mark.asyncio
+async def test_deleting_document_deletes_its_rows_still_buffered(trace_api_client, memory, bank_id, monkeypatch):
+    # #6098 follow-up: rows are buffered before they are written, so a retain answered just before
+    # the delete would land its row after the DELETE and outlive the document — unless the delete
+    # writes the buffer out first.
+    base = f"/v1/default/banks/{bank_id}"
+    await trace_api_client.put(base, json={"name": "Trace Bank"})
+    resp = await trace_api_client.post(
+        f"{base}/memories", json={"items": [{"content": "Alice likes cats", "document_id": "doc-1"}]}
+    )
+    assert resp.status_code == 200
+    await memory._llm_recorder.flush()
+
+    token = set_trace_context(LLMTraceContext(bank_id=bank_id, operation="retain", trace_id="t-buffered"))
+    meta_token = llm_trace.set_call_metadata({"document_id": "doc-1"})
+    try:
+        memory._llm_recorder.record_llm_call(
+            provider="mock", model="mock", scope="memory", messages=[{"role": "user", "content": "x"}], duration=0.1
+        )
+    finally:
+        llm_trace.reset_call_metadata(meta_token)
+        llm_trace.reset_trace_context(token)
+
+    from hindsight_api.config import _get_raw_config
+    from hindsight_api.engine import memory_engine as memory_engine_mod
+
+    config = dataclasses.replace(_get_raw_config(), llm_trace_delete_with_document=True)
+    monkeypatch.setattr(memory_engine_mod, "get_config", lambda: config)
+    assert (await trace_api_client.delete(f"{base}/documents/doc-1")).status_code == 200
+    await memory._llm_recorder.flush()
+
+    resp = await trace_api_client.get(f"{base}/llm-requests", params={"trace_id": "t-buffered"})
+    assert resp.json()["total"] == 0

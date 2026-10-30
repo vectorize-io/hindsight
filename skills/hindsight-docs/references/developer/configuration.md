@@ -2772,7 +2772,7 @@ Rows are buffered in memory and written in batches (at most every 0.5s, or once 
 | `HINDSIGHT_API_LLM_TRACE_EXCLUDE_SCOPES` | Comma-separated call scopes never to trace, applied after the allowlist; `*` prefix patterns as above (e.g. `embedding_*,rerank` keeps only LLM and decision-model calls). | `""` |
 | `HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS` | Number of days to retain trace rows. `-1` = keep forever. | `1` |
 | `HINDSIGHT_API_LLM_TRACE_MAX_CHARS` | Truncate stored input/output beyond this many characters (keeps the row, stores a truncated preview). | `50000` |
-| `HINDSIGHT_API_LLM_TRACE_DELETE_WITH_DOCUMENT` | Deleting a document also deletes the trace rows that quote it: its retain runs, and every run that created or consumed one of its memories (consolidation included). Off, they stay until the retention sweep removes them. Turn it on when a document delete must erase its text everywhere. | `false` |
+| `HINDSIGHT_API_LLM_TRACE_DELETE_WITH_DOCUMENT` | Deleting a document also deletes the trace rows that quote it: its retain runs, and every run that created or consumed one of its memories (consolidation included). Off, they stay until the retention sweep removes them. Rows the API server is still holding are written out first, so a retain followed straight away by a delete leaves nothing behind. Calls still running in a worker when the delete lands (a background retain, a consolidation) can still be written afterwards; the retention sweep removes those. | `false` |
 
 ### Background Maintenance {#background-maintenance}
 
