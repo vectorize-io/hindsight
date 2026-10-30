@@ -21,6 +21,13 @@ from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.response_models import MentalModelTrigger
 from tests.store_seed import store_write_facts
 
+# The scheduled-refresh pass scans every bank in the shared test database, and
+# several tests here let it really submit (or queue behind a stalled worker) a
+# refresh for every due model it finds. Run on another xdist worker, such a pass
+# claims a model a concurrent test just inserted — it is then refreshed or
+# in flight, so that test's own pass skips it. One group keeps the passes serial.
+pytestmark = pytest.mark.xdist_group("mental_model_scheduled_refresh")
+
 
 def test_full_refresh_cron_combines_with_either_trigger():
     """full_refresh_cron is a second schedule, not a third exclusive trigger."""
