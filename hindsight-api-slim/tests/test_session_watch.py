@@ -480,3 +480,14 @@ def test_a_bare_literal_is_not_a_note():
     cmd = W.Moment(trigger="command", text="make eval", recent=[], diff="")
     assert not W.accept_note(s, cmd, "AMB_RECALL_MAX_CHUNK_TOKENS=0", ["m1"])
     assert W.accept_note(s, cmd, "Keep `AMB_RECALL_MAX_CHUNK_TOKENS=0` so recall returns whole chunks.", ["m3"])
+
+
+def test_a_note_naming_a_set_aside_path_is_the_same_point():
+    s = W.WatchState(
+        set_aside=["The command scans `~/dev/memory-poc/.claude/worktrees`, which is outside the job's rules."]
+    )
+    cmd = W.Moment(trigger="command", text="du -sg ~/dev/memory-poc/.claude/worktrees/*/target", recent=[], diff="")
+    again = "You are scanning `~/dev/memory-poc/.claude/worktrees` for target folders, but they are not in the delete rules."
+    assert not W.accept_note(s, cmd, again, ["m1"])
+    other = "Write each deletion to `~/.reps/jobs/disk-guard/cleanup.log` as its own command, right after the rm."
+    assert W.accept_note(s, cmd, other, ["m2"])

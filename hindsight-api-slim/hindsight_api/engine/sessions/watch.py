@@ -607,6 +607,11 @@ def accept_note(state: WatchState, m: Moment, text: str, memory_ids: list[str]) 
         return False
     if any(_overlap(text, s) >= SET_ASIDE_OVERLAP for s in state.set_aside):
         return False
+    # The same path set aside is the same point, in other words: disk-guard set aside the memory-poc
+    # worktrees, and the next run was told about "~/dev/memory-poc/.claude/worktrees" again, reworded
+    # to 0.32-0.34 overlap (beta).
+    if _paths(text) & {p for a in state.set_aside for p in _paths(a)}:
+        return False
     state.sent.append(text.strip())
     state.request_notes += 1
     if m.trigger != "task":
@@ -639,6 +644,11 @@ def readable(text: str) -> str:
             continue
         out.append(str(msg.get("content", "")) if isinstance(msg, dict) else line)
     return "\n".join(out)
+
+
+def _paths(s: str) -> set[str]:
+    """The file or folder paths a note names in backticks (with a "/", ten characters or more)."""
+    return {p.strip() for p in re.findall(r"`([^`\s]*/[^`\s]*)`", s) if len(p.strip()) >= 10}
 
 
 def _quoted(s: str) -> set[str]:
