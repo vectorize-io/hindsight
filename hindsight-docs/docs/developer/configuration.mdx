@@ -3088,6 +3088,7 @@ are merged independently, so unrelated concurrent updates all survive.
 | `HINDSIGHT_API_ENABLE_BANK_CONFIG_API` | Allow clients to change per-bank configuration (`PATCH`/`DELETE .../config`). Reading a bank's config is always allowed. | `true` |
 | `HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH` | Enable the per-bank LLM connectivity probe (`POST /v1/default/banks/{bank_id}/health/llm`). It makes a real provider call, so it is **off by default** — enable it to expose the endpoint. Returns status only — never the provider/model/endpoint. | `false` |
 | `HINDSIGHT_API_ENABLE_DRY_RUN_EXTRACT` | Enable the dry-run extraction preview endpoint (`POST /v1/default/banks/{bank_id}/memories/dry-run-extract`). Runs extraction only — makes a real LLM call but stores nothing. Set to `false` to remove the endpoint (returns `404`). | `true` |
+| `HINDSIGHT_API_DOCS_REQUIRE_AUTH` | Require authentication for the API docs (`/docs`, `/redoc`) and the OpenAPI spec (`/openapi.json`). Off by default, so the API is openly browsable. Set to `true` on a deployment that authenticates requests to stop anonymous callers from enumerating the endpoint/schema surface — the three are then served only to an authenticated caller (with the default no-auth setup they stay open). | `false` |
 | `HINDSIGHT_API_DEFAULT_BANK_TEMPLATE` | Bank template manifest (JSON) applied automatically to every newly-created bank. See below. | _(unset)_ |
 
 ##### `HINDSIGHT_API_DEFAULT_BANK_TEMPLATE`

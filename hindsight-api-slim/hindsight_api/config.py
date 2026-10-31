@@ -791,6 +791,7 @@ ENV_MCP_AUTH_TOKEN = "HINDSIGHT_API_MCP_AUTH_TOKEN"
 ENV_ENABLE_BANK_CONFIG_API = "HINDSIGHT_API_ENABLE_BANK_CONFIG_API"
 ENV_ENABLE_BANK_LLM_HEALTH = "HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH"
 ENV_ENABLE_DRY_RUN_EXTRACT = "HINDSIGHT_API_ENABLE_DRY_RUN_EXTRACT"
+ENV_DOCS_REQUIRE_AUTH = "HINDSIGHT_API_DOCS_REQUIRE_AUTH"
 ENV_DEFAULT_BANK_TEMPLATE = "HINDSIGHT_API_DEFAULT_BANK_TEMPLATE"
 ENV_GRAPH_RETRIEVER = "HINDSIGHT_API_GRAPH_RETRIEVER"
 ENV_RECALL_MAX_CONCURRENT = "HINDSIGHT_API_RECALL_MAX_CONCURRENT"
@@ -1744,6 +1745,11 @@ DEFAULT_ENABLE_DRY_RUN_EXTRACT = True
 # The per-bank LLM connectivity probe makes a real provider call, so it's OFF by
 # default (cost/abuse concerns) and must be explicitly enabled to expose the endpoint.
 DEFAULT_ENABLE_BANK_LLM_HEALTH = False
+# /docs, /redoc and /openapi.json are public by default — an open, browsable API is
+# friendly to self-hosters. A deployment that authenticates requests can set
+# HINDSIGHT_API_DOCS_REQUIRE_AUTH=true to serve those three only to an authenticated
+# caller, so the endpoint/schema surface cannot be enumerated anonymously.
+DEFAULT_DOCS_REQUIRE_AUTH = False
 DEFAULT_DEFAULT_BANK_TEMPLATE: dict | None = None  # BankTemplateManifest dict applied to newly-created banks
 DEFAULT_GRAPH_RETRIEVER = "link_expansion"
 DEFAULT_RECALL_MAX_CONCURRENT = 32  # Max concurrent recall operations per worker
@@ -3682,6 +3688,7 @@ class HindsightConfig:
     enable_bank_config_api: bool
     enable_bank_llm_health: bool
     enable_dry_run_extract: bool
+    docs_require_auth: bool
     # Default bank template (static, server-level only). When set, the manifest is applied
     # to every newly-created bank, overriding the env/config defaults for any fields it sets.
     default_bank_template: dict | None
@@ -5309,6 +5316,7 @@ class HindsightConfig:
             == "true",
             enable_dry_run_extract=os.getenv(ENV_ENABLE_DRY_RUN_EXTRACT, str(DEFAULT_ENABLE_DRY_RUN_EXTRACT)).lower()
             == "true",
+            docs_require_auth=os.getenv(ENV_DOCS_REQUIRE_AUTH, str(DEFAULT_DOCS_REQUIRE_AUTH)).lower() == "true",
             default_bank_template=_parse_default_bank_template(os.getenv(ENV_DEFAULT_BANK_TEMPLATE)),
             # Tokenization
             tokenizer_encoding=os.getenv(ENV_TOKENIZER_ENCODING, DEFAULT_TOKENIZER_ENCODING),

@@ -4414,6 +4414,12 @@ def create_app(
 
     config = get_config()
 
+    # When docs_require_auth is set, FastAPI's built-in (unauthenticated) docs
+    # routes are turned off here and re-served behind authentication further
+    # down, so the endpoint/schema surface cannot be enumerated anonymously.
+    docs_kwargs: dict[str, Any] = (
+        {"docs_url": None, "redoc_url": None, "openapi_url": None} if config.docs_require_auth else {}
+    )
     app = FastAPI(
         title="Hindsight HTTP API",
         version=__version__,
@@ -4427,6 +4433,7 @@ def create_app(
         },
         lifespan=lifespan,
         root_path=config.base_path,
+        **docs_kwargs,
     )
 
     # Drop null fields from responses (omit `"x": null`) for routes where it's wire-safe.
@@ -4664,6 +4671,44 @@ def _register_routes(app: FastAPI):
         )
 
     app.state.resolve_bank_alias = _resolve_bank_alias
+
+    _docs_config = get_config()
+    if _docs_config.docs_require_auth:
+        # The built-in docs were disabled on the app above; re-serve /docs, /redoc
+        # and /openapi.json behind the same authentication the data routes use, so
+        # an anonymous caller cannot enumerate the endpoint/schema surface. With the
+        # default no-auth tenant extension this is a pass-through, so the flag only
+        # bites where authentication is actually configured.
+        from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+        from fastapi.responses import HTMLResponse
+
+        async def _require_docs_auth(request_context: RequestContext = Depends(get_request_context)) -> None:
+            await app.state.memory._authenticate_tenant(request_context)
+
+        # These mirror FastAPI's own docs routes, including the per-request
+        # root_path handling it does in FastAPI.setup(): the servers entry on the
+        # schema and the openapi_url the UIs fetch must carry the deployment's base
+        # path, which only the ASGI scope knows (config.base_path is its source,
+        # but a proxy can set root_path too).
+        @app.get("/openapi.json", include_in_schema=False)
+        async def _authenticated_openapi(request: Request, _: None = Depends(_require_docs_auth)) -> JSONResponse:
+            root_path = request.scope.get("root_path", "").rstrip("/")
+            schema = app.openapi()
+            if root_path and app.root_path_in_servers:
+                server_urls = {s.get("url") for s in schema.get("servers", [])}
+                if root_path not in server_urls:
+                    schema = {**schema, "servers": [{"url": root_path}, *schema.get("servers", [])]}
+            return JSONResponse(schema)
+
+        @app.get("/docs", include_in_schema=False)
+        async def _authenticated_docs(request: Request, _: None = Depends(_require_docs_auth)) -> HTMLResponse:
+            root_path = request.scope.get("root_path", "").rstrip("/")
+            return get_swagger_ui_html(openapi_url=f"{root_path}/openapi.json", title=f"{app.title} - Swagger UI")
+
+        @app.get("/redoc", include_in_schema=False)
+        async def _authenticated_redoc(request: Request, _: None = Depends(_require_docs_auth)) -> HTMLResponse:
+            root_path = request.scope.get("root_path", "").rstrip("/")
+            return get_redoc_html(openapi_url=f"{root_path}/openapi.json", title=f"{app.title} - ReDoc")
 
     def admit_for(operation: PrecheckOperation):
         """Build a FastAPI dependency that holds an admission permit for the request.
