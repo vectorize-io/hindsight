@@ -185,6 +185,7 @@ export function App() {
       const r = await api("POST", `/api/profiles/${pn(current)}/daemon/${action}`);
       setDaemonRunning(r.running);
       setDaemonText(r.running ? "Running" : "Stopped");
+      if (!r.ok) setMsg({ text: r.message, kind: "err" });
     } catch (e) {
       if (!onUnauthorized(e)) setMsg({ text: e.message, kind: "err" });
     } finally {

@@ -53,6 +53,14 @@ class ChatRequest:
     def all_text(self) -> str:
         return "\n".join(_text_of(m.get("content")) for m in self.messages)
 
+    def has_result_of(self, tool: str) -> bool:
+        """Whether an earlier turn of this conversation called ``tool`` and got its result.
+
+        Hindsight replays a tool conversation as plain turns, a result as a user turn
+        opening "Result of `<tool>`:" (``providers/tools_via_schema.as_text_messages``).
+        """
+        return f"Result of `{tool}`:" in self.user_text
+
 
 def _text_of(content: Any) -> str:
     """The text of a message, whether it is a string or OpenAI content parts."""
@@ -482,9 +490,21 @@ class RerankStub:
     #: model was told besides the memory.
     states: list[str]
 
+    #: Pairs a dedup question ("Memory B is a repeat of Memory A") answers yes for, each
+    #: as (text in Memory A, text in Memory B). Every other pair is not a repeat.
+    repeats: set[tuple[str, str]]
+
+    #: The candidates of every ranking question, as the decision model read them.
+    ranked: list[str]
+
     def __init__(self) -> None:
         self.verdicts = {}
         self.states = []
+        self.repeats = set()
+        self.ranked = []
+
+    def repeat(self, memory_a: str, memory_b: str) -> float:
+        return 0.9 if any(a in memory_a and b in memory_b for a, b in self.repeats) else 0.1
 
     def verdict(self, state: str, memory: str) -> float:
         scripted = next((score for text, score in self.verdicts.items() if text in memory), None)
@@ -501,27 +521,20 @@ class TriageStub:
 
     Triage asks TypeSafe, per new fact, how it relates to the observations shown
     (``relation``), which one it restates (``match`` / ``covers_oN``) and which it makes
-    should be reworded (``touches_oN``); under a bank's own mission also whether the mission
-    would keep the fact as stated (``keep_as``); every judgment is a choice. A story names the verdict for a
-    fact by a phrase in its text; every other fact gets "changes" with nothing flagged
-    and no mission fit, which hands it to the LLM — what an unconfigured stub must do so
+    should be reworded (``touches_oN``); every judgment is a choice. A story names the verdict
+    for a fact by a phrase in its text; every other fact gets "changes" with nothing flagged,
+    which hands it to the LLM — what an unconfigured stub must do so
     no story is settled by accident.
     """
 
     def __init__(self) -> None:
         self.verdicts: dict[str, str] = {}
-        #: Phrases of facts the bank's mission wants, worded as it allows.
-        self.fits_mission: set[str] = set()
 
     def relation(self, fact_text: str) -> str:
         return next((v for phrase, v in self.verdicts.items() if phrase in fact_text), "changes")
 
-    def fits(self, fact_text: str) -> bool:
-        return any(phrase in fact_text for phrase in self.fits_mission)
-
     def reset(self) -> None:
         self.verdicts.clear()
-        self.fits_mission.clear()
 
 
 @dataclass(frozen=True)
@@ -578,6 +591,7 @@ class Stubs:
         self.rerank.cut_level = RerankStub.cut_level
         self.rerank.verdicts = {}
         self.rerank.states = []
+        self.rerank.repeats = set()
         self.triage.reset()
         self.rejected_requests.clear()
         self.webhooks.clear()

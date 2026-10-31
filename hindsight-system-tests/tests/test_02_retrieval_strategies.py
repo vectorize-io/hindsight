@@ -76,8 +76,13 @@ async def test_each_retrieval_arm_runs_and_fusion_records_what_it_found(client, 
     # This is the part a blended score cannot tell you: both arms ranked both
     # facts, and RRF saw both ranks.
     merged = {m["text"]: m["source_ranks"] for m in trace["rrf_merged"]}
-    assert merged["Alice moved to Berlin in 2021 | Involving: Alice"] == {"semantic_rank": 1, "bm25_rank": 1}
-    assert merged["Alice plays the cello professionally | Involving: Alice"] == {"semantic_rank": 2, "bm25_rank": 2}
+    berlin = merged["Alice moved to Berlin in 2021 | Involving: Alice"]
+    cello = merged["Alice plays the cello professionally | Involving: Alice"]
+    assert (berlin["semantic_rank"], cello["semantic_rank"]) == (1, 2)
+    # Only "Alice" matches the query in both facts, so BM25 scores them equal and
+    # breaks the tie on the row id (#6056) — random per bank, so which one is
+    # first is not a fact about the pipeline. That both ranks reached RRF is.
+    assert {berlin["bm25_rank"], cello["bm25_rank"]} == {1, 2}
 
     # --- the reranker combined the documented components ----------------------
     top = trace["reranked"][0]

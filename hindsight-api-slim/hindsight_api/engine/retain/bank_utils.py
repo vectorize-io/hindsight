@@ -16,9 +16,10 @@ from pydantic import BaseModel, Field
 
 from ..._vector_index import index_using_clause, per_bank_indexes_are_eager, uses_per_bank_vector_indexes
 from ...config import get_config
+from ...schema_context import get_current_schema
 from ..db_utils import acquire_with_retry, retry_with_backoff
-from ..memory_engine import fq_table, get_current_schema
 from ..response_models import DispositionTraits
+from ..schema import fq_table
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator

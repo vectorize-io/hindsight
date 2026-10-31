@@ -23,6 +23,7 @@ var _ MappedNullable = &ReflectRequest{}
 type ReflectRequest struct {
 	ReflectSearchObservationsMaxTokens NullableInt32 `json:"reflect_search_observations_max_tokens,omitempty"`
 	ReflectSearchObservationsIncludeEntities NullableBool `json:"reflect_search_observations_include_entities,omitempty"`
+	ReflectSearchMentalModelsMaxTokens NullableInt32 `json:"reflect_search_mental_models_max_tokens,omitempty"`
 	Query string `json:"query"`
 	Budget *Budget `json:"budget,omitempty"`
 	Context NullableString `json:"context,omitempty"`
@@ -161,6 +162,48 @@ func (o *ReflectRequest) SetReflectSearchObservationsIncludeEntitiesNil() {
 // UnsetReflectSearchObservationsIncludeEntities ensures that no value is present for ReflectSearchObservationsIncludeEntities, not even an explicit nil
 func (o *ReflectRequest) UnsetReflectSearchObservationsIncludeEntities() {
 	o.ReflectSearchObservationsIncludeEntities.Unset()
+}
+
+// GetReflectSearchMentalModelsMaxTokens returns the ReflectSearchMentalModelsMaxTokens field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *ReflectRequest) GetReflectSearchMentalModelsMaxTokens() int32 {
+	if o == nil || IsNil(o.ReflectSearchMentalModelsMaxTokens.Get()) {
+		var ret int32
+		return ret
+	}
+	return *o.ReflectSearchMentalModelsMaxTokens.Get()
+}
+
+// GetReflectSearchMentalModelsMaxTokensOk returns a tuple with the ReflectSearchMentalModelsMaxTokens field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *ReflectRequest) GetReflectSearchMentalModelsMaxTokensOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.ReflectSearchMentalModelsMaxTokens.Get(), o.ReflectSearchMentalModelsMaxTokens.IsSet()
+}
+
+// HasReflectSearchMentalModelsMaxTokens returns a boolean if a field has been set.
+func (o *ReflectRequest) HasReflectSearchMentalModelsMaxTokens() bool {
+	if o != nil && o.ReflectSearchMentalModelsMaxTokens.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetReflectSearchMentalModelsMaxTokens gets a reference to the given NullableInt32 and assigns it to the ReflectSearchMentalModelsMaxTokens field.
+func (o *ReflectRequest) SetReflectSearchMentalModelsMaxTokens(v int32) {
+	o.ReflectSearchMentalModelsMaxTokens.Set(&v)
+}
+// SetReflectSearchMentalModelsMaxTokensNil sets the value for ReflectSearchMentalModelsMaxTokens to be an explicit nil
+func (o *ReflectRequest) SetReflectSearchMentalModelsMaxTokensNil() {
+	o.ReflectSearchMentalModelsMaxTokens.Set(nil)
+}
+
+// UnsetReflectSearchMentalModelsMaxTokens ensures that no value is present for ReflectSearchMentalModelsMaxTokens, not even an explicit nil
+func (o *ReflectRequest) UnsetReflectSearchMentalModelsMaxTokens() {
+	o.ReflectSearchMentalModelsMaxTokens.Unset()
 }
 
 // GetQuery returns the Query field value
@@ -601,6 +644,9 @@ func (o ReflectRequest) ToMap() (map[string]interface{}, error) {
 	}
 	if o.ReflectSearchObservationsIncludeEntities.IsSet() {
 		toSerialize["reflect_search_observations_include_entities"] = o.ReflectSearchObservationsIncludeEntities.Get()
+	}
+	if o.ReflectSearchMentalModelsMaxTokens.IsSet() {
+		toSerialize["reflect_search_mental_models_max_tokens"] = o.ReflectSearchMentalModelsMaxTokens.Get()
 	}
 	toSerialize["query"] = o.Query
 	if !IsNil(o.Budget) {

@@ -27,7 +27,7 @@ DOCUMENT_ID = "profile-alice"
 CONTENT = "Alice moved to Berlin and plays cello."
 
 ORIGINAL_FACT = "Alice moved to Berlin | Involving: Alice"
-IMPROVED_FACT = "Alice relocated to Berlin, Germany | Involving: Alice"
+IMPROVED_FACT = "Alice relocated to Berlin, Germany | Where: Berlin | Involving: Alice"
 
 
 async def _fact_texts(client, bank: str) -> list[str]:

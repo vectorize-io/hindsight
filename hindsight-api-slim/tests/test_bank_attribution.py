@@ -21,15 +21,11 @@ from hindsight_api.engine.aiohttp_session import LoopLocal
 from hindsight_api.engine.bank_attribution import apply_bank_attribution
 from hindsight_api.engine.cross_encoder import LiteLLMCrossEncoder
 from hindsight_api.engine.embeddings import OpenAIEmbeddings
-from hindsight_api.engine.memory_engine import (
-    MemoryEngine,
-    _bind_bank_id,
-    _current_bank_id,
-    get_current_bank_id,
-)
+from hindsight_api.engine.memory_engine import MemoryEngine, _bind_bank_id
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
 from hindsight_api.engine.retain.embedding_utils import generate_embeddings_batch
 from hindsight_api.models import RequestContext
+from hindsight_api.schema_context import _current_bank_id, get_current_bank_id
 from tests.aiohttp_stub import stub_server
 
 
@@ -215,35 +211,6 @@ async def test_caller_set_user_is_not_overridden():
     finally:
         _current_bank_id.reset(token)
     assert params["user"] == "explicit-user"
-
-
-async def test_user_injected_in_tool_calling_path():
-    """call_with_tools() builds its own call_params; attribution must reach it too."""
-    _set_flag(True)
-    llm = _llm()
-    tool_response = SimpleNamespace(
-        choices=[
-            SimpleNamespace(
-                finish_reason="stop",
-                message=SimpleNamespace(content="done", tool_calls=None, refusal=None, reasoning_content=None),
-            )
-        ],
-        usage=None,
-        error=None,
-    )
-    create = AsyncMock(return_value=tool_response)
-    llm._client.chat.completions.create = create
-    token = _current_bank_id.set("user-tools")
-    try:
-        with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
-            await llm.call_with_tools(
-                messages=[{"role": "user", "content": "ping"}],
-                tools=[{"type": "function", "function": {"name": "noop", "parameters": {}}}],
-                max_retries=0,
-            )
-    finally:
-        _current_bank_id.reset(token)
-    assert create.call_args.kwargs["user"] == "user-tools"
 
 
 # ── Embeddings: user injection ─────────────────────────────────────────────────

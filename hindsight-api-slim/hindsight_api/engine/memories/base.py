@@ -1069,7 +1069,7 @@ class EntityResolverHandle(Protocol):
 
     def discard_pending_stats(self) -> None: ...
 
-    async def flush_pending_stats(self) -> None: ...
+    async def flush_pending_stats(self, conn: Any | None = None) -> None: ...
 
     async def reassert_entities_batch(self, bank_id: str, resolved_entities: list[Any], conn) -> None: ...
 
@@ -3699,9 +3699,10 @@ class MemoriesExtension(Extension, ABC):
 
     async def unit_embeddings(self, *, conn, fq_table, bank_id: str, unit_ids: list[str]) -> list:
         """``(id, embedding, fact_type)`` rows, embedding as pgvector text, for the end-of-retain
-        semantic-link pass. Empty here, so the pass links nothing: that pass writes SQL links, and
-        a store that owns its memories derives its own (and sets
-        :attr:`derives_semantic_links_internally`, which skips the pass altogether)."""
+        semantic-link pass and recall's dedup. Empty here, so the pass links nothing: that pass
+        writes SQL links, and a store that owns its memories derives its own (and sets
+        :attr:`derives_semantic_links_internally`, which skips the pass altogether). Recall's
+        dedup then asks every pair among the kept candidates."""
         return []
 
     # ------------------------------------------------------------------ retain links and entity resolution
@@ -4068,8 +4069,8 @@ class MemoriesExtension(Extension, ABC):
 
     async def expand_memories(self, *, conn, fq_table, bank_id: str, unit_ids: list[uuid.UUID]) -> list:
         """``id`` (a UUID), ``text``, ``chunk_id``, ``document_id``, ``fact_type``, ``context``,
-        ``tags`` for each of ``unit_ids`` that exists, as mappings. Postgres returns its rows as
-        they are."""
+        ``tags``, ``occurred_start``, ``occurred_end``, ``mentioned_at`` for each of ``unit_ids``
+        that exists, as mappings. Postgres returns its rows as they are."""
         stored = await self.get_memories(
             conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(u) for u in unit_ids]
         )
@@ -4082,6 +4083,9 @@ class MemoriesExtension(Extension, ABC):
                 "fact_type": s.fact_type,
                 "context": s.context,
                 "tags": s.tags,
+                "occurred_start": s.occurred_start,
+                "occurred_end": s.occurred_end,
+                "mentioned_at": s.mentioned_at,
             }
             for s in stored
         ]

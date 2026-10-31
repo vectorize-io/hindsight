@@ -32,6 +32,7 @@ class ReflectRequest(BaseModel):
     """ # noqa: E501
     reflect_search_observations_max_tokens: Optional[Annotated[int, Field(strict=True, ge=1)]] = None
     reflect_search_observations_include_entities: Optional[StrictBool] = None
+    reflect_search_mental_models_max_tokens: Optional[Annotated[int, Field(strict=True, ge=1)]] = None
     query: StrictStr
     budget: Optional[Budget] = None
     context: Optional[StrictStr] = None
@@ -45,7 +46,7 @@ class ReflectRequest(BaseModel):
     fact_types: Optional[List[StrictStr]] = None
     exclude_mental_models: Optional[StrictBool] = Field(default=False, description="If true, exclude all mental models from the reflect loop (skip search_mental_models tool).")
     exclude_mental_model_ids: Optional[List[StrictStr]] = None
-    __properties: ClassVar[List[str]] = ["reflect_search_observations_max_tokens", "reflect_search_observations_include_entities", "query", "budget", "context", "max_tokens", "include", "response_schema", "tags", "tags_match", "tag_groups", "apply_all_directives", "fact_types", "exclude_mental_models", "exclude_mental_model_ids"]
+    __properties: ClassVar[List[str]] = ["reflect_search_observations_max_tokens", "reflect_search_observations_include_entities", "reflect_search_mental_models_max_tokens", "query", "budget", "context", "max_tokens", "include", "response_schema", "tags", "tags_match", "tag_groups", "apply_all_directives", "fact_types", "exclude_mental_models", "exclude_mental_model_ids"]
 
     @field_validator('tags_match')
     def tags_match_validate_enum(cls, value):
@@ -127,6 +128,11 @@ class ReflectRequest(BaseModel):
         if self.reflect_search_observations_include_entities is None and "reflect_search_observations_include_entities" in self.model_fields_set:
             _dict['reflect_search_observations_include_entities'] = None
 
+        # set to None if reflect_search_mental_models_max_tokens (nullable) is None
+        # and model_fields_set contains the field
+        if self.reflect_search_mental_models_max_tokens is None and "reflect_search_mental_models_max_tokens" in self.model_fields_set:
+            _dict['reflect_search_mental_models_max_tokens'] = None
+
         # set to None if context (nullable) is None
         # and model_fields_set contains the field
         if self.context is None and "context" in self.model_fields_set:
@@ -171,6 +177,7 @@ class ReflectRequest(BaseModel):
         _obj = cls.model_validate({
             "reflect_search_observations_max_tokens": obj.get("reflect_search_observations_max_tokens"),
             "reflect_search_observations_include_entities": obj.get("reflect_search_observations_include_entities"),
+            "reflect_search_mental_models_max_tokens": obj.get("reflect_search_mental_models_max_tokens"),
             "query": obj.get("query"),
             "budget": obj.get("budget"),
             "context": obj.get("context"),

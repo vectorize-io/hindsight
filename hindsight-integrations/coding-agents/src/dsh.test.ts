@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { createDshHooks, dshSessionEvents, toDshParameters, type Workspace } from "./dsh";
+import {
+  createDshHooks,
+  dshSessionEvents,
+  ownEvents,
+  toDshParameters,
+  type Workspace,
+} from "./dsh";
 import { readDshEvents } from "./core/transcript-dsh";
 import type { ToolSpec } from "./core/knowledge-tools";
 import { z } from "zod";
@@ -59,7 +65,7 @@ describe("dsh pre-step injection", () => {
     expect(appended.id).toEqual(expect.any(String));
   });
 
-  it("does not re-append a block identical to the one already injected this session", async () => {
+  it("does not re-append a block identical to the last one the history carries", async () => {
     // dsh keeps every injected message in the history it sends, so the same roster appended on
     // every turn stacked up as N identical copies (#5026).
     let block = "<hindsight_knowledge_refresh>roster</hindsight_knowledge_refresh>";
@@ -68,19 +74,34 @@ describe("dsh pre-step injection", () => {
       getInjection: vi.fn(() => block),
       seedIfCold: vi.fn(async () => {}),
     };
-    const hooks = createDshHooks(() => fakeWorkspace(core));
-    const step = (id: string, text: string) =>
-      hooks.preStep(
-        { agent: agentWith(id), signal: new AbortController().signal },
+    let hooks = createDshHooks(() => fakeWorkspace(core));
+    // The host logs every message a step enters, so later steps see the injected block.
+    const agents = new Map<string, { session: ReturnType<typeof session> }>();
+    const step = async (id: string, text: string, events?: unknown[]) => {
+      const agent = agents.get(id) ?? { session: session(id) };
+      if (events) agent.session.events = events;
+      agents.set(id, agent);
+      const decision = (await hooks.preStep(
+        { agent: agent as never, signal: new AbortController().signal },
         enter([userMessage(text)])
-      ) as Promise<{ messages: unknown[] }>;
+      )) as { messages: unknown[] };
+      for (const data of decision.messages)
+        agent.session.events.push({ type: "user/message", data });
+      return decision.messages;
+    };
 
-    expect((await step("s-1", "first")).messages).toHaveLength(2);
-    expect((await step("s-1", "second")).messages).toHaveLength(1);
-    // Another session gets its own copy, and a changed block is injected again.
-    expect((await step("s-2", "first")).messages).toHaveLength(2);
+    expect(await step("s-1", "first")).toHaveLength(2);
+    expect(await step("s-1", "second")).toHaveLength(1);
+    // Another session gets its own copy.
+    expect(await step("s-2", "first")).toHaveLength(2);
+    // A fork inherits the parent's history, block included, under a NEW session id (#5940).
+    expect(await step("s-fork", "first", [...agents.get("s-1")!.session.events])).toHaveLength(1);
+    // A restart rebuilds the plugin with nothing in memory, but the history still has the block.
+    hooks = createDshHooks(() => fakeWorkspace(core));
+    expect(await step("s-1", "after restart")).toHaveLength(1);
+    // A changed block is injected again.
     block = "<hindsight_knowledge_refresh>new page</hindsight_knowledge_refresh>";
-    expect((await step("s-1", "third")).messages).toHaveLength(2);
+    expect(await step("s-1", "third")).toHaveLength(2);
   });
 
   it("does not recall again on a tool continuation that claimed no new input", async () => {
@@ -232,6 +253,22 @@ describe("dshSessionEvents (alpha.4+ transcript source)", () => {
   it("prefers snapshotEvents over a stale events property", () => {
     const session = { events: [], snapshotEvents: () => sampleEvents };
     expect(dshSessionEvents(session)).toBe(sampleEvents);
+  });
+
+  it("saves only a fork's own turns, not the prefix it inherited (#5940)", () => {
+    const childTurn = {
+      type: "user/message",
+      data: {
+        role: "user",
+        content: [{ type: "text", text: "now on the fork" }],
+        source: { kind: "user" },
+      },
+    };
+    const fork = { snapshotEvents: () => [...sampleEvents, childTurn], inheritedEventCount: 2 };
+    expect(readDshEvents(ownEvents(fork))).toEqual([{ role: "user", content: "now on the fork" }]);
+    // The model still sees the whole history; an unforked session saves all of it.
+    expect(dshSessionEvents(fork)).toHaveLength(3);
+    expect(ownEvents({ snapshotEvents: () => sampleEvents })).toEqual(sampleEvents);
   });
 });
 

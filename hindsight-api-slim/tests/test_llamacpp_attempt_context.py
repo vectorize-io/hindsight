@@ -9,8 +9,7 @@ from hindsight_api.engine.providers.llamacpp_llm import LlamaCppLLM
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("with_tools", [False, True])
-async def test_llamacpp_forwards_attempt_context_to_delegate(with_tools):
+async def test_llamacpp_forwards_attempt_context_to_delegate():
     provider = LlamaCppLLM(
         provider="llamacpp",
         api_key="",
@@ -24,19 +23,11 @@ async def test_llamacpp_forwards_attempt_context_to_delegate(with_tools):
     async def attempt_context():
         yield
 
-    if with_tools:
-        await provider.call_with_tools(
-            messages=[{"role": "user", "content": "test"}],
-            tools=[],
-            attempt_context=attempt_context,
-        )
-        forwarded = provider._delegate.call_with_tools.await_args.kwargs
-    else:
-        await provider.call(
-            messages=[{"role": "user", "content": "test"}],
-            attempt_context=attempt_context,
-        )
-        forwarded = provider._delegate.call.await_args.kwargs
+    await provider.call(
+        messages=[{"role": "user", "content": "test"}],
+        attempt_context=attempt_context,
+    )
+    forwarded = provider._delegate.call.await_args.kwargs
 
     assert provider.supports_attempt_scoped_concurrency()
     assert forwarded["attempt_context"] is attempt_context

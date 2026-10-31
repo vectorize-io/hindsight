@@ -7,7 +7,8 @@ now references the ``LabelGroup`` schema, still accepts the legacy ``free_values
 shape, and round-trips back to plain dicts for the storage path.
 """
 
-from hindsight_api.api.http import BankTemplateConfig, DryRunExtractRequest
+from hindsight_api.api.http import DryRunExtractRequest
+from hindsight_api.engine.bank_templates import BankTemplateConfig
 from hindsight_api.engine.retain.entity_labels import LabelGroup
 
 
@@ -73,3 +74,15 @@ def test_entity_labels_round_trips_to_dicts_for_storage():
 def test_entity_labels_none_by_default():
     assert DryRunExtractRequest(content="x").entity_labels is None
     assert BankTemplateConfig().entity_labels is None
+
+
+def test_attributes_envelope_is_unwrapped():
+    """The {"attributes": [...]} envelope the config API stores and GET /config returns must
+    validate like the bare list; export used to drop it with only a server warning (#6057)."""
+    envelope = {"attributes": [{"key": "area", "tag": True, "type": "multi-values", "values": [{"value": "cdm"}]}]}
+    cfg = BankTemplateConfig(entity_labels=envelope)
+    assert [g.key for g in cfg.entity_labels] == ["area"]
+    assert cfg.entity_labels[0].tag is True
+    # Legacy keys inside the envelope are migrated too, as parse_entity_labels does.
+    req = DryRunExtractRequest(content="x", entity_labels={"attributes": [{"key": "note", "free_values": True}]})
+    assert req.entity_labels[0].type == "text"

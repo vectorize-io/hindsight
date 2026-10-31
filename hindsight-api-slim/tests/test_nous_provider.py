@@ -16,6 +16,7 @@ from openai import APIStatusError
 from hindsight_api.engine.llm_wrapper import requires_api_key
 from hindsight_api.engine.providers.nous_auth import NousAuthManager
 from hindsight_api.engine.providers.nous_llm import NousLLM
+from hindsight_api.engine.providers.openai_compatible_headers import OPENAI_COMPATIBLE_USER_AGENT
 from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 
 
@@ -88,6 +89,7 @@ async def test_ensure_fresh_token_rebuilds_client_on_rotation() -> None:
     assert auth.refresh_calls == [("proactive (token near expiry)", False)]
     assert llm.api_key == "tok-2"
     assert llm._client is not original_client  # client rebuilt with the new token
+    assert llm._client.default_headers["User-Agent"] == OPENAI_COMPATIBLE_USER_AGENT
 
 
 @pytest.mark.asyncio

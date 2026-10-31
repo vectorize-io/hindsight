@@ -93,12 +93,13 @@ class _AsyncIter:
             raise StopAsyncIteration from None
 
 
-def _succeeded_entry(custom_id: str, tool_input: dict) -> SimpleNamespace:
-    block = SimpleNamespace(type="tool_use", name="structured_response", input=tool_input, text=None)
+def _succeeded_entry(custom_id: str, reply: dict) -> SimpleNamespace:
+    # A strict request is constrained by output_config, so the reply is its JSON as text.
+    block = SimpleNamespace(type="text", text=json.dumps(reply))
     message = SimpleNamespace(
         content=[block],
         usage=SimpleNamespace(input_tokens=100, output_tokens=40, cache_read_input_tokens=60),
-        stop_reason="tool_use",
+        stop_reason="end_turn",
     )
     return SimpleNamespace(custom_id=custom_id, result=SimpleNamespace(type="succeeded", message=message))
 
@@ -134,9 +135,9 @@ async def test_submit_batch_translates_openai_requests():
     assert params["max_tokens"] == 2000
     # temperature is dropped, mirroring the sync call() path.
     assert "temperature" not in params
-    # strict=True → forced tool_use (native constrained decoding).
-    assert params["tools"][0]["input_schema"] == _SCHEMA
-    assert params["tool_choice"] == {"type": "tool", "name": "structured_response"}
+    # strict=True → native structured output, no tools.
+    assert params["output_config"] == {"format": {"type": "json_schema", "schema": _SCHEMA}}
+    assert "tools" not in params and "tool_choice" not in params
 
     assert metadata["batch_id"] == "msgbatch_test1"
     assert metadata["status"] == "in_progress"
@@ -170,17 +171,20 @@ async def test_submit_batch_non_strict_schema_injects_into_system():
     params = provider._client.messages.batches.create.await_args.kwargs["requests"][0]["params"]
     assert "tools" not in params
     assert "tool_choice" not in params
-    # Schema is injected into the system prompt for JSON-text output —
-    # inside the cached block, so the injection is part of the cached prefix.
-    assert "facts" in params["system"][0]["text"]
-    assert "valid JSON" in params["system"][0]["text"]
+    # Schema is injected into the system prompt for JSON-text output, in its
+    # own cached block so a per-request schema leaves the instructions' cache
+    # entry intact (#6187).
+    instructions, schema_block = params["system"]
+    assert instructions == {"type": "text", "text": "Extract facts.", "cache_control": {"type": "ephemeral"}}
+    assert "facts" in schema_block["text"] and "valid JSON" in schema_block["text"]
+    assert schema_block["cache_control"] == {"type": "ephemeral"}
 
 
 async def test_submit_batch_system_carries_cache_control_marker():
     """Batch items share their system prompt, so it gets the cache marker.
 
-    Mirrors the sync ``call()`` one-shot rule: system is the sole cache
-    breakpoint. Within a Message Batch every request carries the same fact-
+    Mirrors the sync ``call()`` one-shot rule: the breakpoints sit on the
+    system blocks only. Within a Message Batch every request carries the same fact-
     extraction system prompt, so the first request's cache write serves the
     rest as best-effort reads (and stacks with the 50% batch discount).
     """

@@ -57,7 +57,7 @@ async def test_high_fanout_entity_returns_results(memory, request_context):
             request_context=request_context,
         )
 
-        from hindsight_api.engine.memory_engine import Budget
+        from hindsight_api.engine.response_models import Budget
 
         # Query for "Zara" — semantic search finds Zara's fact as a seed,
         # then graph expansion should find other Acme Corp facts via the
@@ -118,7 +118,7 @@ async def test_entity_expansion_timeout_fallback(memory, request_context):
         )
 
         from hindsight_api.config import _get_raw_config
-        from hindsight_api.engine.memory_engine import Budget
+        from hindsight_api.engine.response_models import Budget
 
         config = _get_raw_config()
         original_timeout = config.link_expansion_timeout
@@ -186,7 +186,7 @@ async def test_per_entity_limit_caps_expansion(memory, request_context):
         )
 
         from hindsight_api.config import _get_raw_config
-        from hindsight_api.engine.memory_engine import Budget
+        from hindsight_api.engine.response_models import Budget
 
         config = _get_raw_config()
         original_limit = config.link_expansion_per_entity_limit

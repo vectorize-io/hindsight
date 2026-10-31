@@ -35,18 +35,16 @@ from pydantic import BaseModel, ValidationError
 from hindsight_api.engine.aiohttp_session import LoopLocalSession, UpstreamHTTPError, raise_for_status
 from hindsight_api.engine.cache_affinity import cache_affinity_id
 from hindsight_api.engine.llm_interface import (
-    LLM_TOOL_CHOICE_AUTO,
     LLMInterface,
-    LLMToolChoice,
-    LLMToolChoiceMode,
     ProviderRateLimitResetError,
+    ProviderUnavailableError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_transport import build_aiohttp_timeout
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences
-from hindsight_api.engine.providers.openai_responses_llm import _messages_to_responses_input
-from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.providers.openai_responses_llm import _to_responses_content
+from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
@@ -81,13 +79,6 @@ logger = logging.getLogger(__name__)
 _CODEX_ORIGINATOR = "codex_cli_rs"
 _CODEX_USER_AGENT = "codex_cli_rs/0.0.0 (Hindsight)"
 
-# Name of the single forced function tool used to carry structured output when
-# strict_schema is on. The Codex backend speaks the OpenAI Responses API, so a
-# forced function call gives us constrained decoding straight into the response
-# schema — no prompt-injected schema, no raw json.loads on free-form model text,
-# no invalid-\escape retry storm (issue #2504, same class as #1002 / #2339).
-_STRUCTURED_TOOL_NAME = "structured_response"
-
 # Valid JSON string escape characters (the char that may follow a backslash).
 _VALID_JSON_ESCAPE_CHARS = set('"\\/bfnrtu')
 
@@ -100,7 +91,7 @@ def _repair_invalid_json_escapes(text: str) -> str:
     ``\\d``, ``\\s``, ``C:\\Users``), so ``json.loads`` fails deterministically
     and every retry re-fails the same way (issue #2504). This doubles any
     backslash that isn't part of a valid escape so the payload parses. It is a
-    lenient fallback only — the strict_schema forced-tool path is the real fix.
+    lenient fallback only — the strict_schema ``text.format`` path is the real fix.
     """
     result: list[str] = []
     i = 0
@@ -290,10 +281,9 @@ def _usage_from_completed_event(event_type: str | None, data: Any) -> TokenUsage
 
 @dataclass(frozen=True, slots=True)
 class _CodexStreamReply:
-    """What one Codex SSE stream carried: text, tool calls, and the backend's token usage."""
+    """What one Codex SSE stream carried: its text and the backend's token usage."""
 
     text: str
-    tool_calls: list[LLMToolCall]
     # None when the stream ended without a ``response.completed`` usage block.
     usage: TokenUsage | None
 
@@ -338,7 +328,7 @@ class CodexLLM(LLMInterface):
             logger.info(f"Loaded Codex OAuth credentials for account: {account_id}")
         except Exception as e:
             auth_file = default_codex_auth_file(self._codex_home)
-            raise RuntimeError(
+            raise ProviderUnavailableError(
                 f"Failed to load Codex OAuth credentials from {auth_file}: {e}\n\n"
                 "To set up Codex authentication:\n"
                 "1. Install Codex CLI: npm install -g @openai/codex\n"
@@ -583,14 +573,12 @@ class CodexLLM(LLMInterface):
         """Make API call to Codex backend with SSE streaming.
 
         Args:
-            strict_schema: Route structured output through a single forced
-                function tool (constrained decoding) instead of prompt-injecting
-                the schema and parsing free-form text. The Codex backend speaks
-                the OpenAI Responses API, so the forced function call emits the
-                response schema directly as tool arguments — eliminating the
-                invalid-``\\escape`` retry storm (issue #2504). When False, falls
-                back to schema-in-prompt + JSON parse, now hardened with a lenient
-                invalid-escape repair before giving up.
+            strict_schema: Hold the reply to the response schema (the Responses API's
+                ``text.format`` json_schema, constrained decoding) instead of
+                prompt-injecting the schema and parsing free-form text. This used to be a
+                single forced function tool whose arguments were the schema (issue #2504);
+                no request carries tools any more (see ``tools_via_schema``). Either way the
+                reply is parsed with a lenient invalid-escape repair before giving up.
         """
         start_time = time.perf_counter()
 
@@ -616,20 +604,12 @@ class CodexLLM(LLMInterface):
             else:
                 user_messages.append(msg)
 
-        # Structured output: prefer a single forced function tool (constrained
-        # decoding) over text-injecting the schema and parsing the reply. The
-        # forced tool guarantees schema-shaped JSON in the tool arguments,
-        # eliminating the invalid-\escape retry storm (issue #2504). When
-        # strict_schema is off we keep the schema-in-prompt + json.loads
-        # fallback (now hardened with a lenient escape repair) for callers that
-        # can't force tools.
+        # Structured output: held to the schema by ``text.format`` (constrained decoding)
+        # when strict, else the schema in the prompt and a lenient json.loads.
         schema = None
-        use_forced_tool = False
         if response_format is not None and hasattr(response_format, "model_json_schema"):
             schema = strict_json_schema(response_format) if strict_schema else provider_json_schema(response_format)
-            if strict_schema:
-                use_forced_tool = True
-            else:
+            if not strict_schema:
                 schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2, ensure_ascii=False)}"
                 system_instruction += schema_msg
 
@@ -641,13 +621,10 @@ class CodexLLM(LLMInterface):
                 {
                     "type": "message",
                     "role": msg.get("role", "user"),
-                    "content": msg.get("content", ""),
+                    "content": _to_responses_content(msg.get("content", ""), msg.get("role", "user")),
                 }
                 for msg in user_messages
             ],
-            "tools": [],
-            "tool_choice": "auto",
-            "parallel_tool_calls": True,
             "reasoning": self._reasoning_payload(),
             "store": False,  # Codex uses stateless mode
             "stream": True,  # SSE streaming
@@ -655,19 +632,15 @@ class CodexLLM(LLMInterface):
         }
         payload.update(self._extra_body)
 
-        if use_forced_tool and schema is not None:
-            # Single function tool whose parameters ARE the response schema;
-            # force it via tool_choice so the backend does constrained decoding.
-            payload["tools"] = [
-                {
-                    "type": "function",
-                    "name": _STRUCTURED_TOOL_NAME,
-                    "description": "Return the structured response.",
-                    "parameters": schema,
+        if strict_schema and schema is not None:
+            payload["text"] = {
+                "format": {
+                    "type": "json_schema",
+                    "name": getattr(response_format, "__name__", "response"),
+                    "schema": schema,
+                    "strict": True,
                 }
-            ]
-            payload["tool_choice"] = {"type": "function", "name": _STRUCTURED_TOOL_NAME}
-            payload["parallel_tool_calls"] = False
+            }
 
         headers = self._build_request_headers()
 
@@ -683,14 +656,7 @@ class CodexLLM(LLMInterface):
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.codex.{scope}.attempt={attempt + 1}/{max_retries + 1}")
                     async with self._stream_request(url, payload, headers) as response:
-                        # Forced-tool path: read structured output from the function-call
-                        # arguments (already a JSON string in a dedicated channel) rather
-                        # than from free-form assistant text.
-                        if use_forced_tool:
-                            reply = await self._parse_sse_tool_stream(response)
-                        else:
-                            reply = await self._parse_sse_stream(response)
-                        tool_calls = reply.tool_calls
+                        reply = await self._parse_sse_stream(response)
                         content = reply.text
 
                 # The backend reports real counts in ``response.completed``; fall back
@@ -701,7 +667,7 @@ class CodexLLM(LLMInterface):
                     token_usage = reply.usage
                 else:
                     estimated_input = sum(len(m.get("content", "")) for m in messages) // 4
-                    estimated_output = (len(content) or sum(len(json.dumps(tc.arguments)) for tc in tool_calls)) // 4
+                    estimated_output = len(content) // 4
                     token_usage = TokenUsage(
                         input_tokens=estimated_input,
                         output_tokens=estimated_output,
@@ -717,28 +683,7 @@ class CodexLLM(LLMInterface):
                 )
 
                 # Handle structured output
-                if use_forced_tool:
-                    tool_input = None
-                    for tc in tool_calls:
-                        if tc.name == _STRUCTURED_TOOL_NAME:
-                            tool_input = tc.arguments if isinstance(tc.arguments, dict) else None
-                            break
-                    if tool_input is None:
-                        # Model ignored the forced tool (rare — e.g. a gateway that
-                        # drops tool_choice). Retry so we don't hard-fail.
-                        logger.warning(
-                            f"Codex forced structured tool missing from response "
-                            f"(attempt {attempt + 1}/{max_retries + 1})"
-                        )
-                        if attempt < max_retries:
-                            backoff = min(initial_backoff * (2**attempt), max_backoff)
-                            await asyncio.sleep(backoff)
-                            attempt += 1
-                            continue
-                        raise RuntimeError("Codex did not return the forced structured_response tool call")
-                    content = json.dumps(tool_input)
-                    result = tool_input if skip_validation else response_format.model_validate(tool_input)
-                elif response_format is not None:
+                if response_format is not None:
                     # Models may wrap JSON in markdown; the shared helper strips
                     # fences line-based, so a JSON value that itself contains the
                     # text "```json" is no longer truncated (#4819).
@@ -981,6 +926,7 @@ class CodexLLM(LLMInterface):
             The text content and token usage the stream carried.
         """
         full_text = ""
+        deltas = ""
         usage: TokenUsage | None = None
         event_type = None
 
@@ -1003,11 +949,15 @@ class CodexLLM(LLMInterface):
                     _raise_on_sse_failure(event_type, data)
                     usage = _usage_from_completed_event(event_type, data) or usage
 
-                    # Extract content based on event type
-                    if event_type == "response.text.delta" and "delta" in data:
-                        full_text += data["delta"]
-                    elif event_type == "response.content_part.delta" and "delta" in data:
-                        full_text += data["delta"]
+                    # Extract content based on event type. The Responses API streams text
+                    # as ``response.output_text.delta``; the finished items repeat it, so
+                    # they are only the fallback for a stream that sent no deltas.
+                    if (
+                        event_type
+                        in ("response.output_text.delta", "response.text.delta", "response.content_part.delta")
+                        and "delta" in data
+                    ):
+                        deltas += data["delta"]
                     # Check for item content
                     elif "item" in data:
                         item = data["item"]
@@ -1024,280 +974,7 @@ class CodexLLM(LLMInterface):
                     # Skip malformed JSON events
                     pass
 
-        return _CodexStreamReply(text=full_text, tool_calls=[], usage=usage)
-
-    async def call_with_tools(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        max_completion_tokens: int | None = None,
-        temperature: float | None = None,
-        scope: str = "tools",
-        max_retries: int = 5,
-        initial_backoff: float = 1.0,
-        max_backoff: float = 30.0,
-        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
-        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> LLMToolCallResult:
-        """
-        Make API call with tool calling support.
-
-        Parses Codex SSE stream to extract tool calls from response.output_item.done events.
-        Tools are converted from OpenAI format to Codex format (flat structure at top level).
-
-        Args:
-            messages: List of message dicts. Can include tool results with role='tool'.
-            tools: List of tool definitions in OpenAI format.
-            max_completion_tokens: Maximum tokens in response.
-            temperature: Sampling temperature.
-            scope: Scope identifier for tracking.
-            max_retries: Maximum retry attempts.
-            initial_backoff: Initial backoff time in seconds.
-            max_backoff: Maximum backoff time in seconds.
-            tool_choice: Canonical tool-selection policy.
-
-        Returns:
-            LLMToolCallResult with content and/or tool_calls.
-        """
-        start_time = time.perf_counter()
-
-        # Proactively refresh the OAuth access_token if it's near expiry.
-        # Same rationale as in ``call()`` — keeps the request from leaving
-        # the client carrying a token that's already past ``exp``.
-        await self._ensure_fresh_token()
-
-        # System messages become the instructions; the rest replays through the shared
-        # Responses converter, so earlier tool calls go back as function_call /
-        # function_call_output items linked by call_id. This used to flatten them into an
-        # empty assistant message plus a "Tool result: ..." user message, which lost the
-        # link and made reflect re-run searches it had already done (#5701).
-        system_instruction = "\n\n".join(m.get("content", "") for m in messages if m.get("role") == "system")
-        user_messages = _messages_to_responses_input([m for m in messages if m.get("role") != "system"])
-
-        # Convert tools to Codex format
-        # Codex expects tools with type and name/description/parameters at top level
-        codex_tools = []
-        for tool in tools:
-            func = tool.get("function", {})
-            codex_tools.append(
-                {
-                    "type": "function",
-                    "name": func.get("name", ""),
-                    "description": func.get("description", ""),
-                    "parameters": func.get("parameters", {}),
-                }
-            )
-
-        payload = {
-            "model": self.model,
-            "instructions": system_instruction,
-            "input": user_messages,
-            "tools": codex_tools,
-            "tool_choice": (
-                {"type": "function", "name": tool_choice.selected_function_name}
-                if tool_choice.mode is LLMToolChoiceMode.NAMED
-                else tool_choice.mode.value
-            ),
-            "parallel_tool_calls": True,
-            "reasoning": self._reasoning_payload(),
-            "store": False,
-            "stream": True,
-            "prompt_cache_key": _prompt_cache_key(messages),
-        }
-        payload.update(self._extra_body)
-
-        headers = self._build_request_headers()
-
-        url = f"{self.base_url}/codex/responses"
-
-        # Debug logging for troubleshooting
-        logger.debug(f"Codex tool call request: url={url}, model={payload['model']}, tools={len(codex_tools)}")
-
-        # One reactive refresh attempt on auth failure, mirroring call().
-        # ``call_with_tools`` doesn't have a retry loop, so we hand-roll a
-        # single retry after refreshing the token. Any non-auth error still
-        # surfaces immediately to keep behavior identical for callers.
-        attempted_refresh_after_auth_error = False
-
-        async def _request_attempt(attempt: int) -> _CodexStreamReply:
-            async with attempt_context() if attempt_context is not None else nullcontext():
-                set_stage(f"llm.codex.tools.attempt={attempt}/2")
-                try:
-                    async with self._stream_request(url, payload, headers) as response:
-                        return await self._parse_sse_tool_stream(response)
-                except UpstreamHTTPError as e:
-                    _raise_codex_quota_defer(
-                        e,
-                        provider=self.provider,
-                        model=self.model,
-                        scope=scope,
-                        max_backoff=max_backoff,
-                    )
-                    # 401/403 on the first attempt may still be recovered by the
-                    # reactive token refresh below — don't log those as errors yet.
-                    detail = f"Codex API error {e.status_code}: {e.body[:500]}"
-                    if e.status_code in (401, 403) and not attempted_refresh_after_auth_error:
-                        logger.warning(f"{detail} (will attempt token refresh)")
-                    else:
-                        logger.error(detail)
-                    raise
-
-        try:
-            try:
-                reply = await _request_attempt(1)
-            except UpstreamHTTPError as auth_error:
-                if auth_error.status_code not in (401, 403) or attempted_refresh_after_auth_error:
-                    raise
-                attempted_refresh_after_auth_error = True
-                try:
-                    await self._refresh_oauth_tokens(
-                        reason=f"reactive (HTTP {auth_error.status_code} from codex backend in call_with_tools)",
-                        force=True,
-                    )
-                    headers["Authorization"] = f"Bearer {self.access_token}"
-                    logger.info("Codex auth refreshed after auth error; retrying tool-call request once")
-                    reply = await _request_attempt(2)
-                except CodexRefreshExpiredError as refresh_err:
-                    logger.error(
-                        "Codex refresh_token is permanently invalid; cannot recover from auth error in tool-call path"
-                    )
-                    raise RuntimeError(
-                        "Codex authentication failed and the refresh_token is no longer valid.\n"
-                        "Run 'codex auth login' to re-authenticate."
-                    ) from refresh_err
-                except Exception as refresh_err:
-                    logger.error(
-                        f"Codex token refresh attempt failed in tool-call path: {type(refresh_err).__name__}: {refresh_err}"
-                    )
-                    raise auth_error
-
-            content = reply.text or None
-            tool_calls = reply.tool_calls
-            usage = reply.usage or TokenUsage()
-
-            duration = time.perf_counter() - start_time
-            metrics = get_metrics_collector()
-            metrics.record_llm_call(
-                provider=self.provider,
-                model=self.model,
-                scope=scope,
-                duration=duration,
-                input_tokens=usage.input_tokens,
-                output_tokens=usage.output_tokens,
-                success=True,
-                cached_input_tokens=usage.cached_tokens,
-                thoughts_tokens=usage.thoughts_tokens,
-            )
-
-            # Record OpenTelemetry span
-            try:
-                from hindsight_api.tracing import get_span_recorder
-
-                span_recorder = get_span_recorder()
-                # Convert LLMToolCall objects to dicts for span recording
-                tool_calls_dict = (
-                    [{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in tool_calls]
-                    if tool_calls
-                    else None
-                )
-                span_recorder.record_llm_call(
-                    provider=self.provider,
-                    model=self.model,
-                    scope=scope,
-                    messages=messages,
-                    response_content=content,
-                    input_tokens=usage.input_tokens,
-                    output_tokens=usage.output_tokens,
-                    duration=duration,
-                    finish_reason="tool_calls" if tool_calls else "stop",
-                    error=None,
-                    tool_calls=tool_calls_dict,
-                    cached_tokens=usage.cached_tokens,
-                    thoughts_tokens=usage.thoughts_tokens,
-                )
-            except Exception:
-                pass  # logging failure must never affect the operation
-
-            return LLMToolCallResult(
-                content=content,
-                tool_calls=tool_calls,
-                finish_reason="tool_calls" if tool_calls else "stop",
-                input_tokens=usage.input_tokens,
-                output_tokens=usage.output_tokens,
-                cached_tokens=usage.cached_tokens,
-                thoughts_tokens=usage.thoughts_tokens,
-            )
-
-        except Exception as e:
-            # Diagnostic dump (opt-in) of the exact request behind any 4xx.
-            dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=payload)
-            logger.error(f"Codex tool call error: {e}")
-            raise
-
-    async def _parse_sse_tool_stream(self, response: aiohttp.ClientResponse) -> _CodexStreamReply:
-        """
-        Parse SSE stream for tool calls and content.
-
-        Returns:
-            The text content, tool calls and token usage the stream carried.
-        """
-        content = ""
-        tool_calls: list[LLMToolCall] = []
-        usage: TokenUsage | None = None
-        event_type = None
-
-        async for line in self._iter_sse_lines(response):
-            if not line:
-                continue
-
-            if line.startswith("event: "):
-                event_type = line[7:]
-
-            elif line.startswith("data: "):
-                data_str = line[6:]
-                if data_str == "[DONE]":
-                    break
-
-                try:
-                    data = json.loads(data_str)
-                    _raise_on_sse_failure(event_type, data)
-                    usage = _usage_from_completed_event(event_type, data) or usage
-
-                    # Extract text content
-                    if event_type == "response.text.delta" and "delta" in data:
-                        content += data["delta"]
-
-                    # Extract completed tool calls from response.output_item.done
-                    elif event_type == "response.output_item.done":
-                        item = data.get("item", {})
-                        if item.get("type") == "function_call" and item.get("status") == "completed":
-                            tool_name = item.get("name", "")
-                            arguments_str = item.get("arguments", "{}")
-                            call_id = item.get("call_id", "")
-
-                            try:
-                                arguments = json.loads(arguments_str)
-                            except json.JSONDecodeError:
-                                # Escape-heavy content can emit invalid \escape
-                                # sequences (issue #2504); repair before giving up.
-                                try:
-                                    arguments = json.loads(_repair_invalid_json_escapes(arguments_str))
-                                except json.JSONDecodeError:
-                                    logger.warning(f"Failed to parse tool arguments: {arguments_str}")
-                                    arguments = {}
-
-                            tool_calls.append(
-                                LLMToolCall(
-                                    id=call_id,
-                                    name=tool_name,
-                                    arguments=arguments,
-                                )
-                            )
-
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Failed to parse SSE data: {e}, data_str: {data_str[:200]}")
-
-        return _CodexStreamReply(text=content, tool_calls=tool_calls, usage=usage)
+        return _CodexStreamReply(text=deltas or full_text, usage=usage)
 
     async def cleanup(self) -> None:
         """Clean up HTTP sessions."""

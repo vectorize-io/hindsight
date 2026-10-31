@@ -30,6 +30,26 @@ def temp_hindsight_dir(tmp_path, monkeypatch):
     return temp_home / ".hindsight"
 
 
+@pytest.fixture
+def stopped(monkeypatch):
+    """Stub daemon/UI shutdown as succeeding; returns the profiles each was asked to stop."""
+    from hindsight_embed import daemon_client
+
+    calls: dict[str, list[str]] = {"daemon": [], "ui": []}
+
+    def stop_daemon(profile=None):
+        calls["daemon"].append(profile)
+        return True
+
+    def stop_ui(profile=None, ui_port=None):
+        calls["ui"].append(profile)
+        return True
+
+    monkeypatch.setattr(daemon_client, "stop_daemon", stop_daemon)
+    monkeypatch.setattr(daemon_client, "stop_ui", stop_ui)
+    return calls
+
+
 # --------------------------------------------------------------------------
 # service layer
 # --------------------------------------------------------------------------
@@ -127,6 +147,15 @@ class TestService:
         assert paths.daemon_url.startswith("http://localhost:")
         assert "127.0.0.1" not in paths.ui_url and "0.0.0.0" not in paths.ui_url
 
+    def test_profile_paths_show_external_database(self, temp_hindsight_dir, monkeypatch):
+        # Issue #6065: a profile on an external server must not be shown a pg0 directory.
+        monkeypatch.delenv("HINDSIGHT_EMBED_API_DATABASE_URL", raising=False)
+        monkeypatch.delenv("HINDSIGHT_API_DATABASE_URL", raising=False)
+        assert service.get_profile_paths("").database_path is not None
+
+        service.write_env_file("", "HINDSIGHT_API_DATABASE_URL=postgresql://u:p@127.0.0.1:5433/db\n")
+        assert service.get_profile_paths("").database_path is None
+
     def test_tail_log_missing_file(self, temp_hindsight_dir):
         view = service.tail_log("", 10)
         assert view.exists is False and view.content == ""
@@ -155,7 +184,7 @@ class TestService:
 
         assert service.tail_log("", 10).content == "retained — 保存"
 
-    def test_delete_named_profile(self, temp_hindsight_dir):
+    def test_delete_named_profile(self, temp_hindsight_dir, stopped):
         service.save_llm_config("scratch", "openai", "sk-key1234567890", "", "")
         assert (temp_hindsight_dir / "profiles" / "scratch.env").exists()
         result = service.delete_profile("scratch")
@@ -381,7 +410,7 @@ class TestServer:
         assert set(body) >= {"api_ok", "api_detail", "ui_ok"}
         assert body["api_ok"] is False  # probe mocked as unreachable
 
-    def test_delete_profile_over_http(self, server):
+    def test_delete_profile_over_http(self, server, stopped):
         httpx.post(
             f"{server}/api/profiles/throwaway/config",
             headers=_auth(),
@@ -392,6 +421,68 @@ class TestServer:
         # gone from the list
         names = {p["name"] for p in httpx.get(f"{server}/api/profiles", headers=_auth()).json()["profiles"]}
         assert "throwaway" not in names
+
+    def test_unicode_profile_crud_over_http(self, server, stopped):
+        # The UI percent-encodes names; the server must decode them once (#6121).
+        from urllib.parse import quote
+
+        url = f"{server}/api/profiles/{quote('工作')}"
+        post = httpx.post(f"{url}/config", headers=_auth(), json={"provider": "groq", "api_key": "gsk-1234567890"})
+        assert post.status_code == 200
+        get = httpx.get(f"{url}/config", headers=_auth()).json()
+        assert get["name"] == "工作" and get["provider"] == "groq"
+        assert "工作" in {p["name"] for p in httpx.get(f"{server}/api/profiles", headers=_auth()).json()["profiles"]}
+        assert httpx.post(f"{url}/delete", headers=_auth()).json()["ok"] is True
+        assert stopped["daemon"] == ["工作"]
+
+    @pytest.mark.parametrize("segment", ["..%2F..%2Fetc", "a%5Cb", "%2E%2E", "."])
+    def test_encoded_path_parts_rejected(self, server, segment):
+        r = httpx.get(f"{server}/api/profiles/{segment}/config", headers=_auth())
+        assert r.status_code == 404
+        r = httpx.post(f"{server}/api/profiles/{segment}/delete", headers=_auth())
+        assert r.status_code == 404
+
+    @pytest.mark.parametrize("action", ["stop", "restart"])
+    def test_stop_and_restart_reach_unhealthy_daemon(self, server, stopped, monkeypatch, action):
+        # A busy daemon fails /health but is alive; Stop/Restart must still stop it (#6122).
+        from hindsight_embed import daemon_client
+
+        monkeypatch.setattr(daemon_client, "is_daemon_running", lambda profile=None: False)
+        monkeypatch.setattr(daemon_client, "ensure_daemon_running", lambda *a, **k: True)
+        r = httpx.post(f"{server}/api/profiles/default/daemon/{action}", headers=_auth())
+        assert r.status_code == 200
+        assert stopped["daemon"] == [""]
+
+    @pytest.mark.parametrize("action", ["stop", "restart"])
+    def test_failed_stop_is_reported(self, server, monkeypatch, action):
+        from hindsight_embed import daemon_client
+
+        # A busy daemon: fails /health and refuses to stop. It must still read as running.
+        started = []
+        monkeypatch.setattr(daemon_client, "stop_daemon", lambda profile=None: False)
+        monkeypatch.setattr(daemon_client, "is_daemon_running", lambda profile=None: False)
+        monkeypatch.setattr(daemon_client, "ensure_daemon_running", lambda *a, **k: started.append(1) or True)
+        monkeypatch.setattr(daemon_client, "get_daemon_url", lambda profile=None: "http://127.0.0.1:8888")
+        r = httpx.post(f"{server}/api/profiles/default/daemon/{action}", headers=_auth()).json()
+        assert r["ok"] is False and r["running"] is True
+        assert started == []  # restart never starts on top of a daemon it failed to stop
+
+    @pytest.mark.parametrize("component", ["daemon", "ui"])
+    def test_delete_keeps_profile_when_stop_fails(self, server, stopped, monkeypatch, temp_hindsight_dir, component):
+        # A failed shutdown must not wipe the config/logs of a still-running process (#6123).
+        from hindsight_embed import daemon_client
+
+        httpx.post(f"{server}/api/profiles/keep/config", headers=_auth(), json={"provider": "openai"})
+        if component == "daemon":
+            monkeypatch.setattr(daemon_client, "stop_daemon", lambda profile=None: False)
+        else:
+            monkeypatch.setattr(daemon_client, "stop_ui", lambda profile=None, ui_port=None: False)
+        r = httpx.post(f"{server}/api/profiles/keep/delete", headers=_auth()).json()
+        assert r["ok"] is False
+        expected = "daemon" if component == "daemon" else "control plane UI"
+        assert expected in r["message"]
+        assert (temp_hindsight_dir / "profiles" / "keep.env").exists()
+        assert "keep" in {p["name"] for p in httpx.get(f"{server}/api/profiles", headers=_auth()).json()["profiles"]}
 
     def test_responses_are_no_store(self, server):
         assert httpx.get(f"{server}/").headers.get("cache-control") == "no-store"

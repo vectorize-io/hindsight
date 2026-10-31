@@ -83,6 +83,7 @@ services:
 
   hindsight:
     image: ghcr.io/vectorize-io/hindsight:${HINDSIGHT_VERSION:-latest-slim}
+    stop_grace_period: 75s  # outlasts start-all.sh's 60s shutdown wait
     container_name: hindsight-tei
     depends_on:
       tei-embedding:

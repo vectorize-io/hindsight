@@ -56,7 +56,6 @@ def _batch_config(llm_output_language: str | None) -> SimpleNamespace:
         llm_output_language=llm_output_language,
         observations_mission=None,
         llm_strict_schema_consolidation=False,
-        llm_supports_max_items=False,
         consolidation_max_attempts=2,
         consolidation_llm_max_retries=None,
         consolidation_max_completion_tokens=None,

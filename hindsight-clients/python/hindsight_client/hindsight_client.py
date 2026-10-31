@@ -658,6 +658,7 @@ class Hindsight:
         tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
         tag_groups: list[dict[str, Any]] | None = None,
         prefer_observations: bool | None = None,
+        rerank: dict[str, bool | None] | None = None,
         min_scores: dict[str, float] | None = None,
         temporal_window: dict[str, Any] | None = None,
     ) -> RecallResponse:
@@ -689,6 +690,11 @@ class Hindsight:
                 observation supersedes it (no duplicate content). No effect unless "observation" and at
                 least one raw type are both in ``types``. ``None`` (default) uses the bank's
                 ``recall_prefer_observations`` config.
+            rerank: What a decision model set up for recall does beyond ordering, e.g.
+                ``{"prune": True, "dedup": True}``. ``prune`` drops the results it judges no help
+                instead of only ranking them last; ``dedup`` drops a result repeating a better-ranked
+                one, at the cost of one more decision-model request. A key left out (or ``None``) uses
+                the bank's ``recall_decision_model_prune`` / ``recall_decision_model_dedup`` config.
             min_scores: Optional per-stage score floors, e.g. ``{"semantic": 0.2, "final": 0.5}``.
                 ``semantic`` and ``keyword`` are retrieval-level cutoffs; ``reranker`` and ``final``
                 are applied to the scored results after reranking. Any omitted stage imposes no floor.
@@ -721,6 +727,7 @@ class Hindsight:
                 tags_match=tags_match,
                 tag_groups=tag_groups,
                 prefer_observations=prefer_observations,
+                rerank=rerank,
                 min_scores=min_scores,
                 temporal_window=temporal_window,
             )
@@ -746,6 +753,7 @@ class Hindsight:
         exclude_mental_model_ids: list[str] | None = None,
         reflect_search_observations_max_tokens: int | None = None,
         reflect_search_observations_include_entities: bool | None = None,
+        reflect_search_mental_models_max_tokens: int | None = None,
     ) -> ReflectResponse:
         """
         Generate a contextual answer based on bank identity and memories (sync wrapper — prefer :meth:`areflect` in async code).
@@ -783,6 +791,10 @@ class Hindsight:
             reflect_search_observations_include_entities: Whether search_observations attaches
                 resolved entity names, which can be over half the tool payload. None uses the
                 bank default (enabled).
+            reflect_search_mental_models_max_tokens: Token budget for the mental models the
+                agent's search_mental_models calls return in full. The best-ranked one is always in
+                full; the rest that do not fit come back as a snippet. None uses the bank's
+                reflect_default_options, then the shipped default.
 
         Returns:
             ReflectResponse with answer text, optionally facts used, optionally a 'trace' with
@@ -809,6 +821,7 @@ class Hindsight:
                 exclude_mental_model_ids=exclude_mental_model_ids,
                 reflect_search_observations_max_tokens=reflect_search_observations_max_tokens,
                 reflect_search_observations_include_entities=reflect_search_observations_include_entities,
+                reflect_search_mental_models_max_tokens=reflect_search_mental_models_max_tokens,
             )
         )
 
@@ -1337,6 +1350,7 @@ class Hindsight:
         tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
         tag_groups: list[dict[str, Any]] | None = None,
         prefer_observations: bool | None = None,
+        rerank: dict[str, bool | None] | None = None,
         min_scores: dict[str, float] | None = None,
         temporal_window: dict[str, Any] | None = None,
     ) -> RecallResponse:
@@ -1373,6 +1387,11 @@ class Hindsight:
                 observation supersedes it (no duplicate content). No effect unless "observation" and at
                 least one raw type are both in ``types``. ``None`` (default) uses the bank's
                 ``recall_prefer_observations`` config.
+            rerank: What a decision model set up for recall does beyond ordering, e.g.
+                ``{"prune": True, "dedup": True}``. ``prune`` drops the results it judges no help
+                instead of only ranking them last; ``dedup`` drops a result repeating a better-ranked
+                one, at the cost of one more decision-model request. A key left out (or ``None``) uses
+                the bank's ``recall_decision_model_prune`` / ``recall_decision_model_dedup`` config.
             min_scores: Optional per-stage score floors, e.g. ``{"semantic": 0.2, "final": 0.5}``.
                 ``semantic`` and ``keyword`` are retrieval-level cutoffs; ``reranker`` and ``final``
                 are applied to the scored results after reranking. Any omitted stage imposes no floor.
@@ -1428,6 +1447,16 @@ class Hindsight:
                 )
             min_scores_obj = MinScores.from_dict(min_scores)
 
+        rerank_obj = None
+        if rerank is not None:
+            from hindsight_client_api.models.rerank_options import RerankOptions
+
+            unknown_rerank = set(rerank) - {"prune", "dedup"}
+            if unknown_rerank:
+                # Fail loud, as for min_scores: a misspelled key would leave the bank's default on.
+                raise ValueError(f"Unknown rerank keys: {sorted(unknown_rerank)}. Allowed keys: ['dedup', 'prune'].")
+            rerank_obj = RerankOptions.from_dict(rerank)
+
         temporal_window_obj = None
         if temporal_window is not None:
             from hindsight_client_api.models.temporal_window import TemporalWindow
@@ -1438,6 +1467,7 @@ class Hindsight:
             query=query,
             types=types,
             prefer_observations=prefer_observations,
+            rerank=rerank_obj,
             budget=budget,
             max_tokens=max_tokens,
             trace=trace,
@@ -1476,6 +1506,7 @@ class Hindsight:
         exclude_mental_model_ids: list[str] | None = None,
         reflect_search_observations_max_tokens: int | None = None,
         reflect_search_observations_include_entities: bool | None = None,
+        reflect_search_mental_models_max_tokens: int | None = None,
     ) -> ReflectResponse:
         """
         Generate a contextual answer based on bank identity and memories (async — preferred over :meth:`reflect`).
@@ -1513,6 +1544,10 @@ class Hindsight:
             reflect_search_observations_include_entities: Whether search_observations attaches
                 resolved entity names, which can be over half the tool payload. None uses the
                 bank default (enabled).
+            reflect_search_mental_models_max_tokens: Token budget for the mental models the
+                agent's search_mental_models calls return in full. The best-ranked one is always in
+                full; the rest that do not fit come back as a snippet. None uses the bank's
+                reflect_default_options, then the shipped default.
 
         Returns:
             ReflectResponse with answer text, optionally facts used, optionally a 'trace' with
@@ -1553,6 +1588,7 @@ class Hindsight:
             exclude_mental_model_ids=exclude_mental_model_ids,
             reflect_search_observations_max_tokens=reflect_search_observations_max_tokens,
             reflect_search_observations_include_entities=reflect_search_observations_include_entities,
+            reflect_search_mental_models_max_tokens=reflect_search_mental_models_max_tokens,
         )
 
         return await _retry_on_capacity(
@@ -2906,6 +2942,7 @@ class Hindsight:
         retain_strategies: dict[str, Any] | None = None,
         retain_chunk_batch_size: int | None = None,
         store_document_text: bool | None = None,
+        default_timezone: str | None = None,
         # Entity settings
         entity_labels: list[dict[str, Any]] | None = None,
         entities_allow_free_form: bool | None = None,
@@ -2937,6 +2974,8 @@ class Hindsight:
         recall_max_tokens: int | None = None,
         recall_include_chunks: bool | None = None,
         recall_prefer_observations: bool | None = None,
+        recall_decision_model_prune: bool | None = None,
+        recall_decision_model_dedup: bool | None = None,
         recall_chunks_max_tokens: int | None = None,
         recall_budget_function: str | None = None,
         recall_budget_fixed_low: int | None = None,
@@ -2979,6 +3018,7 @@ class Hindsight:
                 retain_strategies=retain_strategies,
                 retain_chunk_batch_size=retain_chunk_batch_size,
                 store_document_text=store_document_text,
+                default_timezone=default_timezone,
                 entity_labels=entity_labels,
                 entities_allow_free_form=entities_allow_free_form,
                 enable_observations=enable_observations,
@@ -3007,6 +3047,8 @@ class Hindsight:
                 recall_max_tokens=recall_max_tokens,
                 recall_include_chunks=recall_include_chunks,
                 recall_prefer_observations=recall_prefer_observations,
+                recall_decision_model_prune=recall_decision_model_prune,
+                recall_decision_model_dedup=recall_decision_model_dedup,
                 recall_chunks_max_tokens=recall_chunks_max_tokens,
                 recall_budget_function=recall_budget_function,
                 recall_budget_fixed_low=recall_budget_fixed_low,
@@ -3045,6 +3087,7 @@ class Hindsight:
         retain_strategies: dict[str, Any] | None = None,
         retain_chunk_batch_size: int | None = None,
         store_document_text: bool | None = None,
+        default_timezone: str | None = None,
         # Entity settings
         entity_labels: list[dict[str, Any]] | None = None,
         entities_allow_free_form: bool | None = None,
@@ -3076,6 +3119,8 @@ class Hindsight:
         recall_max_tokens: int | None = None,
         recall_include_chunks: bool | None = None,
         recall_prefer_observations: bool | None = None,
+        recall_decision_model_prune: bool | None = None,
+        recall_decision_model_dedup: bool | None = None,
         recall_chunks_max_tokens: int | None = None,
         recall_budget_function: str | None = None,
         recall_budget_fixed_low: int | None = None,
@@ -3122,6 +3167,7 @@ class Hindsight:
             retain_strategies: Named strategy definitions (dict of strategy name to config).
             retain_chunk_batch_size: Number of chunks per sub-batch in chunks extraction mode.
             store_document_text: Persist the original document text alongside extracted facts.
+            default_timezone: IANA zone (e.g. ``"Europe/Rome"``) a retain time with no UTC offset is read in.
             entity_labels: Controlled vocabulary for entity labels — a list of label-group
                 dicts, each with a ``key`` and a ``type``: ``"value"``/``"multi-values"`` pick
                 from the group's declared ``values``, while ``"text"``/``"multi-text"`` are
@@ -3142,8 +3188,9 @@ class Hindsight:
             mental_model_min_refresh_interval_seconds: Debounce between mental-model refreshes.
             reflect_default_options: Default reflect options for this bank, applied whenever a
                 reflect request (or a mental model's trigger) leaves the option unset:
-                reflect_search_observations_max_tokens and
-                reflect_search_observations_include_entities.
+                reflect_search_observations_max_tokens,
+                reflect_search_observations_include_entities and
+                reflect_search_mental_models_max_tokens.
             reflect_use_decision_model: When the server has a decision model, reflect lets it
                 prune the evidence and decide when to stop (fewer LLM calls). False keeps agent turns.
             mental_model_refresh_use_decision_model: The same, for knowledge-page refreshes.
@@ -3167,6 +3214,8 @@ class Hindsight:
             recall_max_tokens: Token budget for facts returned by recall.
             recall_include_chunks: Include source chunks in recall results.
             recall_prefer_observations: Default ``prefer_observations`` for recall requests that omit it.
+            recall_decision_model_prune: Default ``prune`` for recall requests that omit it.
+            recall_decision_model_dedup: Default ``dedup`` for recall requests that omit it.
             recall_chunks_max_tokens: Token budget for those chunks.
             recall_budget_function: How the per-query result budget is derived: 'fixed' or 'adaptive'.
             recall_budget_fixed_low: Fixed budget for low-breadth queries.
@@ -3204,6 +3253,7 @@ class Hindsight:
                 "retain_strategies": retain_strategies,
                 "retain_chunk_batch_size": retain_chunk_batch_size,
                 "store_document_text": store_document_text,
+                "default_timezone": default_timezone,
                 "entity_labels": entity_labels,
                 "entities_allow_free_form": entities_allow_free_form,
                 "enable_observations": enable_observations,
@@ -3232,6 +3282,8 @@ class Hindsight:
                 "recall_max_tokens": recall_max_tokens,
                 "recall_include_chunks": recall_include_chunks,
                 "recall_prefer_observations": recall_prefer_observations,
+                "recall_decision_model_prune": recall_decision_model_prune,
+                "recall_decision_model_dedup": recall_decision_model_dedup,
                 "recall_chunks_max_tokens": recall_chunks_max_tokens,
                 "recall_budget_function": recall_budget_function,
                 "recall_budget_fixed_low": recall_budget_fixed_low,

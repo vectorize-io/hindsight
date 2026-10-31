@@ -18,7 +18,6 @@ import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -139,8 +138,8 @@ async def _run() -> None:
     # ------------------------------------------------------------------
     from hindsight_api import LocalSTEmbeddings, MemoryEngine, RequestContext
     from hindsight_api.engine.cross_encoder import LocalSTCrossEncoder
-    from hindsight_api.engine.memory_engine import Budget
     from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
+    from hindsight_api.engine.response_models import Budget
     from hindsight_api.engine.task_backend import SyncTaskBackend
 
     print("  Loading local embeddings model (first run downloads ~90 MB) ...")

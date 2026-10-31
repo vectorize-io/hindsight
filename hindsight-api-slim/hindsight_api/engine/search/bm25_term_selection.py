@@ -33,7 +33,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from ..memory_engine import get_current_schema
+from hindsight_api.schema_context import get_current_schema
 
 if TYPE_CHECKING:
     from ...config import ConfigLike

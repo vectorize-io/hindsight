@@ -6,7 +6,7 @@ this walks the real recall path to check the budget is wired to it.
 
 import pytest
 
-from hindsight_api.engine.memory_engine import Budget
+from hindsight_api.engine.response_models import Budget
 
 
 @pytest.mark.asyncio

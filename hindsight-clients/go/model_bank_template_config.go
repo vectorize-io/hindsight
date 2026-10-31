@@ -67,12 +67,15 @@ type BankTemplateConfig struct {
 	RecallBudgetMax NullableInt32 `json:"recall_budget_max,omitempty"`
 	AuditLogEnabled NullableBool `json:"audit_log_enabled,omitempty"`
 	StoreDocumentText NullableBool `json:"store_document_text,omitempty"`
+	DefaultTimezone NullableString `json:"default_timezone,omitempty"`
 	EnableAutoConsolidation NullableBool `json:"enable_auto_consolidation,omitempty"`
 	ConsolidationUseDecisionModel NullableBool `json:"consolidation_use_decision_model,omitempty"`
 	ConsolidationMaxMemoriesPerRound NullableInt32 `json:"consolidation_max_memories_per_round,omitempty"`
 	ConsolidationLlmParallelism NullableInt32 `json:"consolidation_llm_parallelism,omitempty"`
 	RecallIncludeChunks NullableBool `json:"recall_include_chunks,omitempty"`
 	RecallPreferObservations NullableBool `json:"recall_prefer_observations,omitempty"`
+	RecallDecisionModelPrune NullableBool `json:"recall_decision_model_prune,omitempty"`
+	RecallDecisionModelDedup NullableBool `json:"recall_decision_model_dedup,omitempty"`
 	RecallMaxTokens NullableInt32 `json:"recall_max_tokens,omitempty"`
 	RecallChunksMaxTokens NullableInt32 `json:"recall_chunks_max_tokens,omitempty"`
 	MemoryDefense map[string]interface{} `json:"memory_defense,omitempty"`
@@ -2039,6 +2042,48 @@ func (o *BankTemplateConfig) UnsetStoreDocumentText() {
 	o.StoreDocumentText.Unset()
 }
 
+// GetDefaultTimezone returns the DefaultTimezone field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetDefaultTimezone() string {
+	if o == nil || IsNil(o.DefaultTimezone.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.DefaultTimezone.Get()
+}
+
+// GetDefaultTimezoneOk returns a tuple with the DefaultTimezone field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetDefaultTimezoneOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.DefaultTimezone.Get(), o.DefaultTimezone.IsSet()
+}
+
+// HasDefaultTimezone returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasDefaultTimezone() bool {
+	if o != nil && o.DefaultTimezone.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetDefaultTimezone gets a reference to the given NullableString and assigns it to the DefaultTimezone field.
+func (o *BankTemplateConfig) SetDefaultTimezone(v string) {
+	o.DefaultTimezone.Set(&v)
+}
+// SetDefaultTimezoneNil sets the value for DefaultTimezone to be an explicit nil
+func (o *BankTemplateConfig) SetDefaultTimezoneNil() {
+	o.DefaultTimezone.Set(nil)
+}
+
+// UnsetDefaultTimezone ensures that no value is present for DefaultTimezone, not even an explicit nil
+func (o *BankTemplateConfig) UnsetDefaultTimezone() {
+	o.DefaultTimezone.Unset()
+}
+
 // GetEnableAutoConsolidation returns the EnableAutoConsolidation field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *BankTemplateConfig) GetEnableAutoConsolidation() bool {
 	if o == nil || IsNil(o.EnableAutoConsolidation.Get()) {
@@ -2289,6 +2334,90 @@ func (o *BankTemplateConfig) SetRecallPreferObservationsNil() {
 // UnsetRecallPreferObservations ensures that no value is present for RecallPreferObservations, not even an explicit nil
 func (o *BankTemplateConfig) UnsetRecallPreferObservations() {
 	o.RecallPreferObservations.Unset()
+}
+
+// GetRecallDecisionModelPrune returns the RecallDecisionModelPrune field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetRecallDecisionModelPrune() bool {
+	if o == nil || IsNil(o.RecallDecisionModelPrune.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.RecallDecisionModelPrune.Get()
+}
+
+// GetRecallDecisionModelPruneOk returns a tuple with the RecallDecisionModelPrune field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetRecallDecisionModelPruneOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.RecallDecisionModelPrune.Get(), o.RecallDecisionModelPrune.IsSet()
+}
+
+// HasRecallDecisionModelPrune returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasRecallDecisionModelPrune() bool {
+	if o != nil && o.RecallDecisionModelPrune.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetRecallDecisionModelPrune gets a reference to the given NullableBool and assigns it to the RecallDecisionModelPrune field.
+func (o *BankTemplateConfig) SetRecallDecisionModelPrune(v bool) {
+	o.RecallDecisionModelPrune.Set(&v)
+}
+// SetRecallDecisionModelPruneNil sets the value for RecallDecisionModelPrune to be an explicit nil
+func (o *BankTemplateConfig) SetRecallDecisionModelPruneNil() {
+	o.RecallDecisionModelPrune.Set(nil)
+}
+
+// UnsetRecallDecisionModelPrune ensures that no value is present for RecallDecisionModelPrune, not even an explicit nil
+func (o *BankTemplateConfig) UnsetRecallDecisionModelPrune() {
+	o.RecallDecisionModelPrune.Unset()
+}
+
+// GetRecallDecisionModelDedup returns the RecallDecisionModelDedup field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetRecallDecisionModelDedup() bool {
+	if o == nil || IsNil(o.RecallDecisionModelDedup.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.RecallDecisionModelDedup.Get()
+}
+
+// GetRecallDecisionModelDedupOk returns a tuple with the RecallDecisionModelDedup field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetRecallDecisionModelDedupOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.RecallDecisionModelDedup.Get(), o.RecallDecisionModelDedup.IsSet()
+}
+
+// HasRecallDecisionModelDedup returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasRecallDecisionModelDedup() bool {
+	if o != nil && o.RecallDecisionModelDedup.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetRecallDecisionModelDedup gets a reference to the given NullableBool and assigns it to the RecallDecisionModelDedup field.
+func (o *BankTemplateConfig) SetRecallDecisionModelDedup(v bool) {
+	o.RecallDecisionModelDedup.Set(&v)
+}
+// SetRecallDecisionModelDedupNil sets the value for RecallDecisionModelDedup to be an explicit nil
+func (o *BankTemplateConfig) SetRecallDecisionModelDedupNil() {
+	o.RecallDecisionModelDedup.Set(nil)
+}
+
+// UnsetRecallDecisionModelDedup ensures that no value is present for RecallDecisionModelDedup, not even an explicit nil
+func (o *BankTemplateConfig) UnsetRecallDecisionModelDedup() {
+	o.RecallDecisionModelDedup.Unset()
 }
 
 // GetRecallMaxTokens returns the RecallMaxTokens field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -2562,6 +2691,9 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	if o.StoreDocumentText.IsSet() {
 		toSerialize["store_document_text"] = o.StoreDocumentText.Get()
 	}
+	if o.DefaultTimezone.IsSet() {
+		toSerialize["default_timezone"] = o.DefaultTimezone.Get()
+	}
 	if o.EnableAutoConsolidation.IsSet() {
 		toSerialize["enable_auto_consolidation"] = o.EnableAutoConsolidation.Get()
 	}
@@ -2579,6 +2711,12 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.RecallPreferObservations.IsSet() {
 		toSerialize["recall_prefer_observations"] = o.RecallPreferObservations.Get()
+	}
+	if o.RecallDecisionModelPrune.IsSet() {
+		toSerialize["recall_decision_model_prune"] = o.RecallDecisionModelPrune.Get()
+	}
+	if o.RecallDecisionModelDedup.IsSet() {
+		toSerialize["recall_decision_model_dedup"] = o.RecallDecisionModelDedup.Get()
 	}
 	if o.RecallMaxTokens.IsSet() {
 		toSerialize["recall_max_tokens"] = o.RecallMaxTokens.Get()

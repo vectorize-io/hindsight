@@ -416,13 +416,24 @@ canonical "Robert Smith"), but they can be more than half the serialized tool
 payload; setting `false` keeps the same observations and ranking with a much
 smaller context. Defaults to `true`.
 
-Both options can be defaulted for a whole bank with the
+### reflect_search_mental_models_max_tokens
+
+Token budget for the mental models (knowledge pages) that the agent's
+`search_mental_models` tool returns in full, packed in rank order. The
+best-ranked page always comes back in full, even when it alone is over the
+budget; the others that do not fit come back as a short snippet, and the model
+can open them with `read_mental_models`. Raise it for banks with long pages or
+answers spread across several pages; lower it to cut the reflect context.
+Defaults to `16000`.
+
+All three options can be defaulted for a whole bank with the
 `reflect_default_options` config key (see
 [Configuration](../configuration.md)); an explicit value on the request always
 wins. A mental-model refresh is configured separately and does **not** read
 `reflect_default_options` — set the trigger's fields of the same name, or the
 bank's `knowledge_page_default_trigger`, instead (see
-[Mental Models](./mental-models.md)).
+[Mental Models](./mental-models.md)). A refresh always gets only the
+best-ranked page in full and the others as snippets, to keep its cost down.
 
 ---
 
@@ -465,7 +476,7 @@ Reflect answers from evidence it gathered, so a run that could not gather it doe
 
 - **A retrieval tool raised.** The database, the embedder or the reranker was unavailable. One failure in a batch fails the run: an answer written around a tool that never returned is indistinguishable from one over a bank that genuinely holds nothing on the topic, and callers store it as a real answer.
 - **The model produced no answer.** The `done` call arrived empty, or the final synthesis returned nothing.
-- **The model or transport cannot drive tool calls.** Reflect is driven entirely by structured tool calls, and requires one on every turn (`tool_choice` `required`, or a named tool on the forced searches); without a decision model, a model with enough evidence says so with `answer_ready` and is then asked for the answer, so it is written once. A transport that silently drops the tool definitions fails loudly so you can switch to a tool-calling-capable model; an endpoint that accepts only `tool_choice: "auto"` fails on those turns too (LM Studio and Ollama, which ignore `required`, are sent `auto`).
+- **The model cannot follow the response schema.** Every reflect turn is a call the model makes as a reply to a JSON schema — "one of these functions, with its arguments", or a named function on the forced searches; native tool calling is not used, on any provider. Without a decision model, a model with enough evidence says so with `answer_ready` and is then asked for the answer, so it is written once. A model whose replies never parse as a call fails loudly so you can switch to a stronger one.
 - **The provider kept failing.** A non-context-overflow LLM error is retried once inside the loop and then given up on.
 
 A **successful retrieval that returns nothing is not a failure**: the bank genuinely has nothing on the topic, and reflect says so in its answer.

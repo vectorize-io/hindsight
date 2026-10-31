@@ -1,8 +1,8 @@
 """Regression tests for #5541: Codex reports the token usage the backend streams.
 
 The ``/codex/responses`` stream ends with ``response.completed``, whose
-``response.usage`` is the Responses API usage block. Both SSE parsers used to drop
-it, so ``call()`` returned a char/4 estimate and ``call_with_tools()`` returned 0.
+``response.usage`` is the Responses API usage block. The SSE parser used to drop
+it, so ``call()`` returned a char/4 estimate.
 """
 
 import json
@@ -32,9 +32,9 @@ _COMPLETED = (
 _TEXT_STREAM = "event: response.text.delta\n" + "data: " + json.dumps({"delta": "y" * 40}) + "\n\n" + _COMPLETED
 
 
-def _tool_stream(name: str, arguments: dict) -> str:
-    item = {"type": "function_call", "status": "completed", "name": name, "arguments": json.dumps(arguments)}
-    return "event: response.output_item.done\n" + "data: " + json.dumps({"item": item}) + "\n\n" + _COMPLETED
+def _json_stream(reply: dict) -> str:
+    delta = {"type": "response.output_text.delta", "delta": json.dumps(reply)}
+    return "event: response.output_text.delta\n" + "data: " + json.dumps(delta) + "\n\n" + _COMPLETED
 
 
 class _Fact(BaseModel):
@@ -72,7 +72,7 @@ async def test_call_reports_backend_usage():
 
 async def test_strict_schema_call_reports_backend_usage():
     llm = _build_llm()
-    with stub_codex_stream(llm, CodexReply(text=_tool_stream("structured_response", {"fact": "ok"}))):
+    with stub_codex_stream(llm, CodexReply(text=_json_stream({"fact": "ok"}))):
         result = await llm.call(
             messages=[{"role": "user", "content": "x"}],
             response_format=_Fact,
@@ -83,15 +83,6 @@ async def test_strict_schema_call_reports_backend_usage():
     assert result.content == _Fact(fact="ok")
     usage = result.usage
     _assert_backend_counts(usage.input_tokens, usage.output_tokens, usage.cached_tokens, usage.thoughts_tokens)
-
-
-async def test_call_with_tools_reports_backend_usage():
-    llm = _build_llm()
-    with stub_codex_stream(llm, CodexReply(text=_tool_stream("recall", {"query": "q"}))):
-        result = await llm.call_with_tools(messages=[{"role": "user", "content": "x"}], tools=[], max_retries=0)
-
-    assert [tc.name for tc in result.tool_calls] == ["recall"]
-    _assert_backend_counts(result.input_tokens, result.output_tokens, result.cached_tokens, result.thoughts_tokens)
 
 
 async def test_call_without_usage_block_falls_back_to_estimate():

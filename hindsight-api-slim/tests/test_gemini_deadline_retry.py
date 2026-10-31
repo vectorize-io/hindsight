@@ -116,36 +116,3 @@ async def test_call_gives_up_once_the_timeout_budget_is_spent():
         )
 
     assert generate.call_count == 1 + _TIMEOUT_RETRIES  # NOT 6 (1 + max_retries)
-
-
-@pytest.mark.asyncio
-async def test_call_with_tools_retries_once_after_the_deadline():
-    """The tool path is the one reflect uses, so it carries the same rule."""
-    provider = _make_gemini_provider()
-    generate = _generate_content(_never_answers, lambda: _answers(_text_response("recovered")))
-    provider._client.aio.models.generate_content = generate
-
-    result = await provider.call_with_tools(
-        messages=[{"role": "user", "content": "hi"}], tools=_TOOLS, scope="reflect", initial_backoff=0.0
-    )
-
-    assert result.content == "recovered"
-    assert generate.call_count == 2
-
-
-@pytest.mark.asyncio
-async def test_call_with_tools_gives_up_once_the_timeout_budget_is_spent():
-    provider = _make_gemini_provider()
-    generate = _generate_content(_never_answers)
-    provider._client.aio.models.generate_content = generate
-
-    with pytest.raises(TimeoutError):
-        await provider.call_with_tools(
-            messages=[{"role": "user", "content": "hi"}],
-            tools=_TOOLS,
-            scope="reflect",
-            max_retries=5,
-            initial_backoff=0.0,
-        )
-
-    assert generate.call_count == 1 + _TIMEOUT_RETRIES

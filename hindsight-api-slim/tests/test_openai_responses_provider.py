@@ -4,9 +4,8 @@ Two surfaces are covered:
 - registration/wiring (default model, factory routing, API-key requirement), and
 - request shaping + response parsing, mocking ``_client.responses.create``.
 
-The load-bearing assertion is that ``reasoning`` and ``tools`` are sent together
-on the tool path — the exact combination chat/completions rejects for gpt-5.6-terra
-(#2983), and the reason this provider exists.
+No request carries tools: reflect's tool calls are replies to a response schema (see
+``tools_via_schema``), so the strict ``text.format`` path is what they go through.
 """
 
 import json
@@ -17,8 +16,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pydantic import BaseModel
 
-from hindsight_api.engine.llm_interface import LLMToolChoice, OutputTooLongError
+from hindsight_api.engine.llm_interface import OutputTooLongError
 from hindsight_api.engine.providers.openai_responses_llm import OpenAIResponsesLLM
+from hindsight_api.engine.providers.tools_via_schema import ResponseSchema, schema_format
 
 
 def _fake_response(
@@ -32,10 +32,6 @@ def _fake_response(
         output_tokens_details=types.SimpleNamespace(reasoning_tokens=reasoning_tokens),
     )
     return types.SimpleNamespace(output_text=output_text, output=output or [], usage=usage, status=status)
-
-
-def _function_call(*, call_id, name, arguments):
-    return types.SimpleNamespace(type="function_call", call_id=call_id, name=name, arguments=arguments)
 
 
 def _make_llm(model="gpt-5.6", reasoning_effort="high"):
@@ -55,8 +51,7 @@ def _mock_create(llm, response):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("with_tools", [False, True])
-async def test_request_holds_attempt_context(with_tools):
+async def test_request_holds_attempt_context():
     llm = _make_llm()
     permit_held = False
 
@@ -75,17 +70,10 @@ async def test_request_holds_attempt_context(with_tools):
 
     llm._client.responses.create = create
     with patch("hindsight_api.engine.providers.openai_responses_llm.get_metrics_collector"):
-        if with_tools:
-            await llm.call_with_tools(
-                messages=[{"role": "user", "content": "test"}],
-                tools=[],
-                attempt_context=attempt_context,
-            )
-        else:
-            await llm.call(
-                messages=[{"role": "user", "content": "test"}],
-                attempt_context=attempt_context,
-            )
+        await llm.call(
+            messages=[{"role": "user", "content": "test"}],
+            attempt_context=attempt_context,
+        )
 
     assert not permit_held
     assert llm.supports_attempt_scoped_concurrency()
@@ -237,113 +225,34 @@ async def test_call_raises_output_too_long_on_truncation():
 
 
 # --------------------------------------------------------------------------- #
-# call_with_tools()
+# Reflect's tool turns: a raw JSON schema through call()
 # --------------------------------------------------------------------------- #
 
-_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "recall",
-            "description": "search memory",
-            "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
-        },
+
+@pytest.mark.asyncio
+async def test_a_tool_turn_schema_is_sent_as_text_format_with_reasoning_and_no_tools():
+    """Reasoning and the turn's schema in one request; no tools, no tool_choice."""
+    schema = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+        "additionalProperties": False,
     }
-]
-
-
-@pytest.mark.asyncio
-async def test_tool_path_sends_reasoning_and_tools_together():
-    """The regression pin: reasoning + function tools in one request.
-
-    This is exactly what chat/completions rejects for gpt-5.6-terra (#2983);
-    the Responses API accepts it, which is the whole point of this provider.
-    """
     llm = _make_llm()
-    create = _mock_create(
-        llm,
-        _fake_response(output_text="", output=[_function_call(call_id="c1", name="recall", arguments='{"query":"x"}')]),
-    )
+    create = _mock_create(llm, _fake_response(output_text='{"query": "x"}'))
     with patch("hindsight_api.engine.providers.openai_responses_llm.get_metrics_collector"):
-        result = await llm.call_with_tools(messages=[{"role": "user", "content": "q"}], tools=_TOOLS)
-
-    kwargs = create.call_args.kwargs
-    assert kwargs["reasoning"] == {"effort": "high"}
-    assert kwargs["tools"] == [
-        {
-            "type": "function",
-            "name": "recall",
-            "description": "search memory",
-            "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
-        }
-    ]
-    assert result.tool_calls[0].name == "recall"
-    assert result.tool_calls[0].arguments == {"query": "x"}
-    assert result.tool_calls[0].id == "c1"
-    assert result.finish_reason == "tool_calls"
-
-
-@pytest.mark.asyncio
-async def test_named_tool_choice_flattens_and_filters():
-    llm = _make_llm()
-    create = _mock_create(
-        llm, _fake_response(output_text="", output=[_function_call(call_id="c1", name="recall", arguments="{}")])
-    )
-    with patch("hindsight_api.engine.providers.openai_responses_llm.get_metrics_collector"):
-        await llm.call_with_tools(
+        result = await llm.call(
             messages=[{"role": "user", "content": "q"}],
-            tools=_TOOLS,
-            tool_choice=LLMToolChoice.named("recall"),
+            response_format=schema_format(ResponseSchema(name="recall", schema=schema)),
+            strict_schema=True,
+            skip_validation=True,
         )
 
     kwargs = create.call_args.kwargs
-    assert kwargs["tool_choice"] == {"type": "function", "name": "recall"}
-    assert len(kwargs["tools"]) == 1
-
-
-@pytest.mark.asyncio
-async def test_auto_tool_choice_omits_tool_choice():
-    llm = _make_llm()
-    create = _mock_create(llm, _fake_response(output_text="done"))
-    with patch("hindsight_api.engine.providers.openai_responses_llm.get_metrics_collector"):
-        await llm.call_with_tools(messages=[{"role": "user", "content": "q"}], tools=_TOOLS)
-
-    assert "tool_choice" not in create.call_args.kwargs
-
-
-@pytest.mark.asyncio
-async def test_message_history_translation():
-    """Assistant tool_calls -> function_call items; role=tool -> function_call_output."""
-    llm = _make_llm()
-    create = _mock_create(llm, _fake_response(output_text="done"))
-    history = [
-        {"role": "user", "content": "q"},
-        {
-            "role": "assistant",
-            "tool_calls": [
-                {"id": "c1", "type": "function", "function": {"name": "recall", "arguments": '{"query":"x"}'}}
-            ],
-        },
-        {"role": "tool", "tool_call_id": "c1", "content": '{"memories":[]}'},
-    ]
-    with patch("hindsight_api.engine.providers.openai_responses_llm.get_metrics_collector"):
-        await llm.call_with_tools(messages=history, tools=_TOOLS)
-
-    items = create.call_args.kwargs["input"]
-    assert items[0] == {"role": "user", "content": "q"}
-    assert items[1] == {"type": "function_call", "call_id": "c1", "name": "recall", "arguments": '{"query":"x"}'}
-    assert items[2] == {"type": "function_call_output", "call_id": "c1", "output": '{"memories":[]}'}
-
-
-@pytest.mark.asyncio
-async def test_tool_path_returns_content_when_no_tool_calls():
-    llm = _make_llm()
-    _mock_create(llm, _fake_response(output_text="final answer"))
-    with patch("hindsight_api.engine.providers.openai_responses_llm.get_metrics_collector"):
-        result = await llm.call_with_tools(messages=[{"role": "user", "content": "q"}], tools=_TOOLS)
-
-    assert result.content == "final answer"
-    assert result.tool_calls == []
+    assert kwargs["reasoning"] == {"effort": "high"}
+    assert kwargs["text"]["format"]["schema"] == schema
+    assert not {"tools", "tool_choice"} & kwargs.keys()
+    assert result.content == {"query": "x"}
 
 
 # --------------------------------------------------------------------------- #
@@ -368,7 +277,7 @@ async def test_extra_body_is_merged_into_requests():
 
 
 @pytest.mark.asyncio
-async def test_service_tier_applied_on_both_paths():
+async def test_service_tier_applied():
     llm = OpenAIResponsesLLM(
         provider="openai-responses",
         api_key="sk-test",
@@ -380,10 +289,6 @@ async def test_service_tier_applied_on_both_paths():
         create = _mock_create(llm, _fake_response(output_text="ok"))
         await llm.call(messages=[{"role": "user", "content": "hi"}])
         assert create.call_args.kwargs["service_tier"] == "flex"
-
-        create_tools = _mock_create(llm, _fake_response(output_text="ok"))
-        await llm.call_with_tools(messages=[{"role": "user", "content": "hi"}], tools=_TOOLS)
-        assert create_tools.call_args.kwargs["service_tier"] == "flex"
 
 
 def test_default_headers_passed_to_client():

@@ -17,7 +17,6 @@ a reasoning parameter at all, and every model runs at its own default effort
 rather than one Hindsight picked (it used to resolve unset to "low").
 """
 
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -27,17 +26,6 @@ from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibl
 VLLM_BASE_URL = "http://vllm-host:8000/v1"
 # A self-hosted reasoning model: honours reasoning_effort, matches none of the names.
 VLLM_MODEL = "Qwen/Qwen3-32B"
-
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "search_observations",
-            "description": "Search raw observations",
-            "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
-        },
-    },
-]
 
 
 def _make_llm(model: str, reasoning_effort: str | None, base_url: str = VLLM_BASE_URL) -> OpenAICompatibleLLM:
@@ -72,29 +60,6 @@ async def _capture_call_params(llm: OpenAICompatibleLLM) -> dict:
     return create.await_args.kwargs
 
 
-async def _capture_tool_call_params(llm: OpenAICompatibleLLM) -> dict:
-    """Run call_with_tools() against a mocked client and return the request kwargs."""
-    tool_call = MagicMock()
-    tool_call.id = "call_abc123"
-    tool_call.function.name = "search_observations"
-    tool_call.function.arguments = json.dumps({"query": "x"})
-
-    response = MagicMock()
-    response.usage.prompt_tokens = 120
-    response.usage.completion_tokens = 40
-    response.usage.total_tokens = 160
-    response.usage.completion_tokens_details = None
-    response.error = None
-    response.model_dump.return_value = {}
-    response.choices[0].finish_reason = "tool_calls"
-    response.choices[0].message.content = None
-    response.choices[0].message.tool_calls = [tool_call]
-    with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as create:
-        create.return_value = response
-        await llm.call_with_tools(messages=[{"role": "user", "content": "hi"}], tools=TOOLS, max_retries=0)
-    return create.await_args.kwargs
-
-
 class TestConfiguredEffortReachesTheEndpoint:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("effort", ["none", "low", "high"])
@@ -106,15 +71,6 @@ class TestConfiguredEffortReachesTheEndpoint:
         # documented configuration.
         params = await _capture_call_params(_make_llm(VLLM_MODEL, effort))
         assert params["reasoning_effort"] == effort
-
-    @pytest.mark.asyncio
-    async def test_configured_effort_is_sent_on_the_tool_path_too(self):
-        # Intention: reflect is a tool-calling loop, so a fix that only covers call()
-        # leaves the operation that generates the most thinking tokens unchanged.
-        # Expected: both paths agree.
-        llm = _make_llm(VLLM_MODEL, "none")
-        assert (await _capture_tool_call_params(llm))["reasoning_effort"] == "none"
-        assert (await _capture_call_params(llm))["reasoning_effort"] == "none"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("model", ["gpt-oss-120b", "magistral-small", "glm-4.6", "custom-model"])

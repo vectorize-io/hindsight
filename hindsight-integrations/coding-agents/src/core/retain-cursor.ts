@@ -96,6 +96,15 @@ export interface RetainCursor {
    *  per hook invocation from that event's cwd — a session that moves between repos (#3133) keeps
    *  its id and changes bank, and the new bank holds no document to append to. */
   bank: string;
+  /** Which bank each stretch of the transcript went to, oldest first: a stretch runs from its
+   *  `from` turn to the next one's. Absent means the whole transcript is in `bank`. A session that
+   *  moves to another bank follows the folder FROM THAT TURN ON (#5812): the new bank's document
+   *  starts there, rather than receiving every earlier turn a second time — that replace used to
+   *  copy the whole conversation into each bank the session touched, including turns that belong to
+   *  a project the mapping exists to keep apart. Kept as a list so a session that comes BACK to a
+   *  bank appends onto the document it already has there, and a replace rebuilds that document
+   *  from its own stretches only. */
+  segments?: CursorSegment[];
   /** The transcript FILES whose turns are already in the document, oldest first — the last is the
    *  one `turns`/`fingerprint` describe. Empty for the persistent-plugin runtime, which holds its
    *  turns in memory and has no file. One session can move between files — Codex writes a
@@ -123,6 +132,36 @@ export interface RetainCursor {
    *  already moved past those turns — so the next write-back checks these first, and one that
    *  failed makes it replace, re-sending the turns it carried (#5251). */
   ops?: string[];
+}
+
+export interface CursorSegment {
+  bank: string;
+  /** The first transcript turn retained into `bank` for this stretch. */
+  from: number;
+}
+
+/** The segments once this write-back lands in `bank`: unchanged in the same bank, one more stretch
+ *  — starting where the last write-back stopped — when the session moved to another. */
+export function advanceSegments(
+  cursor: RetainCursor | undefined,
+  bank: string
+): CursorSegment[] | undefined {
+  if (!cursor || cursor.bank === bank) return cursor?.segments;
+  return [...(cursor.segments ?? [{ bank: cursor.bank, from: 0 }]), { bank, from: cursor.turns }];
+}
+
+/** The turns `bank`'s document holds: every stretch of the session spent there. */
+export function bankTurns(
+  turns: TransportTurn[],
+  segments: CursorSegment[] | undefined,
+  bank: string
+): TransportTurn[] {
+  if (!segments) return turns;
+  return turns.filter((_, i) => {
+    let owner: string | undefined;
+    for (const s of segments) if (s.from <= i) owner = s.bank;
+    return owner === bank;
+  });
 }
 
 /** How many accepted-but-unconfirmed operations a cursor tracks. Older ones are forgotten.
@@ -163,8 +202,12 @@ export function planRetain(
   // Buffered appends we can no longer replay safely: replace subsumes them (and the caller drops
   // them), so the document is rebuilt from the transcript rather than left with a gap.
   if (!pendingReplayable(cursor, opts.now ?? Date.now())) return { mode: "replace" };
-  // A different bank holds no document for this session: appending would store the tail alone.
-  if (cursor.bank !== opts.bank) return { mode: "replace" };
+  // A different bank the session has never written to holds no document for it yet: start one,
+  // and the caller renders only this bank's share of the transcript into it (see `segments`). A bank
+  // it is coming BACK to already holds its earlier stretch, so it falls through to the ordinary
+  // append of the turns since the last write-back — replacing would clobber that stretch.
+  if (cursor.bank !== opts.bank && !cursor.segments?.some((s) => s.bank === opts.bank))
+    return { mode: "replace" };
   // A file we have NEVER written whose turns do not continue what we wrote is a continuation
   // segment, not a rewrite (#4493): the earlier turns still exist, in the earlier file, and only
   // this file's turns are missing from the document. Append them all rather than replacing the

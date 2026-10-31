@@ -1,4 +1,4 @@
-/** The system-prompt injection wrapper for a surfaced memory (harness-agnostic text). */
+/** The injection wrapper for a surfaced memory (harness-agnostic text). */
 
 /**
  * The prompt sent to /reflect on a session's first turn. Reflect follows instructions in the

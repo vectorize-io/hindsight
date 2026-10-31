@@ -18,7 +18,7 @@ import re  # noqa: F401
 import json
 
 from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.llm_request_entry import LLMRequestEntry
 from typing import Optional, Set
 from typing_extensions import Self
@@ -32,7 +32,8 @@ class LLMRequestListResponse(BaseModel):
     limit: StrictInt
     offset: StrictInt
     items: List[LLMRequestEntry]
-    __properties: ClassVar[List[str]] = ["bank_id", "total", "limit", "offset", "items"]
+    retention_days: Optional[StrictInt] = None
+    __properties: ClassVar[List[str]] = ["bank_id", "total", "limit", "offset", "items", "retention_days"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -80,6 +81,11 @@ class LLMRequestListResponse(BaseModel):
                 if _item_items:
                     _items.append(_item_items.to_dict())
             _dict['items'] = _items
+        # set to None if retention_days (nullable) is None
+        # and model_fields_set contains the field
+        if self.retention_days is None and "retention_days" in self.model_fields_set:
+            _dict['retention_days'] = None
+
         return _dict
 
     @classmethod
@@ -96,7 +102,8 @@ class LLMRequestListResponse(BaseModel):
             "total": obj.get("total"),
             "limit": obj.get("limit"),
             "offset": obj.get("offset"),
-            "items": [LLMRequestEntry.from_dict(_item) for _item in obj["items"]] if obj.get("items") is not None else None
+            "items": [LLMRequestEntry.from_dict(_item) for _item in obj["items"]] if obj.get("items") is not None else None,
+            "retention_days": obj.get("retention_days")
         })
         return _obj
 

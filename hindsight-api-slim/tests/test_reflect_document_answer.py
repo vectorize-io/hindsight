@@ -1,9 +1,11 @@
-"""The reflect agent can answer with a document instead of markdown.
+"""The reflect agent can answer with a document instead of a plain answer.
 
-A document that is generated as markdown has to be read back to work out its
-structure, and reading markdown back is where #3361 destroyed tables. In
-document mode the model states the structure and the markdown is rendered from
-it, so nothing the model writes is ever parsed to find out what it meant.
+In document mode the closing ``done`` carries the page as one markdown string,
+which ``split_markdown`` cuts into sections at its headings and into blocks at
+its blank lines, losslessly. It used to be a section array the model filled in
+(the answer to #3361, where reading markdown back destroyed tables); held to a
+response schema, models wrote that array thinner than the same page as
+markdown, and the lossless split keeps tables intact.
 
 Most of these are pure-Python tests of the schema, the prompt text and the
 parsing of the tool call — the mechanics. ``TestRealModelFillsTheDocumentShape``
@@ -19,7 +21,6 @@ import pytest
 
 from hindsight_api.engine.reflect.structured_doc import (
     DocumentSectionsInvalidError,
-    document_from_sections,
     render_document,
 )
 from hindsight_api.engine.reflect.prompts import (
@@ -42,9 +43,9 @@ class TestDoneToolSchema:
 
     def test_document_mode_replaces_the_answer_field(self):
         params = _done_tool(answer_as_document=True)["function"]["parameters"]
-        assert "document" in params["properties"]
-        assert "answer" not in params["properties"], "the model must not have a markdown escape hatch"
-        assert params["required"] == ["document", "answer_found"]
+        assert "markdown" in params["properties"]
+        assert "answer" not in params["properties"]
+        assert params["required"][:2] == ["answer_found", "markdown"]
 
     def test_document_mode_keeps_the_supporting_id_fields(self):
         params = _done_tool(answer_as_document=True)["function"]["parameters"]
@@ -53,7 +54,7 @@ class TestDoneToolSchema:
 
     def test_document_mode_composes_with_directives(self):
         params = _done_tool(directive_rules=["Be concise"], answer_as_document=True)["function"]["parameters"]
-        assert set(params["required"]) == {"document", "answer_found", "directive_compliance"}
+        assert {"markdown", "answer_found", "directive_compliance"} <= set(params["required"])
 
     def test_every_variant_requires_answer_found(self):
         """The absence gate in the agent loop reads it (#4567), so no variant may drop it."""
@@ -62,11 +63,10 @@ class TestDoneToolSchema:
             assert params["properties"]["answer_found"]["type"] == "boolean"
             assert "answer_found" in params["required"]
 
-    def test_document_blocks_keep_ids_out_of_the_text(self):
+    def test_the_document_keeps_ids_out_of_the_text(self):
         """Dropping ``answer`` dropped its no-ids rule, and cited handles resolve to UUIDs in pages (#5833)."""
-        document = _done_tool(answer_as_document=True)["function"]["parameters"]["properties"]["document"]
-        blocks = document["properties"]["sections"]["items"]["properties"]["blocks"]["description"]
-        assert NO_IDS_IN_TEXT_RULE in blocks
+        markdown = _done_tool(answer_as_document=True)["function"]["parameters"]["properties"]["markdown"]
+        assert NO_IDS_IN_TEXT_RULE in markdown["description"]
 
     def test_every_text_writing_prompt_keeps_ids_out(self):
         """Document mode, and forced synthesis in both modes, write text a reader sees (#5833)."""
@@ -81,204 +81,34 @@ class TestDoneToolSchema:
         for keyword in ("oneOf", "anyOf", "allOf", "discriminator"):
             assert keyword not in rendered
 
-    def test_section_shape_is_heading_level_blocks(self):
-        document = _done_tool(answer_as_document=True)["function"]["parameters"]["properties"]["document"]
-        section = document["properties"]["sections"]["items"]
-        assert set(section["required"]) == {"heading", "level", "blocks"}
-        assert section["properties"]["blocks"]["items"]["type"] == "string"
-
-
-class TestDocumentFromSections:
-    def test_renders_headings_and_blocks(self):
-        doc = document_from_sections(
-            {"sections": [{"heading": "Ops", "level": 2, "blocks": ["Intro.", "- one\n- two"]}]}
-        )
-        assert render_document(doc) == "## Ops\n\nIntro.\n\n- one\n- two\n"
-
-    def test_ids_are_assigned(self):
-        doc = document_from_sections({"sections": [{"heading": "Ops", "level": 2, "blocks": ["Intro."]}]})
-        assert doc.sections[0].id == "ops"
-        assert doc.sections[0].blocks[0].id
-
-    def test_table_survives_verbatim(self):
-        table = "| a | b |\n| --- | --- |\n| 1 | 2 |"
-        doc = document_from_sections({"sections": [{"heading": "T", "level": 2, "blocks": [table]}]})
-        assert doc.sections[0].blocks[0].text == table
-
-    def test_a_block_holding_several_fragments_is_split(self):
-        """The model sometimes packs a whole section into one string."""
-        doc = document_from_sections({"sections": [{"heading": "T", "level": 2, "blocks": ["One para.\n\nTwo para."]}]})
-        assert [b.text for b in doc.sections[0].blocks] == ["One para.", "Two para."]
-
-    def test_blank_lines_inside_a_fence_do_not_split(self):
-        fence = "```python\ndef f():\n\n    return 1\n```"
-        doc = document_from_sections({"sections": [{"heading": "T", "level": 2, "blocks": [fence]}]})
-        assert [b.text for b in doc.sections[0].blocks] == [fence]
-
-    def test_heading_hashes_are_stripped(self):
-        doc = document_from_sections({"sections": [{"heading": "## Ops", "level": 2, "blocks": ["x"]}]})
-        assert doc.sections[0].heading == "Ops"
-        assert render_document(doc).startswith("## Ops\n")
-
-    def test_empty_heading_renders_without_one(self):
-        doc = document_from_sections({"sections": [{"heading": "", "level": 2, "blocks": ["lead in"]}]})
-        assert doc.sections[0].id == "preamble"
-        assert render_document(doc) == "lead in\n"
-
-    def test_out_of_range_level_is_clamped(self):
-        doc = document_from_sections({"sections": [{"heading": "T", "level": 99, "blocks": ["x"]}]})
-        assert doc.sections[0].level == 6
-
-    def test_missing_level_defaults_to_two(self):
-        doc = document_from_sections({"sections": [{"heading": "T", "blocks": ["x"]}]})
-        assert doc.sections[0].level == 2
-
-    def test_duplicate_headings_get_unique_ids(self):
-        doc = document_from_sections(
-            {"sections": [{"heading": "T", "level": 2, "blocks": ["a"]}, {"heading": "T", "level": 2, "blocks": ["b"]}]}
-        )
-        assert [s.id for s in doc.sections] == ["t", "t-2"]
-
-    def test_blank_blocks_are_dropped(self):
-        """An empty string is a well-typed block that renders to nothing."""
-        doc = document_from_sections({"sections": [{"heading": "", "level": 2, "blocks": ["   ", ""]}, {}]})
-        assert doc.sections == []
-
-    def test_empty_payload_is_an_empty_document(self):
-        assert document_from_sections({}).sections == []
-        assert render_document(document_from_sections({"sections": []})) == ""
-
-
-class TestMalformedDocumentIsRejected:
-    """#4910: a type violation is refused, never read as the text it is not.
-
-    ``str()`` of a block object is its Python repr, so the literal
-    ``{'text': '...'}`` used to be stored as the block's markdown and rendered
-    into ``mental_models.content``, where every prompt built from that content
-    carried the wrapper until the next full refresh. There is no correct reading
-    of the payload to guess, so the caller is handed the per-field errors to feed
-    back to the model instead.
-    """
-
-    def test_block_written_as_an_object_is_rejected(self):
-        with pytest.raises(DocumentSectionsInvalidError) as exc:
-            document_from_sections({"sections": [{"heading": "Ops", "level": 2, "blocks": [{"text": "Intro."}]}]})
-        assert "sections[0].blocks[0]" in str(exc.value)
-
-    def test_the_repr_never_reaches_a_block(self):
-        with pytest.raises(DocumentSectionsInvalidError):
-            document_from_sections({"sections": [{"heading": "Ops", "blocks": [{"text": "Hello."}]}]})
-
-    def test_null_block_is_rejected(self):
-        with pytest.raises(DocumentSectionsInvalidError):
-            document_from_sections({"sections": [{"heading": "Ops", "blocks": ["fine", None]}]})
-
-    def test_non_object_section_is_rejected(self):
-        with pytest.raises(DocumentSectionsInvalidError):
-            document_from_sections({"sections": ["not a section"]})
-
-    def test_sections_that_is_not_a_list_is_rejected(self):
-        with pytest.raises(DocumentSectionsInvalidError):
-            document_from_sections({"sections": {"heading": "Ops"}})
-
-    def test_blocks_that_is_not_a_list_is_rejected(self):
-        with pytest.raises(DocumentSectionsInvalidError):
-            document_from_sections({"sections": [{"heading": "Ops", "blocks": "Intro."}]})
-
-    def test_every_offending_field_is_reported_in_one_error(self):
-        """The retry gets the whole list, so it is not fixed one round-trip at a time."""
-        with pytest.raises(DocumentSectionsInvalidError) as exc:
-            document_from_sections(
-                {
-                    "sections": [
-                        {"heading": "A", "blocks": [{"text": "x"}, 7]},
-                        {"heading": "B", "blocks": [{"text": "y"}]},
-                    ]
-                }
-            )
-        assert len(exc.value.errors) == 3
-
-
-class TestBareSectionIsReadAsOne:
-    """A one-section document the model emitted without its wrapper.
-
-    The most common near-miss on this schema: the model states the section *as*
-    the document — heading, level and blocks at the top level, no ``sections``
-    array. Every fact is present and correctly structured; only the wrapper is
-    absent. Read literally it has no sections, which rendered to "" and made
-    reflect raise ReflectNoAnswerError — the whole refresh discarded, and retried
-    against the same prompt, over one missing key.
-    """
-
-    def test_a_bare_section_is_taken_as_the_document(self):
-        doc = document_from_sections(
-            {"heading": "Team Information Summary", "level": 2, "blocks": ["Alice leads.", "Bob reviews."]}
-        )
-        assert [s.heading for s in doc.sections] == ["Team Information Summary"]
-        rendered = render_document(doc)
-        assert "## Team Information Summary" in rendered
-        # The content is what was nearly thrown away — assert it survives, not just the shape.
-        assert "Alice leads." in rendered
-        assert "Bob reviews." in rendered
-
-    def test_a_bare_section_keeps_the_block_granularity(self):
-        """Blocks must not be folded together on this path — delta operations address
-        them individually, so a document imported here has to be as addressable as one
-        that arrived wrapped."""
-        doc = document_from_sections({"heading": "H", "level": 2, "blocks": ["One.", "- a\n- b"]})
-        assert len(doc.sections[0].blocks) == 2
-
-    def test_a_wrapped_document_is_unaffected(self):
-        """The normalisation triggers on the absence of ``sections``, so a correct
-        payload — including one whose section happens to carry no blocks — takes the
-        ordinary path."""
-        doc = document_from_sections({"sections": [{"heading": "H", "level": 2, "blocks": ["x"]}]})
-        assert [s.heading for s in doc.sections] == ["H"]
-        assert document_from_sections({"sections": []}).sections == []
-
-    def test_a_payload_that_is_neither_stays_empty(self):
-        """Not a licence to guess: something with no sections and no blocks is not a
-        document, and inventing one from it would be the silent overwrite #2959 fixed."""
-        assert document_from_sections({"heading": "H", "level": 2}).sections == []
-        assert document_from_sections({"blocks": "not a list"}).sections == []
-
 
 class TestDocumentPromptStatesTheShape:
-    """The prompt has to name the field the schema requires.
-
-    It described every field of a *section* — heading, level, blocks — and never
-    named the ``sections`` array holding them, so the prose described a section
-    while the tool schema described a document containing sections. Models
-    resolved that disagreement in favour of the prose. These are direct asserts,
-    not judged: whether the text reaches the prompt is mechanical.
-    """
+    """The prompt names the field the schema requires: one markdown string, a '## ' heading per section."""
 
     @staticmethod
     def _document_block() -> str:
         from hindsight_api.engine.reflect.prompts import build_system_prompt_for_tools
 
         prompt = build_system_prompt_for_tools(bank_profile={"name": "T", "mission": ""}, answer_as_document=True)
-        return prompt[prompt.index("## Output Format: Structured Document") :]
+        return prompt[prompt.index("## Output Format: Markdown Document") :]
 
-    def test_the_sections_array_is_named(self):
-        assert "'sections' array" in self._document_block()
+    def test_the_markdown_field_is_named(self):
+        assert "'markdown' field" in self._document_block()
 
-    def test_an_example_of_the_shape_is_shown(self):
-        """A nested shape stated but never shown is the gap that caused this: the
-        example is the part a model copies."""
-        block = self._document_block()
-        assert '{"sections": [{"heading"' in block
-
-    def test_the_single_section_case_is_called_out(self):
-        """The failure only ever showed up on one-section documents — that is the case
-        where flattening looks harmless to the model."""
-        assert "never emit a bare section" in self._document_block()
-
-    def test_markdown_mode_does_not_carry_the_document_shape(self):
+    def test_answer_mode_does_not_carry_the_document_shape(self):
         from hindsight_api.engine.reflect.prompts import build_system_prompt_for_tools
 
         prompt = build_system_prompt_for_tools(bank_profile={"name": "T", "mission": ""})
-        assert "'sections' array" not in prompt
+        assert "## Output Format: Markdown Document" not in prompt
+
+    def test_the_closing_turn_states_the_page_shape_in_markdown_terms(self):
+        """A blank line splits a markdown list into blocks, so the rule says so, not "one block"."""
+        from hindsight_api.engine.reflect.prompts import build_done_request_prompt
+
+        page = build_done_request_prompt("Q", as_document=True)
+        assert "## Document shape" in page
+        assert "no blank lines between its items" in page
+        assert "## Document shape" not in build_done_request_prompt("Q")
 
 
 class TestOverBudgetRewrite:

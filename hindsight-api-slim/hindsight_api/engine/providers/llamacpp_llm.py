@@ -28,8 +28,7 @@ import aiohttp
 
 from hindsight_api._cross_loop import CrossLoopLock
 from hindsight_api.engine.aiohttp_session import per_phase_timeout
-from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
-from hindsight_api.engine.response_models import LLMToolCallResult
+from hindsight_api.engine.llm_interface import LLMInterface
 
 from ..response_models import LLMCallResult
 
@@ -450,34 +449,6 @@ class LlamaCppLLM(LLMInterface):
             max_backoff=max_backoff,
             skip_validation=skip_validation,
             strict_schema=strict_schema,
-            attempt_context=attempt_context,
-        )
-
-    async def call_with_tools(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        max_completion_tokens: int | None = None,
-        temperature: float | None = None,
-        scope: str = "tools",
-        max_retries: int = 5,
-        initial_backoff: float = 1.0,
-        max_backoff: float = 30.0,
-        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
-        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> LLMToolCallResult:
-        """Delegate tool calls to the OpenAI-compatible API."""
-        await self._ensure_initialized()
-        return await self._delegate.call_with_tools(
-            messages=messages,
-            tools=tools,
-            max_completion_tokens=max_completion_tokens,
-            temperature=temperature,
-            scope=scope,
-            max_retries=max_retries,
-            initial_backoff=initial_backoff,
-            max_backoff=max_backoff,
-            tool_choice=tool_choice,
             attempt_context=attempt_context,
         )
 

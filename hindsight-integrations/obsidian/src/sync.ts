@@ -11,7 +11,7 @@
 import { createHash } from "node:crypto";
 import type { HindsightClient } from "./client";
 import { normalizeNote } from "./frontmatter";
-import type { ObservationScopes } from "./types";
+import type { ObservationScopes, TimestampSource } from "./types";
 
 export interface SyncFile {
   path: string;
@@ -41,6 +41,8 @@ export interface SyncConfig {
   prefixDocId: boolean;
   /** Omit to preserve the Hindsight server's default consolidation scope. */
   observationScopes?: ObservationScopes;
+  /** Omitted = `created` (frontmatter created/date, else file birth time). */
+  timestampFrom?: TimestampSource;
 }
 
 export interface ReconcileSummary {
@@ -172,7 +174,10 @@ export class SyncEngine {
       tags,
       observationScopes: this.config.observationScopes,
       metadata,
-      timestamp: note.timestamp ?? isoFromMillis(file.stat.ctime),
+      timestamp:
+        this.config.timestampFrom === "updated"
+          ? (note.updated ?? isoFromMillis(file.stat.mtime))
+          : (note.timestamp ?? isoFromMillis(file.stat.ctime)),
       updateMode: "replace",
     });
 

@@ -17,7 +17,6 @@ path (``o0j1k2l3m4n5``) and does not exist at head, so the migration must not
 touch it.
 """
 
-import asyncio
 import uuid
 from pathlib import Path
 
@@ -56,16 +55,9 @@ def _col_type(conn, table: str) -> str:
 
 
 @pytest.fixture(scope="module")
-def head_db_url():
+def head_db_url(fresh_db_url):
     """pg0 instance migrated to head (includes the widen migration)."""
-    from hindsight_api.pg0 import EmbeddedPostgres
-
-    pg0 = EmbeddedPostgres(name="hindsight-remaining-bankid-test", port=5568)
-    loop = asyncio.new_event_loop()
-    try:
-        url = loop.run_until_complete(pg0.ensure_running())
-    finally:
-        loop.close()
+    url = fresh_db_url
 
     command.upgrade(_alembic_cfg(url), "heads")
     return url
@@ -83,11 +75,10 @@ def test_remaining_bank_id_columns_are_text(head_db_url):
 
 def test_long_bank_id_round_trips_through_widened_tables(head_db_url):
     # bank_id matching the shape reported in the issue, well over the old 64-char
-    # cap. Unique suffixes keep the test idempotent against pg0 data dirs that
-    # persist across runs (otherwise a re-run collides on the banks PK).
+    # cap.
     long_bank = f"tenantA::ou_{uuid.uuid4().hex}::ou_{uuid.uuid4().hex}"
     assert len(long_bank) > 64
-    mm_id = f"mm-{uuid.uuid4().hex}"  # explicit id keeps re-runs from colliding
+    mm_id = f"mm-{uuid.uuid4().hex}"
 
     engine = create_engine(head_db_url)
     try:

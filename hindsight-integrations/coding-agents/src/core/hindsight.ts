@@ -534,15 +534,19 @@ export class HindsightClient {
 
   /**
    * Whether this server honours `operation_id` on an async retain, and can therefore be appended to
-   * safely (see MIN_IDEMPOTENT_RETAIN_VERSION). Probed once per client via the version endpoint; anything
+   * safely (see MIN_IDEMPOTENT_RETAIN_VERSION). Probed via the version endpoint; anything
    * unreachable, unparseable or older answers "no", which costs efficiency, never correctness.
+   * Only a "yes" is cached: a long-lived plugin client would otherwise keep replacing for the rest
+   * of the process after one probe that hit a restarting server (#5735).
    */
   async supportsIdempotentRetain(): Promise<boolean> {
-    if (this.idempotentRetain === undefined) {
-      this.idempotentRetain = await this.probeIdempotentRetain();
-      this.log(`server retain idempotency: ${this.idempotentRetain ? "supported" : "unavailable"}`);
+    if (this.idempotentRetain) return true;
+    const supported = await this.probeIdempotentRetain();
+    if (supported || this.idempotentRetain === undefined) {
+      this.log(`server retain idempotency: ${supported ? "supported" : "unavailable"}`);
     }
-    return this.idempotentRetain;
+    this.idempotentRetain = supported;
+    return supported;
   }
 
   /** `/v1/version` first: an ingress that routes only `/v1` to the API (the Helm chart's default)

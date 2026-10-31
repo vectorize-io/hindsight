@@ -36,12 +36,8 @@ The `openai` provider talks to the **Chat Completions API** (`/v1/chat/completio
 See [Configuration](./configuration#llm-provider) for setup examples.
 :::
 
-:::tip OpenAI Responses API (reasoning + tools together)
-Set `HINDSIGHT_API_LLM_PROVIDER=openai-responses` to call OpenAI's **Responses API** (`/v1/responses`) instead of Chat Completions.
-
-Why it exists: some reasoning models — e.g. `gpt-5.6-terra` — **reject `reasoning_effort` when function tools are present** on Chat Completions (HTTP 400 unless `reasoning_effort="none"`). Reflect is a tool-calling loop, so on the `openai` (Completions) provider that forces the whole operation — including the final synthesis — to run with reasoning disabled. (Hindsight retries that 400 once with `reasoning_effort="none"` so the call still succeeds — but it succeeds without reasoning.) The Responses API keeps the model's chain-of-thought as a first-class reasoning item, so **reasoning and tools coexist**: reflect's search loop runs with a real `HINDSIGHT_API_LLM_REASONING_EFFORT` (e.g. `high`).
-
-Recommended for reasoning models (gpt-5.x, o-series) that use tools. It also honors a custom `HINDSIGHT_API_LLM_BASE_URL`, so any OpenAI-compatible endpoint exposing `/v1/responses` (gateways, Azure-style deployments) can be used just like the Chat Completions path.
+:::tip OpenAI Responses API
+Set `HINDSIGHT_API_LLM_PROVIDER=openai-responses` to call OpenAI's **Responses API** (`/v1/responses`) instead of Chat Completions. Both work for every operation; the Responses API keeps a reasoning model's chain-of-thought as a first-class item. It also honors a custom `HINDSIGHT_API_LLM_BASE_URL`, so any OpenAI-compatible endpoint exposing `/v1/responses` (gateways, Azure-style deployments) can be used just like the Chat Completions path.
 
 See [Configuration](./configuration#llm-provider) for setup examples.
 :::
@@ -87,7 +83,7 @@ Beyond basic generation, some providers support optional features that lower cos
 <LLMProviderCapabilities />
 
 - **Batch API** — submits bulk retain extraction through the provider's asynchronous batch endpoint, typically at ~50% lower cost. Used automatically when available; otherwise calls run synchronously.
-- **Explicit prompt caching** — reuses the large, fixed system prefix that retain (fact extraction), consolidation, and the reflect tool-loop send on every call, billing it at the provider's cached-input rate. On Gemini/Vertex this uses the `CachedContent` API. **On by default**; disable with `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED=false`. Hindsight structures these prompts so the cached prefix is **bank-agnostic** — one cache is shared across all banks rather than one per bank/mission, and creation soft-fails to an uncached call, so it never breaks a request.
+- **Explicit prompt caching** — reuses the large, fixed system prefix that retain (fact extraction) and consolidation send on every call, billing it at the provider's cached-input rate. On Gemini/Vertex this uses the `CachedContent` API. **On by default**; disable with `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED=false`. Hindsight structures these prompts so the cached prefix is **bank-agnostic** — one cache is shared across all banks rather than one per bank/mission, and creation soft-fails to an uncached call, so it never breaks a request.
 
 :::note
 A blank "Explicit prompt caching" cell does not mean a provider has no caching. OpenAI, for example, caches a stable leading prompt prefix **automatically** server-side, so it benefits with no configuration; Anthropic supports caching via `cache_control` breakpoints which can be wired up through the same provider hook. The column tracks only Hindsight's explicit `get_or_create_cached_prefix` hook, which Gemini/Vertex implement today.
@@ -110,7 +106,7 @@ The following models have been tested and verified to work correctly with Hindsi
 | **OpenAI** | `gpt-5-mini` |
 | **OpenAI** | `gpt-5-nano` |
 | **OpenAI** | `gpt-4.1-mini` |
-| **OpenAI** | `gpt-4.1-nano` |
+| **OpenAI** | `gpt-6-luna` |
 | **OpenAI** | `gpt-4o-mini` |
 | **Anthropic** | `claude-sonnet-4-20250514` |
 | **Anthropic** | `claude-3-5-sonnet-20241022` |
@@ -153,7 +149,7 @@ export HINDSIGHT_API_RETAIN_LLM_PROVIDER=anthropic
 
 ### Using Other Models
 
-Other LLM models not listed above may work with Hindsight, but they must support **at least 65,000 output tokens** to ensure reliable fact extraction. If you need support for a specific model that doesn't meet this requirement, please [open an issue](https://github.com/hindsight-ai/hindsight/issues) to request an exception.
+Other LLM models not listed above may work with Hindsight. What a model needs is to **follow a JSON schema** (structured output) and a large enough context window — **native tool calling is not used**: reflect's tool calls are made as replies to a response schema on every provider. It must also support **at least 65,000 output tokens** to ensure reliable fact extraction. If you need support for a specific model that doesn't meet this requirement, please [open an issue](https://github.com/hindsight-ai/hindsight/issues) to request an exception.
 
 :::tip Models with Limited Output Tokens
 If your model only supports 32k or fewer output tokens (e.g., some older models), you can reduce the retain completion token limit:
@@ -186,11 +182,11 @@ export HINDSIGHT_API_LLM_PROVIDER=openai
 export HINDSIGHT_API_LLM_API_KEY=sk-xxxxxxxxxxxx
 export HINDSIGHT_API_LLM_MODEL=gpt-4o
 
-# OpenAI Responses API (/v1/responses) — reasoning + tools together
+# OpenAI Responses API (/v1/responses)
 export HINDSIGHT_API_LLM_PROVIDER=openai-responses
 export HINDSIGHT_API_LLM_API_KEY=sk-xxxxxxxxxxxx
 export HINDSIGHT_API_LLM_MODEL=gpt-5.6           # reasoning model; e.g. gpt-5.6-terra
-export HINDSIGHT_API_LLM_REASONING_EFFORT=high   # sent alongside tools, unlike Completions
+export HINDSIGHT_API_LLM_REASONING_EFFORT=high
 # Optional: point at any OpenAI-compatible endpoint exposing /v1/responses
 # export HINDSIGHT_API_LLM_BASE_URL=https://your-gateway.example.com/v1
 
@@ -283,6 +279,54 @@ export HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=your-gcp-project-id
 ```
 
 **Note:** The LLM is the primary bottleneck for retain operations. See [Performance](./performance) for optimization strategies.
+
+---
+
+### Cheap Memory Model with Failover
+
+Hindsight calls its own LLM, with its own credentials, only to process memory: extracting facts on retain, consolidating observations, refreshing mental models, and answering reflect. Your agent keeps calling whatever model it already uses — Hindsight never sees or changes that. So the memory model can be a cheap, high-throughput one, picked for volume rather than for the agent's reasoning.
+
+A typical production setup puts the cheap model first and stronger, pricier models behind it, used only when the cheap one fails. The building blocks are documented in [Multi-LLM Strategies](./configuration#multi-llm-strategies-failover--round-robin) and [Per-Operation LLM Configuration](./configuration#per-operation-llm-configuration):
+
+```bash
+# Member 0 (primary): cheap workhorse, serves almost every call
+export HINDSIGHT_API_LLM_PROVIDER=groq
+export HINDSIGHT_API_LLM_API_KEY=<groq-key>
+export HINDSIGHT_API_LLM_MODEL=<cheap-model>
+
+# Member 1: mid-tier fallback
+export HINDSIGHT_API_LLM_1_PROVIDER=openai
+export HINDSIGHT_API_LLM_1_API_KEY=<openai-key>
+export HINDSIGHT_API_LLM_1_MODEL=<mid-model>
+
+# Member 2: top-tier last resort, with its own retry budget
+export HINDSIGHT_API_LLM_2_PROVIDER=anthropic
+export HINDSIGHT_API_LLM_2_API_KEY=<anthropic-key>
+export HINDSIGHT_API_LLM_2_MODEL=<top-model>
+export HINDSIGHT_API_LLM_2_MAX_RETRIES=3
+
+export HINDSIGHT_API_LLM_MAX_RETRIES=0   # fail over at once instead of retrying the same member
+export HINDSIGHT_API_LLM_STRATEGY='{"mode": "failover"}'
+# Or spread load instead: '{"mode": "round-robin", "weights": [4, 1, 1]}'
+```
+
+To give one operation a stronger model, override only that operation's primary. Its chain still falls back to the global members above:
+
+```bash
+# Consolidation starts on the mid-tier model; retain and reflect stay on the cheap one
+export HINDSIGHT_API_CONSOLIDATION_LLM_PROVIDER=openai
+export HINDSIGHT_API_CONSOLIDATION_LLM_API_KEY=<openai-key>
+export HINDSIGHT_API_CONSOLIDATION_LLM_MODEL=<mid-model>
+```
+
+Give an operation a fully separate chain with its own indexed members and strategy (`HINDSIGHT_API_RETAIN_LLM_1_PROVIDER`, `HINDSIGHT_API_RETAIN_LLM_STRATEGY`, ...).
+
+Things to know:
+
+- **Number members from 1 with no gaps.** Hindsight stops reading at the first missing `HINDSIGHT_API_LLM_<n>_PROVIDER`: with `_1_` and `_3_` set, member 3 is ignored.
+- **An operation with no members or no strategy of its own uses the global ones.** Mental-model refresh uses the reflect chain first, then the global one.
+- **Batch retain does not fail over.** With `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true`, the whole batch runs on the first member whose provider has a batch API. Put a reliable provider there.
+- **Startup sends a test call to each configured model.** A model that is down only logs a warning; the server still starts. Set `HINDSIGHT_API_SKIP_LLM_VERIFICATION=true` to skip these checks, for example when fallbacks are paid per call or slow to answer.
 
 ---
 
@@ -744,12 +788,12 @@ which makes Cursor a *client* of Hindsight. Here Cursor is the model backend Hin
   against `auto` — slower than a chat-completions request and past the 30s
   `HINDSIGHT_API_REFLECT_LLM_TIMEOUT` default. Left at the default, reflect spends its
   first iteration on timeout retries before recovering.
-- **Structured output and tool calling are prompt-level emulations.** The CLI exposes no
-  `response_format`, JSON-schema, temperature or tool-definition flag — only
+- **Structured output is a prompt-level emulation.** The CLI exposes no
+  `response_format`, JSON-schema or temperature flag — only
   `--output-format text|json|stream-json`, which describes the envelope. Hindsight puts
-  the schema (or the tool list) in the prompt and parses the model's JSON back out,
-  retrying on a parse failure. That is less reliable than a native schema, so prefer a
-  strong named model over `auto` for reflect, the operation that leans hardest on tools.
+  the schema in the prompt and parses the model's JSON back out, retrying on a parse
+  failure. That is less reliable than a native schema, so prefer a strong named model
+  over `auto` for reflect, the operation that leans hardest on it.
 - **Free plans are limited to `auto`.** A named `--model` returns
   `Named models unavailable Free plans can only use Auto`. Paid plans can use any id from
   `cursor-agent --list-models`.
@@ -1144,7 +1188,7 @@ Reranks initial search results to improve precision.
 | `zeroentropy` | ZeroEntropy rerank API (zerank-2) | Production, state-of-the-art accuracy |
 | `siliconflow` | SiliconFlow rerank API (Cohere-compatible `/rerank` endpoint) | Users in China or anyone on SiliconFlow's platform |
 | `nvidia` | NVIDIA NIM reranking API (native `/retrieval/{model}/reranking` endpoint) | Users on NVIDIA NIM / build.nvidia.com |
-| `typesafe` | TypeSafe typed-decision API (Jev) — ranks the whole pool in one question | Production, highest ranking quality; can also return only the relevant candidates |
+| `typesafe` | **Deprecated** — set up the shared [decision model](/developer/configuration#decision-model) instead. TypeSafe typed-decision API (Jev) — ranks the whole pool in one question | Production, highest ranking quality; can also return only the relevant candidates |
 | `alibaba` | Alibaba Cloud DashScope rerank API (qwen3-rerank) | Users on Alibaba Cloud / DashScope |
 | `google` | Google Discovery Engine ranking API (REST + Google auth) | Production, GCP integration |
 | `tei` | HuggingFace Text Embeddings Inference | Production, self-hosted |
@@ -1187,6 +1231,13 @@ SiliconFlow hosts a range of open-weight rerankers behind a Cohere-compatible `/
 | `Qwen/Qwen3-Reranker-8B` | Larger, higher accuracy |
 
 ### TypeSafe Models
+
+:::warning Deprecated
+The `typesafe` reranker provider will be removed in a future release. Set up the shared
+[decision model](/developer/configuration#decision-model) instead
+(`HINDSIGHT_API_DECISION_MODEL_PROVIDER=typesafe` and `HINDSIGHT_API_DECISION_MODEL_API_KEY`):
+recall uses it in place of the reranker.
+:::
 
 TypeSafe is not a `/rerank` endpoint — it answers typed *questions* against a *state*.
 Hindsight makes the candidates the options of a Choice question, so the returned
@@ -1266,11 +1317,10 @@ export HINDSIGHT_API_RERANKER_PROVIDER=nvidia
 export HINDSIGHT_API_RERANKER_NVIDIA_API_KEY=nvapi-your-key
 export HINDSIGHT_API_RERANKER_NVIDIA_MODEL=nvidia/llama-nemotron-rerank-vl-1b-v2  # default, can omit
 
-# TypeSafe (typed-decision API, ranks the whole pool in one question)
-export HINDSIGHT_API_RERANKER_PROVIDER=typesafe
-export HINDSIGHT_API_RERANKER_TYPESAFE_API_KEY=your-api-key
-export HINDSIGHT_API_RERANKER_TYPESAFE_MODEL=jev-latest  # default, can omit
-# export HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES=true  # return only the relevant ones
+# TypeSafe (Jev) - the typesafe reranker provider is deprecated: set up the shared
+# decision model instead, which recall uses in place of the reranker
+export HINDSIGHT_API_DECISION_MODEL_PROVIDER=typesafe
+export HINDSIGHT_API_DECISION_MODEL_API_KEY=your-api-key
 
 # Alibaba Cloud DashScope (qwen3-rerank)
 export HINDSIGHT_API_RERANKER_PROVIDER=alibaba

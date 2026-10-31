@@ -75,3 +75,23 @@ async def test_reflect_evidence_carries_the_screenshot_and_where_it_came_from(cl
         assert [a.id for a in memory.attachments or []] == [screenshot], f"the {memory.type} lost the screenshot"
     fetched = await client.memory.get_bank_attachment(kb_bank, screenshot)
     assert fetched == PNG
+
+
+async def test_a_knowledge_page_carries_the_screenshot_its_evidence_came_from(client, llm, kb_bank, settled):
+    """A page built from the article shows its screenshot, with nothing stored twice.
+
+    The refresh saves its evidence by id only; the images behind that evidence are
+    looked up when the page is read, so a human browsing the page sees them too.
+    """
+    screenshot = await _attachment_id(client, kb_bank)
+    reflect_loop(llm, answer="Configure SSO on the Admin > Identity > SSO page.", query=QUERY)
+    created = await client.mental_models.create_mental_model(kb_bank, {"name": "SSO setup", "source_query": QUERY})
+    await settled(kb_bank)
+
+    model = await client.mental_models.get_mental_model(kb_bank, created.mental_model_id, detail="full")
+
+    based_on = model.reflect_response["based_on"]
+    cited = [m for fact_type in ("world", "observation") for m in based_on.get(fact_type) or []]
+    assert cited, "the page cited no memories"
+    for memory in cited:
+        assert [a["id"] for a in memory.get("attachments") or []] == [screenshot], f"{memory['type']} lost it"

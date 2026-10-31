@@ -31,14 +31,14 @@ Every fact carries its provenance in its document metadata, ``source``:
 
 The six questions are chosen so no blunt rule scores well:
 
-* ``authority_conflict`` — guide and chatter disagree. The guide wins.
-* ``guide_only`` — only the guide answers it.
-* ``conversation_only`` — only the chatter answers it. A fix that filters the
+* ``sp-datastore``, ``sp-approvals`` (source_authority) — guide and chatter disagree. The guide wins.
+* ``sp-postmortem`` (source_authority) — only the guide answers it.
+* ``sp-upgrade-owner`` (source_authority) — only the chatter answers it. A fix that filters the
   conversations away fails here, which is why it is in the set.
-* ``decision_supersedes`` — a dated, explicit decision changes what the guide
+* ``sp-rotation`` (update) — a dated, explicit decision changes what the guide
   says and says so. Here the chatter wins, so "the guide is always right" is not
   the answer either.
-* ``policy_plus_exception`` — the guide states the rule, a conversation records
+* ``sp-friday-deploy`` (aggregation) — the guide states the rule, a conversation records
   an approved exception, and both are needed.
 
 Answering all six requires *ordering* the sources, not choosing one.
@@ -224,7 +224,7 @@ def _chatter() -> list[HardFact]:
 _QUESTIONS = [
     HardQuestion(
         id="sp-datastore",
-        category="authority_conflict",
+        category="source_authority",
         question="What should a new production service use as its primary datastore?",
         ideal_query="new production service primary datastore policy",
         gold=["g-datastore"],
@@ -241,7 +241,7 @@ _QUESTIONS = [
     ),
     HardQuestion(
         id="sp-approvals",
-        category="authority_conflict",
+        category="source_authority",
         question="How many approvals does a pull request need before it can be merged?",
         ideal_query="pull request approvals required before merge",
         gold=["g-approvals"],
@@ -259,7 +259,7 @@ _QUESTIONS = [
     ),
     HardQuestion(
         id="sp-postmortem",
-        category="guide_only",
+        category="source_authority",
         question="Who writes the postmortem after an incident, and when is it due?",
         ideal_query="postmortem owner deadline after incident",
         gold=["g-postmortem"],
@@ -273,7 +273,7 @@ _QUESTIONS = [
     ),
     HardQuestion(
         id="sp-upgrade-owner",
-        category="conversation_only",
+        category="source_authority",
         question="Who volunteered to run the PostgreSQL 16 upgrade for the payments database?",
         ideal_query="volunteer PostgreSQL 16 upgrade payments database",
         gold=["c-upgrade-owner"],
@@ -285,7 +285,7 @@ _QUESTIONS = [
     ),
     HardQuestion(
         id="sp-rotation",
-        category="decision_supersedes",
+        category="update",
         question="How often are production service credentials rotated?",
         ideal_query="production credential rotation interval current",
         gold=["g-rotation", "c-rotation-decision"],
@@ -299,7 +299,7 @@ _QUESTIONS = [
     ),
     HardQuestion(
         id="sp-friday-deploy",
-        category="policy_plus_exception",
+        category="aggregation",
         question="Can the payments team deploy to production on a Friday?",
         ideal_query="payments team Friday production deploy approval",
         gold=["g-deploy-window", "c-friday-exception"],

@@ -358,6 +358,8 @@ pub fn recall(
         query_timestamp,
         // None: let the bank's recall_prefer_observations default decide.
         prefer_observations,
+        // None: the bank's recall_decision_model_prune / _dedup defaults decide.
+        rerank: None,
         include,
         tags: if tags.is_empty() { None } else { Some(tags) },
         tags_match: parse_tags_match(&tags_match),
@@ -463,6 +465,7 @@ pub fn reflect(
         // expose them (operators set them once per bank), so the bank default applies.
         reflect_search_observations_max_tokens: None,
         reflect_search_observations_include_entities: None,
+        reflect_search_mental_models_max_tokens: None,
     };
 
     let response = client.reflect(agent_id, &request, verbose);

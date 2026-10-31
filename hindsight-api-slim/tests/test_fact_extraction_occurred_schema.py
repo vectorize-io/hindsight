@@ -15,8 +15,7 @@ re-sends byte-identical (#3811, #3683).
 
 A JSON Schema `pattern` makes that structurally impossible, but only on backends
 that accept the keyword: Bedrock validates schemas against an allowlist that
-excludes it and 400s the request outright (the same reason
-`llm_supports_max_items` exists), and OpenAI errors on unsupported keywords under
+excludes it and 400s the request outright, and OpenAI errors on unsupported keywords under
 `strict`. So it is opt-in via HINDSIGHT_API_LLM_SUPPORTS_STRING_PATTERN and
 layered on at schema-build time -- these tests pin both halves: off by default,
 correct when enabled.

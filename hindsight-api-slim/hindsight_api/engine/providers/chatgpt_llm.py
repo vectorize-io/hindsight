@@ -3,7 +3,7 @@
 Uses the OAuth access token from OpenAI's "Sign in with ChatGPT" flow for
 open-source apps (see ``chatgpt_auth.py``) as the bearer credential for
 ``POST https://api.openai.com/v1/responses``. Request translation, structured
-output, tool calls and usage accounting are inherited from
+output and usage accounting are inherited from
 ``OpenAIResponsesLLM``; this class only changes the transport:
 
 - every request is sent with ``store: false`` and ``stream: true`` and is
@@ -25,7 +25,7 @@ from typing import Any
 
 from openai import APIConnectionError, APIError, APIStatusError, AuthenticationError
 
-from hindsight_api.engine.llm_interface import ProviderRateLimitResetError
+from hindsight_api.engine.llm_interface import ProviderRateLimitResetError, ProviderUnavailableError
 from hindsight_api.engine.providers.chatgpt_auth import (
     RESOURCE,
     ChatGPTAuth,
@@ -171,7 +171,7 @@ class ChatGPTLLM(OpenAIResponsesLLM):
         try:
             self._auth = ChatGPTAuth.shared(default_home())
         except ChatGPTAuthError as e:
-            raise RuntimeError(f"chatgpt provider unavailable: {e}") from e
+            raise ProviderUnavailableError(f"chatgpt provider unavailable: {e}") from e
         if model.startswith("openai/"):
             model = model[len("openai/") :]
         super().__init__(

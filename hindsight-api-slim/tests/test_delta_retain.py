@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from hindsight_api.engine.memory_engine import Budget
+from hindsight_api.engine.response_models import Budget
 from tests.retain_result_capture import RetainResultCapture
 
 logger = logging.getLogger(__name__)

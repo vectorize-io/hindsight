@@ -23,7 +23,6 @@ These tests pin the contract:
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -32,13 +31,13 @@ import pytest
 from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.consolidation import consolidator as consolidator_module
 from hindsight_api.engine.consolidation.consolidator import (
-    _ConsolidationBatchResponse,
     _CreateAction,
     _DeleteAction,
     run_consolidation_job,
 )
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.providers.mock_llm import MockLLM
+from tests.consolidation_answers import batch_fact_ids, batch_fact_texts, fact_answer
 
 
 @pytest.fixture(autouse=True)
@@ -69,12 +68,12 @@ def _create_one_per_fact(text: str | None = None):
 
     def callback(messages, scope):
         if scope != "consolidation":
-            return _ConsolidationBatchResponse()
+            return fact_answer()
         prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
-        fact_ids = re.findall(r"\[([0-9a-f-]{36})\]", prompt)
-        return _ConsolidationBatchResponse(
+        fact_ids = batch_fact_ids(prompt)
+        return fact_answer(
             creates=[
-                _CreateAction(text=text or f"Observation about fact {fid[:8]}", source_fact_ids=[fid])
+                _CreateAction(text=text or f"Observation about {batch_fact_texts(prompt)[fid]}", source_fact_ids=[fid])
                 for fid in fact_ids
             ]
         )
@@ -155,10 +154,10 @@ async def test_failed_create_rolls_back_the_delete_it_was_replacing(memory: Memo
 
         def delete_and_create(messages, scope):
             if scope != "consolidation":
-                return _ConsolidationBatchResponse()
+                return fact_answer()
             prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
-            fact_ids = re.findall(r"\[([0-9a-f-]{36})\]", prompt)
-            return _ConsolidationBatchResponse(
+            fact_ids = batch_fact_ids(prompt)
+            return fact_answer(
                 creates=[_CreateAction(text="Alice lives in Munich", source_fact_ids=fact_ids)],
                 deletes=[_DeleteAction(observation_id=str(obs_id))],
             )

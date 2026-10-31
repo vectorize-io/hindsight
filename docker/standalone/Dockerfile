@@ -102,26 +102,42 @@ RUN npm ci --ignore-scripts -w @vectorize-io/hindsight-client \
 # =============================================================================
 FROM node:24-slim AS cp-builder
 
-# Create directory structure matching the monorepo layout
-# This is required because build:standalone script expects .next/standalone/memory-poc/hindsight-control-plane
+# Mirror the monorepo layout under /app/memory-poc: next.config sets the
+# monorepo root to the control plane's parent directory.
+WORKDIR /app/memory-poc
+
+# Install from the root lockfile so the image gets exactly the pinned versions
+# and the root package.json overrides (security pins). The lockfile records the
+# linux glibc/musl native bindings for lightningcss and tailwind oxide, so
+# `npm ci` picks the right one for the build platform.
+# --ignore-scripts skips the root `prepare` git-hooks setup.
+# Previously this stage ran `npm install` on the control plane's package.json
+# alone, to get those native bindings. That re-resolved every version on each
+# build (a fresh npm release broke CI, #5785), skipped the root overrides, and
+# installed only the glibc sharp, which the alpine cp-only image can't load.
+COPY package.json package-lock.json ./
+COPY hindsight-control-plane/package.json ./hindsight-control-plane/
+# Only the SDK manifest here, so an SDK code change doesn't rerun the install.
+COPY hindsight-clients/typescript/package.json ./hindsight-clients/typescript/
+# npm skips an optional dependency it fails to download without failing the
+# install, so a network blip can leave out a platform native binding and
+# `next build` dies with "Failed to load native binding" (#5975). Load the
+# bindings the build needs and reinstall if one is missing. (next fetches its
+# own @next/swc binary when it is missing, so it isn't listed.)
+RUN for attempt in 1 2 3; do \
+      npm ci --ignore-scripts -w @vectorize-io/hindsight-control-plane \
+      && node -e 'for (const m of ["lightningcss", "@tailwindcss/oxide"]) require(m); require(require.resolve("@swc/core", { paths: ["node_modules/next-intl"] }))' \
+      && break; \
+      [ "$attempt" -lt 3 ] || exit 1; \
+      echo "native bindings missing after npm ci, retrying ($attempt)"; \
+    done
+
+# Built SDK (the workspace symlink in node_modules points here), then the
+# Control Plane source (excluding node_modules via .dockerignore)
+COPY --from=sdk-builder /app/hindsight-clients/typescript ./hindsight-clients/typescript/
+COPY hindsight-control-plane/ ./hindsight-control-plane/
+
 WORKDIR /app/memory-poc/hindsight-control-plane
-
-# Install Control Plane dependencies
-# Only copy package.json (not package-lock.json) to ensure npm installs
-# correct platform-specific native bindings for lightningcss/tailwindcss
-COPY hindsight-control-plane/package.json ./
-# Remove the file: dependency on SDK (we'll copy it directly later)
-RUN sed -i '/"@vectorize-io\/hindsight-client":/d' package.json \
-    && npm install
-
-# Copy Control Plane source (excluding node_modules via .dockerignore)
-COPY hindsight-control-plane/ ./
-# Remove package-lock.json to avoid conflicts with installed native bindings
-# Also remove the file: dependency from package.json (restored by COPY above)
-RUN rm -f package-lock.json && sed -i '/"@vectorize-io\/hindsight-client":/d' package.json
-
-# Copy built SDK directly into node_modules (more reliable than npm link in Docker)
-COPY --from=sdk-builder /app/hindsight-clients/typescript ./node_modules/@vectorize-io/hindsight-client
 
 # Accept base path as build argument for reverse proxy deployments
 # Usage: docker build --build-arg NEXT_PUBLIC_BASE_PATH=/hindsight ...
@@ -262,6 +278,9 @@ WORKDIR /app/control-plane
 COPY --from=cp-builder /app/memory-poc/hindsight-control-plane/standalone ./
 COPY --from=cp-builder /app/memory-poc/hindsight-control-plane/.next/static ./.next/static
 COPY --from=cp-builder /app/memory-poc/hindsight-control-plane/public ./public
+# next/image needs sharp, and this image is musl while cp-builder is glibc. Fail
+# the build if the bundle lacks the musl binding (it shipped without one, #5785).
+RUN node -e "require('/app/control-plane/node_modules/sharp')"
 
 WORKDIR /app
 

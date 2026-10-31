@@ -15,7 +15,7 @@ from unittest.mock import patch
 from hindsight_api.config import DEFAULT_RERANKER_OPENROUTER_BASE_URL, HindsightConfig
 from hindsight_api.engine.bank_attribution import reranker_bank_attribution_headers
 from hindsight_api.engine.cross_encoder import create_cross_encoder_from_env
-from hindsight_api.engine.memory_engine import _current_bank_id
+from hindsight_api.schema_context import _current_bank_id
 
 
 def _restore_env(saved: dict[str, str | None]) -> None:

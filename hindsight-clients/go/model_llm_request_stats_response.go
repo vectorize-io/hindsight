@@ -26,6 +26,7 @@ type LLMRequestStatsResponse struct {
 	Trunc string `json:"trunc"`
 	Start string `json:"start"`
 	Buckets []LLMRequestStatsBucket `json:"buckets"`
+	RetentionDays NullableInt32 `json:"retention_days,omitempty"`
 }
 
 type _LLMRequestStatsResponse LLMRequestStatsResponse
@@ -172,6 +173,48 @@ func (o *LLMRequestStatsResponse) SetBuckets(v []LLMRequestStatsBucket) {
 	o.Buckets = v
 }
 
+// GetRetentionDays returns the RetentionDays field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *LLMRequestStatsResponse) GetRetentionDays() int32 {
+	if o == nil || IsNil(o.RetentionDays.Get()) {
+		var ret int32
+		return ret
+	}
+	return *o.RetentionDays.Get()
+}
+
+// GetRetentionDaysOk returns a tuple with the RetentionDays field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *LLMRequestStatsResponse) GetRetentionDaysOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.RetentionDays.Get(), o.RetentionDays.IsSet()
+}
+
+// HasRetentionDays returns a boolean if a field has been set.
+func (o *LLMRequestStatsResponse) HasRetentionDays() bool {
+	if o != nil && o.RetentionDays.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetRetentionDays gets a reference to the given NullableInt32 and assigns it to the RetentionDays field.
+func (o *LLMRequestStatsResponse) SetRetentionDays(v int32) {
+	o.RetentionDays.Set(&v)
+}
+// SetRetentionDaysNil sets the value for RetentionDays to be an explicit nil
+func (o *LLMRequestStatsResponse) SetRetentionDaysNil() {
+	o.RetentionDays.Set(nil)
+}
+
+// UnsetRetentionDays ensures that no value is present for RetentionDays, not even an explicit nil
+func (o *LLMRequestStatsResponse) UnsetRetentionDays() {
+	o.RetentionDays.Unset()
+}
+
 func (o LLMRequestStatsResponse) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -187,6 +230,9 @@ func (o LLMRequestStatsResponse) ToMap() (map[string]interface{}, error) {
 	toSerialize["trunc"] = o.Trunc
 	toSerialize["start"] = o.Start
 	toSerialize["buckets"] = o.Buckets
+	if o.RetentionDays.IsSet() {
+		toSerialize["retention_days"] = o.RetentionDays.Get()
+	}
 	return toSerialize, nil
 }
 

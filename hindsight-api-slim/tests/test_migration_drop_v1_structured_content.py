@@ -14,12 +14,10 @@ What this pins:
 - ``content`` is never modified, on any row. It is what users read, and clearing
   the structure must not disturb it.
 
-Uses a dedicated pg0 instance (mirrors test_migration_drop_access_count) so it
-controls exactly which migrations have run and never stamps the shared test
-instance.
+Uses a database of its own (the ``fresh_db_url`` fixture) so it controls exactly
+which migrations have run and never stamps the shared test database.
 """
 
-import asyncio
 import json
 from pathlib import Path
 
@@ -76,23 +74,13 @@ def _alembic_cfg(db_url: str) -> Config:
 
 
 @pytest.fixture(scope="module")
-def migrated_db_url():
-    """pg0 instance seeded at the pre-drop revision, then migrated through it."""
-    from hindsight_api.pg0 import EmbeddedPostgres
-
-    # port=None lets pg0 auto-assign a free port; a hardcoded port is not xdist-safe.
-    pg0 = EmbeddedPostgres(name="hindsight-drop-v1-structured-test", port=None)
-    loop = asyncio.new_event_loop()
-    try:
-        url = loop.run_until_complete(pg0.ensure_running())
-    finally:
-        loop.close()
+def migrated_db_url(fresh_db_url):
+    """A database of its own seeded at the pre-drop revision, then migrated through it."""
+    url = fresh_db_url
 
     cfg = _alembic_cfg(url)
     # Bring the schema up first, then seed, then step the *stamp* back over this
-    # revision and re-apply it. A pg0 instance survives between runs, and alembic
-    # will not replay a migration on a DB already stamped past it — seeding into
-    # a stamped DB would leave the rows untouched and the test asserting nothing.
+    # revision and re-apply it, so the seeded rows go through the migration.
     # This migration's downgrade is a no-op, so stepping back costs nothing.
     command.upgrade(cfg, _REVISION)
 
@@ -100,11 +88,9 @@ def migrated_db_url():
     try:
         with engine.begin() as conn:
             conn.execute(
-                text("INSERT INTO banks (bank_id) VALUES (:b) ON CONFLICT DO NOTHING"),
+                text("INSERT INTO banks (bank_id) VALUES (:b)"),
                 {"b": _BANK_ID},
             )
-            # Idempotent seed: the instance persists across runs.
-            conn.execute(text("DELETE FROM mental_models WHERE bank_id = :b"), {"b": _BANK_ID})
             for mm_id, blob in (
                 ("mm-v1", _V1_BLOB),
                 ("mm-v2", _V2_BLOB),

@@ -4,7 +4,7 @@ Prompt caching is opt-in: ``supports_prompt_caching()`` defaults False and
 ``get_or_create_cached_prefix()`` defaults to returning None, so callers only
 ever pass ``cached_prefix=`` to a provider that overrode them. Two providers had
 copied the parameter out of the interface signature without any of the
-behaviour -- they declared ``cached_prefix``/``cached_prefix_message_count``,
+behaviour -- they declared ``cached_prefix``,
 never referenced them, and could never be handed one. Dead surface that reads
 like a supported feature.
 
@@ -21,14 +21,9 @@ import pytest
 
 PROVIDERS_DIR = pathlib.Path(__file__).resolve().parent.parent / "hindsight_api" / "engine" / "providers"
 
-CACHE_PARAMS = {"cached_prefix", "cached_prefix_message_count"}
+CACHE_PARAMS = {"cached_prefix"}
 #: Overriding any of these is what "implements prompt caching" means.
-CACHE_METHODS = {
-    "get_or_create_cached_prefix",
-    "create_incremental_cache",
-    "supports_prompt_caching",
-    "supports_incremental_prompt_cache",
-}
+CACHE_METHODS = {"get_or_create_cached_prefix", "supports_prompt_caching"}
 
 
 def _provider_modules():
@@ -50,7 +45,7 @@ def test_cache_parameters_only_where_caching_is_implemented(path):
     for cls in _classes(path):
         methods = {b.name: b for b in cls.body if isinstance(b, (ast.FunctionDef, ast.AsyncFunctionDef))}
         implements = bool(CACHE_METHODS & set(methods))
-        for name in ("call", "call_with_tools"):
+        for name in ("call",):
             fn = methods.get(name)
             if fn is None:
                 continue

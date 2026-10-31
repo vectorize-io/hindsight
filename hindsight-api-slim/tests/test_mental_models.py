@@ -10,14 +10,14 @@ from datetime import datetime, timezone
 
 import pytest
 
+from hindsight_api.engine.memories import MemoryScopeWatermark
 from hindsight_api.engine.memory_engine import (
     MemoryEngine,
-    _MentalModelScopeWatermark,
     _mental_model_stale_scope_from_row,
+    _MentalModelScopeWatermark,
 )
-from hindsight_api.engine.schema import fq_store_table
-from hindsight_api.engine.memories import MemoryScopeWatermark
 from hindsight_api.engine.retain import embedding_utils
+from hindsight_api.engine.schema import fq_store_table
 from tests.llm_judge import assert_meets_criteria, evaluate
 
 
@@ -2925,33 +2925,33 @@ class TestMentalModelTriggerSchema:
     """Unit tests for MentalModelTrigger schema validation (no DB needed)."""
 
     def test_trigger_accepts_tags_match(self):
-        from hindsight_api.api.http import MentalModelTrigger
+        from hindsight_api.engine.response_models import MentalModelTrigger
 
         t = MentalModelTrigger(tags_match="any")
         assert t.tags_match == "any"
 
     def test_trigger_accepts_all_tags_match_modes(self):
-        from hindsight_api.api.http import MentalModelTrigger
+        from hindsight_api.engine.response_models import MentalModelTrigger
 
         for mode in ("any", "all", "any_strict", "all_strict"):
             t = MentalModelTrigger(tags_match=mode)
             assert t.tags_match == mode
 
     def test_trigger_tags_match_defaults_to_none(self):
-        from hindsight_api.api.http import MentalModelTrigger
+        from hindsight_api.engine.response_models import MentalModelTrigger
 
         t = MentalModelTrigger()
         assert t.tags_match is None
 
     def test_trigger_accepts_tag_groups_leaf(self):
-        from hindsight_api.api.http import MentalModelTrigger
+        from hindsight_api.engine.response_models import MentalModelTrigger
 
         t = MentalModelTrigger(tag_groups=[{"tags": ["user:alice"], "match": "all_strict"}])
         assert len(t.tag_groups) == 1
         assert t.tag_groups[0].tags == ["user:alice"]
 
     def test_trigger_accepts_tag_groups_compound(self):
-        from hindsight_api.api.http import MentalModelTrigger
+        from hindsight_api.engine.response_models import MentalModelTrigger
 
         t = MentalModelTrigger(
             tag_groups=[
@@ -2970,14 +2970,14 @@ class TestMentalModelTriggerSchema:
         assert len(t.tag_groups[0].filters) == 2
 
     def test_trigger_tag_groups_defaults_to_none(self):
-        from hindsight_api.api.http import MentalModelTrigger
+        from hindsight_api.engine.response_models import MentalModelTrigger
 
         t = MentalModelTrigger()
         assert t.tag_groups is None
 
     def test_trigger_roundtrip_via_model_dump(self):
         """Test that tag_groups survive model_dump -> model_validate (simulates DB storage)."""
-        from hindsight_api.api.http import MentalModelTrigger
+        from hindsight_api.engine.response_models import MentalModelTrigger
 
         t = MentalModelTrigger(
             tags_match="any",
@@ -2994,7 +2994,7 @@ class TestMentalModelTriggerSchema:
     def test_trigger_tag_groups_rejects_invalid(self):
         from pydantic import ValidationError
 
-        from hindsight_api.api.http import MentalModelTrigger
+        from hindsight_api.engine.response_models import MentalModelTrigger
 
         with pytest.raises(ValidationError):
             MentalModelTrigger(tag_groups=[{"invalid_key": "bad"}])

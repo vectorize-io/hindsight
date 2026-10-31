@@ -62,6 +62,10 @@ def test_the_vision_slot_falls_back_to_the_retain_llm_when_unset():
     assert config.vlm_model is None
     assert config.vlm_api_key is None
     assert config.vlm_base_url is None
+    assert config.vlm_reasoning_effort is None
+    assert config.vlm_extra_body is None
+    assert config.vlm_timeout is None
+    assert config.vlm_max_retries is None
 
 
 def test_the_key_and_base_url_are_credential_protected():
@@ -151,3 +155,73 @@ def test_a_configured_vision_slot_does_not_inherit_the_retain_fallback_chain():
         "the vision slot is being wrapped in a fallback chain — a failed vision call "
         "would fail over to a text model and silently drop the attachment"
     )
+
+
+@pytest.fixture
+def vlm_engine(monkeypatch):
+    """Build an engine whose retain LLM runs at `xhigh` with a 120s timeout."""
+    from hindsight_api import MemoryEngine
+    from hindsight_api.config import clear_config_cache
+
+    def _build(**extra: str) -> MemoryEngine:
+        env = {
+            "HINDSIGHT_API_SKIP_LLM_VERIFICATION": "true",
+            "HINDSIGHT_API_LLM_PROVIDER": "mock",
+            "HINDSIGHT_API_RETAIN_LLM_REASONING_EFFORT": "xhigh",
+            "HINDSIGHT_API_RETAIN_LLM_EXTRA_BODY": '{"retain": true}',
+            "HINDSIGHT_API_RETAIN_LLM_TIMEOUT": "120",
+            "HINDSIGHT_API_RETAIN_LLM_MAX_RETRIES": "5",
+            "HINDSIGHT_API_RETAIN_LLM_INITIAL_BACKOFF": "2",
+            "HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF": "20",
+            "HINDSIGHT_API_RETAIN_LLM_CACHE_AFFINITY": "xai_conv_id",
+            "HINDSIGHT_API_VLM_MODEL": "vision-model",
+            **extra,
+        }
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+        clear_config_cache()
+        return MemoryEngine(skip_llm_verification=True)
+
+    yield _build
+    clear_config_cache()
+
+
+def test_the_vision_slot_inherits_the_retain_settings_when_its_own_are_unset(vlm_engine):
+    vlm = vlm_engine()._vlm_config
+
+    assert vlm.model == "vision-model"
+    assert vlm.reasoning_effort == "xhigh"
+    assert vlm.extra_body == {"retain": True}
+    assert vlm.timeout == 120.0
+    assert vlm.max_retries == 5
+    assert vlm.initial_backoff == 2.0
+    assert vlm.max_backoff == 20.0
+    assert vlm.cache_affinity == "xai_conv_id"
+
+
+def test_the_vision_slot_takes_its_own_settings_over_the_retain_ones(vlm_engine):
+    """#6202: a small extraction model at `xhigh` forced the vision model to `xhigh`
+    too, and each image call ran past the retain timeout."""
+    engine = vlm_engine(
+        HINDSIGHT_API_VLM_REASONING_EFFORT="low",
+        HINDSIGHT_API_VLM_EXTRA_BODY='{"vision": true}',
+        HINDSIGHT_API_VLM_TIMEOUT="300",
+        HINDSIGHT_API_VLM_MAX_RETRIES="0",
+        HINDSIGHT_API_VLM_INITIAL_BACKOFF="1",
+        HINDSIGHT_API_VLM_MAX_BACKOFF="10",
+        HINDSIGHT_API_VLM_CACHE_AFFINITY="none",
+    )
+    vlm = engine._vlm_config
+
+    assert vlm.reasoning_effort == "low"
+    assert vlm.extra_body == {"vision": True}
+    assert vlm.timeout == 300.0
+    assert vlm.max_retries == 0
+    assert vlm.initial_backoff == 1.0
+    assert vlm.max_backoff == 10.0
+    assert vlm.cache_affinity == "none"
+    retain = engine._retain_llm_config
+    assert retain.reasoning_effort == "xhigh"
+    assert retain.timeout == 120.0
+    assert retain.max_retries == 5
+    assert retain.cache_affinity == "xai_conv_id"

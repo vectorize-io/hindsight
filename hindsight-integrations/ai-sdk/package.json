@@ -47,11 +47,11 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@vitest/ui": "^4.1.2",
+    "@vitest/ui": "^4.1.12",
     "ai": "^6.0.2",
     "tsup": "^8.5.1",
     "typescript": "^5.7.0",
-    "vitest": "^4.1.11",
+    "vitest": "^4.1.12",
     "zod": "^4.2.0"
   },
   "engines": {

@@ -11,10 +11,10 @@ import uuid
 import pytest
 import pytest_asyncio
 
-from hindsight_api.engine.memory_engine import _current_schema
 from hindsight_api.engine.schema import fq_store_table
 from hindsight_api.extensions import RequestContext, TenantContext, TenantExtension
 from hindsight_api.migrations import run_migrations
+from hindsight_api.schema_context import _current_schema
 
 
 class MultiSchemaTestTenantExtension(TenantExtension):

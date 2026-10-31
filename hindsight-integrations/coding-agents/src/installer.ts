@@ -228,6 +228,13 @@ const cmdHook = (dist: string, file: string, timeout: number) => ({
   hooks: [{ type: "command", command: `node "${join(dist, file)}"`, timeout }],
 });
 
+/** The command STRING for a host that runs `node <script>`. The path is quoted only when it needs
+ *  to be: Antigravity CLI runs these without a shell on Windows, so the quotes reach node as part
+ *  of the path, it reads `"C:\…"` as relative and fails with MODULE_NOT_FOUND (#5913). cursor-cli
+ *  and copilot-cli share the flat hook branch; they run through a shell, where both forms are equal. */
+export const nodeCommand = (script: string): string =>
+  script.includes(" ") ? `node "${script}"` : `node ${script}`;
+
 /** ZCode's registration shape: the same matcher group, but an argv rather than a command STRING —
  *  it spawns hooks without a shell, so `node "…/zcode-hook.js"` would be looked up as one
  *  executable name and never run — and a `timeoutMs` budget rather than `timeout` seconds. */
@@ -282,7 +289,7 @@ function mergeHarnessHooks(
         : spec.configStyle === "process"
           ? processHook(dist, hook.entry, hook.timeout!)
           : {
-              command: `node "${join(dist, hook.entry)}"`,
+              command: nodeCommand(join(dist, hook.entry)),
               ...(hook.timeout ? { timeout: hook.timeout } : {}),
             };
     hooks[hook.event] = mergeHookEvent(hooks[hook.event], entry);
@@ -394,7 +401,9 @@ function runDcodePlugin(args: string[]): boolean {
  * on v2's `plugins` key ("Configuration is invalid … Unrecognized key: plugins"), so a v2-specific
  * entry is not an option. One entry serves both because they resolve a plugin directory
  * differently — v1 follows package.json `main` (dist/index.js), v2 loads `<dir>/index.js` — and v2
- * migrates the legacy `plugin` key to `plugins` for itself. See src/opencode2.ts.
+ * migrates the legacy `plugin` key to `plugins` for itself. A host that looks the package up by name
+ * (v2 given a non-absolute entry, v1 1.18+) reads `exports["./server"]` first, whose default
+ * serves both contracts. See src/opencode2.ts.
  *
  * Consequences worth knowing: installing either harness wires the other one too (the MARKER filter
  * keeps that idempotent), and uninstalling either removes the shared entry.
@@ -750,14 +759,14 @@ const antigravity: HarnessInstaller = {
     if (!settings.statusLine) {
       settings.statusLine = {
         type: "command",
-        command: `node "${join(c.dist, "antigravity-statusline.js")}"`,
+        command: nodeCommand(join(c.dist, "antigravity-statusline.js")),
       };
       writeJson(settingsPath, settings);
       c.log?.(`antigravity-cli: Hindsight status line enabled in ${settingsPath}`);
     } else if (JSON.stringify(settings.statusLine).includes(MARKER)) {
       settings.statusLine = {
         type: "command",
-        command: `node "${join(c.dist, "antigravity-statusline.js")}"`,
+        command: nodeCommand(join(c.dist, "antigravity-statusline.js")),
       };
       writeJson(settingsPath, settings);
     } else {

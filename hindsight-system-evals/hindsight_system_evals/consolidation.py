@@ -10,7 +10,7 @@ The scenario, end to end through the public API:
 Facts go in with ``retain_extraction_mode=chunks``: each item is stored as one
 fact, verbatim. That isolates the step under test. Real extraction would
 paraphrase, split or merge the input, and a wrong observation could then be
-extraction's fault, which ``test_03``/``test_04`` already grade. The facts are
+extraction's fault, which the retain eval already grades. The facts are
 written the way extraction writes them (third person, one claim each, entities
 attached), so consolidation sees the shape it sees in production.
 
@@ -49,7 +49,8 @@ from hindsight_system_evals.pages import SettleFn
 @dataclass(frozen=True)
 class Fact:
     text: str
-    #: When the statement was made (ISO date). Becomes the fact's ``mentioned_at``,
+    #: When the statement was made: an ISO date (read as noon UTC), or a full ISO
+    #: timestamp when the time of day matters. Becomes the fact's ``mentioned_at``,
     #: which is what consolidation is told to read as recency.
     on: str
     entities: tuple[str, ...] = ()
@@ -74,6 +75,8 @@ class Wave:
 @dataclass(frozen=True)
 class Scenario:
     id: str
+    #: The group a per-category table reports it under (merge, update, recency, ...).
+    category: str
     #: Where the scenario comes from: issues, PRs, prompt rules.
     origin: str
     waves: tuple[Wave, ...]
@@ -345,7 +348,7 @@ async def run_scenario(client: Hindsight, bank_id: str, settled: SettleFn, scena
         for j, fact in enumerate(wave.facts):
             item: dict[str, Any] = {
                 "content": fact.text,
-                "timestamp": f"{fact.on}T12:00:00Z",
+                "timestamp": fact.on if "T" in fact.on else f"{fact.on}T12:00:00Z",
                 "document_id": f"{scenario.id}-w{wave_no}-{j}",
                 "entities": [{"text": e} for e in fact.entities],
             }
@@ -527,6 +530,7 @@ def noisy_service_bank() -> Scenario:
         ),
     )
     return Scenario(
+        category="scale",
         id="noisy-service-catalogue",
         origin="#1907 (twin ranked out of view), #1977/#2000 (update drifts into a duplicate), #1566",
         # Growth is reported, not gated, here: whether a restatement updates rather than
@@ -638,6 +642,7 @@ def noisy_personal_bank() -> Scenario:
         ),
     )
     return Scenario(
+        category="scale",
         id="noisy-personal-contacts",
         origin="#1907 (finding the twin at scale), rule 9 (lookalike people), #1151 (newer fact supersedes)",
         # Growth is reported, not gated — see noisy_service_bank.
@@ -652,5 +657,100 @@ def noisy_personal_bank() -> Scenario:
             "Some observation presents Maria as currently living in Turin, without saying she moved.",
             "Some observation presents Paolo as currently working as a teacher, without saying he changed jobs.",
             "Some observation says Mario moved to Bologna or Paola works as a pilot.",
+        ),
+    )
+
+
+#: What a busy team bank receives between real news: small talk, momentary state, thanks.
+_SESSION_CHATTER = (
+    "The user said good morning.",
+    "The user said they were grabbing a coffee.",
+    "The user said thanks, that fixed it.",
+    "The user's screen showed the CI pipeline page.",
+    "The user asked to pause for a quick call.",
+    "The user said the office wifi was slow again.",
+    "The user is reading the deploy logs right now.",
+    "The user said they would be back after lunch.",
+    "The user mentioned they were tired today.",
+    "The user said great, let's continue.",
+    "The user is looking at the Grafana dashboard.",
+    "The user said the build is running.",
+    "The user asked to wait a minute.",
+    "The user said see you tomorrow.",
+    "The user said ok, sounds good.",
+)
+
+
+def repetitive_service_bank() -> Scenario:
+    """A team bank in steady state: 12 services, then four waves that mostly repeat it.
+
+    The shape of real traffic, where most retained facts restate what the bank already
+    knows and much of the rest is chatter: each later wave brings 30 paraphrased
+    restatements and 15 lines of chatter, and wave 4 hides two real changes among them.
+    The changes must land as current, the neighbours must not move, and neither chatter
+    nor a repeat may become an observation of its own. This is the traffic a decision
+    model can settle without the LLM, so its cost line is the one to compare.
+    """
+    rng = random.Random(7310)
+    names = [f"{p}-{s}" for p in ("ledger", "billing", "invoice", "payout") for s in ("api", "worker", "sync")]
+    ports = rng.sample(range(8100, 8999), len(names))
+    spec = {n: _Service(rng.choice(_TEAMS), rng.choice(_LANGUAGES), port) for n, port in zip(names, ports, strict=True)}
+    spec["billing-api"] = _Service("Atlas", "Kotlin", 8211)
+    spec["billing-worker"] = _Service("Atlas", "Kotlin", 8212)
+
+    def stated(name: str, s: _Service, day: str) -> list[Fact]:
+        return [
+            Fact(f"The {name} service is owned by team {s.team}.", day, (name, f"team {s.team}")),
+            Fact(f"The {name} service is written in {s.language}.", day, (name,)),
+            Fact(f"The {name} service listens on port {s.port}.", day, (name,)),
+        ]
+
+    def restated(name: str, s: _Service, day: str) -> list[Fact]:
+        return [
+            Fact(f"Team {s.team} is responsible for {name}.", day, (name, f"team {s.team}")),
+            Fact(f"{name} belongs to team {s.team}.", day, (name, f"team {s.team}")),
+            Fact(f"{name} is implemented in {s.language}.", day, (name,)),
+            Fact(f"{name} is a {s.language} codebase.", day, (name,)),
+            Fact(f"{name} serves traffic on port {s.port}.", day, (name,)),
+            Fact(f"Port {s.port} is where {name} listens.", day, (name,)),
+        ]
+
+    seed = [f for name, s in spec.items() for f in stated(name, s, "2026-08-03")]
+    waves = [Wave(tuple(seed))]
+    for wave_no, day in enumerate(("2026-08-10", "2026-08-17", "2026-08-24", "2026-08-31"), 2):
+        if wave_no == 4:
+            spec["billing-api"] = _Service("Nimbus", "Kotlin", 8211)
+            spec["ledger-sync"] = _Service(spec["ledger-sync"].team, spec["ledger-sync"].language, 9443)
+        pool = [f for name, s in spec.items() for f in restated(name, s, day)]
+        facts = rng.sample(pool, 30) + [
+            Fact(text, day, ("user",), durable=False) for text in rng.sample(_SESSION_CHATTER, 15)
+        ]
+        if wave_no == 4:
+            facts += [
+                Fact(
+                    "Ownership of the billing-api service moved from team Atlas to team Nimbus.",
+                    day,
+                    ("billing-api", "team Nimbus", "team Atlas"),
+                ),
+                Fact("The ledger-sync service moved to port 9443.", day, ("ledger-sync",)),
+            ]
+        rng.shuffle(facts)
+        waves.append(Wave(tuple(facts)))
+    return Scenario(
+        category="repetition",
+        id="repetitive-service-catalogue",
+        origin="steady-state traffic: mostly restatements and chatter, a rare change",
+        waves=tuple(waves),
+        focus=("billing-api", "billing-worker", "ledger-sync", "coffee", "wifi", "thanks", "Grafana", "lunch"),
+        must=(
+            "An observation states that billing-api is currently owned by team Nimbus.",
+            "An observation states that ledger-sync currently listens on port 9443.",
+            "billing-worker is still recorded as owned by team Atlas.",
+        ),
+        traps=(
+            "Some observation presents billing-api as currently owned by team Atlas, without saying it moved.",
+            "Some observation records small talk or momentary state: a greeting, coffee, the wifi, thanks, lunch, "
+            "what is on the user's screen.",
+            "Two or more observations state the same owner, language or port of the same service in different words.",
         ),
     )

@@ -7,11 +7,26 @@ rather than as dict literals spread across the test modules and conftest.
 
 from __future__ import annotations
 
-from typing import Literal
+from collections.abc import Collection, Iterable
+from typing import Literal, Protocol
 
+import pytest
 from pydantic import BaseModel, Field
 
-EvalKind = Literal["knowledge_page", "delta_update", "reflect", "retain", "source_priority", "consolidation"]
+EvalKind = Literal["knowledge_page", "delta_update", "reflect", "retain", "source_priority", "consolidation", "recall"]
+#: The operation an eval grades: one test file each, ``evals/<operation>/test_<operation>.py``.
+Operation = Literal["retain", "recall", "consolidation", "reflect", "refresh_pages"]
+
+#: ``kind`` predates operations and is the dashboard's contract, so it stays; this maps it.
+_OPERATION: dict[str, Operation] = {
+    "retain": "retain",
+    "recall": "recall",
+    "consolidation": "consolidation",
+    "reflect": "reflect",
+    "source_priority": "reflect",
+    "knowledge_page": "refresh_pages",
+    "delta_update": "refresh_pages",
+}
 
 
 class EvalRecord(BaseModel):
@@ -25,6 +40,11 @@ class EvalRecord(BaseModel):
     page_id: str = ""
     #: The page's size after each wave; empty for a one-shot reflect answer.
     sizes: list[int] = Field(default_factory=list)
+
+
+    @property
+    def operation(self) -> Operation:
+        return _OPERATION[self.kind]
 
 
 class KindSummary(BaseModel):
@@ -59,6 +79,8 @@ class RunReport(BaseModel):
     #: The same counts per suite, keyed by ``EvalKind``: a page and a one-shot
     #: answer fail for different reasons and should not hide inside one rate.
     by_kind: dict[str, KindSummary]
+    #: Operation -> category -> counts: the table a model comparison reads (``eval-table``).
+    by_category: dict[str, dict[str, KindSummary]] = Field(default_factory=dict)
     items: list[EvalRecord]
 
     def to_json(self) -> str:
@@ -71,6 +93,32 @@ def summarise(records: list[EvalRecord]) -> KindSummary:
         correct=sum(1 for r in records if r.correct),
         trap_count=sum(1 for r in records if r.hit_trap),
     )
+
+
+def by_category(records: list[EvalRecord]) -> dict[str, dict[str, KindSummary]]:
+    table: dict[str, dict[str, list[EvalRecord]]] = {}
+    for record in records:
+        table.setdefault(record.operation, {}).setdefault(record.category, []).append(record)
+    return {op: {cat: summarise(rs) for cat, rs in sorted(cats.items())} for op, cats in sorted(table.items())}
+
+
+class Categorised(Protocol):
+    @property
+    def id(self) -> str: ...
+    @property
+    def category(self) -> str: ...
+
+
+def case_params(cases: Iterable[Categorised], minimum: Collection[str]) -> list[object]:
+    """The pytest params of an operation's cases, each id'd ``<category>/<case id>``.
+
+    The category in the id is what ``-k`` selects on (``-k "temporal/"``) and what a
+    per-category table groups by; a case outside ``minimum`` is marked ``full``.
+    """
+    return [
+        pytest.param(case, id=f"{case.category}/{case.id}", marks=() if case.id in minimum else pytest.mark.full)
+        for case in cases
+    ]
 
 
 #: Filled by the evals as they finish; written once at session end. A failed

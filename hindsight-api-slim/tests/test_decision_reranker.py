@@ -1,15 +1,21 @@
 """Recall's decision-model reranker: one question per candidate, ordered by the answers."""
 
+import asyncio
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 
+import numpy as np
 import pytest
 
 from hindsight_api.config import DecisionModelConfig
-from hindsight_api.engine.decision_model import DecisionAnswer
+from hindsight_api.engine import decision_rerank_interface
+from hindsight_api.engine.decision_model import DecisionAnswer, DecisionModel
+from hindsight_api.engine.decision_rerank_interface import MAX_MEMORY_TOKENS, MAX_SHARED_CONTEXT_TOKENS
 from hindsight_api.engine.search.decision_reranker import (
-    _MAX_MEMORY_TOKENS,
-    _MAX_SHARED_CONTEXT_TOKENS,
     DecisionModelReranker,
+    DecisionRerankOptions,
+    rerank_options,
     rerank_shared_context,
 )
 from hindsight_api.engine.search.reranking import CrossEncoderReranker
@@ -18,19 +24,37 @@ from hindsight_api.engine.token_encoding import count_tokens
 
 
 class _Client:
-    """Answers each candidate's question from ``keep``, by memory text."""
+    """Answers each candidate's question from ``keep``, by memory text; a dedup question
+    is a repeat when its (Memory A, Memory B) texts are in ``repeats``."""
 
-    def __init__(self, keep=None):
+    def __init__(self, keep=None, repeats=()):
         self.keep = keep or {}
+        self.repeats = set(repeats)
         self.asked: list[tuple[str, dict]] = []
+        self.scopes: list[str] = []
         self.max_request_tokens = 26_000
+        self.tokenizer = None
+
+    rerank_interface = DecisionModel.rerank_interface
 
     async def ask_all(self, state, questions, *, scope):
         self.asked.append((state, questions))
-        return {
-            key: DecisionAnswer(noul=self.keep.get(question.instructions["memory"], 0.5))
-            for key, question in questions.items()
-        }
+        self.scopes.append(scope)
+        return {key: DecisionAnswer(noul=self._answer(question.instructions)) for key, question in questions.items()}
+
+    def _answer(self, instructions) -> float:
+        if "memory_a" in instructions:
+            return 0.9 if (instructions["memory_a"], instructions["memory_b"]) in self.repeats else 0.1
+        return self.keep.get(instructions["memory"], 0.5)
+
+    @property
+    def pairs(self) -> list[tuple[str, str]]:
+        return [
+            (q.instructions["memory_a"], q.instructions["memory_b"])
+            for _, questions in self.asked
+            for q in questions.values()
+            if "memory_a" in q.instructions
+        ]
 
 
 def _reranker(client: _Client) -> DecisionModelReranker:
@@ -142,7 +166,7 @@ class TestSharedState:
             await reranker.predict([("q", "a"), ("q", "b")])
         finally:
             rerank_shared_context.reset(token)
-        assert count_tokens(client.asked[0][0]) <= _MAX_SHARED_CONTEXT_TOKENS + count_tokens("\n\nQuestion: q")
+        assert count_tokens(client.asked[0][0]) <= MAX_SHARED_CONTEXT_TOKENS + count_tokens("\n\nQuestion: q")
 
     async def test_a_huge_memory_is_capped(self):
         """One question carries one memory; uncapped, a single long one could outgrow the
@@ -150,8 +174,17 @@ class TestSharedState:
         client = _Client()
         await _reranker(client).predict([("q", "word " * 20_000), ("q", "short")])
         memories = [q.instructions["memory"] for q in client.asked[0][1].values()]
-        assert count_tokens(memories[0]) <= _MAX_MEMORY_TOKENS
+        assert count_tokens(memories[0]) <= MAX_MEMORY_TOKENS
         assert memories[1] == "short"
+
+    async def test_the_caps_count_in_the_models_own_vocabulary(self):
+        """Capped by o200k_base, a mixed-script memory would still run past 4k by Jev's count."""
+        client = _Client()
+        client.tokenizer = "jev"
+        await _reranker(client).predict([("q", "東京 café naïve 🎉 " * 3_000), ("q", "short")])
+        memory = next(iter(client.asked[0][1].values())).instructions["memory"]
+        assert count_tokens(memory, "jev") <= MAX_MEMORY_TOKENS
+        assert count_tokens(memory) < MAX_MEMORY_TOKENS - 500
 
     async def test_a_low_request_ceiling_shrinks_the_caps(self):
         """A ceiling below the caps would otherwise fail every request."""
@@ -177,6 +210,33 @@ class TestSharedState:
         assert state == f"Current date: 2024-05-01\n\n{self.PROFILE}\n\nQuestion: q"
         assert [q.instructions["memory"] for q in questions.values()] == ["a", "b"]
 
+    async def test_a_memory_with_no_event_date_shows_the_day_it_was_stored(self):
+        """Without it the model cannot tell yesterday's memory from last year's."""
+        client = _Client()
+        reranker = CrossEncoderReranker(cross_encoder=_reranker(client))
+        stored = RetrievalResult(
+            id="pottery",
+            text="I went to a pottery class.",
+            fact_type="world",
+            mentioned_at=datetime(2024, 6, 14, tzinfo=UTC),
+        )
+        dated = RetrievalResult(
+            id="concert",
+            text="I went to a jazz concert.",
+            fact_type="world",
+            occurred_start=datetime(2024, 6, 15, tzinfo=UTC),
+            mentioned_at=datetime(2024, 6, 16, tzinfo=UTC),
+        )
+        await reranker.rerank(
+            "what did I do yesterday?",
+            [MergedCandidate(retrieval=r, rrf_score=0.0, source_ranks={}) for r in (stored, dated)],
+            now=datetime(2024, 6, 16, tzinfo=UTC),
+        )
+        assert [q.instructions["memory"] for q in client.asked[0][1].values()] == [
+            "[Date: June 14, 2024 (2024-06-14)] I went to a pottery class.",
+            "[Date: June 15, 2024 (2024-06-15)] I went to a jazz concert.",
+        ]
+
     async def test_without_a_question_date_it_is_today(self):
         client = _Client()
         reranker = CrossEncoderReranker(cross_encoder=_reranker(client))
@@ -184,6 +244,178 @@ class TestSharedState:
         await reranker.rerank("q", [_candidate("a"), _candidate("b")])
         after = datetime.now(UTC).date()
         assert client.asked[0][0] in {f"Current date: {day.isoformat()}\n\nQuestion: q" for day in (before, after)}
+
+
+@contextmanager
+def _options(**options) -> Iterator[None]:
+    """What CrossEncoderReranker.rerank() sets for one recall."""
+    token = rerank_options.set(DecisionRerankOptions(**options))
+    try:
+        yield
+    finally:
+        rerank_options.reset(token)
+
+
+async def _predict(client: _Client, docs: list[str], **options) -> list[float]:
+    with _options(**options):
+        return await _reranker(client).predict([("q", doc) for doc in docs])
+
+
+TEA, TEA_AGAIN = "Marta favourite tea is genmaicha", "Marta favorite tea is genmaicha"
+SENCHA = "Marta drinks sencha"
+
+
+class TestPrune:
+    async def test_off_by_default_nothing_is_dropped(self):
+        client = _Client({"tea is genmaicha": 0.9, "offsite in lisbon": 0.01})
+        assert all(score > 0.0 for score in await _predict(client, ["tea is genmaicha", "offsite in lisbon"]))
+
+    async def test_a_candidate_judged_no_help_is_dropped_but_the_best_always_survives(self):
+        client = _Client({"tea is genmaicha": 0.9, "offsite in lisbon": 0.1})
+        assert await _predict(client, ["offsite in lisbon", "tea is genmaicha"], prune=True) == [0.0, 1.0]
+
+        # Relative to the best: 0.3 clears the floor but not 40% of 0.9.
+        crowded = _Client({"tea is genmaicha": 0.9, "offsite in lisbon": 0.3})
+        assert (await _predict(crowded, ["offsite in lisbon", "tea is genmaicha"], prune=True))[0] == 0.0
+
+        lonely = _Client({"offsite in lisbon": 0.05})
+        assert (await _predict(lonely, ["offsite in lisbon"], prune=True))[0] > 0.0
+
+    async def test_pruning_asks_nothing_more_than_ranking(self):
+        client = _Client({TEA: 0.9, TEA_AGAIN: 0.85}, repeats={(TEA, TEA_AGAIN)})
+        assert all(score > 0.0 for score in await _predict(client, [TEA, TEA_AGAIN], prune=True))
+        assert client.scopes == ["decision_recall_rerank"]
+
+    async def test_recall_leaves_the_dropped_candidates_out(self):
+        client = _Client({"tea is genmaicha": 0.9, "offsite in lisbon": 0.1})
+        reranker = CrossEncoderReranker(cross_encoder=_reranker(client))
+        candidates = [_candidate("offsite in lisbon"), _candidate("tea is genmaicha")]
+        assert len((await reranker.rerank("q", candidates)).results) == 2
+        result = await reranker.rerank("q", candidates, prune=True)
+        assert [r.candidate.retrieval.text for r in result.results] == ["tea is genmaicha"]
+
+
+class TestDedup:
+    async def test_a_repeat_of_a_better_ranked_candidate_is_dropped_in_one_more_request(self):
+        client = _Client({TEA: 0.9, TEA_AGAIN: 0.8, SENCHA: 0.7}, repeats={(TEA, TEA_AGAIN)})
+        scores = await _predict(client, [TEA_AGAIN, SENCHA, TEA], dedup=True)
+        assert scores[0] == 0.0 and scores[1] > 0.0 and scores[2] == 1.0
+        assert client.scopes == ["decision_recall_rerank", "decision_recall_dedup"]
+        # Each pair once, the better-ranked as Memory A.
+        assert sorted(client.pairs) == sorted([(TEA, TEA_AGAIN), (TEA, SENCHA), (TEA_AGAIN, SENCHA)])
+
+    async def test_off_no_second_request(self):
+        client = _Client({TEA: 0.9, TEA_AGAIN: 0.8}, repeats={(TEA, TEA_AGAIN)})
+        assert all(score > 0.0 for score in await _predict(client, [TEA, TEA_AGAIN]))
+        assert client.scopes == ["decision_recall_rerank"]
+
+    async def test_only_the_candidates_left_after_the_cut_are_compared(self):
+        client = _Client({TEA: 0.9, TEA_AGAIN: 0.8, "offsite in lisbon": 0.05})
+        await _predict(client, [TEA, TEA_AGAIN, "offsite in lisbon"], prune=True, dedup=True)
+        assert client.pairs == [(TEA, TEA_AGAIN)]
+
+    async def test_a_repeat_of_a_dropped_candidate_stays(self):
+        """Greedy in rank order, so a chain does not drop its own head."""
+        a, b, c = "Acme signed the beta", "Acme signed the beta deal", "Acme signed the beta contract"
+        client = _Client({a: 0.9, b: 0.8, c: 0.7}, repeats={(a, b), (b, c)})
+        assert [score > 0.0 for score in await _predict(client, [a, b, c], dedup=True)] == [True, False, True]
+
+    async def test_different_dates_and_fact_types_are_not_compared(self):
+        may3 = "[Date: May 03, 2026 (2026-05-03)] Sam went climbing"
+        may10 = "[Date: May 10, 2026 (2026-05-10)] Sam went climbing"
+        client = _Client({may3: 0.9, may10: 0.8}, repeats={(may3, may10)})
+        assert all(score > 0.0 for score in await _predict(client, [may3, may10], dedup=True))
+        assert client.pairs == []
+
+        fact, observation = "Marta leads payments", "Marta has led payments since 2022"
+        client = _Client({fact: 0.9, observation: 0.8}, repeats={(fact, observation)})
+        scores = await _predict(client, [fact, observation], dedup=True, fact_types=["world", "observation"])
+        assert all(score > 0.0 for score in scores)
+        assert client.pairs == []
+
+    async def test_recall_leaves_the_repeat_out(self):
+        client = _Client({TEA: 0.9, TEA_AGAIN: 0.8}, repeats={(TEA, TEA_AGAIN)})
+        reranker = CrossEncoderReranker(cross_encoder=_reranker(client))
+        result = await reranker.rerank("q", [_candidate(TEA_AGAIN), _candidate(TEA)], dedup=True)
+        assert [r.candidate.retrieval.text for r in result.results] == [TEA]
+
+
+# Stored embeddings: the two tea memories point the same way, sencha elsewhere.
+_VECTORS = {TEA: [1.0, 0.0], TEA_AGAIN: [0.95, 0.1], SENCHA: [0.0, 1.0]}
+
+
+async def _found(vectors: dict[str, list[float]] | None) -> dict[str, np.ndarray] | None:
+    return None if vectors is None else {key: np.array(vector) for key, vector in vectors.items()}
+
+
+class TestDedupAlike:
+    """With the stored embeddings, dedup asks only alike pairs, best-ranked first."""
+
+    async def _dedup(self, client: _Client, docs: list[str], vectors: dict[str, list[float]] | None) -> list[float]:
+        task = asyncio.create_task(_found(vectors))
+        return await _predict(client, docs, dedup=True, ids=docs, embeddings=task)
+
+    async def test_only_alike_pairs_are_asked(self):
+        client = _Client({TEA: 0.9, TEA_AGAIN: 0.8, SENCHA: 0.7}, repeats={(TEA, TEA_AGAIN)})
+        scores = await self._dedup(client, [TEA, TEA_AGAIN, SENCHA], _VECTORS)
+        assert client.pairs == [(TEA, TEA_AGAIN)]
+        assert scores[1] == 0.0 and scores[2] > 0.0
+
+    async def test_no_qualifying_pair_skips_the_second_request(self):
+        client = _Client({TEA: 0.9, SENCHA: 0.7})
+        await self._dedup(client, [TEA, SENCHA], _VECTORS)
+        assert client.scopes == ["decision_recall_rerank"]
+
+    async def test_without_embeddings_every_pair_is_asked(self):
+        """The store keeps none (or the read failed): fall back to every kept pair."""
+        client = _Client({TEA: 0.9, TEA_AGAIN: 0.8, SENCHA: 0.7})
+        await self._dedup(client, [TEA, TEA_AGAIN, SENCHA], None)
+        assert len(client.pairs) == 3
+
+    async def test_a_candidate_without_an_embedding_is_not_compared(self):
+        client = _Client({TEA: 0.9, TEA_AGAIN: 0.8, SENCHA: 0.7})
+        await self._dedup(client, [TEA, TEA_AGAIN, SENCHA], {TEA: _VECTORS[TEA], SENCHA: _VECTORS[SENCHA]})
+        assert client.scopes == ["decision_recall_rerank"]
+
+    async def test_the_best_ranked_alike_pairs_are_asked_up_to_the_cap(self, monkeypatch):
+        monkeypatch.setattr(decision_rerank_interface, "MAX_REPEAT_PAIRS", 1)
+        closer = "Marta's favourite tea: genmaicha"
+        vectors = {**_VECTORS, closer: [1.0, 0.01]}
+        client = _Client({TEA: 0.9, TEA_AGAIN: 0.8, closer: 0.7})
+        await self._dedup(client, [TEA, TEA_AGAIN, closer], vectors)
+        assert client.pairs == [(TEA, TEA_AGAIN)]
+
+    async def test_only_the_kept_candidates_are_compared(self):
+        client = _Client({TEA: 0.9, TEA_AGAIN: 0.05, SENCHA: 0.7})
+        await _predict(
+            client,
+            [TEA, TEA_AGAIN, SENCHA],
+            prune=True,
+            dedup=True,
+            ids=[TEA, TEA_AGAIN, SENCHA],
+            embeddings=asyncio.create_task(_found(_VECTORS)),
+        )
+        assert client.scopes == ["decision_recall_rerank"]
+
+    async def test_the_embeddings_are_read_alongside_the_ranking_request(self):
+        """No round trip of its own: the ranking request is still out when the read runs."""
+        read_ran = asyncio.Event()
+
+        async def read() -> dict[str, np.ndarray] | None:
+            read_ran.set()
+            return await _found(_VECTORS)
+
+        class _Ranking(_Client):
+            async def ask_all(self, state, questions, *, scope):
+                if scope == "decision_recall_rerank":
+                    await asyncio.wait_for(read_ran.wait(), timeout=5)
+                return await super().ask_all(state, questions, scope=scope)
+
+        client = _Ranking({TEA: 0.9, TEA_AGAIN: 0.8}, repeats={(TEA, TEA_AGAIN)})
+        reranker = CrossEncoderReranker(cross_encoder=_reranker(client))
+        task = asyncio.create_task(read())
+        result = await reranker.rerank("q", [_candidate(TEA), _candidate(TEA_AGAIN)], dedup=True, embeddings=task)
+        assert [r.candidate.retrieval.text for r in result.results] == [TEA]
 
 
 @pytest.fixture(autouse=True)

@@ -20,6 +20,7 @@ from hindsight_api.engine.cross_encoder import (
     create_cross_encoder_from_env,
 )
 from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
+from hindsight_api.engine.remote_retry import RetryPolicy
 from hindsight_api.engine.token_encoding import count_tokens
 
 
@@ -155,23 +156,23 @@ class TestRanking:
     @pytest.mark.asyncio
     async def test_candidates_are_the_options_and_the_query_is_the_question(self):
         encoder, session = _encoder({"c0": 1.0})
-        await encoder._predict([("who paid?", "Alice paid the bill")])
+        await encoder._predict([("who paid?", "Alice paid the bill"), ("who paid?", "Bob left early")])
 
         body = session.rank_requests[0]
         assert body["model"] == "jev-latest"
         assert "who paid?" in body["state"]
         question = body["questions"]["rank"]
         assert question["type"] == "choice"
-        assert question["criteria"] == {"c0": "Alice paid the bill"}
+        assert question["criteria"] == {"c0": "Alice paid the bill", "c1": "Bob left early"}
 
     @pytest.mark.asyncio
     async def test_each_query_is_ranked_in_its_own_pool(self):
         """Two queries cannot share a ranking: a Choice ranks against one question."""
         encoder, session = _encoder({"c0": 0.9, "c1": 0.1})
-        scores = await encoder._predict([("a", "doc-a"), ("b", "doc-b"), ("a", "doc-a2")])
+        scores = await encoder._predict([("a", "doc-a"), ("b", "doc-b"), ("a", "doc-a2"), ("b", "doc-b2")])
 
         assert len(session.rank_requests) == 2
-        assert len(scores) == 3
+        assert len(scores) == 4
         assert scores[0] > scores[2], "query a's own two candidates keep their order"
 
     @pytest.mark.asyncio
@@ -290,7 +291,27 @@ class _SufficiencySession(_FakeSession):
         yield _FakeResponse({"answers": {"sufficient": answer}})
 
 
+class _RateLimitedOnceSession(_SufficiencySession):
+    """Refuses the first request with a 429, as a shared endpoint under load does."""
+
+    def post(self, url, headers=None, json=None):
+        if not self.refused:
+            self.refused.append(json)
+            raise UpstreamHTTPError(429, "Too Many Requests", {}, url)
+        return super().post(url, headers=headers, json=json)
+
+
 class TestSufficiency:
+    @pytest.mark.asyncio
+    async def test_a_rate_limit_is_retried_not_read_as_not_enough(self):
+        """A 429 used to fail the verdict, and reflect then ran the agent turns it exists to save."""
+        encoder = TypeSafeCrossEncoder(api_key="k")
+        encoder.retry_policy = RetryPolicy(initial_backoff=0.01, max_backoff=0.01)
+        encoder._session = _RateLimitedOnceSession(2.0, {"0": 0.0, "1": 0.1, "2": 0.9})
+
+        assert await encoder.evidence_is_sufficient("q", "evidence") is True
+        assert len(encoder._session.refused) == 1 and len(encoder._session.posted) == 1
+
     @staticmethod
     async def _verdict(score: float, probabilities: dict[str, float] | None) -> bool:
         encoder = TypeSafeCrossEncoder(api_key="k")
@@ -362,7 +383,14 @@ class TestPageImpact:
         body = (await self._ask({"choice": "yes"})).request
         state = body["state"]
         assert "Who is on call?" in state and "Dana left the company." in state and "Dana is on call." in state
-        assert set(body["questions"]["impact"]["criteria"]) == {"yes", "no"}
+        criteria = set(body["questions"]["impact"]["criteria"])
+        assert {"yes", "no"} <= criteria and len(criteria) > 2
+
+    @pytest.mark.asyncio
+    async def test_a_hedged_answer_keeps_it(self):
+        """Every option but "no" keeps the memory, so a doubt split across them never drops it."""
+        assert (await self._ask({"choice": "maybe"})).verdict is True
+        assert (await self._ask({"choice": "no"})).verdict is False
 
     @pytest.mark.asyncio
     async def test_an_oversized_page_keeps_its_head(self):
@@ -384,7 +412,7 @@ class TestMinKeep:
 
 
 class TestFactory:
-    def test_provider_is_built_from_config(self):
+    def test_provider_is_built_from_config(self, caplog):
         config = _make_config(
             reranker_provider="typesafe",
             reranker_typesafe_api_key="k",
@@ -399,6 +427,8 @@ class TestFactory:
         assert encoder.provider_name == "typesafe"
         assert encoder.model == "jev-latest"
         assert encoder.prunes_candidates is True
+        # Deprecated in favour of the shared decision model; building it says so.
+        assert "HINDSIGHT_API_DECISION_MODEL_PROVIDER" in caplog.text
 
     def test_missing_api_key_names_its_env_var(self):
         config = _make_config(reranker_provider="typesafe")
@@ -414,11 +444,20 @@ class TestFactory:
     @pytest.mark.asyncio
     async def test_base_url_is_honoured(self):
         encoder, session = _encoder({"c0": 1.0}, base_url="https://proxy.example.com/")
-        await encoder._predict([("q", "doc")])
+        await encoder._predict([("q", "doc"), ("q", "other doc")])
         assert session.urls == ["https://proxy.example.com/v1/systemone"]
 
 
 class TestTokenBudgetingAndOrder:
+    @pytest.mark.asyncio
+    async def test_one_candidate_is_ranked_without_a_choice(self):
+        """Jev rejects a one-option Choice, so a bank with one memory failed recall with a 400."""
+        encoder, session = _encoder({}, prune_candidates=True, cut_level=5)
+        scores = await encoder._predict([("q", "the only memory")])
+
+        assert session.rank_requests == []
+        assert scores == [1.0]
+
     @pytest.mark.asyncio
     async def test_single_round_fast_path_when_pool_fits(self):
         """When candidates <= 250 and within token limit, only 1 request is made (no finals)."""

@@ -282,6 +282,7 @@ async def test_batch_api_accepts_top_level_fact_list(mock_llm_config, test_conte
 
     assert len(facts) == 1
     assert "Alice" in facts[0].fact_text
+    assert "Where: TechCorp" in facts[0].fact_text  # #6129
     assert len(chunks) == 1
     assert chunks[0].fact_count == 1
     assert usage.total_tokens == 150

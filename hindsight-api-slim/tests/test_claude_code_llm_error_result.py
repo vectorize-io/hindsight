@@ -227,67 +227,6 @@ async def test_call_survives_span_recorder_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call_with_tools_raises_with_result_text_on_error_result(monkeypatch):
-    """call_with_tools() must surface ResultMessage.result the same way."""
-    import claude_agent_sdk
-
-    class _FakeClient:
-        def __init__(self, options: _FakeOptions) -> None:
-            self.options = options
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def query(self, prompt: str) -> None:
-            return None
-
-        async def receive_response(self):
-            yield _FakeResultMessage(subtype="success", is_error=True, result=QUOTA_ERROR_TEXT)
-
-    @dataclass
-    class _FakeSdkMcpTool:
-        name: str
-        description: str
-        input_schema: dict[str, Any]
-        handler: Any
-
-    def fake_create_sdk_mcp_server(name: str, version: str, tools=None):
-        return {"name": name, "version": version, "tools": tools}
-
-    monkeypatch.setattr(claude_agent_sdk, "ClaudeAgentOptions", _FakeOptions)
-    monkeypatch.setattr(claude_agent_sdk, "AssistantMessage", _FakeAssistantMessage)
-    monkeypatch.setattr(claude_agent_sdk, "TextBlock", _FakeTextBlock)
-    monkeypatch.setattr(claude_agent_sdk, "ResultMessage", _FakeResultMessage)
-    monkeypatch.setattr(claude_agent_sdk, "ToolUseBlock", type("ToolUseBlock", (), {}))
-    monkeypatch.setattr(claude_agent_sdk, "ClaudeSDKClient", _FakeClient)
-    monkeypatch.setattr(claude_agent_sdk, "SdkMcpTool", _FakeSdkMcpTool)
-    monkeypatch.setattr(claude_agent_sdk, "create_sdk_mcp_server", fake_create_sdk_mcp_server)
-
-    provider = _instantiate_provider()
-    with pytest.raises(ProviderRateLimitResetError) as excinfo:
-        await provider.call_with_tools(
-            messages=[{"role": "user", "content": "hi"}],
-            tools=[
-                {
-                    "function": {
-                        "name": "noop",
-                        "description": "no-op",
-                        "parameters": {"type": "object", "properties": {}},
-                    }
-                }
-            ],
-            max_retries=2,
-            scope="test",
-        )
-
-    assert QUOTA_ERROR_TEXT in str(excinfo.value)
-    assert excinfo.value.retry_at > datetime.now(UTC)
-
-
-@pytest.mark.asyncio
 async def test_call_keeps_a_fence_marker_inside_a_json_value(monkeypatch):
     """A ``` inside a string value must not cut the payload short (#4819)."""
     import claude_agent_sdk

@@ -5,17 +5,15 @@ fallback — a delete with no target cannot be guessed at without risking the wr
 row — so it stays required and a delete that omits it still fails closed.
 
 What made that expensive is that rejecting one delete entry rejects the ENTIRE
-``_ConsolidationBatchResponse``: the batch's good creates and updates go with it,
+answer (``_FactBatchResponse``): the batch's good creates and updates go with it,
 the batch is reported failed, and the caller bisects. A model that reliably omits
 the field therefore drains the whole supersession path while every run-level
 counter still reads healthy.
 
 Two things narrow it, and these tests pin both:
 
-1. The prompt now shows the shape of a delete entry — a worked example with a
-   populated ``deletes`` array, and a field rule that says the id is mandatory.
-   Before this, both examples ended in ``"deletes": []`` and the ``deletes`` rule
-   only said *when* to delete.
+1. The prompt shows the shape of a delete entry — a populated ``deletes`` array
+   in the rule that says when to delete, naming the ``observation_id``.
 2. ``_DeleteAction`` accepts ``id`` as an alias, the name a model copying the
    observation's own field emits. Unambiguous — a delete entry carries exactly one
    identifier — and it keeps a near-miss from discarding the creates beside it.
@@ -33,14 +31,15 @@ from pydantic import ValidationError
 
 from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.consolidation.consolidator import (
-    _ConsolidationBatchResponse,
     _CreateAction,
     _DeleteAction,
+    _FactBatchResponse,
     run_consolidation_job,
 )
 from hindsight_api.engine.consolidation.prompts import build_consolidation_system_prompt
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.providers.mock_llm import MockLLM
+from tests.consolidation_answers import batch_fact_ids, fact_answer
 
 
 @pytest.fixture(autouse=True)
@@ -66,17 +65,13 @@ def _override_config(memory: MemoryEngine, **overrides):
 def test_delete_accepts_the_id_alias():
     """``id`` is what a model copying the observation's own field name emits."""
     obs_id = str(uuid.uuid4())
-    response = _ConsolidationBatchResponse.model_validate(
-        {"deletes": [{"id": obs_id, "reason": "superseded by the new fact"}]}
-    )
+    response = _FactBatchResponse.model_validate({"deletes": [{"id": obs_id, "reason": "superseded by the new fact"}]})
     assert [d.observation_id for d in response.deletes] == [obs_id]
 
 
 def test_delete_still_accepts_the_canonical_name():
     obs_id = str(uuid.uuid4())
-    response = _ConsolidationBatchResponse.model_validate(
-        {"deletes": [{"observation_id": obs_id, "reason": "superseded"}]}
-    )
+    response = _FactBatchResponse.model_validate({"deletes": [{"observation_id": obs_id, "reason": "superseded"}]})
     assert [d.observation_id for d in response.deletes] == [obs_id]
     # populate_by_name keeps in-process construction working too.
     assert _DeleteAction(observation_id=obs_id).observation_id == obs_id
@@ -86,7 +81,7 @@ def test_delete_naming_no_target_still_fails_closed():
     """A delete that identifies nothing is rejected — the alias widens what counts
     as an identifier, it does not invent one from ``reason`` prose."""
     with pytest.raises(ValidationError) as exc_info:
-        _ConsolidationBatchResponse.model_validate({"deletes": [{"reason": "the Civic observation is superseded"}]})
+        _FactBatchResponse.model_validate({"deletes": [{"reason": "the Civic observation is superseded"}]})
 
     errors = exc_info.value.errors()
     assert [e["type"] for e in errors] == ["missing"]
@@ -100,19 +95,18 @@ def test_alias_saves_the_creates_and_updates_in_the_same_response():
     """
     obs_id = str(uuid.uuid4())
     payload = {
-        "creates": [{"text": "Alice works nights.", "source_fact_ids": [str(uuid.uuid4())], "reason": "new facet"}],
-        "updates": [],
+        "facts": [{"fact_id": "F1", "kind": "lasting", "adds": "yes", "new": ["Alice works nights."]}],
         "deletes": [{"id": obs_id, "reason": "superseded"}],
     }
-    response = _ConsolidationBatchResponse.model_validate(payload)
-    assert len(response.creates) == 1
+    response = _FactBatchResponse.model_validate(payload)
+    assert len(response.facts) == 1
     assert response.deletes[0].observation_id == obs_id
 
 
 def test_json_schema_still_advertises_only_the_canonical_name():
     """The alias must not change what a grammar-constrained provider is told to
     emit — it only widens what a free-form one gets away with."""
-    schema = _ConsolidationBatchResponse.model_json_schema()["$defs"]["_DeleteAction"]
+    schema = _FactBatchResponse.model_json_schema()["$defs"]["_DeleteAction"]
     assert schema["required"] == ["observation_id"]
     # `merged_into` is optional: a delete that folds its content into another observation
     # names it, so the evidence moves there instead of being re-queued.
@@ -126,13 +120,13 @@ def test_json_schema_still_advertises_only_the_canonical_name():
 
 def test_prompt_states_that_deletes_need_an_observation_id():
     prompt = build_consolidation_system_prompt()
-    deletes_rule = next(line for line in prompt.splitlines() if line.startswith("- `deletes`"))
+    deletes_rule = next(line for line in prompt.splitlines() if line.startswith("`deletes`"))
     assert "observation_id" in deletes_rule
 
 
 def test_prompt_shows_a_worked_example_of_a_populated_deletes_array():
-    """Both prior examples ended in ``"deletes": []``, so the model had never been
-    shown the shape of a delete entry."""
+    """With only ``"deletes": []`` in the examples, the model had never been shown the
+    shape of a delete entry."""
     prompt = build_consolidation_system_prompt()
     match = re.search(r'"deletes": \[\{[^}]*\}\]', prompt)
     assert match is not None, "no worked example with a populated deletes array"
@@ -176,7 +170,7 @@ def _install_llm(memory: MemoryEngine, callback):
 
 def _fact_ids(messages) -> list[str]:
     prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
-    return re.findall(r"\[([0-9a-f-]{36})\]", prompt)
+    return batch_fact_ids(prompt)
 
 
 async def _seed_one_observation(memory: MemoryEngine, bank_id: str, request_context, text: str, tags: list[str]) -> str:
@@ -186,10 +180,8 @@ async def _seed_one_observation(memory: MemoryEngine, bank_id: str, request_cont
 
     def seed_callback(messages, scope):
         if scope != "consolidation":
-            return _ConsolidationBatchResponse()
-        return _ConsolidationBatchResponse(
-            creates=[_CreateAction(text=text, source_fact_ids=[fid]) for fid in _fact_ids(messages)]
-        )
+            return fact_answer()
+        return fact_answer(creates=[_CreateAction(text=text, source_fact_ids=[fid]) for fid in _fact_ids(messages)])
 
     _install_llm(memory, seed_callback)
     with (
@@ -221,14 +213,15 @@ async def test_supersession_delete_lands_under_either_field_name(memory: MemoryE
 
         def deleting_callback(messages, scope):
             if scope != "consolidation":
-                return _ConsolidationBatchResponse()
-            return _ConsolidationBatchResponse.model_validate(
+                return fact_answer()
+            return _FactBatchResponse.model_validate(
                 {
-                    "creates": [
+                    "facts": [
                         {
-                            "text": "Bob uses the product through open signup.",
-                            "source_fact_ids": [fid],
-                            "reason": "replacement for the superseded waitlist observation",
+                            "fact_id": fid,
+                            "kind": "lasting",
+                            "adds": "yes",
+                            "new": ["Bob uses the product through open signup."],
                         }
                         for fid in _fact_ids(messages)
                     ],
@@ -270,18 +263,21 @@ async def test_delete_with_no_identifier_fails_the_batch_and_is_reported(memory:
 
         def malformed_callback(messages, scope):
             if scope != "consolidation":
-                return _ConsolidationBatchResponse()
+                return fact_answer()
             ids = _fact_ids(messages)
-            creates = [_CreateAction(text=f"Observation about {fid[:8]}", source_fact_ids=[fid]) for fid in ids]
+            creates = [_CreateAction(text=f"Observation about {fid}", source_fact_ids=[fid]) for fid in ids]
             if len(ids) > 1:
                 # Names the observation in prose only — no identifier at all.
-                return _ConsolidationBatchResponse.model_validate(
+                return _FactBatchResponse.model_validate(
                     {
-                        "creates": [c.model_dump() for c in creates],
+                        "facts": [
+                            {"fact_id": fid, "kind": "lasting", "adds": "yes", "new": [f"Observation about {fid}"]}
+                            for fid in ids
+                        ],
                         "deletes": [{"reason": "the Civic observation is superseded — Carol sold it"}],
                     }
                 )
-            return _ConsolidationBatchResponse(creates=creates)
+            return fact_answer(creates=creates)
 
         _install_llm(memory, malformed_callback)
         with (

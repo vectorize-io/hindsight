@@ -22,8 +22,12 @@ there.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 import time
+from dataclasses import dataclass
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -33,6 +37,44 @@ from .rulebook import ChatRequest, ReceivedWebhook, Stubs, TokenExchange
 from .validation import RequestRejected, validate_chat, validate_embeddings, validate_rerank, validate_systemone
 
 logger = logging.getLogger(__name__)
+
+
+#: The words Hindsight asks for a forced (named) call with (``tools_via_schema.turn_request``).
+_NAMED_TURN_RX = re.compile(r"^Call `([^`]+)` now")
+
+
+@dataclass(frozen=True)
+class SchemaToolTurn:
+    """A tool-calling turn made as a reply to a response schema, as Hindsight makes every one.
+
+    No ``tools`` are sent (``providers/tools_via_schema.py``): a free turn's schema is
+    ``{"call": one of the declared functions with its arguments}``, and a forced turn's is
+    that function's arguments, asked for in words. Rules keep scripting tool calls; the
+    call they return is written back as the JSON text the schema holds the reply to.
+    """
+
+    tools: tuple[str, ...]
+    named: bool
+
+    def reply_for(self, function: dict[str, Any]) -> dict[str, Any]:
+        arguments = json.loads(function.get("arguments") or "{}")
+        payload = arguments if self.named else {"call": {"name": function["name"], "arguments": arguments}}
+        return {"role": "assistant", "content": json.dumps(payload)}
+
+
+def _schema_tool_turn(body: dict[str, Any]) -> SchemaToolTurn | None:
+    """Recognised by shape: the provider names every response schema alike ("response")."""
+    schema = ((body.get("response_format") or {}).get("json_schema") or {}).get("schema") or {}
+    properties = schema.get("properties") or {}
+    if set(properties) == {"call"} and "anyOf" in properties["call"]:
+        options = properties["call"]["anyOf"]
+        return SchemaToolTurn(tools=tuple(o["properties"]["name"]["enum"][0] for o in options), named=False)
+    last = (body.get("messages") or [{}])[-1]
+    content = last.get("content")
+    match = _NAMED_TURN_RX.match(content) if schema and isinstance(content, str) else None
+    if match:
+        return SchemaToolTurn(tools=(match.group(1),), named=True)
+    return None
 
 
 def create_stub_app(stubs: Stubs) -> FastAPI:
@@ -52,10 +94,12 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
         body = await request.json()
         validate_chat(body)
 
+        turn = _schema_tool_turn(body)
         chat_request = ChatRequest(
             model=body["model"],
             messages=body["messages"],
-            tools=tuple(tool["function"]["name"] for tool in body.get("tools") or []),
+            # Hindsight sends no ``tools``: a tool turn is a reply to a response schema.
+            tools=turn.tools if turn else (),
             api_key=request.headers.get("authorization", "").removeprefix("Bearer ") or None,
             headers={k.lower(): v for k, v in request.headers.items()},
         )
@@ -87,18 +131,20 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
                 retry_after_seconds=reply.retry_after_seconds,
             )
 
+        message, finish_reason = reply.message, reply.finish_reason
+        if turn is not None and message.get("tool_calls"):
+            message, finish_reason = turn.reply_for(message["tool_calls"][0]["function"]), "stop"
+
         return JSONResponse(
             {
                 "id": "chatcmpl-stub",
                 "object": "chat.completion",
                 "created": int(time.time()),
                 "model": body["model"],
-                "choices": [
-                    {"index": 0, "message": reply.message, "finish_reason": reply.finish_reason, "logprobs": None}
-                ],
+                "choices": [{"index": 0, "message": message, "finish_reason": finish_reason, "logprobs": None}],
                 "usage": _usage(
                     chat_request.all_text,
-                    str(reply.message.get("content") or ""),
+                    str(message.get("content") or ""),
                     visible_tokens=reply.visible_tokens,
                     reasoning_tokens=reply.reasoning_tokens,
                 ),
@@ -217,7 +263,8 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
         gets a probability, and they sum to 1, so the stub scores each option's text
         lexically and normalises, except the ``impact`` choice, a delta refresh's gate,
         which is the rulebook's verdict on the memory as yes or no. A ``noul`` asks about one memory, and is answered
-        with the rulebook's verdict for it, else its lexical relevance to the state. A
+        with the rulebook's verdict for it, else its lexical relevance to the state; one about
+        two memories (recall's dedup) with the rulebook's repeats. A
         ``score`` is the cut: its answer is a level, and the rulebook decides which
         one.
         """
@@ -230,13 +277,10 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
             # Consolidation triage: the verdict is scripted per fact (see TriageStub).
             fact_text = state["new_fact"]["text"]
             relation = stubs.triage.relation(fact_text)
-            fits = stubs.triage.fits(fact_text)
             yes = {"covers_o0": relation == "restates"}
             for question_id, question in body["questions"].items():
                 if question_id == "relation":
                     pick = relation
-                elif question_id == "keep_as":
-                    pick = "as_stated" if fits else "reworded"
                 elif set(question["criteria"]) == {"yes", "no"}:
                     pick = "yes" if yes.get(question_id, False) else "no"
                 else:
@@ -246,7 +290,13 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
             return JSONResponse({"model": "stub", "answers": answers, "usage": {"input_tokens": 1, "output_tokens": 1}})
 
         for question_id, question in body["questions"].items():
-            if question["type"] == "noul":
+            if question["type"] == "noul" and "memory_a" in question["instructions"]:
+                instructions = question["instructions"]
+                answers[question_id] = {
+                    "type": "noul",
+                    "noul": stubs.rerank.repeat(instructions["memory_a"], instructions["memory_b"]),
+                }
+            elif question["type"] == "noul":
                 memory = question["instructions"]["memory"]
                 stubs.rerank.states.append(body["state"])
                 answers[question_id] = {"type": "noul", "noul": stubs.rerank.verdict(body["state"], memory)}
@@ -264,6 +314,7 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
                 }
             elif question["type"] == "choice":
                 criteria = question["criteria"]
+                stubs.rerank.ranked.extend(text if isinstance(text, str) else str(text) for text in criteria.values())
                 scores = {
                     key: stubs.rerank.score(body["state"], text if isinstance(text, str) else str(text))
                     for key, text in criteria.items()

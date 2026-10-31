@@ -14,23 +14,23 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Callable, Self
 
-from .response_models import LLMCallResult, LLMToolCallResult
+from .response_models import LLMCallResult
 
 logger = logging.getLogger(__name__)
 
 
 class LLMToolChoiceMode(StrEnum):
-    """Canonical tool-selection modes shared by every LLM provider."""
+    """What a tool-calling turn may call: one function of the model's choosing (``auto`` and
+    ``required`` both mean exactly one, see ``LLMProvider.call_with_tools``), or a named one."""
 
     AUTO = "auto"
-    NONE = "none"
     REQUIRED = "required"
     NAMED = "named"
 
 
 @dataclass(frozen=True, slots=True)
 class LLMToolChoice:
-    """Typed internal tool selection serialized only at provider boundaries."""
+    """A turn's tool selection; it shapes the turn's response schema and is never sent to a provider."""
 
     mode: LLMToolChoiceMode
     function_name: str | None = None
@@ -71,7 +71,6 @@ class PromptCachePrefix:
 
 
 LLM_TOOL_CHOICE_AUTO = LLMToolChoice(mode=LLMToolChoiceMode.AUTO)
-LLM_TOOL_CHOICE_NONE = LLMToolChoice(mode=LLMToolChoiceMode.NONE)
 LLM_TOOL_CHOICE_REQUIRED = LLMToolChoice(mode=LLMToolChoiceMode.REQUIRED)
 
 
@@ -201,43 +200,6 @@ class LLMInterface(ABC):
         """
         pass
 
-    @abstractmethod
-    async def call_with_tools(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        max_completion_tokens: int | None = None,
-        temperature: float | None = None,
-        scope: str = "tools",
-        max_retries: int = 5,
-        initial_backoff: float = 1.0,
-        max_backoff: float = 30.0,
-        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
-        cached_prefix: str | None = None,
-        cached_prefix_message_count: int = 0,
-        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> LLMToolCallResult:
-        """
-        Make an LLM API call with tool/function calling support.
-
-        Args:
-            messages: List of message dicts. Can include tool results with role='tool'.
-            tools: List of tool definitions in OpenAI format.
-            max_completion_tokens: Maximum tokens in response.
-            temperature: Sampling temperature (0.0-2.0).
-            scope: Scope identifier for tracking.
-            max_retries: Maximum retry attempts.
-            initial_backoff: Initial backoff time in seconds.
-            max_backoff: Maximum backoff time in seconds.
-            tool_choice: Canonical tool-selection policy.
-            attempt_context: Factory for an async context manager holding the shared
-                concurrency permits — see ``call``.
-
-        Returns:
-            LLMToolCallResult with content and/or tool_calls.
-        """
-        pass
-
     async def supports_batch_api(self) -> bool:
         """
         Check if this provider supports batch API operations.
@@ -314,7 +276,7 @@ class LLMInterface(ABC):
 
         Default False. Providers that return True must implement
         ``get_or_create_cached_prefix`` and honour the ``cached_prefix`` argument
-        of ``call`` / ``call_with_tools``.
+        of ``call``.
         """
         return False
 
@@ -323,12 +285,11 @@ class LLMInterface(ABC):
         *,
         system_instruction: str,
         response_schema: Any | None = None,
-        tools: list[dict[str, Any]] | None = None,
     ) -> str | None:
         """Cache a reusable prompt prefix and return an opaque handle, or None.
 
         The engine has already decided WHAT is cacheable: it puts the stable,
-        bank-agnostic instructions in ``system_instruction`` (plus ``tools``) and
+        bank-agnostic instructions in ``system_instruction`` and
         keeps all per-request / per-bank data (documents, facts, the bank mission)
         in the user message. A provider only chooses HOW to cache that prefix:
 
@@ -345,48 +306,6 @@ class LLMInterface(ABC):
         Returns None when caching is disabled/unsupported or the prefix is too
         small; callers MUST fall back to an uncached call in that case.
         """
-        return None
-
-    # ── Step-by-step incremental prompt caching (optional) ─────────────────────
-    #
-    # For agentic loops (reflect) the dominant cost is the conversation prefix
-    # re-sent every turn, not the static system prefix. Providers that can cache
-    # a *growing* prefix implement these: the caller rolls one cache per step
-    # (each covering the previous step's full input), passes its handle plus the
-    # message count it covers to ``call_with_tools`` so only the new turns are
-    # sent fresh, and tears the caches down when the loop ends. Default no-ops so
-    # non-supporting providers transparently run uncached.
-
-    def supports_incremental_prompt_cache(self) -> bool:
-        """Whether this provider can cache a growing multi-turn conversation prefix."""
-        return False
-
-    async def create_incremental_cache(
-        self,
-        *,
-        session_id: str,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
-        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
-    ) -> str | None:
-        """Cache ``system + tools + messages`` and return an opaque handle, or None.
-
-        The handle is passed back to ``call_with_tools(cached_prefix=...,
-        cached_prefix_message_count=len(messages))``, and only for a call with this
-        ``tool_choice``: a provider may store the choice in the cache (Gemini refuses
-        it on a request that uses one). Caches are grouped under
-        ``session_id`` for teardown via ``delete_cache_session``. Returns None
-        when caching is unavailable or the prefix is too small — caller falls
-        back to an uncached call.
-        """
-        return None
-
-    async def delete_cached_prefix(self, name: str) -> None:
-        """Best-effort delete of a single cache handle (a superseded step)."""
-        return None
-
-    async def delete_cache_session(self, session_id: str) -> None:
-        """Best-effort teardown of every cache created under ``session_id``."""
         return None
 
     async def submit_batch(
@@ -482,6 +401,16 @@ class ProviderAuthError(RuntimeError):
     (issue #5644). The providers already refuse to retry it; this type carries
     that permanence through ``extract_facts_from_text`` to the worker, so the
     retain fails once instead of replaying every chunk through the retry schedule.
+    """
+
+
+class ProviderUnavailableError(RuntimeError):
+    """Raised while building a provider whose sign-in is missing or revoked.
+
+    It means "this member cannot serve until someone logs in again", not "the
+    configuration is wrong": ``LLMProvider`` turns it into a member that fails
+    every call, so a failover chain moves on to its next member and the server
+    still starts (issue #6095). Any other construction error stays fatal.
     """
 
 

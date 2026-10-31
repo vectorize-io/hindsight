@@ -13,8 +13,9 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from typing import TYPE_CHECKING, Any, cast
+from zoneinfo import ZoneInfo
 
 from ...extensions.memory_defense import (
     DefenseAction,
@@ -35,7 +36,8 @@ from ..document_history import (
     append_operation_events,
     track_observation_changes,
 )
-from ..memory_engine import count_tokens, fq_table
+from ..memory_engine import count_tokens
+from ..schema import fq_table
 
 if TYPE_CHECKING:
     from .attachment_store import RetainAttachmentLoader
@@ -449,7 +451,13 @@ def _count_delta_content_tokens(delta_contents: list["RetainContent"]) -> int:
     return total
 
 
-def parse_datetime_flexible(value: Any) -> datetime:
+def bank_timezone(config: Any) -> tzinfo:
+    """The zone a retain time with no UTC offset is read in: the bank's ``default_timezone``."""
+    name = getattr(config, "default_timezone", None)
+    return ZoneInfo(name) if name else UTC
+
+
+def parse_datetime_flexible(value: Any, default_tz: tzinfo = UTC) -> datetime:
     """
     Parse a datetime value that could be either a datetime object or an ISO string.
 
@@ -458,6 +466,7 @@ def parse_datetime_flexible(value: Any) -> datetime:
 
     Args:
         value: Either a datetime object or an ISO format string
+        default_tz: Zone a value with no UTC offset is read in
 
     Returns:
         datetime object (timezone-aware)
@@ -475,7 +484,7 @@ def parse_datetime_flexible(value: Any) -> datetime:
             raise ValueError(f"Date year {value.year} is a placeholder, not a date.")
         # Ensure timezone-aware
         if value.tzinfo is None:
-            return value.replace(tzinfo=UTC)
+            return value.replace(tzinfo=default_tz)
         return value
     raise TypeError(f"Expected datetime or string, got {type(value).__name__}")
 
@@ -1567,7 +1576,7 @@ async def retain_batch(
     log_buffer.append(f"{'=' * 60}")
 
     # Convert dicts to RetainContent objects
-    contents = _build_contents(contents_dicts, document_tags)
+    contents = _build_contents(contents_dicts, document_tags, bank_timezone(config))
 
     # When contents carry more than one document (several distinct per-content
     # document_ids, or one document_id next to items without any) and no
@@ -1906,7 +1915,7 @@ async def retain_batch(
                 contents_dicts = [merged_item]
             if existing_text or _merged_text is not None:
                 # Rebuild contents list to match
-                contents = _build_contents(contents_dicts, document_tags)
+                contents = _build_contents(contents_dicts, document_tags, bank_timezone(config))
         if existing_text:
             log_buffer.append(
                 f"[append] Prepended {len(existing_text):,} chars from existing document {effective_doc_id}"
@@ -3637,8 +3646,11 @@ async def _streaming_retain_batch(
                     await outbox_callback(conn)
             outbox_fired[0] = True
 
-        # Mark facts as committed in operation metadata (crash recovery checkpoint)
-        if operation_id and all_unit_ids:
+        # Mark facts as committed in operation metadata (crash recovery checkpoint). Not for a
+        # retain session: it may buffer until `commit()`, so its facts are not durable here, and a
+        # retry trusting the checkpoint would skip a document whose facts were never written
+        # (#6099). The session commits once for the whole retain, so there is nothing to resume.
+        if operation_id and all_unit_ids and retain_session is None:
             try:
                 async with acquire_with_retry(pool) as conn:
                     await _persist_facts_committed_checkpoint(
@@ -4503,8 +4515,15 @@ async def _delta_metadata_only(
 # ---------------------------------------------------------------------------
 
 
-def _build_contents(contents_dicts: list[RetainContentDict], document_tags: list[str] | None) -> list[RetainContent]:
-    """Convert content dicts to RetainContent objects."""
+def _build_contents(
+    contents_dicts: list[RetainContentDict], document_tags: list[str] | None, default_tz: tzinfo
+) -> list[RetainContent]:
+    """Convert content dicts to RetainContent objects.
+
+    A timestamp with no UTC offset is read in ``default_tz``, and a missing one
+    becomes "now" in that zone, so the extraction prompt's Event Date carries
+    the offset the LLM's own times are later read in.
+    """
     contents = []
     for item in contents_dicts:
         item_tags = item.get("tags", []) or []
@@ -4513,9 +4532,9 @@ def _build_contents(contents_dicts: list[RetainContentDict], document_tags: list
         if "event_date" in item and item["event_date"] is None:
             event_date_value = None
         elif item.get("event_date"):
-            event_date_value = parse_datetime_flexible(item["event_date"])
+            event_date_value = parse_datetime_flexible(item["event_date"], default_tz)
         else:
-            event_date_value = utcnow()
+            event_date_value = datetime.now(default_tz)
 
         content = RetainContent(
             content=item["content"],

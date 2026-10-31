@@ -5,8 +5,8 @@ someone answer the question, and orders the pool by that, in one batch of reques
 order is final: recall applies none of the recency, temporal or proof-count boosts it
 applies to a cross-encoder's scores.
 
-This is not the ``typesafe`` reranker provider (``HINDSIGHT_API_RERANKER_PROVIDER``),
-which is configured on its own and ranks differently. This one is configured by
+It replaces the deprecated ``typesafe`` reranker provider (``HINDSIGHT_API_RERANKER_PROVIDER``):
+configure the shared ``HINDSIGHT_API_DECISION_MODEL_*`` settings instead. This one is read by
 ``HindsightConfig.decision_model_config("recall")`` and talks to the endpoint through the
 shared :class:`~hindsight_api.engine.decision_model.DecisionModel` client.
 """
@@ -15,11 +15,14 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+from dataclasses import dataclass
+
+import numpy as np
 
 from ...config import DecisionModelConfig
 from ..cross_encoder import CrossEncoderModel
 from ..decision_model import DecisionModel, DecisionQuestion
-from ..token_encoding import count_tokens, truncate_to_tokens
+from ..decision_rerank_interface import ALIKE_FROM
 
 PROVIDER_NAME = "decision_model"
 
@@ -32,19 +35,35 @@ rerank_shared_context: contextvars.ContextVar[str | None] = contextvars.ContextV
     "hindsight_rerank_shared_context", default=None
 )
 
-# Defensive ceilings on the query and the shared context, which every request carries:
-# past the request ceiling, every request would fail. Each also stays within a quarter of
-# that ceiling, so a low one still leaves half of each request for the questions.
-_MAX_QUERY_TOKENS = 2_000
-_MAX_SHARED_CONTEXT_TOKENS = 4_000
-# The same for each candidate's text, which one question carries alone.
-_MAX_MEMORY_TOKENS = 4_000
 
-# The question asked of each candidate. Four wordings were tried on the same pool; this
-# one is the best calibrated, lifting the wanted candidate to 0.74 against 0.59 for
-# "contains information needed to answer" while holding the pool median at 0.08. Framing it
-# as help-versus-distract asks the question a keep/drop decision actually turns on.
-_KEEP_INSTRUCTIONS = "Showing this memory to someone answering the question would help them, rather than distract them."
+@dataclass(frozen=True)
+class DecisionRerankOptions:
+    """What this one recall asks of the decision model beyond ranking.
+
+    Per recall, not per reranker: one reranker serves every bank, and the request, then the
+    bank, then the server decide (``recall_decision_model_prune`` / ``_dedup``).
+    ``fact_types`` and ``ids`` are each candidate's fact type and memory id, aligned with the
+    pairs handed to predict(), so dedup only compares two candidates of one type.
+    ``embeddings`` is the caller's read of those ids' stored embeddings (id to vector), already
+    running so it costs no round trip of its own: dedup awaits it after the ranking request. It
+    resolves to ``None`` when the store has none, and then dedup asks every pair.
+    """
+
+    prune: bool = False
+    dedup: bool = False
+    fact_types: list[str] | None = None
+    ids: list[str] | None = None
+    embeddings: asyncio.Task[dict[str, np.ndarray] | None] | None = None
+
+
+# Set by CrossEncoderReranker.rerank(), like rerank_shared_context.
+rerank_options: contextvars.ContextVar[DecisionRerankOptions] = contextvars.ContextVar(
+    "hindsight_rerank_options", default=DecisionRerankOptions()
+)
+
+# The questions themselves, their state, caps, scores, the prune cut and dedup live in
+# decision_rerank_interface, which services outside hindsight-api load to rank exactly as
+# this does. This class only sends the questions.
 
 
 class DecisionModelReranker(CrossEncoderModel):
@@ -58,7 +77,9 @@ class DecisionModelReranker(CrossEncoderModel):
     0.59 against 0.79 on a 20-question answer-quality set.
 
     The scores handed back are positions, not confidences: descending from 1.0 in rank
-    order.
+    order. With :class:`DecisionRerankOptions` ``prune`` on, a candidate judged no help scores
+    exactly 0.0, and with ``dedup`` on so does one repeating a better-ranked candidate:
+    that is how recall knows to drop it. The best candidate always survives.
     """
 
     # Its decision-model requests are traced one by one; a rerank row would count them twice.
@@ -78,37 +99,58 @@ class DecisionModelReranker(CrossEncoderModel):
     async def initialize(self) -> None:
         pass
 
-    def _capped(self, text: str, ceiling: int) -> str:
-        ceiling = min(ceiling, self._client.max_request_tokens // 4)
-        return truncate_to_tokens(text, ceiling).text if count_tokens(text) > ceiling else text
-
-    def _state(self, query: str) -> str:
-        """The question's state: what is being asked, plus what every candidate shares."""
-        query = self._capped(query, _MAX_QUERY_TOKENS)
-        shared = self._capped(rerank_shared_context.get() or "", _MAX_SHARED_CONTEXT_TOKENS)
-        return f"{shared}\n\nQuestion: {query}" if shared else f"Question: {query}"
-
     async def _rerank(self, query: str, docs: list[str], indices: list[int], scores: list[float]) -> None:
         """Scores ``indices`` by position, best first."""
-        # Each memory capped like the query, so no single question can outgrow the window:
-        # a failed request now raises instead of ranking its candidates last.
-        questions = {
-            f"m{slot}": DecisionQuestion(
-                type="noul",
-                instructions={"task": _KEEP_INSTRUCTIONS, "memory": self._capped(docs[index], _MAX_MEMORY_TOKENS)},
-            )
-            for slot, index in enumerate(indices)
-        }
-        answers = await self._client.ask_all(self._state(query), questions, scope="decision_recall_rerank")
-
-        def answer(slot: int) -> float:
-            found = answers.get(f"m{slot}")
-            return found.noul if found is not None and found.noul is not None else 0.0
-
+        rerank = self._client.rerank_interface()
+        options = rerank_options.get()
+        subset = [docs[index] for index in indices]
+        asked = rerank.questions(subset)
+        questions = {question.key: DecisionQuestion.model_validate(question.system_one()) for question in asked}
+        state = rerank.state(query, rerank_shared_context.get())
+        # Every memory is capped (see DecisionRerank.questions), so no single question can
+        # outgrow the window: a failed request now raises instead of ranking its candidates last.
+        answers = await self._client.ask_all(state, questions, scope="decision_recall_rerank")
         # Stable on the caller's input order, so equal answers keep their RRF order.
-        order = sorted(range(len(indices)), key=lambda slot: -answer(slot))
-        for position, slot in enumerate(order):
-            scores[indices[slot]] = (len(order) - position) / len(order)
+        nouls = [answers[question.key].noul if question.key in answers else None for question in asked]
+        ranked = rerank.pruned(nouls) if options.prune else rerank.scores(nouls)
+        if options.dedup:
+            # The second request: its pairs depend on the ranking answers above.
+            kinds = [options.fact_types[index] for index in indices] if options.fact_types else None
+            repeats = rerank.repeat_questions(subset, ranked, kinds, await self._alike(options, indices, ranked))
+            if repeats:
+                found = await self._client.ask_all(
+                    state,
+                    {q.key: DecisionQuestion.model_validate(q.system_one()) for q in repeats},
+                    scope="decision_recall_dedup",
+                )
+                ranked = rerank.deduped(ranked, repeats, {key: answer.noul for key, answer in found.items()})
+        for slot, score in enumerate(ranked):
+            scores[indices[slot]] = score
+
+    @staticmethod
+    async def _alike(
+        options: DecisionRerankOptions, indices: list[int], ranked: list[float]
+    ) -> set[frozenset[int]] | None:
+        """The pairs of slots still in the pool whose stored embeddings are alike (cosine at
+        least ``ALIKE_FROM``), or None to ask every pair.
+
+        Computed here, on the candidates the ranking kept, rather than read from the semantic
+        links retain stores: retain keeps only each memory's 50 nearest above its link
+        threshold, so in a large bank of alike facts a repeat is often not among them. A
+        candidate with no stored embedding is not compared.
+        """
+        if options.embeddings is None or options.ids is None:
+            return None
+        vectors = await options.embeddings
+        if vectors is None:
+            return None
+        found = [slot for slot, score in enumerate(ranked) if score > 0.0 and options.ids[indices[slot]] in vectors]
+        if len(found) < 2:
+            return set()
+        matrix = np.stack([vectors[options.ids[indices[slot]]] for slot in found])
+        matrix = matrix / np.maximum(np.linalg.norm(matrix, axis=1, keepdims=True), 1e-12)
+        similar = np.argwhere(np.triu(matrix @ matrix.T >= ALIKE_FROM, k=1))
+        return {frozenset((found[a], found[b])) for a, b in similar}
 
     async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         docs = [doc for _, doc in pairs]

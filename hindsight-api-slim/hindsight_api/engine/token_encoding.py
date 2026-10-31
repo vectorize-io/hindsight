@@ -58,10 +58,16 @@ from functools import lru_cache
 
 import toktok
 
-# Vocabularies toktok compiles into its extension module. Used only to make a
-# misconfigured HINDSIGHT_API_TOKENIZER_ENCODING fail with a list of what would have
-# worked, instead of a bare KeyError from the extension module mid-request.
-BUNDLED_ENCODINGS = ("o200k_base", "cl100k_base", "o200k_harmony")
+# Vocabularies toktok compiles into its extension module. Used to make a misconfigured
+# HINDSIGHT_API_TOKENIZER_ENCODING or HINDSIGHT_API_DECISION_MODEL_TOKENIZER fail with a
+# list of what would have worked, instead of a bare KeyError from the extension module
+# mid-request, and to bound the per-name cache below.
+BUNDLED_ENCODINGS = ("o200k_base", "cl100k_base", "o200k_harmony", "qwen3.5")
+
+# Estimates of a model's own count that have no ids: 'jev' is Jev's (TypeSafe). A caller
+# budgeting against that model's window can name one, but it only goes through toktok's
+# batch_count / truncate, never a loaded tokenizer, so it cannot be the configured encoding.
+ESTIMATED_ENCODINGS = ("jev",)
 
 
 # Cached like _load_encoding, and for the same reason — loading one parses a
@@ -72,7 +78,18 @@ def _encoding_by_name(name: str) -> "toktok._Tokenizer":
     try:
         return toktok._encoding(name)
     except Exception as err:
-        raise ValueError(f"Unknown tokenizer encoding {name!r}. Available: {', '.join(BUNDLED_ENCODINGS)}.") from err
+        available = ", ".join((*BUNDLED_ENCODINGS, *ESTIMATED_ENCODINGS))
+        raise ValueError(f"Unknown tokenizer encoding {name!r}. Available: {available}.") from err
+
+
+def check_encoding(name: str) -> None:
+    """Raise ValueError unless ``name`` can be passed as ``encoding`` to the functions below."""
+    if name not in ESTIMATED_ENCODINGS:
+        _encoding_by_name(name)
+
+
+def _encoding_name(encoding: str | None) -> str:
+    return encoding if encoding in ESTIMATED_ENCODINGS else _encoding_for(encoding).name
 
 
 @lru_cache(maxsize=1)
@@ -110,10 +127,11 @@ def _load_encoding() -> "toktok._Tokenizer":
 def _encoding_for(encoding: str | None) -> "toktok._Tokenizer":
     """``encoding`` when a caller knows the model's own vocabulary, else the configured one.
 
-    Only the embedding cap passes one: a provider whose tokenizer is known (OpenAI's
+    The embedding cap passes one: a provider whose tokenizer is known (OpenAI's
     text-embedding-* is cl100k_base) must be counted with *that*, not with whatever
     HINDSIGHT_API_TOKENIZER_ENCODING says, or a text cut to exactly the model's limit
-    is still over it and the provider 400s (#5234).
+    is still over it and the provider 400s (#5234). So does the decision model, whose
+    request ceiling is its own window.
     """
     return _encoding_by_name(encoding) if encoding else _load_encoding()
 
@@ -132,6 +150,8 @@ def count_tokens(text: str, encoding: str | None = None) -> int:
     approximate answer, since a fixed character cut can split a token. ``count()``
     removes the reason for both: it allocates nothing and it is exact.
     """
+    if encoding in ESTIMATED_ENCODINGS:
+        return toktok.batch_count([text], encoding, threads=1)[0]
     return _encoding_for(encoding).count(text)
 
 
@@ -143,7 +163,7 @@ class TokenTruncation:
     original_tokens: int  # token count of the input before any truncation
 
 
-def truncate_to_tokens(text: str, max_tokens: int) -> TokenTruncation:
+def truncate_to_tokens(text: str, max_tokens: int, encoding: str | None = None) -> TokenTruncation:
     """Truncate ``text`` to at most ``max_tokens`` tokens.
 
     The configured encoding is an approximation of any given provider's tokenizer,
@@ -163,7 +183,7 @@ def truncate_to_tokens(text: str, max_tokens: int) -> TokenTruncation:
     # Negative budgets used to slice a list and silently drop tokens off the end;
     # toktok takes an unsigned count and would raise. Clamp, so a misconfigured cap
     # still degrades to "empty" rather than a 500 mid-request.
-    truncated, original_tokens = toktok.truncate(text, max(max_tokens, 0), _load_encoding().name)
+    truncated, original_tokens = toktok.truncate(text, max(max_tokens, 0), _encoding_name(encoding))
     return TokenTruncation(text=truncated, original_tokens=original_tokens)
 
 
@@ -178,5 +198,5 @@ def truncate_many_to_tokens(
     """
     return [
         TokenTruncation(text=truncated, original_tokens=original_tokens)
-        for truncated, original_tokens in toktok.batch_truncate(texts, max(max_tokens, 0), _encoding_for(encoding).name)
+        for truncated, original_tokens in toktok.batch_truncate(texts, max(max_tokens, 0), _encoding_name(encoding))
     ]

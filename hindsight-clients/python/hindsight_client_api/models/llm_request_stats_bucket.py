@@ -18,7 +18,8 @@ import re  # noqa: F401
 import json
 
 from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar, Dict, List, Optional
+from hindsight_client_api.models.llm_request_series_sums import LLMRequestSeriesSums
 from hindsight_client_api.models.llm_request_token_sums import LLMRequestTokenSums
 from typing import Optional, Set
 from typing_extensions import Self
@@ -31,7 +32,8 @@ class LLMRequestStatsBucket(BaseModel):
     statuses: Dict[str, StrictInt]
     total: StrictInt
     tokens: LLMRequestTokenSums
-    __properties: ClassVar[List[str]] = ["time", "statuses", "total", "tokens"]
+    series: Optional[Dict[str, LLMRequestSeriesSums]] = None
+    __properties: ClassVar[List[str]] = ["time", "statuses", "total", "tokens", "series"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -75,6 +77,18 @@ class LLMRequestStatsBucket(BaseModel):
         # override the default output from pydantic by calling `to_dict()` of tokens
         if self.tokens:
             _dict['tokens'] = self.tokens.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of each value in series (dict)
+        _field_dict = {}
+        if self.series:
+            for _key_series in self.series:
+                if self.series[_key_series]:
+                    _field_dict[_key_series] = self.series[_key_series].to_dict()
+            _dict['series'] = _field_dict
+        # set to None if series (nullable) is None
+        # and model_fields_set contains the field
+        if self.series is None and "series" in self.model_fields_set:
+            _dict['series'] = None
+
         return _dict
 
     @classmethod
@@ -90,7 +104,13 @@ class LLMRequestStatsBucket(BaseModel):
             "time": obj.get("time"),
             "statuses": obj.get("statuses"),
             "total": obj.get("total"),
-            "tokens": LLMRequestTokenSums.from_dict(obj["tokens"]) if obj.get("tokens") is not None else None
+            "tokens": LLMRequestTokenSums.from_dict(obj["tokens"]) if obj.get("tokens") is not None else None,
+            "series": dict(
+                (_k, LLMRequestSeriesSums.from_dict(_v))
+                for _k, _v in obj["series"].items()
+            )
+            if obj.get("series") is not None
+            else None
         })
         return _obj
 

@@ -78,16 +78,19 @@ class BankTemplateConfig(BaseModel):
     recall_budget_max: Optional[StrictInt] = None
     audit_log_enabled: Optional[StrictBool] = None
     store_document_text: Optional[StrictBool] = None
+    default_timezone: Optional[StrictStr] = None
     enable_auto_consolidation: Optional[StrictBool] = None
     consolidation_use_decision_model: Optional[StrictBool] = None
     consolidation_max_memories_per_round: Optional[StrictInt] = None
     consolidation_llm_parallelism: Optional[StrictInt] = None
     recall_include_chunks: Optional[StrictBool] = None
     recall_prefer_observations: Optional[StrictBool] = None
+    recall_decision_model_prune: Optional[StrictBool] = None
+    recall_decision_model_dedup: Optional[StrictBool] = None
     recall_max_tokens: Optional[StrictInt] = None
     recall_chunks_max_tokens: Optional[StrictInt] = None
     memory_defense: Optional[Dict[str, Any]] = None
-    __properties: ClassVar[List[str]] = ["reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission", "enable_text_search", "enable_temporal_retrieval", "enable_graph_retrieval", "enable_reranking", "reflect_use_decision_model", "mental_model_refresh_use_decision_model", "mental_model_delta_use_decision_model", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "entity_labels", "entities_allow_free_form", "retain_default_strategy", "retain_strategies", "retain_chunk_batch_size", "retain_max_attachments_per_chunk", "mcp_enabled_tools", "consolidation_llm_batch_size", "consolidation_source_facts_max_tokens", "consolidation_source_facts_max_tokens_per_observation", "max_observations_per_scope", "observation_scope_limits", "default_observation_scopes", "consolidation_strategies", "reflect_source_facts_max_tokens", "knowledge_page_default_trigger", "reflect_default_options", "mental_model_min_refresh_interval_seconds", "llm_gemini_safety_settings", "recall_budget_function", "recall_budget_fixed_low", "recall_budget_fixed_mid", "recall_budget_fixed_high", "recall_budget_adaptive_low", "recall_budget_adaptive_mid", "recall_budget_adaptive_high", "recall_budget_min", "recall_budget_max", "audit_log_enabled", "store_document_text", "enable_auto_consolidation", "consolidation_use_decision_model", "consolidation_max_memories_per_round", "consolidation_llm_parallelism", "recall_include_chunks", "recall_prefer_observations", "recall_max_tokens", "recall_chunks_max_tokens", "memory_defense"]
+    __properties: ClassVar[List[str]] = ["reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission", "enable_text_search", "enable_temporal_retrieval", "enable_graph_retrieval", "enable_reranking", "reflect_use_decision_model", "mental_model_refresh_use_decision_model", "mental_model_delta_use_decision_model", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "entity_labels", "entities_allow_free_form", "retain_default_strategy", "retain_strategies", "retain_chunk_batch_size", "retain_max_attachments_per_chunk", "mcp_enabled_tools", "consolidation_llm_batch_size", "consolidation_source_facts_max_tokens", "consolidation_source_facts_max_tokens_per_observation", "max_observations_per_scope", "observation_scope_limits", "default_observation_scopes", "consolidation_strategies", "reflect_source_facts_max_tokens", "knowledge_page_default_trigger", "reflect_default_options", "mental_model_min_refresh_interval_seconds", "llm_gemini_safety_settings", "recall_budget_function", "recall_budget_fixed_low", "recall_budget_fixed_mid", "recall_budget_fixed_high", "recall_budget_adaptive_low", "recall_budget_adaptive_mid", "recall_budget_adaptive_high", "recall_budget_min", "recall_budget_max", "audit_log_enabled", "store_document_text", "default_timezone", "enable_auto_consolidation", "consolidation_use_decision_model", "consolidation_max_memories_per_round", "consolidation_llm_parallelism", "recall_include_chunks", "recall_prefer_observations", "recall_decision_model_prune", "recall_decision_model_dedup", "recall_max_tokens", "recall_chunks_max_tokens", "memory_defense"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -385,6 +388,11 @@ class BankTemplateConfig(BaseModel):
         if self.store_document_text is None and "store_document_text" in self.model_fields_set:
             _dict['store_document_text'] = None
 
+        # set to None if default_timezone (nullable) is None
+        # and model_fields_set contains the field
+        if self.default_timezone is None and "default_timezone" in self.model_fields_set:
+            _dict['default_timezone'] = None
+
         # set to None if enable_auto_consolidation (nullable) is None
         # and model_fields_set contains the field
         if self.enable_auto_consolidation is None and "enable_auto_consolidation" in self.model_fields_set:
@@ -414,6 +422,16 @@ class BankTemplateConfig(BaseModel):
         # and model_fields_set contains the field
         if self.recall_prefer_observations is None and "recall_prefer_observations" in self.model_fields_set:
             _dict['recall_prefer_observations'] = None
+
+        # set to None if recall_decision_model_prune (nullable) is None
+        # and model_fields_set contains the field
+        if self.recall_decision_model_prune is None and "recall_decision_model_prune" in self.model_fields_set:
+            _dict['recall_decision_model_prune'] = None
+
+        # set to None if recall_decision_model_dedup (nullable) is None
+        # and model_fields_set contains the field
+        if self.recall_decision_model_dedup is None and "recall_decision_model_dedup" in self.model_fields_set:
+            _dict['recall_decision_model_dedup'] = None
 
         # set to None if recall_max_tokens (nullable) is None
         # and model_fields_set contains the field
@@ -490,12 +508,15 @@ class BankTemplateConfig(BaseModel):
             "recall_budget_max": obj.get("recall_budget_max"),
             "audit_log_enabled": obj.get("audit_log_enabled"),
             "store_document_text": obj.get("store_document_text"),
+            "default_timezone": obj.get("default_timezone"),
             "enable_auto_consolidation": obj.get("enable_auto_consolidation"),
             "consolidation_use_decision_model": obj.get("consolidation_use_decision_model"),
             "consolidation_max_memories_per_round": obj.get("consolidation_max_memories_per_round"),
             "consolidation_llm_parallelism": obj.get("consolidation_llm_parallelism"),
             "recall_include_chunks": obj.get("recall_include_chunks"),
             "recall_prefer_observations": obj.get("recall_prefer_observations"),
+            "recall_decision_model_prune": obj.get("recall_decision_model_prune"),
+            "recall_decision_model_dedup": obj.get("recall_decision_model_dedup"),
             "recall_max_tokens": obj.get("recall_max_tokens"),
             "recall_chunks_max_tokens": obj.get("recall_chunks_max_tokens"),
             "memory_defense": obj.get("memory_defense")

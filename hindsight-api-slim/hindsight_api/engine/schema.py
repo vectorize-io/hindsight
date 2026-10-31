@@ -6,6 +6,7 @@ that respect both the active schema context and the database backend.
 """
 
 from ..config import get_config
+from ..schema_context import get_current_schema
 
 #: Tables the memories store owns. For a bank whose store is not Postgres these are
 #: empty, so SQL against them from outside the store reads nothing, and writes rows
@@ -47,7 +48,7 @@ def fq_table(table_name: str) -> str:
 
     On Oracle the schema is set at the session level (``ALTER SESSION SET
     CURRENT_SCHEMA``), so we return the bare table name.  On PostgreSQL
-    we prefix with the schema from :func:`memory_engine.get_current_schema`.
+    we prefix with the schema from :func:`hindsight_api.schema_context.get_current_schema`.
     """
     _guard(table_name)
     return fq_store_table(table_name)
@@ -57,8 +58,6 @@ def fq_store_table(table_name: str) -> str:
     """:func:`fq_table` without the guard. Only the Postgres memories store may call it."""
     if _is_oracle():
         return table_name
-    from .memory_engine import get_current_schema
-
     return f"{get_current_schema()}.{table_name}"
 
 

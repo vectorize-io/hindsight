@@ -23,6 +23,7 @@ from hindsight_client_api.models.budget import Budget
 from hindsight_client_api.models.include_options import IncludeOptions
 from hindsight_client_api.models.mental_model_trigger_input_tag_groups_inner import MentalModelTriggerInputTagGroupsInner
 from hindsight_client_api.models.min_scores import MinScores
+from hindsight_client_api.models.rerank_options import RerankOptions
 from hindsight_client_api.models.temporal_window import TemporalWindow
 from typing import Optional, Set
 from typing_extensions import Self
@@ -34,6 +35,7 @@ class RecallRequest(BaseModel):
     query: StrictStr
     types: Optional[List[StrictStr]] = None
     prefer_observations: Optional[StrictBool] = None
+    rerank: Optional[RerankOptions] = None
     budget: Optional[Budget] = None
     max_tokens: Optional[StrictInt] = 4096
     trace: Optional[StrictBool] = False
@@ -44,7 +46,7 @@ class RecallRequest(BaseModel):
     tag_groups: Optional[List[MentalModelTriggerInputTagGroupsInner]] = None
     min_scores: Optional[MinScores] = None
     temporal_window: Optional[TemporalWindow] = None
-    __properties: ClassVar[List[str]] = ["query", "types", "prefer_observations", "budget", "max_tokens", "trace", "query_timestamp", "include", "tags", "tags_match", "tag_groups", "min_scores", "temporal_window"]
+    __properties: ClassVar[List[str]] = ["query", "types", "prefer_observations", "rerank", "budget", "max_tokens", "trace", "query_timestamp", "include", "tags", "tags_match", "tag_groups", "min_scores", "temporal_window"]
 
     @field_validator('tags_match')
     def tags_match_validate_enum(cls, value):
@@ -95,6 +97,9 @@ class RecallRequest(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of rerank
+        if self.rerank:
+            _dict['rerank'] = self.rerank.to_dict()
         # override the default output from pydantic by calling `to_dict()` of include
         if self.include:
             _dict['include'] = self.include.to_dict()
@@ -120,6 +125,11 @@ class RecallRequest(BaseModel):
         # and model_fields_set contains the field
         if self.prefer_observations is None and "prefer_observations" in self.model_fields_set:
             _dict['prefer_observations'] = None
+
+        # set to None if rerank (nullable) is None
+        # and model_fields_set contains the field
+        if self.rerank is None and "rerank" in self.model_fields_set:
+            _dict['rerank'] = None
 
         # set to None if query_timestamp (nullable) is None
         # and model_fields_set contains the field
@@ -161,6 +171,7 @@ class RecallRequest(BaseModel):
             "query": obj.get("query"),
             "types": obj.get("types"),
             "prefer_observations": obj.get("prefer_observations"),
+            "rerank": RerankOptions.from_dict(obj["rerank"]) if obj.get("rerank") is not None else None,
             "budget": obj.get("budget"),
             "max_tokens": obj.get("max_tokens") if obj.get("max_tokens") is not None else 4096,
             "trace": obj.get("trace") if obj.get("trace") is not None else False,

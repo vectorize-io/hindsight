@@ -90,3 +90,91 @@ async def test_a_rank_position_is_not_published_or_floored(decision_model_client
             bank_id=bank, query="Where did Alice move to?", min_scores={"reranker": 0.5}
         )
     assert exc.value.status == 400
+
+
+TEA = "Marta's favourite tea is genmaicha"
+TEA_AGAIN = "Marta's favorite tea is genmaicha"
+SENCHA = "Marta drinks sencha in the afternoon"
+UNRELATED = "Marta set up the staging cluster on Kubernetes"
+
+
+@pytest.fixture
+async def tea_bank(decision_model_prune_client, hindsight_server, llm) -> AsyncIterator[str]:
+    """A fact, a reworded repeat of it, a second fact and an unrelated one."""
+    bank = f"systest-{uuid.uuid4().hex[:12]}"
+    llm.on_step("extract_facts").returns(
+        extracted(
+            fact(TEA, who="Marta", entities=["Marta", "genmaicha"]),
+            fact(TEA_AGAIN, who="Marta", entities=["Marta", "genmaicha"]),
+            fact(SENCHA, who="Marta", entities=["Marta", "sencha"]),
+            fact(UNRELATED, who="Marta", entities=["Marta", "Kubernetes"]),
+        )
+    )
+    llm.on_step("consolidate").returns(consolidation())
+    await decision_model_prune_client.aretain(bank_id=bank, content="Marta's teas, and the staging cluster.")
+    await wait_until_settled(decision_model_prune_client, bank)
+    yield bank
+    with contextlib.suppress(Exception):
+        await decision_model_prune_client.banks.delete_bank(bank)
+
+
+async def test_pruning_drops_what_is_no_help(decision_model_prune_client, tea_bank, stubs):
+    """With HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE on, the client does not get the memory
+    judged no help. Repeats are not pruned: both copies of the tea fact come back."""
+    stubs.rerank.verdicts = {TEA: 0.9, TEA_AGAIN: 0.85, SENCHA: 0.8, UNRELATED: 0.05}
+
+    response = await decision_model_prune_client.arecall(bank_id=tea_bank, query="What tea does Marta like?")
+
+    assert _texts(response) == [TEA, TEA_AGAIN, SENCHA]
+
+
+async def test_without_pruning_every_candidate_comes_back(decision_model_client, tea_bank, stubs):
+    """The same bank and verdicts on a server without the flag: the unrelated memory is
+    only ordered last, not dropped."""
+    stubs.rerank.verdicts = {TEA: 0.9, TEA_AGAIN: 0.85, SENCHA: 0.8, UNRELATED: 0.05}
+
+    response = await decision_model_client.arecall(bank_id=tea_bank, query="What tea does Marta like?")
+
+    assert _texts(response) == [TEA, TEA_AGAIN, SENCHA, UNRELATED]
+
+
+async def test_a_request_turns_prune_and_dedup_on(decision_model_client, tea_bank, stubs):
+    """On a server with neither flag, the request asks for both: the repeat of the tea fact
+    and the memory judged no help are left out; a different fact about Marta stays."""
+    stubs.rerank.verdicts = {TEA: 0.9, TEA_AGAIN: 0.85, SENCHA: 0.8, UNRELATED: 0.05}
+    stubs.rerank.repeats = {(TEA, TEA_AGAIN)}
+    query = "What tea does Marta like?"
+
+    dedup_only = await decision_model_client.arecall(bank_id=tea_bank, query=query, rerank={"dedup": True})
+    both = await decision_model_client.arecall(
+        bank_id=tea_bank, query=query, rerank={"prune": True, "dedup": True}
+    )
+
+    assert _texts(dedup_only) == [TEA, SENCHA, UNRELATED]
+    assert _texts(both) == [TEA, SENCHA]
+
+
+async def test_a_request_turns_the_servers_prune_off(decision_model_prune_client, tea_bank, stubs):
+    """The server default is only a default: a request saying rerank.prune=false gets everything."""
+    stubs.rerank.verdicts = {TEA: 0.9, TEA_AGAIN: 0.85, SENCHA: 0.8, UNRELATED: 0.05}
+
+    response = await decision_model_prune_client.arecall(
+        bank_id=tea_bank, query="What tea does Marta like?", rerank={"prune": False}
+    )
+
+    assert _texts(response) == [TEA, TEA_AGAIN, SENCHA, UNRELATED]
+
+
+async def test_the_bank_sets_dedup_for_requests_that_omit_it(decision_model_client, tea_bank, stubs):
+    """A bank with recall_decision_model_dedup on dedups every recall that does not say
+    otherwise, and a request can still turn it off."""
+    stubs.rerank.verdicts = {TEA: 0.9, TEA_AGAIN: 0.85, SENCHA: 0.8, UNRELATED: 0.05}
+    stubs.rerank.repeats = {(TEA, TEA_AGAIN)}
+    await decision_model_client.aupdate_bank_config(tea_bank, recall_decision_model_dedup=True)
+    query = "What tea does Marta like?"
+
+    omitted = await decision_model_client.arecall(bank_id=tea_bank, query=query)
+    off = await decision_model_client.arecall(bank_id=tea_bank, query=query, rerank={"dedup": False})
+
+    assert _texts(omitted) == [TEA, SENCHA, UNRELATED]
+    assert _texts(off) == [TEA, TEA_AGAIN, SENCHA, UNRELATED]

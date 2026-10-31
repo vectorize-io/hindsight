@@ -12,8 +12,8 @@ import asyncpg
 import pytest
 
 from hindsight_api.engine.db import DatabaseBackend, DatabaseConnection, create_database_backend
-from hindsight_api.engine.db.ops import UpdatedWindow
 from hindsight_api.engine.db import postgresql as pg_backend
+from hindsight_api.engine.db.ops import UpdatedWindow
 from hindsight_api.engine.db.postgresql import PostgreSQLBackend, apply_session_settings
 from hindsight_api.engine.db.result import DictResultRow as ResultRow
 from hindsight_api.engine.sql import SQLDialect, create_sql_dialect
@@ -225,6 +225,8 @@ class TestPostgreSQLDialect:
         assert "to_tsquery" in arm
         assert "'bm25' AS source" in arm
         assert "LIMIT $3" in arm
+        # Ties at the LIMIT cut break on id, so repeated recalls keep the same rows (#6056)
+        assert "ORDER BY ts_rank_cd(search_vector, to_tsquery('english', $4)) DESC, id LIMIT $3" in arm
         # Default language is english when bm25_language is not specified
         assert "to_tsquery('english', $4)" in arm
 
@@ -1399,7 +1401,7 @@ class TestOracleSetSessionSchema:
         like oracledb: this test fails (TypeError) against the buggy code and
         passes once the erroneous await is removed.
         """
-        from hindsight_api.engine import memory_engine
+        from hindsight_api import schema_context
         from hindsight_api.engine.db.oracle import OracleBackend
 
         executed: list[str] = []
@@ -1421,11 +1423,11 @@ class TestOracleSetSessionSchema:
                 return _FakeAsyncCursor()
 
         backend = OracleBackend()
-        token = memory_engine._current_schema.set("TENANT_X")
+        token = schema_context._current_schema.set("TENANT_X")
         try:
             await backend._set_session_schema(_FakeConn())
         finally:
-            memory_engine._current_schema.reset(token)
+            schema_context._current_schema.reset(token)
 
         assert closed["count"] == 1
         assert any('ALTER SESSION SET CURRENT_SCHEMA = "TENANT_X"' in s for s in executed)
@@ -1440,7 +1442,7 @@ class TestOracleSetSessionSchema:
         reset applies ``ALTER SESSION SET CURRENT_SCHEMA`` to the cached SESSION_USER,
         and the synchronous ``cursor.close()`` is not awaited.
         """
-        from hindsight_api.engine import memory_engine
+        from hindsight_api import schema_context
         from hindsight_api.engine.db.oracle import OracleBackend
 
         executed: list[str] = []
@@ -1461,11 +1463,11 @@ class TestOracleSetSessionSchema:
                 return _FakeAsyncCursor()
 
         backend = OracleBackend()
-        token = memory_engine._current_schema.set("public")
+        token = schema_context._current_schema.set("public")
         try:
             await backend._set_session_schema(_FakeConn())
         finally:
-            memory_engine._current_schema.reset(token)
+            schema_context._current_schema.reset(token)
 
         assert closed["count"] == 1
         assert any('ALTER SESSION SET CURRENT_SCHEMA = "APP_USER"' in s for s in executed)

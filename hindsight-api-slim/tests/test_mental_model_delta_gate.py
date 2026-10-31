@@ -6,6 +6,7 @@ call — reflect never runs. None kept means no LLM call at all, and the waterma
 past them.
 """
 
+import asyncio
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -15,10 +16,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from hindsight_api import MemoryEngine, RequestContext
+from hindsight_api.config import get_config
 from hindsight_api.engine.memories import get_memories
-from hindsight_api.engine.memory_engine import MentalModelRefreshError, fq_table
+from hindsight_api.engine.memory_engine import MentalModelRefreshError
 from hindsight_api.engine.reflect.delta_ops import DeltaOperationList
 from hindsight_api.engine.response_models import LLMCallResult, ReflectResult, TokenUsage
+from hindsight_api.engine.schema import fq_table
 
 TOPIC = "What are the user's durable collaboration preferences?"
 RELEVANT = "The user prefers bullet points over prose."
@@ -140,7 +143,7 @@ async def test_falls_back_to_reflect(memory, request_context, gated, monkeypatch
     if why == "no_decision_model":
         monkeypatch.setattr(memory, "_reflect_decision_model", lambda: None)
     elif why == "over_the_cap":
-        monkeypatch.setattr("hindsight_api.engine.memory_engine._DELTA_GATE_MAX_MEMORIES", 1)
+        monkeypatch.setattr(get_config()._config, "mental_model_delta_gate_max_memories", 1)
     elif why == "decision_model_failed":
         memory._reflect_decision_model_client.could_change_page.side_effect = RuntimeError("down")
     page = await _page_with_new_memories(memory, request_context)
@@ -153,6 +156,48 @@ async def test_falls_back_to_reflect(memory, request_context, gated, monkeypatch
 
     assert len(gated.reflect) == 1
     assert "delta_gate" not in refreshed["reflect_response"]
+
+
+async def test_a_question_failing_after_others_answered_keeps_its_memory(memory, request_context, gated):
+    async def could_change_page(topic, page, text):
+        if "prefers" in text:
+            return True
+        await asyncio.sleep(0.05)  # fails after the other question answered
+        raise RuntimeError("429 after retries")
+
+    memory._reflect_decision_model_client.could_change_page.side_effect = could_change_page
+    page = await _page_with_new_memories(memory, request_context)
+
+    refreshed = await memory.refresh_mental_model(
+        bank_id=page.bank_id, mental_model_id=page.mm_id, request_context=request_context
+    )
+
+    assert gated.reflect == [], "the gate still replaces reflect"
+    assert RELEVANT in str(gated.llm[0]) and UNRELATED in str(gated.llm[0])
+    assert refreshed["reflect_response"]["delta_gate"] == {"memories": 2, "kept": 2}
+
+
+async def test_a_refresh_bounds_its_questions_in_flight(memory, request_context, gated, monkeypatch):
+    monkeypatch.setattr("hindsight_api.engine.memory_engine._DELTA_GATE_MAX_CONCURRENT", 1)
+    in_flight = peak = 0
+
+    async def could_change_page(topic, page, text):
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+        return "prefers" in text
+
+    memory._reflect_decision_model_client.could_change_page.side_effect = could_change_page
+    page = await _page_with_new_memories(memory, request_context)
+
+    refreshed = await memory.refresh_mental_model(
+        bank_id=page.bank_id, mental_model_id=page.mm_id, request_context=request_context
+    )
+
+    assert peak == 1
+    assert refreshed["reflect_response"]["delta_gate"] == {"memories": 2, "kept": 1}
 
 
 @pytest.mark.parametrize("switch", ["mental_model_refresh_use_decision_model", "reflect_use_decision_model"])
@@ -252,3 +297,12 @@ async def test_the_store_lists_new_memories_in_the_page_scope(memory: MemoryEngi
 
         assert await listed() == ["oldest in window", "newer in window", "newest in window"]
         assert await listed(limit=2) == ["oldest in window", "newer in window"]
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "lots"])
+def test_gate_cap_must_be_a_positive_integer(monkeypatch, raw):
+    from hindsight_api.config import ENV_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES, HindsightConfig
+
+    monkeypatch.setenv(ENV_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES, raw)
+    with pytest.raises(ValueError, match=ENV_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES):
+        HindsightConfig.from_env()

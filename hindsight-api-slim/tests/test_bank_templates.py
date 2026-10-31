@@ -8,7 +8,7 @@ import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
-from hindsight_api.api.http import BankTemplateManifest, validate_bank_template
+from hindsight_api.engine.bank_templates import BankTemplateManifest, validate_bank_template
 from hindsight_api.models import RequestContext
 
 

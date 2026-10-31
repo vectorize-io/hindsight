@@ -30,6 +30,7 @@ from ..config import (
 )
 from ..engine.schema import fq_table_explicit as fq_table
 from ..metrics import get_metrics_collector
+from ..operation_runs import worker_task
 from .backpressure import is_append_conflict, is_store_backpressure
 from .exceptions import DeferOperation, RetryTaskAt, format_task_error
 
@@ -312,6 +313,8 @@ class ClaimedTask:
     task_dict: dict[str, Any]
     schema: str | None
     folded_operation_ids: list[str] = field(default_factory=list)
+    #: When the task was queued (its row's ``created_at``), for the operation runs it executes.
+    queued_at: datetime | None = None
     """Peers coalesced into this execution (see ``engine.retain.fold``).
 
     They were claimed by the same transaction that claimed ``operation_id`` and
@@ -458,6 +461,10 @@ class WorkerPoller:
         # this worker has never claimed for, so only a range can discover it.
         # Empty string starts a round; claim_tasks resets to it at the end of one.
         self._next_bank_cursor: dict[str | None, str] = {}
+        # Every schema this process has claimed a row in. Shutdown hands back only
+        # what this worker owns, and it can only own rows where it claimed, so
+        # release_own_tasks walks these instead of every tenant schema.
+        self._claimed_schemas: set[str | None] = set()
         # Retention cleanup runs outside the claim loop. Keep one task per
         # poller so maintenance cannot overlap with itself or block slot refill.
 
@@ -767,6 +774,9 @@ class WorkerPoller:
             # picks the bank, so this costs no extra statement to learn.
             self._next_bank_cursor[schema] = claimed.next_bank_cursor
             all_rows = claimed.rows
+            if all_rows:
+                # Before anything below can fail: once claimed, the row is ours to release.
+                self._claimed_schemas.add(schema)
 
             if not all_rows:
                 return []
@@ -790,6 +800,7 @@ class WorkerPoller:
                         task_dict=task_dict,
                         schema=schema,
                         folded_operation_ids=folded,
+                        queued_at=row.get("created_at"),
                     )
                 )
             return result
@@ -1305,7 +1316,8 @@ class WorkerPoller:
             logger.debug(f"Executing task {task.operation_id} (type={task_type}, bank={bank_id}{schema_info})")
             if task.schema:
                 task.task_dict["_schema"] = task.schema
-            await self._run_executor(task, task_type, holder)
+            with worker_task(task.operation_id, task.queued_at):
+                await self._run_executor(task, task_type, holder)
             logger.debug(f"Task {task.operation_id} execution finished")
         except _WallTimeoutExceeded as e:
             # The executor has already been cancelled; all that's left is to say so
@@ -1633,20 +1645,20 @@ class WorkerPoller:
         rows claimed before startup and the parent pass re-checks each parent
         under a row lock.
 
+        Only the schemas this process claimed in are visited. With thousands of
+        tenant schemas, a walk over all of them takes longer than a typical
+        termination grace period, and the process is killed partway through —
+        the very stranding this release exists to prevent. Rows a previous run
+        under the same worker id left behind elsewhere are startup recovery's.
+
         Returns:
             Number of operations returned to pending.
         """
         # Nothing here may raise: this runs on the shutdown path, where the DB
         # being unwell is exactly the case that strands rows, and an exception
         # escaping would abort the rest of the teardown.
-        try:
-            schemas = await self._get_schemas()
-        except Exception as e:
-            logger.warning(f"Worker {self._worker_id} could not list schemas to release its in-flight tasks: {e}")
-            return 0
-
         total_count = 0
-        for schema in schemas:
+        for schema in list(self._claimed_schemas):
             try:
                 total_count += await self._reclaim_own_processing_tasks(schema)
             except Exception as e:

@@ -1,5 +1,6 @@
 """Unit tests for the markitdown file parser."""
 
+import codecs
 import json
 
 import pytest
@@ -43,6 +44,17 @@ async def test_convert_plain_utf8_text(parser: MarkitdownParser):
 
     assert "über" in content
     assert "naïveté" in content
+
+
+@pytest.mark.parametrize(
+    ("filename", "text"),
+    [("notes.md", "# Title\n\nBody\n"), ("notes.txt", "hello"), ("data.json", '{"a": "Köln"}')],
+)
+async def test_convert_strips_utf8_bom(parser: MarkitdownParser, filename: str, text: str):
+    """A leading UTF-8 byte-order mark is dropped, not kept as U+FEFF."""
+    content = await parser.convert(codecs.BOM_UTF8 + text.encode("utf-8"), filename)
+
+    assert content[0] == text[0]
 
 
 def test_utf8_stream_info_for_text_extension():

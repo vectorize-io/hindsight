@@ -6,14 +6,58 @@ API response models should be kept separate and convert from these core models t
 API stability even if internal models change.
 """
 
+from collections.abc import Callable
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from .metadata_utils import as_string_metadata
+from .search.tag_resolution import needs_resolution
+from .search.tags import TagGroup, TagsMatch
+from .structured_output import validate_response_schema
 
 VALID_RECALL_FACT_TYPES = frozenset(["world", "experience", "observation"])
+
+
+class Budget(str, Enum):
+    """Budget levels for recall/reflect operations."""
+
+    LOW = "low"
+    MID = "mid"
+    HIGH = "high"
+
+
+def FieldWithDefault(default_factory: Callable, **kwargs) -> Any:
+    """
+    Field wrapper that ensures default_factory values appear in OpenAPI schema.
+
+    Pydantic doesn't include default_factory in OpenAPI schemas, causing OpenAPI
+    Generator to make fields Optional with default=None instead of non-optional
+    with the correct default value.
+
+    This wrapper adds json_schema_extra to include the default in the schema.
+    """
+    # Determine the default value for the schema based on the factory
+    if default_factory is list:
+        schema_default = []
+    elif default_factory is dict:
+        schema_default = {}
+    else:
+        # For custom factories (like IncludeOptions), use empty dict as placeholder
+        schema_default = {}
+
+    # Add or merge json_schema_extra
+    json_extra = kwargs.pop("json_schema_extra", {})
+    if isinstance(json_extra, dict):
+        json_extra["default"] = schema_default
+    else:
+        # If json_schema_extra was a function, we can't merge easily
+        # Fall back to just setting default
+        json_extra = {"default": schema_default}
+
+    return Field(default_factory=default_factory, json_schema_extra=json_extra, **kwargs)
 
 
 class LLMToolCall(BaseModel):
@@ -22,10 +66,6 @@ class LLMToolCall(BaseModel):
     id: str = Field(description="Unique identifier for this tool call")
     name: str = Field(description="Name of the tool to call")
     arguments: dict[str, Any] = Field(description="Arguments to pass to the tool")
-    thought_signature: str | None = Field(
-        default=None,
-        description="Opaque token required by Gemini 3.1+ thinking models to preserve thought context across turns",
-    )
 
 
 class LLMToolCallResult(BaseModel):
@@ -259,6 +299,28 @@ class RecallScores(BaseModel):
     keyword: float | None = Field(
         default=None,
         description="Keyword/full-text (BM25) score (>= 0, unbounded). None if this result was not surfaced by keyword search.",
+    )
+
+
+class RerankOptions(BaseModel):
+    """What the decision-model reranker does beyond ordering. Each field left unset (null) uses the
+    bank/global config; neither has any effect unless a decision model is set up for recall."""
+
+    prune: bool | None = Field(
+        default=None,
+        description=(
+            "Drop the results the decision model judges no help to the query, instead of only ranking them "
+            "last. Costs no extra request. When omitted, uses the bank/global recall_decision_model_prune "
+            "config (false unless configured)."
+        ),
+    )
+    dedup: bool | None = Field(
+        default=None,
+        description=(
+            "Drop a result that repeats a better-ranked one, so the same fact comes back once. Costs one "
+            "more decision-model request after the ranking one. When omitted, uses the bank/global "
+            "recall_decision_model_dedup config (false unless configured)."
+        ),
     )
 
 
@@ -791,3 +853,269 @@ class ConsolidationStrategiesPreview(BaseModel):
     complete: bool = Field(
         description="False when the bank has more distinct scopes than the preview scans; counts are then lower bounds"
     )
+
+
+class ReflectDefaultOptions(BaseModel):
+    """Reflect options an operator can default per bank.
+
+    Every field is ``None`` = "not set", so the same model is both the shape of
+    the ``reflect_default_options`` bank config key and the set of fields a
+    reflect request inherits from it. The resolution chain is: explicit request
+    value -> bank ``reflect_default_options`` -> the shipped default.
+
+    A mental-model refresh does NOT read this. It is its own operation with its
+    own per-bank default (``knowledge_page_default_trigger``), so the same-named
+    fields are declared on ``MentalModelTrigger`` instead — see there.
+    """
+
+    reflect_search_observations_max_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Token budget for reflect's search_observations tool when the model names none. "
+            "Observation evidence is often the largest contributor to the reflect context; "
+            "lowering it trades the lowest-ranked observations for a smaller LLM context. "
+            "None means use the shipped default (5000)."
+        ),
+    )
+    reflect_search_observations_include_entities: bool | None = Field(
+        default=None,
+        description=(
+            "Whether search_observations attaches resolved entity names to each observation. "
+            "Entities can be more than half the serialized tool payload; turning them off keeps "
+            "the same observations and ranking with a much smaller context. None means enabled."
+        ),
+    )
+    reflect_search_mental_models_max_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Token budget for the mental models search_mental_models returns in full, packed in rank order. "
+            "The best-ranked one is always in full; the others that do not fit come back as a snippet the "
+            "model can read with read_mental_models. Raise it for banks with long pages or answers spread "
+            "across pages; lower it to cut the reflect context. None means use the shipped default (16000)."
+        ),
+    )
+
+
+class MentalModelTrigger(BaseModel):
+    """Trigger settings for a mental model.
+
+    A refresh is not an ad-hoc reflect with different arguments: it synthesizes a
+    whole document, so it wants its own retrieval and iteration settings. This
+    trigger is therefore the only source for them — a bank's
+    ``reflect_default_options`` deliberately does not reach a refresh. The
+    per-bank default for these fields is ``knowledge_page_default_trigger``,
+    which is merged over this same shape when a page is created.
+    """
+
+    budget: Budget | None = Field(
+        default=None,
+        description=(
+            "How many agent iterations a refresh may spend, as a multiple of "
+            "reflect_max_iterations: 'low' halves it, 'mid' keeps it, 'high' doubles it. "
+            "A refresh is the heaviest reflect there is — it writes a whole document, and with "
+            "exclude_mental_models it must read raw facts first — so null means 'mid', not the "
+            "'low' an ad-hoc reflect defaults to."
+        ),
+    )
+
+    mode: Literal["full", "delta"] = Field(
+        default="full",
+        description=(
+            "Refresh mode. 'full' (default) regenerates the mental model content from scratch on each refresh. "
+            "'delta' performs surgical edits against the existing content: unchanged sections are preserved "
+            "byte-for-byte, stale content is removed, new content is added. If the mental model has no existing "
+            "content, or if the source_query has changed since the last refresh, delta mode falls back to a full "
+            "regeneration automatically."
+        ),
+    )
+    refresh_after_consolidation: bool = Field(
+        default=False,
+        description="If true, refresh this mental model after observations consolidation (real-time mode)",
+    )
+    refresh_cron: str | None = Field(
+        default=None,
+        description=(
+            "Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * *' for daily at 03:00 UTC) "
+            "for refreshing this mental model on a fixed schedule. Mutually exclusive with "
+            "refresh_after_consolidation — a model refreshes either after consolidation or on a cron "
+            "schedule, not both. A scheduled refresh only runs when the model is stale (new memories in "
+            "its scope since the last refresh); if nothing changed, the tick is skipped to avoid a "
+            "wasted LLM call. null = no schedule."
+        ),
+    )
+    full_refresh_cron: str | None = Field(
+        default=None,
+        description=(
+            "Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * 0' for Sundays at 03:00 UTC) "
+            "for a scheduled full refresh: on this schedule the model is refreshed in 'full' mode "
+            "whatever its `mode` says, regenerating the content from scratch to clear the drift many "
+            "delta edits accumulate. Independent of `refresh_cron` and `refresh_after_consolidation` — "
+            "a delta model can refresh after consolidation and still get a weekly full refresh — and it "
+            "does not change `mode`. A tick is skipped when no refresh has run since the last full one "
+            "(there is nothing to correct). Like `refresh_cron`, it honours "
+            "`min_refresh_interval_seconds` and pauses while the last refresh failed. null = no schedule."
+        ),
+    )
+    min_refresh_interval_seconds: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Minimum seconds between two automatic refreshes of this mental model. A triggered "
+            "refresh that arrives sooner is not dropped: it is queued and parked until the window "
+            "expires, and every further trigger in the meantime folds into that one queued refresh, "
+            "so a burst of retains costs one refresh instead of one per retain. Applies to every "
+            "automatic trigger: refresh_after_consolidation, refresh_cron and full_refresh_cron. Explicit refreshes (API, MCP, control "
+            "plane) ignore it and run immediately. 0 disables the floor for this model; null falls "
+            "back to the bank/global mental_model_min_refresh_interval_seconds setting (itself 0 by "
+            "default, i.e. no floor)."
+        ),
+    )
+    fact_types: list[Literal["world", "experience", "observation"]] | None = Field(
+        default=None,
+        description="Filter which fact types are retrieved during reflect. None means all types (world, experience, observation).",
+    )
+    exclude_mental_models: bool = Field(
+        default=False,
+        description="If true, exclude all mental models from the reflect loop (skip search_mental_models tool).",
+    )
+    exclude_mental_model_ids: list[str] | None = Field(
+        default=None,
+        description="Exclude specific mental models by ID from the reflect loop.",
+    )
+    tags_match: TagsMatch | None = Field(
+        default=None,
+        description=(
+            "Override how the model's tags filter memories during refresh. "
+            "If not set, defaults to 'all_strict' when the model has tags (security isolation) "
+            "or 'any' when the model has no tags. Under 'all_strict' a memory must carry EVERY "
+            "one of the model's tags and untagged memories are excluded, which is why a model "
+            "tagged with labels its memories do not carry refreshes to empty content. "
+            "Set to 'all' to keep requiring the tags while including untagged memories, or to "
+            "'any' to include untagged memories alongside any single tag match. "
+            "Staleness ignores that widening: an untagged write never marks a tagged model stale, "
+            "in any mode — only a write that matches the model's tags does."
+        ),
+    )
+    tag_groups: list[TagGroup] | None = Field(
+        default=None,
+        description=(
+            "Compound boolean tag expressions to use during refresh instead of the model's own tags. "
+            "When set, these tag groups are passed to reflect and the model's flat tags are NOT used for filtering. "
+            "Supports nested and/or/not expressions for complex tag-based scoping."
+        ),
+    )
+    include_chunks: bool | None = Field(
+        default=None,
+        description=(
+            "Override whether the internal recall used during refresh returns raw chunk text. "
+            "None means use the bank/global config default (recall_include_chunks)."
+        ),
+    )
+    recall_max_tokens: int | None = Field(
+        default=None,
+        description=(
+            "Override the token budget for facts returned by the internal recall during refresh. "
+            "None means use the bank/global config default (recall_max_tokens)."
+        ),
+    )
+    recall_chunks_max_tokens: int | None = Field(
+        default=None,
+        description=(
+            "Override the token budget for raw chunks returned by the internal recall during refresh. "
+            "None means use the bank/global config default (recall_chunks_max_tokens)."
+        ),
+    )
+    reflect_search_observations_max_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Override the token budget for the refresh's search_observations calls. Observation "
+            "evidence is often the largest contributor to the reflect context; lowering it trades "
+            "the lowest-ranked observations for a smaller LLM context. null means the shipped 5000."
+        ),
+    )
+    reflect_search_observations_include_entities: bool | None = Field(
+        default=None,
+        description=(
+            "Override whether search_observations attaches resolved entity names to each "
+            "observation. Entities can be more than half the serialized tool payload; turning them "
+            "off keeps the same observations and ranking with a much smaller context. null means enabled."
+        ),
+    )
+    response_schema: dict | None = Field(
+        default=None,
+        description=(
+            "Optional JSON Schema for structured output. When set, each refresh runs the same "
+            "structured-output extraction as reflect's response_schema and stores the parsed result "
+            "under reflect_response.structured_output alongside the markdown content."
+        ),
+    )
+    keep_trace: bool = Field(
+        default=False,
+        description=(
+            "If true, every refresh of this mental model records how it reached its result under "
+            "reflect_response.trace: the mode it ran in and why, the resolved scope and time window, "
+            "how many facts retrieval returned versus how many the agent used, the tool and LLM calls, "
+            "and any delta operations. Only the latest refresh's trace is kept. This is the only way to "
+            "diagnose a cron- or consolidation-driven refresh after the fact, since no human sees those "
+            "run. Tool outputs are reduced to result counts to keep the stored trace bounded; use "
+            "LLM request tracing for raw prompts and responses."
+        ),
+    )
+
+    @field_validator("fact_types")
+    @classmethod
+    def validate_fact_types(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None and len(v) == 0:
+            raise ValueError("fact_types must not be empty. Use null to include all fact types.")
+        return v
+
+    @field_validator("tag_groups")
+    @classmethod
+    def validate_tag_groups_are_exact(cls, v: "list[TagGroup] | None") -> "list[TagGroup] | None":
+        # A trigger's scope is read by two paths that resolve differently: the refresh runs
+        # through reflect, which resolves fuzzy leaves, while the staleness check and the
+        # scope watermark build SQL straight from the stored groups and do not. A stored
+        # fuzzy leaf would therefore build content from the resolved tags while never being
+        # marked stale by them, and would drift as the bank's tag vocabulary changes.
+        # Resolution is a request-time step; stored scopes stay exact.
+        if v is not None and needs_resolution(v):
+            raise ValueError(
+                "resolve='fuzzy' is not supported in a trigger's tag_groups. A stored scope must "
+                "be exact; use it on a recall or reflect request instead."
+            )
+        return v
+
+    @field_validator("response_schema")
+    @classmethod
+    def validate_trigger_response_schema(cls, v: dict | None) -> dict | None:
+        if v is not None:
+            validate_response_schema(v)
+        return v
+
+    @field_validator("refresh_cron", "full_refresh_cron")
+    @classmethod
+    def validate_refresh_cron(cls, v: str | None, info: ValidationInfo) -> str | None:
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            return None
+        from croniter import croniter
+
+        if not croniter.is_valid(v):
+            raise ValueError(f"{info.field_name} is not a valid cron expression: {v!r}")
+        return v
+
+    @model_validator(mode="after")
+    def validate_refresh_exclusivity(self) -> "MentalModelTrigger":
+        # A mental model refreshes either after consolidation (real-time) or on a
+        # cron schedule, never both — the two triggers would race and double-refresh.
+        if self.refresh_after_consolidation and self.refresh_cron:
+            raise ValueError(
+                "refresh_after_consolidation and refresh_cron are mutually exclusive: "
+                "a mental model refreshes either after consolidation or on a cron schedule, not both."
+            )
+        return self

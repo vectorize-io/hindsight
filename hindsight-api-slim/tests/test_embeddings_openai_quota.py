@@ -1,15 +1,19 @@
-"""OpenAI embeddings out of credits defers the operation instead of failing it (#5588)."""
+"""OpenAI embeddings: no credits defers the operation (#5588); partial usage never fails it (#5941)."""
 
 from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
 from openai import RateLimitError
+from openai.types import CreateEmbeddingResponse, Embedding
+from openai.types.create_embedding_response import Usage
 
+from hindsight_api import tracing
 from hindsight_api.engine.aiohttp_session import LoopLocal
 from hindsight_api.engine.embeddings import EMBEDDINGS_QUOTA_DEFER_SECONDS, OpenAIEmbeddings
 from hindsight_api.engine.llm_interface import ProviderRateLimitResetError
 from hindsight_api.engine.retain.embedding_utils import generate_embeddings_batch
+from tests.test_llm_trace import _CapturingRecorder
 
 
 def _rate_limit_error(code: str) -> RateLimitError:
@@ -80,3 +84,41 @@ async def test_client_carries_timeout_and_configured_retries(monkeypatch):
         assert client.timeout == 60.0
     finally:
         clear_config_cache()
+
+
+class _UsageEmbeddingsAPI:
+    """Answers like Voyage's OpenAI-compatible endpoint: usage without prompt_tokens (#5941)."""
+
+    def __init__(self, total_tokens: int | None) -> None:
+        self.total_tokens = total_tokens
+
+    async def create(self, **_: object) -> CreateEmbeddingResponse:
+        return CreateEmbeddingResponse.model_construct(
+            data=[Embedding(embedding=[0.1] * 1536, index=0, object="embedding")],
+            model="voyage-4",
+            object="list",
+            usage=Usage.model_construct(prompt_tokens=None, total_tokens=self.total_tokens),
+        )
+
+
+class _UsageClient:
+    def __init__(self, total_tokens: int | None) -> None:
+        self.api_key = "sk-test"
+        self.embeddings = _UsageEmbeddingsAPI(total_tokens)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("total_tokens,traced", [(7, 7), (None, None)])
+async def test_usage_without_prompt_tokens_does_not_fail_the_call(total_tokens: int | None, traced: int | None):
+    backend = OpenAIEmbeddings(api_key="sk-test", model="voyage-4")
+    backend._dimension = 1536
+    backend._clients = LoopLocal(lambda: _UsageClient(total_tokens))
+    recorder = _CapturingRecorder()
+    tracing.register_span_recorder(recorder)
+    try:
+        vectors = await generate_embeddings_batch(backend, ["hello"])
+    finally:
+        tracing.unregister_span_recorder(recorder)
+
+    assert len(vectors) == 1
+    assert [r.input_tokens for r in recorder.records] == [traced]

@@ -19,12 +19,43 @@ export interface MoltbotPluginAPI {
   ): void;
   // OpenClaw >= 2026.10: the memory-slot owner's native read runtime. Absent on older hosts.
   registerMemoryCapability?(capability: { providerRuntime: MemoryProviderRuntime }): void;
+  // Agent tools. A factory runs per agent run and may return null to offer none.
+  registerTool?(
+    factory: (ctx: PluginToolContext) => PluginTool[] | null,
+    opts?: { names?: string[] }
+  ): void;
   // OpenClaw framework logger — handles coloring/formatting consistently across plugins
   logger: {
     info(msg: string): void;
     warn(msg: string): void;
     error(msg: string): void;
   };
+}
+
+/** The run an agent tool is created for (subset of OpenClaw's OpenClawPluginToolContext). */
+export interface PluginToolContext {
+  agentId?: string;
+  sessionKey?: string;
+  workspaceDir?: string;
+  /** Trusted sender id from the inbound message (set by the runtime, not by tool arguments). */
+  requesterSenderId?: string;
+}
+
+export interface PluginToolResult {
+  content: Array<{ type: "text"; text: string }>;
+  details: unknown;
+}
+
+export interface PluginTool {
+  name: string;
+  label: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  execute(
+    toolCallId: string,
+    params: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<PluginToolResult>;
 }
 
 export interface MoltbotConfig {
@@ -128,6 +159,8 @@ export interface PluginConfig {
   retainContext?: string; // Interpretation guidance sent via the retain API context field. Defaults to built-in OpenClaw transcript/routing metadata guidance.
   excludeProviders?: string[]; // Message providers to exclude from recall/retain (e.g. ['telegram', 'discord'])
   autoRecall?: boolean; // Auto-recall memories on every prompt (default: true). Set to false when agent has its own recall tool.
+  memoryMode?: "hybrid" | "context" | "tools"; // Same as Hermes's memory_mode. 'hybrid' (default): auto-recall plus the hindsight_retain/recall/reflect tools; 'context': auto-recall only, no tools; 'tools': tools only, no auto-recall.
+  allowKnowledgeDelete?: boolean; // Offer hindsight_delete_knowledge_node (default: false). It deletes a whole subtree and cannot be undone.
   dynamicBankGranularity?: Array<"agent" | "provider" | "channel" | "user">; // Fields for bank ID derivation. Default: ['agent', 'channel', 'user']
   autoRetain?: boolean; // Default: true
   retainRoles?: Array<"user" | "assistant" | "system" | "tool">; // Roles to include in retained transcript. Default: ['user', 'assistant']
@@ -150,6 +183,7 @@ export interface PluginConfig {
   ignoreSessionPatterns?: string[]; // Session key glob patterns to skip entirely (no recall, no retain). E.g. ["agent:main:**", "agent:*:cron:**"]
   statelessSessionPatterns?: string[]; // Session key glob patterns for read-only sessions (recall allowed, retain skipped). E.g. ["agent:*:subagent:**"]
   skipStatelessSessions?: boolean; // When true (default), stateless sessions also skip recall. When false, they recall but never retain.
+  skipOperationalSessions?: boolean; // When true (default), cron, heartbeat and subagent sessions skip recall and retain. When false, they are handled like any other session.
   debug?: boolean; // Enable debug logging (default: false)
   logLevel?: "off" | "error" | "warning" | "info" | "debug"; // Console log verbosity (default: 'info').
   logSummaryIntervalMs?: number; // Batch retain/recall log summaries over this interval in ms. 0 = log every event. Default: 300000 (5 min).

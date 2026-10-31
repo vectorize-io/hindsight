@@ -34,6 +34,7 @@ export async function POST(request: NextRequest) {
     response_schema,
     reflect_search_observations_max_tokens,
     reflect_search_observations_include_entities,
+    reflect_search_mental_models_max_tokens,
   } = body;
 
   const requestBody: any = {
@@ -51,6 +52,7 @@ export async function POST(request: NextRequest) {
     reflect_search_observations_max_tokens: reflect_search_observations_max_tokens || undefined,
     reflect_search_observations_include_entities:
       reflect_search_observations_include_entities ?? undefined,
+    reflect_search_mental_models_max_tokens: reflect_search_mental_models_max_tokens || undefined,
   };
 
   // Add include options if specified

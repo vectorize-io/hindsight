@@ -25,13 +25,13 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, 
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from hindsight_api.api import page_markdown
 from hindsight_api.api.admission import AdmissionAbandoned, AdmissionRejected, build_controller_from_config
 from hindsight_api.api.disconnect import ClientDisconnectCancellationMiddleware, get_scope_cancellation_token
 from hindsight_api.api.observability import HttpObservabilityMiddleware
 from hindsight_api.api.passthrough_headers import collect_passthrough_headers
 from hindsight_api.api.unknown_params import UnknownParamsRoute, use_unknown_params_routes
 from hindsight_api.cancellation import OperationCancelledError
+from hindsight_api.engine import page_markdown
 from hindsight_api.engine.audit import (
     AuditEntry,
     AuditLogEntry,
@@ -40,8 +40,8 @@ from hindsight_api.engine.audit import (
     AuditLogStatsResponse,
 )
 from hindsight_api.engine.document_history import DocumentHistoryResponse
-from hindsight_api.engine.llm_trace import LLMCallType, LLMRequestListResponse, LLMRequestStatsResponse
-from hindsight_api.extensions import AuthenticationError, BankWriteOperation, PrecheckOperation
+from hindsight_api.engine.llm_trace import LLMCallType, LLMRequestListResponse, LLMRequestStatsResponse, LLMStatsSplit
+from hindsight_api.extensions import AuthenticationError, PrecheckContext, PrecheckOperation
 
 
 def _parse_metadata(metadata: Any) -> dict[str, Any]:
@@ -72,27 +72,13 @@ from pydantic import (
     Field,
     TypeAdapter,
     ValidationError,
-    ValidationInfo,
     field_validator,
     model_validator,
 )
 
 from hindsight_api import MemoryEngine
-from hindsight_api.config import RETAIN_EXTRACTION_MODES
 from hindsight_api.config_resolver import BankConfigPersistenceConflictError
-from hindsight_api.engine.retain.entity_labels import LabelGroup, _migrate_label_group
-
-
-def _migrate_entity_labels_input(value: Any) -> Any:
-    """Pydantic ``mode='before'`` hook: migrate legacy entity-label dicts before ``LabelGroup`` validation.
-
-    Keeps the request boundary accepting the legacy ``free_values``/``multi_value`` shape (translated to
-    the ``type`` field) that ``parse_entity_labels`` already tolerates on the storage-read side, so typing
-    the field as ``list[LabelGroup]`` (which publishes the schema in OpenAPI) does not drop those keys.
-    """
-    if isinstance(value, list):
-        return [_migrate_label_group(item) if isinstance(item, dict) else item for item in value]
-    return value
+from hindsight_api.engine.retain.entity_labels import LabelGroup, migrate_entity_labels_input
 
 
 def _drop_additional_properties(schema: dict[str, Any]) -> None:
@@ -192,47 +178,23 @@ class ExcludeNoneRoute(APIRoute):
         super().__init__(*args, **kwargs)
 
 
-def FieldWithDefault(default_factory: Callable, **kwargs) -> Any:
-    """
-    Field wrapper that ensures default_factory values appear in OpenAPI schema.
-
-    Pydantic doesn't include default_factory in OpenAPI schemas, causing OpenAPI
-    Generator to make fields Optional with default=None instead of non-optional
-    with the correct default value.
-
-    This wrapper adds json_schema_extra to include the default in the schema.
-    """
-    # Determine the default value for the schema based on the factory
-    if default_factory is list:
-        schema_default = []
-    elif default_factory is dict:
-        schema_default = {}
-    else:
-        # For custom factories (like IncludeOptions), use empty dict as placeholder
-        schema_default = {}
-
-    # Add or merge json_schema_extra
-    json_extra = kwargs.pop("json_schema_extra", {})
-    if isinstance(json_extra, dict):
-        json_extra["default"] = schema_default
-    else:
-        # If json_schema_extra was a function, we can't merge easily
-        # Fall back to just setting default
-        json_extra = {"default": schema_default}
-
-    return Field(default_factory=default_factory, json_schema_extra=json_extra, **kwargs)
-
-
 from hindsight_api.config import ConfigLike, HindsightConfig, StaticConfigProxy, get_config
-from hindsight_api.engine.interface import BankTemplateImportWrite
+from hindsight_api.engine.bank_templates import (
+    BANK_TEMPLATE_CURRENT_VERSION,
+    BankTemplateConfig,
+    BankTemplateDirective,
+    BankTemplateImportResponse,
+    BankTemplateManifest,
+    BankTemplateMentalModel,
+    apply_bank_template_manifest,
+    validate_bank_template,
+)
 from hindsight_api.engine.memories.base import StoreWriteUnavailable
 from hindsight_api.engine.memory_engine import (
     KEEP_PARENT,
-    Budget,
     KnowledgeTagFilter,
     RetainOperationConflictError,
     VisionNotSupportedError,
-    _current_schema,
 )
 from hindsight_api.engine.mental_model_refresh import (
     MentalModelDryRunRefreshResult,
@@ -242,12 +204,17 @@ from hindsight_api.engine.providers.none_llm import LLMNotAvailableError
 from hindsight_api.engine.reflect import ReflectNoAnswerError, ReflectToolCallError, ReflectToolExecutionError
 from hindsight_api.engine.response_models import (
     VALID_RECALL_FACT_TYPES,
+    Budget,
     ConsolidationStrategiesPreview,
     ConsolidationStrategySpec,
     DryRunExtractionResult,
+    FieldWithDefault,
     MemoryFact,
+    MentalModelTrigger,
     MinScores,
     RecallScores,
+    ReflectDefaultOptions,
+    RerankOptions,
     TemporalWindow,
     TokenUsage,
 )
@@ -262,7 +229,6 @@ from hindsight_api.engine.retain.attachment_content import (
     validate_and_canonicalize_content,
 )
 from hindsight_api.engine.retain.attachment_store import StoredAttachment
-from hindsight_api.engine.search.tag_resolution import needs_resolution
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 
 _TAG_GROUPS_ADAPTER: TypeAdapter[list[TagGroup]] = TypeAdapter(list[TagGroup])
@@ -313,6 +279,7 @@ from hindsight_api.metrics import (
     reset_metrics_collector,
 )
 from hindsight_api.models import RequestContext
+from hindsight_api.schema_context import _current_schema
 
 logger = logging.getLogger(__name__)
 
@@ -513,7 +480,11 @@ async def run_task_cancellable_on_disconnect(
         # cancellation, not a fault worth reporting over the 499.
         await asyncio.gather(task, return_exceptions=True)
         logger.info(f"[{operation.upper()} CANCELLED] bank={bank_id} reason={token.reason}")
-        raise HTTPException(status_code=_CLIENT_CLOSED_REQUEST_STATUS_CODE, detail=token.reason)
+        # Chained to the typed cancellation so metrics count it as abandoned, not
+        # failed (#5946), the same as run_cancellable_on_disconnect above.
+        raise HTTPException(
+            status_code=_CLIENT_CLOSED_REQUEST_STATUS_CODE, detail=token.reason
+        ) from OperationCancelledError(token.reason)
     finally:
         waiter.cancel()
         # This call can itself be cancelled from above (server shutdown, a deadline),
@@ -596,6 +567,14 @@ class RecallRequest(BaseModel):
             "it and you don't get duplicate content. The freed slots are backfilled with the next results, "
             "keeping the result count at the requested budget. When omitted, uses the bank/global "
             "recall_prefer_observations config (false unless configured). No effect unless 'observation' and at least one raw type are both requested."
+        ),
+    )
+    rerank: RerankOptions | None = Field(
+        default=None,
+        description=(
+            "What the decision-model reranker does beyond ordering: drop results that do not help "
+            "(`prune`) or that repeat a better-ranked one (`dedup`). Each field left unset uses the "
+            "bank/global config. No effect unless a decision model is set up for recall."
         ),
     )
     budget: Budget = Budget.MID
@@ -1530,39 +1509,6 @@ class ReflectIncludeOptions(BaseModel):
     tool_calls: ToolCallsIncludeOptions | None = Field(
         default=None,
         description="Include tool calls trace. Set to {} for full trace (input+output), {output: false} for inputs only.",
-    )
-
-
-class ReflectDefaultOptions(BaseModel):
-    """Reflect options an operator can default per bank.
-
-    Every field is ``None`` = "not set", so the same model is both the shape of
-    the ``reflect_default_options`` bank config key and the set of fields a
-    reflect request inherits from it. The resolution chain is: explicit request
-    value -> bank ``reflect_default_options`` -> the shipped default.
-
-    A mental-model refresh does NOT read this. It is its own operation with its
-    own per-bank default (``knowledge_page_default_trigger``), so the same-named
-    fields are declared on ``MentalModelTrigger`` instead — see there.
-    """
-
-    reflect_search_observations_max_tokens: int | None = Field(
-        default=None,
-        ge=1,
-        description=(
-            "Token budget for reflect's search_observations tool when the model names none. "
-            "Observation evidence is often the largest contributor to the reflect context; "
-            "lowering it trades the lowest-ranked observations for a smaller LLM context. "
-            "None means use the shipped default (5000)."
-        ),
-    )
-    reflect_search_observations_include_entities: bool | None = Field(
-        default=None,
-        description=(
-            "Whether search_observations attaches resolved entity names to each observation. "
-            "Entities can be more than half the serialized tool payload; turning them off keeps "
-            "the same observations and ranking with a much smaller context. None means enabled."
-        ),
     )
 
 
@@ -2680,7 +2626,7 @@ class DryRunExtractRequest(BaseModel):
     entities_allow_free_form: bool | None = None
     llm_output_language: str | None = None
 
-    _migrate_entity_labels = field_validator("entity_labels", mode="before")(_migrate_entity_labels_input)
+    _migrate_entity_labels = field_validator("entity_labels", mode="before")(migrate_entity_labels_input)
 
 
 class DocumentListItem(OpenRowModel):
@@ -3286,229 +3232,6 @@ class UpdateDirectiveRequest(BaseModel):
 # =========================================================================
 
 
-class MentalModelTrigger(BaseModel):
-    """Trigger settings for a mental model.
-
-    A refresh is not an ad-hoc reflect with different arguments: it synthesizes a
-    whole document, so it wants its own retrieval and iteration settings. This
-    trigger is therefore the only source for them — a bank's
-    ``reflect_default_options`` deliberately does not reach a refresh. The
-    per-bank default for these fields is ``knowledge_page_default_trigger``,
-    which is merged over this same shape when a page is created.
-    """
-
-    budget: Budget | None = Field(
-        default=None,
-        description=(
-            "How many agent iterations a refresh may spend, as a multiple of "
-            "reflect_max_iterations: 'low' halves it, 'mid' keeps it, 'high' doubles it. "
-            "A refresh is the heaviest reflect there is — it writes a whole document, and with "
-            "exclude_mental_models it must read raw facts first — so null means 'mid', not the "
-            "'low' an ad-hoc reflect defaults to."
-        ),
-    )
-
-    mode: Literal["full", "delta"] = Field(
-        default="full",
-        description=(
-            "Refresh mode. 'full' (default) regenerates the mental model content from scratch on each refresh. "
-            "'delta' performs surgical edits against the existing content: unchanged sections are preserved "
-            "byte-for-byte, stale content is removed, new content is added. If the mental model has no existing "
-            "content, or if the source_query has changed since the last refresh, delta mode falls back to a full "
-            "regeneration automatically."
-        ),
-    )
-    refresh_after_consolidation: bool = Field(
-        default=False,
-        description="If true, refresh this mental model after observations consolidation (real-time mode)",
-    )
-    refresh_cron: str | None = Field(
-        default=None,
-        description=(
-            "Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * *' for daily at 03:00 UTC) "
-            "for refreshing this mental model on a fixed schedule. Mutually exclusive with "
-            "refresh_after_consolidation — a model refreshes either after consolidation or on a cron "
-            "schedule, not both. A scheduled refresh only runs when the model is stale (new memories in "
-            "its scope since the last refresh); if nothing changed, the tick is skipped to avoid a "
-            "wasted LLM call. null = no schedule."
-        ),
-    )
-    full_refresh_cron: str | None = Field(
-        default=None,
-        description=(
-            "Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * 0' for Sundays at 03:00 UTC) "
-            "for a scheduled full refresh: on this schedule the model is refreshed in 'full' mode "
-            "whatever its `mode` says, regenerating the content from scratch to clear the drift many "
-            "delta edits accumulate. Independent of `refresh_cron` and `refresh_after_consolidation` — "
-            "a delta model can refresh after consolidation and still get a weekly full refresh — and it "
-            "does not change `mode`. A tick is skipped when no refresh has run since the last full one "
-            "(there is nothing to correct). Like `refresh_cron`, it honours "
-            "`min_refresh_interval_seconds` and pauses while the last refresh failed. null = no schedule."
-        ),
-    )
-    min_refresh_interval_seconds: int | None = Field(
-        default=None,
-        ge=0,
-        description=(
-            "Minimum seconds between two automatic refreshes of this mental model. A triggered "
-            "refresh that arrives sooner is not dropped: it is queued and parked until the window "
-            "expires, and every further trigger in the meantime folds into that one queued refresh, "
-            "so a burst of retains costs one refresh instead of one per retain. Applies to every "
-            "automatic trigger: refresh_after_consolidation, refresh_cron and full_refresh_cron. Explicit refreshes (API, MCP, control "
-            "plane) ignore it and run immediately. 0 disables the floor for this model; null falls "
-            "back to the bank/global mental_model_min_refresh_interval_seconds setting (itself 0 by "
-            "default, i.e. no floor)."
-        ),
-    )
-    fact_types: list[Literal["world", "experience", "observation"]] | None = Field(
-        default=None,
-        description="Filter which fact types are retrieved during reflect. None means all types (world, experience, observation).",
-    )
-    exclude_mental_models: bool = Field(
-        default=False,
-        description="If true, exclude all mental models from the reflect loop (skip search_mental_models tool).",
-    )
-    exclude_mental_model_ids: list[str] | None = Field(
-        default=None,
-        description="Exclude specific mental models by ID from the reflect loop.",
-    )
-    tags_match: TagsMatch | None = Field(
-        default=None,
-        description=(
-            "Override how the model's tags filter memories during refresh. "
-            "If not set, defaults to 'all_strict' when the model has tags (security isolation) "
-            "or 'any' when the model has no tags. Under 'all_strict' a memory must carry EVERY "
-            "one of the model's tags and untagged memories are excluded, which is why a model "
-            "tagged with labels its memories do not carry refreshes to empty content. "
-            "Set to 'all' to keep requiring the tags while including untagged memories, or to "
-            "'any' to include untagged memories alongside any single tag match. "
-            "Staleness ignores that widening: an untagged write never marks a tagged model stale, "
-            "in any mode — only a write that matches the model's tags does."
-        ),
-    )
-    tag_groups: list[TagGroup] | None = Field(
-        default=None,
-        description=(
-            "Compound boolean tag expressions to use during refresh instead of the model's own tags. "
-            "When set, these tag groups are passed to reflect and the model's flat tags are NOT used for filtering. "
-            "Supports nested and/or/not expressions for complex tag-based scoping."
-        ),
-    )
-    include_chunks: bool | None = Field(
-        default=None,
-        description=(
-            "Override whether the internal recall used during refresh returns raw chunk text. "
-            "None means use the bank/global config default (recall_include_chunks)."
-        ),
-    )
-    recall_max_tokens: int | None = Field(
-        default=None,
-        description=(
-            "Override the token budget for facts returned by the internal recall during refresh. "
-            "None means use the bank/global config default (recall_max_tokens)."
-        ),
-    )
-    recall_chunks_max_tokens: int | None = Field(
-        default=None,
-        description=(
-            "Override the token budget for raw chunks returned by the internal recall during refresh. "
-            "None means use the bank/global config default (recall_chunks_max_tokens)."
-        ),
-    )
-    reflect_search_observations_max_tokens: int | None = Field(
-        default=None,
-        ge=1,
-        description=(
-            "Override the token budget for the refresh's search_observations calls. Observation "
-            "evidence is often the largest contributor to the reflect context; lowering it trades "
-            "the lowest-ranked observations for a smaller LLM context. null means the shipped 5000."
-        ),
-    )
-    reflect_search_observations_include_entities: bool | None = Field(
-        default=None,
-        description=(
-            "Override whether search_observations attaches resolved entity names to each "
-            "observation. Entities can be more than half the serialized tool payload; turning them "
-            "off keeps the same observations and ranking with a much smaller context. null means enabled."
-        ),
-    )
-    response_schema: dict | None = Field(
-        default=None,
-        description=(
-            "Optional JSON Schema for structured output. When set, each refresh runs the same "
-            "structured-output extraction as reflect's response_schema and stores the parsed result "
-            "under reflect_response.structured_output alongside the markdown content."
-        ),
-    )
-    keep_trace: bool = Field(
-        default=False,
-        description=(
-            "If true, every refresh of this mental model records how it reached its result under "
-            "reflect_response.trace: the mode it ran in and why, the resolved scope and time window, "
-            "how many facts retrieval returned versus how many the agent used, the tool and LLM calls, "
-            "and any delta operations. Only the latest refresh's trace is kept. This is the only way to "
-            "diagnose a cron- or consolidation-driven refresh after the fact, since no human sees those "
-            "run. Tool outputs are reduced to result counts to keep the stored trace bounded; use "
-            "LLM request tracing for raw prompts and responses."
-        ),
-    )
-
-    @field_validator("fact_types")
-    @classmethod
-    def validate_fact_types(cls, v: list[str] | None) -> list[str] | None:
-        if v is not None and len(v) == 0:
-            raise ValueError("fact_types must not be empty. Use null to include all fact types.")
-        return v
-
-    @field_validator("tag_groups")
-    @classmethod
-    def validate_tag_groups_are_exact(cls, v: "list[TagGroup] | None") -> "list[TagGroup] | None":
-        # A trigger's scope is read by two paths that resolve differently: the refresh runs
-        # through reflect, which resolves fuzzy leaves, while the staleness check and the
-        # scope watermark build SQL straight from the stored groups and do not. A stored
-        # fuzzy leaf would therefore build content from the resolved tags while never being
-        # marked stale by them, and would drift as the bank's tag vocabulary changes.
-        # Resolution is a request-time step; stored scopes stay exact.
-        if v is not None and needs_resolution(v):
-            raise ValueError(
-                "resolve='fuzzy' is not supported in a trigger's tag_groups. A stored scope must "
-                "be exact; use it on a recall or reflect request instead."
-            )
-        return v
-
-    @field_validator("response_schema")
-    @classmethod
-    def validate_trigger_response_schema(cls, v: dict | None) -> dict | None:
-        if v is not None:
-            validate_response_schema(v)
-        return v
-
-    @field_validator("refresh_cron", "full_refresh_cron")
-    @classmethod
-    def validate_refresh_cron(cls, v: str | None, info: ValidationInfo) -> str | None:
-        if v is None:
-            return v
-        v = v.strip()
-        if not v:
-            return None
-        from croniter import croniter
-
-        if not croniter.is_valid(v):
-            raise ValueError(f"{info.field_name} is not a valid cron expression: {v!r}")
-        return v
-
-    @model_validator(mode="after")
-    def validate_refresh_exclusivity(self) -> "MentalModelTrigger":
-        # A mental model refreshes either after consolidation (real-time) or on a
-        # cron schedule, never both — the two triggers would race and double-refresh.
-        if self.refresh_after_consolidation and self.refresh_cron:
-            raise ValueError(
-                "refresh_after_consolidation and refresh_cron are mutually exclusive: "
-                "a mental model refreshes either after consolidation or on a cron schedule, not both."
-            )
-        return self
-
-
 class RefreshMentalModelRequest(BaseModel):
     """Optional body of POST /mental-models/{id}/refresh."""
 
@@ -3585,7 +3308,11 @@ class MentalModelResponse(BaseModel):
     )
     reflect_response: dict | None = Field(
         default=None,
-        description="Full reflect API response payload including based_on facts and observations",
+        description=(
+            "Full reflect API response payload including based_on facts and observations. On a "
+            "single-model read, each world/experience/observation entry in based_on also carries "
+            "`attachments`: the retained images and files that memory was extracted from."
+        ),
     )
     is_stale: bool | None = Field(
         default=None,
@@ -3928,753 +3655,6 @@ class UpdateMentalModelRequest(BaseModel):
     max_tokens: int | None = Field(default=None, ge=256, le=8192, description="Maximum tokens for generated content")
     tags: list[str] | None = Field(default=None, description="Tags for scoped visibility")
     trigger: MentalModelTrigger | None = Field(default=None, description="Trigger settings")
-
-
-# =========================================================================
-# Bank Templates (import/export)
-# =========================================================================
-
-# Current manifest schema version. Bump when making breaking changes.
-BANK_TEMPLATE_CURRENT_VERSION = "1"
-
-
-class BankTemplateMentalModel(BaseModel):
-    """A mental model definition within a bank template manifest."""
-
-    id: str = Field(description="Unique ID for the mental model (alphanumeric lowercase with hyphens)")
-    name: str = Field(description="Human-readable name for the mental model")
-    source_query: str = Field(description="The query to run to generate content")
-    tags: list[str] = FieldWithDefault(list, description="Tags for scoped visibility")
-    max_tokens: int = Field(default=2048, ge=256, le=8192, description="Maximum tokens for generated content")
-    trigger: MentalModelTrigger = FieldWithDefault(MentalModelTrigger, description="Trigger settings")
-
-    @field_validator("id")
-    @classmethod
-    def validate_id(cls, v: str) -> str:
-        if not re.match(r"^[a-z0-9][a-z0-9-]*$", v):
-            raise ValueError(
-                f"Mental model id '{v}' must be alphanumeric lowercase with hyphens, starting with a letter or digit."
-            )
-        return v
-
-
-class BankTemplateConfig(BaseModel):
-    """Bank configuration fields within a template manifest.
-
-    Only includes configurable (per-bank) fields. Credential fields
-    (API keys, base URLs) are intentionally excluded for security.
-    """
-
-    reflect_mission: str | None = Field(default=None, description="Mission/context for Reflect operations")
-    retain_mission: str | None = Field(default=None, description="Steers what gets extracted during retain")
-    retain_extraction_mode: str | None = Field(
-        default=None,
-        description="Fact extraction mode: 'concise' (default), 'verbose', 'custom', 'verbatim', or 'chunks'",
-    )
-    retain_custom_instructions: str | None = Field(
-        default=None, description="Custom extraction prompt (when mode='custom')"
-    )
-    retain_chunk_size: int | None = Field(default=None, description="Target max characters for each content chunk")
-    retain_structured_chunk_size: int | None = Field(
-        default=None,
-        description=(
-            "Max characters for a single JSONL line or conversation turn to keep whole; "
-            "defaults to retain_chunk_size when unset"
-        ),
-    )
-    enable_observations: bool | None = Field(default=None, description="Toggle observation consolidation")
-    observations_mission: str | None = Field(default=None, description="Controls what gets synthesised")
-    enable_text_search: bool | None = Field(
-        default=None, description="Toggle the keyword (BM25) arm during recall, leaving pure vector search"
-    )
-    enable_temporal_retrieval: bool | None = Field(
-        default=None, description="Toggle the temporal arm (and its date-aware query analysis) during recall"
-    )
-    enable_graph_retrieval: bool | None = Field(
-        default=None, description="Toggle the entity/link graph arm during recall"
-    )
-    enable_reranking: bool | None = Field(default=None, description="Toggle cross-encoder reranking during recall")
-    reflect_use_decision_model: bool | None = Field(
-        default=None,
-        description="When the server has a decision model, reflect lets it prune evidence and decide when to stop",
-    )
-    mental_model_refresh_use_decision_model: bool | None = Field(
-        default=None, description="The same, for knowledge-page refreshes"
-    )
-    mental_model_delta_use_decision_model: bool | None = Field(
-        default=None,
-        description="When the server has a decision model, a delta knowledge-page refresh asks it which new "
-        "memories could change the page instead of running reflect",
-    )
-    disposition_skepticism: int | None = Field(default=None, ge=1, le=5, description="Skepticism trait (1-5)")
-    disposition_literalism: int | None = Field(default=None, ge=1, le=5, description="Literalism trait (1-5)")
-    disposition_empathy: int | None = Field(default=None, ge=1, le=5, description="Empathy trait (1-5)")
-    entity_labels: list[LabelGroup] | None = Field(default=None, description="Controlled vocabulary for entity labels")
-    _migrate_entity_labels = field_validator("entity_labels", mode="before")(_migrate_entity_labels_input)
-    entities_allow_free_form: bool | None = Field(
-        default=None, description="Allow entities outside the label vocabulary"
-    )
-    retain_default_strategy: str | None = Field(
-        default=None, description="Name of the default retain strategy (key into retain_strategies map)"
-    )
-    retain_strategies: dict | None = Field(
-        default=None, description="Map of retain strategy name to per-strategy config dict"
-    )
-    retain_chunk_batch_size: int | None = Field(
-        default=None, description="Max chunks per streaming batch (0 disables batching)"
-    )
-    retain_max_attachments_per_chunk: int | None = Field(
-        default=None, description="Hard cap on inline images in a single extraction chunk"
-    )
-    mcp_enabled_tools: list[str] | None = Field(
-        default=None, description="MCP tool allowlist for this bank (None = all tools)"
-    )
-    consolidation_llm_batch_size: int | None = Field(
-        default=None, description="LLM batch size for observation consolidation"
-    )
-    consolidation_source_facts_max_tokens: int | None = Field(
-        default=None, description="Max tokens of source facts per consolidation batch"
-    )
-    consolidation_source_facts_max_tokens_per_observation: int | None = Field(
-        default=None, description="Max tokens of source facts per observation"
-    )
-    max_observations_per_scope: int | None = Field(
-        default=None, description="Max observations to retain per consolidation scope"
-    )
-    observation_scope_limits: list[dict[str, Any]] | None = Field(
-        default=None,
-        description=(
-            "DEPRECATED — use consolidation_strategies, which carries the mission too. "
-            "Still honoured, but consulted only after consolidation_strategies. "
-            "Per-scope overrides of max_observations_per_scope: "
-            '[{"scope": ["run_*", "shared"], "limit": 1}]. Each scope is a list of '
-            "fnmatch tag-globs; a consolidation scope matches under exact cover "
-            "(every tag matched by a glob and every glob matched by a tag). The first "
-            "matching rule wins; unmatched scopes fall back to max_observations_per_scope."
-        ),
-    )
-    default_observation_scopes: (
-        Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None
-    ) = Field(
-        default=None,
-        description=(
-            "observation_scopes applied at retain to items that send none ('combined' when unset). "
-            "A list of tag lists may use globs, e.g. [['topic:*']] scopes each memory by its own topic tags."
-        ),
-    )
-    consolidation_strategies: list[ConsolidationStrategySpec] | None = Field(
-        default=None,
-        description=(
-            "Per-scope consolidation settings: "
-            '[{"scopes": [{"tags": ["company:*"]}], "observations_mission": "Record only generalized '
-            'trends.", "max_observations_per_scope": 20}]. Each strategy lists the rules it claims '
-            "scopes with — a rule's tags are fnmatch globs that must all be on the scope, and its "
-            '"tags_match" decides whether the scope may carry others ("all", the default) or not '
-            '("exact"). The rules are alternatives: any one matching claims the scope. A strategy may '
-            "set any of observations_mission, max_observations_per_scope, "
-            "consolidation_source_facts_max_tokens and "
-            "consolidation_source_facts_max_tokens_per_observation; each is optional. "
-            "Exactly one strategy applies to a scope: the first in the list that claims it. "
-            "Whatever that strategy leaves unset — and every scope no strategy claims — "
-            "uses the bank-wide value; a later strategy never fills the gaps. "
-            "Supersedes observation_scope_limits. Lets one bank be federated across "
-            "user/team/company tag scopes, each consolidating under its own brief."
-        ),
-    )
-    reflect_source_facts_max_tokens: int | None = Field(
-        default=None, description="Max tokens of source facts per reflect call"
-    )
-    knowledge_page_default_trigger: dict[str, Any] | None = Field(
-        default=None,
-        description=(
-            "Trigger fields merged over the built-in knowledge-page default when a page is created "
-            '(e.g. {"refresh_cron": "0 * * * *"}). A trigger sent with the create request still wins.'
-        ),
-    )
-    reflect_default_options: dict[str, Any] | None = Field(
-        default=None,
-        description=(
-            "Default reflect options for this bank "
-            '(e.g. {"reflect_search_observations_max_tokens": 3000, "reflect_search_observations_include_entities": false}). '
-            "Applied to every reflect in the bank -- API, MCP and mental-model refresh -- whenever "
-            "the request (or the model's trigger) leaves the option unset."
-        ),
-    )
-    mental_model_min_refresh_interval_seconds: int | None = Field(
-        default=None,
-        ge=0,
-        description=(
-            "Minimum seconds between two automatic refreshes of the same mental model in this "
-            "bank. 0 (the default) means no floor. Overridable per model via the trigger's "
-            "min_refresh_interval_seconds."
-        ),
-    )
-    llm_gemini_safety_settings: list | None = Field(
-        default=None, description="Per-bank Gemini/VertexAI safety filter settings"
-    )
-    recall_budget_function: str | None = Field(
-        default=None, description="Recall budget mapping function: 'fixed' or 'adaptive'"
-    )
-    recall_budget_fixed_low: int | None = Field(
-        default=None, description="Fixed thinking_budget for budget=low (function='fixed')"
-    )
-    recall_budget_fixed_mid: int | None = Field(
-        default=None, description="Fixed thinking_budget for budget=mid (function='fixed')"
-    )
-    recall_budget_fixed_high: int | None = Field(
-        default=None, description="Fixed thinking_budget for budget=high (function='fixed')"
-    )
-    recall_budget_adaptive_low: float | None = Field(
-        default=None, description="Ratio of max_tokens for budget=low (function='adaptive')"
-    )
-    recall_budget_adaptive_mid: float | None = Field(
-        default=None, description="Ratio of max_tokens for budget=mid (function='adaptive')"
-    )
-    recall_budget_adaptive_high: float | None = Field(
-        default=None, description="Ratio of max_tokens for budget=high (function='adaptive')"
-    )
-    recall_budget_min: int | None = Field(default=None, description="Floor for the adaptive function (after clamping)")
-    recall_budget_max: int | None = Field(
-        default=None, description="Ceiling for the adaptive function (after clamping)"
-    )
-    audit_log_enabled: bool | None = Field(
-        default=None, description="Enable audit logging for this bank (overrides the server default)"
-    )
-    store_document_text: bool | None = Field(
-        default=None,
-        description="Persist raw source text (documents.original_text / chunks.chunk_text). "
-        "Set false to keep only derived facts.",
-    )
-    enable_auto_consolidation: bool | None = Field(
-        default=None, description="Automatically consolidate observations after retain"
-    )
-    consolidation_use_decision_model: bool | None = Field(
-        default=None,
-        description="When the server has a decision model, consolidation lets it settle restatements, new "
-        "facets and chatter before the LLM call",
-    )
-    consolidation_max_memories_per_round: int | None = Field(
-        default=None, description="Max memory units fed into a single consolidation round"
-    )
-    consolidation_llm_parallelism: int | None = Field(
-        default=None, description="Number of consolidation LLM batches processed concurrently"
-    )
-    recall_include_chunks: bool | None = Field(default=None, description="Include raw chunks in recall results")
-    recall_prefer_observations: bool | None = Field(
-        default=None, description="Default for recall prefer_observations when the request omits it"
-    )
-    recall_max_tokens: int | None = Field(default=None, description="Max tokens of results returned by recall")
-    recall_chunks_max_tokens: int | None = Field(
-        default=None, description="Max tokens of raw chunks returned by recall (when recall_include_chunks is set)"
-    )
-    memory_defense: dict | None = Field(
-        default=None,
-        description="Memory Defense policy for this bank (validated against the DefensePolicy schema on write)",
-    )
-
-    def get_config_updates(self) -> dict[str, Any]:
-        """Return only the fields that were explicitly set (non-None)."""
-        return {k: v for k, v in self.model_dump().items() if v is not None}
-
-
-class BankTemplateDirective(BaseModel):
-    """A directive definition within a bank template manifest.
-
-    Directives are matched by name on re-import: existing directives
-    with the same name are updated, new ones are created.
-    """
-
-    name: str = Field(description="Human-readable name for the directive (used as match key on re-import)")
-    content: str = Field(description="The directive text to inject into prompts")
-    priority: int = Field(default=0, description="Higher priority directives are injected first")
-    is_active: bool = Field(default=True, description="Whether this directive is active")
-    tags: list[str] = FieldWithDefault(list, description="Tags for filtering")
-
-
-class BankTemplateManifest(BaseModel):
-    """A bank template manifest for import/export.
-
-    Version field enables forward-compatible schema evolution: the API
-    auto-upgrades older manifest versions to the current schema on import.
-    """
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "version": "1",
-                "bank": {
-                    "reflect_mission": "You are helping a support agent remember customer interactions.",
-                    "retain_mission": "Extract customer issues, resolutions, and sentiment.",
-                    "disposition_empathy": 5,
-                    "enable_observations": True,
-                },
-                "mental_models": [
-                    {
-                        "id": "sentiment-overview",
-                        "name": "Customer Sentiment Overview",
-                        "source_query": "What is the overall sentiment trend?",
-                        "trigger": {"refresh_after_consolidation": True},
-                    }
-                ],
-                "directives": [
-                    {
-                        "name": "Always be empathetic",
-                        "content": "Always respond with empathy and understanding.",
-                        "priority": 10,
-                    }
-                ],
-            }
-        }
-    )
-
-    version: str = Field(description="Manifest schema version (currently '1')")
-    bank: BankTemplateConfig | None = Field(
-        default=None, description="Bank configuration to apply. Omit to leave config unchanged."
-    )
-    mental_models: list[BankTemplateMentalModel] | None = Field(
-        default=None, description="Mental models to create or update (matched by id). Omit to leave unchanged."
-    )
-    directives: list[BankTemplateDirective] | None = Field(
-        default=None, description="Directives to create or update (matched by name). Omit to leave unchanged."
-    )
-
-    @field_validator("version")
-    @classmethod
-    def validate_version(cls, v: str) -> str:
-        try:
-            ver = int(v)
-        except ValueError:
-            raise ValueError(f"version must be a numeric string, got '{v}'")
-        if ver < 1:
-            raise ValueError("version must be >= 1")
-        if ver > int(BANK_TEMPLATE_CURRENT_VERSION):
-            raise ValueError(
-                f"version '{v}' is not supported by this server "
-                f"(max supported: {BANK_TEMPLATE_CURRENT_VERSION}). Please upgrade Hindsight."
-            )
-        return v
-
-    @field_validator("mental_models")
-    @classmethod
-    def validate_unique_mental_model_ids(
-        cls,
-        v: list[BankTemplateMentalModel] | None,
-    ) -> list[BankTemplateMentalModel] | None:
-        if v is None:
-            return v
-        ids = [m.id for m in v]
-        duplicates = [mid for mid in ids if ids.count(mid) > 1]
-        if duplicates:
-            raise ValueError(f"Duplicate mental model ids: {sorted(set(duplicates))}")
-        return v
-
-    @field_validator("directives")
-    @classmethod
-    def validate_unique_directive_names(
-        cls,
-        v: list[BankTemplateDirective] | None,
-    ) -> list[BankTemplateDirective] | None:
-        if v is None:
-            return v
-        names = [d.name for d in v]
-        duplicates = [n for n in names if names.count(n) > 1]
-        if duplicates:
-            raise ValueError(f"Duplicate directive names: {sorted(set(duplicates))}")
-        return v
-
-
-class BankTemplateImportResponse(BaseModel):
-    """Response model for the bank template import endpoint."""
-
-    bank_id: str = Field(description="Bank that was imported into")
-    config_applied: bool = Field(description="Whether bank config was updated")
-    mental_models_created: list[str] = FieldWithDefault(list, description="IDs of newly created mental models")
-    mental_models_updated: list[str] = FieldWithDefault(list, description="IDs of updated mental models")
-    directives_created: list[str] = FieldWithDefault(list, description="Names of newly created directives")
-    directives_updated: list[str] = FieldWithDefault(list, description="Names of updated directives")
-    operation_ids: list[str] = FieldWithDefault(
-        list, description="Operation IDs for mental model content generation (async)"
-    )
-    dry_run: bool = Field(default=False, description="True if this was a validation-only run")
-
-
-def validate_bank_template(manifest: "BankTemplateManifest") -> list[str]:
-    """Validate a parsed manifest beyond Pydantic's structural checks.
-
-    Returns a list of human-readable error strings (e.g. invalid
-    extraction mode values, conflicting settings).
-    """
-    errors: list[str] = []
-    if manifest.bank:
-        bank = manifest.bank
-        if bank.retain_extraction_mode is not None:
-            if bank.retain_extraction_mode not in RETAIN_EXTRACTION_MODES:
-                errors.append(
-                    "bank.retain_extraction_mode: "
-                    f"must be one of {RETAIN_EXTRACTION_MODES}, got '{bank.retain_extraction_mode}'"
-                )
-        if bank.retain_custom_instructions and bank.retain_extraction_mode != "custom":
-            errors.append("bank.retain_custom_instructions: requires retain_extraction_mode='custom'")
-    if manifest.mental_models:
-        seen_mental_model_ids: set[str] = set()
-        for i, mm in enumerate(manifest.mental_models):
-            if not mm.name.strip():
-                errors.append(f"mental_models[{i}].name: must not be empty")
-            if not mm.source_query.strip():
-                errors.append(f"mental_models[{i}].source_query: must not be empty")
-            if mm.id in seen_mental_model_ids:
-                errors.append(f"mental_models[{i}].id: duplicate id '{mm.id}'")
-            seen_mental_model_ids.add(mm.id)
-    if manifest.directives:
-        seen_directive_names: set[str] = set()
-        for i, d in enumerate(manifest.directives):
-            if not d.name.strip():
-                errors.append(f"directives[{i}].name: must not be empty")
-            if not d.content.strip():
-                errors.append(f"directives[{i}].content: must not be empty")
-            if d.name in seen_directive_names:
-                errors.append(f"directives[{i}].name: duplicate name '{d.name}'")
-            seen_directive_names.add(d.name)
-    return errors
-
-
-def load_default_bank_template_manifest() -> "BankTemplateManifest | None":
-    """Parse and semantically validate the configured default bank template."""
-    template_dict = get_config().default_bank_template
-    if not template_dict:
-        return None
-    manifest = BankTemplateManifest.model_validate(template_dict)
-    semantic_errors = validate_bank_template(manifest)
-    if semantic_errors:
-        raise ValueError("; ".join(semantic_errors))
-    return manifest
-
-
-async def apply_bank_template_manifest(
-    memory: MemoryEngine,
-    bank_id: str,
-    manifest: "BankTemplateManifest",
-    request_context: "RequestContext",
-) -> "BankTemplateImportResponse":
-    """Apply a client-provided BankTemplateManifest to a bank.
-
-    The authorization context creates a missing bank after validating every
-    requested operation. The caller remains responsible for manifest validation
-    (Pydantic + validate_bank_template). Server-owned defaults use
-    ``apply_default_bank_template_resources`` instead, so this function always
-    owns persistence of its client-provided config.
-    """
-    config_updates = manifest.bank.get_config_updates() if manifest.bank else {}
-    bank_exists = (
-        await memory.get_bank_profile(
-            bank_id,
-            request_context=request_context,
-        )
-        is not None
-    )
-
-    # A missing bank receives the server-owned default template during
-    # provisioning. Project those resources into the authorization decision so
-    # the client's import is authorized as an update when the default owns the
-    # same key, while still keeping every client check before bank creation.
-    default_manifest: BankTemplateManifest | None = None
-    if not bank_exists:
-        try:
-            default_manifest = load_default_bank_template_manifest()
-        except (ValueError, ValidationError):
-            # Provisioning owns error logging and the best-effort fallback for a
-            # malformed server template. Client authorization must not change it.
-            pass
-    imported_mental_model_ids = {item.id for item in manifest.mental_models or []}
-    imported_directive_names = {item.name for item in manifest.directives or []}
-    default_mental_models = (default_manifest.mental_models or []) if default_manifest else []
-    default_directives = (default_manifest.directives or []) if default_manifest else []
-    projected_mental_model_ids = {item.id for item in default_mental_models} & imported_mental_model_ids
-    projected_directive_names = {item.name for item in default_directives} & imported_directive_names
-
-    # limit=None throughout the import path: a create/update decision per imported
-    # resource is only correct against the bank's *whole* set. Under the default
-    # page size a bank with more than 100 models would look like it lacked the
-    # ones past the first page, and the import would create duplicates.
-    existing_by_id: dict[str, dict[str, Any]] = {}
-    if bank_exists and manifest.mental_models:
-        existing = await memory.list_mental_models(
-            bank_id=bank_id, limit=None, detail="metadata", request_context=request_context
-        )
-        existing_by_id = {m["id"]: m for m in existing.items}
-
-    existing_by_name: dict[str, dict[str, Any]] = {}
-    if bank_exists and manifest.directives:
-        existing_directives = await memory.list_directives(
-            bank_id=bank_id, active_only=False, limit=None, request_context=request_context
-        )
-        existing_by_name = {d["name"]: d for d in existing_directives.items}
-
-    bank_writes: list[BankTemplateImportWrite] = []
-    if config_updates:
-        bank_writes.append(BankTemplateImportWrite(BankWriteOperation.UPDATE_BANK_CONFIG))
-    for mental_model in manifest.mental_models or []:
-        if mental_model.id in existing_by_id:
-            bank_writes.append(BankTemplateImportWrite(BankWriteOperation.UPDATE_MENTAL_MODEL, mental_model.id))
-        elif mental_model.id in projected_mental_model_ids:
-            # Default-template application is best-effort. Authorize both
-            # outcomes before provisioning so a failed default create can
-            # safely fall back to the client's create operation.
-            bank_writes.extend(
-                [
-                    BankTemplateImportWrite(BankWriteOperation.UPDATE_MENTAL_MODEL, mental_model.id),
-                    BankTemplateImportWrite(BankWriteOperation.CREATE_MENTAL_MODEL, mental_model.id),
-                ]
-            )
-        else:
-            bank_writes.append(BankTemplateImportWrite(BankWriteOperation.CREATE_MENTAL_MODEL, mental_model.id))
-    for directive in manifest.directives or []:
-        if directive.name in existing_by_name:
-            bank_writes.append(BankTemplateImportWrite(BankWriteOperation.UPDATE_DIRECTIVE, directive.name))
-        elif directive.name in projected_directive_names:
-            bank_writes.extend(
-                [
-                    BankTemplateImportWrite(BankWriteOperation.UPDATE_DIRECTIVE, directive.name),
-                    BankTemplateImportWrite(BankWriteOperation.CREATE_DIRECTIVE, directive.name),
-                ]
-            )
-        else:
-            bank_writes.append(BankTemplateImportWrite(BankWriteOperation.CREATE_DIRECTIVE, directive.name))
-
-    async with memory.bank_template_import_authorization(
-        bank_id,
-        config_updates=config_updates,
-        bank_writes=bank_writes,
-        mental_model_ids=[mental_model.id for mental_model in manifest.mental_models or []],
-        bank_exists=bank_exists,
-        request_context=request_context,
-    ):
-        # The snapshot above only chose which operation to authorize; a concurrent
-        # create or delete (and the server default template applied during
-        # provisioning) can flip a resource between create and update before this
-        # request writes. Re-read the committed state here, inside the scope and
-        # immediately before the writes, and decide against that instead.
-        if manifest.mental_models:
-            provisioned = await memory.list_mental_models(
-                bank_id=bank_id,
-                limit=None,
-                detail="config",
-                request_context=request_context,
-            )
-            existing_by_id = {item["id"]: item for item in provisioned.items}
-
-        if manifest.directives:
-            provisioned_directives = await memory.list_directives(
-                bank_id=bank_id,
-                active_only=False,
-                limit=None,
-                request_context=request_context,
-            )
-            existing_by_name = {item["name"]: item for item in provisioned_directives.items}
-
-        # Authorize whatever the fresh state now calls for. Resources whose
-        # classification held are already preauthorized and this is a no-op; only a
-        # flipped one reaches the validator, so an ordinary import still costs one
-        # decision per resource.
-        for mental_model in manifest.mental_models or []:
-            await memory.authorize_bank_template_import_write(
-                bank_id,
-                BankWriteOperation.UPDATE_MENTAL_MODEL
-                if mental_model.id in existing_by_id
-                else BankWriteOperation.CREATE_MENTAL_MODEL,
-                target=mental_model.id,
-                request_context=request_context,
-            )
-        for directive in manifest.directives or []:
-            await memory.authorize_bank_template_import_write(
-                bank_id,
-                BankWriteOperation.UPDATE_DIRECTIVE
-                if directive.name in existing_by_name
-                else BankWriteOperation.CREATE_DIRECTIVE,
-                target=directive.name,
-                request_context=request_context,
-            )
-
-        if config_updates:
-            await memory.update_bank_config(bank_id, config_updates, request_context=request_context)
-
-        return await _apply_bank_template_resources(
-            memory,
-            bank_id,
-            manifest,
-            existing_by_id,
-            existing_by_name,
-            request_context,
-            config_applied=bool(config_updates),
-        )
-
-
-async def apply_default_bank_template_resources(
-    memory: MemoryEngine,
-    bank_id: str,
-    manifest: "BankTemplateManifest",
-    request_context: "RequestContext",
-) -> None:
-    """Apply only the resources from a server-owned default template."""
-    existing_by_id: dict[str, dict[str, Any]] = {}
-    if manifest.mental_models:
-        existing = await memory.list_mental_models(
-            bank_id=bank_id, limit=None, detail="config", request_context=request_context
-        )
-        existing_by_id = {model["id"]: model for model in existing.items}
-
-    existing_by_name: dict[str, dict[str, Any]] = {}
-    if manifest.directives:
-        existing_directives = await memory.list_directives(
-            bank_id=bank_id,
-            active_only=False,
-            limit=None,
-            request_context=request_context,
-        )
-        existing_by_name = {directive["name"]: directive for directive in existing_directives.items}
-
-    await _apply_bank_template_resources(
-        memory,
-        bank_id,
-        manifest,
-        existing_by_id,
-        existing_by_name,
-        request_context,
-        config_applied=False,
-    )
-
-
-def _mental_model_matches_template(stored: dict[str, Any], mm: "BankTemplateMentalModel") -> bool:
-    """True when re-applying ``mm`` would leave the stored model as it is.
-
-    Mirrors what the update writes: empty manifest tags leave the stored tags
-    alone, so they never count as a difference. The stored trigger goes through
-    ``MentalModelTrigger`` so its unset fields get the same defaults as the
-    manifest's; one that no longer parses counts as changed.
-    """
-    try:
-        stored_trigger = MentalModelTrigger.model_validate(stored["trigger"] or {})
-    except ValidationError:
-        return False
-    return (
-        stored["name"] == mm.name
-        and stored["source_query"] == mm.source_query
-        and stored["max_tokens"] == mm.max_tokens
-        and (not mm.tags or set(stored["tags"]) == set(mm.tags))
-        and stored_trigger == mm.trigger
-    )
-
-
-def _directive_matches_template(stored: dict[str, Any], directive: "BankTemplateDirective") -> bool:
-    """True when re-applying ``directive`` would leave the stored one as it is."""
-    return (
-        stored["content"] == directive.content
-        and stored["priority"] == directive.priority
-        and stored["is_active"] == directive.is_active
-        and (not directive.tags or set(stored["tags"]) == set(directive.tags))
-    )
-
-
-async def _apply_bank_template_resources(
-    memory: MemoryEngine,
-    bank_id: str,
-    manifest: "BankTemplateManifest",
-    existing_mental_models: dict[str, dict[str, Any]],
-    existing_directives: dict[str, dict[str, Any]],
-    request_context: "RequestContext",
-    *,
-    config_applied: bool,
-) -> "BankTemplateImportResponse":
-    """Apply template resources after the caller has handled config and access."""
-    created_ids: list[str] = []
-    updated_ids: list[str] = []
-    operation_ids: list[str] = []
-
-    if manifest.mental_models:
-        for mm in manifest.mental_models:
-            if mm.id in existing_mental_models:
-                # Unchanged: skip it, or every re-apply of the same manifest would
-                # regenerate the model with an LLM call for nothing (#5271).
-                if _mental_model_matches_template(existing_mental_models[mm.id], mm):
-                    continue
-                await memory.update_mental_model(
-                    bank_id=bank_id,
-                    mental_model_id=mm.id,
-                    name=mm.name,
-                    source_query=mm.source_query,
-                    max_tokens=mm.max_tokens,
-                    tags=mm.tags if mm.tags else None,
-                    trigger=mm.trigger.model_dump() if mm.trigger else None,
-                    request_context=request_context,
-                )
-                result = await memory.submit_async_refresh_mental_model(
-                    bank_id=bank_id,
-                    mental_model_id=mm.id,
-                    request_context=request_context,
-                )
-                operation_ids.append(result["operation_id"])
-                updated_ids.append(mm.id)
-            else:
-                mental_model = await memory.create_mental_model(
-                    bank_id=bank_id,
-                    name=mm.name,
-                    source_query=mm.source_query,
-                    content="",
-                    mental_model_id=mm.id,
-                    tags=mm.tags if mm.tags else None,
-                    max_tokens=mm.max_tokens,
-                    trigger=mm.trigger.model_dump() if mm.trigger else None,
-                    request_context=request_context,
-                )
-                result = await memory.submit_async_refresh_mental_model(
-                    bank_id=bank_id,
-                    mental_model_id=mental_model["id"],
-                    request_context=request_context,
-                )
-                operation_ids.append(result["operation_id"])
-                created_ids.append(mm.id)
-
-    directives_created: list[str] = []
-    directives_updated: list[str] = []
-
-    if manifest.directives:
-        for directive in manifest.directives:
-            if directive.name in existing_directives:
-                if _directive_matches_template(existing_directives[directive.name], directive):
-                    continue
-                await memory.update_directive(
-                    bank_id=bank_id,
-                    directive_id=existing_directives[directive.name]["id"],
-                    name=directive.name,
-                    content=directive.content,
-                    priority=directive.priority,
-                    is_active=directive.is_active,
-                    tags=directive.tags if directive.tags else None,
-                    request_context=request_context,
-                )
-                directives_updated.append(directive.name)
-            else:
-                await memory.create_directive(
-                    bank_id=bank_id,
-                    name=directive.name,
-                    content=directive.content,
-                    priority=directive.priority,
-                    is_active=directive.is_active,
-                    tags=directive.tags if directive.tags else None,
-                    request_context=request_context,
-                )
-                directives_created.append(directive.name)
-
-    return BankTemplateImportResponse(
-        bank_id=bank_id,
-        config_applied=config_applied,
-        mental_models_created=created_ids,
-        mental_models_updated=updated_ids,
-        directives_created=directives_created,
-        directives_updated=directives_updated,
-        operation_ids=operation_ids,
-        dry_run=False,
-    )
 
 
 class OperationProgress(BaseModel):
@@ -5175,9 +4155,15 @@ def _make_audited_http(audit_logger_getter: Callable[[], AuditLogger | None]):
             @wraps(func)
             async def wrapper(*args, **kwargs):
                 al = audit_logger_getter()
+                if al is None:
+                    return await func(*args, **kwargs)
+                with al.destructive_op(action, "http", kwargs.get("bank_id"), kwargs.get("request_context")):
+                    return await _audited(al, *args, **kwargs)
+
+            async def _audited(al: AuditLogger, *args: Any, **kwargs: Any) -> Any:
                 # Cheap bank-independent pre-filter first, then the per-bank
                 # decision (audit_log_enabled is overridable per bank).
-                if al is None or not al.action_allowed(action):
+                if not al.action_allowed(action):
                     return await func(*args, **kwargs)
 
                 bank_id = kwargs.get("bank_id")
@@ -5754,7 +4740,6 @@ def _register_routes(app: FastAPI):
             validator = getattr(app.state.memory, "_operation_validator", None)
             if validator is None:
                 return
-            from hindsight_api.extensions import PrecheckContext
 
             _t0_dep_auth = time.perf_counter()
             await app.state.memory._authenticate_tenant(request_context)
@@ -6445,6 +5430,8 @@ def _register_routes(app: FastAPI):
                         enable_trace=request.trace,
                         fact_type=fact_types,
                         prefer_observations=request.prefer_observations,
+                        prune=request.rerank.prune if request.rerank else None,
+                        dedup=request.rerank.dedup if request.rerank else None,
                         question_date=question_date,
                         include_entities=include_entities,
                         max_entity_tokens=max_entity_tokens,
@@ -6651,6 +5638,7 @@ def _register_routes(app: FastAPI):
                         exclude_mental_model_ids=request.exclude_mental_model_ids,
                         reflect_search_observations_max_tokens_override=request.reflect_search_observations_max_tokens,
                         reflect_search_observations_include_entities_override=request.reflect_search_observations_include_entities,
+                        reflect_search_mental_models_max_tokens_override=request.reflect_search_mental_models_max_tokens,
                     ),
                     operation="reflect",
                     bank_id=bank_id,
@@ -7200,6 +6188,23 @@ def _register_routes(app: FastAPI):
             if mental_model is None:
                 raise HTTPException(status_code=404, detail=f"Mental model '{mental_model_id}' not found")
 
+            # The refresh stores its evidence by id only. Resolve the attachments
+            # behind those memories on read, the same per-fact edge reflect's
+            # based_on carries, so a page can show the images it was built from
+            # without storing a copy of them.
+            based_on = (mental_model.get("reflect_response") or {}).get("based_on")
+            if isinstance(based_on, dict):
+                await _attach_to_memories(
+                    app.state.memory,
+                    bank_id,
+                    [
+                        fact
+                        for fact_type in ("world", "experience", "observation")
+                        for fact in based_on.get(fact_type) or []
+                    ],
+                    request_context,
+                )
+
             return MentalModelResponse(**mental_model)
         except (AuthenticationError, HTTPException):
             raise
@@ -7495,7 +6500,7 @@ def _register_routes(app: FastAPI):
     # KNOWLEDGE BASE ENDPOINTS (folders + pages, markdown)
     # =========================================================================
     # A hierarchy of folders and pages over mental models. Pages render to markdown
-    # documents (markdown body + YAML frontmatter); see api/page_markdown.py. The static
+    # documents (markdown body + YAML frontmatter); see engine/page_markdown.py. The static
     # sub-paths (/tree, /folders, /pages, /graph, /export) are declared before
     # the /pages/{id} and /nodes/{id} path-parameter routes so they win.
 
@@ -10938,7 +9943,9 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/llm-requests",
         summary="List LLM request traces",
         description="List traced LLM requests for a bank, ordered by most recent first. "
-        "Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED).",
+        "Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED). "
+        "Requests older than HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS are deleted; `retention_days` "
+        "in the response says how many days are kept (null = forever).",
         operation_id="list_llm_requests",
         tags=["LLM Traces"],
         response_model=LLMRequestListResponse,
@@ -11001,7 +10008,9 @@ def _register_routes(app: FastAPI):
     @app.get(
         "/v1/default/banks/{bank_id}/llm-requests/stats",
         summary="LLM request statistics",
-        description="Get LLM request counts grouped by time bucket and status for charting.",
+        description="Get LLM request counts grouped by time bucket and status for charting. "
+        "Only requests within HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS are kept, so a period longer than "
+        "`retention_days` (in the response; null = kept forever) only covers the last `retention_days`.",
         operation_id="llm_request_stats",
         tags=["LLM Traces"],
         response_model=LLMRequestStatsResponse,
@@ -11013,7 +10022,10 @@ def _register_routes(app: FastAPI):
         call_type: LLMCallType | None = Query(
             None, description="Filter by kind of model call: llm, embedding, rerank or decision"
         ),
-        period: str = Query("7d", description="Time period: 1d, 7d, or 30d"),
+        period: str = Query("7d", description="Time period: 1d (by hour), 7d, or 30d (by day)"),
+        split_by: LLMStatsSplit | None = Query(
+            None, description="Also split each bucket by model or by operation (returned in `series`)"
+        ),
         request_context: RequestContext = Depends(get_request_context),
     ):
         """Get LLM request counts grouped by time bucket and status."""
@@ -11024,6 +10036,7 @@ def _register_routes(app: FastAPI):
                 operation=operation,
                 call_type=call_type,
                 period=period,
+                split_by=split_by,
             )
             if result is None:
                 raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")

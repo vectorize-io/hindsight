@@ -427,7 +427,12 @@ class PostgreSQLDialect(SQLDialect):
             # bm25_language is validated as a PG identifier in HindsightConfig.validate(),
             # so embedding it as a SQL literal here is safe.
             bm25_score_expr = f"ts_rank_cd(search_vector, to_tsquery('{bm25_language}', {text_param}))"
-            bm25_order_by = f"{bm25_score_expr} DESC"
+            # ts_rank_cd yields few distinct scores, so the LIMIT cut lands inside a
+            # tie group; without `id` a parallel plan keeps a different subset each
+            # call (#6056). Free here: every match is scored and sorted anyway. The
+            # other backends above are left alone: they can hand back the top rows
+            # from the index in score order, and a second key can cost them that.
+            bm25_order_by = f"{bm25_score_expr} DESC, id"
             bm25_where_filter = f"AND search_vector @@ to_tsquery('{bm25_language}', {text_param})"
 
         arm = (

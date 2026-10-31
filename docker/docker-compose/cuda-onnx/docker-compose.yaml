@@ -2,6 +2,7 @@ name: hindsight-cuda-onnx
 
 services:
   hindsight:
+    stop_grace_period: 75s  # outlasts start-all.sh's 60s shutdown wait
     build:
       context: .
       dockerfile: Dockerfile

@@ -43,12 +43,7 @@ async def bank(client, llm, bank_id, settled) -> str:
 
 def _expand_then_cite(llm: LLMStub, memory_id: str) -> None:
     def build(request: ChatRequest) -> ToolCall:
-        expanded = any(
-            call.get("function", {}).get("name") == "expand"
-            for m in request.messages
-            for call in (m.get("tool_calls") or [])
-        )
-        if expanded:
+        if request.has_result_of("expand"):
             return ToolCall("done", {"answer": ANSWER, "memory_ids": [memory_id]})
         return ToolCall("expand", {"memory_ids": [memory_id], "depth": "document"})
 

@@ -8,7 +8,7 @@
  *   - seedIfCold(repoPath)          : plugin load -> cold-check auto-seed (the page preamble is
  *                                     NOT computed here; onPrompt builds it per session)
  *   - onPrompt(sessionId, prompt)   : each user turn -> recall + build this turn's injection
- *   - getInjection(sessionId)       : the system-prompt text to inject this turn (or undefined)
+ *   - getInjection(sessionId)       : the text to inject into this turn's user message (or undefined)
  *   - toolSpecs()                   : the hindsight_* knowledge/recall tools to register natively
  *   - onTranscript(sessionId, turns, lastTurnComplete): full transcript -> write back (on by default)
  *   - onSessionIdle(sessionId)      : assistant finished -> refetch + write back the completed
@@ -50,7 +50,6 @@ export class RuntimeCore {
   private fetchTranscript?: (sessionId: string) => Promise<TransportTurn[]>;
   /** Write-backs started and not yet settled — what `flush` waits for. */
   private readonly inFlight = new Set<Promise<void>>();
-  private lastInjection = ""; // most recent turn's injection block, keyed by nothing (see getInjection)
   private deferInitialReflect = false;
   /** Host-notice channel (opencode/Kilo: client.tui.showToast via the adapter). Optional, fail-open. */
   private notify?: (title: string, message: string) => void;
@@ -167,7 +166,13 @@ export class RuntimeCore {
    */
   async onPrompt(sessionId: string | undefined, prompt: string): Promise<void> {
     if (process.env.HINDSIGHT_DISABLE_HOOKS) return; // anti-recursion (see seedIfCold)
-    if (!sessionId || !prompt.trim()) return;
+    if (!sessionId) return;
+    // No prompt text means no recall, so no block for this turn either: the previous turn's block
+    // must not be handed out again, since every host now persists it into the user message.
+    if (!prompt.trim()) {
+      this.injection.delete(sessionId);
+      return;
+    }
     const turns = (this.turnCount.get(sessionId) ?? 0) + 1;
     this.turnCount.set(sessionId, turns);
 
@@ -210,19 +215,22 @@ export class RuntimeCore {
     }
     const block = blocks.filter(Boolean).join("\n\n");
     this.injection.set(sessionId, block);
-    this.lastInjection = block; // for consumers that can't supply a sessionId (see getInjection)
   }
 
   /**
-   * The system-prompt text to inject this turn (built by the preceding onPrompt), or undefined.
-   * opencode's `experimental.chat.system.transform` hook fires with NO sessionId (input is just
-   * `{model}`), so a session-keyed lookup returns nothing there — fall back to the most recent
-   * turn's block (`lastInjection`). The completion's system.transform fires right after that
-   * session's `chat.message`/onPrompt, so `lastInjection` is this turn's block.
+   * The text to inject into this turn's user message (built by the preceding onPrompt), or
+   * undefined.
+   *
+   * It goes into the USER turn on every host, never the system prompt (#5914). The block changes
+   * from turn to turn — the recall runs once, the roster refresh on a cadence — so a system prompt
+   * carrying it differed between requests and broke the provider's prefix cache from that point
+   * on. Persisted in the turn it belongs to, it leaves the system prompt and the earlier history
+   * byte-identical. That used to need a fallback to the most recent block for opencode's
+   * `experimental.chat.system.transform`, which fired with no session id; nothing reads it that
+   * way any more.
    */
-  getInjection(sessionId: string | undefined): string | undefined {
-    const keyed = sessionId ? this.injection.get(sessionId) : undefined;
-    return keyed ?? this.lastInjection ?? undefined;
+  getInjection(sessionId: string): string | undefined {
+    return this.injection.get(sessionId) || undefined;
   }
 
   /**

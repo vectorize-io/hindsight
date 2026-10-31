@@ -2,15 +2,18 @@
 Cross-encoder neural reranking for search results.
 """
 
+import asyncio
 import calendar
 import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+import numpy as np
+
 from ..cross_encoder import RerankTimeoutError, _served_provider
 from .decision_reranker import PROVIDER_NAME as DECISION_MODEL_RERANKER
-from .decision_reranker import DecisionModelReranker, rerank_shared_context
+from .decision_reranker import DecisionModelReranker, DecisionRerankOptions, rerank_options, rerank_shared_context
 from .types import MergedCandidate, ScoredResult
 
 logger = logging.getLogger(__name__)
@@ -370,7 +373,15 @@ class CrossEncoderReranker:
             ) from e
         self._initialized = True
 
-    async def rerank(self, query: str, candidates: list[MergedCandidate], now: datetime | None = None) -> RerankResult:
+    async def rerank(
+        self,
+        query: str,
+        candidates: list[MergedCandidate],
+        now: datetime | None = None,
+        prune: bool = False,
+        dedup: bool = False,
+        embeddings: asyncio.Task[dict[str, np.ndarray] | None] | None = None,
+    ) -> RerankResult:
         """
         Rerank candidates using cross-encoder scores.
 
@@ -379,6 +390,12 @@ class CrossEncoderReranker:
             candidates: Merged candidates from RRF
             now: When the question is asked (the recall's question date), told to a decision
                 model so it can weigh how recent each candidate is. Defaults to now.
+            prune: With a decision model, also drop the candidates it judges no help.
+            dedup: With a decision model, also drop a candidate repeating a better-ranked one.
+                Both are ignored by any other reranker, which only orders.
+            embeddings: For dedup, the read of the candidates' stored embeddings, started
+                by the caller so it runs alongside the ranking request (see DecisionRerankOptions). It is
+                cancelled here if dedup never needs it.
 
         Returns:
             Scored results sorted by cross-encoder score, and the provider that
@@ -397,7 +414,9 @@ class CrossEncoderReranker:
         # between them is information.
         shared_context = None
         pooled_context = None
-        if getattr(self.cross_encoder, "provider_name", None) == DECISION_MODEL_RERANKER:
+        is_decision_model = getattr(self.cross_encoder, "provider_name", None) == DECISION_MODEL_RERANKER
+        prune, dedup = prune and is_decision_model, dedup and is_decision_model
+        if is_decision_model:
             contexts = {c.retrieval.context for c in candidates if c.retrieval.context}
             pooled_context = next(iter(contexts)) if len(contexts) == 1 else None
             today = f"Current date: {(now or datetime.now(timezone.utc)).date().isoformat()}"
@@ -413,10 +432,12 @@ class CrossEncoderReranker:
             if retrieval.context and not pooled_context:
                 doc_text = f"{retrieval.context}: {doc_text}"
 
-            # Add formatted date information for temporal awareness
-            if retrieval.occurred_start:
-                occurred_start = retrieval.occurred_start
-
+            # Add formatted date information for temporal awareness. A decision model also
+            # gets the date a memory was stored when no event date was extracted: without
+            # one it cannot tell yesterday's memory from last year's, and ranked an undated
+            # "went to a pottery class" above the dated concert "yesterday" asked for.
+            occurred_start = retrieval.occurred_start or (retrieval.mentioned_at if is_decision_model else None)
+            if occurred_start:
                 # Format in two styles for better model understanding
                 # 1. ISO format: YYYY-MM-DD
                 date_iso = occurred_start.strftime("%Y-%m-%d")
@@ -437,6 +458,15 @@ class CrossEncoderReranker:
         unscored: set[int] = set()
         token = _served_provider.set(None)
         shared_context_token = rerank_shared_context.set(shared_context)
+        options_token = rerank_options.set(
+            DecisionRerankOptions(
+                prune=prune,
+                dedup=dedup,
+                fact_types=[c.retrieval.fact_type for c in candidates],
+                ids=[c.retrieval.id for c in candidates],
+                embeddings=embeddings if dedup else None,
+            )
+        )
         try:
             try:
                 # The model takes 2-tuples; `pairs` is built as two-element lists.
@@ -448,6 +478,9 @@ class CrossEncoderReranker:
             served_provider = _served_provider.get()
         finally:
             rerank_shared_context.reset(shared_context_token)
+            rerank_options.reset(options_token)
+            if embeddings is not None and not embeddings.done():
+                embeddings.cancel()
             _served_provider.reset(token)
         if served_provider is None:
             # Single-member encoders do not record one. Their provider_name is
@@ -508,7 +541,7 @@ class CrossEncoderReranker:
         # `candidates` arrives in RRF order, so appending preserves it for the tail.
         scored_results.extend(unscored_results)
 
-        if not self.cross_encoder.prunes_candidates:
+        if not (self.cross_encoder.prunes_candidates or prune or dedup):
             return RerankResult(results=scored_results, provider_name=served_provider)
 
         # This backend judges relevance rather than only ordering it, and marks a

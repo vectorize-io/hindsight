@@ -1,10 +1,12 @@
 """Tests for temporal range support (occurred_start, occurred_end, mentioned_at)."""
 
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
+
 import pytest
-from hindsight_api.engine.memory_engine import Budget
+
 from hindsight_api import RequestContext
+from hindsight_api.engine.response_models import Budget
 
 pytestmark = pytest.mark.hs_llm_core
 

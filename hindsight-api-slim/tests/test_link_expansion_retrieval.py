@@ -113,7 +113,8 @@ async def test_link_expansion_observation_graph_retrieval(memory_real_llm, reque
         # Consolidation runs automatically after retain - wait for it to complete
         # by querying for observations (consolidation creates them)
         import asyncio
-        from hindsight_api.engine.memory_engine import Budget
+
+        from hindsight_api.engine.response_models import Budget
 
         # Wait for consolidation to complete with retry logic
         # Consolidation runs as a background task and may take longer in CI
@@ -242,7 +243,7 @@ async def test_link_expansion_world_fact_graph_retrieval(memory, request_context
             request_context=request_context,
         )
 
-        from hindsight_api.engine.memory_engine import Budget
+        from hindsight_api.engine.response_models import Budget
 
         # Query for Alice. Don't filter by fact_type — LLM classification is
         # non-deterministic and may classify "Alice works with Python" as either

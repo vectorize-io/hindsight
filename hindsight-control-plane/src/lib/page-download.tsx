@@ -9,6 +9,9 @@ interface DownloadablePage {
   body: string;
   updatedAt?: string | null;
   tags?: string[];
+  /** Images from the page's evidence, printed after the body. Markdown leaves
+   *  them out: a downloaded .md has nowhere portable to point at them. */
+  images?: { label: string; urls: string[] };
 }
 
 export function mentalModelDownload(m: MentalModel): DownloadablePage {
@@ -44,7 +47,7 @@ body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 /** Render the page into a bare window with the app's stylesheets and open the
  *  browser's print dialog ("Save as PDF" makes the file). The window never gets
  *  the `dark` class, so it prints in light colors. */
-export async function printPage({ name, body, updatedAt, tags = [] }: DownloadablePage) {
+export async function printPage({ name, body, updatedAt, tags = [], images }: DownloadablePage) {
   // Open before any await: a window opened after one is blocked as a popup.
   const w = window.open("", "_blank");
   if (!w) return;
@@ -74,6 +77,24 @@ export async function printPage({ name, body, updatedAt, tags = [] }: Downloadab
       <div className="prose prose-sm max-w-none mt-8">
         <CompactMarkdown>{body}</CompactMarkdown>
       </div>
+      {images && images.urls.length > 0 && (
+        <section className="mt-8 border-t border-gray-200 pt-4">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+            {images.label}
+          </h2>
+          <div className="flex flex-wrap gap-3 mt-3">
+            {images.urls.map((url) => (
+              // The window's load event, which triggers print, waits for these.
+              <img
+                key={url}
+                src={withBasePath(url)}
+                alt=""
+                className="max-h-72 rounded border border-gray-200"
+              />
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
   const styles = Array.from(document.querySelectorAll('link[rel="stylesheet"], style'))

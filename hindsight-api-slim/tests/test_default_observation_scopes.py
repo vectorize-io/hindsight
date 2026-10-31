@@ -18,9 +18,9 @@ from hindsight_api.engine.consolidation.consolidator import (
     _resolve_write_scopes,
 )
 from hindsight_api.engine.memories import get_memories
-from hindsight_api.engine.memory_engine import fq_table
 from hindsight_api.engine.retain.fact_extraction import _apply_default_observation_scopes
 from hindsight_api.engine.retain.types import ExtractedFact
+from hindsight_api.engine.schema import fq_table
 
 # Two subjects, written by different agents and sessions: every tag set is unique.
 TAG_SETS = [

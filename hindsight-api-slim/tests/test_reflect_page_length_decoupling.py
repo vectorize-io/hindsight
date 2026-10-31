@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from hindsight_api.config import HindsightConfig, clear_config_cache
+from hindsight_api.engine.llm_interface import LLMToolChoice
 from hindsight_api.engine.reflect.agent import run_reflect_agent
 from hindsight_api.engine.reflect.prompts import build_final_prompt
 
@@ -152,11 +153,13 @@ async def test_forced_synthesis_uses_config_cap_when_set(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tool_call_loop_uses_config_cap(monkeypatch):
-    """The per-iteration loop gets the same cap as the synthesis calls (#4437).
+    """The closing ``done`` gets the synthesis cap; a loop turn, which only names a search, 1024.
 
-    Left unset it fell through to the provider's own default, which on Anthropic
-    is a fixed number (the Messages API requires ``max_tokens``) — truncating a
-    long ``done`` payload before the answer field was written.
+    Left unset the closing call fell through to the provider's own default, which on
+    Anthropic is a fixed number (the Messages API requires ``max_tokens``) — truncating a
+    long ``done`` payload before the answer field was written (#4437). A loop turn's reply
+    is held to a schema and only names a search, so it is capped well below that: a
+    schema-held reply that falls into a repetition loop otherwise runs to the cap.
     """
     monkeypatch.setenv("HINDSIGHT_API_REFLECT_MAX_COMPLETION_TOKENS", "12345")
     clear_config_cache()
@@ -173,8 +176,16 @@ async def test_tool_call_loop_uses_config_cap(monkeypatch):
             max_tokens=64,
             **_mock_functions(),
         )
-        for call in llm.call_with_tools.await_args_list:
-            assert call.kwargs["max_completion_tokens"] == 12345
+        calls = llm.call_with_tools.await_args_list
+        closing = [c for c in calls if c.kwargs["tool_choice"] == LLMToolChoice.named("done")]
+        assert closing and all(c.kwargs["max_completion_tokens"] == 12345 for c in closing)
+        assert all(c.kwargs["max_completion_tokens"] == 1024 for c in calls if c not in closing)
+        # A capped turn cannot pick done, whose page the cap would cut off; it is still declared,
+        # so every turn's prompt prefix is the same.
+        for c in calls:
+            if c not in closing:
+                assert "done" not in {t["function"]["name"] for t in c.kwargs["tools"]}
+            assert "done" in {t["function"]["name"] for t in c.kwargs["declared_tools"]}
     finally:
         clear_config_cache()
 

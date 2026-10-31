@@ -520,7 +520,7 @@ class TestOperationHooksParameters:
         """Pre-recall hook receives all user-provided parameters."""
         from datetime import datetime, timezone
 
-        from hindsight_api.engine.memory_engine import Budget
+        from hindsight_api.engine.response_models import Budget
 
         memory, validator = memory_with_tracking_validator
         bank_id = "test-recall-params"
@@ -565,7 +565,7 @@ class TestOperationHooksParameters:
     @pytest.mark.asyncio
     async def test_recall_post_hook_receives_all_parameters_and_result(self, memory_with_tracking_validator):
         """Post-recall hook receives all parameters plus the result."""
-        from hindsight_api.engine.memory_engine import Budget
+        from hindsight_api.engine.response_models import Budget
 
         memory, validator = memory_with_tracking_validator
         bank_id = "test-recall-post"
@@ -601,7 +601,7 @@ class TestOperationHooksParameters:
     @pytest.mark.asyncio
     async def test_reflect_pre_hook_receives_all_parameters(self, memory_with_tracking_validator):
         """Pre-reflect hook receives all user-provided parameters."""
-        from hindsight_api.engine.memory_engine import Budget
+        from hindsight_api.engine.response_models import Budget
 
         memory, validator = memory_with_tracking_validator
         bank_id = "test-reflect-params"
@@ -631,7 +631,7 @@ class TestOperationHooksParameters:
     @pytest.mark.asyncio
     async def test_reflect_post_hook_receives_all_parameters_and_result(self, memory_with_tracking_validator):
         """Post-reflect hook receives all parameters plus the result on success."""
-        from hindsight_api.engine.memory_engine import Budget
+        from hindsight_api.engine.response_models import Budget
 
         memory, validator = memory_with_tracking_validator
         bank_id = "test-reflect-post"

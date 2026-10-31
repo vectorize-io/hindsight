@@ -7,9 +7,10 @@ Lets a Cursor subscription back Hindsight's internal LLM work, the same way
 Unlike those, Cursor's CLI exposes no caller-facing tool or schema surface:
 ``cursor-agent --help`` has ``--output-format text|json|stream-json`` and
 nothing for response formats, JSON schemas, temperature or tool definitions.
-So both structured output and tool calling are prompt-level emulations here —
-we ask for JSON and parse it back, retrying on a parse failure, which is the
-same weaker technique ``claude_code_llm.py`` uses for structured output.
+So structured output is a prompt-level emulation here — we ask for JSON and
+parse it back, retrying on a parse failure, which is the same weaker technique
+``claude_code_llm.py`` uses. Tool calls ride on it like every provider's
+(``tools_via_schema``).
 """
 
 import asyncio
@@ -21,7 +22,6 @@ import shutil
 import tempfile
 import threading
 import time
-import uuid
 from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
@@ -29,18 +29,13 @@ from typing import Any, Callable, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from hindsight_api.engine.llm_interface import (
-    LLM_TOOL_CHOICE_AUTO,
     LLMInterface,
-    LLMToolChoice,
-    LLMToolChoiceMode,
     ProviderContentPolicyError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences
 from hindsight_api.engine.response_models import (
     LLMCallResult,
-    LLMToolCall,
-    LLMToolCallResult,
     TokenUsage,
 )
 from hindsight_api.engine.structured_output import provider_json_schema
@@ -224,8 +219,6 @@ def _messages_to_prompt(messages: list[dict[str, Any]]) -> str:
             parts.append(str(content))
         elif role == "assistant":
             parts.append(f"[Previous assistant response: {content}]")
-        elif role == "tool":
-            parts.append(f"[Tool result for {msg.get('tool_call_id', '')}: {content}]")
         else:
             parts.append(str(content))
     return "\n\n".join(parts)
@@ -342,7 +335,6 @@ class CursorLLM(LLMInterface):
         result: Any,
         input_tokens: int,
         output_tokens: int,
-        tool_calls: list[LLMToolCall] | None = None,
     ) -> None:
         duration = time.perf_counter() - start
         get_metrics_collector().record_llm_call(
@@ -368,9 +360,8 @@ class CursorLLM(LLMInterface):
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 duration=duration,
-                finish_reason="tool_calls" if tool_calls else "stop",
+                finish_reason="stop",
                 error=None,
-                tool_calls=[{"id": c.id, "name": c.name, "arguments": c.arguments} for c in tool_calls or []] or None,
             )
         except Exception:
             logger.debug("Cursor span recording failed", exc_info=True)
@@ -451,127 +442,6 @@ class CursorLLM(LLMInterface):
                     await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
                     continue
                 logger.error(f"Cursor error after {max_retries + 1} attempts: {e}")
-                raise
-
-        assert last_exception is not None
-        raise last_exception
-
-    async def call_with_tools(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        max_completion_tokens: int | None = None,
-        temperature: float | None = None,
-        scope: str = "tools",
-        max_retries: int = 5,
-        initial_backoff: float = 1.0,
-        max_backoff: float = 30.0,
-        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
-        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
-    ) -> LLMToolCallResult:
-        """Emulate tool calling by asking for a JSON envelope naming the calls.
-
-        The headless CLI gives the caller no way to declare tools or read tool
-        calls back, so the forced-synthetic-tool trick ``github_copilot_llm.py``
-        and ``codex_llm.py`` use is unavailable. Describing the tools in the
-        prompt and parsing the model's chosen call out of JSON is what is left.
-        """
-        start = time.perf_counter()
-        prompt = _messages_to_prompt(messages)
-
-        if tool_choice.mode is LLMToolChoiceMode.NONE or not tools:
-            usable: list[dict[str, Any]] = []
-        elif tool_choice.mode is LLMToolChoiceMode.NAMED:
-            forced = tool_choice.selected_function_name
-            usable = [t for t in tools if t.get("function", {}).get("name") == forced]
-            if not usable:
-                logger.warning(f"Cursor: forced tool '{forced}' not found in available tools")
-                usable = tools
-        else:
-            usable = tools
-
-        if usable:
-            specs = [
-                {
-                    "name": t.get("function", {}).get("name", ""),
-                    "description": t.get("function", {}).get("description", ""),
-                    "parameters": t.get("function", {}).get("parameters", {}),
-                }
-                for t in usable
-            ]
-            if tool_choice.mode is LLMToolChoiceMode.NAMED:
-                requirement = f"You MUST call the '{tool_choice.selected_function_name}' tool."
-            elif tool_choice.mode is LLMToolChoiceMode.REQUIRED:
-                requirement = "You MUST call at least one tool; an empty tool_calls list is not allowed."
-            else:
-                requirement = "Call tools only if they help; otherwise return an empty tool_calls list."
-            prompt += (
-                "\n\nYou have access to these tools:\n"
-                f"{json.dumps(specs, indent=2, ensure_ascii=False)}\n\n"
-                f"{requirement}\n"
-                "Respond with ONLY a JSON object of this exact shape, no markdown formatting:\n"
-                '{"content": "<your text answer, or null>", '
-                '"tool_calls": [{"name": "<tool name>", "arguments": {<tool arguments>}}]}'
-            )
-        else:
-            prompt += "\n\nDo not call any tools. Answer directly with text."
-
-        last_exception: Exception | None = None
-        for attempt in range(max_retries + 1):
-            try:
-                async with attempt_context() if attempt_context is not None else nullcontext():
-                    set_stage(f"llm.cursor.tools.attempt={attempt + 1}/{max_retries + 1}")
-                    turn = await self._run(prompt, scope)
-                text, in_tok, out_tok = turn.text, turn.input_tokens, turn.output_tokens
-                stash_response_usage(LLMResponseUsage(input_tokens=in_tok, output_tokens=out_tok))
-
-                tool_calls: list[LLMToolCall] = []
-                content: str | None = text or None
-                if usable:
-                    try:
-                        data = _extract_json(text)
-                    except json.JSONDecodeError as e:
-                        logger.warning(f"Cursor tool JSON parse error (attempt {attempt + 1}/{max_retries + 1}): {e}")
-                        if attempt < max_retries:
-                            last_exception = e
-                            await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
-                            continue
-                        raise
-                    if not isinstance(data, dict):
-                        data = {"content": text}
-                    raw_content = data.get("content")
-                    content = raw_content if isinstance(raw_content, str) and raw_content else None
-                    valid_names = {s["name"] for s in specs}
-                    for entry in data.get("tool_calls") or []:
-                        if not isinstance(entry, dict) or entry.get("name") not in valid_names:
-                            continue
-                        arguments = entry.get("arguments")
-                        tool_calls.append(
-                            LLMToolCall(
-                                id=f"call_{uuid.uuid4().hex[:16]}",
-                                name=entry["name"],
-                                arguments=arguments if isinstance(arguments, dict) else {},
-                            )
-                        )
-
-                self._record(scope, start, messages, content, in_tok, out_tok, tool_calls)
-                return LLMToolCallResult(
-                    content=content,
-                    tool_calls=tool_calls,
-                    finish_reason="tool_calls" if tool_calls else "stop",
-                    input_tokens=in_tok,
-                    output_tokens=out_tok,
-                )
-
-            except ProviderContentPolicyError:
-                raise
-            except Exception as e:
-                last_exception = e
-                if attempt < max_retries:
-                    logger.warning(f"Cursor tool call error (attempt {attempt + 1}/{max_retries + 1}): {e}")
-                    await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
-                    continue
-                logger.error(f"Cursor tool call error after {max_retries + 1} attempts: {e}")
                 raise
 
         assert last_exception is not None

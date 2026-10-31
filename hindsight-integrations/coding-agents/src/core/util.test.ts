@@ -1,6 +1,50 @@
-import { describe, expect, it } from "vitest";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MIN_IDEMPOTENT_RETAIN_VERSION } from "./hindsight";
-import { semverGte } from "./util";
+import { binOnPath, semverGte } from "./util";
+
+describe("binOnPath", () => {
+  let dir: string;
+  const file = (name: string, mode = 0o755) => {
+    writeFileSync(join(dir, name), "");
+    chmodSync(join(dir, name), mode);
+  };
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "binonpath-"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  // #5710: npm puts an extensionless `#!/bin/sh` shim, a `.cmd` and a `.ps1` on PATH; only the
+  // native `.exe` can be spawned without a shell.
+  it("Windows: resolves a bare name through PATHEXT to the full path, never the bare shim", () => {
+    const win = { platform: "win32" as const, env: { PATH: dir, PATHEXT: ".COM;.EXE;.BAT;.CMD" } };
+    file("codex");
+    file("codex.cmd");
+    expect(binOnPath("codex", { ...win, exts: [".exe"] })).toBeUndefined();
+    expect(binOnPath("codex", win)).toBe(join(dir, "codex.cmd")); // npx/npm run through a shell
+    file("codex.exe");
+    expect(binOnPath("codex", { ...win, exts: [".exe"] })).toBe(join(dir, "codex.exe"));
+  });
+
+  it("a directory is never a match (X_OK accepts one)", () => {
+    mkdirSync(join(dir, "agy.exe"));
+    expect(binOnPath("agy", { platform: "win32", env: { PATH: dir } })).toBeUndefined();
+    expect(binOnPath(join(dir, "agy.exe"))).toBeUndefined();
+  });
+
+  it("POSIX: a bare name needs the exec bit, and no extension is tried", () => {
+    const posix = { platform: "linux" as const, env: { PATH: dir } };
+    file("plain", 0o644);
+    file("codex.exe");
+    expect(binOnPath("plain", posix)).toBeUndefined();
+    expect(binOnPath("codex", posix)).toBeUndefined();
+    file("codex");
+    expect(binOnPath("codex", posix)).toBe(join(dir, "codex"));
+    expect(binOnPath(join(dir, "codex"), posix)).toBe(join(dir, "codex"));
+  });
+});
 
 describe("semverGte", () => {
   it("compares numerically, not lexically", () => {

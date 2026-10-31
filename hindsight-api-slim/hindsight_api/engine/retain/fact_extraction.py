@@ -11,7 +11,7 @@ import logging
 import re
 from collections.abc import Collection, Iterator, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
@@ -318,8 +318,8 @@ class FactExtractionResponse(BaseModel):
 # this small still overflows the model's output cap, the cause is degenerate or
 # looping model output rather than genuinely dense input, and halving it just
 # recurses toward a single character. A few-hundred-character floor bounds that
-# runaway (an all-sizes-overflow 3000-char chunk drops in ~17 extraction calls
-# instead of ~5000) while staying well under any chunk that legitimately holds
+# runaway (an all-sizes-overflow 3000-char chunk fails the retain after ~17 extraction
+# calls instead of ~5000) while staying well under any chunk that legitimately holds
 # enough facts to exceed the cap.
 _MIN_SPLIT_CHUNK_CHARS = 500
 
@@ -2219,9 +2219,10 @@ async def _extract_facts_from_chunk(
                         return value
                     return None
 
-                # NEW FORMAT: what, when, who, why (all required)
+                # NEW FORMAT: what, when, where, who, why (all required)
                 what = get_value("what")
                 when = get_value("when")
+                where = get_value("where")
                 who = get_value("who")
                 why = get_value("why")
 
@@ -2264,7 +2265,7 @@ async def _extract_facts_from_chunk(
                 if fact_kind not in ["conversation", "event", "other"]:
                     fact_kind = "conversation"
 
-                # Build combined fact text from the 4 dimensions: what | when | who | why
+                # Build combined fact text from the 5 dimensions: what | when | where | who | why
                 # In verbatim mode, leave combined_text empty — _collapse_to_verbatim backfills it
                 # A kwargs BAG for `Fact(**fact_data)` below: its inferred value type is the union of
                 # everything put in it, so the unpack is checked against that union for every field.
@@ -2277,6 +2278,9 @@ async def _extract_facts_from_chunk(
 
                     if when:
                         combined_parts.append(f"When: {when}")
+
+                    if where:
+                        combined_parts.append(f"Where: {where}")
 
                     if who:
                         combined_parts.append(f"Involving: {who}")
@@ -2592,11 +2596,14 @@ async def _extract_facts_with_auto_split(
 
         split_chunks = _split_chunk_for_output_retry(chunk)
         if split_chunks is None:
-            logger.warning(
-                f"Cannot make progress splitting chunk {chunk_index + 1}/{total_chunks} "
-                f"({len(chunk)} chars); dropping this sub-chunk."
+            # Raise rather than return []: an empty result commits the document with
+            # no facts and reports success, losing the content silently (#6129, same
+            # rule as #1833). The floor still stops the recursion (#3172).
+            raise RuntimeError(
+                f"Fact extraction failed: the LLM reply for chunk {chunk_index + 1}/{total_chunks} "
+                f"({len(chunk)} chars) exceeded the output token limit and the chunk is too small "
+                f"to split further. The model may be producing a runaway reply."
             )
-            return [], TokenUsage()
 
         first_half, second_half = split_chunks
 
@@ -2669,7 +2676,8 @@ async def extract_facts_from_text(
     to avoid hitting output token limits. Processes ALL chunks in PARALLEL for speed.
 
     If a chunk produces output that exceeds token limits (OutputTooLongError), it is
-    automatically split in half and retried recursively until successful.
+    automatically split in half and retried recursively. A piece too small to split
+    that still overflows fails the retain rather than being dropped (#6129).
 
     Args:
         text: Input text (conversation, article, etc.)
@@ -3224,6 +3232,7 @@ async def extract_facts_from_contents_batch_api(
                 continue
 
             when = get_value("when")
+            where = get_value("where")
             who = get_value("who")
             why = get_value("why")
 
@@ -3243,6 +3252,8 @@ async def extract_facts_from_contents_batch_api(
             combined_parts = [what]
             if when:
                 combined_parts.append(f"When: {when}")
+            if where:
+                combined_parts.append(f"Where: {where}")
             if who:
                 combined_parts.append(f"Involving: {who}")
             if why:
@@ -3408,6 +3419,7 @@ async def extract_facts_from_contents_batch_api(
 
     for chunk_meta, chunk_facts in facts_by_chunk:
         content = contents[chunk_meta.content_index]
+        content_tz = _content_timezone(content, config)
         extraction_group_start_idx = global_fact_idx
 
         for fact_from_llm in chunk_facts:
@@ -3415,8 +3427,12 @@ async def extract_facts_from_contents_batch_api(
                 fact_text=fact_from_llm.fact,
                 fact_type=fact_from_llm.fact_type,
                 entities=list(fact_from_llm.entities or []),
-                occurred_start=_parse_datetime(fact_from_llm.occurred_start) if fact_from_llm.occurred_start else None,
-                occurred_end=_parse_datetime(fact_from_llm.occurred_end) if fact_from_llm.occurred_end else None,
+                occurred_start=_parse_datetime(fact_from_llm.occurred_start, content_tz)
+                if fact_from_llm.occurred_start
+                else None,
+                occurred_end=_parse_datetime(fact_from_llm.occurred_end, content_tz)
+                if fact_from_llm.occurred_end
+                else None,
                 causal_relations=_convert_causal_relations(
                     fact_from_llm.causal_relations or [], extraction_group_start_idx, len(chunk_facts)
                 ),
@@ -3602,6 +3618,7 @@ async def extract_facts_from_contents(
     for content_index, (content, (facts_from_llm, chunks_from_llm, content_usage)) in enumerate(valid_results):
         total_usage = total_usage + content_usage
         chunk_start_idx = global_chunk_idx
+        content_tz = _content_timezone(content, config)
 
         # Convert chunk tuples to ChunkMetadata objects
         for chunk_index_in_content, (chunk_text, chunk_fact_count) in enumerate(chunks_from_llm):
@@ -3629,10 +3646,12 @@ async def extract_facts_from_contents(
                     fact_type=fact_from_llm.fact_type,
                     entities=list(fact_from_llm.entities or []),
                     # occurred_start/end: from LLM only, leave None if not provided
-                    occurred_start=_parse_datetime(fact_from_llm.occurred_start)
+                    occurred_start=_parse_datetime(fact_from_llm.occurred_start, content_tz)
                     if fact_from_llm.occurred_start
                     else None,
-                    occurred_end=_parse_datetime(fact_from_llm.occurred_end) if fact_from_llm.occurred_end else None,
+                    occurred_end=_parse_datetime(fact_from_llm.occurred_end, content_tz)
+                    if fact_from_llm.occurred_end
+                    else None,
                     causal_relations=_convert_causal_relations(
                         fact_from_llm.causal_relations or [], extraction_group_start_idx, len(chunk_facts)
                     ),
@@ -3700,11 +3719,14 @@ def _collapse_to_verbatim(facts: list[ExtractedFactType], chunks: list[ChunkMeta
     return result
 
 
-def _parse_datetime(date_str: str):
-    """Parse an ISO datetime string from the LLM; None when unparseable or a placeholder.
+def _parse_datetime(date_str: str, default_tz: tzinfo) -> datetime | None:
+    """Parse an ISO datetime from the LLM; None when unparseable or a placeholder.
 
     A model sometimes writes an open-ended range as year 1 or 9999 ("since forever", "still
     ongoing"); that is an unknown bound, not a date (see ``stored_dates``).
+
+    One with no UTC offset is read in ``default_tz``: the LLM copies clock times from the
+    content as written, so they are local to the content's Event Date, not UTC (issue #6208).
     """
     from dateutil import parser as date_parser
 
@@ -3712,7 +3734,22 @@ def _parse_datetime(date_str: str):
         parsed = date_parser.isoparse(date_str)
     except Exception:
         return None
-    return None if is_placeholder_date(parsed) else parsed
+    if is_placeholder_date(parsed):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=default_tz)
+
+
+def _content_timezone(content: RetainContent, config: Any) -> tzinfo:
+    """The zone the LLM's offset-less times for ``content`` are read in.
+
+    The content's own Event Date offset when it has one, else the bank's default zone.
+    """
+    from .orchestrator import bank_timezone
+
+    event_date = content.event_date
+    if isinstance(event_date, datetime) and event_date.tzinfo is not None:
+        return event_date.tzinfo
+    return bank_timezone(config)
 
 
 def _convert_causal_relations(

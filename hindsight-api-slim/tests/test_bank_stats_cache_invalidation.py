@@ -21,7 +21,8 @@ import pytest
 from hindsight_api import RequestContext
 from hindsight_api.engine.bank_stats_cache import BankStatsCache
 from hindsight_api.engine.memories import FactRecord, get_memories
-from hindsight_api.engine.memory_engine import MemoryEngine, fq_table
+from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.schema import fq_table
 
 # A TTL long enough that, absent invalidation, the warmed cache would still be
 # served on the post-mutation read within the same test.

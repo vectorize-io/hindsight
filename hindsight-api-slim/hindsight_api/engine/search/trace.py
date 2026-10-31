@@ -157,6 +157,15 @@ class SearchTrace(BaseModel):
     )
     rrf_merged: list[RRFMergeResult] = Field(default_factory=list, description="Results after RRF merging")
     reranked: list[RerankedResult] = Field(default_factory=list, description="Results after reranking")
+    reranker_provider: str | None = Field(
+        default=None,
+        description=(
+            "Reranker that scored this recall. On a failover chain, the member that answered "
+            "(e.g. 'local' after the primary failed); 'rrf' when the chain fell back to fusion order. "
+            "None when no cross-encoder ran, or unless the server sets "
+            "HINDSIGHT_API_RECALL_TRACE_RERANKER_PROVIDER=true."
+        ),
+    )
 
     # Legacy fields (kept for backward compatibility with graph/temporal visualizations)
     entry_points: list[EntryPoint] = Field(

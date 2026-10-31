@@ -73,7 +73,7 @@ class LLMTracesApi:
     ) -> LLMRequestListResponse:
         """List LLM request traces
 
-        List traced LLM requests for a bank, ordered by most recent first. Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED).
+        List traced LLM requests for a bank, ordered by most recent first. Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED). Requests older than HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS are deleted; `retention_days` in the response says how many days are kept (null = forever).
 
         :param bank_id: (required)
         :type bank_id: str
@@ -198,7 +198,7 @@ class LLMTracesApi:
     ) -> ApiResponse[LLMRequestListResponse]:
         """List LLM request traces
 
-        List traced LLM requests for a bank, ordered by most recent first. Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED).
+        List traced LLM requests for a bank, ordered by most recent first. Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED). Requests older than HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS are deleted; `retention_days` in the response says how many days are kept (null = forever).
 
         :param bank_id: (required)
         :type bank_id: str
@@ -323,7 +323,7 @@ class LLMTracesApi:
     ) -> RESTResponseType:
         """List LLM request traces
 
-        List traced LLM requests for a bank, ordered by most recent first. Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED).
+        List traced LLM requests for a bank, ordered by most recent first. Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED). Requests older than HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS are deleted; `retention_days` in the response says how many days are kept (null = forever).
 
         :param bank_id: (required)
         :type bank_id: str
@@ -548,7 +548,8 @@ class LLMTracesApi:
         bank_id: StrictStr,
         operation: Annotated[Optional[StrictStr], Field(description="Filter by operation")] = None,
         call_type: Annotated[Optional[StrictStr], Field(description="Filter by kind of model call: llm, embedding, rerank or decision")] = None,
-        period: Annotated[Optional[StrictStr], Field(description="Time period: 1d, 7d, or 30d")] = None,
+        period: Annotated[Optional[StrictStr], Field(description="Time period: 1d (by hour), 7d, or 30d (by day)")] = None,
+        split_by: Annotated[Optional[StrictStr], Field(description="Also split each bucket by model or by operation (returned in `series`)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -565,7 +566,7 @@ class LLMTracesApi:
     ) -> LLMRequestStatsResponse:
         """LLM request statistics
 
-        Get LLM request counts grouped by time bucket and status for charting.
+        Get LLM request counts grouped by time bucket and status for charting. Only requests within HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS are kept, so a period longer than `retention_days` (in the response; null = kept forever) only covers the last `retention_days`.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -573,8 +574,10 @@ class LLMTracesApi:
         :type operation: str
         :param call_type: Filter by kind of model call: llm, embedding, rerank or decision
         :type call_type: str
-        :param period: Time period: 1d, 7d, or 30d
+        :param period: Time period: 1d (by hour), 7d, or 30d (by day)
         :type period: str
+        :param split_by: Also split each bucket by model or by operation (returned in `series`)
+        :type split_by: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -604,6 +607,7 @@ class LLMTracesApi:
             operation=operation,
             call_type=call_type,
             period=period,
+            split_by=split_by,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -633,7 +637,8 @@ class LLMTracesApi:
         bank_id: StrictStr,
         operation: Annotated[Optional[StrictStr], Field(description="Filter by operation")] = None,
         call_type: Annotated[Optional[StrictStr], Field(description="Filter by kind of model call: llm, embedding, rerank or decision")] = None,
-        period: Annotated[Optional[StrictStr], Field(description="Time period: 1d, 7d, or 30d")] = None,
+        period: Annotated[Optional[StrictStr], Field(description="Time period: 1d (by hour), 7d, or 30d (by day)")] = None,
+        split_by: Annotated[Optional[StrictStr], Field(description="Also split each bucket by model or by operation (returned in `series`)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -650,7 +655,7 @@ class LLMTracesApi:
     ) -> ApiResponse[LLMRequestStatsResponse]:
         """LLM request statistics
 
-        Get LLM request counts grouped by time bucket and status for charting.
+        Get LLM request counts grouped by time bucket and status for charting. Only requests within HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS are kept, so a period longer than `retention_days` (in the response; null = kept forever) only covers the last `retention_days`.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -658,8 +663,10 @@ class LLMTracesApi:
         :type operation: str
         :param call_type: Filter by kind of model call: llm, embedding, rerank or decision
         :type call_type: str
-        :param period: Time period: 1d, 7d, or 30d
+        :param period: Time period: 1d (by hour), 7d, or 30d (by day)
         :type period: str
+        :param split_by: Also split each bucket by model or by operation (returned in `series`)
+        :type split_by: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -689,6 +696,7 @@ class LLMTracesApi:
             operation=operation,
             call_type=call_type,
             period=period,
+            split_by=split_by,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -718,7 +726,8 @@ class LLMTracesApi:
         bank_id: StrictStr,
         operation: Annotated[Optional[StrictStr], Field(description="Filter by operation")] = None,
         call_type: Annotated[Optional[StrictStr], Field(description="Filter by kind of model call: llm, embedding, rerank or decision")] = None,
-        period: Annotated[Optional[StrictStr], Field(description="Time period: 1d, 7d, or 30d")] = None,
+        period: Annotated[Optional[StrictStr], Field(description="Time period: 1d (by hour), 7d, or 30d (by day)")] = None,
+        split_by: Annotated[Optional[StrictStr], Field(description="Also split each bucket by model or by operation (returned in `series`)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -735,7 +744,7 @@ class LLMTracesApi:
     ) -> RESTResponseType:
         """LLM request statistics
 
-        Get LLM request counts grouped by time bucket and status for charting.
+        Get LLM request counts grouped by time bucket and status for charting. Only requests within HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS are kept, so a period longer than `retention_days` (in the response; null = kept forever) only covers the last `retention_days`.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -743,8 +752,10 @@ class LLMTracesApi:
         :type operation: str
         :param call_type: Filter by kind of model call: llm, embedding, rerank or decision
         :type call_type: str
-        :param period: Time period: 1d, 7d, or 30d
+        :param period: Time period: 1d (by hour), 7d, or 30d (by day)
         :type period: str
+        :param split_by: Also split each bucket by model or by operation (returned in `series`)
+        :type split_by: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -774,6 +785,7 @@ class LLMTracesApi:
             operation=operation,
             call_type=call_type,
             period=period,
+            split_by=split_by,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -799,6 +811,7 @@ class LLMTracesApi:
         operation,
         call_type,
         period,
+        split_by,
         authorization,
         _request_auth,
         _content_type,
@@ -835,6 +848,10 @@ class LLMTracesApi:
         if period is not None:
             
             _query_params.append(('period', period))
+            
+        if split_by is not None:
+            
+            _query_params.append(('split_by', split_by))
             
         # process the header parameters
         if authorization is not None:

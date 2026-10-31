@@ -52,33 +52,9 @@ async def test_call_merges_extra_body_into_request() -> None:
             llm,
             "_parse_sse_stream",
             new_callable=AsyncMock,
-            return_value=_CodexStreamReply(text="ok", tool_calls=[], usage=None),
+            return_value=_CodexStreamReply(text="ok", usage=None),
         ),
     ):
         await llm.call(messages=[{"role": "user", "content": "hello"}], max_retries=0)
-
-    assert mock_stream.call_args.kwargs["json"]["service_tier"] == "priority"
-
-
-@pytest.mark.asyncio
-async def test_call_with_tools_merges_extra_body_into_request() -> None:
-    llm = build_llm({"service_tier": "priority"})
-    response = MagicMock(status_code=200)
-    response.raise_for_status.return_value = None
-
-    with (
-        stub_codex_stream(llm, response) as mock_stream,
-        patch.object(
-            llm,
-            "_parse_sse_tool_stream",
-            new_callable=AsyncMock,
-            return_value=_CodexStreamReply(text="", tool_calls=[], usage=None),
-        ),
-    ):
-        await llm.call_with_tools(
-            messages=[{"role": "user", "content": "hello"}],
-            tools=[],
-            max_retries=0,
-        )
 
     assert mock_stream.call_args.kwargs["json"]["service_tier"] == "priority"

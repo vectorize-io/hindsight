@@ -31,12 +31,12 @@ import pytest
 
 from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.consolidation.consolidator import (
-    _ConsolidationBatchResponse,
     _CreateAction,
     run_consolidation_job,
 )
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.providers.mock_llm import MockLLM
+from tests.consolidation_answers import batch_fact_ids, batch_fact_texts, fact_answer
 
 
 # ---------------------------------------------------------------------------
@@ -109,13 +109,16 @@ def _mock_llm_one_obs_per_fact():
 
     def callback(messages, scope):
         if scope != "consolidation":
-            return _ConsolidationBatchResponse()
+            return fact_answer()
         # Facts live in the user message; the system message (stable, cached) carries
         # example UUIDs in its OUTPUT samples — read user only.
         prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
-        fact_ids = re.findall(r"\[([0-9a-f-]{36})\]", prompt)
-        creates = [_CreateAction(text=f"Observation about fact {fid[:8]}", source_fact_ids=[fid]) for fid in fact_ids]
-        return _ConsolidationBatchResponse(creates=creates)
+        fact_ids = batch_fact_ids(prompt)
+        creates = [
+            _CreateAction(text=f"Observation about {batch_fact_texts(prompt)[fid]}", source_fact_ids=[fid])
+            for fid in fact_ids
+        ]
+        return fact_answer(creates=creates)
 
     mock_llm.set_response_callback(callback)
     wrapper = MagicMock()
@@ -235,10 +238,10 @@ async def test_shared_mode_pools_different_native_tags_into_one_llm_batch(memory
     await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     try:
         async with memory._pool.acquire() as conn:
-            mem_a = await _insert_memory(
+            await _insert_memory(
                 conn, bank_id, "Terraform Cloud is our IaC tool", ["suggested_tool:terraform-cloud"], "shared"
             )
-            mem_b = await _insert_memory(
+            await _insert_memory(
                 conn, bank_id, "Gardea helps with garden planning", ["suggested_tool:gardea"], "shared"
             )
 
@@ -248,14 +251,16 @@ async def test_shared_mode_pools_different_native_tags_into_one_llm_batch(memory
 
         def callback(messages, scope):
             if scope != "consolidation":
-                return _ConsolidationBatchResponse()
+                return fact_answer()
             prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
-            fact_ids = set(re.findall(r"\[([0-9a-f-]{36})\]", prompt))
-            calls.append(fact_ids)
+            fact_ids = set(batch_fact_ids(prompt))
+            # The prompt names facts F1, F2, …: which memories were batched shows in their texts.
+            calls.append({t.split(" (")[0] for t in batch_fact_texts(prompt).values()})
             creates = [
-                _CreateAction(text=f"Observation about fact {fid[:8]}", source_fact_ids=[fid]) for fid in fact_ids
+                _CreateAction(text=f"Observation about {batch_fact_texts(prompt)[fid]}", source_fact_ids=[fid])
+                for fid in fact_ids
             ]
-            return _ConsolidationBatchResponse(creates=creates)
+            return fact_answer(creates=creates)
 
         mock_llm.set_response_callback(callback)
         wrapper = MagicMock()
@@ -276,7 +281,7 @@ async def test_shared_mode_pools_different_native_tags_into_one_llm_batch(memory
 
         assert result["status"] == "completed"
         assert len(calls) == 1, f"expected exactly one LLM consolidation call, got {len(calls)}: {calls}"
-        assert calls[0] == {str(mem_a), str(mem_b)}, calls[0]
+        assert calls[0] == {"Terraform Cloud is our IaC tool", "Gardea helps with garden planning"}, calls[0]
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
 

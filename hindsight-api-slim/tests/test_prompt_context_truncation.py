@@ -1,7 +1,8 @@
-"""A memory's context is capped in every internal prompt that lists memories.
+"""A memory's context is capped, or left out, in every internal prompt that lists memories.
 
 Callers can store a huge context on each fact; repeated per memory it would
-bloat the consolidation and think prompts. These pin the cap at each site.
+bloat the think prompt. These pin the cap there, and that consolidation leaves
+the context out entirely (#5996).
 """
 
 import json
@@ -22,11 +23,11 @@ def test_truncate_context_for_prompt():
     assert truncate_context_for_prompt(None) is None
 
 
-def test_consolidation_source_memory_context_is_capped():
+def test_consolidation_source_memory_carries_no_context():
     obs = MemoryFact(id="o1", text="obs", fact_type="observation", source_fact_ids=["f1"])
     src = MemoryFact(id="f1", text="fact", fact_type="world", context=LONG)
     [obs_data] = _build_observations_for_llm([obs], {"f1": src})
-    assert obs_data["source_memories"][0]["context"] == CUT
+    assert obs_data["source_memories"] == [{"text": "fact"}]
 
 
 def test_think_prompt_context_is_capped():

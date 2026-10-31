@@ -88,6 +88,7 @@ describe("full bank config surface mapping", () => {
       retainStrategies: { fast: { retain_extraction_mode: "concise" } },
       retainChunkBatchSize: 64,
       storeDocumentText: false,
+      defaultTimezone: "Asia/Shanghai",
       mcpEnabledTools: ["recall", "reflect"],
       llmGeminiSafetySettings: [{ category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" }],
       memoryDefense: { redact_secrets: true },
@@ -117,6 +118,7 @@ describe("full bank config surface mapping", () => {
       retain_strategies: { fast: { retain_extraction_mode: "concise" } },
       retain_chunk_batch_size: 64,
       store_document_text: false,
+      default_timezone: "Asia/Shanghai",
       mcp_enabled_tools: ["recall", "reflect"],
       llm_gemini_safety_settings: [
         { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },

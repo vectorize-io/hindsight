@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any
 
 from ...config import _get_raw_config
-from ..memory_engine import fq_table
+from ..schema import fq_table
 from .bank_utils import create_bank_row_on_conn
 from .fact_extraction import _sanitize_text
 from .types import ProcessedFact

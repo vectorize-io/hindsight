@@ -472,7 +472,10 @@ async def delete_chunks(*, conn, fq_table: Callable[[str], str], bank_id: str, c
                 LEAST(ml.from_unit_id, ml.to_unit_id),
                 GREATEST(ml.from_unit_id, ml.to_unit_id),
                 ml.link_type,
-                COALESCE(ml.entity_id, '00000000-0000-0000-0000-000000000000'::uuid)
+                COALESCE(ml.entity_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                -- Breaks the tie between the two rows of a pair written both ways, which
+                -- otherwise lock in either order (#6051). Same order as ops.delete_unit_links.
+                ml.from_unit_id
             FOR UPDATE OF ml
         )
         DELETE FROM {fq_table("memory_links")} ml

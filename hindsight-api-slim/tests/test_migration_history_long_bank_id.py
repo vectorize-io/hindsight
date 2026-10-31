@@ -9,11 +9,10 @@ A bank_id longer than 64 chars aborted the backfill with
 This test seeds a 78-char bank_id (the shape reported in the issue) at the
 revision just before the migration, then runs the migration up to head and
 asserts the row is backfilled intact and both history tables expose a ``TEXT``
-``bank_id``. Uses a dedicated pg0 instance (mirrors test_migration_backsweep)
+``bank_id``. Uses a database of its own (the ``fresh_db_url`` fixture)
 so we control exactly which migrations have run.
 """
 
-import asyncio
 import uuid
 from pathlib import Path
 
@@ -40,20 +39,12 @@ def _alembic_cfg(db_url: str) -> Config:
 
 
 @pytest.fixture(scope="module")
-def pre_split_db_url():
-    """pg0 instance with schema at the revision just before the split-history
+def pre_split_db_url(fresh_db_url):
+    """A database of its own with schema at the revision just before the split-history
     migration so the migration's backfill actually runs against seeded data."""
-    from hindsight_api.pg0 import EmbeddedPostgres
+    url = fresh_db_url
 
-    pg0 = EmbeddedPostgres(name="hindsight-long-bankid-test", port=5567)
-    loop = asyncio.new_event_loop()
-    try:
-        url = loop.run_until_complete(pg0.ensure_running())
-    finally:
-        loop.close()
-
-    # pg0 data dirs persist across runs, so the DB may already be past the
-    # split. Bring everything to head, then downgrade to before the split so
+    # Bring everything to head, then downgrade to before the split so
     # memory_units.history is present and the history tables are gone.
     command.upgrade(_alembic_cfg(url), "heads")
     command.downgrade(_alembic_cfg(url), _PRE_SPLIT_REVISION)
@@ -70,9 +61,7 @@ def _col_type(conn, table: str) -> str:
 def test_split_history_backfills_long_bank_id(pre_split_db_url):
     db_url = pre_split_db_url
     # bank_id matching the shape reported in the issue:
-    # <scope>::ou_<32hex>::ou_<32hex> — well over the old 64-char cap. A unique
-    # suffix keeps the test idempotent against pg0 data dirs that persist across
-    # runs (otherwise a re-run collides on the banks PK).
+    # <scope>::ou_<32hex>::ou_<32hex> — well over the old 64-char cap.
     long_bank = f"tenantA::ou_{uuid.uuid4().hex}::ou_{uuid.uuid4().hex}"
     assert len(long_bank) > 64
 

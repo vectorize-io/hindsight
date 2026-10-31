@@ -1,7 +1,7 @@
 """Issue #5439: HINDSIGHT_API_LLM_OPENAI_SERVICE_TIER must reach chat completions.
 
 The tier is a native top-level ``service_tier`` param, sent only for provider=openai,
-on both ``call()`` and ``call_with_tools()``.
+on ``call()``.
 """
 
 import types
@@ -35,28 +35,21 @@ def _make_llm(provider: str) -> OpenAICompatibleLLM:
     )
 
 
-async def _sent_params(llm: OpenAICompatibleLLM, with_tools: bool) -> dict:
+async def _sent_params(llm: OpenAICompatibleLLM) -> dict:
     with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as create:
         create.return_value = _response()
-        messages = [{"role": "user", "content": "go"}]
-        if with_tools:
-            tool = {"type": "function", "function": {"name": "noop", "parameters": {"type": "object"}}}
-            await llm.call_with_tools(messages=messages, tools=[tool], max_retries=0)
-        else:
-            await llm.call(messages=messages, max_retries=0)
+        await llm.call(messages=[{"role": "user", "content": "go"}], max_retries=0)
         return create.call_args.kwargs
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("with_tools", [False, True])
-async def test_openai_sends_service_tier(with_tools: bool):
-    params = await _sent_params(_make_llm("openai"), with_tools)
+async def test_openai_sends_service_tier():
+    params = await _sent_params(_make_llm("openai"))
     assert params["service_tier"] == "flex"
     assert "service_tier" not in params.get("extra_body", {})
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("with_tools", [False, True])
-async def test_other_providers_do_not_send_openai_service_tier(with_tools: bool):
-    params = await _sent_params(_make_llm("lmstudio"), with_tools)
+async def test_other_providers_do_not_send_openai_service_tier():
+    params = await _sent_params(_make_llm("lmstudio"))
     assert "service_tier" not in params

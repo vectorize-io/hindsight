@@ -4,11 +4,17 @@ import asyncio
 import os
 import signal
 import sys
+import threading
 from unittest.mock import MagicMock
 
 import pytest
 
-from hindsight_api.worker.main import _http_server, _install_shutdown_signal_handlers
+from hindsight_api.worker.main import (
+    _arm_exit_backstop,
+    _close_within,
+    _http_server,
+    _install_shutdown_signal_handlers,
+)
 
 
 def test_install_shutdown_signal_handlers_unix_path():
@@ -133,3 +139,78 @@ async def test_one_sigterm_reaches_worker_handler_once():
     finally:
         loop.remove_signal_handler(signal.SIGTERM)
     assert calls == [1]
+
+
+@pytest.mark.asyncio
+async def test_engine_close_that_hangs_does_not_hold_shutdown():
+    """A close() that never finishes gives up at the bound instead of holding the
+    process until the platform kills it at the end of its grace period."""
+
+    class _Hangs:
+        async def close(self):
+            await asyncio.sleep(3600)
+
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    assert await _close_within(_Hangs(), timeout=0.1) is False
+    assert loop.time() - t0 < 2
+
+
+@pytest.mark.asyncio
+async def test_engine_close_that_finishes_reports_it():
+    closed = []
+
+    class _Closes:
+        async def close(self):
+            closed.append(True)
+
+    assert await _close_within(_Closes(), timeout=5) is True
+    assert closed == [True]
+
+
+@pytest.mark.asyncio
+async def test_engine_close_that_ignores_the_cancel_does_not_hold_shutdown(monkeypatch):
+    """wait_for cancels at the timeout and then waits for the cancel to land, unbounded: a close()
+    that catches CancelledError and keeps going would hold the process anyway. Bounded here too."""
+    import hindsight_api.worker.main as worker_main
+
+    monkeypatch.setattr(worker_main, "_CLOSE_CANCEL_GRACE_SECONDS", 0.05)
+    release = asyncio.Event()
+
+    class _IgnoresCancel:
+        async def close(self):
+            while not release.is_set():
+                try:
+                    await asyncio.sleep(0.01)
+                except asyncio.CancelledError:
+                    continue
+
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    assert await asyncio.wait_for(_close_within(_IgnoresCancel(), timeout=0.05), timeout=2) is False
+    assert loop.time() - t0 < 1
+    release.set()
+    await asyncio.sleep(0.05)
+
+
+def test_exit_backstop_ends_the_process_when_shutdown_overruns():
+    """Last resort past every bound above (asyncio.run's own teardown waits on every task left):
+    the process exits once the backstop fires. The tasks were returned to 'pending' before it."""
+    fired = threading.Event()
+    codes = []
+
+    def _exit(code):
+        codes.append(code)
+        fired.set()
+
+    timer = _arm_exit_backstop(0.05, exit_fn=_exit)
+    assert fired.wait(2)
+    assert codes == [1]
+    assert timer.daemon
+
+
+def test_exit_backstop_does_nothing_when_cancelled():
+    fired = threading.Event()
+    timer = _arm_exit_backstop(0.1, exit_fn=lambda code: fired.set())
+    timer.cancel()
+    assert not fired.wait(0.3)

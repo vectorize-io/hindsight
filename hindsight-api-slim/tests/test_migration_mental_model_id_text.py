@@ -7,10 +7,9 @@ mental model with a long id failed on every history-row insert.
 
 The test narrows both columns back to ``VARCHAR(64)`` (the state of a deployment
 that ran the old DDL), runs the repair migration, then writes rows with an
-87-char id. Uses a dedicated pg0 instance so we control which migrations ran.
+87-char id. Uses a database of its own so we control which migrations ran.
 """
 
-import asyncio
 import uuid
 from pathlib import Path
 
@@ -34,15 +33,8 @@ def _alembic_cfg(db_url: str) -> Config:
 
 
 @pytest.fixture(scope="module")
-def db_url():
-    from hindsight_api.pg0 import EmbeddedPostgres
-
-    pg0 = EmbeddedPostgres(name="hindsight-long-mmid-test", port=5573)
-    loop = asyncio.new_event_loop()
-    try:
-        url = loop.run_until_complete(pg0.ensure_running())
-    finally:
-        loop.close()
+def head_db_url(fresh_db_url):
+    url = fresh_db_url
     command.upgrade(_alembic_cfg(url), "heads")
     return url
 
@@ -54,18 +46,16 @@ def _col_type(conn, table: str, column: str) -> str:
     ).scalar()
 
 
-def test_repair_widens_mental_model_id_refs(db_url):
-    engine = create_engine(db_url)
+def test_repair_widens_mental_model_id_refs(head_db_url):
+    engine = create_engine(head_db_url)
     # Recreate the narrow columns an already-migrated deployment still has.
-    command.downgrade(_alembic_cfg(db_url), _PRE_REPAIR_REVISION)
+    command.downgrade(_alembic_cfg(head_db_url), _PRE_REPAIR_REVISION)
     with engine.connect() as conn:
-        # pg0 data persists across runs: drop long ids a previous run left (cascades to both tables).
-        conn.execute(text("DELETE FROM mental_models WHERE length(id) > 64"))
         for table, column in _COLUMNS:
             conn.execute(text(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE VARCHAR(64)"))
         conn.commit()
 
-    command.upgrade(_alembic_cfg(db_url), "heads")
+    command.upgrade(_alembic_cfg(head_db_url), "heads")
 
     bank_id = f"bank-{uuid.uuid4().hex}"
     mm_id = f"project-conventions-slack-inc-2026-10-19-lag-on-filecoin-raw-receipt-{uuid.uuid4().hex}"

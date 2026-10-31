@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
-from collections.abc import Awaitable, Callable
-from contextlib import asynccontextmanager
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -27,6 +28,27 @@ logger = logging.getLogger(__name__)
 
 # How long close() waits for in-flight audit writes before giving up on them.
 _DRAIN_TIMEOUT_SECONDS = 5.0
+
+# Actions that remove or replace a bank's data. Each call logs one INFO line whatever the
+# audit setting, so "who deleted my bank" has an answer with audit off (#5960).
+DESTRUCTIVE_ACTIONS: frozenset[str] = frozenset(
+    {
+        "delete_bank",
+        "clear_memories",
+        "delete_document",
+        "delete_mental_model",
+        "clear_mental_model",
+        "delete_knowledge_node",
+        "delete_directive",
+        "delete_bank_alias",
+        "delete_webhook",
+        "clear_observations",
+        "clear_memory_observations",
+        "import_bank_template",
+        "import_documents",
+        "import_bank_transfer",
+    }
+)
 
 
 class AuditLogSummary(BaseModel):
@@ -190,6 +212,43 @@ class AuditLogger:
             # than dropping records that compliance may require.
             logger.warning(f"Audit config resolution failed for bank={bank_id}: {e}; using global default")
             return self._enabled
+
+    @contextmanager
+    def destructive_op(
+        self,
+        action: str,
+        transport: str,
+        bank_id: str | None,
+        context: RequestContext | None = None,
+        tenant_id: str | None = None,
+        api_key_id: str | None = None,
+    ) -> Iterator[None]:
+        """Log one line when a destructive action ends. Not gated by the audit setting.
+
+        Tenant, key and schema are read at the end: the tenant extension fills them in
+        during the call.
+        """
+        if action not in DESTRUCTIVE_ACTIONS:
+            yield
+            return
+        start = time.monotonic()
+        status = "error"
+        try:
+            yield
+            status = "ok"
+        finally:
+            logger.info(
+                "destructive_op action=%s bank=%s transport=%s tenant=%s schema=%s api_key_id=%s "
+                "status=%s duration_ms=%d",
+                action,
+                bank_id,
+                transport,
+                tenant_id or (context.tenant_id if context else None),
+                self._schema_getter(),
+                api_key_id or (context.api_key_id if context else None),
+                status,
+                (time.monotonic() - start) * 1000,
+            )
 
     def log_fire_and_forget(self, entry: AuditEntry) -> None:
         """Schedule an audit write as a background task.

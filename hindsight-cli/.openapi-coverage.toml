@@ -166,6 +166,7 @@ include = "Flattened into --include-chunks / --chunk-max-tokens (facts are alway
 tag_groups = "Complex nested tag filter not yet exposed in the CLI; use --tags / --tags-match for simple cases."
 min_scores = "Complex nested per-stage score floors (semantic/keyword/reranker/final) not yet exposed in the CLI."
 temporal_window = "Flattened into --window-start / --window-end on `memory recall`."
+rerank = "Per-call override of the bank's recall_decision_model_prune / _dedup; operators set those once per bank (config API / control plane) rather than per CLI invocation."
 
 [fields.reflect]
 include = "Flattened into --include-facts and related flags."
@@ -174,6 +175,7 @@ tag_groups = "Complex nested tag filter not yet exposed in the CLI; use --tags /
 apply_all_directives = "Directive tag-scope override; exposed via the API, SDKs, and control plane, not the end-user CLI yet."
 reflect_search_observations_max_tokens = "Per-call override of the bank's reflect_default_options; operators set it once per bank (config API / control plane) rather than per CLI invocation."
 reflect_search_observations_include_entities = "Per-call override of the bank's reflect_default_options; operators set it once per bank (config API / control plane) rather than per CLI invocation."
+reflect_search_mental_models_max_tokens = "Per-call override of the bank's reflect_default_options; operators set it once per bank (config API / control plane) rather than per CLI invocation."
 
 [fields.retain_memories]
 items = "Constructed from the single positional content argument on `memory retain`."

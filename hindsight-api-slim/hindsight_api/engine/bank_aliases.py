@@ -34,9 +34,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ..config import get_config
+from ..schema_context import get_current_schema
 from .bank_stats_cache import BankStatsCache
 from .db_utils import acquire_with_retry
-from .memory_engine import fq_table, get_current_schema
+from .schema import fq_table
 
 if TYPE_CHECKING:
     from .db.base import DatabaseConnection

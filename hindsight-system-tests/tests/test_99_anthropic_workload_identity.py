@@ -45,7 +45,7 @@ async def test_every_model_call_carries_the_exchanged_token(wif_client, stubs, l
 
     response = await wif_client.arecall(bank_id=bank_id, query="Who keeps bees in Ljubljana?")
     assert [result.text for result in response.results] == [
-        "Quillon Ashgrove keeps bees on a rooftop in Ljubljana | Involving: Quillon Ashgrove"
+        "Quillon Ashgrove keeps bees on a rooftop in Ljubljana | Where: Ljubljana | Involving: Quillon Ashgrove"
     ]
 
     # The server presented its identity token, with the federation it was configured for.

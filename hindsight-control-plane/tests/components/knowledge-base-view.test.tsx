@@ -162,3 +162,36 @@ describe("KnowledgeBaseView bank scoping", () => {
     expect(getKnowledgePage).not.toHaveBeenCalledWith("bank-a", "kp-bank-a-1");
   });
 });
+
+describe("KnowledgeBaseView evidence images", () => {
+  it("shows each image behind the page's evidence once", async () => {
+    const shot = { id: "b732780ade05", kind: "image", media_type: "image/png" };
+    const other = { id: "c0ffee000001", kind: "image", media_type: "image/png" };
+    getMentalModel.mockImplementation(async () => ({
+      reflect_response: {
+        based_on: {
+          world: [{ id: "f1", text: "fact", attachments: [shot] }],
+          experience: [],
+          // Consolidated from the same screenshot: it must not appear twice.
+          observation: [{ id: "o1", text: "observation", attachments: [shot, other] }],
+        },
+      },
+    }));
+
+    render(<KnowledgeBaseView />);
+
+    await waitFor(() => expect(screen.getByText("evidenceImages")).toBeTruthy());
+    const srcs = [...document.querySelectorAll("img")].map((img) => img.getAttribute("src"));
+    expect(srcs).toEqual([
+      "/api/banks/bank-a/attachments/b732780ade05",
+      "/api/banks/bank-a/attachments/c0ffee000001",
+    ]);
+  });
+
+  it("shows no image section when the evidence carries none", async () => {
+    render(<KnowledgeBaseView />);
+
+    await waitFor(() => expect(getMentalModel).toHaveBeenCalledWith("bank-a", "mm-bank-a-1"));
+    expect(screen.queryByText("evidenceImages")).toBeNull();
+  });
+});

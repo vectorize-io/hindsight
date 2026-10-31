@@ -33,7 +33,9 @@ const config: Config = {
       lightningCssMinimizer: true,
       mdxCrossCompilerCache: true,
       rspackBundler: true,
-      rspackPersistentCache: true,
+      // Off in light dev mode: restoring the cache loads every page it holds
+      // back into memory, and pages there compile on demand anyway.
+      rspackPersistentCache: process.env.DOCS_LIGHT !== 'true',
       ssgWorkerThreads: false, // same Redoc SSG failure on /api-reference
     },
   },
@@ -198,6 +200,8 @@ const config: Config = {
   ],
 
   plugins: [
+    // Local dev only: compile a page when it is first opened (start-docs.sh).
+    ...(process.env.DOCS_LIGHT === 'true' ? ['./plugins/dev-light'] : []),
     // Fetches the repo's star count at build time for the navbar and the
     // homepage hero.
     './plugins/github-stars',

@@ -47,6 +47,12 @@ describe("normalizeNote", () => {
     expect(note.timestamp).toBe("2026-01-01");
   });
 
+  it("lifts the first of updated/modified as the edit time, keeping it in metadata", () => {
+    const note = normalizeNote("---\nmodified: 2026-10-05\nupdated: 2026-11-01\n---\nbody", "");
+    expect(note.updated).toBe("2026-10-05");
+    expect(note.metadata).toMatchObject({ modified: "2026-10-05", updated: "2026-11-01" });
+  });
+
   it("lifts other scalars into metadata with quotes stripped", () => {
     const note = normalizeNote('---\nstatus: "active"\nauthor: ben\n---\nbody', "Notes");
     expect(note.metadata).toEqual({ folder: "Notes", status: "active", author: "ben" });

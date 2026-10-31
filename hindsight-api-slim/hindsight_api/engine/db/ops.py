@@ -833,6 +833,7 @@ class DataAccessOps(ABC):
         queue_table: str,
         entities_table: str,
         ue_table: str,
+        units_table: str,
         bank_id: str,
         unit_ids: list,
     ) -> int:
@@ -846,9 +847,16 @@ class DataAccessOps(ABC):
         triggering transaction and BEFORE the delete or cascade fires, because
         afterwards there is nothing left to read them from.
 
-        Queue rows are locked before entity rows, matching the order
-        :meth:`claim_entity_maintenance_batch` and :meth:`prune_orphan_entities`
-        take them, so a delete cannot cycle against a worker draining the queue.
+        The ``unit_ids`` rows of ``units_table`` are locked, ascending, before
+        the postings are read, and held to commit. Every transaction that
+        removes a memory's postings releases them here first, so a second one
+        retiring or re-editing the same memory waits, then reads what the first
+        left — each posting is debited exactly once (#6229).
+
+        Memory rows are locked first, then queue rows, then entity rows. Queue
+        before entity matches the order :meth:`claim_entity_maintenance_batch`
+        and :meth:`prune_orphan_entities` take them, so a delete cannot cycle
+        against a worker draining the queue.
 
         The count floors at zero. The increment side counts *mentions* while a
         posting is per (unit, entity), so the two disagree by one whenever two

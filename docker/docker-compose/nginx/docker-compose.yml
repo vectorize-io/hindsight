@@ -22,6 +22,7 @@ services:
   # Hindsight (API + Control Plane + embedded pg0)
   hindsight:
     image: ghcr.io/vectorize-io/hindsight:latest
+    stop_grace_period: 75s  # outlasts start-all.sh's 60s shutdown wait
     ports:
       - "9999:9999"  # Control Plane (direct access, not proxied)
     environment:

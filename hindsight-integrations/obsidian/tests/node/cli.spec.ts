@@ -95,6 +95,15 @@ describe("parseCliArgs", () => {
     );
   });
 
+  it("parses --timestamp-from and rejects unsupported values", () => {
+    expect(parseCliArgs(base).timestampFrom).toBeUndefined();
+    expect(parseCliArgs([...base, "--timestamp-from", "updated"]).timestampFrom).toBe("updated");
+    expect(buildConfig(parseCliArgs([...base, "--timestamp-from", "updated"])).timestampFrom).toBe(
+      "updated"
+    );
+    expect(() => parseCliArgs([...base, "--timestamp-from", "mtime"])).toThrow(/timestamp-from/);
+  });
+
   it("requires --vault, --bank and an api url", () => {
     expect(() => parseCliArgs(["--bank", "b", "--api-url", "h"])).toThrow(UsageError);
     expect(() => parseCliArgs(["--vault", "/v", "--api-url", "h"])).toThrow(UsageError);

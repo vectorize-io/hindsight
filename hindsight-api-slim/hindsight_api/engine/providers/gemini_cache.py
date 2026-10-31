@@ -40,10 +40,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from google.genai import types as genai_types
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -58,14 +55,6 @@ _DEFAULT_REFRESH_MARGIN_SECONDS = 5 * 60
 # retain batch waiting on the cold-start create). On timeout the create soft-fails
 # to None and callers proceed uncached, rather than stalling the whole batch.
 _DEFAULT_CREATE_TIMEOUT_SECONDS = 30.0
-
-# TTL for the per-step reflect caches created by ``create_incremental``. These
-# live only for the duration of one reflect (seconds), so the TTL is just a
-# storage backstop in case the explicit ``delete_session`` at reflect end is
-# missed (crash / event-loop teardown). Short so orphaned caches age out fast —
-# storage is billed per token-hour, so a 5-minute cap keeps the cost of a leaked
-# cache negligible.
-_DEFAULT_INCREMENTAL_TTL_SECONDS = 5 * 60
 
 
 @dataclass
@@ -103,17 +92,12 @@ class GeminiCacheManager:
         self._create_timeout_seconds = create_timeout_seconds
         self._entries: dict[str, _CacheEntry] = {}
         self._lock = asyncio.Lock()
-        # session_id -> CachedContent names created via ``create_incremental``.
-        # A reflect creates a fresh rolling cache per step under one session id;
-        # ``delete_session`` tears them all down when the reflect finishes.
-        self._sessions: dict[str, list[str]] = {}
 
     @staticmethod
     def fingerprint(
         model: str,
         system_instruction: str,
         response_schema: Any | None = None,
-        tools: list[dict[str, Any]] | None = None,
     ) -> str:
         """Stable hash of the cacheable surface.
 
@@ -125,13 +109,6 @@ class GeminiCacheManager:
         for callers (e.g. fact extraction) that rebuild the schema
         class on every request via a builder helper — without the
         normalisation the cache would never hit.
-
-        ``tools`` is the OpenAI-style tools list (each entry has a
-        ``"function"`` dict with name/description/parameters). When
-        supplied, the tool definitions become part of the cache key so a
-        loop that adds or renames a tool gets a fresh cache and doesn't
-        silently use a stale schema. Tools are serialised with
-        ``sort_keys=True`` to neutralise dict-ordering drift.
         """
         hasher = hashlib.sha256()
         hasher.update(model.encode("utf-8"))
@@ -153,14 +130,6 @@ class GeminiCacheManager:
                 hasher.update(json.dumps(response_schema, sort_keys=True).encode("utf-8"))
             except (TypeError, ValueError):
                 hasher.update(repr(response_schema).encode("utf-8"))
-        hasher.update(b"\x00")
-        if tools:
-            try:
-                hasher.update(json.dumps(tools, sort_keys=True).encode("utf-8"))
-            except (TypeError, ValueError):
-                hasher.update(repr(tools).encode("utf-8"))
-        else:
-            hasher.update(b"no-tools")
         return hasher.hexdigest()
 
     async def get_or_create(
@@ -169,21 +138,15 @@ class GeminiCacheManager:
         model: str,
         system_instruction: str,
         response_schema: Any | None = None,
-        tools: list[dict[str, Any]] | None = None,
     ) -> str | None:
         """Return a CachedContent resource name for the given prefix, or
         ``None`` if Gemini rejects the create (prefix too small, model
         does not support caching, etc.).
 
-        ``tools`` is the OpenAI-style tools list. When supplied, the tool
-        definitions are baked into the CachedContent so the caller's
-        ``call_with_tools`` doesn't need to resend them on every
-        iteration. Pass ``None`` for non-tool calls.
-
         ``None`` return is a normal, expected value — the caller falls
         back to an uncached call and the system continues to work.
         """
-        key = self.fingerprint(model, system_instruction, response_schema, tools)
+        key = self.fingerprint(model, system_instruction, response_schema)
 
         async with self._lock:
             entry = self._entries.get(key)
@@ -198,7 +161,6 @@ class GeminiCacheManager:
                 cache_name = await self._create_cache(
                     model=model,
                     system_instruction=system_instruction,
-                    tools=tools,
                 )
             except _CacheNotEligible as e:
                 logger.debug(
@@ -244,109 +206,23 @@ class GeminiCacheManager:
             if entry.name == name:
                 self._entries.pop(key, None)
 
-    async def create_incremental(
-        self,
-        *,
-        session_id: str,
-        model: str,
-        system_instruction: str,
-        contents: list[Any],
-        tools: list[dict[str, Any]] | None = None,
-        tool_config: genai_types.ToolConfig | None = None,
-    ) -> str | None:
-        """Create a fresh CachedContent holding ``system + tools + contents`` (and
-        the ``tool_config`` its turns run with) and track it under ``session_id``
-        for later teardown.
-
-        Unlike ``get_or_create``, this does NOT deduplicate by fingerprint: each
-        step of a reflect grows the conversation prefix, so every call is a
-        distinct, single-use cache. The reflect loop creates one per step (each
-        covering the previous step's full input) and reuses it for exactly the
-        next model turn, then supersedes it. All caches for the session are
-        deleted by ``delete_session`` when the reflect ends; the short TTL is
-        only a backstop.
-
-        Returns the cache resource name, or ``None`` when caching is disabled,
-        the prefix is below the model minimum, or the create otherwise fails —
-        callers MUST fall back to an uncached call in that case.
-        """
-        try:
-            name = await self._create_cache(
-                model=model,
-                system_instruction=system_instruction,
-                tools=tools,
-                tool_config=tool_config,
-                contents=contents,
-                ttl_seconds=_DEFAULT_INCREMENTAL_TTL_SECONDS,
-            )
-        except _CacheNotEligible as e:
-            logger.debug(
-                "GeminiCacheManager: incremental prefix not eligible (model=%s, reason=%s) — caller falls back",
-                model,
-                e,
-            )
-            return None
-        except Exception:
-            logger.exception(
-                "GeminiCacheManager: failed to create incremental cache (model=%s); caller falls back",
-                model,
-            )
-            return None
-        if name is not None:
-            self._sessions.setdefault(session_id, []).append(name)
-        return name
-
-    async def delete(self, name: str) -> None:
-        """Best-effort server-side delete of a single CachedContent.
-
-        Swallows all errors: a failed delete just means the cache ages out on
-        its TTL. Also drops any matching in-process entry.
-        """
-        self.invalidate(name)
-        try:
-            await self._client.aio.caches.delete(name=name)
-        except Exception:
-            logger.debug("GeminiCacheManager: delete of cache %s failed (will age out on TTL)", name, exc_info=True)
-
-    async def delete_session(self, session_id: str) -> None:
-        """Delete every CachedContent created for ``session_id`` (reflect teardown).
-
-        Deletes concurrently and best-effort — a reflect must never fail because
-        a cache couldn't be torn down; the short TTL is the backstop.
-        """
-        names = self._sessions.pop(session_id, [])
-        if not names:
-            return
-        await asyncio.gather(*(self.delete(n) for n in names), return_exceptions=True)
-
     async def _create_cache(
         self,
         *,
         model: str,
         system_instruction: str,
-        tools: list[dict[str, Any]] | None = None,
-        tool_config: genai_types.ToolConfig | None = None,
-        contents: list[Any] | None = None,
-        ttl_seconds: int | None = None,
     ) -> str | None:
         """Wrap ``client.aio.caches.create`` with the config we want.
 
         The SDK surface differs slightly across google-genai versions;
         this implementation targets the >=1.0.0 line where caches live
         under ``client.aio.caches``.
-
-        ``contents`` (already-converted ``genai_types.Content`` turns) is
-        appended after the system_instruction/tools so the cache can hold a
-        growing multi-turn conversation prefix, not just the static prefix —
-        this is what the step-by-step reflect cache relies on. ``ttl_seconds``
-        overrides the manager default (used to give per-step reflect caches a
-        short backstop TTL).
         """
         # Lazy import so this module doesn't require the SDK at import time.
         from google.genai import types as genai_types
 
-        # A CachedContent only holds reusable *input* — system_instruction,
-        # contents, tools, ttl. ``response_schema``/``response_mime_type`` are
+        # A CachedContent only holds reusable *input* — system_instruction and
+        # ttl. ``response_schema``/``response_mime_type`` are
         # generation-time output constraints and the SDK rejects them here
         # (``CreateCachedContentConfig`` forbids those fields). They are applied
         # per-request on the GenerateContentConfig instead — see the call sites,
@@ -354,32 +230,8 @@ class GeminiCacheManager:
         # still part of the fingerprint so a schema change keys a fresh cache.
         config_kwargs: dict[str, Any] = {
             "system_instruction": system_instruction,
-            "ttl": f"{ttl_seconds if ttl_seconds is not None else self._ttl_seconds}s",
+            "ttl": f"{self._ttl_seconds}s",
         }
-        if contents:
-            config_kwargs["contents"] = contents
-        if tools:
-            # OpenAI-style {"function": {...}} entries must be converted to
-            # Gemini's Tool/FunctionDeclaration shape before caching.
-            gemini_tools = []
-            for tool in tools:
-                func = tool.get("function", {})
-                gemini_tools.append(
-                    genai_types.Tool(
-                        function_declarations=[
-                            genai_types.FunctionDeclaration(
-                                name=func.get("name", ""),
-                                description=func.get("description", ""),
-                                parameters=func.get("parameters"),
-                            )
-                        ]
-                    )
-                )
-            config_kwargs["tools"] = gemini_tools
-        if tool_config is not None:
-            # A request that uses the cache may not carry its own tool_config.
-            config_kwargs["tool_config"] = tool_config
-
         try:
             cached = await asyncio.wait_for(
                 self._client.aio.caches.create(

@@ -326,6 +326,11 @@ def run_label() -> str:
     results are told apart afterwards, and guessing it from a filename is how
     someone eventually publishes the wrong arm.
     """
+    # A decision model set up for recall replaces the reranker outright.
+    decision = os.getenv("HINDSIGHT_EVAL_SET_DECISION_MODEL_PROVIDER", "none")
+    if decision != "none":
+        model = os.getenv("HINDSIGHT_EVAL_SET_DECISION_MODEL_MODEL", "default model")
+        return f"decision model {decision} {model} ({'drop' if prunes_candidates() else 'keep'} irrelevant)"
     provider = os.getenv("HINDSIGHT_EVAL_SET_RERANKER_PROVIDER", "local")
     if provider != "typesafe":
         return f"{provider} reranker"
@@ -343,7 +348,10 @@ def prunes_candidates() -> bool:
     ranking. Recall@k stays honest (the gold document is either in the kept set or
     it is not); Recall@100 stops being comparable with a non-pruning arm.
     """
-    return os.getenv("HINDSIGHT_EVAL_SET_RERANKER_TYPESAFE_PRUNE_CANDIDATES", "false").lower() == "true"
+    return any(
+        os.getenv(f"HINDSIGHT_EVAL_SET_{setting}", "false").lower() == "true"
+        for setting in ("RERANKER_TYPESAFE_PRUNE_CANDIDATES", "RECALL_DECISION_MODEL_PRUNE")
+    )
 
 
 def run_notes(manifest: Manifest | None) -> dict[str, str]:

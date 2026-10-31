@@ -79,3 +79,12 @@ dev = [
     "pytest>=9.0.2",
     "pytest-asyncio>=0.23.0",
 ]
+
+[tool.uv]
+# filelock 4.2.1 (the first release outside GHSA advisories affecting
+# 3.20.4–4.2.0) requires Python >= 3.11, so a lock that also resolves for 3.10
+# keeps a vulnerable filelock 3.x fork. Restrict the development lockfile to
+# 3.11+, which is what CI runs; the published package metadata
+# (requires-python >= 3.10) is unchanged. Same approach as the crewai and
+# smolagents integrations.
+environments = ["python_version >= '3.11'"]

@@ -39,7 +39,14 @@ import re
 from typing import Any
 
 _ALIAS_RE = re.compile(r"^[fopc]\d+$")
-_ALIAS_IN_TEXT_RE = re.compile(r"\b[fopc]\d+\b")
+#: An alias cited in prose: a token of its own, not part of an identifier such as
+#: ``tra64-v1-c2-ui1``, ``o1-preview``, ``src/c2/x``, ``c2.example`` or ``admin@f5-1``.
+#: Punctuation after it (``o1.``, ``o1:``, ``[o1]``) still ends a citation. This was
+#: ``\b[fopc]\d+\b`` (#5246), which also matched at ``-``, ``.``, ``/``, ``:`` and ``@``,
+#: and low aliases exist in nearly every reflect, so identifiers in the answer came back
+#: with a real id spliced into them (#6150). Only an explicit form like ``[o1]`` was not
+#: chosen instead: no prompt asks for brackets, and models cite aliases bare.
+_ALIAS_IN_TEXT_RE = re.compile(r"(?<![\w./:@-])[fopc]\d+(?![\w/@-]|[.:]\w)")
 _UUID_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE)
 #: What an id the model was never shown is replaced with in the answer.
 _UNVERIFIED_ID = "[unverified id]"
@@ -87,6 +94,10 @@ class ToolResultPresenter:
         self._id_by_alias[alias] = raw_id
         return alias
 
+    def aliases(self, prefix: str) -> list[str]:
+        """Every alias handed out under ``prefix`` ("f" facts, "o" observations, "p" pages), in order."""
+        return [f"{prefix}{n}" for n in range(1, self._counters.get(prefix, 0) + 1)]
+
     def resolve(self, value: Any) -> Any:
         """Map every alias in a tool call's arguments back to its real id.
 
@@ -102,7 +113,7 @@ class ToolResultPresenter:
             for k, v in value.items():
                 if k in ("query", "reason"):
                     out[k] = v
-                elif k in ("answer", "document"):
+                elif k in ("answer", "markdown"):
                     # Prose that outlives the run: aliases inside it become real ids too.
                     out[k] = self._resolve_prose(v)
                 else:
@@ -114,7 +125,8 @@ class ToolResultPresenter:
         """Swap every alias cited in free text for its real id.
 
         Only tokens that are aliases of this reflect are touched, so a word like
-        ``c3`` that was never handed out stays as written.
+        ``c3`` that was never handed out stays as written. So does an alias inside
+        an identifier: the ``c2`` of ``tra64-v1-c2-ui1`` is not a citation.
         """
         return _ALIAS_IN_TEXT_RE.sub(lambda m: self._id_by_alias.get(m.group(0), m.group(0)), text)
 
