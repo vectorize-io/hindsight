@@ -7,7 +7,7 @@ import { deriveBankId } from "./bank";
 import type { TransportTurn } from "./chat";
 import { type RawConfig, resolveConfig } from "./config";
 import type { HindsightClient } from "./hindsight";
-import { buildRetain, runRetainHook } from "./retain-hook";
+import { buildRetain, HEADLESS_NOTE_LEAD, runRetainHook } from "./retain-hook";
 import { NOTE_LEAD } from "./live";
 import { notesKey } from "./live-entry";
 import { takePendingContext } from "./session-cache";
@@ -1006,7 +1006,9 @@ describe("runRetainHook with the live session on a session", () => {
     syncAnswer = async () => answers.shift() ?? { notes: [], unsupported: false };
     const { makeClient } = stubClient();
     await runRetainHook(spec, makeClient);
-    expect(written.map((w) => JSON.parse(w))).toEqual([{ decision: "block", reason: rendered }]);
+    expect(written.map((w) => JSON.parse(w))).toEqual([
+      { decision: "block", reason: `${HEADLESS_NOTE_LEAD}\n\n${rendered}` },
+    ]);
   });
 
   it("an interactive run never waits and never blocks", async () => {

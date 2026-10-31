@@ -48,6 +48,12 @@ const HEADLESS_POLL_MS = 2_000;
 /** Kept free of that wait, for the write-back after it. */
 const HEADLESS_RETAIN_RESERVE_MS = 15_000;
 
+/** Leads a note handed back at a headless Stop. A job has no user to catch a wrong note: in beta
+ * a disk-guard run took a note that misread GiB as GB as an order and dropped databases. */
+export const HEADLESS_NOTE_LEAD =
+  "A memory check found the note below. It can be wrong: check it against your files first. " +
+  "If it is wrong, say so in your summary and change nothing because of it.";
+
 /** Whether the transcript is a headless run (`claude -p`): Claude Code stamps each line with how it
  *  was started, `sdk-cli` for print mode and `cli` for the interactive terminal. */
 export function isHeadlessRun(transcriptPath: string): boolean {
@@ -332,7 +338,9 @@ export async function runRetainHook(
             .join("\n\n")
         : "";
       if (notes && headless) {
-        process.stdout.write(JSON.stringify({ decision: "block", reason: notes }));
+        process.stdout.write(
+          JSON.stringify({ decision: "block", reason: `${HEADLESS_NOTE_LEAD}\n\n${notes}` })
+        );
       } else if (notes) {
         stashPendingContext(notesKey(spec.harness), sessionId, notes); // the next prompt hands it over
         if (spec.stopShowsNotes)
