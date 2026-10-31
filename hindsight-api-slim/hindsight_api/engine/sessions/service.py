@@ -445,13 +445,17 @@ class SessionService:
                 # A scheduled job runs as a new session each time, with the same request word for
                 # word, so its runs kept hearing the note their earlier runs had set aside (beta:
                 # disk-guard was told six runs in a row that one folder is outside its rules).
-                # Take over what the last runs of the same request set aside, once.
+                # Take over what the last runs of the same request set aside, once. "Same" ignores
+                # numbers: each run's request names its own run folder (".../20261031-040756.139/"),
+                # and an exact match never hit a single earlier run.
                 if settings.live and not state.inherited and len(state.goal) >= INHERIT_MIN_GOAL_CHARS:
                     state.inherited = True
                     earlier = await conn.fetch(
                         f"""
                         SELECT watch_state->'set_aside' AS set_aside FROM {fq_table("sessions")}
-                        WHERE bank_id = $1 AND session_id <> $2 AND watch_state->>'goal' = $3
+                        WHERE bank_id = $1 AND session_id <> $2
+                          AND regexp_replace(watch_state->>'goal', '[0-9]+', '#', 'g')
+                              = regexp_replace($3, '[0-9]+', '#', 'g')
                         ORDER BY updated_at DESC LIMIT 5
                         """,
                         bank_id,

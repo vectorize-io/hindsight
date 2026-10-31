@@ -839,11 +839,12 @@ async def test_a_rerun_of_the_same_request_inherits_what_earlier_runs_set_aside(
     from hindsight_api.engine.sessions.watch import WatchState
 
     bank, s = _bank(), memory.sessions
-    job = "You are running the scheduled job 'disk-guard'. Read JOB.md and do what it says."
+    # Each run's request names its own run folder: only the numbers differ.
+    job = "You are running the scheduled job 'disk-guard'. Read JOB.md and do what it says. Write runs/{}/summary.md."
     await s.append(
         bank,
         "run1",
-        _req({"id": "1", "role": "user", "text": job}, live=True, retain="off"),
+        _req({"id": "1", "role": "user", "text": job.format("20261031-025859.367")}, live=True, retain="off"),
         request_context=request_context,
     )
     backend = await memory._get_backend()
@@ -855,7 +856,7 @@ async def test_a_rerun_of_the_same_request_inherits_what_earlier_runs_set_aside(
     await s.append(
         bank,
         "run2",
-        _req({"id": "1", "role": "user", "text": job}, live=True, retain="off"),
+        _req({"id": "1", "role": "user", "text": job.format("20261031-040756.139")}, live=True, retain="off"),
         request_context=request_context,
     )
     state = WatchState.model_validate(await _watch_state(memory, bank, "run2"))
