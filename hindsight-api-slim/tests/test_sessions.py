@@ -832,3 +832,38 @@ async def test_a_note_from_a_mixed_memory_is_own_when_this_session_states_it_bes
     monkeypatch.setattr(memory, "get_memory_unit", get_memory_unit)
     assert await s._from_this_session_only(bank, "s1", ["obs"], request_context, own_doc)
     assert not await s._from_this_session_only(bank, "s1", ["obs"], request_context, "chat:past")
+
+
+async def test_a_rerun_of_the_same_request_inherits_what_earlier_runs_set_aside(memory, request_context):
+    """A scheduled job's runs are separate sessions with one request: what one run set aside, the next is told."""
+    from hindsight_api.engine.sessions.watch import WatchState
+
+    bank, s = _bank(), memory.sessions
+    job = "You are running the scheduled job 'disk-guard'. Read JOB.md and do what it says."
+    await s.append(
+        bank,
+        "run1",
+        _req({"id": "1", "role": "user", "text": job}, live=True, retain="off"),
+        request_context=request_context,
+    )
+    backend = await memory._get_backend()
+    async with backend.acquire() as conn:  # an earlier run that set a note aside
+        await conn.execute(
+            "UPDATE sessions SET watch_state = jsonb_set(watch_state, '{set_aside}', '[\"The worktrees folder is outside the rules.\"]') WHERE bank_id = $1 AND session_id = 'run1'",
+            bank,
+        )
+    await s.append(
+        bank,
+        "run2",
+        _req({"id": "1", "role": "user", "text": job}, live=True, retain="off"),
+        request_context=request_context,
+    )
+    state = WatchState.model_validate(await _watch_state(memory, bank, "run2"))
+    assert state.set_aside == ["The worktrees folder is outside the rules."]
+    await s.append(
+        bank,
+        "run3",
+        _req({"id": "1", "role": "user", "text": "go on"}, live=True, retain="off"),
+        request_context=request_context,
+    )
+    assert WatchState.model_validate(await _watch_state(memory, bank, "run3")).set_aside == []

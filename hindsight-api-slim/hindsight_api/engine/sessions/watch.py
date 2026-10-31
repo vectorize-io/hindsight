@@ -223,6 +223,8 @@ class WatchState(BaseModel):
     request_file: str = ""
     # When this session's last command or plan was checked (database time, ISO): see COMMAND_CHECK_EVERY_S.
     last_command_check: str = ""
+    # Whether the notes earlier runs of the same request set aside were taken over (see the service).
+    inherited: bool = False
 
 
 class Step(BaseModel):

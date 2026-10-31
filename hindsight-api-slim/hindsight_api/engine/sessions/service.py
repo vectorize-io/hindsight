@@ -97,6 +97,8 @@ SAVE_EVERY_EVENTS = 300
 # The coding-agents plugin has the agent name notes as thoughts: "**Thanks to Hindsight thought #12**"
 # only when it changed the work, else one plain "🧠 Hindsight thought #12 — ..." (not needed; the
 # earlier ", already done" / ", set aside" lines still count so). The note lines stay counted too.
+# Short requests ("go on", "fix it") repeat across unrelated sessions: only a longer one names a job.
+INHERIT_MIN_GOAL_CHARS = 40
 CREDIT_RE = re.compile(
     r"From Hindsight memory \(live session (#\d+[^)]*)\)|Hindsight thought (#\d+(?:\s*(?:/|,|and)\s*#\d+)*)\*\*"
 )
@@ -440,6 +442,24 @@ class SessionService:
                         -W.SET_ASIDE_KEPT :
                     ]
                     credits, dismissed = len(new_credits), len(new_dismissed) - len(unused_then_used)
+                # A scheduled job runs as a new session each time, with the same request word for
+                # word, so its runs kept hearing the note their earlier runs had set aside (beta:
+                # disk-guard was told six runs in a row that one folder is outside its rules).
+                # Take over what the last runs of the same request set aside, once.
+                if settings.live and not state.inherited and len(state.goal) >= INHERIT_MIN_GOAL_CHARS:
+                    state.inherited = True
+                    earlier = await conn.fetch(
+                        f"""
+                        SELECT watch_state->'set_aside' AS set_aside FROM {fq_table("sessions")}
+                        WHERE bank_id = $1 AND session_id <> $2 AND watch_state->>'goal' = $3
+                        ORDER BY updated_at DESC LIMIT 5
+                        """,
+                        bank_id,
+                        session_id,
+                        state.goal,
+                    )
+                    taken = [t for r in earlier for t in (conn.parse_json(r["set_aside"]) or [])]
+                    state.set_aside = list(dict.fromkeys(state.set_aside + taken))[-W.SET_ASIDE_KEPT :]
                 if rows:
                     await conn.bulk_insert_from_arrays(
                         fq_table("session_events"),
