@@ -3016,12 +3016,6 @@ class MemoryEngine(MemoryEngineInterface):
         # Initialize entity resolver (will be created in initialize())
         self.entity_resolver: EntityResolverHandle | None = None
 
-        # Initialize embeddings (from env vars if not provided)
-        if embeddings is not None:
-            self.embeddings = embeddings
-        else:
-            self.embeddings = create_embeddings_from_env()
-
         # Initialize query analyzer
         if query_analyzer is not None:
             self.query_analyzer = query_analyzer
@@ -3483,6 +3477,32 @@ class MemoryEngine(MemoryEngineInterface):
             _set_context = getattr(_ext, "set_context", None)
             if _set_context is not None:
                 _set_context(self._ext_ctx)
+
+        # Initialize embeddings: an explicit argument, else the embeddings extension, else
+        # the server's own settings. The extension is loaded with the context, so
+        # create_embeddings() can already use it.
+        from ..extensions.embeddings import EmbeddingsExtension  # noqa: PLC0415
+
+        self._embeddings_extension: EmbeddingsExtension | None = None
+        if embeddings is not None:
+            self.embeddings = embeddings
+        else:
+            self._embeddings_extension = load_extension("EMBEDDINGS", EmbeddingsExtension, context=self._ext_ctx)
+            if self._embeddings_extension is not None:
+                supplied = self._embeddings_extension.create_embeddings(create_embeddings_from_env)
+                if not isinstance(supplied, Embeddings):
+                    raise TypeError(
+                        f"{type(self._embeddings_extension).__name__}.create_embeddings() returned "
+                        f"{type(supplied).__name__}, not an Embeddings"
+                    )
+                self.embeddings = supplied
+                logger.info(
+                    "[embeddings] supplied by %s (provider=%s)",
+                    type(self._embeddings_extension).__name__,
+                    supplied.provider_name,
+                )
+            else:
+                self.embeddings = create_embeddings_from_env()
 
         # The LLM request extension decides the credentials of every LLM call in the
         # process, so it is installed process-wide rather than handed to each LLM the
@@ -6131,6 +6151,9 @@ class MemoryEngine(MemoryEngineInterface):
         # Before anything can make an LLM call through it.
         if self._llm_request_extension is not None:
             await self._llm_request_extension.on_startup()
+        # Before the embeddings model it supplied is initialized.
+        if self._embeddings_extension is not None:
+            await self._embeddings_extension.on_startup()
         if self._model_call_extension is not None:
             await self._model_call_extension.on_startup()
 
@@ -6669,6 +6692,9 @@ class MemoryEngine(MemoryEngineInterface):
             if installed_llm_request_extension() is self._llm_request_extension:
                 install_llm_request_extension(None)
             await self._llm_request_extension.on_shutdown()
+
+        if self._embeddings_extension is not None:
+            await self._embeddings_extension.on_shutdown()
 
         # Stop the background maintenance loop (retention sweeps + reconcile)
         if self._maintenance_loop is not None:
