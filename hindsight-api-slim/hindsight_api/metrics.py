@@ -93,6 +93,33 @@ def _is_client_cancellation(exc: BaseException) -> bool:
     return False
 
 
+def _is_validation_rejection(exc: BaseException) -> bool:
+    """Whether *exc* is an operation validator refusing the operation rather than a failure.
+
+    An ``OperationValidatorExtension`` that rejects an operation (insufficient quota, a
+    policy refusal, ...) raises OperationValidationError before the operation does any
+    work, and the HTTP layer returns its status code to the caller. Nothing failed: the
+    server decided not to run it. Counting it as ``success="false"`` lets one client that
+    keeps calling after it has been refused drive the failure rate of an operation to
+    whatever share of the traffic it sends. It is recorded as ``success="rejected"``
+    instead, counted but outside the failure rate, the same treatment a client
+    cancellation gets. Matched anywhere in the ``__cause__`` chain, so a route that
+    re-raises it as an HTTPException ``from`` it is still recognised.
+    """
+    # Imported lazily, like OperationCancelledError above: the extensions package is
+    # heavier than this module and must not be loaded by importing metrics.
+    from hindsight_api.extensions.operation_validator import OperationValidationError
+
+    cause: BaseException | None = exc
+    seen: set[int] = set()  # guard against a cyclic __cause__ chain
+    while cause is not None and id(cause) not in seen:
+        if isinstance(cause, OperationValidationError):
+            return True
+        seen.add(id(cause))
+        cause = cause.__cause__
+    return False
+
+
 # Custom bucket boundaries for operation duration (in seconds)
 # Fine granularity in 0-30s range where most operations complete
 DURATION_BUCKETS = (0.1, 0.25, 0.5, 0.75, 1.0, 2.0, 3.0, 5.0, 7.5, 10.0, 15.0, 20.0, 30.0, 60.0, 120.0)
@@ -274,11 +301,14 @@ class MetricsCollectorBase:
         max_tokens: int | None = None,
         memories_backend: str | None = None,
         cancelled: bool = False,
+        rejected: bool = False,
     ):
         """Record a single completed operation with an explicit success label.
 
         ``cancelled`` marks a client-disconnect cancellation; it is recorded with
         ``success="cancelled"`` so it is counted without touching the failure rate.
+        ``rejected`` marks an operation a validator refused; it is recorded with
+        ``success="rejected"`` for the same reason.
         """
         raise NotImplementedError
 
@@ -393,6 +423,7 @@ class NoOpMetricsCollector(MetricsCollectorBase):
         max_tokens: int | None = None,
         memories_backend: str | None = None,
         cancelled: bool = False,
+        rejected: bool = False,
     ):
         """No-op operation result recording."""
         pass
@@ -699,6 +730,7 @@ class MetricsCollector(MetricsCollectorBase):
         start_time = time.perf_counter()
         success = True
         cancelled = False
+        rejected = False
         # Resolved once, and published for the length of the operation so the recall phases
         # recorded inside it carry the same backend label. (Retain phases label their store
         # themselves, in timed_retain.)
@@ -717,6 +749,10 @@ class MetricsCollector(MetricsCollectorBase):
             # how often clients gave up, or how long they waited first.
             if _is_client_cancellation(exc):
                 cancelled = True
+            # A validator refusing the operation is not a failure of it either: recorded as
+            # success="rejected", so a refused client cannot drive the failure rate.
+            elif _is_validation_rejection(exc):
+                rejected = True
             success = False
             raise
         finally:
@@ -731,6 +767,7 @@ class MetricsCollector(MetricsCollectorBase):
                 max_tokens=max_tokens,
                 memories_backend=backend,
                 cancelled=cancelled,
+                rejected=rejected,
             )
 
     def record_operation_result(
@@ -744,6 +781,7 @@ class MetricsCollector(MetricsCollectorBase):
         max_tokens: int | None = None,
         memories_backend: str | None = None,
         cancelled: bool = False,
+        rejected: bool = False,
     ):
         """Record a single completed operation (duration + count) with a success label.
 
@@ -764,7 +802,7 @@ class MetricsCollector(MetricsCollectorBase):
             attributes["budget"] = budget
         if max_tokens:
             attributes["max_tokens"] = str(max_tokens)
-        attributes["success"] = "cancelled" if cancelled else str(success).lower()
+        attributes["success"] = "cancelled" if cancelled else "rejected" if rejected else str(success).lower()
 
         # Record duration
         self.operation_duration.record(duration, attributes)
