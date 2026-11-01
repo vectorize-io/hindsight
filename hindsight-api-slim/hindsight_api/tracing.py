@@ -147,6 +147,33 @@ PROVIDER_NAME_MAPPING = {
 }
 
 
+def bank_id_span_processor() -> Any:
+    """A span processor that stamps ``hindsight.bank_id`` on every span started inside a
+    bank-scoped operation.
+
+    Per-bank routing (e.g. an OTel collector sending each bank to its own backend project)
+    keys on this attribute, and the model-call spans that carry token counts start deep
+    inside the operation, so tagging only the operation span left the cost unattributed.
+    Built here so the SDK still loads only when tracing is on.
+    """
+    from opentelemetry.sdk.trace import SpanProcessor
+
+    # Imported here: llm_trace imports this module.
+    from .engine.llm_trace import current_trace_context
+    from .schema_context import get_current_bank_id
+
+    class BankIdSpanProcessor(SpanProcessor):
+        def on_start(self, span: Any, parent_context: Any = None) -> None:
+            if span.attributes and "hindsight.bank_id" in span.attributes:
+                return
+            ctx = current_trace_context()
+            bank_id = (ctx.bank_id if ctx else None) or get_current_bank_id()
+            if bank_id:
+                span.set_attribute("hindsight.bank_id", bank_id)
+
+    return BankIdSpanProcessor()
+
+
 def initialize_tracing(
     service_name: str,
     endpoint: str,
@@ -202,6 +229,7 @@ def initialize_tracing(
 
     # Create tracer provider with batch processor
     provider = TracerProvider(resource=resource)
+    provider.add_span_processor(bank_id_span_processor())
     provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
 
     # Set global tracer provider
