@@ -700,7 +700,9 @@ class OnnxEmbeddings(Embeddings):
         self._tokenizer = tokenizer
         self._session = session
         try:
-            detected = len(self._encode_sync(["test"])[0])
+            probe = self._encode_sync(["hindsight startup probe"])
+            detected = len(probe[0])
+            assert_finite_local_output(probe, label=f"Embeddings[onnx:{self.model_id}]")
             if self.configured_dimensions is not None and detected != self.configured_dimensions:
                 raise ValueError(
                     f"Configured ONNX embedding dimension {self.configured_dimensions} does not match model output {detected}"

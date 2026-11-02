@@ -3,6 +3,7 @@ Embedding generation utilities for memory units.
 """
 
 import logging
+import math
 from typing import Literal, Protocol
 
 from ...config import ENV_EMBEDDINGS_MAX_INPUT_TOKENS, get_config
@@ -100,6 +101,16 @@ def _validate_embedding_vector(vector: list[float], *, index: int, expected_dime
         raise RuntimeError(f"embedding {index} has dimension 0; expected {expected_dimension}")
     if actual_dimension != expected_dimension:
         raise RuntimeError(f"embedding {index} has dimension {actual_dimension}; expected {expected_dimension}")
+    # A NaN/Inf vector otherwise travels to the pgvector bind and fails there as an
+    # opaque "NaN not allowed in vector" that names neither the backend nor the vector
+    # (issue #6255). Fail here, loudly, with the index. Left retryable: the observed
+    # case was a transient backend glitch that clean re-embeds of the same text fixed.
+    non_finite = sum(1 for x in vector if not math.isfinite(x))
+    if non_finite:
+        raise RuntimeError(
+            f"embedding {index} contains {non_finite} non-finite value(s) (NaN/Inf) of {actual_dimension}; "
+            "the embedding backend produced an unusable vector"
+        )
     return vector
 
 
