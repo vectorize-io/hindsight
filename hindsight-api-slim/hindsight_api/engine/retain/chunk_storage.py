@@ -129,10 +129,6 @@ async def store_chunks_batch(
     if not chunks:
         return {}
 
-    # When document text storage is disabled, persist empty chunk_text (the
-    # column is NOT NULL) while still computing content_hash from the real text
-    # so delta-retain dedup is unaffected.
-
     # Prepare chunk data for batch insert
     chunk_ids = []
     chunk_texts = []
@@ -143,6 +139,9 @@ async def store_chunks_batch(
     for chunk in chunks:
         chunk_id = build_chunk_id(bank_id, document_id, chunk.chunk_index)
         chunk_ids.append(chunk_id)
+        # When document text storage is disabled, persist empty chunk_text (the
+        # column is NOT NULL) while still computing content_hash from the real text
+        # so delta-retain dedup is unaffected.
         chunk_texts.append(chunk.chunk_text if store_document_text else "")
         chunk_indices.append(chunk.chunk_index)
         content_hashes.append(compute_chunk_hash(chunk.chunk_text))
