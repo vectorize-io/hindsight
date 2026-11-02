@@ -266,10 +266,10 @@ class LocalSTCrossEncoder(CrossEncoderModel):
 
     Call initialize() during startup to load the model and avoid cold starts.
 
-    Default model is cross-encoder/ms-marco-MiniLM-L-6-v2:
-    - Fast inference (~80ms for 100 pairs on CPU)
-    - Small model (80MB)
-    - Trained for passage re-ranking
+    Default model is hindsight-ai/hs-rerank-1:
+    - Multilingual (en, es, fr, de, pt, ja, ko, zh)
+    - Small model (114M parameters, a 15M-parameter transformer per pass)
+    - Trained for Hindsight memory re-ranking
 
     Uses a dedicated thread pool to limit concurrent CPU-bound work.
     """
@@ -294,7 +294,7 @@ class LocalSTCrossEncoder(CrossEncoderModel):
 
         Args:
             model_name: Name of the CrossEncoder model to use.
-                       Default: cross-encoder/ms-marco-MiniLM-L-6-v2
+                       Default: hindsight-ai/hs-rerank-1
             max_concurrent: Maximum concurrent reranking calls (default: 2).
                            Higher values may cause CPU thrashing under load.
             force_cpu: Force CPU mode for local inference.
@@ -397,11 +397,17 @@ class LocalSTCrossEncoder(CrossEncoderModel):
                 transformers_logger.setLevel(logging.ERROR)
 
                 try:
+                    import torch
+
+                    # Raw logits, as the other providers return: recall applies the sigmoid.
+                    # sentence-transformers otherwise defaults single-label models to Sigmoid,
+                    # and the second sigmoid squashes every score into 0.5..0.73.
                     self._model = CrossEncoder(
                         self.model_name,
                         device=device,
                         model_kwargs={"low_cpu_mem_usage": False},
                         trust_remote_code=self.trust_remote_code,
+                        activation_fn=torch.nn.Identity(),
                     )
                 finally:
                     # Restore original logging level
@@ -409,8 +415,8 @@ class LocalSTCrossEncoder(CrossEncoderModel):
 
             # Safetensors weights are mapped zero-copy and can land on a byte offset that
             # is not a multiple of the dtype size, which makes torch's vectorized CPU matmul
-            # return corrupt scores. See engine/local_device.py. The default reranker
-            # (ms-marco-MiniLM-L-6-v2) is one of the affected files.
+            # return corrupt scores. See engine/local_device.py. ms-marco-MiniLM-L-6-v2 is
+            # one of the affected files.
             align_local_model_weights(self._model.model, label=f"Reranker[{self.model_name}]")
 
             self._device_type = resolve_model_device_type(self._model)

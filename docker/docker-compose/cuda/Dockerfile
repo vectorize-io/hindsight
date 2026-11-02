@@ -2,7 +2,7 @@
 # for NVIDIA GPU-accelerated local embedding and reranker models.
 #
 # Based on the full standalone image (which already bakes in the default
-# BAAI/bge-small-en-v1.5 and cross-encoder/ms-marco-MiniLM-L-6-v2 models).
+# BAAI/bge-small-en-v1.5 and hindsight-ai/hs-rerank-1 models).
 # The CPU torch wheel stays in the base layers, so the CUDA runtime is purely
 # additive: expect roughly 11 GB on disk against ~9 GB for the base image.
 #

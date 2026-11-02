@@ -10,7 +10,7 @@ Hindsight uses several machine learning models for different tasks.
 
 - **LLM** — Fact extraction, reasoning, and generation. Provider-specific, fully configurable.
 - **Embedding** — Vector representations for semantic search. Default: `BAAI/bge-small-en-v1.5`.
-- **Cross-Encoder** — Reranking search results. Default: `cross-encoder/ms-marco-MiniLM-L-6-v2`.
+- **Cross-Encoder** — Reranking search results. Default: `hindsight-ai/hs-rerank-1`.
 
 Embedding and cross-encoder models are downloaded automatically from HuggingFace on first run.
 
@@ -1176,7 +1176,7 @@ For a runnable Docker Compose setup that serves both embeddings and reranking fr
 
 Reranks initial search results to improve precision.
 
-**Default:** `cross-encoder/ms-marco-MiniLM-L-6-v2` (~85MB)
+**Default:** `hindsight-ai/hs-rerank-1` (multilingual, 114M parameters)
 
 ### Supported Providers
 
@@ -1203,9 +1203,9 @@ Reranks initial search results to improve precision.
 
 | Model | Use Case |
 |-------|----------|
-| `cross-encoder/ms-marco-MiniLM-L-6-v2` | Default, fast |
-| `cross-encoder/ms-marco-MiniLM-L-12-v2` | Higher accuracy |
-| `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` | Multilingual |
+| `hindsight-ai/hs-rerank-1` | Default, multilingual (en, es, fr, de, pt, ja, ko, zh), trained for Hindsight |
+| `cross-encoder/ms-marco-MiniLM-L-6-v2` | English-only, smaller (the default before hs-rerank-1) |
+| `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` | Multilingual, 14 languages |
 
 ### Cohere Models
 
@@ -1284,7 +1284,7 @@ LiteLLM supports multiple reranking providers via the `/rerank` endpoint:
 ```bash
 # Local provider (default)
 export HINDSIGHT_API_RERANKER_PROVIDER=local
-export HINDSIGHT_API_RERANKER_LOCAL_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+export HINDSIGHT_API_RERANKER_LOCAL_MODEL=hindsight-ai/hs-rerank-1
 
 # Cohere
 export HINDSIGHT_API_RERANKER_PROVIDER=cohere

@@ -64,7 +64,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.cache/huggingface
-          key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+          key: ${{ runner.os }}-huggingface-hs-rerank-1-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
           restore-keys: |
             ${{ runner.os }}-huggingface-
 
@@ -75,7 +75,7 @@ jobs:
       - name: Pre-download models
         working-directory: ./hindsight-api-slim
         run: |
-          uv run --all-extras python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; SentenceTransformer('BAAI/bge-small-en-v1.5'); CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2'); print('Models downloaded')"
+          uv run --all-extras python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; SentenceTransformer('BAAI/bge-small-en-v1.5'); CrossEncoder('hindsight-ai/hs-rerank-1'); print('Models downloaded')"
 
       # Start the server and run the client tests in a SINGLE step. On Windows
       # runners a process backgrounded with `&` in one step is not reliably kept

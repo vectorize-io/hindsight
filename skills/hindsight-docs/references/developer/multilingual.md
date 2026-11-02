@@ -17,7 +17,7 @@ Hindsight automatically detects the language of your input and responds in the s
 - **recall()**
   1. A query in Chinese.
   2. The multilingual embeddings match by meaning; the tokenizer lets the exact name 王芳 match as a word.
-  3. Both point to the Chinese facts. The reranker that then orders them is English-only by default too, so pick a multilingual one.
+  3. Both point to the Chinese facts. The default reranker that then orders them already reads Chinese.
   4. The facts come back exactly as stored. Nothing was translated on the way.
 - **reflect()**
   1. A question in Chinese.
@@ -184,8 +184,8 @@ HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL=BAAI/bge-m3
 | `intfloat/multilingual-e5-large` | 100+ | Good alternative |
 | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | 50+ | Lighter weight |
 
-### 3. Reranker Model (Recommended)
-The default reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`) is **English-only**. For multilingual content, use a multilingual reranker:
+### 3. Reranker Model (Only for Other Languages)
+The default reranker (`hindsight-ai/hs-rerank-1`) is **multilingual**: English, Spanish, French, German, Portuguese, Japanese, Korean and Chinese. For other languages, use a reranker that covers them:
 
 ```bash
 # In your .env file
@@ -270,7 +270,7 @@ This is prompt-level guidance, not a hard guarantee: a model that ignores instru
 ## Best Practices
 
 ### 1. Use Multilingual Models for Non-English Content
-If you primarily work with non-English content, configure multilingual embedding and reranker models. English-only models will still store your content correctly, but semantic search quality will be degraded.
+If you primarily work with non-English content, configure a multilingual embedding model (the default reranker already covers 8 languages; outside them, change it too). English-only models will still store your content correctly, but semantic search quality will be degraded.
 
 ### 2. Keep Content in One Language Per Retain Call
 While mixed content works, keeping each `retain` call in a single language produces more consistent results.

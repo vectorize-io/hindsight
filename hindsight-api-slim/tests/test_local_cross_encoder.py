@@ -148,6 +148,22 @@ class TestLocalSTCrossEncoder:
 
         assert await encoder.predict([("q", "a"), ("q", "b"), ("q", "c")]) == [0.4, 0.4, 0.4]
 
+    async def test_initialize_loads_the_model_returning_raw_logits(self):
+        """Recall applies the sigmoid; sentence-transformers would apply one too for a
+        single-label model (hs-rerank-1), squashing every score into 0.5..0.73."""
+        torch = pytest.importorskip("torch")
+        model = MagicMock()
+        model.model = torch.nn.Linear(4, 4)
+        model.predict.return_value = [1.0]
+
+        with (
+            patch("hindsight_api.engine.cross_encoder.prefetch_local_model"),
+            patch("sentence_transformers.CrossEncoder", return_value=model) as build,
+        ):
+            await LocalSTCrossEncoder(model_name="org/m", force_cpu=True).initialize()
+
+        assert isinstance(build.call_args.kwargs["activation_fn"], torch.nn.Identity)
+
     async def test_predict_not_initialized_raises(self):
         encoder = LocalSTCrossEncoder()
         with pytest.raises(RuntimeError, match="not initialized"):

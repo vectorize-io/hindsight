@@ -314,7 +314,7 @@ class CrossEncoderReranker:
     Neural reranking using a cross-encoder model.
 
     Configured via environment variables (see cross_encoder.py).
-    Default local model is cross-encoder/ms-marco-MiniLM-L-6-v2.
+    Default local model is hindsight-ai/hs-rerank-1.
     """
 
     def __init__(self, cross_encoder=None):

@@ -487,7 +487,7 @@ tei:
       repository: ghcr.io/huggingface/text-embeddings-inference
       tag: cpu-1.8.3
       pullPolicy: IfNotPresent
-    model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    model: "hindsight-ai/hs-rerank-1"
     port: 8090
     args:
       - "--auto-truncate"

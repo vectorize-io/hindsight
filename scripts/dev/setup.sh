@@ -195,7 +195,7 @@ install_node_deps() {
 prewarm_models() {
     step "Pre-download ML models (offline readiness)"
     # Respect provider/model overrides from .env; default to local + repo
-    # defaults (BAAI/bge-small-en-v1.5, cross-encoder/ms-marco-MiniLM-L-6-v2).
+    # defaults (BAAI/bge-small-en-v1.5, hindsight-ai/hs-rerank-1).
     set -a; [ -f "$ROOT_DIR/.env" ] && . "$ROOT_DIR/.env"; set +a
 
     # Only the "local" provider downloads weights; remote providers (TEI,
@@ -209,7 +209,7 @@ prewarm_models() {
         info "embeddings provider is '${HINDSIGHT_API_EMBEDDINGS_PROVIDER}' — no local weights to fetch"
     fi
     if [ "${HINDSIGHT_API_RERANKER_PROVIDER:-local}" = "local" ]; then
-        rer_model="${HINDSIGHT_API_RERANKER_LOCAL_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}"
+        rer_model="${HINDSIGHT_API_RERANKER_LOCAL_MODEL:-hindsight-ai/hs-rerank-1}"
         info "reranker (local): $rer_model"
     else
         info "reranker provider is '${HINDSIGHT_API_RERANKER_PROVIDER}' — no local weights to fetch"
