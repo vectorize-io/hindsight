@@ -109,7 +109,7 @@ pub fn create(
     bank_id: &str,
     name: &str,
     content: &str,
-    priority: i64,
+    priority: i32,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
@@ -160,7 +160,7 @@ pub fn update(
     name: Option<String>,
     content: Option<String>,
     is_active: Option<bool>,
-    priority: Option<i64>,
+    priority: Option<i32>,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
