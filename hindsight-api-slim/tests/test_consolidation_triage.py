@@ -13,6 +13,7 @@ import uuid
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from aiohttp import web
@@ -21,6 +22,7 @@ from hindsight_api.config import DecisionModelConfig
 from hindsight_api.engine import decision_model
 from hindsight_api.engine.consolidation import consolidator, triage
 from hindsight_api.engine.decision_model import DecisionModel, DecisionResponse
+from hindsight_api.engine.response_models import MemoryFact
 from hindsight_api.tracing import LLMSpanRecorder
 from tests.aiohttp_stub import stub_server
 
@@ -232,3 +234,51 @@ async def test_a_request_is_traced_in_the_shape_every_recorder_takes(monkeypatch
     assert call.arguments["input_tokens"] == 7
     # The OTel recorder takes it as a forward-compatible extra; the DB recorder stores it as the input.
     assert "questions" in call.arguments["_extra"]["structured_input"]
+
+
+async def test_a_batch_whose_llm_call_fails_writes_no_triage_verdict():
+    """A failed batch is bisected and re-run, triage included. Its verdicts written ahead of that
+    re-run land unstamped, and the second look judges the facts again against a pool the first
+    one already changed — a verdict that flips with the order the passes ran in (#6239)."""
+    settled, unsettled, obs = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    memories = [{"id": settled, "text": "a", "tags": []}, {"id": unsettled, "text": "b", "tags": []}]
+    recall = SimpleNamespace(results=[MemoryFact(id=obs, text="a", fact_type="observation", tags=[])], source_facts={})
+    store = SimpleNamespace(begin_write_batch=AsyncMock())
+    with (
+        patch.object(consolidator, "get_memories", return_value=store),
+        patch.object(consolidator, "record_source_memory_ids"),
+        patch.object(consolidator, "_find_related_observations", new=AsyncMock(return_value=recall)),
+        patch.object(
+            consolidator,
+            "_consolidate_batch_with_llm",
+            new=AsyncMock(return_value=consolidator._BatchLLMResult(failed=True)),
+        ),
+        patch.object(consolidator, "_effective_scope_limit", return_value=-1),
+        patch.object(consolidator, "_config_for_scope", side_effect=lambda config, _tags: config),
+        patch.object(consolidator, "_dedup_active", return_value=False),
+        patch.object(consolidator, "triage_model", return_value=object()),
+        patch.object(
+            consolidator, "triage_facts", new=AsyncMock(return_value=triage.TriageResult(restates={settled: obs}))
+        ),
+        patch.object(
+            consolidator, "_live_source_ids", new=AsyncMock(side_effect=lambda _p, _b, ids: set(map(str, ids)))
+        ),
+        patch.object(
+            consolidator.embedding_utils,
+            "generate_embeddings_batch",
+            new=AsyncMock(side_effect=lambda _e, texts, **_k: [[0.0] for _ in texts]),
+        ),
+    ):
+        _, _, failed = await consolidator._process_memory_batch(
+            pool=SimpleNamespace(),
+            memory_engine=SimpleNamespace(embeddings=object()),
+            llm_config=object(),
+            bank_id="bank",
+            memories=memories,
+            request_context=object(),
+            config=SimpleNamespace(observations_mission=""),
+            mark_consolidated_ids=[settled, unsettled],
+        )
+
+    assert failed
+    store.begin_write_batch.assert_not_called()

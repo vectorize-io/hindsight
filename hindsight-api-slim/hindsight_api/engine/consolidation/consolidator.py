@@ -2836,7 +2836,10 @@ async def _process_memory_batch(
         perf.record_llm_call(llm_result.obs_count, llm_result.prompt_chars)
         perf.record_llm_batch_failures(llm_result.failed_attempts)
     honored_skips = _settle_skips(llm_result)
-    _apply_triage(llm_result, triage, union_observations)
+    # A failed call writes nothing — the caller bisects and re-runs these facts, triage included —
+    # so the triage verdicts must not land on their own, unstamped, ahead of that re-run (#6239).
+    if not llm_result.failed:
+        _apply_triage(llm_result, triage, union_observations)
 
     # 4. Prepare every action connection-free, then apply them all in ONE transaction.
     #
