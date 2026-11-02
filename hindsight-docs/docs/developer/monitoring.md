@@ -388,6 +388,7 @@ Supports any OTLP-compatible backend (Grafana LGTM, Langfuse, OpenLIT, DataDog, 
 - `gen_ai.usage.input_tokens` - Input tokens
 - `gen_ai.usage.output_tokens` - Output tokens
 - `hindsight.scope` - LLM call purpose (`memory`, `reflect`, `consolidation`, etc.)
+- `hindsight.bank_id` - Memory bank ID. Every span started inside a bank operation carries it, so a collector can route spans, and their token usage, per bank
 
 **Events:**
 - `gen_ai.client.inference.operation.details` - Full prompts and completions
