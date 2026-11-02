@@ -554,7 +554,7 @@ NOTHING_TO_SAY = re.compile(r"^\W*(no conflicts?\b|no (relevant )?decision\b|(no
 # on the first sentence only, so "X is consistent, but Y breaks
 # the rule" in a later one still goes out.
 AGREES_WITH_RULE = re.compile(
-    r"\b(not|no|nothing|never) (contradict|conflict)\w*|\b(is|are|stays?|remains?) consistent with\b|\baligns? with\b"
+    r"\b(not|no|nothing|never) (a |an |any )?(contradict|conflict)\w*|\b(is|are|stays?|remains?) consistent with\b|\baligns? with\b"
     # "your", "the" or a file name ("following JOB.md rule 47"); "you correctly ..." only praises.
     r"|\b(are|is) (already )?following \S+( \w+){0,2} (request|decision|rule|instruction)s?\b"
     r"|\b(this |it )?follows \S+( \w+){0,2} (request|decision|rule|instruction)s?\b|\byou correctly\b",
@@ -569,6 +569,15 @@ _PROSE_WORD = re.compile(r"(?<![\w=/$.-])[A-Za-z][a-z']+(?![\w=/$.-])")
 CLAIMS_CONFLICT = re.compile(
     r"\b(contradicts?|conflicts? with|violat\w*|breaks?|must not|should not|instead of|but|requires?)\b", re.I
 )
+
+
+# The reflect prompt forbids memory ids, yet a small model still cites them ("(REF-ID:
+# conversation:910a...)"): the agent cannot look one up, so cut it from the note.
+_REF_ID = re.compile(r"\s*[(\[]?\s*REF-ID:\s*[\w:.-]+[)\]]?")
+
+
+def strip_refs(text: str) -> str:
+    return _REF_ID.sub("", text).strip()
 
 
 def accept_note(state: WatchState, m: Moment, text: str, memory_ids: list[str]) -> bool:

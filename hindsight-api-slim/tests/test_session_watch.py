@@ -504,3 +504,34 @@ def test_a_list_the_agent_proposes_stays_whole_for_the_check():
     listed = "I found 9 issues to close. " + "- **#751**, a fix that landed. " * 15 + "- **#696**, the 100k cap."
     W.read_step(s, W.Step(kind="say", text=listed))
     assert "#696" in s.recent[-1]
+
+
+def test_a_memory_reference_is_cut_from_the_note():
+    raw = "The pin still has to move in `hindsight-deployment` (REF-ID: conversation:910a5acd-89a9-4b03-bf53-a433e0)."
+    assert W.strip_refs(raw) == "The pin still has to move in `hindsight-deployment`."
+    assert W.strip_refs("Keep the floor at 60 GB.") == "Keep the floor at 60 GB."
+
+
+def test_a_note_saying_it_is_not_a_conflict_is_not_a_note():
+    s = W.WatchState()
+    cmd = W.Moment(trigger="command", text="sed -i '' 's/a/b/' devreads.py", recent=[], diff="")
+    praised = (
+        "You are following your own instruction to 'manually patch it' by running `sed -i '' 's/a/b/' "
+        "/private/tmp/claude-501/.../devreads.py`. This is not a conflict with any recorded project decision."
+    )
+    assert not W.accept_note(s, cmd, praised, ["m1"])
+
+
+def test_a_reworded_conflict_without_its_memory_reference_is_a_repeat():
+    s = W.WatchState()
+    cmd = W.Moment(trigger="command", text="docker build", recent=[], diff="")
+    first = W.strip_refs(
+        "The deployment still depends on updating the memlake pin in `hindsight-deployment` (REF-ID: "
+        "conversation:910a5acd-89a9). You are manually patching the image of `sts/memlake-serve` instead."
+    )
+    again = (
+        "The memory states that the `hindsight-deployment` Memlake pin must move to commit `9456e929` before "
+        "the filter works; you are manually patching the image of `sts/memlake-serve` instead."
+    )
+    assert W.accept_note(s, cmd, first, ["m1"])
+    assert not W.accept_note(s, cmd, again, ["m2"])

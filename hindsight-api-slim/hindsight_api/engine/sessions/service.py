@@ -855,7 +855,7 @@ class SessionService:
                 ),
                 timeout=CHECK_TIMEOUT_S,
             )
-            text = (result.text or "").strip()
+            text = W.strip_refs(result.text or "")
             abstained = result.abstained
             memory_ids = [
                 str(f.id)
