@@ -289,9 +289,10 @@ logger = logging.getLogger(__name__)
 def _internal_error(exc: Exception, where: str) -> HTTPException:
     """Log an unhandled handler exception with its traceback, and map it to a 500.
 
-    Two exceptions keep their own status instead: a validator rejection (the
-    validator's code — routes that forgot to catch it used to answer 500, #5448)
-    and a store that shed the request (503).
+    Three failures keep their own status instead: a validator rejection (the
+    validator's code — routes that forgot to catch it used to answer 500, #5448),
+    a store that shed the request (503), and client text the database cannot
+    store, such as a NUL byte (400 — every route answered 500 for it, #6231).
 
     Every route's catch-all used to do this inline — 72 byte-identical copies of
     the same four lines, plus seven near-copies that logged the traceback without
