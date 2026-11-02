@@ -1036,6 +1036,7 @@ async def _attach_to_memories(
     bank_id: str,
     items: "list[dict[str, Any]]",
     request_context: RequestContext,
+    read_uncarried: bool = False,
 ) -> None:
     """Add ``attachments`` to memory dicts, in place — the ones each fact came from.
 
@@ -1052,7 +1053,8 @@ async def _attach_to_memories(
     the item as ``attachment_ids``. Those are taken off here — the key is an
     internal carrier, and leaving it would make the payload differ by backend —
     and handed to the engine, so the lookup resolves them instead of reading them
-    back from a table the store never wrote.
+    back from a table the store never wrote. ``read_uncarried`` is for items that are
+    bare stored ids rather than store rows: see ``attachments_for_memories``.
     """
     unit_ids: list[str] = []
     observation_ids: list[str] = []
@@ -1072,7 +1074,12 @@ async def _attach_to_memories(
     if not unit_ids:
         return
     by_unit = await memory_app.attachments_for_memories(
-        bank_id, unit_ids, request_context, carried=carried, observation_ids=observation_ids
+        bank_id,
+        unit_ids,
+        request_context,
+        carried=carried,
+        observation_ids=observation_ids,
+        read_uncarried=read_uncarried,
     )
     if not by_unit:
         return
@@ -6203,6 +6210,8 @@ def _register_routes(app: FastAPI):
                         for fact in based_on.get(fact_type) or []
                     ],
                     request_context,
+                    # Stored ids, not store rows: nothing carried their attachment ids.
+                    read_uncarried=True,
                 )
 
             return MentalModelResponse(**mental_model)
