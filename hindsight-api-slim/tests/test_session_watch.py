@@ -496,3 +496,11 @@ def test_a_note_naming_a_set_aside_path_is_the_same_point():
     assert not W.accept_note(s, cmd, again, ["m1"])
     other = "Write each deletion to `~/.reps/jobs/disk-guard/cleanup.log` as its own command, right after the rm."
     assert W.accept_note(s, cmd, other, ["m2"])
+
+
+def test_a_list_the_agent_proposes_stays_whole_for_the_check():
+    # The user approves "close all of them": the check must still see every item the agent listed.
+    s = W.WatchState()
+    listed = "I found 9 issues to close. " + "- **#751**, a fix that landed. " * 15 + "- **#696**, the 100k cap."
+    W.read_step(s, W.Step(kind="say", text=listed))
+    assert "#696" in s.recent[-1]

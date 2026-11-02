@@ -358,7 +358,9 @@ def read_step(state: WatchState, step: Step, seq: int = 0) -> None:
         state.request_notes = 0
         state.request_file = ""
     elif step.kind == "say":
-        said = f"agent said: {_clip(step.text, 300)}"
+        # A list the agent proposes is what the user's "close all of them" approves: at 300 characters
+        # the list was cut before #696, and a check then called closing it a conflict (beta).
+        said = f"agent said: {_clip(step.text, 1500)}"
         if len(step.text) >= 60:
             trigger, text = "plan", step.text
     elif step.kind == "tool":
