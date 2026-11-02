@@ -97,7 +97,7 @@ _BANK_ROW_TABLES = (*_CONFIG_ROW_TABLES, *_SYNTHESIZED_ROW_TABLES)
 # Bank-scoped child-history carried verbatim. Unlike observations, mental models
 # keep their (id, bank_id) across export/import, so their refresh history can be
 # re-attached. The surrogate ``id`` is dropped on dump so the target reassigns it
-# (see _dump_history_rows); restored after its parent table (mental_models).
+# (see _iter_history_row_pages); restored after its parent table (mental_models).
 # Operational history — only carried with scope.history.
 # Carried under ``scope.data`` as verbatim rows under ``data/``, alongside the
 # attachment rows (whose bytes ride in ``blobs/``). These are keyed by globally
@@ -447,6 +447,8 @@ _PAGED_ROW_KEYS = {
     "graph_maintenance_queue": "unit_id",
     "audit_log": "id",
     "llm_requests": "id",
+    # Every refresh stores a full snapshot of the model: megabytes a row, gigabytes a bank (#6259).
+    "mental_model_history": "id",
 }
 #: Rows per page. Small, because one operation row carries its whole task payload.
 _ROW_PAGE = 100
@@ -510,19 +512,17 @@ async def _load_knowledge_pages(conn: Any, bank_id: str) -> list[TransferKnowled
     ]
 
 
-async def _dump_history_rows(conn: Any, table: str, bank_id: str) -> list[dict]:
-    """Dump a bank-scoped child-history table for carrying across instances.
+async def _iter_history_row_pages(conn_or_backend: Any, table: str, bank_id: str) -> AsyncIterator[list[dict]]:
+    """A carried child-history table's rows, a page at a time, oldest first.
 
     Drops the surrogate ``id`` so the target reassigns it from its own IDENTITY
     sequence (carrying explicit ids would leave the sequence un-advanced and
-    collide with later writes). Ordered oldest-first so the reassigned ids keep
-    the same chronological tie-break order the read path relies on.
+    collide with later writes). Paged in ``id`` order — the order rows were
+    written — so the reassigned ids keep the chronological tie-break order the
+    read path relies on.
     """
-    rows = await conn.fetch(
-        f"SELECT * FROM {fq_table(table)} WHERE bank_id = $1 ORDER BY changed_at, id",
-        bank_id,
-    )
-    return [{k: v for k, v in dict(row).items() if k not in _DERIVED_COLUMNS and k != "id"} for row in rows]
+    async for rows in _iter_bank_row_pages(conn_or_backend, table, bank_id):
+        yield [{k: v for k, v in row.items() if k != "id"} for row in rows]
 
 
 async def stream_export_bank(
@@ -543,10 +543,10 @@ async def stream_export_bank(
 
     Memory: documents are read ``batch_size`` at a time, attachment bytes are
     streamed from file storage, and the operation log, the maintenance queues, the
-    curation archive and the history tables are read and written a page at a time,
-    so none is ever held whole (#5737). The index of every fact, the observations
-    and the bank's own rows (config, mental models, knowledge pages) are still
-    loaded in full before they are written.
+    curation archive, the history tables and the mental-model history are read and
+    written a page at a time, so none is ever held whole (#5737, #6259). The index
+    of every fact, the observations and the bank's own rows (config, mental models,
+    knowledge pages) are still loaded in full before they are written.
 
     Consistency: ``conn_or_backend`` is either one connection (the admin CLI, which
     owns it) or a backend that each read borrows a connection from and returns —
@@ -642,9 +642,12 @@ async def stream_export_bank(
         async with as_connection(conn_or_backend) as conn:
             for table in _SYNTHESIZED_ROW_TABLES:
                 bank_rows[table] = await _dump_bank_rows(conn, table, bank_id)
-            for table in CARRIED_HISTORY_TABLES:
-                bank_rows[table] = await _dump_history_rows(conn, table, bank_id)
             knowledge_pages = await _load_knowledge_pages(conn, bank_id)
+        for table in CARRIED_HISTORY_TABLES:
+            async for chunk in write_row_pages(
+                f"{table}.json", _iter_history_row_pages(conn_or_backend, table, bank_id)
+            ):
+                yield chunk
 
     if scope.bank_config:
         async with as_connection(conn_or_backend) as conn:
@@ -906,7 +909,7 @@ async def load_bank_export(
         for table in _SYNTHESIZED_ROW_TABLES:
             bank_rows[table] = await _dump_bank_rows(conn, table, bank_id)
         for table in CARRIED_HISTORY_TABLES:
-            bank_rows[table] = await _dump_history_rows(conn, table, bank_id)
+            bank_rows[table] = await _collect(_iter_history_row_pages(conn, table, bank_id))
         knowledge_pages = await _load_knowledge_pages(conn, bank_id)
     if scope.bank_config:
         for table in _CONFIG_ROW_TABLES:

@@ -3645,3 +3645,61 @@ async def test_paged_sections_survive_a_page_boundary(memory, request_context, m
     finally:
         await memory.delete_bank(source, request_context=request_context)
         await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_a_big_mental_model_history_moves_without_being_held_whole(memory, request_context):
+    """Export and import stream the mental-model history a page at a time (#6259).
+
+    Every refresh stores a full snapshot of the model, so a busy bank's history runs to
+    gigabytes; it was read as one list on export and parsed as one list on import, and
+    OOM-killed the API. The rows must also come back oldest-first, under the new bank.
+    """
+    import tracemalloc
+
+    from hindsight_api.engine.transfer import TransferScope, stream_export_bank
+
+    source, target = _unique_bank("big_mm_hist"), _unique_bank("big_mm_hist_copy")
+    rows, payload_bytes = 2000, 50_000
+    history_bytes = rows * payload_bytes
+    try:
+        await _retain(memory, source, "Alan moved to Berlin in 2021.", request_context, "doc-1")
+        await memory.create_mental_model(
+            source,
+            name="Moves",
+            source_query="where did Alan move",
+            content="Alan moved to Berlin.",
+            mental_model_id="mm-big",
+            request_context=request_context,
+        )
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            # Seeded directly: the refresh path caps the history, and a fast test can't run 2000 refreshes.
+            await conn.executemany(
+                f"INSERT INTO {fq_store_table('mental_model_history')} (mental_model_id, bank_id, content, changed_at) "
+                f"VALUES ('mm-big', $1, $2::jsonb, now())",
+                [(source, json.dumps({"previous_content": f"{seq:05d}" + "x" * payload_bytes})) for seq in range(rows)],
+            )
+
+        tracemalloc.start()
+        try:
+            # The snapshots compress to almost nothing, so the archive itself barely counts.
+            archive = b"".join(
+                [chunk async for chunk in stream_export_bank(backend, source, scope=TransferScope(data=True))]
+            )
+            _, export_peak = tracemalloc.get_traced_memory()
+            tracemalloc.reset_peak()
+            result = await memory.import_bank_async(io.BytesIO(archive), request_context, target_bank_id=target)
+            _, import_peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
+        assert result.mental_model_history_imported == rows
+        assert export_peak < history_bytes / 2, f"export peaked at {export_peak / 1e6:.0f} MB"
+        assert import_peak < history_bytes / 2, f"import peaked at {import_peak / 1e6:.0f} MB"
+        # Newest first; every row shares one changed_at, so this order is the reassigned ids' tie-break.
+        history = await memory.get_mental_model_history(target, "mm-big", request_context=request_context)
+        assert [int(h["previous_content"][:5]) for h in history] == list(reversed(range(rows)))
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)

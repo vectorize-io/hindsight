@@ -49,7 +49,6 @@ from ..retain.types import (
 )
 from ..schema import fq_table
 from .schema import (
-    CARRIED_HISTORY_TABLES,
     HISTORY_TABLES,
     SCHEMA_VERSION,
     BankRowsJSONEncoding,
@@ -597,9 +596,7 @@ def parse_bank_archive(zf: zipfile.ZipFile) -> ParsedBankArchive:
         raise ValueError(
             f"Not a whole-bank archive (archive_type={manifest.archive_type!r}); use import_documents instead"
         )
-    bank_rows = {
-        table: _read_json(zf, f"{table}.json") for table in ("banks", *_BANK_CHILD_TABLES, *CARRIED_HISTORY_TABLES)
-    }
+    bank_rows = {table: _read_json(zf, f"{table}.json") for table in ("banks", *_BANK_CHILD_TABLES)}
     # Typed tree — absent on pre-tree archives, which restore with no pages.
     knowledge_pages = [TransferKnowledgePage.model_validate(p) for p in _read_json(zf, "knowledge_pages.json")]
     attachments = [TransferAttachment.model_validate(a) for a in _read_json(zf, "attachments.json")]
@@ -1374,7 +1371,7 @@ async def _restore_bank(
             # Every unit id the rows restored below can cite, so only those are remapped.
             keep_unit_ids=_referenced_ids(
                 parsed.bank_rows.get("mental_models", []),
-                parsed.bank_rows.get("mental_model_history", []),
+                _iter_json_array(zf, "mental_model_history.json"),
                 _iter_json_array(zf, "data/graph_maintenance_queue.json"),
                 _iter_json_array(zf, "data/invalidated_memory_units.json"),
             ),
@@ -1391,7 +1388,6 @@ async def _restore_bank(
     # references before insertion so current and historical based_on data points
     # at the target bank's units rather than the source bank's units.
     _remap_mental_model_evidence(parsed.bank_rows.get("mental_models", []), unit_id_map)
-    _remap_mental_model_evidence(parsed.bank_rows.get("mental_model_history", []), unit_id_map)
 
     # Re-embed restored mental models off-connection (the source embedding was
     # stripped on export), so no DB connection is held across the embedding call.
@@ -1435,10 +1431,14 @@ async def _restore_bank(
             # restored rows (native search_vector already repopulated on insert).
             await _apply_mental_model_derived_state(conn, bank_id, mm_embeddings, config)
             # Restored after mental_models so the (mental_model_id, bank_id) FK resolves.
+            # Streamed: every refresh stores a full snapshot, so the history can run to
+            # gigabytes (#6259).
             result.mental_model_history_imported = await _restore_rows(
                 conn,
                 "mental_model_history",
-                parsed.bank_rows.get("mental_model_history", []),
+                _remapped_evidence(
+                    _retargeted_history(_iter_json_array(zf, "mental_model_history.json"), bank_id), unit_id_map
+                ),
                 bank_rows_json_encoding=bank_rows_json_encoding,
             )
             # Knowledge-base tree after its backing mental models exist (page FK) and
@@ -2045,7 +2045,14 @@ def _remap_based_on_ids(payload: dict[str, Any] | None, unit_id_map: dict[str, s
                     entry["id"] = unit_id_map[source_id]
 
 
-def _remap_mental_model_evidence(rows: list[dict], unit_id_map: dict[str, str]) -> None:
+def _remapped_evidence(rows: Iterable[dict], unit_id_map: dict[str, str]) -> Iterator[dict]:
+    """:func:`_remap_mental_model_evidence` for a stream of rows."""
+    for row in rows:
+        _remap_mental_model_evidence((row,), unit_id_map)
+        yield row
+
+
+def _remap_mental_model_evidence(rows: Iterable[dict], unit_id_map: dict[str, str]) -> None:
     """Repair current and historical mental-model reflect-response evidence.
 
     Handles both row shapes. A ``mental_models`` row carries the response in its
