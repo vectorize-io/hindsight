@@ -3678,7 +3678,7 @@ async def test_a_big_mental_model_history_moves_without_being_held_whole(memory,
             await conn.executemany(
                 f"INSERT INTO {fq_store_table('mental_model_history')} (mental_model_id, bank_id, content, changed_at) "
                 f"VALUES ('mm-big', $1, $2::jsonb, now())",
-                [(source, json.dumps({"seq": seq, "previous_content": "x" * payload_bytes})) for seq in range(rows)],
+                [(source, json.dumps({"previous_content": f"{seq:05d}" + "x" * payload_bytes})) for seq in range(rows)],
             )
 
         tracemalloc.start()
@@ -3697,13 +3697,9 @@ async def test_a_big_mental_model_history_moves_without_being_held_whole(memory,
         assert result.mental_model_history_imported == rows
         assert export_peak < history_bytes / 2, f"export peaked at {export_peak / 1e6:.0f} MB"
         assert import_peak < history_bytes / 2, f"import peaked at {import_peak / 1e6:.0f} MB"
-        async with acquire_with_retry(backend) as conn:
-            restored = await conn.fetch(
-                f"SELECT (content->>'seq')::int AS seq FROM {fq_store_table('mental_model_history')} "
-                f"WHERE bank_id = $1 AND mental_model_id = 'mm-big' ORDER BY id",
-                target,
-            )
-        assert [row["seq"] for row in restored] == list(range(rows))
+        # Newest first; every row shares one changed_at, so this order is the reassigned ids' tie-break.
+        history = await memory.get_mental_model_history(target, "mm-big", request_context=request_context)
+        assert [int(h["previous_content"][:5]) for h in history] == list(reversed(range(rows)))
     finally:
         await memory.delete_bank(source, request_context=request_context)
         await memory.delete_bank(target, request_context=request_context)
