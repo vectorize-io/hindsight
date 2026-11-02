@@ -535,3 +535,18 @@ def test_a_reworded_conflict_without_its_memory_reference_is_a_repeat():
     )
     assert W.accept_note(s, cmd, first, ["m1"])
     assert not W.accept_note(s, cmd, again, ["m2"])
+
+
+def test_a_note_saying_the_request_supersedes_a_rule_is_not_a_note():
+    s = W.WatchState()
+    edit = W.Moment(trigger="edit", text="", recent=[], diff="d")
+    echoed = (
+        "The request to 'fix it without mentioning prod or gemma/gemini' is the newest decision, which supersedes "
+        "the previous state where the agent was following a rule that 'Nothing in the PR mentions prod or Gemma.'"
+    )
+    assert not W.accept_note(s, edit, echoed, ["m1"])
+    kept = (
+        'You are using `provider="openai-codex"` in `live_pdf.py`, but the legacy `codex` integration was removed '
+        "via commit `d8f3c68fb` and superseded by `@vectorize-io/hindsight-coding-agents`."
+    )
+    assert W.accept_note(s, edit, kept, ["m2"])
