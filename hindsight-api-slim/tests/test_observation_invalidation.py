@@ -416,6 +416,7 @@ class TestDocumentUpsertObservationCleanup:
                     retain_params=None,
                     document_tags=None,
                     ops=memory._backend.ops,
+                    store_document_text=True,
                 )
 
         async with pool.acquire() as conn:

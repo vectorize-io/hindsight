@@ -1691,6 +1691,7 @@ async def _import_document_batch(
                     document.retain_params,
                     document.tags,
                     ops=ops,
+                    store_document_text=config.store_document_text,
                 )
                 if document.created_at is not None:
                     # Transfer archives carry source provenance. Apply it here,
@@ -1706,7 +1707,12 @@ async def _import_document_batch(
                 chunk_id_map: dict[int, str] = {}
                 if doc.chunk_meta:
                     chunk_id_map = await chunk_storage.store_chunks_batch(
-                        conn, bank_id, doc.target_id, doc.chunk_meta, ops=ops
+                        conn,
+                        bank_id,
+                        doc.target_id,
+                        doc.chunk_meta,
+                        ops=ops,
+                        store_document_text=config.store_document_text,
                     )
 
                 for extracted, processed in zip(doc.extracted_facts, doc.processed_facts):

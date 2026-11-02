@@ -4219,6 +4219,7 @@ async def _try_delta_retain(
                     combined_content,
                     retain_params,
                     merged_tags,
+                    store_document_text=config.store_document_text,
                     attachment_filenames=_attachment_filenames_for(contents),
                 )
                 # Re-store the document's bodies in the store's document store with the
@@ -4379,7 +4380,7 @@ async def _delta_metadata_only(
     outbox_callback,
     *,
     full_document_body: str | None = None,
-    config: Any = None,
+    config: Any,
     expected_content_hash: str | None = None,
 ) -> RetainBatchResult | None:
     """Handle the case where no chunks changed — just update document metadata and tags."""
@@ -4477,6 +4478,7 @@ async def _delta_metadata_only(
                     combined_content,
                     retain_params,
                     merged_tags,
+                    store_document_text=config.store_document_text,
                     attachment_filenames=_attachment_filenames_for(contents),
                 )
                 await fact_storage.update_memory_units_metadata_and_tags(

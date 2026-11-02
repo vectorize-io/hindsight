@@ -1089,6 +1089,7 @@ class TestEveryDeleteSiteEnqueues:
                     "replacement text",
                     is_first_batch=True,
                     ops=backend.ops,
+                    store_document_text=True,
                 )
 
         async with pool.acquire() as conn:

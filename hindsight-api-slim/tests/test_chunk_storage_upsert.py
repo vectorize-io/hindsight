@@ -67,7 +67,9 @@ async def test_store_chunks_batch_is_idempotent_for_same_chunk_id(memory):
                 ChunkMetadata(chunk_text="beta", fact_count=1, content_index=0, chunk_index=1),
                 ChunkMetadata(chunk_text="gamma", fact_count=1, content_index=0, chunk_index=2),
             ]
-            v1_map = await chunk_storage.store_chunks_batch(conn, bank_id, document_id, v1, ops=ops)
+            v1_map = await chunk_storage.store_chunks_batch(
+                conn, bank_id, document_id, v1, ops=ops, store_document_text=True
+            )
             assert set(v1_map.keys()) == {0, 1, 2}
 
             # Second insert — overlapping chunk_index (1 and 2) with new text,
@@ -80,7 +82,9 @@ async def test_store_chunks_batch_is_idempotent_for_same_chunk_id(memory):
                 ChunkMetadata(chunk_text="gamma-updated", fact_count=1, content_index=0, chunk_index=2),
                 ChunkMetadata(chunk_text="delta", fact_count=1, content_index=0, chunk_index=3),
             ]
-            v2_map = await chunk_storage.store_chunks_batch(conn, bank_id, document_id, v2, ops=ops)
+            v2_map = await chunk_storage.store_chunks_batch(
+                conn, bank_id, document_id, v2, ops=ops, store_document_text=True
+            )
             assert set(v2_map.keys()) == {1, 2, 3}
 
             # Verify the stored state matches the upserted content.
@@ -136,9 +140,13 @@ async def test_store_chunks_batch_second_call_with_identical_payload(memory):
                 ChunkMetadata(chunk_text=f"chunk-{i}", fact_count=1, content_index=0, chunk_index=i) for i in range(5)
             ]
 
-            await chunk_storage.store_chunks_batch(conn, bank_id, document_id, chunks, ops=ops)
+            await chunk_storage.store_chunks_batch(
+                conn, bank_id, document_id, chunks, ops=ops, store_document_text=True
+            )
             # Second call with identical chunks — must not raise.
-            await chunk_storage.store_chunks_batch(conn, bank_id, document_id, chunks, ops=ops)
+            await chunk_storage.store_chunks_batch(
+                conn, bank_id, document_id, chunks, ops=ops, store_document_text=True
+            )
 
             count = await conn.fetchval(
                 "SELECT COUNT(*) FROM chunks WHERE document_id = $1 AND bank_id = $2",
@@ -181,6 +189,7 @@ async def test_chunk_ids_do_not_collide_across_banks(memory):
                 doc_a,
                 [ChunkMetadata(chunk_text="bank-a-secret", fact_count=1, content_index=0, chunk_index=0)],
                 ops=ops,
+                store_document_text=True,
             )
             map_b = await chunk_storage.store_chunks_batch(
                 conn,
@@ -188,6 +197,7 @@ async def test_chunk_ids_do_not_collide_across_banks(memory):
                 doc_b,
                 [ChunkMetadata(chunk_text="bank-b-text", fact_count=1, content_index=0, chunk_index=0)],
                 ops=ops,
+                store_document_text=True,
             )
 
             assert map_a[0] != map_b[0], "Distinct bank/document pairs must not share a chunk id"
