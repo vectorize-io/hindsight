@@ -612,7 +612,9 @@ def accept_note(state: WatchState, m: Moment, text: str, memory_ids: list[str]) 
     # The same rule quoted word for word is the same rule, whatever file the work moved to: in beta
     # "scoped to pointwise ranking only" came back on a bench script, the code and its docs within
     # 8 minutes, each from a rewritten memory and under 0.6 overlap with the others.
-    if m.trigger != "task" and _quoted(text) & {q for c in state.conflicts for q in _quoted(c)}:
+    # Quoted now, plain before ("Terraform is the owner ..." came back 3.5 h later at 0.59): the
+    # quote found word for word in an earlier note is the same rule.
+    if m.trigger != "task" and any(q in c.lower() for q in _quoted(text) for c in state.conflicts):
         return False
     # A heads-up for a new request says nothing new when the session was already told the same rule:
     # in beta a dashboards rule came back, reworded, for the session's next request. (A conflict

@@ -550,3 +550,18 @@ def test_a_note_saying_the_request_supersedes_a_rule_is_not_a_note():
         "via commit `d8f3c68fb` and superseded by `@vectorize-io/hindsight-coding-agents`."
     )
     assert W.accept_note(s, edit, kept, ["m2"])
+
+
+def test_a_rule_quoted_now_and_stated_plainly_before_is_a_repeat():
+    s = W.WatchState()
+    cmd = W.Moment(trigger="command", text="kubectl set image deploy/memlake-indexer", recent=[], diff="")
+    first = (
+        "Terraform is the owner of the memlake release; manual updates via kubectl or helm are reverted by "
+        "Terraform. Your use of `kubectl set image` to update `deploy/memlake-indexer` violates this."
+    )
+    again = (
+        'You are violating the decision that "Terraform is the owner of the memlake release; manual updates via '
+        'kubectl or helm are reverted by Terraform." The current rollout to `5d5d1eb` via `kubectl` contradicts this.'
+    )
+    assert W.accept_note(s, cmd, first, ["m1"])
+    assert not W.accept_note(s, cmd, again, ["m2"])
