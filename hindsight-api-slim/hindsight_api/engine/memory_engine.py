@@ -8622,6 +8622,7 @@ class MemoryEngine(MemoryEngineInterface):
         *,
         carried: "Mapping[str, tuple[str | None, Sequence[str]]] | None" = None,
         observation_ids: "Sequence[str]" = (),
+        read_uncarried: bool = False,
     ) -> "dict[str, list[StoredAttachment]]":
         """The attachments each memory was actually drawn from, keyed by unit id.
 
@@ -8645,6 +8646,12 @@ class MemoryEngine(MemoryEngineInterface):
         rewriting an observation's sources, and a copy would go stale with them.
         ``observation_ids`` names which of ``unit_ids`` are observations — the caller
         already has each row's type, and only an observation pays for the source read.
+
+        ``read_uncarried`` is for a caller that holds memory ids and no rows -- a knowledge
+        page's stored evidence. For a store-owned bank, the non-observation memories it carried
+        nothing for are then read back from the store for their ids. Off by default: a caller
+        rendering store rows has already carried everything there is, and a read would cost a
+        store round trip on every recall.
         """
         if not unit_ids:
             return {}
@@ -8657,6 +8664,8 @@ class MemoryEngine(MemoryEngineInterface):
         wanted_observations = [u for u in wanted_units if u in observation_set]
         store_owned = store.store_owned_for(bank_id)
         refs: dict[str, list[AttachmentRef]] = {}
+        # The memories whose ids are read from the store rather than taken from ``carried``.
+        unread = wanted_units
         if store_owned:
             # Never `memory_units` for a store-owned bank. It holds none of the bank's memories,
             # so the read can only come back empty, and it is not a cheap empty read: the table
@@ -8670,7 +8679,12 @@ class MemoryEngine(MemoryEngineInterface):
                 for unit_id, (document_id, ids) in (carried or {}).items()
                 if unit_id in wanted_units and ids
             }
-            if not refs and not wanted_observations:
+            unread = (
+                [u for u in wanted_units if u not in observation_set and u not in (carried or {})]
+                if read_uncarried
+                else []
+            )
+            if not refs and not wanted_observations and not unread:
                 return {}
 
         profile = await self.get_bank_profile(bank_id, request_context=request_context)
@@ -8678,15 +8692,15 @@ class MemoryEngine(MemoryEngineInterface):
             return {}
         backend = await self._get_backend()
         async with backend.acquire() as conn:
-            if not store_owned:
-                refs = {
-                    unit_id: [ref]
+            if unread:
+                refs.update(
+                    (unit_id, [ref])
                     for unit_id, ref in (
                         await store.memory_attachment_refs(
-                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=wanted_units
+                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unread
                         )
                     ).items()
-                }
+                )
             if wanted_observations:
                 refs.update(await _observation_attachment_refs(conn, store, bank_id, wanted_observations))
             if not refs:

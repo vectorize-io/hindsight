@@ -441,6 +441,35 @@ async def test_an_observation_in_a_bank_without_attachments_reads_nothing_more(m
 
 
 @pytest.mark.asyncio
+async def test_stored_evidence_ids_read_their_attachments_from_the_store(monkeypatch):
+    """A knowledge page holds its evidence as bare ids, so nothing was carried for them.
+
+    Asked to read what was not carried, the lookup reads those memories from the store, never
+    SQL. A memory carried with no ids is not read again, and the default (rows already rendered
+    by the store) still reads nothing -- that is the case recall pays on every call.
+    """
+    store = _observation_store(
+        [StoredMemory(unit_id=UNIT_A, text="a", fact_type="world", document_id="doc-1", attachment_ids=[SHOT])]
+    )
+    monkeypatch.setattr(memories_module, "get_memories", lambda: store)
+
+    result = await MemoryEngine.attachments_for_memories(
+        _EngineWithConn(_AttachmentsOnlyConn()),
+        "bank-1",
+        [UNIT_A, UNIT_PLAIN],
+        request_context=None,
+        carried={UNIT_PLAIN: ("doc-1", [])},
+        read_uncarried=True,
+    )
+
+    assert {unit: [r.short_id for r in records] for unit, records in result.items()} == {UNIT_A: [SHOT]}
+    assert store.reads == [[UNIT_A]]
+
+    assert await MemoryEngine.attachments_for_memories(_NoPostgres(), "bank-1", [UNIT_A], request_context=None) == {}
+    assert store.reads == [[UNIT_A]]
+
+
+@pytest.mark.asyncio
 async def test_a_bank_whose_rows_live_in_sql_still_reads_them(monkeypatch):
     """The guard must not swallow the Postgres-backed case: there the read is the feature."""
     monkeypatch.setattr(memories_module, "get_memories", lambda: _memories(store_owned=False))
