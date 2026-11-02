@@ -734,6 +734,34 @@ def build_fact_records(
     return records
 
 
+def watermark_may_postdate(last_refreshed_at: datetime | None, watermark: datetime | None) -> bool:
+    """Cheap half of staleness: rule a model current from the bank watermark alone.
+
+    False is exact — nothing in the bank has been written since the model last
+    read the memories, so nothing in its scope has either, and no scoped query is
+    needed. True means only that *something* was written, possibly outside the
+    model's tags, so it is a signal to go and ask
+    (:func:`_mental_model_stale_scope` plus the store's scoped check), never an
+    answer to report. Surfaces used to report it as "may need refresh" because
+    asking per model was expensive; they now ask the scoped question instead
+    (#3291), and this stays what it always was — a free way to skip it. Every
+    staleness caller runs it first (#4169): the scoped check is bounded by the
+    writes since the model's own watermark, so a model this settles is exactly the
+    one that would have paid the most to be asked.
+    """
+    if last_refreshed_at is None:
+        return True  # Never refreshed — nothing to be current with.
+    if watermark is None:
+        return False  # Empty bank.
+    # Oracle's TIMESTAMP columns come back naive while the bank watermark is aware;
+    # compare both in UTC, as engine/reflect/tools.py already does for last_refreshed_at.
+    if last_refreshed_at.tzinfo is None:
+        last_refreshed_at = last_refreshed_at.replace(tzinfo=timezone.utc)
+    if watermark.tzinfo is None:
+        watermark = watermark.replace(tzinfo=timezone.utc)
+    return watermark > last_refreshed_at
+
+
 @dataclass(frozen=True)
 class MemoryScopeWatermark:
     """One "has this scope changed?" question, for the batched staleness check.
@@ -2240,6 +2268,44 @@ class MemoriesExtension(Extension, ABC):
         raising, so callers may pass a mixed set.
         """
         raise NotImplementedError
+
+    async def mental_model_is_stale(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        scope: MemoryScopeWatermark,
+        cited_ids: list[str],
+    ) -> bool:
+        """Whether a memory in ``scope`` was written after ``scope.since``, or any of ``cited_ids`` is gone.
+
+        The whole store-side question behind a single mental model's staleness, asked
+        as one call so a store can answer its parts together. The three reads it is
+        made of — the bank watermark, the scoped existence check, the liveness of the
+        cited ids — are independent apart from the watermark gating the scoped check,
+        and a store that pays a network round trip per read pays them in series here.
+
+        The default asks them in series on ``conn``, which is the only correct shape
+        for a store whose reads share one connection. Override it when the reads can
+        run concurrently.
+        """
+        watermark = await self.latest_memory_write_at(conn=conn, fq_table=fq_table, bank_id=bank_id)
+        if watermark_may_postdate(scope.since, watermark) and await self.any_memory_updated_since(
+            conn=conn,
+            fq_table=fq_table,
+            bank_id=bank_id,
+            since=scope.since,
+            fact_types=scope.fact_types,
+            tags=scope.tags,
+            tags_match=scope.tags_match,
+            tag_groups=scope.tag_groups,
+        ):
+            return True
+        if not cited_ids:
+            return False
+        live = await self.live_memory_ids(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=cited_ids)
+        return len(live) < len(cited_ids)
 
     # ------------------------------------------------------------------ count surfaces
     #
