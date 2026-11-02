@@ -17,8 +17,9 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from typing_extensions import Annotated
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -28,7 +29,7 @@ class UpdateDirectiveRequest(BaseModel):
     """ # noqa: E501
     name: Optional[StrictStr] = None
     content: Optional[StrictStr] = None
-    priority: Optional[StrictInt] = None
+    priority: Optional[Annotated[int, Field(le=2147483647, strict=True, ge=-2147483648)]] = None
     is_active: Optional[StrictBool] = None
     tags: Optional[List[StrictStr]] = None
     __properties: ClassVar[List[str]] = ["name", "content", "priority", "is_active", "tags"]

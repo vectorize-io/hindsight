@@ -843,6 +843,8 @@
         "priority": {
           "default": 0,
           "description": "Higher priority directives are injected first",
+          "maximum": 2147483647,
+          "minimum": -2147483648,
           "title": "Priority",
           "type": "integer"
         },

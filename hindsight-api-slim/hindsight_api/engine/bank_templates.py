@@ -11,7 +11,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from hindsight_api.config import RETAIN_EXTRACTION_MODES, get_config
 from hindsight_api.engine.interface import BankTemplateImportWrite
-from hindsight_api.engine.response_models import ConsolidationStrategySpec, FieldWithDefault, MentalModelTrigger
+from hindsight_api.engine.response_models import (
+    DIRECTIVE_PRIORITY_MAX,
+    DIRECTIVE_PRIORITY_MIN,
+    ConsolidationStrategySpec,
+    FieldWithDefault,
+    MentalModelTrigger,
+)
 from hindsight_api.engine.retain.entity_labels import LabelGroup, migrate_entity_labels_input
 from hindsight_api.extensions.operation_validator import BankWriteOperation
 from hindsight_api.models import RequestContext
@@ -282,7 +288,12 @@ class BankTemplateDirective(BaseModel):
 
     name: str = Field(description="Human-readable name for the directive (used as match key on re-import)")
     content: str = Field(description="The directive text to inject into prompts")
-    priority: int = Field(default=0, description="Higher priority directives are injected first")
+    priority: int = Field(
+        default=0,
+        ge=DIRECTIVE_PRIORITY_MIN,
+        le=DIRECTIVE_PRIORITY_MAX,
+        description="Higher priority directives are injected first",
+    )
     is_active: bool = Field(default=True, description="Whether this directive is active")
     tags: list[str] = FieldWithDefault(list, description="Tags for filtering")
 

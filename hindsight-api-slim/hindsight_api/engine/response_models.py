@@ -29,6 +29,11 @@ class Budget(str, Enum):
     HIGH = "high"
 
 
+# directives.priority is a Postgres INT.
+DIRECTIVE_PRIORITY_MIN = -(2**31)
+DIRECTIVE_PRIORITY_MAX = 2**31 - 1
+
+
 def FieldWithDefault(default_factory: Callable, **kwargs) -> Any:
     """
     Field wrapper that ensures default_factory values appear in OpenAPI schema.

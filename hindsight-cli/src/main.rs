@@ -1420,7 +1420,7 @@ enum DirectiveCommands {
 
         /// Priority — higher-priority directives are injected first
         #[arg(long, default_value = "0")]
-        priority: i64,
+        priority: i32,
     },
 
     /// Update a directive
@@ -1445,7 +1445,7 @@ enum DirectiveCommands {
 
         /// New priority (higher = injected first)
         #[arg(long)]
-        priority: Option<i64>,
+        priority: Option<i32>,
     },
 
     /// Delete a directive
