@@ -513,9 +513,14 @@ class DaemonEmbedManager(EmbedManager):
         binary_name = "hindsight-api.exe" if is_windows else "hindsight-api"
 
         scripts_dirs = [Path(sysconfig.get_path("scripts"))]
-        venv_root = next((p for p in Path(__file__).parents if (p / "pyvenv.cfg").is_file()), None)
-        if venv_root is not None:
-            scripts_dirs.append(venv_root / ("Scripts" if is_windows else "bin"))
+        site_packages = Path(__file__).parent.parent
+        if site_packages.name == "site-packages":
+            # Only the venv that owns this site-packages: <venv>/Lib/site-packages
+            # on Windows, <venv>/lib/pythonX.Y/site-packages elsewhere. Walking every
+            # parent would let an unrelated outer venv shadow a --target bundle.
+            venv_root = next((p for p in site_packages.parents[1:3] if (p / "pyvenv.cfg").is_file()), None)
+            if venv_root is not None:
+                scripts_dirs.append(venv_root / ("Scripts" if is_windows else "bin"))
         installed = [d for d in dict.fromkeys(scripts_dirs) if (d / binary_name).exists()]
         if installed and self._can_use_installed_api_binary(env):
             # hindsight_api is importable by that venv's own interpreter, so

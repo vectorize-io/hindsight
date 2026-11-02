@@ -477,15 +477,14 @@ def test_find_api_command_target_install_uses_sibling_even_without_local_ml(tmp_
     assert manager._find_api_command("1.2.3", env={}) == [str(sibling_bin)]
 
 
-def _venv_with_embed_module(root, site_packages: str) -> tuple[object, object]:
-    """A venv (pyvenv.cfg at its root) holding hindsight_embed; returns (venv, module path)."""
-    venv = root / "venv"
+def _embed_module_in_venv(venv: Path, site_packages: str) -> Path:
+    """Create a venv (pyvenv.cfg at its root) holding hindsight_embed; return the module path."""
     pkg_dir = venv / site_packages / "hindsight_embed"
     pkg_dir.mkdir(parents=True)
     (venv / "pyvenv.cfg").write_text("home = /base\n")
     module = pkg_dir / "daemon_embed_manager.py"
     module.write_text("")
-    return venv, module
+    return module
 
 
 def test_find_api_command_uses_venv_of_module_when_run_by_another_interpreter(tmp_path, monkeypatch):
@@ -495,7 +494,8 @@ def test_find_api_command_uses_venv_of_module_when_run_by_another_interpreter(tm
     """
     base_scripts = tmp_path / "base" / "Scripts"
     base_scripts.mkdir(parents=True)
-    venv, module = _venv_with_embed_module(tmp_path, "Lib/site-packages")
+    venv = tmp_path / "venv"
+    module = _embed_module_in_venv(venv, "Lib/site-packages")
     api_binary = venv / "Scripts" / "hindsight-api.exe"
     api_binary.parent.mkdir()
     api_binary.touch()
@@ -520,7 +520,8 @@ def test_find_api_command_uses_venv_of_module_on_posix(tmp_path, monkeypatch):
     """Same launcher shape on POSIX: <venv>/lib/pythonX.Y/site-packages -> <venv>/bin (#6252)."""
     base_bin = tmp_path / "base" / "bin"
     base_bin.mkdir(parents=True)
-    venv, module = _venv_with_embed_module(tmp_path, "lib/python3.12/site-packages")
+    venv = tmp_path / "venv"
+    module = _embed_module_in_venv(venv, "lib/python3.12/site-packages")
     api_binary = venv / "bin" / "hindsight-api"
     api_binary.parent.mkdir()
     api_binary.touch()
@@ -536,6 +537,34 @@ def test_find_api_command_uses_venv_of_module_on_posix(tmp_path, monkeypatch):
     # Missing local ML deps keep the #2676 uvx fallback, as for a standard venv.
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.find_spec", lambda name: None)
     assert manager._find_api_command("1.2.3", env={}) == ["uvx", "hindsight-api@1.2.3"]
+
+
+def test_find_api_command_target_bundle_inside_venv_keeps_its_sibling(tmp_path, monkeypatch):
+    """A --target bundle that happens to sit inside some venv is not that venv's
+    install: its own sibling binary must win over the outer venv's (#6252, #1240).
+    """
+    base_bin = tmp_path / "base" / "bin"
+    base_bin.mkdir(parents=True)
+    outer_venv = tmp_path / "venv"
+    (outer_venv / "bin").mkdir(parents=True)
+    (outer_venv / "pyvenv.cfg").write_text("home = /base\n")
+    (outer_venv / "bin" / "hindsight-api").touch()
+    target_dir = outer_venv / "vendor"
+    pkg_dir = target_dir / "hindsight_embed"
+    pkg_dir.mkdir(parents=True)
+    module = pkg_dir / "daemon_embed_manager.py"
+    module.write_text("")
+    sibling_bin = target_dir / "bin" / "hindsight-api"
+    sibling_bin.parent.mkdir()
+    sibling_bin.touch()
+
+    manager = DaemonEmbedManager()
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.__file__", str(module))
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(base_bin))
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
+    _mock_sentence_transformers_present(monkeypatch)
+
+    assert manager._find_api_command("1.2.3") == [str(sibling_bin)]
 
 
 def test_find_api_command_falls_back_to_uvx_when_no_binary(tmp_path, monkeypatch):
