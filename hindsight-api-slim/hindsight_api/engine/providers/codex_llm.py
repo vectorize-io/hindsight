@@ -643,6 +643,10 @@ class CodexLLM(LLMInterface):
             }
 
         headers = self._build_request_headers()
+        # The ChatGPT backend routes Responses cache affinity on ``session-id``, not on
+        # the body's ``prompt_cache_key`` (openai/codex#44862): without it one operation's
+        # calls land on different hosts and its growing prompt prefix is rarely reused.
+        headers["session-id"] = str(payload["prompt_cache_key"])
 
         url = f"{self.base_url}/codex/responses"
 

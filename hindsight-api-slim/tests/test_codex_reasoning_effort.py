@@ -95,6 +95,8 @@ async def test_prompt_cache_key_is_stable_across_calls_with_the_same_prompt() ->
     keys = [c.kwargs["json"]["prompt_cache_key"] for c in mock_stream.call_args_list]
     assert keys[0] == keys[1]
     assert keys[2] != keys[0]
+    # The backend routes cache affinity on this header, not the body key (#6243).
+    assert [c.kwargs["headers"]["session-id"] for c in mock_stream.call_args_list] == keys
 
 
 @pytest.mark.asyncio
