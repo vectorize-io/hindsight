@@ -21,7 +21,7 @@ from opentelemetry.trace import Status, StatusCode
 
 if TYPE_CHECKING:
     from opentelemetry.context import Context
-    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace import Span, SpanProcessor, TracerProvider
 
     from .config import HindsightConfig, StaticConfigProxy
 
@@ -147,7 +147,7 @@ PROVIDER_NAME_MAPPING = {
 }
 
 
-def bank_id_span_processor() -> Any:
+def bank_id_span_processor() -> "SpanProcessor":
     """A span processor that stamps ``hindsight.bank_id`` on every span started inside a
     bank-scoped operation.
 
@@ -163,7 +163,7 @@ def bank_id_span_processor() -> Any:
     from .schema_context import get_current_bank_id
 
     class BankIdSpanProcessor(SpanProcessor):
-        def on_start(self, span: Any, parent_context: Any = None) -> None:
+        def on_start(self, span: "Span", parent_context: "Context | None" = None) -> None:
             if span.attributes and "hindsight.bank_id" in span.attributes:
                 return
             ctx = current_trace_context()
@@ -227,7 +227,7 @@ def initialize_tracing(
         headers=headers_dict,
     )
 
-    # Create tracer provider with batch processor
+    # Create tracer provider: stamp the bank on each span, then batch-export
     provider = TracerProvider(resource=resource)
     provider.add_span_processor(bank_id_span_processor())
     provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
