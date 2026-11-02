@@ -17,8 +17,9 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from typing_extensions import Annotated
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -28,7 +29,7 @@ class CreateDirectiveRequest(BaseModel):
     """ # noqa: E501
     name: StrictStr = Field(description="Human-readable name for the directive")
     content: StrictStr = Field(description="The directive text to inject into prompts")
-    priority: Optional[StrictInt] = Field(default=0, description="Higher priority directives are injected first")
+    priority: Optional[Annotated[int, Field(le=2147483647, strict=True, ge=-2147483648)]] = Field(default=0, description="Higher priority directives are injected first")
     is_active: Optional[StrictBool] = Field(default=True, description="Whether this directive is active")
     tags: Optional[List[StrictStr]] = Field(default=None, description="Directive execution scope. Empty means global; non-empty requires a matching reflect scope.")
     __properties: ClassVar[List[str]] = ["name", "content", "priority", "is_active", "tags"]

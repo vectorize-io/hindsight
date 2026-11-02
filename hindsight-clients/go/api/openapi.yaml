@@ -6785,6 +6785,8 @@ components:
         priority:
           default: 0
           description: Higher priority directives are injected first
+          maximum: 2147483647
+          minimum: -2147483648
           title: Priority
           type: integer
         is_active:
@@ -7581,7 +7583,7 @@ components:
       example:
         is_active: true
         name: name
-        priority: 0
+        priority: -1803530559
         content: content
         tags:
         - tags
@@ -7598,6 +7600,8 @@ components:
         priority:
           default: 0
           description: Higher priority directives are injected first
+          maximum: 2147483647
+          minimum: -2147483648
           title: Priority
           type: integer
         is_active:
@@ -13436,7 +13440,7 @@ components:
       example:
         is_active: true
         name: name
-        priority: 0
+        priority: -1803530559
         content: content
         tags:
         - tags
@@ -13449,6 +13453,8 @@ components:
           nullable: true
           type: string
         priority:
+          maximum: 2147483647
+          minimum: -2147483648
           nullable: true
           type: integer
         is_active:

@@ -14,7 +14,7 @@ import re
 import time
 import traceback
 import uuid
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
@@ -203,6 +203,8 @@ from hindsight_api.engine.mental_model_refresh import (
 from hindsight_api.engine.providers.none_llm import LLMNotAvailableError
 from hindsight_api.engine.reflect import ReflectNoAnswerError, ReflectToolCallError, ReflectToolExecutionError
 from hindsight_api.engine.response_models import (
+    DIRECTIVE_PRIORITY_MAX,
+    DIRECTIVE_PRIORITY_MIN,
     VALID_RECALL_FACT_TYPES,
     Budget,
     ConsolidationStrategiesPreview,
@@ -311,8 +313,45 @@ def _internal_error(exc: Exception, where: str) -> HTTPException:
     if unavailable is not None:
         logger.warning(f"Store unavailable in {where}, answering 503: {exc}")
         return unavailable
+    unstorable = _unstorable_text(exc)
+    if unstorable is not None:
+        return unstorable
     logger.error(f"Error in {where}: {exc}\n\nTraceback:\n{traceback.format_exc()}")
     return HTTPException(status_code=500, detail=str(exc))
+
+
+def _exception_chain(exc: BaseException) -> Iterator[BaseException]:
+    """``exc`` and every exception it was raised from or while handling, once each."""
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        yield cur
+        cur = cur.__cause__ or cur.__context__
+
+
+# Postgres rejects text it cannot store: a NUL byte (22021) or a character the
+# database encoding lacks (22P05). Every such string came from the client.
+_UNSTORABLE_TEXT_SQLSTATES = {"22021", "22P05"}
+
+
+def _unstorable_text(exc: BaseException) -> HTTPException | None:
+    """The 400 for client text the database cannot store, or None if that is not what failed.
+
+    Covers a NUL byte, a character outside the database encoding, and a lone surrogate
+    (which asyncpg fails to encode before the query is sent, so it carries no SQLSTATE).
+    """
+    for cur in _exception_chain(exc):
+        if getattr(cur, "sqlstate", None) in _UNSTORABLE_TEXT_SQLSTATES or (
+            isinstance(cur, UnicodeEncodeError) and cur.reason == "surrogates not allowed"
+        ):
+            return HTTPException(status_code=400, detail=f"Input contains text that cannot be stored: {cur}")
+    return None
+
+
+def _expected_failure(exc: BaseException) -> HTTPException | None:
+    """The 503 or 400 for a failure that is not a server bug, for catch-alls that build their own 500."""
+    return _store_unavailable(exc) or _unstorable_text(exc)
 
 
 def _store_unavailable(exc: BaseException) -> HTTPException | None:
@@ -327,17 +366,13 @@ def _store_unavailable(exc: BaseException) -> HTTPException | None:
     Walks the cause/context chain because the engine usually wraps the store's error before a route
     sees it.
     """
-    seen: set[int] = set()
-    cur: BaseException | None = exc
-    while cur is not None and id(cur) not in seen:
-        seen.add(id(cur))
+    for cur in _exception_chain(exc):
         if isinstance(cur, StoreWriteUnavailable):
             return HTTPException(
                 status_code=503,
                 detail=str(cur),
                 headers={"Retry-After": str(cur.retry_after)},
             )
-        cur = cur.__cause__ or cur.__context__
     return None
 
 
@@ -3216,7 +3251,12 @@ class CreateDirectiveRequest(BaseModel):
 
     name: str = Field(description="Human-readable name for the directive")
     content: str = Field(description="The directive text to inject into prompts")
-    priority: int = Field(default=0, description="Higher priority directives are injected first")
+    priority: int = Field(
+        default=0,
+        ge=DIRECTIVE_PRIORITY_MIN,
+        le=DIRECTIVE_PRIORITY_MAX,
+        description="Higher priority directives are injected first",
+    )
     is_active: bool = Field(default=True, description="Whether this directive is active")
     tags: list[str] = FieldWithDefault(
         list,
@@ -3229,7 +3269,9 @@ class UpdateDirectiveRequest(BaseModel):
 
     name: str | None = Field(default=None, description="New name")
     content: str | None = Field(default=None, description="New content")
-    priority: int | None = Field(default=None, description="New priority")
+    priority: int | None = Field(
+        default=None, ge=DIRECTIVE_PRIORITY_MIN, le=DIRECTIVE_PRIORITY_MAX, description="New priority"
+    )
     is_active: bool | None = Field(default=None, description="New active status")
     tags: list[str] | None = Field(default=None, description="New tags")
 
@@ -5577,7 +5619,7 @@ def _register_routes(app: FastAPI):
                 detail="Request timed out while searching memories. Try a shorter or more specific query.",
             )
         except Exception as e:
-            if (unavailable := _store_unavailable(e)) is not None:
+            if (unavailable := _expected_failure(e)) is not None:
                 raise unavailable
             import traceback
 
@@ -5758,7 +5800,7 @@ def _register_routes(app: FastAPI):
             # reply built on a partial (often empty) evidence set, which callers
             # store as a real answer (#2894). Returning the failure lets them retry.
             # A tool whose recall the store shed is "not now", so it gets the same 503 as recall.
-            if (unavailable := _store_unavailable(e)) is not None:
+            if (unavailable := _expected_failure(e)) is not None:
                 raise unavailable
             logger.warning("Reflect retrieval failure in bank %s: %s", bank_id, e)
             raise HTTPException(status_code=500, detail=str(e))
@@ -6905,6 +6947,8 @@ def _register_routes(app: FastAPI):
             return DirectiveResponse(**directive)
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
@@ -6977,6 +7021,8 @@ def _register_routes(app: FastAPI):
             return DirectiveResponse(**directive)
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
@@ -7007,6 +7053,8 @@ def _register_routes(app: FastAPI):
             return {"status": "deleted"}
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
@@ -8884,6 +8932,8 @@ def _register_routes(app: FastAPI):
             return ClearMemoryObservationsResponse(deleted_count=result["deleted_count"])
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
@@ -9601,7 +9651,7 @@ def _register_routes(app: FastAPI):
                     status_code=422,
                     detail={"violations": [asdict(v) for v in e.violations]},
                 )
-            if (unavailable := _store_unavailable(e)) is not None:
+            if (unavailable := _expected_failure(e)) is not None:
                 raise unavailable
             import traceback
 
