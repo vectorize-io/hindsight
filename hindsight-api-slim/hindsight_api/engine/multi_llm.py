@@ -57,13 +57,14 @@ def _should_failover(exc: BaseException) -> bool:
     """Whether ``exc`` from one member should trigger a try on the next member.
 
     Generic ``Exception`` instances (network errors, provider 5xx, timeouts after
-    a member's own retries) fail over. ``OutputTooLongError`` is propagated — a
-    different provider won't fit an over-length output either. ``CancelledError``,
+    a member's own retries) fail over. So does ``OutputTooLongError`` (#6265): it
+    used to propagate on the theory that a different provider won't fit an
+    over-length output either, which holds for a genuinely long answer but not
+    for the common case — a model stuck in a repetition loop until it hits the
+    cap, which the next member does not reproduce. ``CancelledError``,
     ``KeyboardInterrupt`` and ``SystemExit`` are ``BaseException`` (not
     ``Exception``) and therefore propagate unchanged.
     """
-    if isinstance(exc, OutputTooLongError):
-        return False
     return isinstance(exc, Exception)
 
 
@@ -194,6 +195,7 @@ class MultiLLMProvider:
 
     async def _dispatch(self, method_name: str, **kwargs: Any) -> Any:
         last_exc: BaseException | None = None
+        too_long: OutputTooLongError | None = None
         order = self._member_order()
         for position, idx in enumerate(order):
             member = self._members[idx]
@@ -204,7 +206,13 @@ class MultiLLMProvider:
                     raise
                 last_exc = e
                 remaining = len(order) - position - 1
-                cooldown = self._cool_down(idx)
+                # A runaway reply says nothing about the member's health, so it does
+                # not push the member to the back of the chain for later calls.
+                if isinstance(e, OutputTooLongError):
+                    too_long = too_long or e
+                    cooldown = 0.0
+                else:
+                    cooldown = self._cool_down(idx)
                 logger.warning(
                     "LLM member %d (%s/%s) failed on %s: %s%s%s",
                     idx,
@@ -220,9 +228,12 @@ class MultiLLMProvider:
                 self._cooldown_until.pop(idx, None)
                 logger.info("LLM member %d (%s/%s) recovered", idx, member.provider, member.model)
             return result
-        # All members failed; surface the last error (loop ran at least once).
+        # All members failed; surface the last error (loop ran at least once) — unless
+        # one said the output was too long: callers act on that one specifically
+        # (retain splits its input and retries), and a later member's timeout must
+        # not hide it.
         assert last_exc is not None
-        raise last_exc
+        raise too_long or last_exc
 
     async def call(self, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
         return await self._dispatch("call", messages=messages, **kwargs)

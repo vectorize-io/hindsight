@@ -191,12 +191,23 @@ async def test_cooldown_zero_keeps_trying_every_member():
 # ── error classification ──────────────────────────────────────────────────────
 
 
-async def test_output_too_long_is_not_failed_over():
+async def test_output_too_long_fails_over_without_a_cooldown():
     a = FakeMember("a", OutputTooLongError("too long"))
     b = FakeMember("b", "RB")
+    chain = _failover(a, b)
+    assert (await chain.call(messages=[])).content == "RB"
+    # A runaway reply is not an outage: the primary stays first for the next call.
+    await chain.call(messages=[])
+    assert (a.calls, b.calls) == (2, 2)
+
+
+async def test_output_too_long_survives_a_later_members_failure():
+    # Retain splits its input on OutputTooLongError, so a later member's
+    # unrelated failure must not replace it.
+    a = FakeMember("a", OutputTooLongError("too long"))
+    b = FakeMember("b", RuntimeError("down"))
     with pytest.raises(OutputTooLongError):
         await _failover(a, b).call(messages=[])
-    assert b.calls == 0  # never tried the secondary
 
 
 async def test_cancellation_propagates_without_failover():
@@ -210,7 +221,7 @@ async def test_cancellation_propagates_without_failover():
 def test_should_failover_classification():
     assert _should_failover(RuntimeError()) is True
     assert _should_failover(ValueError()) is True
-    assert _should_failover(OutputTooLongError("x")) is False
+    assert _should_failover(OutputTooLongError("x")) is True
     assert _should_failover(asyncio.CancelledError()) is False
     assert _should_failover(KeyboardInterrupt()) is False
     assert _should_failover(SystemExit()) is False
