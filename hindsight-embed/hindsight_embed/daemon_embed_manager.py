@@ -498,22 +498,36 @@ class DaemonEmbedManager(EmbedManager):
             return dev_command
 
         # Prefer a hindsight-api entry point installed alongside hindsight-embed.
-        # Try two strategies:
+        # Try three strategies:
         #
         # 1. sysconfig: resolves <venv>/bin or <venv>/Scripts for standard
         #    pip/venv installs (issue #1401).
-        # 2. __file__-relative: resolves <target>/bin or <target>/Scripts for
+        # 2. The venv holding this file, found by its pyvenv.cfg: a different
+        #    interpreter can load the venv's site-packages (Hermes runs the base
+        #    Python with site.addsitedir), and then sysconfig reports that
+        #    interpreter's scripts dir instead of the venv's (issue #6252).
+        # 3. __file__-relative: resolves <target>/bin or <target>/Scripts for
         #    `pip install --target` layouts where sysconfig still points at the
         #    system/venv scripts dir (issue #1240).
-        binary_name = "hindsight-api.exe" if platform.system() == "Windows" else "hindsight-api"
+        is_windows = platform.system() == "Windows"
+        binary_name = "hindsight-api.exe" if is_windows else "hindsight-api"
 
-        scripts_dir = Path(sysconfig.get_path("scripts"))
-        candidate = scripts_dir / binary_name
-        if candidate.exists() and self._can_use_installed_api_binary(env):
-            # The console exe lives in sys.executable's scripts dir, so
-            # hindsight_api is importable by the GUI interpreter; prefer it on
-            # Windows to avoid ConPTY popping a terminal tab (issue #1885).
-            return self._windows_gui_api_command(scripts_dir) or [str(candidate)]
+        scripts_dirs = [Path(sysconfig.get_path("scripts"))]
+        site_packages = Path(__file__).parent.parent
+        if site_packages.name == "site-packages":
+            # Only the venv that owns this site-packages: <venv>/Lib/site-packages
+            # on Windows, <venv>/lib/pythonX.Y/site-packages elsewhere. Walking every
+            # parent would let an unrelated outer venv shadow a --target bundle.
+            venv_root = next((p for p in site_packages.parents[1:3] if (p / "pyvenv.cfg").is_file()), None)
+            if venv_root is not None:
+                scripts_dirs.append(venv_root / ("Scripts" if is_windows else "bin"))
+        installed = [d for d in dict.fromkeys(scripts_dirs) if (d / binary_name).exists()]
+        if installed and self._can_use_installed_api_binary(env):
+            # hindsight_api is importable by that venv's own interpreter, so
+            # prefer its GUI pythonw.exe on Windows to avoid ConPTY popping a
+            # terminal tab (issue #1885).
+            scripts_dir = installed[0]
+            return self._windows_gui_api_command(scripts_dir) or [str(scripts_dir / binary_name)]
 
         # --target installs place binaries alongside site-packages contents.
         # The running interpreter usually can't import hindsight_api here (it's
