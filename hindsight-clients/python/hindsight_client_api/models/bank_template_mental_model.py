@@ -28,7 +28,7 @@ class BankTemplateMentalModel(BaseModel):
     """
     A mental model definition within a bank template manifest.
     """ # noqa: E501
-    id: StrictStr = Field(description="Unique ID for the mental model (alphanumeric lowercase with hyphens)")
+    id: StrictStr = Field(description="Unique ID for the mental model (same rules as a bank id: at most 192 bytes of UTF-8, no '/' and no control characters)")
     name: StrictStr = Field(description="Human-readable name for the mental model")
     source_query: StrictStr = Field(description="The query to run to generate content")
     tags: Optional[List[StrictStr]] = Field(default=None, description="Tags for scoped visibility")

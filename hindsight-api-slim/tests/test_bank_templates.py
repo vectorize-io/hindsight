@@ -210,7 +210,7 @@ class TestImportValidation:
             json={
                 "version": "1",
                 "mental_models": [
-                    {"id": "UPPERCASE-NOT-ALLOWED", "name": "Bad", "source_query": "q"},
+                    {"id": "team/standup", "name": "Bad", "source_query": "q"},
                 ],
             },
         )

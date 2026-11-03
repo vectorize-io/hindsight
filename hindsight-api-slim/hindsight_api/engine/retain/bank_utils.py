@@ -5,7 +5,6 @@ bank profile utilities for disposition and mission management.
 import asyncio
 import json
 import logging
-import unicodedata
 import uuid
 from contextlib import aclosing
 from dataclasses import dataclass
@@ -18,7 +17,7 @@ from ..._vector_index import index_using_clause, per_bank_indexes_are_eager, use
 from ...config import get_config
 from ...schema_context import get_current_schema
 from ..db_utils import acquire_with_retry, retry_with_backoff
-from ..response_models import DispositionTraits
+from ..response_models import DispositionTraits, id_problem
 from ..schema import fq_table
 
 if TYPE_CHECKING:
@@ -333,24 +332,13 @@ async def get_bank_profile_if_exists(pool, bank_id: str) -> BankProfile | None:
     )
 
 
-# Bytes, not characters: storage keys percent-encode the bank id (up to 3x per UTF-8 byte), so
-# 192 bytes is at most 576 encoded bytes, under S3's 1,024-byte key limit with room for the
-# tenant, the prefix and the file name, while still fitting 64 CJK characters (#4391).
-BANK_ID_MAX_BYTES = 192
-
-
 def validate_new_bank_id(bank_id: str) -> None:
     """Reject a bank id that must not be created. Existing banks are never re-checked."""
     from hindsight_api.extensions import OperationValidationError
 
-    if not bank_id:
-        raise OperationValidationError("Bank id must not be empty", status_code=400)
-    if len(bank_id.encode("utf-8")) > BANK_ID_MAX_BYTES:
-        raise OperationValidationError(
-            f"Bank id is too long: at most {BANK_ID_MAX_BYTES} bytes of UTF-8 are allowed", status_code=400
-        )
-    if any(unicodedata.category(ch) == "Cc" for ch in bank_id):
-        raise OperationValidationError("Bank id must not contain control characters", status_code=400)
+    problem = id_problem(bank_id, "Bank id")
+    if problem:
+        raise OperationValidationError(problem, status_code=400)
     # Reserved so a store-owned backend can keep its own bookkeeping objects (`_index`, `_meta`, ...)
     # next to a bank's objects without escaping bank names. Existing banks are not re-checked.
     if bank_id.startswith("_"):

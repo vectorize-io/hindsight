@@ -6920,8 +6920,8 @@ components:
       description: A mental model definition within a bank template manifest.
       properties:
         id:
-          description: Unique ID for the mental model (alphanumeric lowercase with
-            hyphens)
+          description: "Unique ID for the mental model (same rules as a bank id: at\
+            \ most 192 bytes of UTF-8, no '/' and no control characters)"
           title: Id
           type: string
         name:
@@ -7491,7 +7491,7 @@ components:
       properties:
         alias:
           description: "The extra bank id. Same rules as a bank id (non-empty, at\
-            \ most 192 bytes of UTF-8, no control characters, no leading underscore),\
+            \ most 192 bytes of UTF-8, no '/', no control characters, no leading underscore),\
             \ and it must not already name a bank or another alias."
           title: Alias
           type: string
@@ -7719,7 +7719,7 @@ components:
         folder.
       example:
         source_query: source_query
-        max_tokens: 0
+        max_tokens: 891
         parent_id: parent_id
         name: name
         trigger:
@@ -7775,6 +7775,8 @@ components:
           nullable: true
           type: array
         max_tokens:
+          maximum: 8192.0
+          minimum: 256.0
           nullable: true
           type: integer
         trigger:
@@ -13596,7 +13598,7 @@ components:
         when present in the request body.
       example:
         source_query: source_query
-        max_tokens: 0
+        max_tokens: 891
         parent_id: parent_id
         name: name
         trigger:
@@ -13652,6 +13654,8 @@ components:
           nullable: true
           type: array
         max_tokens:
+          maximum: 8192.0
+          minimum: 256.0
           nullable: true
           type: integer
         trigger:

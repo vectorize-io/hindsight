@@ -17,8 +17,9 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from typing_extensions import Annotated
 from hindsight_client_api.models.mental_model_trigger_input import MentalModelTriggerInput
 from typing import Optional, Set
 from typing_extensions import Self
@@ -31,7 +32,7 @@ class CreatePageRequest(BaseModel):
     source_query: StrictStr
     parent_id: Optional[StrictStr] = None
     tags: Optional[List[StrictStr]] = None
-    max_tokens: Optional[StrictInt] = None
+    max_tokens: Optional[Annotated[int, Field(le=8192, strict=True, ge=256)]] = None
     trigger: Optional[MentalModelTriggerInput] = None
     __properties: ClassVar[List[str]] = ["name", "source_query", "parent_id", "tags", "max_tokens", "trigger"]
 

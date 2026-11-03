@@ -744,6 +744,7 @@ from .response_models import (
     TemporalWindow,
     TokenUsage,
     ToolCallTrace,
+    check_mental_model_id,
 )
 from .response_models import RecallResult as RecallResultModel
 from .retain import bank_utils, embedding_utils
@@ -17801,6 +17802,8 @@ class MemoryEngine(MemoryEngineInterface):
         Returns:
             The created pinned mental model dict
         """
+        if mental_model_id:
+            check_mental_model_id(mental_model_id)
         await self._authenticate_tenant(request_context)
         if self._operation_validator and not _nested_operation_authorized.get():
             if not self._consume_preauthorized_bank_write(

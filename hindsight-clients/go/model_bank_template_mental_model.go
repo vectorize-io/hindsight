@@ -21,7 +21,7 @@ var _ MappedNullable = &BankTemplateMentalModel{}
 
 // BankTemplateMentalModel A mental model definition within a bank template manifest.
 type BankTemplateMentalModel struct {
-	// Unique ID for the mental model (alphanumeric lowercase with hyphens)
+	// Unique ID for the mental model (same rules as a bank id: at most 192 bytes of UTF-8, no '/' and no control characters)
 	Id string `json:"id"`
 	// Human-readable name for the mental model
 	Name string `json:"name"`

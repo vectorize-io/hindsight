@@ -219,6 +219,7 @@ from hindsight_api.engine.response_models import (
     RerankOptions,
     TemporalWindow,
     TokenUsage,
+    check_mental_model_id,
 )
 from hindsight_api.engine.retain.attachment_content import (
     CanonicalContent,
@@ -1896,7 +1897,7 @@ class CreateBankAliasRequest(BaseModel):
 
     alias: str = Field(
         description=(
-            "The extra bank id. Same rules as a bank id (non-empty, at most 192 bytes of UTF-8, no "
+            "The extra bank id. Same rules as a bank id (non-empty, at most 192 bytes of UTF-8, no '/', no "
             "control characters, no leading underscore), and it must not already name a bank or another alias."
         )
     )
@@ -3466,7 +3467,7 @@ class CreatePageRequest(BaseModel):
             "'all' to require the tags while still including untagged memories."
         ),
     )
-    max_tokens: int | None = None
+    max_tokens: int | None = Field(default=None, ge=256, le=8192)
     trigger: MentalModelTrigger | None = None
 
 
@@ -3488,7 +3489,7 @@ class UpdateNodeRequest(BaseModel):
             "matching rules on this field in `CreatePageRequest`; `trigger.tags_match` widens them."
         ),
     )
-    max_tokens: int | None = None
+    max_tokens: int | None = Field(default=None, ge=256, le=8192)
     trigger: MentalModelTrigger | None = Field(
         default=None,
         description=(
@@ -3669,13 +3670,23 @@ class CreateMentalModelRequest(BaseModel):
     )
 
     id: str | None = Field(
-        None, description="Optional custom ID for the mental model (alphanumeric lowercase with hyphens)"
+        None,
+        description=(
+            "Optional custom ID for the mental model (same rules as a bank id: at most 192 bytes of UTF-8, "
+            "no '/' and no control characters)"
+        ),
     )
     name: str = Field(description="Human-readable name for the mental model")
     source_query: str = Field(description="The query to run to generate content")
     tags: list[str] = FieldWithDefault(list, description="Tags for scoped visibility")
     max_tokens: int = Field(default=2048, ge=256, le=8192, description="Maximum tokens for generated content")
     trigger: MentalModelTrigger = FieldWithDefault(MentalModelTrigger, description="Trigger settings")
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, v: str | None) -> str | None:
+        # An empty id means "generate one", as it always has.
+        return check_mental_model_id(v) if v else v
 
 
 class CreateMentalModelResponse(BaseModel):

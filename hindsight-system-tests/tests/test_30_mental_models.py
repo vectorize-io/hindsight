@@ -121,3 +121,29 @@ async def test_deleting_a_model_leaves_the_facts_alone(client, bank_with_facts, 
     assert sorted(m.text for m in memories.items) == sorted(
         ["Alice moved to Berlin | Involving: Alice", "Alice renewed her Berlin lease | Involving: Alice"]
     )
+
+
+async def test_a_chosen_id_stays_reachable_and_exportable(client, bank_with_facts, settled):
+    """A caller-chosen id follows the bank-id rule: free text, but no "/" (#6235).
+
+    An id with "/" used to be stored and then lost: the slash splits the URL, so
+    the model could never be read or deleted again, and the bank's export failed
+    on it. It is refused up front now, and an id the old export check disliked
+    (capitals, a space) is read back and exported like any other.
+    """
+    from hindsight_client_api.api.bank_templates_api import BankTemplatesApi
+    from hindsight_client_api.exceptions import ApiException
+
+    with pytest.raises(ApiException) as caught:
+        await _create(client, bank_with_facts, id="team/standup")
+    assert caught.value.status == 422
+    listed = await client.mental_models.list_mental_models(bank_with_facts)
+    assert [m.id for m in listed.items] == []
+
+    model_id = await _create(client, bank_with_facts, id="Team Notes")
+    await settled(bank_with_facts)
+
+    model = await client.mental_models.get_mental_model(bank_with_facts, model_id)
+    assert model.id == "Team Notes"
+    template = await BankTemplatesApi(client.banks.api_client).export_bank_template(bank_with_facts)
+    assert [m.id for m in template.mental_models] == ["Team Notes"]

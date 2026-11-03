@@ -281,7 +281,7 @@ Create a mental model — a living document that stays current with your memorie
 |-----------|------|----------|-------------|
 | `name` | string | Yes | Human-readable name for the mental model |
 | `source_query` | string | Yes | The query used to generate and refresh the model |
-| `mental_model_id` | string | No | Custom ID (alphanumeric lowercase with hyphens). Auto-generated if not provided |
+| `mental_model_id` | string | No | Custom ID (same rules as a bank id: at most 192 bytes of UTF-8, no '/' and no control characters). Auto-generated if not provided |
 | `tags` | list[string] | No | Tags for organizing and filtering models |
 | `tags_match` | string | No | How the model's tags are matched against memories on refresh: `any`, `all`, `any_strict`, `all_strict`, or `exact`. See the note below on the default |
 | `trigger` | object | No | Refresh policy — see [Trigger settings](#trigger-settings) |

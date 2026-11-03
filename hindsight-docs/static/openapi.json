@@ -10380,7 +10380,7 @@
           "id": {
             "type": "string",
             "title": "Id",
-            "description": "Unique ID for the mental model (alphanumeric lowercase with hyphens)"
+            "description": "Unique ID for the mental model (same rules as a bank id: at most 192 bytes of UTF-8, no '/' and no control characters)"
           },
           "name": {
             "type": "string",
@@ -11038,7 +11038,7 @@
           "alias": {
             "type": "string",
             "title": "Alias",
-            "description": "The extra bank id. Same rules as a bank id (non-empty, at most 192 bytes of UTF-8, no control characters, no leading underscore), and it must not already name a bank or another alias."
+            "description": "The extra bank id. Same rules as a bank id (non-empty, at most 192 bytes of UTF-8, no '/', no control characters, no leading underscore), and it must not already name a bank or another alias."
           },
           "primary": {
             "type": "boolean",
@@ -11424,7 +11424,7 @@
               }
             ],
             "title": "Id",
-            "description": "Optional custom ID for the mental model (alphanumeric lowercase with hyphens)"
+            "description": "Optional custom ID for the mental model (same rules as a bank id: at most 192 bytes of UTF-8, no '/' and no control characters)"
           },
           "name": {
             "type": "string",
@@ -11545,7 +11545,9 @@
           "max_tokens": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "integer",
+                "maximum": 8192.0,
+                "minimum": 256.0
               },
               {
                 "type": "null"
@@ -20217,7 +20219,9 @@
           "max_tokens": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "integer",
+                "maximum": 8192.0,
+                "minimum": 256.0
               },
               {
                 "type": "null"
