@@ -74,7 +74,12 @@ class LocalRuntimeStatus:
     reason: str | None = None
 
 
-def _check_local_runtime() -> LocalRuntimeStatus:
+# What every mode imports in this process; local_embedded also needs the daemon manager.
+_CLIENT_MODULES = ("hindsight_client",)
+_LOCAL_RUNTIME_MODULES = (*_CLIENT_MODULES, "hindsight_embed.daemon_embed_manager")
+
+
+def _check_local_runtime(modules: tuple[str, ...] = _LOCAL_RUNTIME_MODULES) -> LocalRuntimeStatus:
     """Whether what local_embedded needs IN THIS PROCESS imports cleanly: an HTTP client and
     the daemon manager. Nothing else belongs here.
 
@@ -88,7 +93,7 @@ def _check_local_runtime() -> LocalRuntimeStatus:
     are declared in this plugin's pyproject and conflict with nothing.
     """
     try:
-        for module in ("hindsight_client", "hindsight_embed.daemon_embed_manager"):
+        for module in modules:
             importlib.import_module(module)
         return LocalRuntimeStatus(available=True)
     except Exception as exc:
@@ -107,7 +112,8 @@ def _local_runtime_hint(reason: str | None) -> str:
     if "no module named" in text and any(m in text for m in ("hindsight_client", "hindsight_embed")):
         return (
             " The plugin's own packages (hindsight-client, hindsight-embed) are missing from "
-            "this environment: run 'hermes pm repair' and restart Hermes to rebuild them. The Hindsight server itself is NOT needed here — it runs as a "
+            "this environment: run 'hermes pm repair', then 'hermes gateway restart' (restarting the app alone keeps "
+            "a running gateway on the old environment). The Hindsight server itself is NOT needed here — it runs as a "
             "separate process."
         )
     return ""

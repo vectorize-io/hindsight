@@ -35,6 +35,7 @@ from tools.registry import tool_error
 from utils import read_json_or_empty
 
 from .embedded import (
+    _CLIENT_MODULES,
     _RETRIABLE_CONNECTION_MARKERS,
     _build_embedded_profile_env,
     _check_local_runtime,
@@ -602,6 +603,10 @@ class HindsightMemoryProvider(MemoryProvider):
                 # the provider outright when this returns False, and every other runtime probe below
                 # runs after it has already passed.
                 return _check_local_runtime().available
+            # Hermes keeps a provider whose client cannot import and lets every recall and retain
+            # fail; a gateway started before the install runs without it (#6063).
+            if not _check_local_runtime(_CLIENT_MODULES).available:
+                return False
             return mode == "local_external" or bool(
                 _cloud_api_key(cfg) or cfg.get("api_url") or get_secret("HINDSIGHT_API_URL", "")
             )
@@ -610,7 +615,7 @@ class HindsightMemoryProvider(MemoryProvider):
             return False
 
     def unavailable_reason(self) -> str:
-        """Install hint for an unavailable local_embedded runtime (is_available() gates
+        """Install hint when this process can't import what the mode needs (is_available() gates
         initialize() out, so the hint it would log never fires; agent_init shows this).
 
         ``is_available()`` returns False for local modes when the embedded runtime can't be imported, so
@@ -618,11 +623,10 @@ class HindsightMemoryProvider(MemoryProvider):
         guidance here, where agent_init warns about an unavailable provider.
         """
         try:
-            if _load_config().get("mode", "cloud") not in _LOCAL_MODES:
-                return ""
+            local = _load_config().get("mode", "cloud") in _LOCAL_MODES
         except Exception:
             return ""
-        status = _check_local_runtime()
+        status = _check_local_runtime() if local else _check_local_runtime(_CLIENT_MODULES)
         return "" if status.available else _local_runtime_hint(status.reason).strip()
 
     def save_config(self, values, hermes_home):
