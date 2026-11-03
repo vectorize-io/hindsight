@@ -371,8 +371,8 @@ class MinScores(BaseModel):
     reranker: float | None = Field(
         default=None,
         description="Post-query: minimum normalized reranker score (0-1). Applied to every returned result. "
-        "Rejected with HTTP 400 when the reranker scores by rank position (TypeSafe), since a floor would only "
-        "keep a fixed share of the results.",
+        "Rejected with HTTP 400 when the reranker scores by rank position (a decision model, or TypeSafe), since a "
+        "floor would only keep a fixed share of the results.",
     )
     final: float | None = Field(
         default=None,

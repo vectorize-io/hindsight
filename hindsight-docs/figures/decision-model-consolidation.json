@@ -1,0 +1,353 @@
+{
+  "title": "Consolidation with a Decision Model",
+  "speed": 2200,
+  "elements": [
+    {
+      "id": "facts",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "New facts"
+        },
+        {
+          "type": "subtitle",
+          "text": "from retain"
+        }
+      ],
+      "minCardHeight": 148,
+      "width": 250
+    },
+    {
+      "id": "find",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Find related"
+        },
+        {
+          "type": "subtitle",
+          "text": "observations recall finds for each fact"
+        }
+      ],
+      "minCardHeight": 28,
+      "width": 320
+    },
+    {
+      "id": "dm",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Decision model"
+        },
+        {
+          "type": "subtitle",
+          "text": "restates · new · changes · chatter"
+        }
+      ],
+      "minCardHeight": 148,
+      "width": 320
+    },
+    {
+      "id": "llm",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "LLM"
+        },
+        {
+          "type": "subtitle",
+          "text": "only what changes an observation"
+        }
+      ],
+      "minCardHeight": 43,
+      "width": 320
+    },
+    {
+      "id": "work",
+      "type": "group",
+      "label": {
+        "title": "Hindsight Worker · Consolidation"
+      },
+      "children": [
+        "find",
+        "dm",
+        "llm"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 40,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "obs",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Observations"
+        }
+      ],
+      "minCardHeight": 148,
+      "width": 300
+    },
+    {
+      "id": "g0",
+      "type": "group",
+      "children": [
+        "facts",
+        "work",
+        "obs"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 56,
+        "align": "center"
+      }
+    },
+    {
+      "id": "in",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "facts"
+      },
+      "end": {
+        "id": "find"
+      },
+      "label": {
+        "text": "new facts"
+      }
+    },
+    {
+      "id": "lookup",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "find"
+      },
+      "end": {
+        "id": "obs"
+      },
+      "label": {
+        "text": "recall"
+      }
+    },
+    {
+      "id": "ask",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "find"
+      },
+      "end": {
+        "id": "dm"
+      }
+    },
+    {
+      "id": "settle",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "dm"
+      },
+      "end": {
+        "id": "obs"
+      },
+      "label": {
+        "text": "settled, no LLM"
+      }
+    },
+    {
+      "id": "hard",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "dm"
+      },
+      "end": {
+        "id": "llm"
+      },
+      "label": {
+        "text": "the rest"
+      }
+    },
+    {
+      "id": "write",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "llm"
+      },
+      "end": {
+        "id": "obs"
+      },
+      "label": {
+        "text": "rewrite"
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "label": "consolidation",
+      "beats": [
+        {
+          "show": {
+            "facts": [
+              {
+                "tag": "1",
+                "tone": "gray",
+                "text": "Alice works at Google"
+              },
+              {
+                "tag": "2",
+                "tone": "gray",
+                "text": "Alice’s manager is Carol"
+              },
+              {
+                "tag": "3",
+                "tone": "gray",
+                "text": "Thanks, talk tomorrow!"
+              },
+              {
+                "tag": "4",
+                "tone": "gray",
+                "text": "Alice moved to the Zurich office"
+              }
+            ],
+            "obs": [
+              {
+                "text": "Alice is a software engineer at Google"
+              },
+              {
+                "text": "Alice is based in the London office"
+              }
+            ]
+          },
+          "say": "Retain stored four new facts. Consolidation turns facts into observations in the background.",
+          "ms": 2600
+        },
+        {
+          "edges": [
+            {
+              "edge": "in",
+              "data": "4 facts"
+            },
+            {
+              "edge": "lookup",
+              "data": "recall"
+            }
+          ],
+          "show": {
+            "find": [
+              {
+                "text": "related observations for each fact",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "For each fact it finds the observations it could touch, as it always has."
+        },
+        {
+          "edges": {
+            "edge": "ask",
+            "data": "fact + its observations"
+          },
+          "show": {
+            "dm": [
+              {
+                "tag": "restates",
+                "tone": "blue",
+                "text": "1 · Alice works at Google"
+              },
+              {
+                "tag": "new",
+                "tone": "green",
+                "text": "2 · Alice’s manager is Carol"
+              },
+              {
+                "tag": "chatter",
+                "tone": "gray",
+                "text": "3 · Thanks, talk tomorrow!"
+              },
+              {
+                "tag": "changes",
+                "tone": "orange",
+                "text": "4 · Alice moved to Zurich"
+              }
+            ]
+          },
+          "say": "The decision model is asked how each fact relates to those observations: does it restate one, add something new, change one, or is it chatter?",
+          "ms": 3400
+        },
+        {
+          "edges": {
+            "edge": "settle",
+            "data": "evidence · new observation · skip"
+          },
+          "show": {
+            "obs": [
+              {
+                "text": "Alice is a software engineer at Google",
+                "meta": "+1 source"
+              },
+              {
+                "text": "Alice is based in the London office"
+              },
+              {
+                "text": "Alice’s manager is Carol",
+                "mark": "new"
+              }
+            ]
+          },
+          "say": "Three are settled with no LLM call: the restatement becomes evidence, the new fact becomes an observation as stated, the chatter is skipped.",
+          "ms": 3400
+        },
+        {
+          "edges": {
+            "edge": "hard",
+            "data": "fact 4"
+          },
+          "show": {
+            "llm": [
+              {
+                "tag": "update",
+                "tone": "orange",
+                "text": "London → Zurich"
+              }
+            ]
+          },
+          "say": "Only the fact that changes what an observation says reaches the LLM, which rewrites it as before."
+        },
+        {
+          "edges": {
+            "edge": "write",
+            "data": "rewrite"
+          },
+          "show": {
+            "obs": [
+              {
+                "text": "Alice is a software engineer at Google",
+                "meta": "+1 source"
+              },
+              {
+                "text": "Alice moved from London to the Zurich office",
+                "mark": "updated"
+              },
+              {
+                "text": "Alice’s manager is Carol",
+                "mark": "new"
+              }
+            ]
+          },
+          "say": "Four facts, one LLM call. On the consolidation eval this cut LLM calls by about 40% at the same pass rate.",
+          "ms": 3400
+        }
+      ]
+    }
+  ]
+}

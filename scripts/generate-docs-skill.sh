@@ -185,6 +185,8 @@ content = re.sub(r'<LLMProviderCapabilities\s*/>', render_llm_capabilities_table
 
 content = re.sub(r'<PageHero\s+title="([^"]+)"\s+subtitle="([^"]+)"\s*/>', r'# \1\n\n\2', content)
 content = re.sub(r'</?div>\s*', '', content)
+# The Models page's provider search is interactive only; the tables below it carry the same list.
+content = re.sub(r'Find a provider and jump to its setup:\s*<ModelProviderSearch\s*/>\s*', '', content)
 
 # Convert <Tabs> to markdown sections
 # Replace <Tabs> ... </Tabs> with markdown headers
