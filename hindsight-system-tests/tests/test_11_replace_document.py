@@ -162,3 +162,34 @@ async def test_re_sending_the_same_document_edits_no_fact(client, bank_id, retai
     await retained(ORIGINAL)
 
     assert await _written_at() == before
+
+
+async def test_a_bank_that_keeps_no_text_keeps_none_across_re_sends(client, llm, bank_id, settled):
+    """A bank with `store_document_text` off keeps no document text on ANY write of a
+    document — not only the first (#6249).
+
+    A re-send of an existing document takes the delta path, which used to ignore the
+    bank's setting and fall back to the server default (on), so the full text landed
+    on the second retain: unchanged re-sends and one-chunk edits alike. The first
+    retain looked right, which is what made the leak easy to miss.
+    """
+    await client.banks.update_bank_config(bank_id, {"updates": {"store_document_text": False}})
+    llm.on_step("extract_facts", contains="Berlin").returns(
+        extracted(fact("Alice moved to Berlin", who="Alice", entities=["Alice", "Berlin"]))
+    )
+    llm.on_step("extract_facts", contains="Lisbon").returns(
+        extracted(fact("Alice moved to Lisbon", who="Alice", entities=["Alice", "Lisbon"]))
+    )
+    llm.on_step("consolidate").returns(consolidation())
+
+    for content in ("Alice moved to Berlin.", "Alice moved to Berlin.", "Alice moved to Lisbon."):
+        await client.aretain(bank_id=bank_id, content=content, document_id=DOCUMENT_ID)
+        await settled(bank_id)
+
+        document = await client.documents.get_document(bank_id, DOCUMENT_ID)
+        assert document.original_text is None, f"text stored after retaining {content!r}"
+        chunks = await client.documents.list_document_chunks(bank_id, DOCUMENT_ID)
+        assert [chunk.chunk_text for chunk in chunks.items] == [""]
+
+    # The edit still went through: only the text was withheld, not the update.
+    assert await _fact_texts(client, bank_id) == [LISBON]

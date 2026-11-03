@@ -11,7 +11,6 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from ...config import _get_raw_config
 from ..schema import fq_table
 from .bank_utils import create_bank_row_on_conn
 from .fact_extraction import _sanitize_text
@@ -198,7 +197,8 @@ async def handle_document_tracking(
     retain_params: dict | None = None,
     document_tags: list[str] | None = None,
     ops=None,
-    store_document_text: bool | None = None,
+    *,
+    store_document_text: bool,
     attachment_filenames: dict[str, str] | None = None,
 ) -> None:
     """
@@ -328,7 +328,8 @@ async def upsert_document_metadata(
     combined_content: str,
     retain_params: dict | None = None,
     document_tags: list[str] | None = None,
-    store_document_text: bool | None = None,
+    *,
+    store_document_text: bool,
     attachment_filenames: dict[str, str] | None = None,
 ) -> None:
     """
@@ -364,7 +365,8 @@ async def _upsert_document_row(
     retain_params: dict | None = None,
     document_tags: list[str] | None = None,
     preserved_created_at: datetime | None = None,
-    store_document_text: bool | None = None,
+    *,
+    store_document_text: bool,
     attachment_filenames: dict[str, str] | None = None,
 ) -> None:
     """Insert or update a document row.
@@ -377,13 +379,10 @@ async def _upsert_document_row(
     When ``store_document_text`` is disabled, the raw source text
     is dropped and ``original_text`` is stored as NULL. The ``content_hash`` is
     still computed from the real content so delta-retain dedup is unaffected.
-    ``store_document_text`` defaults to the server-level config when ``None``;
-    the retain path passes the per-bank resolved value.
+    ``store_document_text`` is the bank's resolved value and has no default: a
+    server-wide fallback here silently overrode a bank that turned it off (#6249).
     """
-    # Fallback to the raw global default (not get_config(), which guards
-    # bank-configurable fields); the retain path always passes the resolved value.
-    store_text = store_document_text if store_document_text is not None else _get_raw_config().store_document_text
-    original_text = combined_content if store_text else None
+    original_text = combined_content if store_document_text else None
     # A store that owns a dedicated document store keeps no SQL documents row: the body is written
     # to the store up front (orchestrator._store_document_bodies), so this writes nothing there.
     from ..memories import get_memories

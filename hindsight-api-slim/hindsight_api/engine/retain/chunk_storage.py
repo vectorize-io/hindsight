@@ -7,7 +7,6 @@ Handles storage of document chunks in the database.
 import hashlib
 import logging
 
-from ...config import _get_raw_config
 from ..chunk_ids import build_chunk_id
 from ..schema import fq_table
 from .types import ChunkMetadata
@@ -109,7 +108,8 @@ async def store_chunks_batch(
     document_id: str,
     chunks: list[ChunkMetadata],
     ops=None,
-    store_document_text: bool | None = None,
+    *,
+    store_document_text: bool,
 ) -> dict[int, str]:
     """
     Store document chunks in the database.
@@ -120,22 +120,14 @@ async def store_chunks_batch(
         document_id: Document identifier
         chunks: List of ChunkMetadata objects
         ops: DataAccessOps instance (from backend.ops)
-        store_document_text: Whether to persist raw chunk text. When ``None``,
-            falls back to the server-level default; callers on the retain path
-            pass the per-bank resolved value.
+        store_document_text: Whether to persist raw chunk text — the bank's
+            resolved value, never a server-wide fallback (#6249).
 
     Returns:
         Dictionary mapping global chunk index to chunk_id
     """
     if not chunks:
         return {}
-
-    # When document text storage is disabled, persist empty chunk_text (the
-    # column is NOT NULL) while still computing content_hash from the real text
-    # so delta-retain dedup is unaffected.
-    # Fallback to the raw global default (not get_config(), which guards
-    # bank-configurable fields); the retain path always passes the resolved value.
-    store_text = store_document_text if store_document_text is not None else _get_raw_config().store_document_text
 
     # Prepare chunk data for batch insert
     chunk_ids = []
@@ -147,7 +139,10 @@ async def store_chunks_batch(
     for chunk in chunks:
         chunk_id = build_chunk_id(bank_id, document_id, chunk.chunk_index)
         chunk_ids.append(chunk_id)
-        chunk_texts.append(chunk.chunk_text if store_text else "")
+        # When document text storage is disabled, persist empty chunk_text (the
+        # column is NOT NULL) while still computing content_hash from the real text
+        # so delta-retain dedup is unaffected.
+        chunk_texts.append(chunk.chunk_text if store_document_text else "")
         chunk_indices.append(chunk.chunk_index)
         content_hashes.append(compute_chunk_hash(chunk.chunk_text))
         chunk_id_map[chunk.chunk_index] = chunk_id

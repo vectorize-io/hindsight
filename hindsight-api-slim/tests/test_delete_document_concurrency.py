@@ -287,7 +287,13 @@ async def test_reingest_and_delete_of_observation_sources_both_complete(delete_r
         async with backend.acquire() as conn:
             async with conn.transaction():
                 await handle_document_tracking(
-                    conn, race.banks[0], "b", "replacement", is_first_batch=True, ops=backend.ops
+                    conn,
+                    race.banks[0],
+                    "b",
+                    "replacement",
+                    is_first_batch=True,
+                    ops=backend.ops,
+                    store_document_text=True,
                 )
 
     first._delete_stale_observations_for_memories = pause_after_cascade
@@ -342,7 +348,9 @@ async def test_reingest_and_delete_of_linked_documents_both_complete(delete_race
         backend = second._backend
         async with backend.acquire() as conn:
             async with conn.transaction():
-                await handle_document_tracking(conn, bank, "b", "replacement", is_first_batch=True, ops=backend.ops)
+                await handle_document_tracking(
+                    conn, bank, "b", "replacement", is_first_batch=True, ops=backend.ops, store_document_text=True
+                )
 
     async def run_round() -> list:
         # Each round acquires fresh connection wrappers, and CPython may hand a new one the
