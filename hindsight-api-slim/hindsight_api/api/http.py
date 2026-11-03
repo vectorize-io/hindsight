@@ -7246,7 +7246,11 @@ def _register_routes(app: FastAPI):
     )
     async def api_list_sessions(
         bank_id: str,
-        q: str | None = Query(default=None, description="Case-insensitive match on the session id"),
+        q: str | None = Query(
+            default=None,
+            description='Case-insensitive match on the session id; a note number ("#123" or "123") '
+            "also finds the session that got that note",
+        ),
         limit: int = Query(default=50, ge=0, le=500),
         offset: int = Query(default=0, ge=0),
         request_context: RequestContext = Depends(get_request_context),

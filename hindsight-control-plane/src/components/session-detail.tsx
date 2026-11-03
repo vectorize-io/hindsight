@@ -2165,6 +2165,7 @@ function NoteCard({
 }: RowProps & { row: Extract<TimelineRow, { kind: "note" }> }) {
   const locale = useLocale();
   const n = row.note;
+  const outcome = timeline.noteOutcomes.get(row.seq);
   const delivered = handedOff ? handedOff.has(row.seq) : isDelivered(row.seq, ackedSeq);
   const check = n.check_seq !== undefined ? timeline.eventBySeq.get(n.check_seq) : undefined;
   const momentSeq = check ? (check.payload as CheckPayload).moment_seq : undefined;
@@ -2184,6 +2185,9 @@ function NoteCard({
         <div className="rounded-[15px] rounded-tl-[3px] bg-card px-4 py-3">
           <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="text-xs font-bold text-primary">{t("voiceHindsight")}</span>
+            <span className="font-mono text-[11px] text-muted-foreground">
+              #{n.number ?? row.seq}
+            </span>
             <span className="text-[11px] text-muted-foreground">{t("toAgent")}</span>
             {n.trigger && (
               <span className="rounded-full bg-primary/10 px-1.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
@@ -2202,15 +2206,20 @@ function NoteCard({
                   {t("pending")}
                 </span>
               )}
-              {timeline.noteMentions.get(row.seq) === "used" && (
+              {outcome?.verdict === "used" && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
                   <CheckCheck className="h-3 w-3" />
                   {t("noteUsed")}
                 </span>
               )}
-              {timeline.noteMentions.get(row.seq) === "unneeded" && (
+              {outcome?.verdict === "not_needed" && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
                   {t("noteNotNeeded")}
+                </span>
+              )}
+              {outcome?.verdict === "wrong" && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-700 dark:text-red-400">
+                  {t("noteWrong")}
                 </span>
               )}
               <Time iso={row.event.created_at} />
@@ -2220,6 +2229,12 @@ function NoteCard({
           <div className="whitespace-pre-wrap break-words text-[15px] leading-relaxed text-foreground">
             {n.text}
           </div>
+
+          {outcome?.reason && (
+            <p className="mt-2 text-[13px] italic leading-relaxed text-muted-foreground">
+              {t("agentReason", { reason: outcome.reason })}
+            </p>
+          )}
 
           {src?.quote && (
             <blockquote className="mt-3 border-l-2 border-primary/40 pl-3 text-[13px] italic leading-relaxed text-foreground/75">

@@ -581,7 +581,7 @@ type ApiListSessionsRequest struct {
 	authorization *string
 }
 
-// Case-insensitive match on the session id
+// Case-insensitive match on the session id; a note number (\&quot;#123\&quot; or \&quot;123\&quot;) also finds the session that got that note
 func (r ApiListSessionsRequest) Q(q string) ApiListSessionsRequest {
 	r.q = &q
 	return r

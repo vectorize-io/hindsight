@@ -23,6 +23,8 @@ var _ MappedNullable = &SessionNote{}
 type SessionNote struct {
 	// Its position in the log: acknowledge it by sending it back as `ack`.
 	Seq int32 `json:"seq"`
+	// Its number in the bank: what the agent is shown and names in its reply, and what finds the session again. Notes written before numbering have their seq.
+	Number int32 `json:"number"`
 	Text string `json:"text"`
 	Source NullableSessionNoteSource `json:"source,omitempty"`
 }
@@ -33,9 +35,10 @@ type _SessionNote SessionNote
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewSessionNote(seq int32, text string) *SessionNote {
+func NewSessionNote(seq int32, number int32, text string) *SessionNote {
 	this := SessionNote{}
 	this.Seq = seq
+	this.Number = number
 	this.Text = text
 	return &this
 }
@@ -70,6 +73,30 @@ func (o *SessionNote) GetSeqOk() (*int32, bool) {
 // SetSeq sets field value
 func (o *SessionNote) SetSeq(v int32) {
 	o.Seq = v
+}
+
+// GetNumber returns the Number field value
+func (o *SessionNote) GetNumber() int32 {
+	if o == nil {
+		var ret int32
+		return ret
+	}
+
+	return o.Number
+}
+
+// GetNumberOk returns a tuple with the Number field value
+// and a boolean to check if the value has been set.
+func (o *SessionNote) GetNumberOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return &o.Number, true
+}
+
+// SetNumber sets field value
+func (o *SessionNote) SetNumber(v int32) {
+	o.Number = v
 }
 
 // GetText returns the Text field value
@@ -149,6 +176,7 @@ func (o SessionNote) MarshalJSON() ([]byte, error) {
 func (o SessionNote) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	toSerialize["seq"] = o.Seq
+	toSerialize["number"] = o.Number
 	toSerialize["text"] = o.Text
 	if o.Source.IsSet() {
 		toSerialize["source"] = o.Source.Get()
@@ -162,6 +190,7 @@ func (o *SessionNote) UnmarshalJSON(data []byte) (err error) {
 	// that every required field exists as a key in the generic map.
 	requiredProperties := []string{
 		"seq",
+		"number",
 		"text",
 	}
 

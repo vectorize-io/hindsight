@@ -1279,7 +1279,7 @@ class SessionsApi:
     async def list_sessions(
         self,
         bank_id: StrictStr,
-        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive match on the session id")] = None,
+        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive match on the session id; a note number (\"#123\" or \"123\") also finds the session that got that note")] = None,
         limit: Optional[Annotated[int, Field(le=500, strict=True, ge=0)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
@@ -1302,7 +1302,7 @@ class SessionsApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param q: Case-insensitive match on the session id
+        :param q: Case-insensitive match on the session id; a note number (\"#123\" or \"123\") also finds the session that got that note
         :type q: str
         :param limit:
         :type limit: int
@@ -1363,7 +1363,7 @@ class SessionsApi:
     async def list_sessions_with_http_info(
         self,
         bank_id: StrictStr,
-        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive match on the session id")] = None,
+        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive match on the session id; a note number (\"#123\" or \"123\") also finds the session that got that note")] = None,
         limit: Optional[Annotated[int, Field(le=500, strict=True, ge=0)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
@@ -1386,7 +1386,7 @@ class SessionsApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param q: Case-insensitive match on the session id
+        :param q: Case-insensitive match on the session id; a note number (\"#123\" or \"123\") also finds the session that got that note
         :type q: str
         :param limit:
         :type limit: int
@@ -1447,7 +1447,7 @@ class SessionsApi:
     async def list_sessions_without_preload_content(
         self,
         bank_id: StrictStr,
-        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive match on the session id")] = None,
+        q: Annotated[Optional[StrictStr], Field(description="Case-insensitive match on the session id; a note number (\"#123\" or \"123\") also finds the session that got that note")] = None,
         limit: Optional[Annotated[int, Field(le=500, strict=True, ge=0)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
@@ -1470,7 +1470,7 @@ class SessionsApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param q: Case-insensitive match on the session id
+        :param q: Case-insensitive match on the session id; a note number (\"#123\" or \"123\") also finds the session that got that note
         :type q: str
         :param limit:
         :type limit: int

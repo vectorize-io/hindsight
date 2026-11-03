@@ -6834,6 +6834,12 @@ export type SessionNote = {
    */
   seq: number;
   /**
+   * Number
+   *
+   * Its number in the bank: what the agent is shown and names in its reply, and what finds the session again. Notes written before numbering have their seq.
+   */
+  number: number;
+  /**
    * Text
    */
   text: string;
@@ -10071,7 +10077,7 @@ export type ListSessionsData = {
     /**
      * Q
      *
-     * Case-insensitive match on the session id
+     * Case-insensitive match on the session id; a note number ("#123" or "123") also finds the session that got that note
      */
     q?: string | null;
     /**

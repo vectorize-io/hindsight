@@ -149,7 +149,7 @@ async def test_the_agent_telling_the_user_about_notes_is_counted_once(memory, re
     )
     await s.append(bank, "s1", _req(*edit), request_context=request_context)
     notes = (await s.events(bank, "s1", request_context=request_context)).items
-    used, unneeded = [e.seq for e in notes if e.kind == "note"][:2]
+    used, unneeded = [e.payload["number"] for e in notes if e.kind == "note"][:2]
     reply = (
         f"> 🧠 **From Hindsight memory (live session #{used})** — K is 1024, so I kept it.\n"
         f"> 🧠 **Hindsight note (live session #{unneeded})** — email masking; not needed here.\n"
@@ -205,7 +205,9 @@ async def test_thought_lines_are_counted_like_note_lines(memory, request_context
     )
     await s.append(bank, "s1", _req(*edit), request_context=request_context)
     used, unneeded = [
-        e.seq for e in (await s.events(bank, "s1", request_context=request_context)).items if e.kind == "note"
+        e.payload["number"]
+        for e in (await s.events(bank, "s1", request_context=request_context)).items
+        if e.kind == "note"
     ][:2]
     reply = (
         f"> 🧠 **Thanks to Hindsight thought #{used}**, I kept K at 1024.\n"
@@ -219,6 +221,14 @@ async def test_thought_lines_are_counted_like_note_lines(memory, request_context
 
     state = WatchState.model_validate(await _watch_state(memory, bank, "s1"))
     assert state.set_aside == ["Email is never masked."]
+    # Each note carries what the agent made of it, in the agent's own words.
+    notes = {
+        e.payload["number"]: e.payload
+        for e in (await s.events(bank, "s1", request_context=request_context)).items
+        if e.kind == "note"
+    }
+    assert notes[used]["feedback"] == {"verdict": "used", "reason": "I kept K at 1024."}
+    assert notes[unneeded]["feedback"] == {"verdict": "not_needed", "reason": "no email here."}
 
 
 async def test_an_event_carrying_a_nul_is_stored_without_it(memory, request_context):
@@ -868,3 +878,64 @@ async def test_a_rerun_of_the_same_request_inherits_what_earlier_runs_set_aside(
         request_context=request_context,
     )
     assert WatchState.model_validate(await _watch_state(memory, bank, "run3")).set_aside == []
+
+
+@pytest.mark.parametrize(
+    ("line", "verdict", "reason"),
+    [
+        ("> 🧠 **Thanks to Hindsight thought #7**, I kept K at 1024.", "used", "I kept K at 1024."),
+        (
+            "> 🧠 Hindsight thought #7 — K is 1024; no change: I already used 1024.",
+            "not_needed",
+            "I already used 1024.",
+        ),
+        (
+            "> 🧠 Hindsight thought #7 — K is 1000; wrong: the commit it cites sets 1024.",
+            "wrong",
+            "the commit it cites sets 1024.",
+        ),
+        ("> 🧠 Hindsight thought #7 — K is 1024", "not_needed", "K is 1024"),
+    ],
+)
+def test_the_line_an_agent_writes_about_a_note_gives_its_verdict(line, verdict, reason):
+    from hindsight_api.engine.sessions.service import note_feedback
+
+    fb = note_feedback(line)[7]
+    assert (fb.verdict, fb.reason) == (verdict, reason)
+
+
+def test_used_wins_when_a_message_names_a_note_twice():
+    from hindsight_api.engine.sessions.service import note_feedback
+
+    text = "> 🧠 Hindsight thought #3 — x; no change: done\n> 🧠 **Thanks to Hindsight thought #3**, fixed y."
+    assert note_feedback(text)[3].verdict == "used"
+
+
+async def test_notes_are_numbered_across_the_bank_and_found_by_number(memory, request_context, monkeypatch):
+    """A note's number names one note in the bank, and "#N" finds the session that got it."""
+    bank = _bank()
+    s = memory.sessions
+    monkeypatch.setattr(
+        memory,
+        "reflect_async",
+        _reflect_stub([("Before you change units.py: K is 1024.", [str(uuid.uuid4())])] * 2, []),
+    )
+    for sid in ("s1", "s2"):
+        await s.append(
+            bank,
+            sid,
+            _req({"id": "u", "role": "user", "text": "Fix the unit sizes in units.py"}, live=True, retain="off"),
+            request_context=request_context,
+        )
+    numbers = {
+        sid: [
+            e.payload["number"]
+            for e in (await s.events(bank, sid, request_context=request_context)).items
+            if e.kind == "note"
+        ]
+        for sid in ("s1", "s2")
+    }
+    assert sorted(numbers["s1"] + numbers["s2"]) == [1, 2]
+    second = "s1" if numbers["s1"] == [2] else "s2"
+    found = await s.list(bank, q="#2", request_context=request_context)
+    assert [x.session_id for x in found.items] == [second]

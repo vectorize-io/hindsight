@@ -2407,6 +2407,8 @@
     "noteMentions": "{used} 個用咗 · {skipped} 個唔使",
     "noteUsed": "代理用咗",
     "noteNotNeeded": "唔使",
+    "noteWrong": "錯誤",
+    "agentReason": "代理：{reason}",
     "usedCount": "用咗 {count} 個",
     "rawLog": "原始記錄",
     "liveOffLong": "即時會話關閉",

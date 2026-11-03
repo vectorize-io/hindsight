@@ -18,6 +18,13 @@ const where = (document_id: string, mentioned_at?: string) =>
   renderNote({ seq: 1, text: "K.", source: { document_id, mentioned_at } }).split("Source: ")[1];
 
 describe("the note's source", () => {
+  it("names the note by its number in the bank, not its place in the session log", () => {
+    const text = renderNote({ seq: 7, number: 123, text: "K is 1024." });
+    expect(text).toContain("thought #123:");
+    expect(text).toContain(noteCredit(123));
+    expect(text).not.toContain("#7");
+  });
+
   it("renders the note, where to read it, and the quote", () => {
     expect(
       renderNote({
@@ -26,10 +33,10 @@ describe("the note's source", () => {
         source: { document_id: "git:abc", quote: "memory as 1024" },
       })
     ).toBe(
-      `${NOTE_LEAD.replace("thought:", "thought #1:")} K is 1024. Source: git show abc — "memory as 1024". Share it with the user: "${noteCredit(1)} …" if you did something differently because of it, else "${noteDismiss(1)} …; no change: …"`
+      `${NOTE_LEAD.replace("thought:", "thought #1:")} K is 1024. Source: git show abc — "memory as 1024". Share it with the user: "${noteCredit(1)} …" if you did something differently because of it, else "${noteDismiss(1)} …; no change: …" (or "…; wrong: …" if it is wrong)`
     );
     expect(renderNote({ seq: 1, text: "K is 1024." })).toBe(
-      `${NOTE_LEAD.replace("thought:", "thought #1:")} K is 1024. Source: project memory. Share it with the user: "${noteCredit(1)} …" if you did something differently because of it, else "${noteDismiss(1)} …; no change: …"`
+      `${NOTE_LEAD.replace("thought:", "thought #1:")} K is 1024. Source: project memory. Share it with the user: "${noteCredit(1)} …" if you did something differently because of it, else "${noteDismiss(1)} …; no change: …" (or "…; wrong: …" if it is wrong)`
     );
   });
 

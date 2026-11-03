@@ -2897,7 +2897,8 @@ paths:
           title: Bank Id
           type: string
         style: simple
-      - description: Case-insensitive match on the session id
+      - description: Case-insensitive match on the session id; a note number ("#123"
+          or "123") also finds the session that got that note
         explode: true
         in: query
         name: q
@@ -13530,13 +13531,15 @@ components:
       example:
         checking: true
         notes:
-        - text: text
+        - number: 6
+          text: text
           source:
             quote: ""
             mentioned_at: 2000-01-23T04:56:07.000+00:00
             document_id: document_id
           seq: 0
-        - text: text
+        - number: 6
+          text: text
           source:
             quote: ""
             mentioned_at: 2000-01-23T04:56:07.000+00:00
@@ -13754,6 +13757,7 @@ components:
         A note for the agent. What Hindsight checked and the memories it used are in the session's
         event log (the note's `note` entry and its `check`).
       example:
+        number: 6
         text: text
         source:
           quote: ""
@@ -13766,12 +13770,19 @@ components:
             \ as `ack`."
           title: Seq
           type: integer
+        number:
+          description: "Its number in the bank: what the agent is shown and names\
+            \ in its reply, and what finds the session again. Notes written before\
+            \ numbering have their seq."
+          title: Number
+          type: integer
         text:
           title: Text
           type: string
         source:
           $ref: '#/components/schemas/SessionNoteSource'
       required:
+      - number
       - seq
       - text
       title: SessionNote

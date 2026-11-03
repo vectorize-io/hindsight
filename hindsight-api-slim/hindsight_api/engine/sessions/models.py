@@ -137,6 +137,10 @@ class SessionNote(BaseModel):
     event log (the note's `note` entry and its `check`)."""
 
     seq: int = Field(description="Its position in the log: acknowledge it by sending it back as `ack`.")
+    number: int = Field(
+        description="Its number in the bank: what the agent is shown and names in its reply, and what "
+        "finds the session again. Notes written before numbering have their seq."
+    )
     text: str
     source: SessionNoteSource | None = None
 
@@ -236,6 +240,19 @@ class CheckLog(BaseModel):
     llm_calls: list[dict[str, Any]] | None = None
 
 
+NoteVerdict = Literal["used", "not_needed", "wrong"]
+
+
+class NoteFeedback(BaseModel):
+    """What the agent said a note did for its work, read from the line it writes about the note."""
+
+    verdict: NoteVerdict = Field(
+        description="used: it changed the work; not_needed: the agent already did it or it does not "
+        "apply; wrong: its source does not say it, or it is outdated"
+    )
+    reason: str = Field(default="", description="The agent's own words: what it did, or why not")
+
+
 class NoteLog(BaseModel):
     """A note's entry in the session log."""
 
@@ -244,3 +261,7 @@ class NoteLog(BaseModel):
     check_seq: int
     memory_ids: list[str]
     source: SessionNoteSource | None = None
+    # The note's number in the bank (also its row's note_number column).
+    number: int | None = None
+    # Set once the agent writes its line about the note (see sessions.service.note_feedback).
+    feedback: NoteFeedback | None = None

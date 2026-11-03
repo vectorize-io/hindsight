@@ -50,6 +50,10 @@ interface NotePayload {
   check_seq?: number;
   memory_ids?: string[];
   source?: NoteSource | null;
+  /** Its number in the bank: what the agent was shown. Notes from before numbering have none. */
+  number?: number;
+  /** What the agent said the note did, saved by the server from the agent's line about it. */
+  feedback?: { verdict: NoteVerdict; reason?: string } | null;
 }
 
 interface SavePayload {
@@ -210,11 +214,17 @@ interface Timeline {
   /** Row key for any seq it contains (a tool row holds its call's and its result's seq). */
   rowKeyBySeq: Map<number, string>;
   eventBySeq: Map<number, SessionEvent>;
-  /** What the agent told the user about each note (by note seq); "used" wins over "unneeded". */
-  noteMentions: Map<number, NoteMention>;
+  /** What each note did for the agent's work (by note seq). */
+  noteOutcomes: Map<number, NoteOutcome>;
 }
 
 export type NoteMention = "used" | "unneeded";
+export type NoteVerdict = "used" | "not_needed" | "wrong";
+export interface NoteOutcome {
+  verdict: NoteVerdict;
+  /** The agent's own words: what it did, or why not. */
+  reason?: string;
+}
 
 // The lines the agent is asked to write about a note (the server counts the same ones:
 // hindsight_api/engine/sessions/service.py CREDIT_RE / DISMISS_RE).
@@ -234,6 +244,29 @@ export function noteMentions(events: SessionEvent[]): Map<number, NoteMention> {
       if (!out.has(n)) out.set(n, "unneeded");
     }
     for (const m of p.text.matchAll(USED_RE)) out.set(+(m[1] ?? m[2]), "used");
+  }
+  return out;
+}
+
+/**
+ * Each note's outcome, by the note's seq: the verdict and reason the server saved on the note, else
+ * (a note from before the server saved them) what the agent's lines say. The agent names a note by
+ * its number in the bank, which is its seq only for notes from before numbering.
+ */
+export function noteOutcomes(events: SessionEvent[]): Map<number, NoteOutcome> {
+  const seqByNumber = new Map<number, number>();
+  const out = new Map<number, NoteOutcome>();
+  for (const ev of events) {
+    if (ev.kind !== "note") continue;
+    const p = (ev.payload ?? {}) as NotePayload;
+    seqByNumber.set(typeof p.number === "number" ? p.number : ev.seq, ev.seq);
+    if (p.feedback?.verdict)
+      out.set(ev.seq, { verdict: p.feedback.verdict, reason: p.feedback.reason || undefined });
+  }
+  for (const [n, mention] of noteMentions(events)) {
+    const seq = seqByNumber.get(n);
+    if (seq !== undefined && !out.has(seq))
+      out.set(seq, { verdict: mention === "used" ? "used" : "not_needed" });
   }
   return out;
 }
@@ -351,7 +384,7 @@ export function buildTimeline(events: SessionEvent[]): Timeline {
       push({ kind: "other", key, seq: ev.seq, event: ev, checks: [] });
     }
   }
-  return { rows, rowKeyBySeq, eventBySeq, noteMentions: noteMentions(events) };
+  return { rows, rowKeyBySeq, eventBySeq, noteOutcomes: noteOutcomes(events) };
 }
 
 /** Checks that found nothing to say (or never ran): kept quiet, hidden by the "silent checks" toggle. */

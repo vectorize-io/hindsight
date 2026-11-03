@@ -2407,6 +2407,8 @@
     "noteMentions": "{used}개 사용 · {skipped}개 불필요",
     "noteUsed": "에이전트가 사용함",
     "noteNotNeeded": "불필요",
+    "noteWrong": "잘못됨",
+    "agentReason": "에이전트: {reason}",
     "usedCount": "{count}개 사용",
     "rawLog": "원본 로그",
     "liveOffLong": "라이브 세션 꺼짐",

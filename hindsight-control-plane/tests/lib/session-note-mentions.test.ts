@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionEvent } from "@/lib/api";
-import { noteMentions } from "@/lib/session-timeline";
+import { noteMentions, noteOutcomes } from "@/lib/session-timeline";
 
 const msg = (seq: number, role: string, text: string): SessionEvent => ({
   seq,
@@ -35,5 +35,31 @@ describe("noteMentions", () => {
       [9, "unneeded"],
       [10, "unneeded"],
     ]);
+  });
+});
+
+describe("noteOutcomes", () => {
+  const note = (seq: number, payload: Record<string, unknown>): SessionEvent => ({
+    seq,
+    event_id: `hindsight:${seq}`,
+    source: "hindsight",
+    kind: "note",
+    created_at: "2026-11-03T10:00:00Z",
+    payload: { text: "K is 1024.", ...payload },
+  });
+
+  it("takes the verdict and reason the server saved on the note", () => {
+    const out = noteOutcomes([
+      note(4, { number: 120, feedback: { verdict: "wrong", reason: "the commit sets 1000" } }),
+    ]);
+    expect(out.get(4)).toEqual({ verdict: "wrong", reason: "the commit sets 1000" });
+  });
+
+  it("reads an older note from the agent's line, by its number in the bank", () => {
+    const out = noteOutcomes([
+      note(4, { number: 120 }),
+      msg(5, "assistant", "> 🧠 **Thanks to Hindsight thought #120**, I kept K at 1024."),
+    ]);
+    expect(out.get(4)).toEqual({ verdict: "used" });
   });
 });

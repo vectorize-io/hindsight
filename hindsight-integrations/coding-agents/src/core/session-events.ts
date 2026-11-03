@@ -45,6 +45,8 @@ export interface SessionAppend {
 
 export interface SessionNote {
   seq: number;
+  /** Its number in the bank: what the agent is shown and names back (servers before numbering send none). */
+  number?: number;
   text: string;
   source?: { document_id: string; quote?: string; mentioned_at?: string | null } | null;
 }

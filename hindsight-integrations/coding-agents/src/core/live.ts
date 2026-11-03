@@ -47,7 +47,9 @@ export const LIVE_DECLARATION =
   "anything differently because of it (fix, add, avoid or undo something)? If yes:\n" +
   `${NOTE_CREDIT} <what you did differently>\n` +
   "If no (you were already doing it, or it does not apply):\n" +
-  `${NOTE_DISMISS} <what it said>; no change: <why>`;
+  `${NOTE_DISMISS} <what it said>; no change: <why>\n` +
+  "If it is wrong (its source does not say it, or it is outdated):\n" +
+  `${NOTE_DISMISS} <what it said>; wrong: <why>`;
 
 /** Where the agent can read a note's source. Commit ids are this repo's own, so git can show them. */
 function whereFor(source: SessionNote["source"]): string {
@@ -65,10 +67,12 @@ function whereFor(source: SessionNote["source"]): string {
  */
 export function renderNote(n: SessionNote): string {
   const quote = n.source?.quote ?? "";
+  // The bank-wide number: the server reads the agent's line by it, and the user can search it.
+  const num = n.number ?? n.seq;
   return (
-    `${NOTE_LEAD.replace("thought:", `thought #${n.seq}:`)} ${n.text.trim()} Source: ${whereFor(n.source)}${quote ? ` — "${quote}"` : ""}` +
-    `. Share it with the user: "${noteCredit(n.seq)} …" if you did something differently because of it, ` +
-    `else "${noteDismiss(n.seq)} …; no change: …"`
+    `${NOTE_LEAD.replace("thought:", `thought #${num}:`)} ${n.text.trim()} Source: ${whereFor(n.source)}${quote ? ` — "${quote}"` : ""}` +
+    `. Share it with the user: "${noteCredit(num)} …" if you did something differently because of it, ` +
+    `else "${noteDismiss(num)} …; no change: …" (or "…; wrong: …" if it is wrong)`
   );
 }
 

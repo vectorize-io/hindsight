@@ -2407,6 +2407,8 @@
     "noteMentions": "{used} usadas · {skipped} desnecessárias",
     "noteUsed": "Usada pelo agente",
     "noteNotNeeded": "Desnecessária",
+    "noteWrong": "Incorreta",
+    "agentReason": "Agente: {reason}",
     "usedCount": "{count} usadas",
     "rawLog": "Registo bruto",
     "liveOffLong": "Sessão ao vivo desligada",

@@ -51,6 +51,7 @@ from .models import (
     MAX_EVENT_TEXT,
     CheckLog,
     ContentPart,
+    NoteFeedback,
     NoteLog,
     SavedTurn,
     SessionAppendRequest,
@@ -107,6 +108,42 @@ DISMISS_RE = re.compile(
     r"|🧠 Hindsight thought (#\d+(?:\s*(?:/|,|and)\s*#\d+)*) —"
 )
 NOTE_NUMBER_RE = re.compile(r"#(\d+)")
+NOTE_SEARCH_RE = re.compile(r"#?(\d+)")
+# The verdict after a not-needed line's "<what it said>;": "wrong:" when the agent found the note
+# false or outdated, else not needed ("no change:", or the older ", already done" / ", set aside").
+_WRONG_RE = re.compile(r";\s*wrong:\s*", re.I)
+_NO_CHANGE_RE = re.compile(r";\s*no change:\s*", re.I)
+MAX_FEEDBACK_REASON = 500
+
+
+def note_feedback(text: str) -> dict[int, NoteFeedback]:
+    """The verdict and reason an agent's message gives each note it names, by note number.
+
+    Bound to the lines the agent is asked to write (coding-agents ``live.ts``): "**Thanks to
+    Hindsight thought #N**, <what changed>" is used; "Hindsight thought #N — <what it said>; no
+    change: <why>" is not needed, and "...; wrong: <why>" is wrong. Used wins within one message.
+    """
+    out: dict[int, NoteFeedback] = {}
+    for line in text.splitlines():
+        for m in CREDIT_RE.finditer(line):
+            reason = line[m.end() :].strip(" ,—:*-")
+            for n in NOTE_NUMBER_RE.findall(next(g for g in m.groups() if g)):
+                out[int(n)] = NoteFeedback(verdict="used", reason=reason[:MAX_FEEDBACK_REASON])
+        for m in DISMISS_RE.finditer(line):
+            rest = line[m.end() :]
+            wrong = _WRONG_RE.search(rest)
+            no_change = _NO_CHANGE_RE.search(rest)
+            if wrong:
+                fb = NoteFeedback(verdict="wrong", reason=rest[wrong.end() :].strip()[:MAX_FEEDBACK_REASON])
+            else:
+                why = rest[no_change.end() :] if no_change else rest
+                fb = NoteFeedback(verdict="not_needed", reason=why.strip(" ,—:*-")[:MAX_FEEDBACK_REASON])
+            for n in NOTE_NUMBER_RE.findall(next(g for g in m.groups() if g)):
+                if int(n) not in out:
+                    out[int(n)] = fb
+    return out
+
+
 # How the saved conversation reads to extraction when the client does not say: who is speaking.
 DEFAULT_SAVE_CONTEXT = (
     "conversation between a user and an assistant: user turns are the user's words and decisions, "
@@ -390,8 +427,7 @@ class SessionService:
                 seq = int(row["next_seq"])
                 rows: list[tuple[int, str, str, str]] = []
                 seen: set[str] = set()
-                cited: set[int] = set()
-                said_unneeded: set[int] = set()
+                feedback: dict[int, NoteFeedback] = {}
                 for event in incoming:
                     if event.id in known or event.id in seen:
                         continue
@@ -404,31 +440,56 @@ class SessionService:
                         if step is not None:
                             W.read_step(state, step, seq)
                     if event.kind == "message" and payload["role"] == "assistant":
-                        for m in CREDIT_RE.finditer(payload["text"]):
-                            cited.update(int(n) for n in NOTE_NUMBER_RE.findall(next(g for g in m.groups() if g)))
-                        for m in DISMISS_RE.finditer(payload["text"]):
-                            said_unneeded.update(
-                                int(n) for n in NOTE_NUMBER_RE.findall(next(g for g in m.groups() if g))
-                            )
+                        for n, fb in note_feedback(payload["text"]).items():
+                            if n not in feedback or fb.verdict == "used":
+                                feedback[n] = fb
                     rows.append((seq, event.id, event.kind, json.dumps(payload)))
                     seq += 1
                 turn_ended = any(r[2] == "turn_end" for r in rows)
                 credits = dismissed = 0
+                cited = {n for n, fb in feedback.items() if fb.verdict == "used"}
+                said_unneeded = set(feedback) - cited
                 if cited or said_unneeded:
                     # Only this session's notes count, each once however often the agent names it.
-                    note_text = {
-                        int(r["seq"]): str(r["text"] or "")
+                    # The agent names a note by its number; a note from before numbering by its seq.
+                    # Everything below keys a note by its seq, as the watch state always has.
+                    by_number = {
+                        int(r["number"]): (int(r["seq"]), NoteLog.model_validate(conn.parse_json(r["payload"])))
                         for r in await conn.fetch(
                             f"""
-                            SELECT seq, payload->>'text' AS text FROM {fq_table("session_events")}
-                            WHERE bank_id = $1 AND session_id = $2 AND kind = 'note' AND seq = ANY($3)
+                            SELECT seq, COALESCE(note_number, seq) AS number, payload
+                            FROM {fq_table("session_events")}
+                            WHERE bank_id = $1 AND session_id = $2 AND kind = 'note'
+                              AND COALESCE(note_number, seq) = ANY($3)
                             """,
                             bank_id,
                             session_id,
                             list(cited | said_unneeded),
                         )
                     }
+                    feedback = {by_number[n][0]: fb for n, fb in feedback.items() if n in by_number}
+                    cited = {by_number[n][0] for n in cited if n in by_number}
+                    said_unneeded = {by_number[n][0] for n in said_unneeded if n in by_number}
+                    note_rows = dict(by_number.values())
+                    note_text = {n: log.text for n, log in note_rows.items()}
                     notes_here = set(note_text)
+                    # The verdict and reason go onto the note itself, so the log shows each note with
+                    # what the agent made of it. Used wins here too: a note already used keeps it.
+                    for n, log in note_rows.items():
+                        fb = feedback[n]
+                        if log.feedback is not None and (log.feedback.verdict == "used" or fb == log.feedback):
+                            continue
+                        log.feedback = fb
+                        await conn.execute(
+                            f"""
+                            UPDATE {fq_table("session_events")} SET payload = $4::jsonb
+                            WHERE bank_id = $1 AND session_id = $2 AND seq = $3
+                            """,
+                            bank_id,
+                            session_id,
+                            n,
+                            log.model_dump_json(exclude_none=True),
+                        )
                     # Used wins: in beta an agent first called a note not needed, then worked by it
                     # and credited it. A note once used is never counted as not needed.
                     new_credits = sorted((cited & notes_here) - set(state.credited))
@@ -628,6 +689,7 @@ class SessionService:
             notes.append(
                 SessionNote(
                     seq=int(r["seq"]),
+                    number=int(p.get("number") or r["seq"]),
                     text=p.get("text", ""),
                     source=SessionNoteSource.model_validate(p["source"]) if p.get("source") else None,
                 )
@@ -936,14 +998,32 @@ class SessionService:
                     ),
                 )
                 if spoke:
+                    # A note's number counts the bank's notes, so "#123" names one note in the bank.
+                    # The bank row lock keeps two sessions from taking the same number at once.
+                    await conn.fetchval(
+                        f"SELECT bank_id FROM {fq_table('banks')} WHERE bank_id = $1 FOR UPDATE", bank_id
+                    )
+                    number = int(
+                        await conn.fetchval(
+                            f"SELECT COALESCE(MAX(note_number), 0) + 1 FROM {fq_table('session_events')} "
+                            "WHERE bank_id = $1",
+                            bank_id,
+                        )
+                    )
                     await self._log(
                         conn,
                         bank_id,
                         session_id,
                         "note",
                         NoteLog(
-                            text=text, trigger=m.trigger, check_seq=check_seq, memory_ids=memory_ids, source=source
+                            text=text,
+                            trigger=m.trigger,
+                            check_seq=check_seq,
+                            memory_ids=memory_ids,
+                            source=source,
+                            number=number,
                         ),
+                        note_number=number,
                     )
                 await conn.execute(
                     f"""
@@ -966,6 +1046,7 @@ class SessionService:
         kind: str,
         payload: CheckLog | NoteLog | dict[str, Any],
         event_id: str = "",
+        note_number: int | None = None,
     ) -> int:
         """Append one of Hindsight's own entries (a check, a note, a save) to the session log, at the
         next position. Needs the session row locked."""
@@ -978,8 +1059,8 @@ class SessionService:
         )
         await conn.execute(
             f"""
-            INSERT INTO {fq_table("session_events")} (bank_id, session_id, seq, event_id, source, kind, payload)
-            VALUES ($1, $2, $3, $4, 'hindsight', $5, $6::jsonb)
+            INSERT INTO {fq_table("session_events")} (bank_id, session_id, seq, event_id, source, kind, payload, note_number)
+            VALUES ($1, $2, $3, $4, 'hindsight', $5, $6::jsonb, $7)
             """,
             bank_id,
             session_id,
@@ -990,6 +1071,7 @@ class SessionService:
             payload.model_dump_json(exclude_none=True)
             if isinstance(payload, BaseModel)
             else json.dumps(payload, default=str),
+            note_number,
         )
         await conn.execute(
             f"UPDATE {fq_table('sessions')} SET next_seq = $3 WHERE bank_id = $1 AND session_id = $2",
@@ -1349,7 +1431,16 @@ class SessionService:
         args: list[Any] = [bank_id]
         if q:
             args.append(f"%{q.lower()}%")
-            where += f" AND LOWER(session_id) LIKE ${len(args)}"
+            where += f" AND (LOWER(session_id) LIKE ${len(args)}"
+            # "#123" (or "123") also finds the session that got note 123: a note the agent showed
+            # the user leads back to its conversation. Notes from before numbering match by seq.
+            if number := NOTE_SEARCH_RE.fullmatch(q.strip()):
+                args.append(int(number.group(1)))
+                where += (
+                    f" OR session_id IN (SELECT session_id FROM {fq_table('session_events')}"
+                    f" WHERE bank_id = $1 AND kind = 'note' AND COALESCE(note_number, seq) = ${len(args)})"
+                )
+            where += ")"
         async with acquire_with_retry(backend) as conn:
             total = int(await conn.fetchval(f"SELECT COUNT(*) FROM {fq_table('sessions')} WHERE {where}", *args))
             rows = await conn.fetch(

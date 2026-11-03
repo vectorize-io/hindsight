@@ -28,9 +28,10 @@ class SessionNote(BaseModel):
     A note for the agent. What Hindsight checked and the memories it used are in the session's event log (the note's `note` entry and its `check`).
     """ # noqa: E501
     seq: StrictInt = Field(description="Its position in the log: acknowledge it by sending it back as `ack`.")
+    number: StrictInt = Field(description="Its number in the bank: what the agent is shown and names in its reply, and what finds the session again. Notes written before numbering have their seq.")
     text: StrictStr
     source: Optional[SessionNoteSource] = None
-    __properties: ClassVar[List[str]] = ["seq", "text", "source"]
+    __properties: ClassVar[List[str]] = ["seq", "number", "text", "source"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -92,6 +93,7 @@ class SessionNote(BaseModel):
 
         _obj = cls.model_validate({
             "seq": obj.get("seq"),
+            "number": obj.get("number"),
             "text": obj.get("text"),
             "source": SessionNoteSource.from_dict(obj["source"]) if obj.get("source") is not None else None
         })

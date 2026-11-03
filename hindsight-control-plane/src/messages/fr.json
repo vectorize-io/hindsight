@@ -2407,6 +2407,8 @@
     "noteMentions": "{used} utilisées · {skipped} inutiles",
     "noteUsed": "Utilisée par l'agent",
     "noteNotNeeded": "Inutile",
+    "noteWrong": "Erronée",
+    "agentReason": "Agent : {reason}",
     "usedCount": "{count} utilisées",
     "rawLog": "Journal brut",
     "liveOffLong": "Session en direct inactive",

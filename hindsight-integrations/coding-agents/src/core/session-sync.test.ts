@@ -210,7 +210,7 @@ describe("syncSession", () => {
     appendFileSync(s.transcript, prompt("u1", "Fix it."));
     const r = await syncSession(base(s, client));
     expect(r.notes).toEqual([
-      `${NOTE_LEAD.replace("thought:", "thought #3:")} Before you change units.py: K is 1024. Source: a past session (2026-10-01) — "K is 1024, never 1000.". Share it with the user: "${noteCredit(3)} …" if you did something differently because of it, else "${noteDismiss(3)} …; no change: …"`,
+      `${NOTE_LEAD.replace("thought:", "thought #3:")} Before you change units.py: K is 1024. Source: a past session (2026-10-01) — "K is 1024, never 1000.". Share it with the user: "${noteCredit(3)} …" if you did something differently because of it, else "${noteDismiss(3)} …; no change: …" (or "…; wrong: …" if it is wrong)`,
     ]);
     await syncSession(base(s, client));
     expect(appends.map((a) => a.ack)).toEqual([0, 3]);

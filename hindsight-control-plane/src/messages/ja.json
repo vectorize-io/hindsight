@@ -2407,6 +2407,8 @@
     "noteMentions": "{used} 件使用 · {skipped} 件不要",
     "noteUsed": "エージェントが使用",
     "noteNotNeeded": "不要",
+    "noteWrong": "誤り",
+    "agentReason": "エージェント: {reason}",
     "usedCount": "{count} 件使用",
     "rawLog": "生ログ",
     "liveOffLong": "ライブセッション オフ",
