@@ -31,7 +31,7 @@ from hindsight_api.api.http import (
     run_task_cancellable_on_disconnect,
 )
 from hindsight_api.cancellation import CancellationToken, OperationCancelledError
-from hindsight_api.metrics import _is_client_cancellation
+from hindsight_api.metrics import OperationOutcome, _outcome_of_error
 from hindsight_api.models import RequestContext
 
 _TEST_TIMEOUT_SECONDS = 3.0
@@ -384,7 +384,7 @@ async def test_run_task_cancellable_stops_work_that_reaches_no_checkpoint():
     assert exc.value.status_code == _CLIENT_CLOSED_REQUEST_STATUS_CODE
     assert exc.value.detail == "client disconnected"
     # Counted as abandoned, not as a failed operation (#5946).
-    assert _is_client_cancellation(exc.value)
+    assert _outcome_of_error(exc.value) is OperationOutcome.CANCELLED
     assert unwound.is_set(), "the cancelled task was abandoned instead of awaited"
 
 

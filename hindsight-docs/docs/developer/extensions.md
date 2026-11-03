@@ -346,6 +346,20 @@ chunked transfer encoding). Use it for cheap size-aware quota or cost guards;
 the full `validate_*` hooks still run after parsing and should enforce precise
 per-operation limits.
 
+#### Rejecting an operation
+
+`ValidationResult.reject(reason, status_code=403)` refuses the operation before
+it does any work. The caller gets `status_code` with `reason` as the error
+detail, so pick the code that tells the client what to do: `403` for a policy
+refusal, `402` or `429` for a quota. The refusal is counted on
+`hindsight.operation.total` with `success="rejected"`, not `"false"`, so a
+client that keeps calling after it has been refused does not show up as a rise
+in the operation's failure rate (see [Monitoring](./monitoring.md)).
+
+Only a rejection counts that way. If the validator itself raises (for example,
+its quota service is down), the operation fails with a `500` and is counted as
+`success="false"`.
+
 #### Memory curation hooks
 
 Curating a memory (`PATCH /v1/default/banks/{bank_id}/memories/{memory_id}`:

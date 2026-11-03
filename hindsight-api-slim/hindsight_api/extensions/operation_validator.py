@@ -16,7 +16,14 @@ if TYPE_CHECKING:
 
 
 class OperationValidationError(Exception):
-    """Raised when an operation fails validation."""
+    """The operation was refused before it did any work.
+
+    Raised for a ``ValidationResult.reject`` from an OperationValidatorExtension, and by
+    the engine's own tag-scope checks.
+
+    The HTTP layer answers ``status_code`` with ``reason``, and the operation is counted
+    with ``success="rejected"`` rather than as a failure (see metrics.OperationOutcome).
+    """
 
     def __init__(self, reason: str, status_code: int = 403):
         self.reason = reason

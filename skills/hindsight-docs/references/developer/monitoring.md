@@ -121,9 +121,11 @@ only on deployments with few banks or tenants. The backlog gauges always carry `
 - `budget`: Budget level if specified (`low`, `mid`, `high`)
 - `max_tokens`: Max tokens if specified
 - `success`: How the operation ended: `true`, `false`, `cancelled` when the client disconnected
-  before a recall or reflect finished, or `rejected` when an operation validator refused it. Neither
-  a cancellation nor a rejection is a failure, so `success="false"` stays a server-side signal; the
-  `cancelled` duration shows how long clients waited before giving up.
+  before a recall or reflect finished, or `rejected` when it was refused before it ran (an
+  [operation validator](./extensions.md#rejecting-an-operation) rejected it, or the caller's tag
+  scope does not allow it). Neither a cancellation nor a rejection is a failure, so
+  `success="false"` stays a server-side signal; the `cancelled` duration shows how long clients
+  waited before giving up.
 - `memories_backend`: The store serving the bank, when the memories extension names one
   (`MemoriesExtension.backend_name_for`). Absent by default, so existing series are unchanged; a
   deployment whose banks live in different stores uses it to compare their latency without

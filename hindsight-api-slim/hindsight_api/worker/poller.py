@@ -29,7 +29,7 @@ from ..config import (
     get_config,
 )
 from ..engine.schema import fq_table_explicit as fq_table
-from ..metrics import get_metrics_collector
+from ..metrics import OperationOutcome, get_metrics_collector
 from ..operation_runs import worker_task
 from .backpressure import is_append_conflict, is_store_backpressure
 from .exceptions import DeferOperation, RetryTaskAt, format_task_error
@@ -1409,7 +1409,7 @@ class WorkerPoller:
                 metrics.record_operation_result(
                     op_label,
                     bank_id,
-                    success=terminal_success,
+                    outcome=OperationOutcome.SUCCESS if terminal_success else OperationOutcome.FAILURE,
                     duration=time.perf_counter() - op_start,
                     source="worker",
                 )

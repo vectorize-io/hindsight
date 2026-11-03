@@ -10,6 +10,7 @@ from hindsight_api.metrics import (
     MetricsCollector,
     MetricsCollectorBase,
     NoOpMetricsCollector,
+    OperationOutcome,
     get_metrics_collector,
     get_token_bucket,
     create_metrics_collector,
@@ -222,7 +223,7 @@ class TestMetricsCollector:
         assert collector.operation_total.add.call_args[0][1]["success"] == "false"
 
     def test_record_operation_result_records_rejected(self, collector):
-        collector.record_operation_result("retain", "test_bank", success=False, duration=0.1, rejected=True)
+        collector.record_operation_result("retain", "test_bank", outcome=OperationOutcome.REJECTED, duration=0.1)
 
         assert collector.operation_total.add.call_args[0][1]["success"] == "rejected"
 
@@ -284,7 +285,9 @@ class TestMetricsCollector:
 
     def test_record_operation_result_records_with_explicit_success(self, collector):
         """Direct recording path used by the worker (source=worker, explicit success)."""
-        collector.record_operation_result("retain", bank_id="test_bank", success=False, duration=1.5, source="worker")
+        collector.record_operation_result(
+            "retain", bank_id="test_bank", outcome=OperationOutcome.FAILURE, duration=1.5, source="worker"
+        )
 
         duration, attributes = collector.operation_duration.record.call_args[0]
         assert duration == 1.5
@@ -349,7 +352,7 @@ class TestMetricsCollector:
         ):
             collector = MetricsCollector()
 
-        collector.record_operation_result("recall", "test_bank", success=True, duration=0.1)
+        collector.record_operation_result("recall", "test_bank", outcome=OperationOutcome.SUCCESS, duration=0.1)
         collector.record_recall_phase("engine_auth", 0.01)
         collector.record_retain_phase("write", 0.01)
 
