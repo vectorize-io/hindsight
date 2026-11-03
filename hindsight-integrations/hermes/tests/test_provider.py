@@ -611,7 +611,7 @@ def test_an_unreachable_server_is_asked_again_not_cached(version_probe, monkeypa
     assert plugin._check_api_supports_update_mode_append("http://hs.test") is False
     # Inside the retry window a hung server is not asked again on every turn.
     assert plugin._check_api_supports_update_mode_append("http://hs.test") is False
-    assert down.calls == ["/v1/version", "/version"]
+    assert down.calls == ["/v1/version", "/version", "/api/version"]
 
     monkeypatch.setattr(plugin, "_APPEND_PROBE_RETRY_S", 0.0)
     up = version_probe({"/v1/version": {"api_version": "0.10.3"}})
@@ -641,7 +641,7 @@ def test_an_old_server_answer_is_cached(version_probe):
     old = version_probe({"/v1/version": 404, "/version": 404})
     assert plugin._check_api_supports_update_mode_append("http://hs.test") is False
     assert plugin._check_api_supports_update_mode_append("http://hs.test") is False
-    assert old.calls == ["/v1/version", "/version"]
+    assert old.calls == ["/v1/version", "/version", "/api/version"]
 
 
 def test_version_falls_back_to_the_bare_path(version_probe):
@@ -649,6 +649,13 @@ def test_version_falls_back_to_the_bare_path(version_probe):
     server = version_probe({"/v1/version": 404, "/version": {"version": "0.5.0"}})
     assert plugin._check_api_supports_update_mode_append("http://hs.test") is True
     assert server.calls == ["/v1/version", "/version"]
+
+
+def test_version_falls_back_to_the_control_plane_path(version_probe):
+    """#6137: a proxy that fronts the control plane at the root answers only /api/version."""
+    server = version_probe({"/v1/version": 404, "/version": 404, "/api/version": {"version": "1.0.0"}})
+    assert plugin._check_api_supports_update_mode_append("http://hs.test") is True
+    assert server.calls == ["/v1/version", "/version", "/api/version"]
 
 
 def test_retain_tool_honours_retain_async(provider):
