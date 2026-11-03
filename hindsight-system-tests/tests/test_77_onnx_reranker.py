@@ -2,7 +2,7 @@
 
 Opt in with a local cross-encoder snapshot laid out like the Hugging Face repos
 (``onnx/model.onnx`` plus the tokenizer files at the root), e.g. the
-``cross-encoder/ms-marco-MiniLM-L-6-v2`` snapshot, via
+``hindsight-ai/hs-rerank-1`` snapshot, via
 HINDSIGHT_TEST_ONNX_RERANKER_MODEL_DIR. Only the LLM and embedder are scripted
 through the HTTP stub; the tokenizer, ORT session, DB and API are real, so the
 ranking below is the model's, not the stub's.

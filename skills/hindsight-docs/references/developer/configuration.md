@@ -1213,7 +1213,7 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | `HINDSIGHT_API_RERANKER_MAX_BACKOFF` | Cap on the backoff between rerank retries, in seconds | `4.0` |
 | `HINDSIGHT_API_RERANKER_RETRY_BUDGET` | Wall-clock ceiling, in seconds, on the time one rerank may spend retrying (failed attempts plus backoff). Tighter than the embedding budget because rerank runs after retrieval has already spent time on the same request. With a fallback chain configured, each member spends its own budget before the chain advances. | `10.0` |
 | `HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER` | Add `X-Hindsight-Bank-Id: <bank_id>` to remote reranker requests. Enable only for trusted endpoints because this transmits the current bank ID. Covers TEI, Cohere-compatible HTTP, LiteLLM proxy, and LiteLLM SDK transports. | `false` |
-| `HINDSIGHT_API_RERANKER_LOCAL_MODEL` | Model for local provider | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
+| `HINDSIGHT_API_RERANKER_LOCAL_MODEL` | Model for local provider | `hindsight-ai/hs-rerank-1` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MAX_CONCURRENT` | Max concurrent local reranking (prevents CPU thrashing under load) | `4` |
 | `HINDSIGHT_API_RERANKER_LOCAL_TRUST_REMOTE_CODE` | Allow loading models with custom code (security risk, disabled by default) | `false` |
 | `HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU` | Force CPU mode for local reranker even when CUDA/XPU is available | `false` |
@@ -1273,7 +1273,7 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | `HINDSIGHT_API_RERANKER_FLASHRANK_CACHE_DIR` | Cache directory for FlashRank models | System default |
 | `HINDSIGHT_API_RERANKER_FLASHRANK_CPU_MEM_ARENA` | Enable ONNX Runtime CPU memory arena for FlashRank. When `true`, ONNX pre-allocates a memory arena that never shrinks, causing RSS to grow monotonically. `false` trades slightly slower per-call allocation for bounded RSS. | `false` |
 | `HINDSIGHT_API_RERANKER_FLASHRANK_BATCH_SIZE` | Passages scored per FlashRank forward pass. Each pass allocates attention tensors sized `batch × heads × seq²`, and FlashRank pads a batch to its longest passage, so raising this raises peak memory sharply on long candidates. Lower it if the reranker is the memory ceiling on a large bank. | `32` |
-| `HINDSIGHT_API_RERANKER_ONNX_MODEL_ID` | Hugging Face repo for the `onnx` provider. Hindsight downloads `HINDSIGHT_API_RERANKER_ONNX_FILE` from it, and uses it as the tokenizer fallback. | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
+| `HINDSIGHT_API_RERANKER_ONNX_MODEL_ID` | Hugging Face repo for the `onnx` provider. Hindsight downloads `HINDSIGHT_API_RERANKER_ONNX_FILE` from it, and uses it as the tokenizer fallback. | `hindsight-ai/hs-rerank-1` |
 | `HINDSIGHT_API_RERANKER_ONNX_MODEL_PATH` | Local path to an ONNX cross-encoder graph. Use this for models whose repo ships no ONNX file (export them yourself, see below). | - |
 | `HINDSIGHT_API_RERANKER_ONNX_TOKENIZER_NAME_OR_PATH` | Hugging Face tokenizer repo or local tokenizer directory. Set this with `HINDSIGHT_API_RERANKER_ONNX_MODEL_PATH`. | Falls back to `HINDSIGHT_API_RERANKER_ONNX_MODEL_ID` |
 | `HINDSIGHT_API_RERANKER_ONNX_FILE` | ONNX file path inside the Hugging Face repo (also downloads its `_data` sidecar when present). | `onnx/model.onnx` |
@@ -1376,7 +1376,7 @@ slower recall rather than errors.
 ```bash
 # Local (default) - uses SentenceTransformers CrossEncoder
 export HINDSIGHT_API_RERANKER_PROVIDER=local
-export HINDSIGHT_API_RERANKER_LOCAL_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+export HINDSIGHT_API_RERANKER_LOCAL_MODEL=hindsight-ai/hs-rerank-1
 
 # Local with custom model requiring trust_remote_code (e.g., jina-reranker-v2)
 # WARNING: Only enable trust_remote_code for models you trust (security risk)
@@ -1530,7 +1530,7 @@ cut.
 
 The `onnx` provider runs any cross-encoder exported to ONNX in-process with ONNX Runtime, so a model outside FlashRank's catalog needs neither PyTorch nor a TEI server. It needs the `local-onnx` extra (`pip install 'hindsight-api-slim[local-onnx]'`). Scores are the model's raw logits, the same as the `local` provider, so switching between the two keeps the ranking. Models with a single output score and binary `[irrelevant, relevant]` heads both work.
 
-With no settings it downloads `onnx/model.onnx` from the default `cross-encoder/ms-marco-MiniLM-L-6-v2` repo. For a model whose repo ships no ONNX file, export it once and point Hindsight at the files:
+With no settings it downloads `onnx/model.onnx` from the default `hindsight-ai/hs-rerank-1` repo. For a model whose repo ships no ONNX file, export it once and point Hindsight at the files:
 
 ```bash
 uvx --from "optimum-onnx[onnxruntime]" optimum-cli export onnx \

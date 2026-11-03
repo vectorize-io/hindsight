@@ -1483,7 +1483,7 @@ jobs:
       uses: actions/cache@v5
       with:
         path: ~/.cache/huggingface
-        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        key: ${{ runner.os }}-huggingface-hs-rerank-1-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-huggingface-
 
@@ -1495,7 +1495,7 @@ jobs:
         print('Downloading embedding model...')
         SentenceTransformer('BAAI/bge-small-en-v1.5')
         print('Downloading cross-encoder model...')
-        CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        CrossEncoder('hindsight-ai/hs-rerank-1')
         print('Models downloaded successfully')
         "
 
@@ -1811,7 +1811,7 @@ jobs:
       uses: actions/cache@v5
       with:
         path: ~/.cache/huggingface
-        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        key: ${{ runner.os }}-huggingface-hs-rerank-1-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-huggingface-
 
@@ -1823,7 +1823,7 @@ jobs:
         print('Downloading embedding model...')
         SentenceTransformer('BAAI/bge-small-en-v1.5')
         print('Downloading cross-encoder model...')
-        CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        CrossEncoder('hindsight-ai/hs-rerank-1')
         print('Models downloaded successfully')
         "
 
@@ -1922,7 +1922,7 @@ jobs:
       uses: actions/cache@v5
       with:
         path: ~/.cache/huggingface
-        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        key: ${{ runner.os }}-huggingface-hs-rerank-1-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-huggingface-
 
@@ -1932,7 +1932,7 @@ jobs:
         uv run python -c "
         from sentence_transformers import SentenceTransformer, CrossEncoder
         SentenceTransformer('BAAI/bge-small-en-v1.5')
-        CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        CrossEncoder('hindsight-ai/hs-rerank-1')
         print('Models downloaded successfully')
         "
 
@@ -2025,7 +2025,7 @@ jobs:
       uses: actions/cache@v5
       with:
         path: ~/.cache/huggingface
-        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        key: ${{ runner.os }}-huggingface-hs-rerank-1-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-huggingface-
 
@@ -2035,7 +2035,7 @@ jobs:
         uv run python -c "
         from sentence_transformers import SentenceTransformer, CrossEncoder
         SentenceTransformer('BAAI/bge-small-en-v1.5')
-        CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        CrossEncoder('hindsight-ai/hs-rerank-1')
         "
 
     - name: Build litellmrouter config
@@ -2176,7 +2176,7 @@ jobs:
       uses: actions/cache@v5
       with:
         path: ~/.cache/huggingface
-        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        key: ${{ runner.os }}-huggingface-hs-rerank-1-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-huggingface-
 
@@ -2188,7 +2188,7 @@ jobs:
         print('Downloading embedding model...')
         SentenceTransformer('BAAI/bge-small-en-v1.5')
         print('Downloading cross-encoder model...')
-        CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        CrossEncoder('hindsight-ai/hs-rerank-1')
         print('Models downloaded successfully')
         "
 
@@ -2258,7 +2258,7 @@ jobs:
       uses: actions/cache@v5
       with:
         path: ~/.cache/huggingface
-        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        key: ${{ runner.os }}-huggingface-hs-rerank-1-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-huggingface-
 
@@ -2270,7 +2270,7 @@ jobs:
         print('Downloading embedding model...')
         SentenceTransformer('BAAI/bge-small-en-v1.5')
         print('Downloading cross-encoder model...')
-        CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        CrossEncoder('hindsight-ai/hs-rerank-1')
         print('Models downloaded successfully')
         "
 
@@ -2375,7 +2375,7 @@ jobs:
       uses: actions/cache@v5
       with:
         path: ~/.cache/huggingface
-        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        key: ${{ runner.os }}-huggingface-hs-rerank-1-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-huggingface-
 
@@ -2387,7 +2387,7 @@ jobs:
         print('Downloading embedding model...')
         SentenceTransformer('BAAI/bge-small-en-v1.5')
         print('Downloading cross-encoder model...')
-        CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        CrossEncoder('hindsight-ai/hs-rerank-1')
         print('Models downloaded successfully')
         "
 
@@ -2562,7 +2562,7 @@ jobs:
       uses: actions/cache@v5
       with:
         path: ~/.cache/huggingface
-        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        key: ${{ runner.os }}-huggingface-hs-rerank-1-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-huggingface-
 
@@ -2574,7 +2574,7 @@ jobs:
         print('Downloading embedding model...')
         SentenceTransformer('BAAI/bge-small-en-v1.5')
         print('Downloading cross-encoder model...')
-        CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        CrossEncoder('hindsight-ai/hs-rerank-1')
         print('Models downloaded successfully')
         "
 
@@ -2748,7 +2748,7 @@ jobs:
       uses: actions/cache@v5
       with:
         path: ~/.cache/huggingface
-        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        key: ${{ runner.os }}-huggingface-hs-rerank-1-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-huggingface-
 
@@ -2760,7 +2760,7 @@ jobs:
         print('Downloading embedding model...')
         SentenceTransformer('BAAI/bge-small-en-v1.5')
         print('Downloading cross-encoder model...')
-        CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        CrossEncoder('hindsight-ai/hs-rerank-1')
         print('Models downloaded successfully')
         "
 
@@ -2873,7 +2873,7 @@ jobs:
       uses: actions/cache@v5
       with:
         path: ~/.cache/huggingface
-        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        key: ${{ runner.os }}-huggingface-hs-rerank-1-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-huggingface-
 
@@ -2885,7 +2885,7 @@ jobs:
         print('Downloading embedding model...')
         SentenceTransformer('BAAI/bge-small-en-v1.5')
         print('Downloading cross-encoder model...')
-        CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        CrossEncoder('hindsight-ai/hs-rerank-1')
         print('Models downloaded successfully')
         "
 
@@ -3021,7 +3021,7 @@ jobs:
       uses: actions/cache@v5
       with:
         path: ~/.cache/huggingface
-        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        key: ${{ runner.os }}-huggingface-hs-rerank-1-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-huggingface-
 
@@ -3033,7 +3033,7 @@ jobs:
         print('Downloading embedding model...')
         SentenceTransformer('BAAI/bge-small-en-v1.5')
         print('Downloading cross-encoder model...')
-        CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        CrossEncoder('hindsight-ai/hs-rerank-1')
         print('Models downloaded successfully')
         "
 
@@ -3131,7 +3131,7 @@ jobs:
       uses: actions/cache@v5
       with:
         path: ~/.cache/huggingface
-        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        key: ${{ runner.os }}-huggingface-hs-rerank-1-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-huggingface-
 
@@ -3143,7 +3143,7 @@ jobs:
         print('Downloading embedding model...')
         SentenceTransformer('BAAI/bge-small-en-v1.5')
         print('Downloading cross-encoder model...')
-        CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        CrossEncoder('hindsight-ai/hs-rerank-1')
         print('Models downloaded successfully')
         "
 
@@ -3249,7 +3249,7 @@ jobs:
       uses: actions/cache@v5
       with:
         path: ~/.cache/huggingface
-        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        key: ${{ runner.os }}-huggingface-hs-rerank-1-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-huggingface-
 
@@ -3261,7 +3261,7 @@ jobs:
         print('Downloading embedding model...')
         SentenceTransformer('BAAI/bge-small-en-v1.5')
         print('Downloading cross-encoder model...')
-        CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        CrossEncoder('hindsight-ai/hs-rerank-1')
         print('Models downloaded successfully')
         "
 
@@ -3373,7 +3373,7 @@ jobs:
       uses: actions/cache@v5
       with:
         path: ~/.cache/huggingface
-        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        key: ${{ runner.os }}-huggingface-hs-rerank-1-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-huggingface-
 
@@ -3385,7 +3385,7 @@ jobs:
         print('Downloading embedding model...')
         SentenceTransformer('BAAI/bge-small-en-v1.5')
         print('Downloading cross-encoder model...')
-        CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        CrossEncoder('hindsight-ai/hs-rerank-1')
         print('Models downloaded successfully')
         "
 
@@ -5129,7 +5129,7 @@ jobs:
       uses: actions/cache@v5
       with:
         path: ~/.cache/huggingface
-        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        key: ${{ runner.os }}-huggingface-hs-rerank-1-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-huggingface-
 
@@ -5141,7 +5141,7 @@ jobs:
         print('Downloading embedding model...')
         SentenceTransformer('BAAI/bge-small-en-v1.5')
         print('Downloading reranker model...')
-        CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        CrossEncoder('hindsight-ai/hs-rerank-1')
         print('Models downloaded successfully')
         "
 
@@ -5230,7 +5230,7 @@ jobs:
       uses: actions/cache@v5
       with:
         path: ~/.cache/huggingface
-        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        key: ${{ runner.os }}-huggingface-hs-rerank-1-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-huggingface-
 
@@ -5250,7 +5250,7 @@ jobs:
         print('Downloading embedding model...')
         SentenceTransformer('BAAI/bge-small-en-v1.5')
         print('Downloading cross-encoder model...')
-        CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        CrossEncoder('hindsight-ai/hs-rerank-1')
         print('Models downloaded successfully')
         "
 

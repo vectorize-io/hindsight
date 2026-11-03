@@ -23,7 +23,7 @@ RUN uv pip install --python /app/api/.venv/bin/python --no-cache \
 
 # Pre-download the models you want to use. Replace these with your own.
 # The defaults bundled in the full image are BAAI/bge-small-en-v1.5 and
-# cross-encoder/ms-marco-MiniLM-L-6-v2; here we pick multilingual variants
+# hindsight-ai/hs-rerank-1; here we pick other multilingual variants
 # as a concrete non-default example.
 ARG EMBEDDER=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
 ARG RERANKER=cross-encoder/mmarco-mMiniLMv2-L12-H384-v1

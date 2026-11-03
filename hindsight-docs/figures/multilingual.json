@@ -552,7 +552,7 @@
               }
             ]
           },
-          "say": "Both point to the Chinese facts. The reranker that then orders them is English-only by default too, so pick a multilingual one.",
+          "say": "Both point to the Chinese facts. The default reranker that then orders them already reads Chinese.",
           "ms": 2000
         },
         {
