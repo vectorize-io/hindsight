@@ -924,3 +924,51 @@ def test_explicit_observation_scopes_win_over_the_default(provider):
     instance.sync_turn("hi", "hello")
     instance.shutdown()
     assert _retain_item(fake)["observation_scopes"] == "combined"
+
+
+class _StaleOnceClient(FakeClient):
+    """The first call of each kind hits a pooled connection the server closed while it sat idle."""
+
+    def __init__(self):
+        super().__init__(recall_texts=["Ada likes tea"])
+        self.failed: set[str] = set()
+
+    def _stale_once(self, kind: str) -> None:
+        import aiohttp
+
+        if kind not in self.failed:
+            self.failed.add(kind)
+            raise aiohttp.ServerDisconnectedError()
+
+    async def arecall(self, **kwargs):
+        self._stale_once("recall")
+        return await super().arecall(**kwargs)
+
+    async def aretain_batch(self, **kwargs):
+        self._stale_once("retain")
+        return await super().aretain_batch(**kwargs)
+
+
+def test_a_stale_keepalive_connection_is_retried_for_a_recall(provider):
+    """#5734: outside local_embedded a dropped idle connection failed the turn's recall outright."""
+    instance, fake = provider({}, client=_StaleOnceClient())
+    result = json.loads(instance.handle_tool_call("hindsight_recall", {"query": "tea?"}))
+    assert "Ada likes tea" in result["result"]
+    assert len(fake.recalls) == 1
+
+
+def test_a_sync_retain_is_not_resent_after_a_dropped_connection(provider):
+    """The server may have stored a retain it dropped mid-way; without an operation id to replay
+    under, resending it would store it twice."""
+    instance, fake = provider({"retain_async": False}, client=_StaleOnceClient())
+    result = instance.handle_tool_call("hindsight_retain", {"content": "Ada likes tea"})
+    assert "Server disconnected" in result
+    assert fake.retains == []
+    instance.shutdown()
+
+
+def test_an_async_turn_retain_is_resent_under_its_operation_id(provider):
+    instance, fake = provider({}, client=_StaleOnceClient())
+    instance.sync_turn("one", "1")
+    instance.shutdown()
+    assert len(fake.retains) == 1 and fake.retains[0]["operation_id"]

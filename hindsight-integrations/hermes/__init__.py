@@ -476,6 +476,8 @@ _SESSION_KWARGS = (
     "agent_workspace",
     "cwd",
 )
+# aiohttp's message for a pooled keep-alive connection the server closed while it sat idle.
+_STALE_KEEPALIVE_MARKER = "server disconnected"
 # Retain metadata keys, each stamped from the attribute of the same name when set.
 _METADATA_ATTRS = (
     "session_id",
@@ -999,16 +1001,19 @@ class HindsightMemoryProvider(MemoryProvider):
         """Schedule *coro* on the shared loop using the configured timeout."""
         return _run_sync(coro, timeout=self._timeout)
 
-    def _run_hindsight_operation(self, operation):
-        """Run an async client operation; for local_embedded, a stale-daemon
-        connection failure recreates the client and retries once."""
+    def _run_hindsight_operation(self, operation, *, repeatable: bool = True):
+        """Run an async client operation, recreating the client and retrying once when its
+        connection went stale: for local_embedded, a daemon that is no longer there; in any mode,
+        a pooled connection the server already closed (#5734). The server may have read a request
+        it dropped mid-way, so that retry is only for a *repeatable* operation."""
         try:
             return self._run_sync(operation(self._get_client()))
         except Exception as exc:
             text = f"{type(exc).__name__}: {exc}".lower()
-            if self._mode != "local_embedded" or not any(m in text for m in _RETRIABLE_CONNECTION_MARKERS):
+            stale_daemon = self._mode == "local_embedded" and any(m in text for m in _RETRIABLE_CONNECTION_MARKERS)
+            if not stale_daemon and not (repeatable and _STALE_KEEPALIVE_MARKER in text):
                 raise
-            logger.info("Hindsight embedded daemon appears unreachable; recreating client and retrying once: %s", exc)
+            logger.info("Hindsight connection went stale; recreating client and retrying once: %s", exc)
             with self._client_lock:
                 stale, self._client = self._client, None
             if stale is not None:
@@ -1909,7 +1914,10 @@ class HindsightMemoryProvider(MemoryProvider):
             "operation_id": operation_id if retain_async else None,
         }
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
-        return self._run_hindsight_operation(lambda client: client.aretain_batch(**kwargs))
+        # A retain is only safe to resend under its operation id, which the server replays.
+        return self._run_hindsight_operation(
+            lambda client: client.aretain_batch(**kwargs), repeatable="operation_id" in kwargs
+        )
 
     def _make_turn_retain_job(
         self, turns: list[str], *, document_id: str, update_mode: str | None, label: str, track_ops: bool = True
