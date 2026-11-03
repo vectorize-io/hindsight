@@ -30,6 +30,17 @@ import ThemedImage from '@theme/ThemedImage';
 
 <!-- truncate -->
 
+<div style={{position: "relative", paddingBottom: "56.25%", height: 0, margin: "1rem 0 2rem", borderRadius: "8px", overflow: "hidden"}}>
+  <iframe
+    style={{position: "absolute", top: 0, left: 0, width: "100%", height: "100%"}}
+    src="https://www.youtube.com/embed/NqipFrDSZgU"
+    title="Introducing Hindsight Models: Better Agent Memory, for Less"
+    frameBorder="0"
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+    allowFullScreen
+  ></iframe>
+</div>
+
 ## Judgments are most of the work
 
 A memory system is full of judgments. Between storing a memory and recalling it, Hindsight asks: is this fact new, or already known? Does it change what we believe? Which of these memories matter for this question? Is this evidence enough to answer? Could this new memory change that knowledge page?
