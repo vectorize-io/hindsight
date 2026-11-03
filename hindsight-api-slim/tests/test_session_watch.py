@@ -582,3 +582,10 @@ def test_a_note_saying_nothing_in_the_plan_contradicts_is_not_a_note():
         "Nothing in your plan contradicts the decision that recent releases of 'Hermes' did not require new articles."
     )
     assert not W.accept_note(s, plan, said, ["m1"])
+
+
+def test_a_note_saying_you_followed_a_rule_is_not_a_note():
+    s = W.WatchState()
+    cmd = W.Moment(trigger="command", text="rm -rf models--x", recent=[], diff="")
+    said = "You followed JOB.md rule 31 by skipping the Qwen3-TTS folder because of an `.incomplete` file."
+    assert not W.accept_note(s, cmd, said, ["m1"])
