@@ -66,6 +66,11 @@ database (`~/.pg0/instances/hindsight-embed-<profile>/`) and the profile env
 (`~/.hindsight/profiles/<profile>.env`) are the same files, read the same way. No migration step, no
 re-setup.
 
+To run the daemon on a database you already have instead of its own pg0, set
+`HINDSIGHT_API_DATABASE_URL` (or `HINDSIGHT_EMBED_API_DATABASE_URL`) in `$HERMES_HOME/.env` or in the
+profile env. The plugin writes it into the profile env, so every daemon it launches connects to that
+database.
+
 The plugin no longer calls `tools.lazy_deps.install_specs` from anywhere. On package-manager Hermes
 that is a retired shim which handed the process to the updater and exited instead of installing, so
 every `hermes` invocation became a ~40s "update" that drained `hermes-gateway` and still left the
