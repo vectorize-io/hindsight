@@ -485,6 +485,8 @@ _METADATA_ATTRS = (
     "thread_id",
     "agent_identity",
 )
+# Retain metadata that differs on every call; left off appends to a session document (#6241).
+_PER_CALL_METADATA = frozenset({"retained_at", "message_count", "turn_index"})
 # Naming Hermes' built-in session_search tells the model when to pick each tool. With only
 # the tool names listed, models defaulted to session_search (raw transcripts) for every
 # history question and skipped Hindsight's deduplicated memories.
@@ -1912,6 +1914,10 @@ class HindsightMemoryProvider(MemoryProvider):
         # when the document is a list of messages, not a list of per-turn lists.
         content = json.dumps([message for turn in turns for message in json.loads(turn)], ensure_ascii=False)
         metadata = self._build_metadata(message_count=len(turns) * 2, turn_index=self._turn_index)
+        if update_mode == "append":
+            # An append sets the document's metadata on every memory the session already has, so a
+            # value that changes per call would rewrite all of them on each turn (#6241).
+            metadata = {k: v for k, v in metadata.items() if k not in _PER_CALL_METADATA}
         occurred_at = _event_timestamp()
         # A session named as its own parent (in-place compaction) is no lineage; tagging it
         # would flip the document's tag set and re-consolidate it from scratch.
