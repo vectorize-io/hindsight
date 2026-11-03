@@ -1870,21 +1870,13 @@ jobs:
     timeout-minutes: 30
     name: Core LLM tests
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      # Test: main LLM on Hindsight Inference Dev (Gemma 4) instead of Vertex
+      # gemini-3.1-flash-lite. The judge stays on Gemini via GEMINI_API_KEY.
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      # gemini-3.1-flash-lite for this job only. Every test here asserts what the
-      # model chose to do, and 2.5-flash-lite is not reliable enough at the weakest
-      # of them to carry a gate: measured on this endpoint with the same prompt it
-      # kept a Japanese input in Japanese 3 times out of 10, against 10/10 for
-      # 3.1-flash-lite (test_retain_japanese_content, the largest single source of
-      # red runs here). The other jobs stay on 2.5-flash-lite — they exercise
-      # plumbing, not judgement.
-      #
-      # REGION: 3.1 is not served from us-central1 for this project (plain 404,
-      # "not found or your project does not have access"); the global endpoint
-      # serves it. us-east5 404s too, so this line is load-bearing.
-      HINDSIGHT_API_LLM_MODEL: google/gemini-3.1-flash-lite
-      HINDSIGHT_API_LLM_VERTEXAI_REGION: global
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       # The real-LLM delta/retraction/cache evals gate on this flag *and* a key. The
       # key was already set here, so they sat skipped and the mental-model delta path —
