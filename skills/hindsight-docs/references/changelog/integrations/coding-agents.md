@@ -10,6 +10,15 @@ For the source code, see [`hindsight-integrations/coding-agents`](https://github
 
 ← [Back to main changelog](../index.md)
 
+## [0.8.5](https://github.com/vectorize-io/hindsight/tree/integrations/coding-agents/v0.8.5)
+
+[Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/coding-agents/v0.8.5)
+
+**Bug Fixes**
+
+- Coding-agent surveys again collect results from every configured host.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/a70b1966b" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>a70b1966b</a>
+- Coding-agent survey output no longer includes terminal-manager environment data or terminal color codes.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/a70b1966b" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>a70b1966b</a>
+
 ## [0.8.4](https://github.com/vectorize-io/hindsight/tree/integrations/coding-agents/v0.8.4)
 
 [Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/coding-agents/v0.8.4)
