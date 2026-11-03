@@ -573,3 +573,12 @@ def test_a_note_carrying_a_credential_never_reaches_the_agent():
     assert not W.accept_note(s, edit, "The sheepit password is hunter2x9 and no username is required.", ["m1"])
     assert not W.accept_note(s, edit, "Use the API key: sk-live-4f9a2b and keep it out of git.", ["m2"])
     assert W.accept_note(s, edit, "The token is refreshed every hour, so do not cache it longer.", ["m3"])
+
+
+def test_a_note_saying_nothing_in_the_plan_contradicts_is_not_a_note():
+    s = W.WatchState()
+    plan = W.Moment(trigger="plan", text="I will skip new articles this run.", recent=[], diff="")
+    said = (
+        "Nothing in your plan contradicts the decision that recent releases of 'Hermes' did not require new articles."
+    )
+    assert not W.accept_note(s, plan, said, ["m1"])
