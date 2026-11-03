@@ -1,0 +1,84 @@
+---
+sidebar_position: 2
+---
+
+import CodeSnippet from '@site/src/components/CodeSnippet';
+import nodejsSdkMjs from '!!raw-loader!@site/examples/api/nodejs-sdk.mjs';
+
+# TypeScript / JavaScript Client
+
+Official TypeScript/JavaScript client for the Hindsight API. Supports **Node.js** and **Deno**.
+
+## Installation
+
+### Node.js
+
+```bash
+npm install @vectorize-io/hindsight-client
+```
+
+### Deno
+
+No installation needed — import directly via the `npm:` specifier:
+
+```typescript
+import { HindsightClient } from "npm:@vectorize-io/hindsight-client";
+```
+
+## Quick Start
+
+<CodeSnippet code={nodejsSdkMjs} section="quickstart" language="typescript" />
+
+## Client Initialization
+
+<CodeSnippet code={nodejsSdkMjs} section="client-init" language="typescript" />
+
+## Core Operations
+
+### Version and Feature Checks
+
+<CodeSnippet code={nodejsSdkMjs} section="get-version" language="typescript" />
+
+### Retain (Store Memory)
+
+<CodeSnippet code={nodejsSdkMjs} section="retain" language="typescript" />
+
+### Retain Batch
+
+<CodeSnippet code={nodejsSdkMjs} section="retain-batch" language="typescript" />
+
+### Recall (Search)
+
+<CodeSnippet code={nodejsSdkMjs} section="recall" language="typescript" />
+
+### Reflect (Generate Response)
+
+<CodeSnippet code={nodejsSdkMjs} section="reflect" language="typescript" />
+
+## Bank Management
+
+### Create Bank
+
+<CodeSnippet code={nodejsSdkMjs} section="create-bank" language="typescript" />
+
+### List Memories
+
+<CodeSnippet code={nodejsSdkMjs} section="list-memories" language="typescript" />
+
+## Document Management
+
+### Get Document
+
+<CodeSnippet code={nodejsSdkMjs} section="get-document" language="typescript" />
+
+### List Documents
+
+<CodeSnippet code={nodejsSdkMjs} section="list-documents" language="typescript" />
+
+### Update Document
+
+<CodeSnippet code={nodejsSdkMjs} section="update-document" language="typescript" />
+
+### Delete Document
+
+<CodeSnippet code={nodejsSdkMjs} section="delete-document" language="typescript" />
