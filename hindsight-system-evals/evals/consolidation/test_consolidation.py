@@ -14,7 +14,8 @@ actually shipped or been asked about, or a rule the prompt promises
   observation it affects — #1151, #3248 (fnm -> nub), #3475 (retired facts stated
   as current), rules 4-5;
 * recency is when a fact was *stated*, not when it was retained — #2550, and
-  #5938 (same-day amendment retained before the rule it amends);
+  #5938 (same-day amendment retained before the rule it amends); older
+  restatements of a newer value keep a short, bounded history — #6264;
 * a correction retires the false belief — #3509 (KeePass);
 * one facet per observation, matched by entity, no arithmetic — #814 (the horse
   farm, ``tests/test_horse_observations.py``), rules 2, 3, 8;
@@ -216,6 +217,32 @@ SCENARIOS: tuple[Scenario, ...] = (
             traps=(
                 "Some observation presents React as the user's current favorite, or says the user moved from "
                 "Svelte to React.",
+            ),
+        ),
+        Scenario(
+            id="recency-older-restatements-stay-bounded",
+            category="recency",
+            origin="#6264: every older restatement of a newer value added another earlier-state note, "
+            "unbounded, until small models looped on the list",
+            waves=(
+                _wave(Fact("The nightly build takes 41 minutes.", "2026-03-20", ("nightly build",))),
+                *(
+                    _wave(Fact(text, on, ("nightly build",)))
+                    for text, on in (
+                        ("The nightly build took about 40 minutes.", "2026-03-12"),
+                        ("Nightly builds run for roughly 40 minutes.", "2026-03-11"),
+                        ("The nightly build finished in 39 minutes.", "2026-03-10"),
+                        ("The nightly build takes around 40 minutes to complete.", "2026-03-09"),
+                        ("The nightly build took about 40 minutes.", "2026-03-08"),
+                        ("The nightly build ran for 38 minutes.", "2026-03-07"),
+                    )
+                ),
+            ),
+            must=("The observations say the nightly build currently takes 41 minutes.",),
+            traps=(
+                "Some observation presents a duration other than 41 minutes as the nightly build's current one.",
+                "Some observation carries more than three dated earlier states in brackets, or the same earlier "
+                "state twice.",
             ),
         ),
         Scenario(

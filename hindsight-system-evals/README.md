@@ -70,7 +70,7 @@ stays out of the category counts.
 | recall | distinct | 2 | facts that only look alike (four customers, three details of one offsite) all come back |
 | consolidation | merge | 3 | restatements update one observation; one fact told three ways in one batch is one observation; the same facts under two tags merge in a shared scope |
 | consolidation | update | 4 | a new employer, retired tools, a correction, a member leaving a list: the old belief stops reading as current |
-| consolidation | recency | 2 | recency is when a fact was stated, not when it was retained |
+| consolidation | recency | 3 | recency is when a fact was stated, not when it was retained; older restatements keep a short, bounded history |
 | consolidation | counts | 2 | the horse farm; no arithmetic on counts |
 | consolidation | entities | 2 | a vague reference resolved by a later fact; lookalike people and numbers stay apart |
 | consolidation | language | 2 | Chinese facts give Chinese observations; a mixed update is rewritten, not patched |

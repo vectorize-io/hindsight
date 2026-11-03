@@ -20,6 +20,7 @@ import copy
 import json
 import logging
 import math
+import re
 import time
 import uuid
 from collections import defaultdict
@@ -989,8 +990,8 @@ class _FactBatchResponse(BaseModel):
         code compares the times, gemma-4 got them wrong both ways. ``marked``: the prompt told the
         model so (``(stated after this fact)`` or ``newer_than_input_facts``). A marked change adds
         the fact to the observation as its earlier state, in brackets after the current text, most
-        recent first, and the fact creates nothing — its ``new`` would restate that earlier state as
-        current. The code writes that note, not the model: asked for it, gemini-3.1-flash-lite
+        recent first, at most :data:`_MAX_EARLIER_STATES` and none repeated (#6264), and the fact
+        creates nothing — its ``new`` would restate that earlier state as current. The code writes that note, not the model: asked for it, gemini-3.1-flash-lite
         wrote an older rule as the removal of the newer one ("until it was removed"), or repeated
         the whole observation. An unmarked change was written as if the fact were newer: the
         observation keeps its text and only cites the fact. ``earlier_states`` holds the batch's
@@ -1077,6 +1078,8 @@ class _FactBatchResponse(BaseModel):
             # small models fill ``new`` with the repeated sentence too, and say so with "adds": "no".
             if not own and f.same_as_fact and (twin := creates.get(f.same_as_fact)) is not None:
                 cite(twin, f.fact_id)
+        for u in updates.values():
+            u.text = _bound_earlier_states(u.text)
         return _ConsolidationBatchResponse(
             creates=all_creates, updates=list(updates.values()), deletes=self.deletes, skips=skips
         )
@@ -1474,6 +1477,34 @@ def _end_sentence(text: str) -> str:
     """``text`` ending in a full stop, so a note added after it reads apart from it."""
     text = text.strip()
     return text if text[-1:] in ".!?)。！？）" else f"{text}."
+
+
+#: Earlier-state notes kept on one observation. A topic restated every day grew a note each
+#: time, unbounded; on a long, self-repeating list smaller models looped until the output cap
+#: (#6264). The facts behind dropped notes stay cited in ``source_memory_ids``.
+_MAX_EARLIER_STATES = 3
+_EARLIER_STATE = re.compile(r"\s+\((?=\d{4}-\d{2}-\d{2} \d{2}:\d{2}: )")
+
+
+def _bound_earlier_states(text: str) -> str:
+    """``text`` with its ``(YYYY-MM-DD HH:MM: …)`` notes newest first, one per sentence (the
+    current text counts as one), and at most :data:`_MAX_EARLIER_STATES` of them."""
+    head, *notes = _EARLIER_STATE.split(text)
+    if not notes:
+        return text
+
+    def key(sentence: str) -> str:
+        return " ".join(re.sub(r"[^\w\s]", " ", sentence).casefold().split())
+
+    seen = {key(head)}
+    kept: list[str] = []
+    # A note is `YYYY-MM-DD HH:MM: <sentence>`: sorting the strings sorts by date, and the
+    # sentence starts at character 18.
+    for note in sorted((n.strip().removesuffix(")") for n in notes), reverse=True):
+        if (k := key(note[18:])) not in seen:
+            seen.add(k)
+            kept.append(f"({note})")
+    return " ".join([head, *kept[:_MAX_EARLIER_STATES]])
 
 
 def _build_fact_response_model(fact_ids: list[str]) -> type[_FactBatchResponse]:

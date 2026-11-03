@@ -368,3 +368,42 @@ async def test_the_prompt_uses_short_ids_oldest_first_and_marks_later_observatio
     assert "is an earlier state that the text before it replaced" in sent["messages"][0]["content"]
     # A full scope is told in the answer's own terms: no `new` sentences.
     assert 'Write no `new` sentences (set `adds` to "no")' in user
+
+
+def test_earlier_state_notes_are_deduplicated_and_capped() -> None:
+    """A topic restated over and over grew a note per restatement, unbounded (#6264)."""
+    pool = {
+        "o-build": "The nightly build takes 41 minutes."
+        " (2025-03-12 09:10: The nightly build took about 40 minutes.)"
+        " (2025-03-11 18:02: Nightly builds run for roughly 40 minutes.)"
+        " (2025-03-11 09:15: The nightly build finished in 39 minutes.)"
+    }
+    answer = _answer(
+        {"fact_id": "f1", "kind": "lasting", "existing": [_change("o-build", "changes")]},
+        {"fact_id": "f2", "kind": "lasting", "existing": [_change("o-build", "changes")]},
+        ids=("f1", "f2"),
+    )
+    texts = {
+        "f1": "2025-03-10 17:40: The nightly build takes around 40 minutes to complete.",
+        # The same sentence as a note already there.
+        "f2": "2025-03-12 09:12: The nightly build took about 40 minutes!",
+    }
+    actions = answer.to_actions(pool, texts, lambda f, o: True, lambda f, o: True)
+    assert [(u.text, u.source_fact_ids) for u in actions.updates] == [
+        (
+            # The duplicate keeps its newest date; the fourth, oldest note is dropped.
+            "The nightly build takes 41 minutes."
+            " (2025-03-12 09:12: The nightly build took about 40 minutes!)"
+            " (2025-03-11 18:02: Nightly builds run for roughly 40 minutes.)"
+            " (2025-03-11 09:15: The nightly build finished in 39 minutes.)",
+            ["f1", "f2"],
+        )
+    ]
+
+
+def test_a_note_repeating_the_current_text_is_dropped() -> None:
+    pool = {"o-fav": "The user's favorite framework is Svelte."}
+    answer = _answer({"fact_id": "f1", "kind": "lasting", "existing": [_change("o-fav", "changes")]}, ids=("f1",))
+    texts = {"f1": "2026-10-10 09:00: The user's favorite framework is Svelte"}
+    actions = answer.to_actions(pool, texts, lambda f, o: True, lambda f, o: True)
+    assert [u.text for u in actions.updates] == [pool["o-fav"]]
