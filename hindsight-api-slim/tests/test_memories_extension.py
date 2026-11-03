@@ -686,6 +686,7 @@ class InMemoryMemories(MemoriesExtension):
         file_content_type="",
         file_original_name="",
         expect_content_hash=None,
+        keep_chunk_text=True,
     ):
         self.calls.append("put_document")
         if expect_content_hash is not None:
@@ -696,7 +697,7 @@ class InMemoryMemories(MemoriesExtension):
             "id": str(document_id),
             "content_hash": content_hash,
             "original_text": original_text,
-            "chunk_texts": list(chunk_texts),
+            "chunk_texts": list(chunk_texts) if keep_chunk_text else [""] * len(chunk_texts),
             "tags": list(tags or []),
             "metadata": dict(metadata or {}),
             "file_content_type": file_content_type,
@@ -1510,6 +1511,32 @@ async def test_store_document_bodies_carries_retain_params(restore_default_store
     carried = store.documents[doc_id]["metadata"].get("retain_params")
     assert carried is not None, "retain_params must reach the store record, not be dropped"
     assert _json.loads(carried) == params, carried
+
+
+async def test_store_document_bodies_keeps_no_text_for_a_bank_that_keeps_none(restore_default_store):
+    """A bank with `store_document_text` off keeps neither its body nor its chunk texts in the
+    store, as the SQL path keeps neither (#6249). The chunks still go over: the store needs their
+    text to record the hashes delta retain diffs against, and is told not to keep it."""
+    from hindsight_api.engine.retain.orchestrator import _store_document_bodies
+
+    store = InMemoryMemories({})
+    set_memories(store)
+    suffix = uuid.uuid4().hex[:8]
+    doc_id = f"doc-{suffix}"
+
+    class _Cfg:
+        store_document_text = False
+
+    await _store_document_bodies(
+        bank_id=f"seam-notext-{suffix}",
+        document_id=doc_id,
+        combined_content="Alice moved to Berlin.",
+        chunk_texts=["Alice moved to Berlin."],
+        merged_tags=None,
+        config=_Cfg(),
+    )
+    assert store.documents[doc_id]["original_text"] is None
+    assert store.documents[doc_id]["chunk_texts"] == [""]
 
 
 async def test_store_document_bodies_omits_absent_retain_params(restore_default_store):
