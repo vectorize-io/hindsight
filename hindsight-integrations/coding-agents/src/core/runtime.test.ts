@@ -72,6 +72,23 @@ describe("RuntimeCore", () => {
     expect(runtime.getInjection(a)).toBeUndefined();
   });
 
+  it("shows the recall toast as plain text, without the terminal's color codes (#6257)", async () => {
+    const client = {
+      listDocumentIds: vi.fn(async () => new Set(["git:existing"])),
+      listPages: vi.fn(async () => ({ items: [] })),
+      reflect: vi.fn(async () => "a memory"),
+    } as unknown as HindsightClient;
+    const runtime = new RuntimeCore(client, "bank-1", resolveConfig({}));
+    const notify = vi.fn();
+    runtime.setNotifier(notify);
+
+    await runtime.onPrompt(`session-${randomUUID()}`, "first prompt");
+
+    const toast = notify.mock.calls.find(([title]) => title.includes("recalled"));
+    expect(toast?.[1]).toContain("Hindsight");
+    expect(toast?.[1]).not.toContain("\x1b");
+  });
+
   it("the knowledge roster tracks the pages a SESSION sees, not the ones plugin load saw", async () => {
     // These hosts outlive every session. A preamble frozen at load told each new session "No
     // knowledge pages yet" for the process's whole life, while the same turn's memory block listed

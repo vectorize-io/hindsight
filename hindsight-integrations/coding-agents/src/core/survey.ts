@@ -115,8 +115,9 @@ export const SURVEY_AGENT_CONFIG = {
 } as const;
 
 /** Resolve a harness's agent CLI binary: explicit `claudeBin` (claude only) -> `HINDSIGHT_<AGENT>_BIN`
- *  env override -> the bare command name (resolved on PATH by the caller). */
-function resolveAgentBin(harness: SurveyHarness, claudeBin?: string): string {
+ *  env override -> the bare command name (resolved on PATH by the caller); undefined for a host
+ *  with no survey recipe. Callers cast any host id to SurveyHarness, so the default case is real. */
+function resolveAgentBin(harness: SurveyHarness, claudeBin?: string): string | undefined {
   switch (harness) {
     case "claude-code":
       return resolveClaudeBin(claudeBin);
@@ -126,6 +127,9 @@ function resolveAgentBin(harness: SurveyHarness, claudeBin?: string): string {
       return process.env.HINDSIGHT_ANTIGRAVITY_BIN || "agy";
     case "opencode":
       return process.env.HINDSIGHT_OPENCODE_BIN || "opencode";
+    default:
+      // The host has no survey recipe (pi, opencode2, kilo, …): the next agent in line runs it.
+      return undefined;
   }
 }
 
@@ -217,7 +221,10 @@ function buildSurveyPlan(
   opts: { model?: string; budgetUsd?: number; mcpServerPath: string }
 ): SpawnPlan {
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    // Terminal managers name the user's pane in env vars and hook the agent's Stop: inherited,
+    // they made the survey's run look like the user's, so Orca closed the pane and Herdr rebound
+    // it to the survey's session (#6075).
+    ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(ORCA|HERDR)_/.test(k))),
     // Anti-recursion: the survey's own agent session must not fire our hooks (session-start,
     // UserPromptSubmit/BeforeAgent, Stop/SessionEnd) or re-seed — see the HINDSIGHT_DISABLE_HOOKS
     // guard in hook.ts / retain-hook.ts / session-start.ts / runtime.ts.
@@ -383,6 +390,8 @@ export async function startCodebaseSurvey(
       if (seen.has(harness)) continue;
       seen.add(harness);
       const name = resolveAgentBin(harness, opts.claudeBin);
+      // Without this check binOnPath threw on the host's missing recipe and no survey ran (#6251).
+      if (!name) continue;
       const bin = resolveBin(name);
       if (!bin) {
         log.info("survey", `${harness}: ${name} not found, trying the next agent`);
