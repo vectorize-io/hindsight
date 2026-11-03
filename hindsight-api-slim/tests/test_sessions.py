@@ -935,7 +935,9 @@ async def test_notes_are_numbered_across_the_bank_and_found_by_number(memory, re
         ]
         for sid in ("s1", "s2")
     }
-    assert sorted(numbers["s1"] + numbers["s2"]) == [1, 2]
-    second = "s1" if numbers["s1"] == [2] else "s2"
-    found = await s.list(bank, q="#2", request_context=request_context)
-    assert [x.session_id for x in found.items] == [second]
+    # Unique in the bank, and above every note's seq, so no older note shares a number.
+    first, second = sorted(numbers["s1"] + numbers["s2"])
+    assert second == first + 1
+    newest = "s1" if numbers["s1"] == [second] else "s2"
+    found = await s.list(bank, q=f"#{second}", request_context=request_context)
+    assert [x.session_id for x in found.items] == [newest]

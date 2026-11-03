@@ -999,14 +999,16 @@ class SessionService:
                 )
                 if spoke:
                     # A note's number counts the bank's notes, so "#123" names one note in the bank.
-                    # The bank row lock keeps two sessions from taking the same number at once.
+                    # The bank row lock keeps two sessions from taking the same number at once. It
+                    # starts above every older note's seq (their number, from before numbering):
+                    # counting from 1 made the first new note "#1" as well as each old session's first.
                     await conn.fetchval(
                         f"SELECT bank_id FROM {fq_table('banks')} WHERE bank_id = $1 FOR UPDATE", bank_id
                     )
                     number = int(
                         await conn.fetchval(
-                            f"SELECT COALESCE(MAX(note_number), 0) + 1 FROM {fq_table('session_events')} "
-                            "WHERE bank_id = $1",
+                            f"SELECT COALESCE(MAX(COALESCE(note_number, seq)), 0) + 1 "
+                            f"FROM {fq_table('session_events')} WHERE bank_id = $1 AND kind = 'note'",
                             bank_id,
                         )
                     )
