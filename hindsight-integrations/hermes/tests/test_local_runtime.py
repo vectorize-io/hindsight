@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from conftest import SECRETS
 from hindsight_hermes import embedded
 
 
@@ -336,3 +337,29 @@ def test_a_rewrite_keeps_the_keys_the_plugin_does_not_own(hermes_env):
         "HINDSIGHT_API_TENANT_API_KEY": "t",
     }
     assert embedded._profile_env_drifted(_CFG) is False
+
+
+_DB = "postgresql://u:p@127.0.0.1:5433/hindsight"
+
+
+def test_the_users_database_reaches_the_launched_daemon(hermes_env, monkeypatch):
+    """#6093: with no way to say where the database is, the daemon took a pg0 of its own and failed
+    to start it against the cluster still running from the last daemon. Either name works, and it is
+    written under the one every hindsight-embed release honours."""
+    monkeypatch.setitem(SECRETS, "HINDSIGHT_API_DATABASE_URL", _DB)
+    path = embedded._materialize_embedded_profile_env(_CFG)
+    assert embedded._load_simple_env(path)["HINDSIGHT_EMBED_API_DATABASE_URL"] == _DB
+    assert embedded._profile_env_drifted(_CFG) is False
+
+
+def test_a_database_set_in_the_profile_env_by_hand_survives_a_rewrite(hermes_env):
+    path = _profile_env(_OWNED.replace("gpt", "old-model") + f"HINDSIGHT_API_DATABASE_URL={_DB}\n")
+    assert embedded._profile_env_drifted(_CFG) is True  # the model changed
+    embedded._materialize_embedded_profile_env(_CFG)
+    assert embedded._load_simple_env(path)["HINDSIGHT_EMBED_API_DATABASE_URL"] == _DB
+    assert embedded._profile_env_drifted(_CFG) is False
+
+
+def test_a_default_deployment_names_no_database(hermes_env):
+    """No URL anywhere leaves the daemon on its own pg0, as before."""
+    assert "HINDSIGHT_EMBED_API_DATABASE_URL" not in embedded._build_embedded_profile_env(_CFG)

@@ -362,6 +362,7 @@ _PLUGIN_PROFILE_ENV_KEYS = frozenset(
         "HINDSIGHT_API_LOG_LEVEL",
         "HINDSIGHT_API_LLM_BASE_URL",
         "HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT",
+        "HINDSIGHT_EMBED_API_DATABASE_URL",
     }
 )
 
@@ -401,7 +402,28 @@ def _build_embedded_profile_env(config: dict[str, Any], *, llm_api_key: str | No
         idle_timeout = os.environ.get("HINDSIGHT_IDLE_TIMEOUT")
     if idle_timeout is not None and idle_timeout != "":
         env_values["HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT"] = str(_parse_int_setting(idle_timeout, _DEFAULT_IDLE_TIMEOUT))
+    if database_url := _embedded_database_url(config):
+        env_values["HINDSIGHT_EMBED_API_DATABASE_URL"] = database_url
     return env_values
+
+
+# Either name says where the daemon's database is; hindsight-embed before 1.2 honours only the first.
+_DATABASE_URL_KEYS = ("HINDSIGHT_EMBED_API_DATABASE_URL", "HINDSIGHT_API_DATABASE_URL")
+
+
+def _embedded_database_url(config: dict[str, Any]) -> str:
+    """The database the user pointed Hindsight at, from a scoped secret, else the profile env itself
+    (a URL set there by hand must survive a rewrite). Without it the daemon owns a pg0 of its own,
+    and starting that against a cluster that outlived the last daemon fails with "Instance already
+    running" on every restart (#6093). The process environment the daemon inherits anyway."""
+    for key in _DATABASE_URL_KEYS:
+        try:
+            if url := get_secret(key, ""):
+                return str(url)
+        except UnscopedSecretError:
+            pass
+    on_disk = _load_simple_env(_embedded_profile_env_path(config))
+    return next((url for key in _DATABASE_URL_KEYS if (url := on_disk.get(key))), "")
 
 
 def _secure_write_profile_env(profile_env: Path, content: str) -> None:
