@@ -170,6 +170,32 @@
   padding: 0 1rem;
 }
 
+/* Reading progress: a gradient bar on the navbar's bottom edge that fills as
+   the page scrolls. Pure CSS (scroll-driven animation); browsers without it
+   just show no bar. */
+@supports (animation-timeline: scroll()) {
+  .navbar::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 3px;
+    background: var(--hindsight-gradient-horizontal);
+    transform: scaleX(0);
+    transform-origin: left;
+    pointer-events: none;
+    animation: hindsight-scroll-progress linear both;
+    animation-timeline: scroll(root block);
+  }
+}
+
+@keyframes hindsight-scroll-progress {
+  to {
+    transform: scaleX(1);
+  }
+}
+
 .navbar__logo {
   margin-bottom: 0.5rem;
 }
