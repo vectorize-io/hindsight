@@ -192,6 +192,8 @@ def _fetch_hindsight_api_version(api_url: str, api_key: str | None = None, timeo
 
     ``/v1/version`` first: an ingress that routes only ``/v1`` to the API hands a bare ``/version``
     to whatever else it fronts, whose 404 read as "no version" (same order as coding-agents, #5286).
+    ``/api/version`` last: a proxy that fronts the control plane at the root answers there with the
+    API's own version, which it relays (#6137).
     Raises ``_VersionProbeUnreachable`` when no version came back and either path failed to answer
     (connection error, timeout, 5xx), so the caller can tell "unknown" from "old": only a 4xx or a
     versionless body from every path means the server is old.
@@ -205,7 +207,7 @@ def _fetch_hindsight_api_version(api_url: str, api_key: str | None = None, timeo
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     unanswered = False
-    for path in ("/v1/version", "/version"):
+    for path in ("/v1/version", "/version", "/api/version"):
         url = api_url.rstrip("/") + path
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as resp:  # noqa: S310
