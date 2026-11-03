@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from hindsight_api.engine.retain.bank_utils import BANK_ID_MAX_BYTES
+from hindsight_api.engine.response_models import ID_MAX_BYTES
 from hindsight_api.engine.storage import bank_storage_prefix, key_segment
 
 
@@ -33,8 +33,8 @@ def test_an_empty_bank_id_is_refused():
 def test_maximum_bank_id_stays_within_object_store_key_budget():
     """The longest bank id creation accepts still leaves room for the rest of an object-store key (#4391)."""
     # Percent-encoding turns every UTF-8 byte of a CJK character into 3 key bytes: the worst case.
-    bank_id = "界" * (BANK_ID_MAX_BYTES // len("界".encode()))
-    assert len(key_segment(bank_id)) == 3 * BANK_ID_MAX_BYTES
+    bank_id = "界" * (ID_MAX_BYTES // len("界".encode()))
+    assert len(key_segment(bank_id)) == 3 * ID_MAX_BYTES
 
     # S3-compatible stores cap object keys at 1,024 bytes. The bank-id limit counts bytes before
     # encoding, so this fails if the limit or the encoding grows past what a file key can hold.

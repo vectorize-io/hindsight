@@ -1856,7 +1856,7 @@ class TestAuthorizationWriteDenied:
         assert "Orders" not in resp.text
         assert _write_ops(validator) == []
 
-    @pytest.mark.parametrize("body", [{"tags": []}, {"max_tokens": 0}, {"name": ""}])
+    @pytest.mark.parametrize("body", [{"tags": []}, {"source_query": ""}, {"name": ""}])
     async def test_empty_but_supplied_values_still_authorize(self, api_client, kb_bank, memory, monkeypatch, body):
         """The near misses of the guard above: supplied-but-empty is a real change.
 

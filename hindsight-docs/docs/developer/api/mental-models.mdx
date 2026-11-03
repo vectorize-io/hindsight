@@ -73,7 +73,7 @@ Creating a mental model runs a reflect operation in the background and saves the
 |-----------|------|----------|-------------|
 | `name` | string | Yes | Human-readable name for the mental model |
 | `source_query` | string | Yes | The query to run to generate content |
-| `id` | string | No | Custom ID for the mental model (alphanumeric lowercase with hyphens). Auto-generated if omitted. |
+| `id` | string | No | Custom ID for the mental model (same rules as a bank id: at most 192 bytes of UTF-8, no '/' and no control characters). Auto-generated if omitted. |
 | `tags` | list | No | Tags that scope the model during reflect **and** filter source memories during refresh. Defaults to `all_strict` matching, so only memories carrying every listed tag are read. See [Tags and Visibility](#tags-and-visibility). |
 | `max_tokens` | int | No | Maximum tokens for the mental model content |
 | `trigger` | object | No | Trigger settings (see [Automatic Refresh](#automatic-refresh)) |

@@ -1079,7 +1079,7 @@ export type BankTemplateMentalModel = {
   /**
    * Id
    *
-   * Unique ID for the mental model (alphanumeric lowercase with hyphens)
+   * Unique ID for the mental model (same rules as a bank id: at most 192 bytes of UTF-8, no '/' and no control characters)
    */
   id: string;
   /**
@@ -1573,7 +1573,7 @@ export type CreateBankAliasRequest = {
   /**
    * Alias
    *
-   * The extra bank id. Same rules as a bank id (non-empty, at most 192 bytes of UTF-8, no control characters, no leading underscore), and it must not already name a bank or another alias.
+   * The extra bank id. Same rules as a bank id (non-empty, at most 192 bytes of UTF-8, no '/', no control characters, no leading underscore), and it must not already name a bank or another alias.
    */
   alias: string;
   /**
@@ -1793,7 +1793,7 @@ export type CreateMentalModelRequest = {
   /**
    * Id
    *
-   * Optional custom ID for the mental model (alphanumeric lowercase with hyphens)
+   * Optional custom ID for the mental model (same rules as a bank id: at most 192 bytes of UTF-8, no '/' and no control characters)
    */
   id?: string | null;
   /**

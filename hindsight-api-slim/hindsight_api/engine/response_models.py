@@ -6,6 +6,7 @@ API response models should be kept separate and convert from these core models t
 API stability even if internal models change.
 """
 
+import unicodedata
 from collections.abc import Callable
 from datetime import datetime, timezone
 from enum import Enum
@@ -901,6 +902,36 @@ class ReflectDefaultOptions(BaseModel):
             "across pages; lower it to cut the reflect context. None means use the shipped default (16000)."
         ),
     )
+
+
+# Bytes, not characters: storage keys percent-encode the bank id (up to 3x per UTF-8 byte), so
+# 192 bytes is at most 576 encoded bytes, under S3's 1,024-byte key limit with room for the
+# tenant, the prefix and the file name, while still fitting 64 CJK characters (#4391).
+ID_MAX_BYTES = 192
+
+
+def id_problem(value: str, what: str) -> str | None:
+    """Why a caller-chosen id that names a URL segment (bank, alias, mental model) can't be created, or None.
+
+    A "/" splits the URL path, so the server never routes back to it (#6235). Existing rows are
+    never re-checked, so they stay reachable through whatever path they can still use.
+    """
+    if not value:
+        return f"{what} must not be empty"
+    if len(value.encode("utf-8")) > ID_MAX_BYTES:
+        return f"{what} is too long: at most {ID_MAX_BYTES} bytes of UTF-8 are allowed"
+    if any(unicodedata.category(ch) == "Cc" for ch in value):
+        return f"{what} must not contain control characters"
+    if "/" in value:
+        return f"{what} must not contain '/': it would split the URL path"
+    return None
+
+
+def check_mental_model_id(mental_model_id: str) -> str:
+    problem = id_problem(mental_model_id, "Mental model id")
+    if problem:
+        raise ValueError(problem)
+    return mental_model_id
 
 
 class MentalModelTrigger(BaseModel):

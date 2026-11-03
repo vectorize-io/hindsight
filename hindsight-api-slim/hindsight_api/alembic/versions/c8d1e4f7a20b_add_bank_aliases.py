@@ -85,7 +85,7 @@ def _oracle_execute_ignoring_955(sql: str) -> None:
 
 def _oracle_upgrade() -> None:
     # VARCHAR2(256) mirrors the bank_id columns elsewhere in the Oracle schema;
-    # BANK_ID_MAX_BYTES (192) bounds what either column can actually hold.
+    # ID_MAX_BYTES (192) bounds what either column can actually hold.
     _oracle_execute_ignoring_955(
         """
         CREATE TABLE bank_aliases (

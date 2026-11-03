@@ -2042,7 +2042,7 @@ def _register_create_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
             Args:
                 name: Human-readable name for the mental model
                 source_query: The query to run through reflect to generate content
-                mental_model_id: Optional custom ID (alphanumeric lowercase with hyphens). Auto-generated if not provided.
+                mental_model_id: Optional custom ID (same rules as a bank id: at most 192 bytes of UTF-8, no '/' and no control characters). Auto-generated if not provided.
                 tags: Optional tags for scoped visibility filtering
                 tags_match: How this model's tags are matched against memories when the content
                     is (re)generated. One of 'any' (match any tag, like recall/reflect), 'all'
@@ -2108,7 +2108,7 @@ def _register_create_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
             Args:
                 name: Human-readable name for the mental model
                 source_query: The query to run through reflect to generate content
-                mental_model_id: Optional custom ID (alphanumeric lowercase with hyphens). Auto-generated if not provided.
+                mental_model_id: Optional custom ID (same rules as a bank id: at most 192 bytes of UTF-8, no '/' and no control characters). Auto-generated if not provided.
                 tags: Optional tags for scoped visibility filtering
                 tags_match: How this model's tags are matched against memories when the content
                     is (re)generated. One of 'any' (match any tag, like recall/reflect), 'all'
