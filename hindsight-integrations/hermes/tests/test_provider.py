@@ -754,6 +754,23 @@ def test_availability_failure_is_logged(hermes_env, caplog):
     assert "availability check failed" in caplog.text
 
 
+@pytest.mark.parametrize("mode", ["cloud", "local_external"])
+def test_a_client_that_cannot_import_makes_the_provider_unavailable(hermes_env, monkeypatch, mode):
+    """#6063: a gateway started before the install has no hindsight_client. The provider said it was
+    available and every recall and retain then failed; it now says why it isn't."""
+    (hermes_env / "hindsight").mkdir(parents=True, exist_ok=True)
+    (hermes_env / "hindsight" / "config.json").write_text(json.dumps({"mode": mode, "api_url": "http://hs.test"}))
+    provider = plugin.HindsightMemoryProvider()
+    assert provider.is_available() is True and provider.unavailable_reason() == ""
+
+    def _missing(name):
+        raise ModuleNotFoundError(f"No module named '{name}'")
+
+    monkeypatch.setattr(plugin.embedded.importlib, "import_module", _missing)
+    assert provider.is_available() is False
+    assert "hermes gateway restart" in provider.unavailable_reason()
+
+
 def test_desktop_panel_offers_every_mode_the_plugin_runs():
     """#4662: without local_embedded the panel could not hold that mode and saving rewrote it."""
     from hindsight_hermes.config_schema import CONFIG_SCHEMA
