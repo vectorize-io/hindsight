@@ -1539,6 +1539,104 @@ async def test_store_document_bodies_keeps_no_text_for_a_bank_that_keeps_none(re
     assert store.documents[doc_id]["chunk_texts"] == [""]
 
 
+async def test_batched_body_flush_keeps_no_text_for_a_bank_that_keeps_none(restore_default_store):
+    """The end-of-retain flush writes several documents in one `put_documents` call, which builds
+    its own arguments rather than going through `_store_document_bodies`: it must honour
+    `store_document_text` the same way (#6249)."""
+    from hindsight_api.engine.retain.orchestrator import (
+        DocumentBodyAccumulator,
+        DocumentBodyMeta,
+        flush_document_bodies,
+    )
+
+    class _Batching(InMemoryMemories):
+        async def put_documents(self, *, bank_id, documents):
+            self.calls.append("put_documents")
+            await super().put_documents(bank_id=bank_id, documents=documents)
+
+    store = _Batching({})
+    set_memories(store)
+
+    class _Cfg:
+        store_document_text = False
+
+    def _acc(text: str) -> DocumentBodyAccumulator:
+        acc = DocumentBodyAccumulator(
+            meta=DocumentBodyMeta(
+                bank_id="bank-notext",
+                content_hash="h",
+                combined_content=text,
+                merged_tags=None,
+                config=_Cfg(),
+                retain_params=None,
+                expect_content_hash=None,
+            )
+        )
+        acc.slices[0] = [text]
+        return acc
+
+    await flush_document_bodies({"doc-a": _acc("Alice moved to Berlin."), "doc-b": _acc("Bob moved to Rome.")})
+
+    assert "put_documents" in store.calls, "two documents must go as one batch, the path under test"
+    for doc_id in ("doc-a", "doc-b"):
+        assert store.documents[doc_id]["original_text"] is None
+        assert store.documents[doc_id]["chunk_texts"] == [""]
+
+
+async def test_metadata_only_re_put_keeps_no_text_for_a_bank_that_keeps_none(monkeypatch, restore_default_store):
+    """An unchanged re-send re-puts the record to change its labels. It used to re-put the full
+    body whatever the bank said, so a bank that keeps no text got it back on every re-send
+    (#6249)."""
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    from hindsight_api.engine.retain import orchestrator as orch
+    from hindsight_api.engine.retain.types import RetainContent
+
+    store = InMemoryMemories({})
+    set_memories(store)
+    await store.put_document(
+        bank_id="bank-notext",
+        document_id="doc-1",
+        content_hash="v1",
+        original_text=None,
+        chunk_texts=["Alice moved to Berlin."],
+        keep_chunk_text=False,
+    )
+
+    class _NoConnection:
+        @asynccontextmanager
+        async def transaction(self):
+            yield
+
+    @asynccontextmanager
+    async def _no_connection(_pool):
+        yield _NoConnection()
+
+    async def _relabel(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(orch, "acquire_with_retry", _no_connection)
+    monkeypatch.setattr(orch.fact_storage, "update_memory_units_metadata_and_tags", _relabel)
+
+    result = await orch._delta_metadata_only(
+        pool=SimpleNamespace(ops=None),
+        bank_id="bank-notext",
+        contents_dicts=[{"content": "Alice moved to Berlin.", "document_id": "doc-1", "tags": ["team-b"]}],
+        contents=[RetainContent(content="Alice moved to Berlin.")],
+        document_id="doc-1",
+        document_tags=None,
+        log_buffer=[],
+        start_time=0.0,
+        outbox_callback=None,
+        config=SimpleNamespace(store_document_text=False),
+    )
+
+    assert result is not None
+    assert store.documents["doc-1"]["original_text"] is None
+    assert store.documents["doc-1"]["chunk_texts"] == [""]
+
+
 async def test_store_document_bodies_omits_absent_retain_params(restore_default_store):
     """No params ⇒ no key, rather than a "null" string that the read would then hand back as the
     literal string. The read path json-parses whatever is there."""
