@@ -47,7 +47,32 @@ def test_retain_every_n_turns_buffers_then_ships_the_batch(provider):
     instance.shutdown()
 
     assert len(fake.retains) == 1
-    assert _retain_item(fake)["metadata"]["message_count"] == "4"
+    assert len(_messages_of(fake)) == 4
+
+
+def test_appends_carry_no_per_call_metadata(provider):
+    """#6241: an append relabels every memory of the session document, so a value that changes on
+    each call (a timestamp, a counter) made every turn rewrite all of the session's memories."""
+    instance, fake = provider({})
+    instance.sync_turn("one", "1")
+    instance.sync_turn("two", "2")
+    instance.shutdown()
+
+    first, second = (call["items"][0]["metadata"] for call in fake.retains)
+    assert first == second and first["session_id"] == "session-1"
+    assert not {"retained_at", "message_count", "turn_index"} & first.keys()
+
+
+def test_non_append_retains_keep_per_call_metadata(provider, monkeypatch):
+    instance, fake = provider({"retain_every_n_turns": 2})
+    # The fixture pins the append probe on; an API without append gets per-call documents.
+    monkeypatch.setattr(plugin, "_check_api_supports_update_mode_append", lambda *a, **k: False)
+    instance.sync_turn("one", "1")
+    instance.sync_turn("two", "2")
+    instance.shutdown()
+
+    metadata = _retain_item(fake)["metadata"]
+    assert metadata["message_count"] == "4" and "retained_at" in metadata
 
 
 def test_shutdown_flushes_turns_below_the_retain_cadence(provider):
