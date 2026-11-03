@@ -1876,6 +1876,9 @@ jobs:
       HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
       HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
       HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      # json_object mode makes Gemma open with an empty key ({"": "", "facts": []})
+      # about 1 time in 3; schema-in-prompt only was 20/20 on the temporal test.
+      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
       # Attachments (images, PDFs) go to Gemini: the dev endpoint rejects 'file' parts.
       HINDSIGHT_API_VLM_PROVIDER: vertexai
       HINDSIGHT_API_VLM_MODEL: google/gemini-3.1-flash-lite
