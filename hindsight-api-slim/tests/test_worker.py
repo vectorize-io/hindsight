@@ -238,7 +238,7 @@ class TestWorkerOperationMetrics:
         collector.record_operation_result.assert_called_once()
         call = collector.record_operation_result.call_args
         assert call.args[0] == "retain"  # batch_retain normalised
-        assert call.kwargs["success"] is True
+        assert call.kwargs["outcome"] == "true"
         assert call.kwargs["source"] == "worker"
 
     @pytest.mark.asyncio
@@ -260,7 +260,7 @@ class TestWorkerOperationMetrics:
 
         collector = await self._run(boom)
         collector.record_operation_result.assert_called_once()
-        assert collector.record_operation_result.call_args.kwargs["success"] is False
+        assert collector.record_operation_result.call_args.kwargs["outcome"] == "false"
 
     @pytest.mark.asyncio
     async def test_deferral_not_counted(self):

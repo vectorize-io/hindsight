@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from hindsight_api.engine.memories.postgres import PostgresMemories
-from hindsight_api.metrics import MetricsCollector, memories_backend_for
+from hindsight_api.metrics import MetricsCollector, OperationOutcome, memories_backend_for
 
 
 class _RoutedStore:
@@ -64,7 +64,7 @@ def test_default_is_no_label_so_existing_series_are_untouched(collector):
 def test_only_a_named_backend_is_labelled(collector):
     with collector.record_operation("recall", bank_id="ext-bank"):
         pass
-    collector.record_operation_result("recall", "pg-bank", success=True, duration=0.1)
+    collector.record_operation_result("recall", "pg-bank", outcome=OperationOutcome.SUCCESS, duration=0.1)
 
     labels = [c.args[1].get("memories_backend") for c in collector.operation_duration.record.call_args_list]
     assert labels == ["other-store", None]

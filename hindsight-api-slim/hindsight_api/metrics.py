@@ -22,6 +22,7 @@ import threading
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
+from enum import StrEnum
 from typing import TYPE_CHECKING, Callable, NamedTuple
 
 from opentelemetry import metrics
@@ -64,33 +65,61 @@ def _backend_attrs(backend: str) -> dict[str, str]:
     return {"memories_backend": backend} if backend else {}
 
 
-def _is_client_cancellation(exc: BaseException) -> bool:
-    """Whether *exc* is a client-disconnect cancellation rather than a failure.
+class OperationOutcome(StrEnum):
+    """How an operation ended: the ``success`` label on ``hindsight.operation.*``.
 
-    An abandoned recall/reflect raises OperationCancelledError (issue #2122);
-    the HTTP layer re-raises it as ``HTTPException(499) from exc`` (see
-    api/http.py run_cancellable_on_disconnect). The hard-cancel path
-    (run_task_cancellable_on_disconnect) has no such error to re-raise, so it
-    chains a fresh one; before #5946 it raised a bare 499 and every hard
-    disconnect counted as a failure. The exception itself, or any
-    link in its ``__cause__`` chain, being an OperationCancelledError marks it
-    as a cancellation. Matching on the cause chain rather than a bare status
-    code avoids misclassifying an unrelated 499 as a cancellation. Per the
-    engine contract a cancellation is "not a failure to retry or report"
-    (cancellation.OperationCancelledError), so it is recorded on
-    ``hindsight.operation.total`` as ``success="cancelled"``, never ``"false"``.
+    Only ``FAILURE`` counts toward an operation's failure rate. The values are the
+    label strings themselves; ``true``/``false`` are kept from when the label was a bool.
     """
-    # Imported lazily to avoid import-time coupling (cf. _get_tenant above).
+
+    SUCCESS = "true"
+    FAILURE = "false"
+    # The client disconnected before a recall/reflect finished (#2122).
+    CANCELLED = "cancelled"
+    # The operation was refused before it did any work (OperationValidationError): an
+    # OperationValidatorExtension rejected it, or the caller's tag scope does not allow it.
+    REJECTED = "rejected"
+
+
+def _outcome_of_error(exc: BaseException) -> OperationOutcome:
+    """The outcome of an operation that raised *exc*: a failure, unless it was not one.
+
+    Two errors are not failures of the operation, and are counted outside the failure
+    rate on ``hindsight.operation.total``:
+
+    - **Cancelled.** An abandoned recall/reflect raises OperationCancelledError (issue
+      #2122); the HTTP layer re-raises it as ``HTTPException(499) from exc`` (see
+      api/http.py run_cancellable_on_disconnect). The hard-cancel path
+      (run_task_cancellable_on_disconnect) has no such error to re-raise, so it chains a
+      fresh one; before #5946 it raised a bare 499 and every hard disconnect counted as a
+      failure. Per the engine contract a cancellation is "not a failure to retry or
+      report" (cancellation.OperationCancelledError).
+    - **Rejected.** An OperationValidatorExtension that refuses an operation (over quota,
+      a policy refusal, ...), like the engine's tag-scope checks, raises
+      OperationValidationError before it does any work, and the HTTP layer returns its
+      status code. The server decided not to run it. Counted as a failure, one client
+      that keeps calling after it has been refused drives the operation's failure rate
+      to its share of the traffic.
+
+    Either error is matched anywhere in the ``__cause__`` chain, so a route that re-raises
+    it as an HTTPException ``from`` it is still recognised. Matching on the cause chain
+    rather than a bare status code keeps an unrelated 499 or 402 a failure.
+    """
+    # Imported lazily to avoid import-time coupling (cf. _get_tenant above): both
+    # modules are heavier than this one and must not be loaded by importing metrics.
     from hindsight_api.cancellation import OperationCancelledError
+    from hindsight_api.extensions.operation_validator import OperationValidationError
 
     cause: BaseException | None = exc
     seen: set[int] = set()  # guard against a cyclic __cause__ chain
     while cause is not None and id(cause) not in seen:
         if isinstance(cause, OperationCancelledError):
-            return True
+            return OperationOutcome.CANCELLED
+        if isinstance(cause, OperationValidationError):
+            return OperationOutcome.REJECTED
         seen.add(id(cause))
         cause = cause.__cause__
-    return False
+    return OperationOutcome.FAILURE
 
 
 # Custom bucket boundaries for operation duration (in seconds)
@@ -267,19 +296,14 @@ class MetricsCollectorBase:
         self,
         operation: str,
         bank_id: str,
-        success: bool,
+        outcome: OperationOutcome,
         duration: float,
         source: str = "api",
         budget: str | None = None,
         max_tokens: int | None = None,
         memories_backend: str | None = None,
-        cancelled: bool = False,
     ):
-        """Record a single completed operation with an explicit success label.
-
-        ``cancelled`` marks a client-disconnect cancellation; it is recorded with
-        ``success="cancelled"`` so it is counted without touching the failure rate.
-        """
+        """Record a single completed operation with an explicit outcome (see OperationOutcome)."""
         raise NotImplementedError
 
     def record_llm_call(
@@ -386,13 +410,12 @@ class NoOpMetricsCollector(MetricsCollectorBase):
         self,
         operation: str,
         bank_id: str,
-        success: bool,
+        outcome: OperationOutcome,
         duration: float,
         source: str = "api",
         budget: str | None = None,
         max_tokens: int | None = None,
         memories_backend: str | None = None,
-        cancelled: bool = False,
     ):
         """No-op operation result recording."""
         pass
@@ -697,8 +720,7 @@ class MetricsCollector(MetricsCollectorBase):
             max_tokens: Optional max tokens for the operation
         """
         start_time = time.perf_counter()
-        success = True
-        cancelled = False
+        outcome = OperationOutcome.SUCCESS
         # Resolved once, and published for the length of the operation so the recall phases
         # recorded inside it carry the same backend label. (Retain phases label their store
         # themselves, in timed_retain.)
@@ -707,48 +729,41 @@ class MetricsCollector(MetricsCollectorBase):
         try:
             yield
         except Exception as exc:
-            # A client disconnect cancels the operation cooperatively (#2122),
-            # raised as OperationCancelledError and re-raised by the HTTP layer
-            # as HTTPException(499) from it. An abandoned request is neither a
-            # success nor a failure: it is recorded as success="cancelled", so
-            # it is counted (with its time-until-cancel) without inflating the
-            # failure rate on hindsight.operation.total. Before #6126 it was
-            # dropped from the metric entirely (#2185), which left no way to see
-            # how often clients gave up, or how long they waited first.
-            if _is_client_cancellation(exc):
-                cancelled = True
-            success = False
+            # Not every error is a failure of the operation: a client disconnect is recorded
+            # as "cancelled" and a validator refusal as "rejected" (see _outcome_of_error).
+            # Both are still counted, with their duration, but outside the failure rate.
+            # Before #6126 a cancellation was dropped from the metric entirely (#2185),
+            # which left no way to see how often clients gave up, or how long they waited.
+            outcome = _outcome_of_error(exc)
             raise
         finally:
             _current_memories_backend.reset(backend_token)
             self.record_operation_result(
                 operation,
                 bank_id,
-                success=success,
+                outcome=outcome,
                 duration=time.perf_counter() - start_time,
                 source=source,
                 budget=budget,
                 max_tokens=max_tokens,
                 memories_backend=backend,
-                cancelled=cancelled,
             )
 
     def record_operation_result(
         self,
         operation: str,
         bank_id: str,
-        success: bool,
+        outcome: OperationOutcome,
         duration: float,
         source: str = "api",
         budget: str | None = None,
         max_tokens: int | None = None,
         memories_backend: str | None = None,
-        cancelled: bool = False,
     ):
-        """Record a single completed operation (duration + count) with a success label.
+        """Record a single completed operation (duration + count) with its outcome.
 
         Direct (non-context-manager) recording for code paths that need explicit
-        success control rather than the exception-based ``record_operation`` — e.g.
+        outcome control rather than the exception-based ``record_operation`` — e.g.
         the async worker, where deferrals/retries are not terminal outcomes and must
         not be counted as completions.
         """
@@ -764,7 +779,7 @@ class MetricsCollector(MetricsCollectorBase):
             attributes["budget"] = budget
         if max_tokens:
             attributes["max_tokens"] = str(max_tokens)
-        attributes["success"] = "cancelled" if cancelled else str(success).lower()
+        attributes["success"] = outcome.value
 
         # Record duration
         self.operation_duration.record(duration, attributes)
