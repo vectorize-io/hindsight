@@ -248,7 +248,8 @@ async def list_memory_units(
         *query_params,
     )
 
-    # Get entity information for these units
+    # Get entity information for these units. Names are sorted so the list
+    # agrees with get_memory_unit, which sorts the same way (#6271).
     if units:
         unit_ids = [row["id"] for row in units]
         unit_entities = await conn.fetch(
@@ -257,7 +258,7 @@ async def list_memory_units(
             FROM {fq_table("unit_entities")} ue
             JOIN {fq_table("entities")} e ON ue.entity_id = e.id
             WHERE ue.unit_id = ANY($1::uuid[])
-            ORDER BY ue.unit_id
+            ORDER BY ue.unit_id, e.canonical_name
         """,
             unit_ids,
         )
@@ -360,7 +361,8 @@ async def get_memory_unit(*, conn, ops, fq_table, bank_id: str, unit_id: str) ->
     # observation→source_memory_ids inheritance fallback in SQL, so a
     # single query covers direct rows and inherited ones.
     entities_rows = await conn.fetch(
-        _entity_rows_for_units_sql(ops=ops, fq_table=fq_table, unit_ids_placeholder=1),
+        # Same order as the listing, so the two reads agree (#6271).
+        _entity_rows_for_units_sql(ops=ops, fq_table=fq_table, unit_ids_placeholder=1) + " ORDER BY canonical_name",
         [row["id"]],
     )
     entities = [r["canonical_name"] for r in entities_rows]
