@@ -89,7 +89,7 @@ Retain doesn't use the decision model, so it costs the same either way and water
 
 **A cheap LLM gets close to a frontier setup.** `glm-5.3-flash` with the decision model scores 87.1 at $7.72 per thousand cases, and `gpt-6-luna` with it scores 87.0 at $9.88. `gemini-3.8-flash` alone scores 89.0 at $147: about 2 points more, at 15–19x the cost. Switching to a cheaper LLM and adding the decision model is the biggest saving in these results.
 
-**Faster calls.** A decision-model request takes 167 ms at the median (350 ms at p90) and answers every question about a fact or a memory at once; the LLM call it replaces takes 0.9 to 7 seconds at the median, depending on the model.
+**Faster calls.** A decision-model request takes 167 ms at the median (350 ms at p90) and answers every question about a fact or a memory at once; the LLM call it replaces takes 1 to 7 seconds at the median, depending on the model.
 
 **The decision model is a small part of the bill for most LLMs.** Its own tokens cost $4 to $7 per thousand cases: $3.93 of the $61 on `gemini-3.8-flash`. On the cheapest LLMs that's most of the bill, which is why they cost more with it (below).
 
