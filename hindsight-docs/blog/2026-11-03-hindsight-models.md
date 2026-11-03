@@ -83,7 +83,7 @@ Each chart plots quality against cost, one point per LLM; an arrow joins an LLM 
 
 </div>
 
-Quality goes up for six of the seven LLMs, most for the ones that need it most (`glm-5.3-flash` 73.8 → 87.1, `gemma-4-26b-a4b` 76.6 → 81.1, `deepseek-v4.1-flash` 81.9 → 85.1), and holds level for `gemini-3.1-flash-lite` (87.1 → 86.6). The LLM makes about a third fewer calls and reads half the input tokens or less, so five of them get cheaper: `gemini-3.8-flash` $147 → $61 (2.4x less), `gemini-3.1-flash-lite` $42 → $22, `claude-haiku-5.5` $31 → $18, `gpt-6-luna` $16 → $9.88, `gemma-4-26b-a4b` $14 → $11. Time in model calls drops for all seven, from 1.2x (`gemini-3.1-flash-lite`) to 1.9x (`gemini-3.8-flash`).
+Quality goes up for six of the seven LLMs, most for the ones that need it most (`glm-5.3-flash` 73.8 → 87.1, `gemma-4-26b-a4b` 76.6 → 81.1, `deepseek-v4.1-flash` 81.9 → 85.1), and holds level for `gemini-3.1-flash-lite` (87.1 → 86.6). The LLM makes about a third fewer calls and reads half the input tokens or less, so five of them get cheaper: `gemini-3.8-flash` $147 → $61 (2.4x less), `gemini-3.1-flash-lite` $42 → $22, `claude-haiku-5.5` $31 → $18, `gpt-6-luna` $16 → $9.88, `gemma-4-26b-a4b` $16 → $12. Time in model calls drops for all seven, from 1.2x (`gemini-3.1-flash-lite`) to 1.9x (`gemini-3.8-flash`).
 
 Retain doesn't use the decision model, so it costs the same either way and waters down the totals above. Leave it out and count only consolidation, reflect and knowledge pages, the operations the decision model takes part in: on `gemini-3.8-flash` they cost 2.5x less, spend 1.9x less time in model calls, and score 2.2 points higher.
 
