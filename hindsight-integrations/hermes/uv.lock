@@ -330,7 +330,7 @@ wheels = [
 
 [[package]]
 name = "hermes-plugin-hindsight"
-version = "1.2.3"
+version = "1.2.4"
 source = { virtual = "." }
 dependencies = [
     { name = "hindsight-client" },
