@@ -10,6 +10,7 @@ hide_table_of_contents: false
 ---
 
 import ThemedImage from '@theme/ThemedImage';
+import YouTubeVideo from '@site/src/components/YouTubeVideo';
 
 **The LLM writes, the decision model judges.** Most of what an AI application asks an LLM isn't writing. It's small judgments: is this new, which of these matters, is this enough. Today we're releasing three models built for agent memory, starting with `hs-decide-1-flash`, a decision model that answers those judgments directly, so the LLM is left with the writing.
 
@@ -30,16 +31,7 @@ import ThemedImage from '@theme/ThemedImage';
 
 <!-- truncate -->
 
-<div style={{position: "relative", paddingBottom: "56.25%", height: 0, margin: "1rem 0 2rem", borderRadius: "8px", overflow: "hidden"}}>
-  <iframe
-    style={{position: "absolute", top: 0, left: 0, width: "100%", height: "100%"}}
-    src="https://www.youtube.com/embed/NqipFrDSZgU"
-    title="Introducing Hindsight Models: Better Agent Memory, for Less"
-    frameBorder="0"
-    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-    allowFullScreen
-  ></iframe>
-</div>
+<YouTubeVideo id="NqipFrDSZgU" title="Introducing Hindsight Models: Better Agent Memory, for Less" poster="/img/blog/hindsight-models/video-poster.jpg" duration="1:17" />
 
 ## Judgments are most of the work
 
