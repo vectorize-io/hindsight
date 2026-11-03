@@ -589,3 +589,13 @@ def test_a_note_saying_you_followed_a_rule_is_not_a_note():
     cmd = W.Moment(trigger="command", text="rm -rf models--x", recent=[], diff="")
     said = "You followed JOB.md rule 31 by skipping the Qwen3-TTS folder because of an `.incomplete` file."
     assert not W.accept_note(s, cmd, said, ["m1"])
+
+
+def test_a_note_saying_the_request_overrides_a_rule_is_not_a_note():
+    s = W.WatchState()
+    edit = W.Moment(trigger="edit", text="", recent=[], diff="d")
+    said = (
+        "The Hindsight Hermes plugin constrains `hindsight-client` to versions below 1. Your request to "
+        "'allow any 1.x client, even 1.2' overrides that constraint."
+    )
+    assert not W.accept_note(s, edit, said, ["m1"])
