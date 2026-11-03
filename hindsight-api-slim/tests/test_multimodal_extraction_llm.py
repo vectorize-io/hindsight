@@ -101,6 +101,18 @@ def _content_with_image(before: str, image_bytes: bytes, after: str):
 
 async def _extract(text: str, loader, context: str):
     config = _get_raw_config()
+    # The engine sends attachment chunks to the VLM slot when one is configured; do the same.
+    vlm_config = None
+    if config.vlm_provider:
+        vlm_config = LLMConfig(
+            provider=config.vlm_provider,
+            api_key=config.vlm_api_key or "",
+            base_url=config.vlm_base_url or "",
+            model=config.vlm_model,
+            vertexai_project_id=config.llm_vertexai_project_id,
+            vertexai_region=config.llm_vertexai_region,
+            vertexai_service_account_key=config.llm_vertexai_service_account_key,
+        )
     facts, _, _ = await extract_facts_from_text(
         text=text,
         event_date=datetime(2024, 6, 1),
@@ -109,6 +121,7 @@ async def _extract(text: str, loader, context: str):
         config=config,
         context=context,
         attachment_loader=loader,
+        vlm_config=vlm_config,
     )
     return "\n".join(f"- [{fact.fact_type}] {fact.fact}" for fact in facts)
 

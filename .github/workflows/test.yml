@@ -1876,6 +1876,10 @@ jobs:
       HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
       HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
       HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      # Attachments (images, PDFs) go to Gemini: the dev endpoint rejects 'file' parts.
+      HINDSIGHT_API_VLM_PROVIDER: vertexai
+      HINDSIGHT_API_VLM_MODEL: google/gemini-3.1-flash-lite
+      HINDSIGHT_API_LLM_VERTEXAI_REGION: global
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       # The real-LLM delta/retraction/cache evals gate on this flag *and* a key. The
