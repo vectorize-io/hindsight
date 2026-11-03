@@ -1719,10 +1719,8 @@ def chatgpt(ctx: typer.Context):
     raise typer.Exit(chatgpt_main(ctx.args))
 
 
-# Not listed in --help yet.
 @app.command(
     name="cloud",
-    hidden=True,
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True, "help_option_names": []},
 )
 def cloud(ctx: typer.Context):
