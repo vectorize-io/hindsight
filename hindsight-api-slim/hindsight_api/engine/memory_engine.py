@@ -4984,9 +4984,9 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Call post-operation hook if validator is configured
         if self._operation_validator:
-            # Estimate tokens
-            query_tokens = len(source_query) // 4 if source_query else 0
-            output_tokens = len(generated_content) // 4 if generated_content else 0
+            # Counted with the engine's tokenizer, the same one retain and recall use.
+            query_tokens = count_tokens(source_query) if source_query else 0
+            output_tokens = count_tokens(generated_content) if generated_content else 0
             context_tokens = 0  # refresh doesn't use additional context
 
             result_ctx = MentalModelRefreshResult(
@@ -15384,7 +15384,7 @@ class MemoryEngine(MemoryEngineInterface):
                     bank_id=bank_id,
                     mental_model_id=mental_model_id,
                     request_context=request_context,
-                    output_tokens=0 if _is_unwritten_body(content) else len(content or "") // 4,
+                    output_tokens=0 if _is_unwritten_body(content) else count_tokens(content or ""),
                     success=True,
                 )
             )

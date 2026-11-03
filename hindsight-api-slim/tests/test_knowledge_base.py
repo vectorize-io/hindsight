@@ -1464,7 +1464,7 @@ class TestListReportsTheContentItDelivers:
 
         page = await memory.list_mental_models(bank_id=bank_id, detail="content", request_context=request_context)
 
-        expected = sorted(len(m["content"]) // 4 for m in page.items if m.get("content"))
+        expected = sorted(memory_engine_module.count_tokens(m["content"]) for m in page.items if m.get("content"))
         assert sorted(validator.model_get_tokens) == expected
 
     async def test_config_detail_carries_the_definition_without_the_body(
@@ -1639,8 +1639,28 @@ class TestPageReadIsAModelRead:
         # The response renames the model's content to body; the hook is
         # given the same string, so the recorded size must track it.
         assert len(validator.model_get_tokens) == 1
-        assert validator.model_get_tokens[0] == len(body.get("body") or "") // 4
+        assert validator.model_get_tokens[0] == memory_engine_module.count_tokens(body.get("body") or "")
         assert validator.model_get_tokens[0] > 0
+
+    async def test_reported_size_is_a_token_count_not_a_character_estimate(
+        self, api_client, kb_bank, memory, request_context, monkeypatch
+    ):
+        # Chinese runs about one token per character, so a characters/4 estimate
+        # would report roughly a quarter of what the reader actually received.
+        bank_id, _ = kb_bank
+        body = "# 订单\n\n" + "客户下周去东京出差，记得提醒他提前预订酒店。" * 20
+        page = await memory.create_knowledge_page(
+            bank_id, "订单", "订单的事实是什么？", body, request_context=request_context
+        )
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages/{page['id']}")
+
+        assert resp.status_code == 200, resp.text
+        returned = resp.json()["body"]
+        assert validator.model_get_tokens == [memory_engine_module.count_tokens(returned)]
+        assert validator.model_get_tokens[0] > 2 * (len(returned) // 4)
 
     async def test_reading_an_unwritten_page_still_reports_completion_at_zero(
         self, api_client, kb_bank, memory, request_context, monkeypatch
