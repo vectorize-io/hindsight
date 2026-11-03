@@ -231,7 +231,7 @@ export interface NoteOutcome {
 // The coding-agents plugin names notes as Hindsight thoughts; the note lines stay for other clients.
 const USED_RE = /From Hindsight memory \(live session #(\d+)\)|Hindsight thought #(\d+)\*\*/g;
 const UNNEEDED_RE =
-  /Hindsight note \(live session #(\d+)\)|Hindsight thought #(\d+), (?:set aside|already done)|🧠 Hindsight thought #(\d+) —/g;
+  /Hindsight note \(live session #(\d+)\)|Hindsight thought #(\d+), (?:set aside|already done)|🧠 Hindsight thought #(\d+)\s*[—–:-]/g;
 
 /** The notes the agent's own messages name as used or not needed. */
 export function noteMentions(events: SessionEvent[]): Map<number, NoteMention> {

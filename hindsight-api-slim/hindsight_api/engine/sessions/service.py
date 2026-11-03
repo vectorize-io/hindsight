@@ -105,14 +105,15 @@ CREDIT_RE = re.compile(
 )
 DISMISS_RE = re.compile(
     r"Hindsight note \(live session (#\d+[^)]*)\)|Hindsight thought (#\d+(?:\s*(?:/|,|and)\s*#\d+)*), (?:set aside|already done)"
-    r"|🧠 Hindsight thought (#\d+(?:\s*(?:/|,|and)\s*#\d+)*) —"
+    # Agents drift from the asked "#N — ...; no change:": beta also had "#N: ... . No change:".
+    r"|🧠 Hindsight thought (#\d+(?:\s*(?:/|,|and)\s*#\d+)*)\s*[—–:-]"
 )
 NOTE_NUMBER_RE = re.compile(r"#(\d+)")
 NOTE_SEARCH_RE = re.compile(r"#?(\d+)")
 # The verdict after a not-needed line's "<what it said>;": "wrong:" when the agent found the note
 # false or outdated, else not needed ("no change:", or the older ", already done" / ", set aside").
-_WRONG_RE = re.compile(r";\s*wrong:\s*", re.I)
-_NO_CHANGE_RE = re.compile(r";\s*no change:\s*", re.I)
+_WRONG_RE = re.compile(r"[;.]\s*wrong:\s*", re.I)
+_NO_CHANGE_RE = re.compile(r"[;.]\s*no change:\s*", re.I)
 MAX_FEEDBACK_REASON = 500
 
 

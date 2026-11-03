@@ -895,6 +895,12 @@ async def test_a_rerun_of_the_same_request_inherits_what_earlier_runs_set_aside(
             "the commit it cites sets 1024.",
         ),
         ("> 🧠 Hindsight thought #7 — K is 1024", "not_needed", "K is 1024"),
+        # The shape an agent wrote in beta: a colon, and a sentence before "No change:".
+        (
+            "> 🧠 Hindsight thought #7: K is 1024. No change: the fix already uses it.",
+            "not_needed",
+            "the fix already uses it.",
+        ),
     ],
 )
 def test_the_line_an_agent_writes_about_a_note_gives_its_verdict(line, verdict, reason):
