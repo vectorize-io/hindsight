@@ -224,6 +224,43 @@ describe("startCodebaseSurvey", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
+  // #6251: a host with no survey recipe of its own (pi, opencode2, kilo, …) hands the survey to the
+  // next agent. The lookup used to reach binOnPath with no name, throw, and start no survey at all.
+  it("hands a host without a survey recipe to the next agent in line", async () => {
+    const spawn = fakeSpawn();
+    const ok = await startCodebaseSurvey("/repo", {
+      harness: "pi" as never,
+      spawn,
+      // binOnPath's contract: a name in, a path or undefined out — it throws on no name at all.
+      resolveBin: (b) => {
+        if (typeof b !== "string") throw new TypeError("no bin name");
+        return b === "codex" ? "/bin/codex" : undefined;
+      },
+    });
+    expect(ok).toBe(true);
+    expect(launched(spawn)[0]).toBe("/bin/codex");
+  });
+
+  // #6075: terminal managers name the user's pane in env vars and hook the agent's Stop, so a
+  // survey inheriting them closed (Orca) or rebound (Herdr) the user's own pane.
+  it("does not hand the survey the user's terminal-manager pane identity", async () => {
+    const vars = { ORCA_PANE_KEY: "p1", HERDR_PANE_ID: "p2", ORCAS: "kept", MY_HERDR_X: "kept" };
+    Object.assign(process.env, vars);
+    try {
+      const spawn = fakeSpawn();
+      await startCodebaseSurvey("/repo", { harness: "codex", spawn, resolveBin: yes });
+      const env = launched(spawn)[2].env;
+      expect(env.ORCA_PANE_KEY).toBeUndefined();
+      expect(env.HERDR_PANE_ID).toBeUndefined();
+      expect(env.ORCAS).toBe("kept");
+      expect(env.MY_HERDR_X).toBe("kept");
+      expect(env.PATH).toBe(process.env.PATH);
+      expect(env.HINDSIGHT_DISABLE_HOOKS).toBe("1");
+    } finally {
+      for (const k of Object.keys(vars)) delete process.env[k];
+    }
+  });
+
   it.skipIf(process.platform === "win32").each([
     ["0.0.0-beta-18743", false],
     ["2.1.2", false], // stable v2 (#5923)
