@@ -582,9 +582,21 @@ def strip_refs(text: str) -> str:
     return _REF_ID.sub("", text).strip()
 
 
+# A note must never carry a credential: in beta a memory of a past session handed the agent an app
+# password in plain text ("The sheepit password is ..."), twice in the same bank. The value must look
+# like one (a digit or symbol, no spaces), so "the token is refreshed" still passes.
+_SECRET = re.compile(
+    r"\b(password|passwd|passphrase|api[_ -]?key|secret|token)\b[^.\n]{0,20}?\b(is|was|=|:)\s*[`'\"]?"
+    r"(?=\S*[\d!@#$%^&*_+=])\S{6,}",
+    re.I,
+)
+
+
 def accept_note(state: WatchState, m: Moment, text: str, memory_ids: list[str]) -> bool:
     """Whether a note reaches the agent, recording it when it does: never the same memory twice.
     A heads-up does not use its memory up: going against it later is still worth saying."""
+    if _SECRET.search(text):
+        return False
     # The agreement can come after a sentence that only narrates the step ("The user is adding scenarios
     # to test_consolidation.py. This aligns with the rule ...", beta 11:22): look at the first two, and
     # keep the note when it also claims a real conflict ("X is fine, but Y breaks the rule").
