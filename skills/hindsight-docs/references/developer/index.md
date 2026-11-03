@@ -119,6 +119,10 @@ These shape `reflect` only. `recall` returns the same memories whoever is asking
 
 See [Reflect](reflect.md) for the loop in detail.
 
+### Decision Models
+
+Optionally, a [decision model](decision-models.md) takes over the small judgment calls inside recall, consolidation, reflect and knowledge-page refresh — *would this memory help?*, *does this fact say something new?*, *is this enough to answer?* — and answers them in well under a second. The LLM is kept for writing, so the same work takes fewer LLM calls.
+
 ## Architecture Deep Dive
 
 Everything above, end to end and in motion: what a document turns into on the
@@ -177,6 +181,7 @@ Integrations Hub.
 - [**Retain**](retain.md) — How memories are stored with multi-dimensional facts
 - [**Recall**](retrieval.md) — How the 4-way parallel search retrieves memories
 - [**Reflect**](reflect.md) — How mission, directives, and disposition shape reasoning
+- [**Decision Models**](decision-models.md) — How a decision model saves LLM calls across operations
 
 ### API Methods
 - [**Retain**](api/retain.md) — Store information in memory banks

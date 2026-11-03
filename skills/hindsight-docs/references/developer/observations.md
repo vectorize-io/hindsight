@@ -55,6 +55,20 @@ After `retain()` completes, the consolidation engine runs automatically:
 3. **Observation creation/update** — New observations are created or existing ones refined
 4. **Evidence tracking** — Each observation maintains references to supporting facts
 
+### Decision-Model Triage {#decision-model-triage}
+
+When a [decision model](./decision-models.md) is set up for consolidation, it settles the easy facts before the consolidation LLM sees them. For each new fact it asks how the fact relates to the observations recall found for it:
+
+- **It restates an observation** — the fact is attached to that observation as evidence.
+- **It is chatter** — it is skipped.
+- **It changes what an observation says, or adds something new** — it goes to the LLM, as before. The decision model never writes an observation's text.
+
+Facts whose answers disagree, or whose request failed, also go to the LLM, so a decision-model outage only costs the savings. On the consolidation eval this cut LLM calls by about 40% at the same pass rate.
+
+Under a bank's own [observations mission](#observations-mission), chatter is left to the LLM, which applies the mission.
+
+Turn it off for one bank with [`consolidation_use_decision_model: false`](configuration.md#observations), or for every bank with `HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_PROVIDER=none`.
+
 ### Near-Duplicate Reconciliation
 
 Consolidation can still produce two observations that say the same thing in slightly different words — for example when a weaker model writes a near-identical observation instead of refining the existing one, or when refining an observation reshapes its wording so it overlaps another one. Left alone, these near-duplicates clutter recall with redundant beliefs.

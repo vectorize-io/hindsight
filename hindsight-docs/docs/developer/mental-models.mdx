@@ -41,6 +41,8 @@ A mental model is not a cached answer that goes stale silently. Hindsight tracks
 
 The check comes first, and it is scoped: a rebuild only happens when something *within this model's own scope* actually changed. A busy bank does not cause unrelated models to churn, and a scheduled rebuild over an unchanged bank costs nothing.
 
+With a [decision model](./decision-models) set up, a `delta` rebuild first asks it which of the new memories could change the model, and edits from those alone — when none could, the rebuild makes no LLM call. See [Knowledge Pages](./knowledge-pages#decision-model-refresh).
+
 When a model is handed to the reflect agent, it comes with a freshness signal — whether memories in its scope have landed since it was last written. A model that has fallen behind is still shown, but it no longer short-circuits retrieval, and the agent is expected to check it against the layers below rather than trust it blindly.
 
 ---

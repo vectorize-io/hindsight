@@ -1,0 +1,190 @@
+/* Search, pills and cards follow the Integrations hub (src/pages/integrations/index.module.css),
+   on the page background instead of the hero band. */
+.wrapper {
+  margin: 1.5rem 0 2rem;
+}
+
+.searchRow {
+  position: relative;
+}
+
+.input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.85rem 3rem 0.85rem 1.1rem;
+  border-radius: 12px;
+  border: 2px solid var(--ifm-color-emphasis-300);
+  background: var(--ifm-background-surface-color);
+  color: var(--ifm-font-color-base);
+  font-size: 1rem;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.input:focus {
+  border-color: var(--ifm-color-primary);
+  box-shadow: 0 0 0 4px rgba(77, 166, 255, 0.18);
+}
+
+.clear {
+  position: absolute;
+  right: 0.9rem;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  background: none;
+  color: var(--ifm-color-emphasis-600);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.8rem 0 1rem;
+}
+
+.pill {
+  font-size: 0.82rem;
+  font-weight: 500;
+  padding: 0.3rem 0.85rem;
+  border-radius: 999px;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  background: transparent;
+  color: var(--ifm-color-emphasis-700);
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s ease;
+}
+
+.pill:hover {
+  border-color: var(--ifm-color-primary);
+  color: var(--ifm-color-primary);
+}
+
+.pillActive {
+  background: var(--ifm-color-primary);
+  border-color: var(--ifm-color-primary);
+  color: #fff !important;
+}
+
+.count {
+  margin-left: auto;
+  font-size: 0.82rem;
+  color: var(--ifm-color-emphasis-600);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 0.6rem;
+  max-height: 26rem;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.card {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-areas: 'icon name' 'icon meta' 'icon caps';
+  column-gap: 0.6rem;
+  align-items: center;
+  padding: 0.55rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  background: var(--ifm-background-surface-color);
+  color: var(--ifm-font-color-base);
+  text-decoration: none !important;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.card:hover {
+  border-color: var(--ifm-color-primary);
+  transform: translateY(-1px);
+}
+
+.icon {
+  grid-area: icon;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
+[data-theme='dark'] .lightOnly,
+[data-theme='light'] .darkOnly {
+  display: none;
+}
+
+.name {
+  grid-area: name;
+  font-weight: 600;
+  font-size: 0.9rem;
+  line-height: 1.25;
+}
+
+.meta {
+  grid-area: meta;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  font-size: 0.72rem;
+}
+
+.id {
+  padding: 0 0.3rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kind {
+  margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+  color: var(--ifm-color-emphasis-600);
+}
+
+.caps {
+  grid-area: caps;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.3rem;
+}
+
+.model {
+  display: block;
+  min-width: 0;
+  font-size: 0.66rem;
+  padding: 0.05rem 0.35rem;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cap {
+  font-size: 0.66rem;
+  font-weight: 600;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: rgba(77, 166, 255, 0.14);
+  color: var(--ifm-color-primary);
+}
+
+.empty {
+  color: var(--ifm-color-emphasis-700);
+}

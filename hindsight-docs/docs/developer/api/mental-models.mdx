@@ -259,6 +259,8 @@ Delta mode falls back to a full regeneration automatically in two cases:
 
 **A delta refresh never replaces the document with a partial one.** Because delta retrieval only reads memories newer than the last refresh, an answer written from that window covers just the recent slice of the topic — it is material for editing the document, not a replacement for it. So when the edits can't be made at all — the provider call fails, the response can't be read, or every single operation is rejected — the existing content stays exactly as it is and the refresh **fails** instead of completing. Nothing is lost, the refresh's time window is not advanced, and a retry sees the same memories again. The same holds for an empty answer: a populated document is never overwritten with an empty one. A delta refresh is never turned into a full rewrite behind your back: if a model's delta refreshes keep failing, switch its `mode` to `full`.
 
+**With a decision model, a delta refresh can skip reflect.** When a [decision model](/developer/decision-models) is set up for reflect, a delta refresh asks it which memories added since the last refresh could change the document, and sends only those to the LLM that writes the operations — none of them means no LLM call. See [Knowledge Pages](/developer/knowledge-pages#decision-model-refresh) for limits and fallbacks.
+
 | Use Case | Recommended Mode | Why |
 |----------|-----------------|-----|
 | Skill / playbook docs | `delta` | Sections live for many refreshes; only specific rules change |

@@ -61,6 +61,19 @@ The agent uses a smart retrieval hierarchy:
 
 If an observation is marked as **stale**, the agent automatically verifies it against current facts.
 
+### Decision-Model Orchestration {#decision-model-orchestration}
+
+When a [decision model](./decision-models.md) is set up for reflect, the loop above changes shape to spend fewer LLM calls:
+
+1. One LLM call rewrites the request into a search query.
+2. All retrieval layers — mental models, observations, raw facts — run **in parallel** with that query.
+3. The decision model prunes the evidence to what matters and judges whether it already answers the request.
+4. If it does, the next LLM call writes the answer. If not, the LLM writes the next query and another parallel round runs, judged the same way.
+
+In agent mode each layer costs its own LLM turn; here one round covers them all.
+
+If the decision model fails, the LLM decides when to stop, as in agent mode, so the reflect still answers. Only the `hindsight` and `typesafe` providers are supported for now: with another provider reflect keeps agent turns and logs a warning. Turn it off for one bank with [`reflect_use_decision_model: false`](configuration.md#reflect).
+
 ---
 
 ## Why Reflect?

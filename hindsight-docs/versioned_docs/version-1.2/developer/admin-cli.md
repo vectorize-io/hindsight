@@ -457,6 +457,50 @@ Import restores a **whole bank** (config, facts, mental models, …) — it is *
 
 ---
 
+### cloud
+
+Sign in to Hindsight Cloud and save an API key for the `hindsight` [decision model](./decision-models) provider ([Hindsight Inference](https://inference.hindsight.vectorize.io), `hs-decide-1-flash`). The login opens your browser; you sign in (or sign up), pick an organization and approve. Hindsight Cloud creates a key and the CLI saves it to `~/.hindsight/cloud/credentials.json`, readable only by you. Unlike the other commands, it does not touch the database.
+
+```bash
+hindsight-admin cloud login [OPTIONS]
+hindsight-admin cloud status
+hindsight-admin cloud logout
+```
+
+Then set `HINDSIGHT_API_DECISION_MODEL_PROVIDER=hindsight` and restart the API. A key set in `HINDSIGHT_API_DECISION_MODEL_API_KEY` wins over the saved one.
+
+**Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `login` | Sign in in a browser and save the key. With `--from-file`, install a `credentials.json` saved on another machine instead. |
+| `status` | Show the organization and the key's last 4 characters. |
+| `logout` | Delete the saved key. To revoke it, delete it under **API Keys** in Hindsight Cloud. |
+
+**Options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--home` | Credential directory (put it before the command). | `HINDSIGHT_API_CLOUD_HOME` or `~/.hindsight/cloud` |
+| `--no-browser` | `login`: print the sign-in link instead of opening it. | `false` |
+| `--port` | `login`: port of the local callback on `127.0.0.1`. | a free one |
+| `--cloud-url` | `login`: Hindsight Cloud URL. | `HINDSIGHT_API_CLOUD_URL` or Hindsight Cloud |
+| `--from-file` | `login`: copy a `credentials.json` made on a machine with a browser. | - |
+
+**Examples:**
+
+```bash
+# Sign in on this machine
+hindsight-admin cloud login
+
+# A server with no browser: sign in on your laptop, then copy the login over
+hindsight-admin cloud login
+scp ~/.hindsight/cloud/credentials.json server:/tmp/cloud.json
+ssh server 'hindsight-admin cloud login --from-file /tmp/cloud.json && rm /tmp/cloud.json'
+```
+
+---
+
 ## Migrating a bank to a new instance
 
 Changing a bank's **embedding model** (e.g. a 384-dim encoder → a 1024-dim one), **vector extension** (pgvector / vchord / pgvectorscale), or **text-search backend** can't be done in place on a populated bank — the stored vectors and indexes are tied to those settings. Because every embedding and index is a deterministic function of text already on disk, the supported path is to **move the bank to a fresh instance configured with the new settings and re-derive everything there — with no LLM re-extraction**.

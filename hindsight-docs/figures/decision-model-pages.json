@@ -1,0 +1,293 @@
+{
+  "title": "Knowledge Page Refresh with a Decision Model",
+  "speed": 2200,
+  "elements": [
+    {
+      "id": "new",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "New memories"
+        },
+        {
+          "type": "subtitle",
+          "text": "since the last refresh"
+        }
+      ],
+      "minCardHeight": 148,
+      "width": 270
+    },
+    {
+      "id": "dm",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Decision model"
+        },
+        {
+          "type": "subtitle",
+          "text": "could this change the page?"
+        }
+      ],
+      "minCardHeight": 148,
+      "width": 320
+    },
+    {
+      "id": "llm",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "LLM"
+        },
+        {
+          "type": "subtitle",
+          "text": "edits the page"
+        }
+      ],
+      "minCardHeight": 43,
+      "width": 320
+    },
+    {
+      "id": "refresh",
+      "type": "group",
+      "label": {
+        "title": "Delta refresh"
+      },
+      "children": [
+        "dm",
+        "llm"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 48,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "page",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Knowledge page"
+        },
+        {
+          "type": "subtitle",
+          "text": "Team › Who works on what"
+        }
+      ],
+      "minCardHeight": 133,
+      "width": 280
+    },
+    {
+      "id": "g0",
+      "type": "group",
+      "children": [
+        "new",
+        "refresh",
+        "page"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 110,
+        "align": "center"
+      }
+    },
+    {
+      "id": "read",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "new"
+      },
+      "end": {
+        "id": "dm"
+      },
+      "label": {
+        "text": "one question each"
+      },
+      "labelAt": 0.7
+    },
+    {
+      "id": "context",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "page"
+      },
+      "end": {
+        "id": "dm"
+      },
+      "label": {
+        "text": "current page"
+      }
+    },
+    {
+      "id": "kept",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "dm"
+      },
+      "end": {
+        "id": "llm"
+      },
+      "label": {
+        "text": "only these"
+      }
+    },
+    {
+      "id": "edit",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "llm"
+      },
+      "end": {
+        "id": "page"
+      },
+      "label": {
+        "text": "edits"
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "label": "refresh",
+      "beats": [
+        {
+          "show": {
+            "new": [
+              {
+                "text": "Alice moved to the Zurich office"
+              },
+              {
+                "text": "Bob fixed the login bug"
+              },
+              {
+                "text": "Carol now leads the ML team"
+              },
+              {
+                "text": "Lunch is at noon on Fridays"
+              },
+              {
+                "text": "Dan likes the new laptop"
+              }
+            ],
+            "page": [
+              {
+                "text": "Alice — backend, London"
+              },
+              {
+                "text": "Carol — ML engineer"
+              },
+              {
+                "text": "Bob — frontend"
+              }
+            ]
+          },
+          "say": "Five memories arrived since this page was last refreshed. A page refreshes incrementally, so only these need a look.",
+          "ms": 3000
+        },
+        {
+          "edges": [
+            {
+              "edge": "read",
+              "data": "5 memories"
+            },
+            {
+              "edge": "context",
+              "data": "the page"
+            }
+          ],
+          "show": {
+            "dm": [
+              {
+                "tag": "asking",
+                "tone": "gray",
+                "text": "one question per memory"
+              }
+            ]
+          },
+          "say": "Instead of running reflect, the refresh asks the decision model about each memory, with the page in front of it: could this change the page?",
+          "ms": 3000
+        },
+        {
+          "show": {
+            "dm": [
+              {
+                "tag": "yes",
+                "tone": "green",
+                "text": "Alice moved to the Zurich office"
+              },
+              {
+                "tag": "yes",
+                "tone": "green",
+                "text": "Carol now leads the ML team"
+              },
+              {
+                "tag": "no",
+                "tone": "gray",
+                "text": "Bob fixed the login bug"
+              },
+              {
+                "tag": "no",
+                "tone": "gray",
+                "text": "Lunch is at noon on Fridays"
+              },
+              {
+                "tag": "no",
+                "tone": "gray",
+                "text": "Dan likes the new laptop"
+              }
+            ]
+          },
+          "say": "Two could change it. The other three are dropped and not offered again.",
+          "ms": 3000
+        },
+        {
+          "edges": {
+            "edge": "kept",
+            "data": "2 memories + directives"
+          },
+          "show": {
+            "llm": [
+              {
+                "tag": "1 call",
+                "tone": "green",
+                "text": "update Alice and Carol"
+              }
+            ]
+          },
+          "say": "Only those reach the LLM that edits the page. When none could change it, there is no LLM call at all."
+        },
+        {
+          "edges": {
+            "edge": "edit",
+            "data": "2 edits"
+          },
+          "show": {
+            "page": [
+              {
+                "text": "Alice — backend, Zurich",
+                "mark": "updated"
+              },
+              {
+                "text": "Carol — leads the ML team",
+                "mark": "updated"
+              },
+              {
+                "text": "Bob — frontend"
+              }
+            ]
+          },
+          "say": "On the refresh cost eval, a 20-memory refresh went from 3 LLM calls to 1, with about 70% fewer input tokens.",
+          "ms": 3400
+        }
+      ]
+    }
+  ]
+}

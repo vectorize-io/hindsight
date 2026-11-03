@@ -27,12 +27,14 @@ Hindsight™ is an agent memory system built to create smarter agents that learn
 
 It eliminates the shortcomings of alternative techniques such as RAG and knowledge graph and delivers state-of-the-art performance on long term memory tasks.
 
+> 🆕 **[Introducing Hindsight Models](https://hindsight.vectorize.io/blog/2026/11/03/hindsight-models)**: decision, rerank and embedding models built for agent memory. Open weights on [Hugging Face](https://huggingface.co/hindsight-ai), or hosted on Hindsight Inference. [Read the post →](https://hindsight.vectorize.io/blog/2026/11/03/hindsight-models)
+
 **Contents**
 
 - [Memory Performance & Accuracy](#memory-performance--accuracy)
 - [Quick Start](#quick-start) — [server](#1-start-a-server) · [clients](#2-connect-a-client) · [platforms](#supported-platforms) · [embedded](#python-embedded-no-server-required)
 - [Adding Hindsight to Your Agent](#adding-hindsight-to-your-agent) — [LLM Wrapper](#llm-wrapper-2-lines-of-code) · [integrations](#integrations) · [coding agents](#coding-agents) · [MCP](#mcp-server)
-- [Core Concepts](#core-concepts) — [memory types](#memory-types) · [retain / recall / reflect](#the-three-operations) · [observations](#observations) · [mental models & knowledge pages](#mental-models--knowledge-pages) · [banks](#memory-banks)
+- [Core Concepts](#core-concepts) — [memory types](#memory-types) · [retain / recall / reflect](#the-three-operations) · [observations](#observations) · [mental models & knowledge pages](#mental-models--knowledge-pages) · [decision models](#decision-models) · [banks](#memory-banks)
 - [Use Cases](#use-cases)
 - [Running in Production](#running-in-production)
 - [Resources](#resources)
@@ -358,6 +360,25 @@ A **mental model** is a standing answer to a question about a bank ("What are th
 **Knowledge pages** are mental models with the mechanics hidden: living documents a bank writes about itself, organized in folders like a wiki, searchable, and projectable onto disk as ordinary markdown. Supply a name and a question; every other decision is a default you can override.
 
 [Mental models →](https://hindsight.vectorize.io/developer/mental-models) · [Knowledge pages →](https://hindsight.vectorize.io/developer/knowledge-pages)
+
+### Decision Models
+
+Most of what a memory system does between storing and recalling is small judgments: is this fact new, which of these memories matter for the question, could this change a knowledge page. A **decision model** answers those directly, with a typed answer instead of text to parse, so Hindsight sends far fewer of them to your LLM. Turn it on and recall, consolidation, reflect and knowledge pages use it.
+
+| Model | What it does | Size | License |
+|---|---|---|---|
+| [`hs-decide-1-flash`](https://huggingface.co/hindsight-ai/hs-decide-1-flash) | Decision model: the judgments inside recall, consolidation, reflect and knowledge pages | 0.8B | Apache 2.0 |
+| [`hs-rerank-1`](https://huggingface.co/hindsight-ai/hs-rerank-1) | Reranker: orders recalled memories by relevance | 114M | MIT |
+| [`hs-embed-1`](https://huggingface.co/hindsight-ai/hs-embed-1) | Embeddings: 384-dimensional vectors for search | 112M | MIT |
+
+All three read eight languages. Run them yourself, or use them hosted on Hindsight Inference:
+
+```bash
+hindsight-admin cloud login
+export HINDSIGHT_API_DECISION_MODEL_PROVIDER=hindsight
+```
+
+[Decision models docs →](https://hindsight.vectorize.io/developer/decision-models) · [Launch post →](https://hindsight.vectorize.io/blog/2026/11/03/hindsight-models)
 
 ### Memory Banks
 
