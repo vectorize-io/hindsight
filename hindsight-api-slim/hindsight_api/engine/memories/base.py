@@ -1519,10 +1519,18 @@ class MemoriesExtension(Extension, ABC):
         file_content_type: str = "",
         file_original_name: str = "",
         expect_content_hash: "str | None" = None,
+        keep_chunk_text: bool = True,
     ) -> None:
         """Store (or replace) a document's bodies: its extracted text, its ordered chunk texts, and
         optionally the original uploaded file. Idempotent by content — re-ingest re-uploads only
         what changed.
+
+        ``keep_chunk_text=False`` is a bank with ``store_document_text`` off: the store keeps each
+        chunk's hash, computed from the text passed here, but not the text, and every chunk reads
+        back as empty — what the SQL path stores. The hashes are what delta retain diffs a re-send
+        against, so they must be those of the real text. A caller restoring a prefix it cannot read
+        back (see ``_store_document_bodies``) passes those chunks as ``""``, and the store keeps
+        their hashes from the record being replaced.
 
         ``chunk_texts`` REPLACES the document's chunk list, so a caller holding only part of a
         document (a retain sub-batch) must send the whole list, not its slice — see

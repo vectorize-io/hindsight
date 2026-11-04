@@ -53,6 +53,11 @@ database (`~/.pg0/instances/hindsight-embed-<profile>/`) and the profile env
 (`~/.hindsight/profiles/<profile>.env`) are the same files, read the same way. No migration step, no
 re-setup.
 
+To run the daemon on a database you already have instead of its own pg0, set
+`HINDSIGHT_API_DATABASE_URL` (or `HINDSIGHT_EMBED_API_DATABASE_URL`) in `$HERMES_HOME/.env` or in the
+profile env. The plugin writes it into the profile env, so every daemon it launches connects to that
+database.
+
 The plugin no longer calls `tools.lazy_deps.install_specs` from anywhere. On package-manager Hermes
 that is a retired shim which handed the process to the updater and exited instead of installing, so
 every `hermes` invocation became a ~40s "update" that drained `hermes-gateway` and still left the
@@ -431,9 +436,12 @@ so a fact pruned from the size-capped file is not lost. Removals are not mirrore
 Check `hermes memory status` reports `hindsight` as the active provider and `Status: available`. In
 `memory_mode: context` the tools are hidden on purpose.
 
-**`Status: not available` in `local_embedded`** — this plugin's own packages
-(`hindsight-client`, `hindsight-embed`) are missing from the environment, which happens when a venv
-rebuild dropped the plugin member. Run `hermes pm repair` and restart Hermes to rebuild them. The Hindsight server is *not* needed in that venv — it runs as a separate
+**`Status: not available`, or `No module named 'hindsight_client'`** — this plugin's own packages
+(`hindsight-client`, and `hindsight-embed` for `local_embedded`) are missing from the environment
+Hermes is running in. That happens when a venv rebuild dropped the plugin member, or when the gateway
+started before the plugin was installed: a running gateway keeps the environment it started with.
+Run `hermes pm repair`, then `hermes gateway restart` — restarting the desktop app alone does not
+restart a detached gateway. The Hindsight server is *not* needed in that venv — it runs as a separate
 process, and first use downloads it if no `hindsight-api` binary is present yet.
 
 **`Timeout context manager should be used inside a task`** — `hindsight-embed` 0.10.0. Run

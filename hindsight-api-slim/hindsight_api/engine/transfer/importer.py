@@ -28,6 +28,7 @@ from datetime import UTC, date, datetime
 from typing import IO, TYPE_CHECKING, Any, Literal, cast
 
 from ...schema_context import get_current_schema
+from .. import bank_aliases
 from ..causal_links import CANONICAL_CAUSAL_LINK_TYPE, LEGACY_CAUSAL_LINK_TYPES
 from ..db.ops_postgresql import pg_search_vector_expr
 from ..db_utils import acquire_with_retry
@@ -1308,6 +1309,9 @@ async def _restore_bank(
                     f"Target bank '{bank_id}' already exists; import-bank restores into a fresh bank "
                     f"(it is not a merge). Delete the bank first, or pass a different target bank id."
                 )
+            # The config path below writes the archived banks row itself, past the create
+            # path's alias check, so the check runs here for both paths.
+            await bank_aliases.refuse_alias_as_bank_id_on_conn(conn, bank_id)
             # Bank row first — children (documents, mental_models, …) FK to it. Without
             # the config component there is no row to restore, so the bank is created
             # with this instance's defaults and the data lands inside it.

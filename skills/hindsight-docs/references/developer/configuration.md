@@ -862,7 +862,7 @@ server-level only (not overridable per tenant/bank) and a change requires a rest
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_EMBEDDINGS_PROVIDER` | Provider: `local`, `onnx`, `tei`, `openai`, `openai-codex`, `openrouter`, `requesty`, `cohere`, `google`, `zeroentropy`, `nvidia`, `litellm`, or `litellm-sdk` | `local` |
+| `HINDSIGHT_API_EMBEDDINGS_PROVIDER` | Provider: `local`, `onnx`, `tei`, `hindsight`, `openai`, `openai-codex`, `openrouter`, `requesty`, `cohere`, `google`, `zeroentropy`, `nvidia`, `litellm`, or `litellm-sdk` | `local` |
 | `HINDSIGHT_API_EMBEDDINGS_MAX_INPUT_TOKENS` | Applies to **every** provider: truncate each text to this many tokens (counted with `HINDSIGHT_API_TOKENIZER_ENCODING`, approximate) before embedding, so oversized content is truncated instead of failing the embed call permanently. The budget covers the whole payload, including any client-side prefix an asymmetric model needs. The default matches the input limit of essentially every remote embedding model (OpenAI `text-embedding-3-*`, Bedrock Titan V2, Cohere v3, a stock llama.cpp context) — set it to your model's real limit if it differs, or to `0` to send text uncapped. **The cap is counted in Hindsight's tokens, not your provider's.** If your model uses a different tokenizer (for example `BAAI/bge-m3`, `nomic-embed-text`, or most open-source models behind TEI or an OpenAI-compatible endpoint), the same text can count up to ~2× more tokens on the provider's side, especially code, logs, or minified text. Text cut to exactly 8192 then still exceeds the model's limit, and the embed call fails with a 400. For these models, convert the limit: divide the model's real limit by how many of its tokens one Hindsight token becomes on your content, e.g. `4096` for an 8192-token model when embedding code. (Deprecated alias: `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS`.) | `8192` |
 | `HINDSIGHT_API_EMBEDDINGS_QUERY_PREFIX` | Text prepended to every search before it is embedded. Set it when your endpoint serves an asymmetric model that expects a search instruction — e.g. `task: search result \| query: ` for `google/embeddinggemma-300m`, or `query: ` for E5. Applies to the providers that only accept plain text (`tei`, `openai`, `openai-codex`, `openrouter`, `requesty`, `litellm`, `litellm-sdk`); see the note below for the ones that don't need it. Trailing spaces are kept as written. | - (no prefix) |
 | `HINDSIGHT_API_EMBEDDINGS_PASSAGE_PREFIX` | Text prepended to every stored memory/document before it is embedded — e.g. `title: none \| text: ` for `google/embeddinggemma-300m`, or `passage: ` for E5. Same providers as above. Trailing spaces are kept as written. | - (no prefix) |
@@ -898,6 +898,7 @@ server-level only (not overridable per tenant/bank) and a change requires a rest
 | `HINDSIGHT_API_EMBEDDINGS_INITIAL_BACKOFF` | Initial backoff in seconds between embedding retries (doubles per attempt, with jitter) | `0.5` |
 | `HINDSIGHT_API_EMBEDDINGS_MAX_BACKOFF` | Cap on the backoff between embedding retries, in seconds | `4.0` |
 | `HINDSIGHT_API_EMBEDDINGS_RETRY_BUDGET` | Wall-clock ceiling, in seconds, on the time one `encode()` call may spend retrying (failed attempts plus backoff). Keeps a degraded provider from stalling a synchronous recall. | `15.0` |
+| `HINDSIGHT_API_EMBEDDINGS_HINDSIGHT_API_KEY` | Hindsight Inference key for embeddings (`hs-embed-1`). Without it, the key `hindsight-admin cloud login` saved | - |
 | `HINDSIGHT_API_EMBEDDINGS_OPENROUTER_API_KEY` | OpenRouter API key for embeddings (falls back to `HINDSIGHT_API_OPENROUTER_API_KEY`, then `HINDSIGHT_API_LLM_API_KEY`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_REQUESTY_API_KEY` | Requesty API key for embeddings (falls back to `HINDSIGHT_API_REQUESTY_API_KEY`, then `HINDSIGHT_API_LLM_API_KEY`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_REQUESTY_MODEL` | Requesty embedding model | `openai/text-embedding-3-small` |
@@ -1206,7 +1207,7 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `nvidia`, `typesafe` (deprecated, see [Decision model](#decision-model)), `alibaba`, `google`, `flashrank`, `onnx`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
+| `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `nvidia`, `hindsight`, `typesafe` (deprecated, see [Decision model](#decision-model)), `alibaba`, `google`, `flashrank`, `onnx`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
 | `HINDSIGHT_API_RERANKER_MAX_TOKENS_PER_CANDIDATE` | Applies to **every** provider. If set, truncate each rerank candidate to this many tokens (tiktoken, approximate) before reranking. Set it below the model's context window (e.g. `900` for a 1024-token model), or lower to bound request size when documents can be very long (keeps a CPU-only rerank server from running out of memory). Each fallback member has its own (`HINDSIGHT_API_RERANKER_<n>_MAX_TOKENS_PER_CANDIDATE`). Off by default. (Deprecated alias: `HINDSIGHT_API_RERANKER_LITELLM_MAX_TOKENS_PER_DOC`.) | - |
 | `HINDSIGHT_API_RERANKER_MAX_RETRIES` | Retries after the first attempt when a remote rerank call fails transiently (5xx, timeout, connection error, `429` quota). `0` disables retrying. Applies to every remote provider except `tei`, which has its own retry loop; the in-process providers (`local`, `flashrank`, `onnx`, `jina-mlx`, `rrf`) are unaffected. 4xx auth/validation errors are never retried. | `3` |
 | `HINDSIGHT_API_RERANKER_INITIAL_BACKOFF` | Initial backoff in seconds between rerank retries (doubles per attempt, with jitter) | `0.5` |
@@ -1229,6 +1230,7 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | `HINDSIGHT_API_RERANKER_OPENROUTER_MODEL` | OpenRouter rerank model | `cohere/rerank-v3.5` |
 | `HINDSIGHT_API_RERANKER_OPENROUTER_TIMEOUT` | HTTP request timeout for OpenRouter reranker (seconds). | `60.0` |
 | `HINDSIGHT_API_RERANKER_OPENROUTER_BASE_URL` | Rerank endpoint URL (point at a Cohere-compatible gateway/proxy for metering) | `https://openrouter.ai/api/v1/rerank` |
+| `HINDSIGHT_API_RERANKER_HINDSIGHT_API_KEY` | Hindsight Inference key for reranking (`hs-rerank-1`). Without it, the key `hindsight-admin cloud login` saved | - |
 | `HINDSIGHT_API_RERANKER_COHERE_API_KEY` | Cohere API key for reranking (falls back to `HINDSIGHT_API_COHERE_API_KEY`) | - |
 | `HINDSIGHT_API_RERANKER_COHERE_MODEL` | Cohere rerank model | `rerank-english-v3.0` |
 | `HINDSIGHT_API_RERANKER_COHERE_BASE_URL` | Custom base URL for any Cohere-compatible `/rerank` endpoint (Azure AI Foundry, Jina, Voyage, self-hosted BGE, etc.). When set, the `cohere` provider bypasses the Cohere SDK and calls the endpoint directly via HTTP. | - |
@@ -1557,22 +1559,34 @@ The `jina-mlx` provider uses [`jinaai/jina-reranker-v3-mlx`](https://huggingface
 `jina-reranker-v3-mlx` is licensed under CC BY-NC 4.0. Contact Jina AI for commercial usage.
 ### Decision model
 
-> **⚠️ Experimental**
->
-Decision model support is experimental. Its settings, behavior and supported providers may
-change or be removed in any release, without a deprecation period. Leave
-`HINDSIGHT_API_DECISION_MODEL_PROVIDER` at `none` in production unless you are testing it.
 A decision model answers typed questions (pick one of these, how likely is this) in well
-under a second. Operations that support one hand it the in-between judgments an LLM call
-would otherwise make, and keep the LLM for writing. Set it up once here: every operation
-that supports a decision model shares it, unless that operation overrides it or turns it off.
+under a second, so recall, consolidation, reflect and knowledge-page refresh can skip LLM
+calls. It is optional: with the provider at `none` (the default), every operation keeps its
+LLM-only path. See [Decision Models](./decision-models.md) for what each operation does with it,
+and [Models › Decision Model](./models.md#decision-model) for the providers and their default models.
 
-This is separate from the `typesafe` [reranker](#reranker), which keeps its own
-`HINDSIGHT_API_RERANKER_TYPESAFE_*` settings.
+#### Set it up
+
+Choose a provider and give it a key. Every operation that supports a decision model starts
+using it. With [Hindsight Inference](https://inference.hindsight.vectorize.io) and `hs-decide-1-flash`:
+
+```bash
+hindsight-admin cloud login     # signs in to Hindsight Cloud and saves a key
+export HINDSIGHT_API_DECISION_MODEL_PROVIDER=hindsight
+```
+
+Instead of signing in, you can set `HINDSIGHT_API_DECISION_MODEL_API_KEY=hsk_...` with a key from Hindsight Cloud. Recall keeps its reranker; to rank recall with the decision model too, set `HINDSIGHT_API_RECALL_DECISION_MODEL_PROVIDER=hindsight`.
+
+Or with another provider, at its default model:
+
+```bash
+export HINDSIGHT_API_DECISION_MODEL_PROVIDER=typesafe   # or cloudflare, openai
+export HINDSIGHT_API_DECISION_MODEL_API_KEY=your-key
+```
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_DECISION_MODEL_PROVIDER` | `none`, `typesafe`, `cloudflare` or `openai` (see below). | `none` |
+| `HINDSIGHT_API_DECISION_MODEL_PROVIDER` | `none`, `hindsight`, `typesafe`, `cloudflare` or `openai` (see below). | `none` |
 | `HINDSIGHT_API_DECISION_MODEL_API_KEY` | API key (Cloudflare: an API token with Workers AI access). Required when the provider is not `none`. | - |
 | `HINDSIGHT_API_DECISION_MODEL_MODEL` | Model name. | provider default |
 | `HINDSIGHT_API_DECISION_MODEL_BASE_URL` | API base URL. Required for `cloudflare`. | provider default |
@@ -1583,18 +1597,12 @@ This is separate from the `typesafe` [reranker](#reranker), which keeps its own
 
 Every request is retried on its own when it is rate-limited (429) or fails transiently.
 
-| Provider | API | Default model | Default base URL |
-|----------|-----|---------------|------------------|
-| `typesafe` | [TypeSafe](https://typesafe.ai) System One (`/v1/systemone`) | `jev-latest` | `https://api.typesafe.ai` |
-| `cloudflare` | [Clef](https://blog.cloudflare.com/clef-decision-models) on Workers AI (System One body, `/@cf/cloudflare/<model>`) | `clef` (or `clef-flash`) | none: set `https://api.cloudflare.com/client/v4/accounts/<account_id>/ai/run`, or an AI Gateway `https://gateway.ai.cloudflare.com/v1/<account_id>/<gateway>/workers-ai` |
-| `openai` | [OpenAI Decisions API](https://developers.openai.com/api/docs/guides/decisions) (`/v1/decisions`, public beta) | `gpt-6-luna` | `https://api.openai.com` |
-
-**Per-operation overrides.** `HINDSIGHT_API_{RECALL,REFLECT,CONSOLIDATION}_DECISION_MODEL_{PROVIDER,API_KEY,MODEL,BASE_URL}`
+**One operation on a different setup.** `HINDSIGHT_API_{RECALL,REFLECT,CONSOLIDATION}_DECISION_MODEL_{PROVIDER,API_KEY,MODEL,BASE_URL}`
 replace the global value for that operation only. Key, model and URL fall back to the global
 value only while the operation uses the global provider; an operation that switches to another
-provider takes that provider's defaults and needs its own key. Set an operation's provider to
-`none` to turn the decision model off for it, or give one operation a decision model without a
-global one.
+provider takes that provider's defaults and needs its own key. You can also give one operation
+a decision model without a global one. Reflect and knowledge-page refresh share the reflect
+setup, and support only `hindsight` and `typesafe` for now.
 
 ```bash
 export HINDSIGHT_API_DECISION_MODEL_PROVIDER=typesafe
@@ -1604,42 +1612,68 @@ export HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_PROVIDER=openai    # consolida
 export HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_API_KEY=your-openai-key
 ```
 
-**Recall.** With a decision model, recall uses it in place of the [reranker](#reranker).
-It asks of each candidate whether showing it would help answer the question, telling it
-the date the question is asked (the recall's question date, else today), and orders the
-pool by that. That order is final: recall skips the recency, temporal and proof-count
-boosts it applies to a cross-encoder, and publishes no reranker score, so
-`min_scores.reranker` is rejected. To keep the cross-encoder for recall
-while other operations use the decision model, set
-`HINDSIGHT_API_RECALL_DECISION_MODEL_PROVIDER=none`.
+#### Turn it off
 
-Recall can also **drop** candidates instead of only ordering them. Both are off by default,
-and a recall request turns each on or off with `rerank.prune` / `rerank.dedup`; a request
-that omits one gets the bank's value, else the server's. That covers every recall, including
-the ones reflect runs (consolidation's recall skips the reranker).
+For every bank, set that operation's provider to `none`. For one bank, set its bank config
+(see [Updating Configuration](./api/memory-banks.md#updating-configuration)); these are on by
+default, so setting up a decision model is what turns them on.
+
+| To turn it off for… | Every bank | One bank (bank config) |
+|---|---|---|
+| Recall (keep the cross-encoder) | `HINDSIGHT_API_RECALL_DECISION_MODEL_PROVIDER=none` | — |
+| Consolidation | `HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_PROVIDER=none` | `consolidation_use_decision_model: false` |
+| Reflect | `HINDSIGHT_API_REFLECT_DECISION_MODEL_PROVIDER=none` | `reflect_use_decision_model: false` |
+| Knowledge-page full refresh | `HINDSIGHT_API_REFLECT_DECISION_MODEL_PROVIDER=none` | `mental_model_refresh_use_decision_model: false` |
+| Knowledge-page delta refresh | `HINDSIGHT_API_REFLECT_DECISION_MODEL_PROVIDER=none` | `mental_model_delta_use_decision_model: false` |
+
+The bank settings are also listed with their operation under [Observations](#observations) and [Reflect](#reflect).
+
+#### Tune it
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE` | Drop a candidate judged no help: below 0.2, or below 40% of the best candidate. Reuses the ranking answers, so no extra request; the best candidate always survives. Per bank (`recall_decision_model_prune`). | `false` |
-| `HINDSIGHT_API_RECALL_DECISION_MODEL_DEDUP` | Drop a candidate repeating a better-ranked one, so the same fact retained from several documents comes back once. One more decision-model request after the ranking one, asking only about candidates still in the pool whose stored embeddings are alike (cosine 0.65 or more), at most 100 pairs, best-ranked first; memories dated differently, or of two fact types, are never called repeats. Per bank (`recall_decision_model_dedup`). | `false` |
+| `HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE` | Also drop recall candidates judged no help, instead of only ordering them (see below). Per bank (`recall_decision_model_prune`). | `false` |
+| `HINDSIGHT_API_RECALL_DECISION_MODEL_DEDUP` | Also drop recall candidates repeating a better-ranked one (see below). Per bank (`recall_decision_model_dedup`). | `false` |
+| `HINDSIGHT_API_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES` | The most new memories a delta knowledge-page refresh asks the decision model about; past it, the refresh runs reflect. See [Reflect](#reflect). | `200` |
 
-**Consolidation.** With a decision model, consolidation asks it, for each new fact, how the
-fact relates to the observations recall found for it: does it restate one, add something new
-that touches none, change one, or is it chatter. Restatements become evidence for their
-observation, new facts become observations as stated, and chatter is skipped, all without an
-LLM call; only the rest reach the consolidation LLM. On the consolidation eval this cut LLM
-calls by about 40% at the same pass rate. Turn it off per bank with
-[`HINDSIGHT_API_CONSOLIDATION_USE_DECISION_MODEL`](#observations), or for every bank with
-`HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_PROVIDER=none`.
+- **Rate limits.** `HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT` caps requests in flight for
+  each operation. Recall asks one question per candidate, batched into as few requests as fit
+  `HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS`, so a busy recall path is where the cap bites.
+- **Another model.** When the endpoint serves another model than the provider's default, set
+  `HINDSIGHT_API_DECISION_MODEL_MODEL`, `HINDSIGHT_API_DECISION_MODEL_TOKENIZER`, and set
+  `HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS` to its context window less a margin.
 
-**Knowledge pages.** With a decision model, a delta refresh of a knowledge page skips reflect.
-It reads the memories added since the page's last refresh and asks the decision model, for each,
-whether it could change the page. Only those reach the LLM that edits the page, together with the
-bank's directives; none of them means no LLM call at all. A memory it drops is not offered again.
-Above 200 new memories, or when the decision model fails, the refresh runs reflect as before. On
-the refresh cost eval this took a 20-memory refresh from 3 LLM calls to 1 and cut its input tokens
-by about 70%. Only the `typesafe` provider is supported, as for reflect. Turn it off per bank with
-[`HINDSIGHT_API_MENTAL_MODEL_DELTA_USE_DECISION_MODEL`](#reflect).
+**Recall pruning and dedup.** Both are off by default, and a recall request turns each on or off
+with `rerank.prune` / `rerank.dedup`; a request that omits one gets the bank's value, else the
+server's. That covers every recall, including the ones reflect runs (consolidation's recall skips
+the reranker).
+
+- **Prune** drops a candidate judged no help: below 0.2, or below 40% of the best candidate. It
+  reuses the ranking answers, so no extra request; the best candidate always survives.
+- **Dedup** drops a candidate repeating a better-ranked one, so the same fact retained from
+  several documents comes back once. It costs one more decision-model request after the ranking
+  one, asking only about candidates still in the pool whose stored embeddings are alike (cosine
+  0.65 or more), at most 100 pairs, best-ranked first; memories dated differently, or of two fact
+  types, are never called repeats.
+
+#### Moving from the TypeSafe reranker
+
+The `typesafe` [reranker](#reranker) provider is deprecated. Set up the shared decision model
+with the `typesafe` provider instead: recall uses it in place of the reranker, and
+consolidation, reflect and knowledge pages get it too.
+
+```bash
+# Before
+export HINDSIGHT_API_RERANKER_PROVIDER=typesafe
+export HINDSIGHT_API_RERANKER_TYPESAFE_API_KEY=your-typesafe-key
+
+# After
+export HINDSIGHT_API_DECISION_MODEL_PROVIDER=typesafe
+export HINDSIGHT_API_DECISION_MODEL_API_KEY=your-typesafe-key
+```
+
+Recall then publishes no reranker score and rejects [`min_scores.reranker`](./api/recall.md#min_scores)
+with HTTP 400, as it did under the TypeSafe reranker. Use `min_scores.final` instead.
 
 ### Authentication
 
@@ -2442,7 +2476,7 @@ Observations are deduplicated, evidence-grounded knowledge consolidated from mul
 |----------|-------------|---------|
 | `HINDSIGHT_API_ENABLE_OBSERVATIONS` | Enable observation consolidation | `true` |
 | `HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION` | Automatically trigger consolidation after retain, delete, and update operations. When `false`, consolidation only runs when explicitly triggered via the [consolidate endpoint](api/operations.md#consolidation). Configurable per bank. | `true` |
-| `HINDSIGHT_API_CONSOLIDATION_USE_DECISION_MODEL` | **Experimental.** When a decision model is set up for consolidation (see [Decision model](#decision-model)), it settles the easy facts before the consolidation LLM call: a fact that restates an existing observation is attached as its evidence, and chatter next to existing observations is skipped. It never writes an observation's text: every other fact (a new one, one with no observation to compare against, one that changes what an observation says, one whose answers disagree, one whose request failed) goes to the LLM as before. Under a bank's own observations mission, chatter is left to the LLM, which applies the mission. Set `false` to send every fact to the LLM. Hierarchical (per bank). | `true` |
+| `HINDSIGHT_API_CONSOLIDATION_USE_DECISION_MODEL` | When a decision model is set up for consolidation (see [Decision model](#decision-model)), it settles the easy facts before the consolidation LLM call: a fact that restates an existing observation is attached as its evidence, and chatter next to existing observations is skipped. It never writes an observation's text: every other fact (a new one, one with no observation to compare against, one that changes what an observation says, one whose answers disagree, one whose request failed) goes to the LLM as before. Under a bank's own observations mission, chatter is left to the LLM, which applies the mission. Set `false` to send every fact to the LLM. Hierarchical (per bank). | `true` |
 | `HINDSIGHT_API_CONSOLIDATION_WALL_TIMEOUT` | Ceiling in seconds on how long one consolidation task in the worker may run **without making progress**. Every batch that commits restarts the clock, so a large backlog is never cut short — only a genuinely stalled job is. A stalled consolidation is cancelled and marked `failed` (which the API will retry, unlike `processing`, and which lets the reconcile sweep re-schedule the bank) instead of holding its reserved worker slot until the process restarts. `0` disables. | `7200` |
 | `HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS` | Interval for the background sweep that re-schedules consolidation for banks with unconsolidated facts but no consolidation in progress — recovering facts left unscheduled when a consolidation operation failed terminally (e.g. the LLM provider was unavailable). Only applies to banks with auto-consolidation enabled. `0` disables the sweep — but see the note below: that stops work being *scheduled*, not work already queued from *running*. | `300` |
 | `HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS` | How often the background loop checks for cron-scheduled mental models that are due for a refresh. This is only the *check* cadence; the actual schedule is the per-model `trigger.refresh_cron` expression set on the mental model. A due model is refreshed only when it is stale (new memories in its scope since the last refresh). It also sets a **floor on cron granularity** — at the default, a `* * * * *` schedule fires every 5 minutes, not every minute; lower it if you need finer schedules, at the cost of a more frequent cross-tenant scan (see [Background Maintenance](#background-maintenance)). `0` disables the sweep — but see the note below: that stops work being *scheduled*, not work already queued from *running*. | `300` |
@@ -2539,10 +2573,10 @@ export HINDSIGHT_API_OBSERVATIONS_MISSION="Observations are recurring patterns i
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_REFLECT_MAX_ITERATIONS` | Max tool call iterations before forcing a response | `10` |
-| `HINDSIGHT_API_REFLECT_USE_DECISION_MODEL` | **Experimental.** When a decision model is set up for reflect (see [Decision model](#decision-model)), reflect is decision-orchestrated: one LLM call rewrites the request into a search query, the layers run in parallel with that query, and the decision model prunes the evidence and judges whether it already answers the request. If it does, the answer is the next LLM call. If not, the LLM writes the next query and another parallel round runs, judged the same way. Fewer LLM calls than agent turns, so it costs less. If the decision model fails, reflect falls back to agent turns. Only the `typesafe` provider is supported here for now: with another provider reflect keeps agent turns and logs a warning. Set `false` to keep agent turns (one LLM turn per retrieval layer, each writing its own query). Hierarchical (per bank). | `true` |
-| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL` | **Experimental.** The same, for the reflect that refreshes a knowledge page. Hierarchical (per bank). | `true` |
-| `HINDSIGHT_API_MENTAL_MODEL_DELTA_USE_DECISION_MODEL` | **Experimental.** When a decision model is set up for reflect (see [Decision model](#decision-model)), a delta knowledge-page refresh skips reflect: it asks the decision model which of the memories added since its last run could change the page, and edits the page from those alone. None of them means no LLM call. Set `false` to run reflect for delta refreshes too. Hierarchical (per bank). | `true` |
-| `HINDSIGHT_API_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES` | **Experimental.** The most new memories that gated delta refresh asks the decision model about; past it, the refresh runs reflect instead. Each memory is one decision-model request carrying the whole page, and one refresh sends at most 8 at a time. A question that fails after others answered keeps its memory. Server-level. | `200` |
+| `HINDSIGHT_API_REFLECT_USE_DECISION_MODEL` | When a decision model is set up for reflect (see [Decision model](#decision-model)), reflect is decision-orchestrated: one LLM call rewrites the request into a search query, the layers run in parallel with that query, and the decision model prunes the evidence and judges whether it already answers the request. If it does, the answer is the next LLM call. If not, the LLM writes the next query and another parallel round runs, judged the same way. Fewer LLM calls than agent turns, so it costs less. If the decision model fails, reflect falls back to agent turns. Only the `hindsight` and `typesafe` providers are supported here for now: with another provider reflect keeps agent turns and logs a warning. Set `false` to keep agent turns (one LLM turn per retrieval layer, each writing its own query). Hierarchical (per bank). | `true` |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL` | The same, for the reflect that refreshes a knowledge page. Hierarchical (per bank). | `true` |
+| `HINDSIGHT_API_MENTAL_MODEL_DELTA_USE_DECISION_MODEL` | When a decision model is set up for reflect (see [Decision model](#decision-model)), a delta knowledge-page refresh skips reflect: it asks the decision model which of the memories added since its last run could change the page, and edits the page from those alone. None of them means no LLM call. Set `false` to run reflect for delta refreshes too. Hierarchical (per bank). | `true` |
+| `HINDSIGHT_API_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES` | The most new memories that gated delta refresh asks the decision model about; past it, the refresh runs reflect instead. Each memory is one decision-model request carrying the whole page, and one refresh sends at most 8 at a time. A question that fails after others answered keeps its memory. Server-level. | `200` |
 | `HINDSIGHT_API_REFLECT_MAX_CONTEXT_TOKENS` | Max accumulated context tokens in the reflect loop before forcing final synthesis. Prevents `context_length_exceeded` errors on large banks. Lower this if your LLM has a context window smaller than 128K. | `100000` |
 | `HINDSIGHT_API_REFLECT_WALL_TIMEOUT` | Wall-clock timeout in seconds for the entire reflect operation. If exceeded, the request returns HTTP 504. Also bounds a whole mental-model refresh in the worker: one that runs past it is cancelled and marked failed instead of holding its worker slot. | `300` |
 | `HINDSIGHT_API_REFLECT_MISSION` | Global reflect mission (identity and reasoning framing). Overridden per bank via config API. | - |

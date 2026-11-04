@@ -1,0 +1,276 @@
+{
+  "title": "Recall with a Decision Model",
+  "speed": 2200,
+  "elements": [
+    {
+      "id": "agent",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Your AI Agent"
+        }
+      ],
+      "minCardHeight": 118,
+      "width": 230
+    },
+    {
+      "id": "search",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "4-way search"
+        },
+        {
+          "type": "subtitle",
+          "text": "semantic · keyword · graph · temporal"
+        }
+      ],
+      "minCardHeight": 118,
+      "width": 280
+    },
+    {
+      "id": "dm",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Decision model"
+        },
+        {
+          "type": "subtitle",
+          "text": "would this help answer?"
+        }
+      ],
+      "minCardHeight": 148,
+      "width": 300
+    },
+    {
+      "id": "recall",
+      "type": "group",
+      "label": {
+        "title": "Recall"
+      },
+      "children": [
+        "search",
+        "dm"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 44,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "bank",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Memory Bank"
+        },
+        {
+          "type": "subtitle",
+          "text": "facts · observations"
+        }
+      ],
+      "minCardHeight": 88,
+      "width": 200
+    },
+    {
+      "id": "g0",
+      "type": "group",
+      "children": [
+        "agent",
+        "recall",
+        "bank"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 56,
+        "align": "center"
+      }
+    },
+    {
+      "id": "ask",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "agent"
+      },
+      "end": {
+        "id": "search"
+      },
+      "label": {
+        "text": "recall()"
+      }
+    },
+    {
+      "id": "read",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "search"
+      },
+      "end": {
+        "id": "bank"
+      }
+    },
+    {
+      "id": "pool",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "search"
+      },
+      "end": {
+        "id": "dm"
+      },
+      "label": {
+        "text": "candidates"
+      }
+    },
+    {
+      "id": "reply",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "dm"
+      },
+      "end": {
+        "id": "agent"
+      },
+      "label": {
+        "text": "ranked"
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "label": "recall()",
+      "beats": [
+        {
+          "edges": {
+            "edge": "ask",
+            "data": "“Where does Alice work now?”"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "question",
+                "tone": "gray",
+                "text": "“Where does Alice work now?”"
+              }
+            ]
+          },
+          "say": "recall() gets a question. Nothing about the call changes when a decision model is set up."
+        },
+        {
+          "edges": "read",
+          "show": {
+            "search": [
+              {
+                "text": "4 strategies in parallel",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "The four search strategies run as usual and their results are fused into one pool of candidates."
+        },
+        {
+          "edges": {
+            "edge": "read",
+            "back": true,
+            "data": "4 candidates"
+          },
+          "show": {
+            "search": [
+              {
+                "text": "Alice joined Google in 2023"
+              },
+              {
+                "text": "Alice left Google for OpenAI in May"
+              },
+              {
+                "text": "Alice likes hiking"
+              },
+              {
+                "text": "Bob works at Google"
+              }
+            ]
+          }
+        },
+        {
+          "edges": {
+            "edge": "pool",
+            "data": "4 candidates + today’s date"
+          },
+          "show": {
+            "dm": [
+              {
+                "tag": "asking",
+                "tone": "gray",
+                "text": "one question per candidate"
+              }
+            ]
+          },
+          "say": "Instead of a cross-encoder, the decision model is asked about each candidate on its own: would showing it help answer? It is told the date the question is asked.",
+          "ms": 3000
+        },
+        {
+          "show": {
+            "dm": [
+              {
+                "tag": "0.94",
+                "tone": "green",
+                "text": "Alice left Google for OpenAI in May"
+              },
+              {
+                "tag": "0.61",
+                "tone": "blue",
+                "text": "Alice joined Google in 2023"
+              },
+              {
+                "tag": "0.07",
+                "tone": "gray",
+                "text": "Bob works at Google",
+                "mark": "no help"
+              },
+              {
+                "tag": "0.02",
+                "tone": "gray",
+                "text": "Alice likes hiking",
+                "mark": "no help"
+              }
+            ]
+          },
+          "say": "Its answers are the order. Recent and on-topic wins; that order is final, with no recency or proof boosts on top.",
+          "ms": 3400
+        },
+        {
+          "edges": {
+            "edge": "reply",
+            "data": "ranked results"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "1",
+                "tone": "green",
+                "text": "Alice left Google for OpenAI in May"
+              },
+              {
+                "tag": "2",
+                "tone": "blue",
+                "text": "Alice joined Google in 2023"
+              }
+            ]
+          },
+          "say": "With pruning on, the candidates judged no help are dropped too, at no extra request. The best one always stays.",
+          "ms": 3200
+        }
+      ]
+    }
+  ]
+}

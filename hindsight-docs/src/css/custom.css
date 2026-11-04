@@ -945,9 +945,24 @@ table {
   margin: 1rem 0;
 }
 
+/* display: table above stretches a table to the column but drops Infima's scroll box, so on a
+   phone a wide table widens the whole page. Scroll it in place there instead. */
+@media (max-width: 996px) {
+  table {
+    display: block;
+    overflow-x: auto;
+  }
+}
+
 th, td {
   border: 1px solid var(--ifm-toc-border-color);
   padding: 0.5rem 0.75rem;
+}
+
+/* A long value in a cell (an env var with a URL) would hold the column at its full width and push
+   the table past the content column into the table of contents. Let it break instead. */
+td code {
+  overflow-wrap: anywhere;
 }
 
 th {

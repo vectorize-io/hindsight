@@ -1,6 +1,6 @@
 [project]
 name = "hermes-plugin-hindsight"
-version = "1.2.3"
+version = "1.2.4"
 description = "Hermes Agent memory provider plugin: hindsight"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -15,8 +15,8 @@ dependencies = [
     # task"). That breaks local_embedded outright. Anyone who installed between
     # 2026-09-14 and 2026-09-21 is pinned to the broken release until a floor moves them
     # off it, so keep these at >=0.10.1 rather than widening them back.
-    "hindsight-client>=0.10.1,<1",
-    "hindsight-embed>=0.10.1,<1",
+    "hindsight-client>=0.10.1,<2",
+    "hindsight-embed>=0.10.1,<2",
 ]
 
 # The plugin is loaded from a directory by Hermes, not installed as a distribution.

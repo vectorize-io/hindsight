@@ -35,6 +35,7 @@ from tools.registry import tool_error
 from utils import read_json_or_empty
 
 from .embedded import (
+    _CLIENT_MODULES,
     _RETRIABLE_CONNECTION_MARKERS,
     _build_embedded_profile_env,
     _check_local_runtime,
@@ -191,6 +192,8 @@ def _fetch_hindsight_api_version(api_url: str, api_key: str | None = None, timeo
 
     ``/v1/version`` first: an ingress that routes only ``/v1`` to the API hands a bare ``/version``
     to whatever else it fronts, whose 404 read as "no version" (same order as coding-agents, #5286).
+    ``/api/version`` last: a proxy that fronts the control plane at the root answers there with the
+    API's own version, which it relays (#6137).
     Raises ``_VersionProbeUnreachable`` when no version came back and either path failed to answer
     (connection error, timeout, 5xx), so the caller can tell "unknown" from "old": only a 4xx or a
     versionless body from every path means the server is old.
@@ -204,7 +207,7 @@ def _fetch_hindsight_api_version(api_url: str, api_key: str | None = None, timeo
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     unanswered = False
-    for path in ("/v1/version", "/version"):
+    for path in ("/v1/version", "/version", "/api/version"):
         url = api_url.rstrip("/") + path
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as resp:  # noqa: S310
@@ -473,6 +476,8 @@ _SESSION_KWARGS = (
     "agent_workspace",
     "cwd",
 )
+# aiohttp's message for a pooled keep-alive connection the server closed while it sat idle.
+_STALE_KEEPALIVE_MARKER = "server disconnected"
 # Retain metadata keys, each stamped from the attribute of the same name when set.
 _METADATA_ATTRS = (
     "session_id",
@@ -485,6 +490,8 @@ _METADATA_ATTRS = (
     "thread_id",
     "agent_identity",
 )
+# Retain metadata that differs on every call; left off appends to a session document (#6241).
+_PER_CALL_METADATA = frozenset({"retained_at", "message_count", "turn_index"})
 # Naming Hermes' built-in session_search tells the model when to pick each tool. With only
 # the tool names listed, models defaulted to session_search (raw transcripts) for every
 # history question and skipped Hindsight's deduplicated memories.
@@ -600,6 +607,10 @@ class HindsightMemoryProvider(MemoryProvider):
                 # the provider outright when this returns False, and every other runtime probe below
                 # runs after it has already passed.
                 return _check_local_runtime().available
+            # Hermes keeps a provider whose client cannot import and lets every recall and retain
+            # fail; a gateway started before the install runs without it (#6063).
+            if not _check_local_runtime(_CLIENT_MODULES).available:
+                return False
             return mode == "local_external" or bool(
                 _cloud_api_key(cfg) or cfg.get("api_url") or get_secret("HINDSIGHT_API_URL", "")
             )
@@ -608,7 +619,7 @@ class HindsightMemoryProvider(MemoryProvider):
             return False
 
     def unavailable_reason(self) -> str:
-        """Install hint for an unavailable local_embedded runtime (is_available() gates
+        """Install hint when this process can't import what the mode needs (is_available() gates
         initialize() out, so the hint it would log never fires; agent_init shows this).
 
         ``is_available()`` returns False for local modes when the embedded runtime can't be imported, so
@@ -616,11 +627,10 @@ class HindsightMemoryProvider(MemoryProvider):
         guidance here, where agent_init warns about an unavailable provider.
         """
         try:
-            if _load_config().get("mode", "cloud") not in _LOCAL_MODES:
-                return ""
+            local = _load_config().get("mode", "cloud") in _LOCAL_MODES
         except Exception:
             return ""
-        status = _check_local_runtime()
+        status = _check_local_runtime() if local else _check_local_runtime(_CLIENT_MODULES)
         return "" if status.available else _local_runtime_hint(status.reason).strip()
 
     def save_config(self, values, hermes_home):
@@ -991,16 +1001,19 @@ class HindsightMemoryProvider(MemoryProvider):
         """Schedule *coro* on the shared loop using the configured timeout."""
         return _run_sync(coro, timeout=self._timeout)
 
-    def _run_hindsight_operation(self, operation):
-        """Run an async client operation; for local_embedded, a stale-daemon
-        connection failure recreates the client and retries once."""
+    def _run_hindsight_operation(self, operation, *, repeatable: bool = True):
+        """Run an async client operation, recreating the client and retrying once when its
+        connection went stale: for local_embedded, a daemon that is no longer there; in any mode,
+        a pooled connection the server already closed (#5734). The server may have read a request
+        it dropped mid-way, so that retry is only for a *repeatable* operation."""
         try:
             return self._run_sync(operation(self._get_client()))
         except Exception as exc:
             text = f"{type(exc).__name__}: {exc}".lower()
-            if self._mode != "local_embedded" or not any(m in text for m in _RETRIABLE_CONNECTION_MARKERS):
+            stale_daemon = self._mode == "local_embedded" and any(m in text for m in _RETRIABLE_CONNECTION_MARKERS)
+            if not stale_daemon and not (repeatable and _STALE_KEEPALIVE_MARKER in text):
                 raise
-            logger.info("Hindsight embedded daemon appears unreachable; recreating client and retrying once: %s", exc)
+            logger.info("Hindsight connection went stale; recreating client and retrying once: %s", exc)
             with self._client_lock:
                 stale, self._client = self._client, None
             if stale is not None:
@@ -1901,7 +1914,10 @@ class HindsightMemoryProvider(MemoryProvider):
             "operation_id": operation_id if retain_async else None,
         }
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
-        return self._run_hindsight_operation(lambda client: client.aretain_batch(**kwargs))
+        # A retain is only safe to resend under its operation id, which the server replays.
+        return self._run_hindsight_operation(
+            lambda client: client.aretain_batch(**kwargs), repeatable="operation_id" in kwargs
+        )
 
     def _make_turn_retain_job(
         self, turns: list[str], *, document_id: str, update_mode: str | None, label: str, track_ops: bool = True
@@ -1912,6 +1928,10 @@ class HindsightMemoryProvider(MemoryProvider):
         # when the document is a list of messages, not a list of per-turn lists.
         content = json.dumps([message for turn in turns for message in json.loads(turn)], ensure_ascii=False)
         metadata = self._build_metadata(message_count=len(turns) * 2, turn_index=self._turn_index)
+        if update_mode == "append":
+            # An append sets the document's metadata on every memory the session already has, so a
+            # value that changes per call would rewrite all of them on each turn (#6241).
+            metadata = {k: v for k, v in metadata.items() if k not in _PER_CALL_METADATA}
         occurred_at = _event_timestamp()
         # A session named as its own parent (in-place compaction) is no lineage; tagging it
         # would flip the document's tag set and re-consolidate it from scratch.

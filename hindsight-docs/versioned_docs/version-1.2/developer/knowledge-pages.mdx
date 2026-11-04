@@ -62,6 +62,20 @@ This is a different path from [recall](./retrieval), which searches individual m
 
 ---
 
+## Cheaper Refreshes With a Decision Model {#decision-model-refresh}
+
+Because a page refreshes incrementally, most refreshes only have a handful of new memories to consider. When a [decision model](./decision-models) is set up for reflect, a refresh uses that:
+
+1. It reads the memories added since the page's last refresh.
+2. For each one, it asks the decision model whether it could change the page.
+3. Only those reach the LLM that edits the page, together with the bank's directives. When none could, there is no LLM call at all.
+
+A memory it drops is not offered again. Above 200 new memories ([`HINDSIGHT_API_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES`](./configuration#reflect)), or when the decision model fails, the refresh runs reflect as before. On the refresh cost eval this took a 20-memory refresh from 3 LLM calls to 1 and cut its input tokens by about 70%.
+
+The same applies to any [mental model](./api/mental-models#refresh-mode) in `delta` mode. Only the `hindsight` and `typesafe` providers are supported for now. Turn it off for one bank with [`mental_model_delta_use_decision_model: false`](./configuration#reflect).
+
+---
+
 ## Why Not Just Raw Files?
 
 If the answer is documents in a tree, haven't we reinvented files — the thing a memory system exists to replace?

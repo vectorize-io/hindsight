@@ -47,7 +47,32 @@ def test_retain_every_n_turns_buffers_then_ships_the_batch(provider):
     instance.shutdown()
 
     assert len(fake.retains) == 1
-    assert _retain_item(fake)["metadata"]["message_count"] == "4"
+    assert len(_messages_of(fake)) == 4
+
+
+def test_appends_carry_no_per_call_metadata(provider):
+    """#6241: an append relabels every memory of the session document, so a value that changes on
+    each call (a timestamp, a counter) made every turn rewrite all of the session's memories."""
+    instance, fake = provider({})
+    instance.sync_turn("one", "1")
+    instance.sync_turn("two", "2")
+    instance.shutdown()
+
+    first, second = (call["items"][0]["metadata"] for call in fake.retains)
+    assert first == second and first["session_id"] == "session-1"
+    assert not {"retained_at", "message_count", "turn_index"} & first.keys()
+
+
+def test_non_append_retains_keep_per_call_metadata(provider, monkeypatch):
+    instance, fake = provider({"retain_every_n_turns": 2})
+    # The fixture pins the append probe on; an API without append gets per-call documents.
+    monkeypatch.setattr(plugin, "_check_api_supports_update_mode_append", lambda *a, **k: False)
+    instance.sync_turn("one", "1")
+    instance.sync_turn("two", "2")
+    instance.shutdown()
+
+    metadata = _retain_item(fake)["metadata"]
+    assert metadata["message_count"] == "4" and "retained_at" in metadata
 
 
 def test_shutdown_flushes_turns_below_the_retain_cadence(provider):
@@ -586,7 +611,7 @@ def test_an_unreachable_server_is_asked_again_not_cached(version_probe, monkeypa
     assert plugin._check_api_supports_update_mode_append("http://hs.test") is False
     # Inside the retry window a hung server is not asked again on every turn.
     assert plugin._check_api_supports_update_mode_append("http://hs.test") is False
-    assert down.calls == ["/v1/version", "/version"]
+    assert down.calls == ["/v1/version", "/version", "/api/version"]
 
     monkeypatch.setattr(plugin, "_APPEND_PROBE_RETRY_S", 0.0)
     up = version_probe({"/v1/version": {"api_version": "0.10.3"}})
@@ -616,7 +641,7 @@ def test_an_old_server_answer_is_cached(version_probe):
     old = version_probe({"/v1/version": 404, "/version": 404})
     assert plugin._check_api_supports_update_mode_append("http://hs.test") is False
     assert plugin._check_api_supports_update_mode_append("http://hs.test") is False
-    assert old.calls == ["/v1/version", "/version"]
+    assert old.calls == ["/v1/version", "/version", "/api/version"]
 
 
 def test_version_falls_back_to_the_bare_path(version_probe):
@@ -624,6 +649,13 @@ def test_version_falls_back_to_the_bare_path(version_probe):
     server = version_probe({"/v1/version": 404, "/version": {"version": "0.5.0"}})
     assert plugin._check_api_supports_update_mode_append("http://hs.test") is True
     assert server.calls == ["/v1/version", "/version"]
+
+
+def test_version_falls_back_to_the_control_plane_path(version_probe):
+    """#6137: a proxy that fronts the control plane at the root answers only /api/version."""
+    server = version_probe({"/v1/version": 404, "/version": 404, "/api/version": {"version": "1.0.0"}})
+    assert plugin._check_api_supports_update_mode_append("http://hs.test") is True
+    assert server.calls == ["/v1/version", "/version", "/api/version"]
 
 
 def test_retain_tool_honours_retain_async(provider):
@@ -754,6 +786,23 @@ def test_availability_failure_is_logged(hermes_env, caplog):
     assert "availability check failed" in caplog.text
 
 
+@pytest.mark.parametrize("mode", ["cloud", "local_external"])
+def test_a_client_that_cannot_import_makes_the_provider_unavailable(hermes_env, monkeypatch, mode):
+    """#6063: a gateway started before the install has no hindsight_client. The provider said it was
+    available and every recall and retain then failed; it now says why it isn't."""
+    (hermes_env / "hindsight").mkdir(parents=True, exist_ok=True)
+    (hermes_env / "hindsight" / "config.json").write_text(json.dumps({"mode": mode, "api_url": "http://hs.test"}))
+    provider = plugin.HindsightMemoryProvider()
+    assert provider.is_available() is True and provider.unavailable_reason() == ""
+
+    def _missing(name):
+        raise ModuleNotFoundError(f"No module named '{name}'")
+
+    monkeypatch.setattr(plugin.embedded.importlib, "import_module", _missing)
+    assert provider.is_available() is False
+    assert "hermes gateway restart" in provider.unavailable_reason()
+
+
 def test_desktop_panel_offers_every_mode_the_plugin_runs():
     """#4662: without local_embedded the panel could not hold that mode and saving rewrote it."""
     from hindsight_hermes.config_schema import CONFIG_SCHEMA
@@ -875,3 +924,51 @@ def test_explicit_observation_scopes_win_over_the_default(provider):
     instance.sync_turn("hi", "hello")
     instance.shutdown()
     assert _retain_item(fake)["observation_scopes"] == "combined"
+
+
+class _StaleOnceClient(FakeClient):
+    """The first call of each kind hits a pooled connection the server closed while it sat idle."""
+
+    def __init__(self):
+        super().__init__(recall_texts=["Ada likes tea"])
+        self.failed: set[str] = set()
+
+    def _stale_once(self, kind: str) -> None:
+        import aiohttp
+
+        if kind not in self.failed:
+            self.failed.add(kind)
+            raise aiohttp.ServerDisconnectedError()
+
+    async def arecall(self, **kwargs):
+        self._stale_once("recall")
+        return await super().arecall(**kwargs)
+
+    async def aretain_batch(self, **kwargs):
+        self._stale_once("retain")
+        return await super().aretain_batch(**kwargs)
+
+
+def test_a_stale_keepalive_connection_is_retried_for_a_recall(provider):
+    """#5734: outside local_embedded a dropped idle connection failed the turn's recall outright."""
+    instance, fake = provider({}, client=_StaleOnceClient())
+    result = json.loads(instance.handle_tool_call("hindsight_recall", {"query": "tea?"}))
+    assert "Ada likes tea" in result["result"]
+    assert len(fake.recalls) == 1
+
+
+def test_a_sync_retain_is_not_resent_after_a_dropped_connection(provider):
+    """The server may have stored a retain it dropped mid-way; without an operation id to replay
+    under, resending it would store it twice."""
+    instance, fake = provider({"retain_async": False}, client=_StaleOnceClient())
+    result = instance.handle_tool_call("hindsight_retain", {"content": "Ada likes tea"})
+    assert "Server disconnected" in result
+    assert fake.retains == []
+    instance.shutdown()
+
+
+def test_an_async_turn_retain_is_resent_under_its_operation_id(provider):
+    instance, fake = provider({}, client=_StaleOnceClient())
+    instance.sync_turn("one", "1")
+    instance.shutdown()
+    assert len(fake.retains) == 1 and fake.retains[0]["operation_id"]

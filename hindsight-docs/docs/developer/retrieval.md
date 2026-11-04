@@ -274,6 +274,16 @@ When running without a cross-encoder (e.g., slim image with no external reranker
 
 ---
 
+### Stage 2 With a Decision Model {#decision-model-ranking}
+
+When a [decision model](./decision-models) is set up for recall, it takes the cross-encoder's place. It asks of each candidate on its own whether showing it would help answer the question, telling it the date the question is asked (the recall's question date, else today), and orders the pool by that.
+
+That order is final. Recall skips Stage 3's recency, temporal and proof-count boosts, publishes no reranker score (`scores.reranker` is `null`), and rejects [`min_scores.reranker`](./api/recall#min_scores) with HTTP 400 — use `min_scores.final` instead. If the decision model cannot be reached after retries, the recall fails, as it does with any remote reranker.
+
+With [`HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE=true`](./configuration#decision-model), recall also drops the candidates judged no help instead of only ordering them. The best candidate always survives. To keep the cross-encoder for recall while other operations use the decision model, set `HINDSIGHT_API_RECALL_DECISION_MODEL_PROVIDER=none`.
+
+---
+
 ### Stage 3: Combined Scoring (Boosts)
 
 The normalized cross-encoder score is adjusted by three **multiplicative boosts** that incorporate signals the cross-encoder can't see: recency, temporal proximity, and evidence strength.

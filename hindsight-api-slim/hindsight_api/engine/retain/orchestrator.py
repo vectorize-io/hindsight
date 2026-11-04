@@ -2307,10 +2307,12 @@ async def _store_document_bodies(
             bank_id=bank_id,
             document_id=document_id,
             content_hash=content_hash,
-            # Honour store_document_text: when a deployment opts out of keeping the full text,
-            # only the chunk texts (needed for citation) go to the store, not the whole body.
+            # Honour the bank's store_document_text on the body AND the chunks, as the SQL path
+            # does: a bank that keeps no text keeps none, and the store still records each chunk's
+            # hash so delta retain can diff a re-send against it (#6249).
             original_text=combined_content if config.store_document_text else None,
             chunk_texts=list(chunk_texts),
+            keep_chunk_text=config.store_document_text,
             tags=list(merged_tags or []),
             metadata=document_record_metadata(retain_params, attachment_filenames),
             expect_content_hash=expect_content_hash,
@@ -2502,6 +2504,7 @@ async def flush_document_bodies(body_accum: dict[str, DocumentBodyAccumulator]) 
                     "content_hash": a["content_hash"] or "",
                     "original_text": (a["combined_content"] if a["config"].store_document_text else None),
                     "chunk_texts": a["chunk_texts"],
+                    "keep_chunk_text": a["config"].store_document_text,
                     "tags": list(a["merged_tags"] or []),
                     "metadata": document_record_metadata(a["retain_params"], a["attachment_filenames"]),
                 }
@@ -4412,8 +4415,9 @@ async def _delta_metadata_only(
             bank_id=bank_id,
             document_id=document_id,
             content_hash=current_content_hash or "",
-            original_text=combined_content,
+            original_text=combined_content if config.store_document_text else None,
             chunk_texts=chunk_texts,
+            keep_chunk_text=config.store_document_text,
             tags=merged_tags,
             # The same map every other write path produces. This path used to pass the params dict
             # itself, which the store flattened key by key: the record then carried no

@@ -1,0 +1,97 @@
+.frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  margin: 1rem 0 2rem;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  background: #fafafa;
+}
+
+.fill {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  object-fit: cover;
+}
+
+.poster {
+  all: unset;
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+}
+
+.poster:focus-visible {
+  outline: 3px solid var(--ifm-color-primary);
+  outline-offset: -3px;
+}
+
+.play {
+  position: absolute;
+  left: 50%;
+  top: 72%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  padding-left: 4px;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--ifm-color-primary);
+  box-shadow: 0 8px 24px rgba(0, 116, 217, 0.35);
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.poster:hover .play {
+  transform: translate(-50%, -50%) scale(1.08);
+  box-shadow: 0 10px 30px rgba(0, 116, 217, 0.5);
+}
+
+.caption {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.8rem;
+  /* The poster is always light, so the caption keeps one colour in both themes. */
+  color: #555;
+}
+
+.title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.duration {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-family: var(--ifm-font-family-monospace);
+  color: #fff;
+  background: rgba(0, 0, 0, 0.7);
+}
+
+@media (max-width: 600px) {
+  .play {
+    width: 52px;
+    height: 52px;
+  }
+  .caption .title {
+    display: none;
+  }
+  .caption {
+    justify-content: flex-end;
+  }
+}

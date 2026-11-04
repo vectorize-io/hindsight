@@ -1,0 +1,390 @@
+{
+  "title": "Reflect with a Decision Model",
+  "speed": 2200,
+  "elements": [
+    {
+      "id": "agent",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Your AI Agent"
+        }
+      ],
+      "minCardHeight": 103,
+      "width": 230
+    },
+    {
+      "id": "llm",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "LLM"
+        },
+        {
+          "type": "subtitle",
+          "text": "writes the query, then the answer"
+        }
+      ],
+      "minCardHeight": 73,
+      "width": 280
+    },
+    {
+      "id": "dm",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Decision model"
+        },
+        {
+          "type": "subtitle",
+          "text": "keep what matters · is it enough?"
+        }
+      ],
+      "minCardHeight": 118,
+      "width": 280
+    },
+    {
+      "id": "reflect",
+      "type": "group",
+      "label": {
+        "title": "Reflect"
+      },
+      "children": [
+        "llm",
+        "dm"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 56,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "mm",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Mental Models"
+        }
+      ],
+      "minCardHeight": 28,
+      "width": 260
+    },
+    {
+      "id": "obs",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Observations"
+        }
+      ],
+      "minCardHeight": 28,
+      "width": 260
+    },
+    {
+      "id": "facts",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Facts"
+        }
+      ],
+      "minCardHeight": 28,
+      "width": 260
+    },
+    {
+      "id": "bank",
+      "type": "group",
+      "label": {
+        "title": "One parallel round"
+      },
+      "children": [
+        "mm",
+        "obs",
+        "facts"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 12,
+        "align": "stretch"
+      }
+    },
+    {
+      "id": "g0",
+      "type": "group",
+      "children": [
+        "agent",
+        "reflect",
+        "bank"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 90,
+        "align": "center"
+      }
+    },
+    {
+      "id": "ask",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "agent"
+      },
+      "end": {
+        "id": "llm"
+      },
+      "label": {
+        "text": "reflect()"
+      }
+    },
+    {
+      "id": "q-mm",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "llm"
+      },
+      "end": {
+        "id": "mm"
+      }
+    },
+    {
+      "id": "q-obs",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "llm"
+      },
+      "end": {
+        "id": "obs"
+      }
+    },
+    {
+      "id": "q-facts",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "llm"
+      },
+      "end": {
+        "id": "facts"
+      }
+    },
+    {
+      "id": "evidence",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "bank"
+      },
+      "end": {
+        "id": "dm"
+      },
+      "label": {
+        "text": "evidence"
+      }
+    },
+    {
+      "id": "verdict",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "dm"
+      },
+      "end": {
+        "id": "llm"
+      },
+      "label": {
+        "text": "enough / not yet"
+      }
+    },
+    {
+      "id": "reply",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "llm"
+      },
+      "end": {
+        "id": "agent"
+      },
+      "label": {
+        "text": "answer"
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "label": "reflect()",
+      "beats": [
+        {
+          "edges": {
+            "edge": "ask",
+            "data": "“Should Alice join the ML project?”"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "question",
+                "tone": "gray",
+                "text": "“Should Alice join the ML project?”"
+              }
+            ]
+          },
+          "say": "reflect() gets a question that needs reasoning."
+        },
+        {
+          "show": {
+            "llm": [
+              {
+                "tag": "call 1",
+                "tone": "gray",
+                "text": "query: “Alice skills, ML project needs”"
+              }
+            ]
+          },
+          "say": "One LLM call turns the request into a search query.",
+          "ms": 2400
+        },
+        {
+          "edges": [
+            "q-mm",
+            "q-obs",
+            "q-facts"
+          ],
+          "show": {
+            "mm": [
+              {
+                "text": "Team overview",
+                "mark": "fresh"
+              }
+            ],
+            "obs": [
+              {
+                "text": "Alice is strong in Python"
+              },
+              {
+                "text": "Alice prefers research work"
+              }
+            ],
+            "facts": [
+              {
+                "text": "ML project needs PyTorch"
+              },
+              {
+                "text": "Alice likes hiking"
+              }
+            ]
+          },
+          "say": "Every layer runs at once with that query: mental models, observations and facts. In agent mode each one would cost its own LLM turn.",
+          "ms": 3000
+        },
+        {
+          "edges": {
+            "edge": "evidence",
+            "data": "5 results"
+          },
+          "show": {
+            "dm": [
+              {
+                "tag": "keep",
+                "tone": "green",
+                "text": "Alice is strong in Python"
+              },
+              {
+                "tag": "keep",
+                "tone": "green",
+                "text": "Alice prefers research work"
+              },
+              {
+                "tag": "keep",
+                "tone": "green",
+                "text": "ML project needs PyTorch"
+              },
+              {
+                "tag": "drop",
+                "tone": "gray",
+                "text": "Alice likes hiking"
+              }
+            ]
+          },
+          "say": "The decision model keeps the evidence that matters and drops the rest.",
+          "ms": 3000
+        },
+        {
+          "show": {
+            "dm": [
+              {
+                "tag": "keep",
+                "tone": "green",
+                "text": "Alice is strong in Python"
+              },
+              {
+                "tag": "keep",
+                "tone": "green",
+                "text": "Alice prefers research work"
+              },
+              {
+                "tag": "keep",
+                "tone": "green",
+                "text": "ML project needs PyTorch"
+              },
+              {
+                "tag": "enough?",
+                "tone": "blue",
+                "text": "yes, this answers it",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "Then it judges whether that evidence already answers the request. If not, the LLM writes the next query and another round runs.",
+          "ms": 3000
+        },
+        {
+          "edges": {
+            "edge": "verdict",
+            "data": "enough"
+          },
+          "show": {
+            "llm": [
+              {
+                "tag": "call 1",
+                "tone": "gray",
+                "text": "query: “Alice skills, ML project needs”"
+              },
+              {
+                "tag": "call 2",
+                "tone": "green",
+                "text": "write the answer"
+              }
+            ]
+          },
+          "say": "It is enough, so the next LLM call writes the answer."
+        },
+        {
+          "edges": {
+            "edge": "reply",
+            "data": "answer + citations"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "answer",
+                "tone": "green",
+                "text": "Yes: she knows Python and likes research; she will need PyTorch."
+              }
+            ]
+          },
+          "say": "Two LLM calls in all. If the decision model fails, the LLM decides when to stop, as in agent mode.",
+          "ms": 3200
+        }
+      ]
+    }
+  ]
+}
