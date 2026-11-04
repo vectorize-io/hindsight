@@ -1767,13 +1767,12 @@ jobs:
         shard: [1, 2, 3]
     name: test-api (${{ matrix.shard }}/3)
     env:
+      # No VLM slot or JSON-mode override here: these tests assert the defaults
+      # (json_object on, vision falls back to the retain LLM) with mock LLMs.
       HINDSIGHT_API_LLM_PROVIDER: openai
       HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
       HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
       HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
-      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
-      HINDSIGHT_API_VLM_PROVIDER: vertexai
-      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -2087,13 +2086,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      # No VLM slot or JSON-mode override here: these tests assert the defaults
+      # (json_object on, vision falls back to the retain LLM) with mock LLMs.
       HINDSIGHT_API_LLM_PROVIDER: openai
       HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
       HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
       HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
-      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
-      HINDSIGHT_API_VLM_PROVIDER: vertexai
-      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
