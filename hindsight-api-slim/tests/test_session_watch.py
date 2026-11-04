@@ -614,3 +614,14 @@ def test_a_note_saying_there_is_no_conflict_is_not_a_note():
     assert not W.accept_note(s, cmd, said, ["m1"])
     real = "There is no conflict on the port, but the job must not delete ~/dev: JOB.md keeps it."
     assert W.accept_note(s, cmd, real, ["m2"])
+
+
+def test_a_praise_note_with_a_but_in_its_facts_is_not_a_note():
+    s = W.WatchState()
+    edit = W.Moment(trigger="edit", text="", recent=[], diff="d")
+    said = (
+        "Your work does not contradict any recorded decisions. In fact, your implementation of "
+        "`MEMLAKE_BALANCER_MIN_PLACED_MB` directly addresses the inefficiencies: the balancer moves ~610 "
+        "banks/hour, but 80% of those moves are for banks < 20 MB."
+    )
+    assert not W.accept_note(s, edit, said, ["m1"])

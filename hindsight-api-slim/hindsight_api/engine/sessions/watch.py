@@ -581,8 +581,9 @@ NEGATED_CLAIM = re.compile(
     re.I,
 )
 CLAIMS_CONFLICT = re.compile(
-    # "did not require" claims nothing: only an unnegated "requires" does.
-    r"\b(contradicts?|conflicts? with|violat\w*|breaks?|must not|should not|instead of|but|(?<!not )requires?)\b",
+    # "did not require" claims nothing: only an unnegated "requires" does. "but" was a claim word
+    # too, until a praise note's own facts ("moves ~610 banks/hour, but 80% are small") kept it.
+    r"\b(contradicts?|conflicts? with|violat\w*|breaks?|must not|should not|instead of|(?<!not )requires?)\b",
     re.I,
 )
 
