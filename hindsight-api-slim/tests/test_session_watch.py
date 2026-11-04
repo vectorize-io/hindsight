@@ -513,6 +513,8 @@ def test_a_memory_reference_is_cut_from_the_note():
     raw = "The pin still has to move in `hindsight-deployment` (REF-ID: conversation:910a5acd-89a9-4b03-bf53-a433e0)."
     assert W.strip_refs(raw) == "The pin still has to move in `hindsight-deployment`."
     assert W.strip_refs("Keep the floor at 60 GB.") == "Keep the floor at 60 GB."
+    said = "You are violating the decision recorded in REF-ID conversation:852c3331-d38b, which states: 'X'."
+    assert W.strip_refs(said) == "You are violating the decision recorded, which states: 'X'."
 
 
 def test_a_note_saying_it_is_not_a_conflict_is_not_a_note():

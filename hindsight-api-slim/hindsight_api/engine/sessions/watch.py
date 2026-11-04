@@ -590,7 +590,7 @@ CLAIMS_CONFLICT = re.compile(
 
 # The reflect prompt forbids memory ids, yet a small model still cites them ("(REF-ID:
 # conversation:910a...)"): the agent cannot look one up, so cut it from the note.
-_REF_ID = re.compile(r"\s*[(\[]?\s*REF-ID:\s*[\w:.-]+[)\]]?")
+_REF_ID = re.compile(r"(?:\s+(?:in|from))?\s*[(\[]?\s*REF-ID:?\s*[\w:.-]+[)\]]?")
 
 
 def strip_refs(text: str) -> str:
