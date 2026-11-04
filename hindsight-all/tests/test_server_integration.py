@@ -25,6 +25,7 @@ def llm_config():
     provider = os.getenv("HINDSIGHT_LLM_PROVIDER", "groq")
     api_key = os.getenv("HINDSIGHT_LLM_API_KEY", "")
     model = os.getenv("HINDSIGHT_LLM_MODEL", "openai/gpt-oss-120b")
+    base_url = os.getenv("HINDSIGHT_LLM_BASE_URL") or None
 
     # vertexai uses GCP service account credentials (HINDSIGHT_API_LLM_VERTEXAI_*),
     # not a traditional API key
@@ -36,6 +37,7 @@ def llm_config():
         "llm_provider": provider,
         "llm_api_key": api_key,
         "llm_model": model,
+        "llm_base_url": base_url,
     }
 
 

@@ -16,14 +16,21 @@ permissions:
 
 jobs:
   windows-client-smoke:
-    # Don't run on forks: the job needs the org's Vertex AI credentials.
+    # Don't run on forks: the job needs the org's secrets (Hindsight Inference key; Vertex for vision).
     if: github.repository == 'vectorize-io/hindsight'
     runs-on: windows-latest
     timeout-minutes: 45
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      HINDSIGHT_API_LLM_MAX_RETRIES: "8"
+      HINDSIGHT_API_LLM_INITIAL_BACKOFF: "2"
+      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
+      HINDSIGHT_API_VLM_PROVIDER: vertexai
+      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: ${{ github.workspace }}/gcp-credentials.json
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_URL: http://localhost:8888
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Force UTF-8 I/O so the API/CLI's ✓/box-drawing output doesn't crash the

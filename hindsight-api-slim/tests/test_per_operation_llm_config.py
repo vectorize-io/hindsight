@@ -10,9 +10,14 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def setup_test_env():
+def setup_test_env(monkeypatch):
     """Set up environment for each test, restoring original values after."""
     from hindsight_api.config import clear_config_cache
+
+    # The defaults these tests assert must not come from the job's own env (CI raises them
+    # for the shared dev GPU).
+    for key in ("HINDSIGHT_API_LLM_MAX_RETRIES", "HINDSIGHT_API_LLM_INITIAL_BACKOFF", "HINDSIGHT_API_LLM_MAX_BACKOFF"):
+        monkeypatch.delenv(key, raising=False)
 
     # Save original environment values
     env_vars_to_set = {

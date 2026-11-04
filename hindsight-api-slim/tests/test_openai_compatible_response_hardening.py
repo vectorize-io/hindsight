@@ -24,6 +24,10 @@ from hindsight_api.worker.stage import StageHolder, bind_holder, set_stage
 from tests.ollama_stub import OllamaStub, chat_body, ollama_stub
 
 
+# These tests assert the default json_object behaviour, not a job's JSON-mode override.
+pytestmark = pytest.mark.usefixtures("default_json_mode")
+
+
 class SimpleJsonResponse(BaseModel):
     ok: bool
 

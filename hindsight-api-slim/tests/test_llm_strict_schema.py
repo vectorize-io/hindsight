@@ -43,6 +43,10 @@ from hindsight_api.engine.llm_wrapper import LLMProvider
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
 
 
+# These tests assert the default json_object behaviour, not a job's JSON-mode override.
+pytestmark = pytest.mark.usefixtures("default_json_mode")
+
+
 class _Resp(BaseModel):
     ok: bool
 

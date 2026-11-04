@@ -5,6 +5,10 @@ import pytest
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
 
 
+# These tests assert the default json_object behaviour, not a job's JSON-mode override.
+pytestmark = pytest.mark.usefixtures("default_json_mode")
+
+
 def _make_deepseek_llm(model: str = "deepseek-v4-flash") -> OpenAICompatibleLLM:
     return OpenAICompatibleLLM(
         provider="openai",
