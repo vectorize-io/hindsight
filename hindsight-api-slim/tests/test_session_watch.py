@@ -627,3 +627,13 @@ def test_a_praise_note_with_a_but_in_its_facts_is_not_a_note():
         "banks/hour, but 80% of those moves are for banks < 20 MB."
     )
     assert not W.accept_note(s, edit, said, ["m1"])
+
+
+def test_a_note_saying_you_follow_the_design_is_not_a_note():
+    s = W.WatchState()
+    edit = W.Moment(trigger="edit", text="", recent=[], diff="d")
+    said = (
+        'You are following the #794 design which specifies a "new per-segment `facets.parquet` holds one row '
+        'per memory" and uses "tags as u32 ids" to avoid dictionary encoding issues.'
+    )
+    assert not W.accept_note(s, edit, said, ["m1"])
