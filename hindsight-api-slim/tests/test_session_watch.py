@@ -599,3 +599,15 @@ def test_a_note_saying_the_request_overrides_a_rule_is_not_a_note():
         "'allow any 1.x client, even 1.2' overrides that constraint."
     )
     assert not W.accept_note(s, edit, said, ["m1"])
+
+
+def test_a_note_saying_there_is_no_conflict_is_not_a_note():
+    s = W.WatchState()
+    cmd = W.Moment(trigger="command", text="kubectl get pods", recent=[], diff="")
+    said = (
+        "There is no conflict. Your command is a read-only monitoring operation for production pod health, "
+        "which does not modify the code and therefore cannot contradict or repeat any past project decisions."
+    )
+    assert not W.accept_note(s, cmd, said, ["m1"])
+    real = "There is no conflict on the port, but the job must not delete ~/dev: JOB.md keeps it."
+    assert W.accept_note(s, cmd, real, ["m2"])

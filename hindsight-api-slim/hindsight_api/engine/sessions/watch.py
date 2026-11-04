@@ -568,6 +568,12 @@ MIN_NOTE_WORDS = 3  # "Retries stay at 7." is a whole rule
 # A plain word, not a literal: no "=", "/", "$", "_" or digits in it.
 _PROSE_WORD = re.compile(r"(?<![\w=/$.-])[A-Za-z][a-z']+(?![\w=/$.-])")
 
+# A conflict word the note itself negates claims nothing ("cannot contradict", "does not violate").
+NEGATED_CLAIM = re.compile(
+    r"\b(?:cannot|can't|does not|doesn't|do not|don't|did not|didn't|is not|isn't|not|never)\s+(?:\w+\s+){0,2}?"
+    r"(?:contradict|conflict|violat|break|require)\w*",
+    re.I,
+)
 CLAIMS_CONFLICT = re.compile(
     # "did not require" claims nothing: only an unnegated "requires" does.
     r"\b(contradicts?|conflicts? with|violat\w*|breaks?|must not|should not|instead of|but|(?<!not )requires?)\b",
@@ -609,7 +615,9 @@ def accept_note(state: WatchState, m: Moment, text: str, memory_ids: list[str]) 
     # no word on what rule it stands for or why (beta), and the agent can't act on that.
     if len(_PROSE_WORD.findall(re.sub(r"`[^`]*`", " ", text))) < MIN_NOTE_WORDS:
         return False
-    if AGREES_WITH_RULE.search(lead) and not CLAIMS_CONFLICT.search(AGREES_WITH_RULE.sub("", text)):
+    if AGREES_WITH_RULE.search(lead) and not CLAIMS_CONFLICT.search(
+        NEGATED_CLAIM.sub("", AGREES_WITH_RULE.sub("", text))
+    ):
         return False
     # The same words twice say nothing new, whatever the moment (a heads-up for a request the
     # client sent twice wrote the same note again).
