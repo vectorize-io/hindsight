@@ -371,10 +371,7 @@ async def create_bank_row_on_conn(conn: "DatabaseConnection", bank_id: str, *, o
     # common "bank exists" case pays nothing.
     from .. import bank_aliases
 
-    if await bank_aliases.alias_exists_on_conn(conn, bank_id):
-        from hindsight_api.extensions import OperationValidationError
-
-        raise OperationValidationError(f"'{bank_id}' is an alias of another bank", status_code=409)
+    await bank_aliases.refuse_alias_as_bank_id_on_conn(conn, bank_id)
 
     internal_id = uuid.uuid4()
     inserted = await conn.fetchval(

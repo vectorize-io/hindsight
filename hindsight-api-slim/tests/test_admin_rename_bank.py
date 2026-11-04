@@ -159,3 +159,27 @@ async def test_rename_rebuilds_vector_indexes_for_the_new_id(rename_schema):
         "SELECT indexdef FROM pg_indexes WHERE schemaname = $1 AND indexname LIKE 'idx_mu_emb_%'", schema
     )
     assert defs and all("'new'::text" in r["indexdef"] for r in defs)
+
+
+@pytest.mark.asyncio
+async def test_rename_refuses_another_banks_alias(rename_schema):
+    _, schema, conn = rename_schema
+    await _seed_bank(conn, schema, "old")
+    await _seed_bank(conn, schema, "other")
+    await conn.execute(f"INSERT INTO {schema}.bank_aliases (alias, bank_id) VALUES ('next', 'other')")
+    before = await _counts(conn, schema, "old")
+
+    with pytest.raises(RenameBankError, match="alias"):
+        await _rename_bank(conn, schema, "old", "next", dry_run=False)
+    assert await _counts(conn, schema, "old") == before
+
+
+@pytest.mark.asyncio
+async def test_rename_onto_its_own_alias_retires_that_alias(rename_schema):
+    _, schema, conn = rename_schema
+    await _seed_bank(conn, schema, "old")
+    await conn.execute(f"INSERT INTO {schema}.bank_aliases (alias, bank_id) VALUES ('next', 'old'), ('keep', 'old')")
+
+    await _rename_bank(conn, schema, "old", "next", dry_run=False)
+    rows = await conn.fetch(f"SELECT alias, bank_id FROM {schema}.bank_aliases ORDER BY alias")
+    assert [(r["alias"], r["bank_id"]) for r in rows] == [("keep", "next")]

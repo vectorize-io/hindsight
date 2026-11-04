@@ -136,14 +136,19 @@ async def invalidate(alias: str) -> None:
     await _get_cache().invalidate(schema, key)
 
 
-async def alias_exists_on_conn(conn: "DatabaseConnection", alias: str) -> bool:
-    """Is this string already an alias? Uncached, and on the caller's connection.
+async def refuse_alias_as_bank_id_on_conn(conn: "DatabaseConnection", bank_id: str) -> None:
+    """Raise 409 when ``bank_id`` is already an alias. Uncached, on the caller's connection.
 
-    Used by ``bank_utils.create_bank_row_on_conn`` to refuse creating a bank whose
-    id is already routing elsewhere. Deliberately not cached: it guards a write, and
-    a stale "no" here would create exactly the collision it exists to prevent.
+    Every path that writes a ``banks`` row calls this: creating a bank, and restoring
+    one (clone, transfer import), which writes the archived row itself. A bank born
+    under an alias name would take that name over silently, since :func:`resolve`
+    prefers a real bank. Deliberately not cached: it guards a write, and a stale "no"
+    here would create exactly the collision it exists to prevent.
     """
-    return await conn.fetchval(f"SELECT 1 FROM {fq_table('bank_aliases')} WHERE alias = $1", alias) is not None
+    if await conn.fetchval(f"SELECT 1 FROM {fq_table('bank_aliases')} WHERE alias = $1", bank_id) is not None:
+        from hindsight_api.extensions import OperationValidationError
+
+        raise OperationValidationError(f"'{bank_id}' is an alias of another bank", status_code=409)
 
 
 @dataclass(frozen=True)
