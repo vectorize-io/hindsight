@@ -21474,8 +21474,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # (A bank with auto-consolidation off never reaches that hook; its
                 # cron-refreshed pages are still covered by the scheduled loop, and its
                 # manually refreshed ones were never this function's business.)
-                freshness = await get_memories().consolidation_freshness(conn=conn, fq_table=fq_table, bank_id=bank_id)
-                if freshness.get("pending"):
+                if await get_memories().has_pending_consolidation(conn=conn, fq_table=fq_table, bank_id=bank_id):
                     return 0
                 rows = await conn.fetch(
                     f"""

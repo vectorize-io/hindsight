@@ -556,6 +556,11 @@ class PostgresMemories(MemoriesExtension):
     async def consolidation_freshness(self, *, conn, fq_table, bank_id: str) -> dict[str, Any]:
         return await counts.consolidation_freshness(conn=conn, fq_table=fq_store_table, bank_id=bank_id)
 
+    async def has_pending_consolidation(self, *, conn, fq_table, bank_id: str) -> bool:
+        if getattr(conn, "backend_type", "postgresql") != "postgresql":
+            return await super().has_pending_consolidation(conn=conn, fq_table=fq_table, bank_id=bank_id)
+        return await counts.has_pending_consolidation(conn=conn, fq_table=fq_store_table, bank_id=bank_id)
+
     async def document_memory_counts(self, *, conn, fq_table, bank_id: str, document_ids: list[str]) -> dict[str, int]:
         return await counts.document_memory_counts(
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, document_ids=document_ids
