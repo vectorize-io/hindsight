@@ -565,7 +565,8 @@ AGREES_WITH_RULE = re.compile(
     r"|\b(are|is) (already )?following \S+( \S+){0,2} (request|decision|rule|instruction|design|plan|spec)s?\b"
     r"|\b(this |it )?follows \S+( \w+){0,2} (request|decision|rule|instruction)s?\b|\byou correctly\b|\byou (have )?followed\b"
     # Our own rule said back ("the request ... is the newest decision, which supersedes ..."): agreement.
-    r"|\b(request|instruction)\b[^\n]{0,80}?\b(is the newest decision|supersedes|overrides)\b",
+    r"|\b(request|instruction)\b[^\n]{0,80}?\b(is the newest decision|supersedes|overrides)\b"
+    r"|\b(superseded|overridden|replaced) by your (\w+ ){0,2}(request|instruction)s?\b",
     re.I,
 )
 

@@ -662,3 +662,13 @@ def test_a_note_saying_the_change_implements_the_requirement_is_not_a_note():
         "tokens, aligning with the fix in `find_unconsolidated` to ensure the ordered scan returns all memories."
     )
     assert not W.accept_note(s, edit, said, ["m1"])
+
+
+def test_a_note_saying_a_rule_is_superseded_by_your_request_is_not_a_note():
+    s = W.WatchState()
+    cmd = W.Moment(trigger="command", text="uv run run-amb", recent=[], diff="")
+    said = (
+        "The previous decision 'no openrouter runs' is superseded by your request to 'run the llm that we can "
+        "as you suggested' and 'test models available on open router'."
+    )
+    assert not W.accept_note(s, cmd, said, ["m1"])
