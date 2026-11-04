@@ -14,6 +14,9 @@ from hindsight_api import LLMConfig
 from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.retain.fact_extraction import extract_facts_from_text
 
+# Calls the real LLM, so it runs in the core-LLM job rather than the mock-LLM shards.
+pytestmark = pytest.mark.hs_llm_core
+
 
 def estimate_tokens(text: str) -> int:
     """Rough token estimate: ~4 chars per token for English text."""

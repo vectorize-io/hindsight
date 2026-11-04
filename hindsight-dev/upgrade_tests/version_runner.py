@@ -136,7 +136,7 @@ class VersionRunner:
                 tag_date,
             ],
             check=True,
-            capture_output=True,
+            # Not captured: an install failure must show uv's reason in the test report.
             env={**os.environ, "UV_INDEX": "pytorch=https://download.pytorch.org/whl/cpu"},
         )
 
