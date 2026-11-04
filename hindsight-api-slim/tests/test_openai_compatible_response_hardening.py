@@ -24,6 +24,17 @@ from hindsight_api.worker.stage import StageHolder, bind_holder, set_stage
 from tests.ollama_stub import OllamaStub, chat_body, ollama_stub
 
 
+@pytest.fixture(autouse=True)
+def _default_json_mode(monkeypatch):
+    """These tests assert the default json_object behaviour, not the job's env override."""
+    from hindsight_api.config import clear_config_cache
+
+    monkeypatch.delenv("HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE", raising=False)
+    clear_config_cache()
+    yield
+    clear_config_cache()
+
+
 class SimpleJsonResponse(BaseModel):
     ok: bool
 

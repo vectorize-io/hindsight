@@ -111,15 +111,6 @@ class VersionRunner:
         api_path = self.work_dir / "hindsight-api"
         logger.info(f"Installing hindsight-api from {api_path}")
 
-        # Resolve dependencies as of the tag's date: old releases pin lower bounds only
-        # (v0.3.0: fastmcp>=2.3.0), so today's latest can break them at startup.
-        tag_date = subprocess.run(
-            ["git", "-C", str(self.work_dir), "log", "-1", "--format=%cI"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-
         # Install with uv pip - use --index-strategy for pytorch
         subprocess.run(
             [
@@ -132,8 +123,9 @@ class VersionRunner:
                 str(venv_path / "bin" / "python"),
                 "--index-strategy",
                 "unsafe-best-match",
-                "--exclude-newer",
-                tag_date,
+                # Old releases only set a floor (v0.3.0: fastmcp>=2.3.0); FastMCP 3+ dropped
+                # the constructor arguments they pass, so the server crashes at startup.
+                "fastmcp<3",
             ],
             check=True,
             # Not captured: an install failure must show uv's reason in the test report.
