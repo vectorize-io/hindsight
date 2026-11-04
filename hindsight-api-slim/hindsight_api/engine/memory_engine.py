@@ -6363,6 +6363,16 @@ class MemoryEngine(MemoryEngineInterface):
             # resolver falls back to the "full" strategy.
             settings.append(("pg_trgm.similarity_threshold", str(trgm_similarity_threshold)))
 
+            # JIT off (#6306). Postgres decides to JIT from the plan's estimated
+            # cost, and many of our queries probe with a value only known at run
+            # time (e.g. `source_memory_ids @> ARRAY[cs.source_id]` in
+            # expand_observations), which the planner prices at a fixed 0.5% of
+            # the table no matter what the statistics say. That inflates a
+            # ~100 ms query past jit_optimize/inline_above_cost and spends ~1 s
+            # compiling it on every call. Our queries are short and index-driven,
+            # so JIT never pays back its compile time here.
+            settings.append(("jit", "off"))
+
             # Optional cap on planner parallelism for this process's
             # connections. Deployments that run background workers against a
             # database shared with latency-sensitive traffic can set this to 0
