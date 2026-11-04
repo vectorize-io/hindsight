@@ -385,6 +385,48 @@ async def test_concurrent_upserts_no_duplicates(memory_no_llm, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_concurrent_retains_of_the_same_content_store_each_fact_once(memory_no_llm, request_context):
+    """
+    The same document retained twice at once with the same content: a client retrying a
+    slow retain, or a task run again while its first run is still writing. The content
+    hash cannot tell the two apart, so on a document spanning several batches both
+    write every batch after the first, and its facts are stored twice. Fails on main.
+    """
+    from collections import Counter
+
+    from hindsight_api.engine.retain.fact_extraction import chunk_text
+
+    bank_id = f"test_concurrent_same_{_ts()}"
+    document_id = "same-content-doc"
+    # Two chunks per batch, so the document below is written in several batches.
+    memory_no_llm._config_resolver._global_config.retain_chunk_batch_size = 2
+    content = "\n\n".join(f"Section {i}: " + f"Person_{i} works at Company_{i}. " * 120 for i in range(12))
+    expected_chunks = chunk_text(content, max_chars=3000)
+    assert len(expected_chunks) > 4
+
+    try:
+        await asyncio.gather(
+            *[
+                memory_no_llm.retain_async(
+                    bank_id=bank_id, content=content, document_id=document_id, request_context=request_context
+                )
+                for _ in range(2)
+            ]
+        )
+
+        listing = await memory_no_llm.list_memory_units(
+            bank_id, document_id=document_id, limit=1000, request_context=request_context
+        )
+        unit_texts = [r["text"] for r in listing["items"]]
+        duplicates = {text[:80]: count for text, count in Counter(unit_texts).items() if count > 1}
+        assert not duplicates, f"Found duplicate memory units: {duplicates}"
+        assert len(unit_texts) == len(expected_chunks)
+    finally:
+        await memory_no_llm.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_append_mode_preserves_document_metadata_projection(memory_no_llm, request_context):
     """Append retains should keep item metadata visible through document APIs."""
     bank_id = f"test_append_metadata_{_ts()}"
