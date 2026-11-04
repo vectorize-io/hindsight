@@ -413,6 +413,8 @@ def test_an_answer_saying_there_is_nothing_to_say_is_not_a_note():
     cmd = W.Moment(trigger="command", text="echo summary >> cleanup.log", recent=[], diff="")
     assert not W.accept_note(s, cmd, "No conflict. The log entry is consistent with the recorded fact.", ["m1"])
     assert not W.accept_note(s, cmd, "Nothing.", ["m2"])
+    assert not W.accept_note(s, cmd, "Nothing in memory genuinely explains this symptom.", ["m12"])
+    assert not W.accept_note(s, cmd, "NOTHING in memory genuinely explains THIS symptom.", ["m13"])
     assert W.accept_note(s, cmd, "None of the pruning may touch ~/dev: the job's rule keeps it.", ["m3"])
     assert W.accept_note(s, cmd, "Keep the floor at 60 GB, not 50.", ["m4"])
     agrees = "The user is not contradicting any decision; they listed the path as left, which aligns with the rule."

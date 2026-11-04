@@ -548,7 +548,13 @@ def skip_reason(state: WatchState, m: Moment) -> str | None:
 # An answer that says there is nothing to say. Questions ask for an empty reply then, but after the
 # switch to Gemma 4 one came back as "No conflict. The user's log entry ... is consistent with ..." and
 # went out as a thought.
-NOTHING_TO_SAY = re.compile(r"^\W*(no conflicts?\b|no (relevant )?decision\b|(nothing|none)\W*$)", re.I)
+# Also the long way of saying it ("Nothing in memory genuinely explains this symptom.", beta: two
+# delivered in one minute to the same memlake session).
+NOTHING_TO_SAY = re.compile(
+    r"^\W*(no conflicts?\b|no (relevant )?decision\b|(nothing|none)\W*$"
+    r"|(nothing|no memory|no memories|none of (the|these) memories)\b( \w+){0,4} (explains?|answers?|applies|appl(y|ies) to|is relevant|are relevant|matters?)\b)",
+    re.I,
+)
 # The same said in a whole sentence ("The user is not contradicting any decision; ... aligns with the
 # recorded rule", beta 03:15; "You are following your request to update the pricing ...", 13:36): judged
 # on the first sentence only, so "X is consistent, but Y breaks
