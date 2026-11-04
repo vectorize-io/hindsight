@@ -288,13 +288,14 @@ class TestUpgrade:
             server = new.start()
             client = httpx.Client(base_url=server.url, timeout=60)
 
-            # Verify profile is preserved
-            resp = client.get(f"/v1/default/banks/{bank_id}/profile")
+            # Verify the disposition is preserved. The profile endpoints are retired (410);
+            # bank config is where the current version exposes the traits.
+            resp = client.get(f"/v1/default/banks/{bank_id}/config")
             assert resp.status_code == 200
-            new_profile = resp.json()
-            assert new_profile["disposition"]["skepticism"] == 4, "Skepticism not preserved"
-            assert new_profile["disposition"]["literalism"] == 2, "Literalism not preserved"
-            assert new_profile["disposition"]["empathy"] == 5, "Empathy not preserved"
+            new_config = resp.json()["config"]
+            assert new_config["disposition_skepticism"] == 4, "Skepticism not preserved"
+            assert new_config["disposition_literalism"] == 2, "Literalism not preserved"
+            assert new_config["disposition_empathy"] == 5, "Empathy not preserved"
 
             # Cleanup
             resp = client.delete(f"/v1/default/banks/{bank_id}")
