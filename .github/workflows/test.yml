@@ -1392,9 +1392,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
+      HINDSIGHT_API_VLM_PROVIDER: vertexai
+      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_URL: http://localhost:8888
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -1506,6 +1511,11 @@ jobs:
         HINDSIGHT_API_LLM_MODEL=${{ env.HINDSIGHT_API_LLM_MODEL }}
         HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/tmp/gcp-credentials.json
         HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID
+        HINDSIGHT_API_LLM_BASE_URL=${{ env.HINDSIGHT_API_LLM_BASE_URL }}
+        HINDSIGHT_API_LLM_API_KEY=${{ env.HINDSIGHT_API_LLM_API_KEY }}
+        HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE=${{ env.HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE }}
+        HINDSIGHT_API_VLM_PROVIDER=${{ env.HINDSIGHT_API_VLM_PROVIDER }}
+        HINDSIGHT_API_VLM_MODEL=${{ env.HINDSIGHT_API_VLM_MODEL }}
         EOF
 
     - name: Start API server
@@ -1724,8 +1734,13 @@ jobs:
     - name: Smoke test - verify container starts
       if: matrix.smoke
       env:
-        HINDSIGHT_API_LLM_PROVIDER: vertexai
-        HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
+        HINDSIGHT_API_LLM_PROVIDER: openai
+        HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+        HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+        HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+        HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
+        HINDSIGHT_API_VLM_PROVIDER: vertexai
+        HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
         HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
         HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID: ${{ env.HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID }}
         HINDSIGHT_API_EMBEDDINGS_PROVIDER: cohere
@@ -1752,9 +1767,14 @@ jobs:
         shard: [1, 2, 3]
     name: test-api (${{ matrix.shard }}/3)
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
+      HINDSIGHT_API_VLM_PROVIDER: vertexai
+      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
@@ -2067,9 +2087,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
+      HINDSIGHT_API_VLM_PROVIDER: vertexai
+      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
@@ -2208,9 +2233,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
+      HINDSIGHT_API_VLM_PROVIDER: vertexai
+      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_URL: http://localhost:8888
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Prefer CPU-only PyTorch in CI (but keep PyPI for everything else)
@@ -2280,6 +2310,11 @@ jobs:
         HINDSIGHT_API_LLM_MODEL=${{ env.HINDSIGHT_API_LLM_MODEL }}
         HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/tmp/gcp-credentials.json
         HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID
+        HINDSIGHT_API_LLM_BASE_URL=${{ env.HINDSIGHT_API_LLM_BASE_URL }}
+        HINDSIGHT_API_LLM_API_KEY=${{ env.HINDSIGHT_API_LLM_API_KEY }}
+        HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE=${{ env.HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE }}
+        HINDSIGHT_API_VLM_PROVIDER=${{ env.HINDSIGHT_API_VLM_PROVIDER }}
+        HINDSIGHT_API_VLM_MODEL=${{ env.HINDSIGHT_API_VLM_MODEL }}
         EOF
 
     - name: Start API server
@@ -2320,9 +2355,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
+      HINDSIGHT_API_VLM_PROVIDER: vertexai
+      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_URL: http://localhost:8888
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Prefer CPU-only PyTorch in CI (but keep PyPI for everything else)
@@ -2397,6 +2437,11 @@ jobs:
         HINDSIGHT_API_LLM_MODEL=${{ env.HINDSIGHT_API_LLM_MODEL }}
         HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/tmp/gcp-credentials.json
         HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID
+        HINDSIGHT_API_LLM_BASE_URL=${{ env.HINDSIGHT_API_LLM_BASE_URL }}
+        HINDSIGHT_API_LLM_API_KEY=${{ env.HINDSIGHT_API_LLM_API_KEY }}
+        HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE=${{ env.HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE }}
+        HINDSIGHT_API_VLM_PROVIDER=${{ env.HINDSIGHT_API_VLM_PROVIDER }}
+        HINDSIGHT_API_VLM_MODEL=${{ env.HINDSIGHT_API_VLM_MODEL }}
         EOF
 
     - name: Start API server
@@ -2450,9 +2495,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
+      HINDSIGHT_API_VLM_PROVIDER: vertexai
+      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_URL: http://localhost:8888
       HINDSIGHT_API_DATABASE_BACKEND: oracle
       HINDSIGHT_API_DATABASE_URL: oracle+oracledb://hindsight_test:hindsight_test@localhost:1521/FREEPDB1
@@ -2586,6 +2636,11 @@ jobs:
         HINDSIGHT_API_LLM_MODEL=${{ env.HINDSIGHT_API_LLM_MODEL }}
         HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/tmp/gcp-credentials.json
         HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID
+        HINDSIGHT_API_LLM_BASE_URL=${{ env.HINDSIGHT_API_LLM_BASE_URL }}
+        HINDSIGHT_API_LLM_API_KEY=${{ env.HINDSIGHT_API_LLM_API_KEY }}
+        HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE=${{ env.HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE }}
+        HINDSIGHT_API_VLM_PROVIDER=${{ env.HINDSIGHT_API_VLM_PROVIDER }}
+        HINDSIGHT_API_VLM_MODEL=${{ env.HINDSIGHT_API_VLM_MODEL }}
         HINDSIGHT_API_DATABASE_BACKEND=${{ env.HINDSIGHT_API_DATABASE_BACKEND }}
         HINDSIGHT_API_DATABASE_URL=${{ env.HINDSIGHT_API_DATABASE_URL }}
         EOF
@@ -2631,9 +2686,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
+      HINDSIGHT_API_VLM_PROVIDER: vertexai
+      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_URL: http://localhost:8888
       HINDSIGHT_API_DATABASE_BACKEND: oracle
       HINDSIGHT_API_DATABASE_URL: oracle+oracledb://hindsight_test:hindsight_test@localhost:1521/FREEPDB1
@@ -2770,6 +2830,11 @@ jobs:
         HINDSIGHT_API_LLM_MODEL=${{ env.HINDSIGHT_API_LLM_MODEL }}
         HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/tmp/gcp-credentials.json
         HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID
+        HINDSIGHT_API_LLM_BASE_URL=${{ env.HINDSIGHT_API_LLM_BASE_URL }}
+        HINDSIGHT_API_LLM_API_KEY=${{ env.HINDSIGHT_API_LLM_API_KEY }}
+        HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE=${{ env.HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE }}
+        HINDSIGHT_API_VLM_PROVIDER=${{ env.HINDSIGHT_API_VLM_PROVIDER }}
+        HINDSIGHT_API_VLM_MODEL=${{ env.HINDSIGHT_API_VLM_MODEL }}
         HINDSIGHT_API_DATABASE_BACKEND=${{ env.HINDSIGHT_API_DATABASE_BACKEND }}
         HINDSIGHT_API_DATABASE_URL=${{ env.HINDSIGHT_API_DATABASE_URL }}
         EOF
@@ -2812,9 +2877,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
+      HINDSIGHT_API_VLM_PROVIDER: vertexai
+      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_URL: http://localhost:8888
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -2895,6 +2965,11 @@ jobs:
         HINDSIGHT_API_LLM_MODEL=${{ env.HINDSIGHT_API_LLM_MODEL }}
         HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/tmp/gcp-credentials.json
         HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID
+        HINDSIGHT_API_LLM_BASE_URL=${{ env.HINDSIGHT_API_LLM_BASE_URL }}
+        HINDSIGHT_API_LLM_API_KEY=${{ env.HINDSIGHT_API_LLM_API_KEY }}
+        HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE=${{ env.HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE }}
+        HINDSIGHT_API_VLM_PROVIDER=${{ env.HINDSIGHT_API_VLM_PROVIDER }}
+        HINDSIGHT_API_VLM_MODEL=${{ env.HINDSIGHT_API_VLM_MODEL }}
         EOF
 
     - name: Start API server
@@ -2967,9 +3042,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
+      HINDSIGHT_API_VLM_PROVIDER: vertexai
+      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_URL: http://localhost:8888
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Prefer CPU-only PyTorch in CI (but keep PyPI for everything else)
@@ -3043,6 +3123,11 @@ jobs:
         HINDSIGHT_API_LLM_MODEL=${{ env.HINDSIGHT_API_LLM_MODEL }}
         HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/tmp/gcp-credentials.json
         HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID
+        HINDSIGHT_API_LLM_BASE_URL=${{ env.HINDSIGHT_API_LLM_BASE_URL }}
+        HINDSIGHT_API_LLM_API_KEY=${{ env.HINDSIGHT_API_LLM_API_KEY }}
+        HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE=${{ env.HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE }}
+        HINDSIGHT_API_VLM_PROVIDER=${{ env.HINDSIGHT_API_VLM_PROVIDER }}
+        HINDSIGHT_API_VLM_MODEL=${{ env.HINDSIGHT_API_VLM_MODEL }}
         EOF
 
     - name: Start API server
@@ -3083,9 +3168,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
+      HINDSIGHT_API_VLM_PROVIDER: vertexai
+      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_URL: http://localhost:8888
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Prefer CPU-only PyTorch in CI (but keep PyPI for everything else)
@@ -3153,6 +3243,11 @@ jobs:
         HINDSIGHT_API_LLM_MODEL=${{ env.HINDSIGHT_API_LLM_MODEL }}
         HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/tmp/gcp-credentials.json
         HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID
+        HINDSIGHT_API_LLM_BASE_URL=${{ env.HINDSIGHT_API_LLM_BASE_URL }}
+        HINDSIGHT_API_LLM_API_KEY=${{ env.HINDSIGHT_API_LLM_API_KEY }}
+        HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE=${{ env.HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE }}
+        HINDSIGHT_API_VLM_PROVIDER=${{ env.HINDSIGHT_API_VLM_PROVIDER }}
+        HINDSIGHT_API_VLM_MODEL=${{ env.HINDSIGHT_API_VLM_MODEL }}
         EOF
 
     - name: Start API server
@@ -3198,9 +3293,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
+      HINDSIGHT_API_VLM_PROVIDER: vertexai
+      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_URL: http://localhost:8888
       HINDSIGHT_EMBED_PACKAGE_PATH: ${{ github.workspace }}/hindsight-embed
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -3288,6 +3388,11 @@ jobs:
         HINDSIGHT_API_LLM_MODEL=${{ env.HINDSIGHT_API_LLM_MODEL }}
         HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/tmp/gcp-credentials.json
         HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID
+        HINDSIGHT_API_LLM_BASE_URL=${{ env.HINDSIGHT_API_LLM_BASE_URL }}
+        HINDSIGHT_API_LLM_API_KEY=${{ env.HINDSIGHT_API_LLM_API_KEY }}
+        HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE=${{ env.HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE }}
+        HINDSIGHT_API_VLM_PROVIDER=${{ env.HINDSIGHT_API_VLM_PROVIDER }}
+        HINDSIGHT_API_VLM_MODEL=${{ env.HINDSIGHT_API_VLM_MODEL }}
         EOF
 
     - name: Start API server
@@ -3328,9 +3433,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
+      HINDSIGHT_API_VLM_PROVIDER: vertexai
+      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_URL: http://localhost:8888
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -3395,6 +3505,11 @@ jobs:
         HINDSIGHT_API_LLM_MODEL=${{ env.HINDSIGHT_API_LLM_MODEL }}
         HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/tmp/gcp-credentials.json
         HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID
+        HINDSIGHT_API_LLM_BASE_URL=${{ env.HINDSIGHT_API_LLM_BASE_URL }}
+        HINDSIGHT_API_LLM_API_KEY=${{ env.HINDSIGHT_API_LLM_API_KEY }}
+        HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE=${{ env.HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE }}
+        HINDSIGHT_API_VLM_PROVIDER=${{ env.HINDSIGHT_API_VLM_PROVIDER }}
+        HINDSIGHT_API_VLM_MODEL=${{ env.HINDSIGHT_API_VLM_MODEL }}
         EOF
 
     - name: Start API server
@@ -4526,9 +4641,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
+      HINDSIGHT_API_VLM_PROVIDER: vertexai
+      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_EMBEDDINGS_PROVIDER: cohere
       HINDSIGHT_API_RERANKER_PROVIDER: cohere
       HINDSIGHT_API_COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
@@ -4639,9 +4759,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
+      HINDSIGHT_API_VLM_PROVIDER: vertexai
+      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       # Prefer CPU-only PyTorch in CI
 
     steps:
@@ -4707,9 +4832,14 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
+      HINDSIGHT_API_VLM_PROVIDER: vertexai
+      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: ${{ github.workspace }}/gcp-credentials.json
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       # Force UTF-8 I/O so the CLI's ✓/box-drawing output doesn't crash the
       # default Windows cp1252 codec. Also applied at runtime via
       # sys.stdout.reconfigure in cli.py; this belt-and-suspenders covers
@@ -4950,13 +5080,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
+      HINDSIGHT_API_VLM_PROVIDER: vertexai
+      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       # For test_server_integration.py compatibility
-      HINDSIGHT_LLM_PROVIDER: vertexai
-      HINDSIGHT_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      HINDSIGHT_LLM_MODEL: google/gemini-2.5-flash-lite
+      HINDSIGHT_LLM_PROVIDER: openai
+      HINDSIGHT_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_LLM_MODEL: gemma-4-26b-a4b
       # Prefer CPU-only PyTorch in CI
 
     steps:
@@ -5050,9 +5186,14 @@ jobs:
         language: [python, node, cli, go]
     name: test-doc-examples (${{ matrix.language }})
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
+      HINDSIGHT_API_VLM_PROVIDER: vertexai
+      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_URL: http://localhost:8888
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -5151,6 +5292,11 @@ jobs:
         HINDSIGHT_API_LLM_MODEL=${{ env.HINDSIGHT_API_LLM_MODEL }}
         HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/tmp/gcp-credentials.json
         HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID
+        HINDSIGHT_API_LLM_BASE_URL=${{ env.HINDSIGHT_API_LLM_BASE_URL }}
+        HINDSIGHT_API_LLM_API_KEY=${{ env.HINDSIGHT_API_LLM_API_KEY }}
+        HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE=${{ env.HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE }}
+        HINDSIGHT_API_VLM_PROVIDER=${{ env.HINDSIGHT_API_VLM_PROVIDER }}
+        HINDSIGHT_API_VLM_MODEL=${{ env.HINDSIGHT_API_VLM_MODEL }}
         EOF
 
     - name: Start API server
@@ -5194,9 +5340,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gemma-4-26b-a4b
+      HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE: "false"
+      HINDSIGHT_API_VLM_PROVIDER: vertexai
+      HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
-      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
