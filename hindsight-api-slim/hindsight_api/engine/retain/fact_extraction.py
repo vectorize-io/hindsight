@@ -1451,7 +1451,16 @@ def _build_labels_prompt_section(labels_cfg: EntityLabelsConfig | list | None, f
         lines.append("")
 
     if has_classification_attrs:
-        lines.append("Only assign labels when clearly applicable. Leave null/empty if the fact does not match.")
+        lines.append(
+            "Fill a label whenever the content gives a value for it, even when the same words are also "
+            "in the fact text or in 'entities'. Leave it null/empty only when the content gives none."
+        )
+        if any(attr.type in ("text", "multi-text") for attr in labels_cfg.attributes):
+            lines.append(
+                'Example: for a group that collects names, the text "we run PostgreSQL, which everyone calls '
+                'Postgres or PG" gives ["PostgreSQL", "Postgres", "PG"] for that group, while entities can still '
+                'list "PostgreSQL".'
+            )
         lines.append("")
 
     # Add structured entity types (map groups)

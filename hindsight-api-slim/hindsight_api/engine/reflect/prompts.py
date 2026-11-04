@@ -1683,8 +1683,9 @@ RULES
 - **Do not tidy.** No rewording, reordering, or reformatting of surviving content.
   Never leave a note saying something was removed — the document must read as though
   the retracted claim was never there.
-- If removing a block would leave its section empty and the section exists only for
-  that content, remove the section instead.
+- Remove a whole section only when you remove every block in it. A section that still
+  has a block you keep stays, so never pair ``remove_block`` with ``remove_section`` on
+  the same section.
 - Output ``{"operations": []}`` when nothing in the document rests on the retracted
   facts. That is a normal, expected answer.
 
