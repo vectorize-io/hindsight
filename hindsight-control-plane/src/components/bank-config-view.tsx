@@ -59,6 +59,7 @@ import {
   suggestedTags,
   textToScopes,
 } from "@/lib/observations-config";
+import { RECALL_FIELDS, recallSlice, type RecallEdits } from "@/lib/recall-config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -174,17 +175,6 @@ function effectivePageTrigger(configured: Record<string, any> | null | undefined
     merged.refresh_after_consolidation = false;
   return triggerFormFromTrigger(merged);
 }
-
-// Recall pipeline stages. null = inherit the server default (all four ship
-// enabled); explicit false switches that stage off for this bank, trading
-// recall breadth for latency. Semantic always runs — it is the baseline arm.
-type RecallEdits = {
-  enable_text_search: boolean | null;
-  enable_temporal_retrieval: boolean | null;
-  enable_graph_retrieval: boolean | null;
-  enable_reranking: boolean | null;
-  recall_prefer_observations: boolean | null;
-};
 
 // ─── Gemini safety settings catalogue ────────────────────────────────────────
 
@@ -441,16 +431,6 @@ function reflectOptionsSlice(overrides: Record<string, any>): ReflectOptionsEdit
     reflect_search_observations_include_entities:
       opts.reflect_search_observations_include_entities ?? null,
     reflect_search_mental_models_max_tokens: opts.reflect_search_mental_models_max_tokens ?? null,
-  };
-}
-
-function recallSlice(overrides: Record<string, any>): RecallEdits {
-  return {
-    enable_text_search: overrides.enable_text_search ?? null,
-    enable_temporal_retrieval: overrides.enable_temporal_retrieval ?? null,
-    enable_graph_retrieval: overrides.enable_graph_retrieval ?? null,
-    enable_reranking: overrides.enable_reranking ?? null,
-    recall_prefer_observations: overrides.recall_prefer_observations ?? null,
   };
 }
 
@@ -767,13 +747,7 @@ export function BankConfigView() {
       await client.updateBankConfig(bankId, { ...recallEdits });
       setBaseOverrides((prev) => {
         const next = { ...prev };
-        for (const key of [
-          "enable_text_search",
-          "enable_temporal_retrieval",
-          "enable_graph_retrieval",
-          "enable_reranking",
-          "recall_prefer_observations",
-        ] as const) {
+        for (const [key] of RECALL_FIELDS) {
           if (recallEdits[key] === null) delete next[key];
           else next[key] = recallEdits[key];
         }
@@ -1437,15 +1411,7 @@ export function BankConfigView() {
           saving={recallSaving}
           onSave={saveRecall}
         >
-          {(
-            [
-              ["enable_text_search", "recallTextSearch"],
-              ["enable_temporal_retrieval", "recallTemporalRetrieval"],
-              ["enable_graph_retrieval", "recallGraphRetrieval"],
-              ["enable_reranking", "recallReranking"],
-              ["recall_prefer_observations", "recallPreferObservations"],
-            ] as const
-          ).map(([field, key]) => (
+          {RECALL_FIELDS.map(([field, key]) => (
             <FieldRow key={field} label={t(`${key}Label`)} description={t(`${key}Description`)}>
               {/* Tri-state: inherit the server default, or override per bank. */}
               <Select
