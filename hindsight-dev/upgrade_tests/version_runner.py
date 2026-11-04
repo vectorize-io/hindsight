@@ -147,6 +147,9 @@ class VersionRunner:
                 "unsafe-best-match",
                 "-c",
                 str(constraints),
+                # The run's cwd is today's repo, whose [tool.uv] constraints (onnxruntime>=1.24.1)
+                # would apply to the old release and clash with its lockfile.
+                "--no-config",
             ],
             check=True,
             # Not captured: an install failure must show uv's reason in the test report.
