@@ -1901,8 +1901,9 @@ jobs:
     timeout-minutes: 30
     name: Core LLM tests
     env:
-      # Test: main LLM on Hindsight Inference Dev (Gemma 4) instead of Vertex
-      # gemini-3.1-flash-lite. The judge stays on Gemini via GEMINI_API_KEY.
+      # Main LLM: Gemma 4 on Hindsight Inference Dev, the model these judgement tests
+      # gate on (it replaced Vertex gemini-3.1-flash-lite). The judge stays on Gemini via
+      # GEMINI_API_KEY, so the model under test never grades itself.
       HINDSIGHT_API_LLM_PROVIDER: openai
       HINDSIGHT_API_LLM_BASE_URL: https://inference.dev.hindsight.vectorize.io/v1
       HINDSIGHT_API_LLM_API_KEY: ${{ secrets.HINDSIGHT_INFERENCE_DEV_API_KEY }}

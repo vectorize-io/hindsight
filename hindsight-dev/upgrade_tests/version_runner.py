@@ -130,7 +130,6 @@ class VersionRunner:
             ],
             cwd=self.work_dir,
             check=True,
-            capture_output=True,
         )
 
         # Install with uv pip - use --index-strategy for pytorch

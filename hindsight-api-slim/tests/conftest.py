@@ -106,6 +106,16 @@ def pytest_collection_modifyitems(config, items):
             item.fixturenames.append("_close_aiohttp_sessions")
 
 
+@pytest.fixture
+def default_json_mode(monkeypatch):
+    """Drop a job-level ``HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE`` override.
+
+    CI turns json_object mode off for Gemma; tests asserting the default request shape
+    must not see that. ``_reset_config_cache`` makes the removal reach the config.
+    """
+    monkeypatch.delenv("HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE", raising=False)
+
+
 @pytest.fixture(autouse=True)
 def _reset_config_cache():
     """Let a test's ``monkeypatch.setenv`` actually reach the code under test.

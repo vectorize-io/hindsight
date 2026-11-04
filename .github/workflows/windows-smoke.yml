@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   windows-client-smoke:
-    # Don't run on forks: the job needs the org's Vertex AI credentials.
+    # Don't run on forks: the job needs the org's secrets (Hindsight Inference key; Vertex for vision).
     if: github.repository == 'vectorize-io/hindsight'
     runs-on: windows-latest
     timeout-minutes: 45

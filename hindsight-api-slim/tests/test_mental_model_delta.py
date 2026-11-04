@@ -1934,7 +1934,9 @@ async def gemini_memory(memory_no_llm_verify: MemoryEngine):
     """MemoryEngine wired to a real LLM for reflect + structured delta.
 
     Provider and model come from the environment (the job's main LLM), so the eval
-    measures the model the job is testing rather than a pinned Gemini.
+    measures the model the job is testing. It used to pin Gemini whenever a Gemini key
+    was set (falling back to OpenAI), which meant a job testing another model never ran
+    these evals against it.
     """
     from hindsight_api.config import get_config
 

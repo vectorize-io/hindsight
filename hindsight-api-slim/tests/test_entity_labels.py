@@ -340,6 +340,18 @@ def test_build_labels_prompt_section_generates_key_values():
     assert "multi" in result  # prompt mentions multi-value nature
 
 
+def test_build_labels_prompt_section_shows_an_open_vocabulary_example_only_for_free_text_groups():
+    """The example teaches filling a label that repeats an entity; closed value lists don't need it."""
+    from hindsight_api.engine.retain.fact_extraction import _build_labels_prompt_section
+
+    free_text = EntityLabelsConfig(attributes=[LabelGroup(key="name", type="multi-text", description="Names")])
+    closed = EntityLabelsConfig(attributes=[LabelGroup(key="topic", values=[LabelValue(value="math")])])
+
+    assert '["PostgreSQL", "Postgres", "PG"]' in _build_labels_prompt_section(free_text)
+    assert "PostgreSQL" not in _build_labels_prompt_section(closed)
+    assert "even when the same words are also in the fact text" in _build_labels_prompt_section(closed)
+
+
 def test_build_labels_prompt_section_free_form_true():
     from hindsight_api.engine.retain.fact_extraction import _build_labels_prompt_section
 

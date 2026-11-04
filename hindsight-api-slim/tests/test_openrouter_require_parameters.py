@@ -10,15 +10,8 @@ from pydantic import BaseModel
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
 
 
-@pytest.fixture(autouse=True)
-def _default_json_mode(monkeypatch):
-    """These tests assert the default json_object behaviour, not the job's env override."""
-    from hindsight_api.config import clear_config_cache
-
-    monkeypatch.delenv("HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE", raising=False)
-    clear_config_cache()
-    yield
-    clear_config_cache()
+# These tests assert the default json_object behaviour, not a job's JSON-mode override.
+pytestmark = pytest.mark.usefixtures("default_json_mode")
 
 
 class _Out(BaseModel):
