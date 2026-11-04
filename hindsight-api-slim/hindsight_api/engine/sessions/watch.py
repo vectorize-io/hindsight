@@ -551,7 +551,7 @@ def skip_reason(state: WatchState, m: Moment) -> str | None:
 # Also the long way of saying it ("Nothing in memory genuinely explains this symptom.", beta: two
 # delivered in one minute to the same memlake session).
 NOTHING_TO_SAY = re.compile(
-    r"^\W*(no conflicts?\b|no (relevant )?decision\b|(nothing|none)\W*$"
+    r"^\W*(no conflicts?\b|no (relevant |applicable )?(decisions?|information|memory|memories|evidence|rules?)\b|(nothing|none)\W*$"
     r"|(nothing|no memory|no memories|none of (the|these) memories)\b( \w+){0,4} (explains?|answers?|applies|appl(y|ies) to|is relevant|are relevant|matters?)\b)",
     re.I,
 )
