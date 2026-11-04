@@ -9,7 +9,6 @@ compiling a ~100 ms query on every recall.
 import pytest
 
 
-@pytest.mark.memory_backend_incompatible
 @pytest.mark.asyncio
 async def test_pooled_connections_run_with_jit_off(memory):
     pool = await memory._get_pool()
