@@ -18,6 +18,7 @@ import pytest_asyncio
 
 from hindsight_api import RequestContext
 from hindsight_api.api import create_app
+from hindsight_api.engine import bank_aliases
 
 
 @pytest_asyncio.fixture
@@ -384,6 +385,4 @@ async def test_a_deleted_banks_aliases_are_free_at_once(client, memory, bank):
     assert (await client.get(f"/v1/default/banks/{alias}/aliases")).status_code == 200  # cached now
 
     await memory.delete_bank(bank, request_context=RequestContext())
-    from hindsight_api.engine import bank_aliases
-
     assert await bank_aliases.resolve(await memory._get_backend(), alias) == alias

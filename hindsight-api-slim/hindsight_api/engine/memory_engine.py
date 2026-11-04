@@ -12182,7 +12182,7 @@ class MemoryEngine(MemoryEngineInterface):
         # bank row actually being there. Declared here, not only where it is read, because the
         # post-commit gate sits outside the transaction that fetches the row.
         bank_present = False
-        freed_aliases: list[Any] = []
+        freed_aliases: list[str] = []
         async with acquire_with_retry(backend) as conn:
             # Ensure connection is not in read-only mode (can happen with connection poolers)
             await conn.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE")
@@ -12314,9 +12314,12 @@ class MemoryEngine(MemoryEngineInterface):
                             # The FK cascade drops these, but resolve() caches them: their
                             # names are evicted after commit, or a write to one would recreate
                             # this bank instead of creating a bank under the freed name.
-                            freed_aliases = await conn.fetch(
-                                f"SELECT alias FROM {fq_table('bank_aliases')} WHERE bank_id = $1", bank_id
-                            )
+                            freed_aliases = [
+                                row["alias"]
+                                for row in await conn.fetch(
+                                    f"SELECT alias FROM {fq_table('bank_aliases')} WHERE bank_id = $1", bank_id
+                                )
+                            ]
                             # Delete the bank profile and retrieve internal_id for HNSW index cleanup
                             internal_id = await conn.fetchval(
                                 f"DELETE FROM {fq_table('banks')} WHERE bank_id = $1 RETURNING internal_id", bank_id
@@ -12401,8 +12404,8 @@ class MemoryEngine(MemoryEngineInterface):
             await _invalidate_bank_info(bank_id)
             from . import bank_aliases
 
-            for row in freed_aliases:
-                await bank_aliases.invalidate(row["alias"])
+            for alias in freed_aliases:
+                await bank_aliases.invalidate(alias)
 
         if invalidated_obs > 0:
             config = await self._config_resolver.resolve_full_config(bank_id, request_context)

@@ -228,6 +228,6 @@ async def test_deleting_the_bank_frees_the_new_id_at_once(client, llm, settled, 
         await settled(new)
 
         listed = {b.bank_id for b in (await client.banks.list_banks(q=old)).banks}
-        assert new in listed and old not in listed, "the write went to the deleted bank, not the freed name"
+        assert listed == {new}, "the write went to the deleted bank, not the freed name"
     finally:
         await client.banks.delete_bank(new)
