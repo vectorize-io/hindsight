@@ -30,6 +30,7 @@ import uuid
 from collections.abc import AsyncIterator
 
 import pytest
+from hindsight_client_api.exceptions import ApiException
 from hindsight_client_api.models.create_bank_alias_request import CreateBankAliasRequest
 from hindsight_client_api.models.set_bank_alias_primary_request import SetBankAliasPrimaryRequest
 
@@ -189,3 +190,44 @@ async def test_dropping_the_shown_alias_returns_the_bank_to_its_own_id(client, m
 
     row = next(b for b in (await client.banks.list_banks(q=old)).banks if b.bank_id == old)
     assert row.display_alias is None
+
+
+async def test_a_clone_cannot_take_over_the_new_id(client, migrating_bank):
+    """A clone into the new id would make a real bank under it, and a real bank wins
+    over an alias: every caller already moved across would silently start reading and
+    writing the copy. The clone restores the bank row from the archive rather than
+    through bank creation, so the refusal has to hold on that path too."""
+    old, new = migrating_bank
+    other = f"systest-{uuid.uuid4().hex[:12]}"
+
+    try:
+        await client.acreate_bank(bank_id=other)
+        with pytest.raises(ApiException) as exc:
+            await client.aclone_bank(other, new)
+        assert exc.value.status == 409
+
+        assert (await client.banks.list_bank_aliases(new)).bank_id == old
+        assert len(await _fact_texts(client, new)) == 1
+    finally:
+        await client.banks.delete_bank(other)
+
+
+async def test_deleting_the_bank_frees_the_new_id_at_once(client, llm, settled, migrating_bank):
+    """The alias is cached once a request has gone through it. If deleting the bank
+    left that entry behind, the next write to the freed name would recreate the
+    deleted bank instead of making one under the name it was sent to."""
+    old, new = migrating_bank
+    llm.on_step("extract_facts", contains="Friday").returns(
+        extracted(fact("The freeze starts Friday", who="Ops", entities=["Ops"]))
+    )
+    await _fact_texts(client, new)  # routes through the alias, and caches it
+
+    await client.banks.delete_bank(old)
+    try:
+        await client.aretain(bank_id=new, content="The freeze starts Friday.", document_id="freeze")
+        await settled(new)
+
+        listed = {b.bank_id for b in (await client.banks.list_banks(q=old)).banks}
+        assert listed == {new}, "the write went to the deleted bank, not the freed name"
+    finally:
+        await client.banks.delete_bank(new)

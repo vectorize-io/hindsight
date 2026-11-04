@@ -81,7 +81,7 @@ This is **display only**. `bank_id` remains the bank's identity: authorisation, 
 **What to know:**
 
 - **A bank can have several aliases**, so more than one old id can be retired at a time.
-- **A name is unique across banks and aliases.** Adding one that already names a bank or another alias returns `409`, so an alias can never reach two banks.
+- **A name is unique across banks and aliases.** Adding one that already names a bank or another alias returns `409`, so an alias can never reach two banks. The same holds for every way a bank comes into being: creating, cloning, importing (`/transfer/import`) or `rename-bank` onto another bank's alias is refused.
 - **An alias never replaces the bank's own id.** The real id keeps working and is what every response reports, including responses to requests made through an alias. Removing a bank's real id is not possible — that is what `rename-bank` is for.
 - **Deleting an alias only closes that door.** The bank and its memories are untouched, and callers still using the removed id get exactly what they got before it existed.
 - **Deleting a bank removes its aliases**, freeing those names for reuse.

@@ -8210,6 +8210,14 @@ class MemoryEngine(MemoryEngineInterface):
             task_payload=task_payload,
         )
 
+    @staticmethod
+    async def _refuse_alias_as_new_bank_id(backend: "DatabaseBackend", bank_id: str) -> None:
+        """409 now rather than a failed operation; the restore checks again in its transaction."""
+        from . import bank_aliases
+
+        async with acquire_with_retry(backend) as conn:
+            await bank_aliases.refuse_alias_as_bank_id_on_conn(conn, bank_id)
+
     async def submit_bank_import_async(
         self,
         bank_id: str,
@@ -8245,6 +8253,7 @@ class MemoryEngine(MemoryEngineInterface):
             )
         # The restore checks this again, but the caller should get the 400 now, not a failed operation.
         bank_utils.validate_new_bank_id(target)
+        await self._refuse_alias_as_new_bank_id(backend, target)
         if self._operation_validator:
             await self._validate_operation(
                 self._operation_validator.validate_create_bank(
@@ -8312,6 +8321,7 @@ class MemoryEngine(MemoryEngineInterface):
                 f"Target bank '{target_bank_id}' already exists; a clone writes into a fresh bank "
                 f"(it is not a merge). Delete it first, or choose a different target bank id."
             )
+        await self._refuse_alias_as_new_bank_id(backend, target_bank_id)
         if self._operation_validator:
             await self._validate_operation(
                 self._operation_validator.validate_create_bank(
@@ -12172,6 +12182,7 @@ class MemoryEngine(MemoryEngineInterface):
         # bank row actually being there. Declared here, not only where it is read, because the
         # post-commit gate sits outside the transaction that fetches the row.
         bank_present = False
+        freed_aliases: list[str] = []
         async with acquire_with_retry(backend) as conn:
             # Ensure connection is not in read-only mode (can happen with connection poolers)
             await conn.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE")
@@ -12300,6 +12311,15 @@ class MemoryEngine(MemoryEngineInterface):
                                     f"DELETE FROM {_llm_table} t USING target WHERE t.id = target.id",
                                     bank_id,
                                 )
+                            # The FK cascade drops these, but resolve() caches them: their
+                            # names are evicted after commit, or a write to one would recreate
+                            # this bank instead of creating a bank under the freed name.
+                            freed_aliases = [
+                                row["alias"]
+                                for row in await conn.fetch(
+                                    f"SELECT alias FROM {fq_table('bank_aliases')} WHERE bank_id = $1", bank_id
+                                )
+                            ]
                             # Delete the bank profile and retrieve internal_id for HNSW index cleanup
                             internal_id = await conn.fetchval(
                                 f"DELETE FROM {fq_table('banks')} WHERE bank_id = $1 RETURNING internal_id", bank_id
@@ -12382,6 +12402,10 @@ class MemoryEngine(MemoryEngineInterface):
             from .bank_info_cache import invalidate as _invalidate_bank_info
 
             await _invalidate_bank_info(bank_id)
+            from . import bank_aliases
+
+            for alias in freed_aliases:
+                await bank_aliases.invalidate(alias)
 
         if invalidated_obs > 0:
             config = await self._config_resolver.resolve_full_config(bank_id, request_context)

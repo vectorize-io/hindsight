@@ -18,6 +18,7 @@ import pytest_asyncio
 
 from hindsight_api import RequestContext
 from hindsight_api.api import create_app
+from hindsight_api.engine import bank_aliases
 
 
 @pytest_asyncio.fixture
@@ -336,3 +337,52 @@ async def test_promoting_an_alias_of_another_bank_is_a_404(client, memory, bank)
     assert resp.status_code == 404
     # And the other bank's alias was not promoted as a side effect.
     assert _primary(await client.get(f"/v1/default/banks/{other}/aliases")) is None
+
+
+@pytest.mark.asyncio
+async def test_a_bank_cannot_be_cloned_under_an_alias(client, memory, bank):
+    """A clone carries its config by default, so it restores the banks row itself rather
+    than through the create path: the alias check has to hold there too, or the clone
+    silently takes over a name another bank's callers are still using."""
+    alias = f"a-{uuid.uuid4().hex[:8]}"
+    await client.post(f"/v1/default/banks/{bank}/aliases", json={"alias": alias})
+    other = f"alias-other-{uuid.uuid4().hex[:8]}"
+    await memory.ensure_bank_profile(other, request_context=RequestContext())
+
+    resp = await client.post(f"/v1/default/banks/{other}/clone", params={"target_bank_id": alias})
+    assert resp.status_code == 409, resp.text
+    assert _aliases(await client.get(f"/v1/default/banks/{alias}/aliases")) == [alias]
+
+
+@pytest.mark.asyncio
+async def test_a_bank_cannot_be_restored_under_an_alias(client, memory, bank):
+    """The restore itself refuses too, with and without the config component, so a
+    submission that raced past the up-front check still cannot take the name."""
+    from hindsight_api.engine.db_utils import acquire_with_retry
+    from hindsight_api.engine.transfer import TransferScope, export_bank
+    from hindsight_api.extensions import OperationValidationError
+
+    alias = f"a-{uuid.uuid4().hex[:8]}"
+    await client.post(f"/v1/default/banks/{bank}/aliases", json={"alias": alias})
+    other = f"alias-other-{uuid.uuid4().hex[:8]}"
+    await memory.ensure_bank_profile(other, request_context=RequestContext())
+    async with acquire_with_retry(await memory._get_backend()) as conn:
+        archive = await export_bank(conn, other)
+
+    for scope in (TransferScope(), TransferScope(bank_config=False)):
+        with pytest.raises(OperationValidationError) as exc:
+            await memory.import_bank_async(archive, RequestContext(), target_bank_id=alias, scope=scope)
+        assert exc.value.status_code == 409
+    assert _aliases(await client.get(f"/v1/default/banks/{alias}/aliases")) == [alias]
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_banks_aliases_are_free_at_once(client, memory, bank):
+    """Deleting the bank cascades its alias rows away, but an alias resolved before the
+    delete is still cached: a write to that name would recreate the deleted bank."""
+    alias = f"a-{uuid.uuid4().hex[:8]}"
+    await client.post(f"/v1/default/banks/{bank}/aliases", json={"alias": alias})
+    assert (await client.get(f"/v1/default/banks/{alias}/aliases")).status_code == 200  # cached now
+
+    await memory.delete_bank(bank, request_context=RequestContext())
+    assert await bank_aliases.resolve(await memory._get_backend(), alias) == alias
