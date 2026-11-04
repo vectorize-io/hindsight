@@ -111,6 +111,28 @@ class VersionRunner:
         api_path = self.work_dir / "hindsight-api"
         logger.info(f"Installing hindsight-api from {api_path}")
 
+        # Pin every dependency to the version's own lockfile. Old releases only set floors
+        # (v0.3.0: fastmcp>=2.3.0, sqlalchemy>=2.0.44), and today's latest of those breaks
+        # them at startup (FastMCP 3 dropped constructor args, SQLAlchemy 2.1 defaults to psycopg 3).
+        constraints = self.work_dir / ".upgrade-test-constraints.txt"
+        subprocess.run(
+            [
+                "uv",
+                "export",
+                "--frozen",
+                "--package",
+                "hindsight-api",
+                "--no-hashes",
+                "--no-emit-workspace",
+                "--no-header",
+                "-o",
+                str(constraints),
+            ],
+            cwd=self.work_dir,
+            check=True,
+            capture_output=True,
+        )
+
         # Install with uv pip - use --index-strategy for pytorch
         subprocess.run(
             [
@@ -123,9 +145,8 @@ class VersionRunner:
                 str(venv_path / "bin" / "python"),
                 "--index-strategy",
                 "unsafe-best-match",
-                # Old releases only set a floor (v0.3.0: fastmcp>=2.3.0); FastMCP 3+ dropped
-                # the constructor arguments they pass, so the server crashes at startup.
-                "fastmcp<3",
+                "-c",
+                str(constraints),
             ],
             check=True,
             # Not captured: an install failure must show uv's reason in the test report.
