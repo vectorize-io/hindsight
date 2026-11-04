@@ -51,21 +51,19 @@ def _get_or_create_pg0():
 
 
 def _clean_database(db_url: str):
-    """Drop all tables in the database to reset state for next test."""
+    """Reset the ``public`` schema so the next test migrates a truly empty database.
+
+    Dropping the schema, not just its tables: the previous test's new-version run leaves
+    routines behind (e.g. ``public.mental_models_with_cron()`` in its latest shape), and an
+    older migration's ``CREATE OR REPLACE`` of the same function then fails with "cannot
+    change return type". Dropping tables alone let that leak into every test after the first.
+    """
     from sqlalchemy import create_engine, text
 
     engine = create_engine(db_url)
     with engine.connect() as conn:
-        # Drop all tables in public schema (cascade to handle foreign keys)
-        tables = conn.execute(
-            text("""
-                SELECT tablename FROM pg_tables
-                WHERE schemaname = 'public'
-                AND tablename NOT LIKE 'pg_%'
-            """)
-        ).fetchall()
-        for table in tables:
-            conn.execute(text(f'DROP TABLE IF EXISTS public."{table[0]}" CASCADE'))
+        conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+        conn.execute(text("CREATE SCHEMA public"))
         conn.commit()
     engine.dispose()
 
