@@ -10,7 +10,10 @@ import { runSessionStartHook, type SessionStartHookSpec } from "../core/session-
 import { ensureTraecodeWorkspaceMcp } from "../core/traecode-mcp";
 import { readCodexTranscript } from "../core/transcript-codex";
 import { readCursorTranscript } from "../core/transcript-cursor";
-import { readAntigravityTranscript } from "../core/transcript-antigravity";
+import {
+  readAntigravityPromptTurn,
+  readAntigravityTranscript,
+} from "../core/transcript-antigravity";
 import { readCopilotTranscript } from "../core/transcript-copilot";
 import { grokTranscriptPath, readGrokTranscript } from "../core/transcript-grok";
 import { readDevinTranscript } from "../core/transcript-devin";
@@ -164,11 +167,10 @@ const antigravityPrompt: HookSpec = {
   harness: "antigravity-cli",
   requireCwd: true,
   parse: (ev) => ({
-    // Antigravity's PreInvocation payload deliberately omits the prompt. Its transcript is already
-    // persisted at that point, so recover the latest real user turn from the supplied JSONL path.
-    prompt: readAntigravityTranscript(ev.transcriptPath as string | undefined)
-      .filter((turn) => turn.role === "user")
-      .at(-1)?.content,
+    // Antigravity's PreInvocation payload omits the prompt and fires before EVERY planner step in
+    // the agent loop (including after every tool call). Read the transcript's trailing record so
+    // only a genuine user submission returns a prompt and tool-result continuations are suppressed.
+    prompt: readAntigravityPromptTurn(ev.transcriptPath as string | undefined),
     cwd: antigravityCwd(ev),
     sessionId: ev.conversationId as string | undefined,
   }),

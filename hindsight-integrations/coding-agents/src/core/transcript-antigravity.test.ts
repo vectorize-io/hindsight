@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readAntigravityTranscript } from "./transcript-antigravity";
+import { readAntigravityPromptTurn, readAntigravityTranscript } from "./transcript-antigravity";
 
 let root: string;
 let file: string;
@@ -66,5 +66,69 @@ describe("readAntigravityTranscript", () => {
     );
     expect(readAntigravityTranscript(file)).toEqual([{ role: "user", content: "What changed?" }]);
     expect(readAntigravityTranscript(join(root, "missing.jsonl"))).toEqual([]);
+  });
+});
+
+describe("readAntigravityPromptTurn", () => {
+  it("returns the unwrapped user prompt when the transcript ends on a USER_INPUT turn", () => {
+    writeFileSync(
+      file,
+      [
+        JSON.stringify({
+          step_index: 0,
+          type: "USER_INPUT",
+          content: "<USER_REQUEST>\nAudit the retry logic.\n</USER_REQUEST>",
+        }),
+        JSON.stringify({
+          step_index: 1,
+          type: "CHECKPOINT",
+        }),
+      ].join("\n")
+    );
+    expect(readAntigravityPromptTurn(file)).toBe("Audit the retry logic.");
+  });
+
+  it("returns undefined on intra-turn tool continuations (PLANNER_RESPONSE, GENERIC, SYSTEM_MESSAGE)", () => {
+    const userTurn = JSON.stringify({
+      step_index: 0,
+      type: "USER_INPUT",
+      content: "<USER_REQUEST>\nAudit the retry logic.\n</USER_REQUEST>",
+    });
+    // Tool-only PLANNER_RESPONSE carries empty content, which readAntigravityTranscript drops.
+    writeFileSync(
+      file,
+      [
+        userTurn,
+        JSON.stringify({ step_index: 1, type: "PLANNER_RESPONSE", content: "", tool_calls: [{}] }),
+        JSON.stringify({ step_index: 2, type: "GENERIC", content: "file contents" }),
+      ].join("\n")
+    );
+    expect(readAntigravityPromptTurn(file)).toBeUndefined();
+
+    // Background task wakeup (SYSTEM_MESSAGE) is also an intra-turn continuation.
+    writeFileSync(
+      file,
+      [
+        userTurn,
+        JSON.stringify({ step_index: 1, type: "SYSTEM_MESSAGE", content: "Task finished" }),
+      ].join("\n")
+    );
+    expect(readAntigravityPromptTurn(file)).toBeUndefined();
+
+    // A subsequent USER_INPUT turn re-enables prompt extraction for that new turn.
+    writeFileSync(
+      file,
+      [
+        userTurn,
+        JSON.stringify({ step_index: 1, type: "PLANNER_RESPONSE", content: "" }),
+        JSON.stringify({ step_index: 2, type: "GENERIC", content: "file contents" }),
+        JSON.stringify({
+          step_index: 3,
+          type: "USER_INPUT",
+          content: "<USER_REQUEST>\nNow update the test.\n</USER_REQUEST>",
+        }),
+      ].join("\n")
+    );
+    expect(readAntigravityPromptTurn(file)).toBe("Now update the test.");
   });
 });
