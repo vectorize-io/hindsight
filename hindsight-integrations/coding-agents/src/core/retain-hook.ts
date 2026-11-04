@@ -48,11 +48,13 @@ const HEADLESS_POLL_MS = 2_000;
 /** Kept free of that wait, for the write-back after it. */
 const HEADLESS_RETAIN_RESERVE_MS = 15_000;
 
-/** Leads a note handed back at a headless Stop. A job has no user to catch a wrong note: in beta
+/** Leads a note handed back at a headless Stop. It names the "wrong:" line: told only to "say so",
+ * jobs wrote "no change" for notes their own JOB.md disproved, and the server saved them as not needed. A job has no user to catch a wrong note: in beta
  * a disk-guard run took a note that misread GiB as GB as an order and dropped databases. */
 export const HEADLESS_NOTE_LEAD =
   "A memory check found the note below. It can be wrong: check it against your files first. " +
-  "If it is wrong, say so in your summary and change nothing because of it.";
+  "If it is wrong, change nothing because of it and say so in your summary with the line " +
+  '"🧠 Hindsight thought #<number> — <what it said>; wrong: <why>".';
 
 /** Whether the transcript is a headless run (`claude -p`): Claude Code stamps each line with how it
  *  was started, `sdk-cli` for print mode and `cli` for the interactive terminal. */
