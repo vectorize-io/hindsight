@@ -560,7 +560,7 @@ NOTHING_TO_SAY = re.compile(
 # on the first sentence only, so "X is consistent, but Y breaks
 # the rule" in a later one still goes out.
 AGREES_WITH_RULE = re.compile(
-    r"\b(not|no|nothing|never) (a |an |any )?(contradict|conflict)\w*|\bnothing (in|about)( \w+){1,3} (contradicts?|conflicts?)\b|\b(is|are|stays?|remains?) consistent with\b|\baligns? with\b"
+    r"\b(not|no|nothing|never) (a |an |any )?(contradict|conflict)\w*|\bnothing (in|about)( \w+){1,3} (contradicts?|conflicts?)\b|\b(is|are|stays?|remains?) consistent with\b|\b(aligns?|aligning) with\b|\b(implements|meets|satisfies|fulfils|fulfills) the (\w+ ){0,2}(requirement|rule|decision)s?\b"
     # "your", "the" or a file name ("following JOB.md rule 47"); "you correctly ..." only praises.
     r"|\b(are|is) (already )?following \S+( \S+){0,2} (request|decision|rule|instruction|design|plan|spec)s?\b"
     r"|\b(this |it )?follows \S+( \w+){0,2} (request|decision|rule|instruction)s?\b|\byou correctly\b|\byou (have )?followed\b"

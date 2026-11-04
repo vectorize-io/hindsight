@@ -652,3 +652,13 @@ def test_a_rule_quoted_in_single_quotes_twice_is_a_repeat():
     )
     assert W.accept_note(s, plan, first, ["m1"])
     assert not W.accept_note(s, plan, again, ["m2"])
+
+
+def test_a_note_saying_the_change_implements_the_requirement_is_not_a_note():
+    s = W.WatchState()
+    edit = W.Moment(trigger="edit", text="", recent=[], diff="d")
+    said = (
+        "The change to `tests/test_memlake_inputs_reads.py` implements the requirement to correctly handle page "
+        "tokens, aligning with the fix in `find_unconsolidated` to ensure the ordered scan returns all memories."
+    )
+    assert not W.accept_note(s, edit, said, ["m1"])
