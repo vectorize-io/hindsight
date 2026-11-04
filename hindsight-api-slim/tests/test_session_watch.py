@@ -637,3 +637,18 @@ def test_a_note_saying_you_follow_the_design_is_not_a_note():
         'per memory" and uses "tags as u32 ids" to avoid dictionary encoding issues.'
     )
     assert not W.accept_note(s, edit, said, ["m1"])
+
+
+def test_a_rule_quoted_in_single_quotes_twice_is_a_repeat():
+    s = W.WatchState()
+    plan = W.Moment(trigger="plan", text="bump the replicas to 2", recent=[], diff="")
+    first = (
+        "You are planning to 'bump manually the 2replicas' in dev, but the `hindsight-analytics` architecture is "
+        "decided as 'one `hindsight-analytics` StatefulSet replica'."
+    )
+    again = (
+        "The project decision is 'one `hindsight-analytics` StatefulSet replica'. Your plan to 'bump manually "
+        "the 2replicas' for this service violates this rule."
+    )
+    assert W.accept_note(s, plan, first, ["m1"])
+    assert not W.accept_note(s, plan, again, ["m2"])

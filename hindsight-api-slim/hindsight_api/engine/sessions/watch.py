@@ -697,8 +697,12 @@ def _paths(s: str) -> set[str]:
 
 
 def _quoted(s: str) -> set[str]:
-    """The phrases of three words or more a note quotes ("..." or curly quotes), lowercased."""
-    return {q.strip().lower() for q in re.findall(r'["\u201c]([^"\u201c\u201d]+)["\u201d]', s) if len(q.split()) >= 3}
+    """The phrases of three words or more a note quotes ("...", curly or '...' quotes), lowercased.
+    Single quotes count only away from letters, so an apostrophe ("don't") opens nothing: in beta
+    one replica rule came back in the same session, quoted the same way in single quotes."""
+    double = re.findall(r'["\u201c]([^"\u201c\u201d]+)["\u201d]', s)
+    single = re.findall(r"(?<!\w)'([^'\n]+)'(?!\w)", s)
+    return {q.strip().lower() for q in double + single if len(q.split()) >= 3}
 
 
 def _words(s: str) -> set[str]:
