@@ -26,6 +26,7 @@ from ...extensions.memory_defense import (
 )
 from ...metrics import get_metrics_collector
 from ...worker.stage import set_stage
+from ..bank_life import assert_job_bank_alive_on_pool
 from ..chunk_ids import build_chunk_id
 from ..db_utils import acquire_with_retry, retry_with_backoff
 from ..document_history import (
@@ -1561,6 +1562,12 @@ async def retain_batch(
     from ..memories import get_memories
 
     await get_memories().assert_writable(bank_id)
+    # A retain job whose bank was deleted since it started stops here, before its writes would
+    # recreate the bank's storage (#6344).
+    # ponytail: one check per pass. A delete landing mid-pass still fails the SQL writes on their
+    # foreign keys, but a store that owns its storage can take that pass's writes; check per
+    # document write if that window shows up.
+    await assert_job_bank_alive_on_pool(pool, bank_id)
 
     start_time = time.time()  # noqa: TID251
     # start_time stays a wall-clock stamp: the stale-request check below compares it with the document's
