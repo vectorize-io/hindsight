@@ -672,3 +672,20 @@ def test_a_note_saying_a_rule_is_superseded_by_your_request_is_not_a_note():
         "as you suggested' and 'test models available on open router'."
     )
     assert not W.accept_note(s, cmd, said, ["m1"])
+
+
+def test_a_note_saying_the_command_follows_the_standard_is_not_a_note():
+    s = W.WatchState()
+    cmd = W.Moment(trigger="command", text="uv run ruff check .", recent=[], diff="")
+    said = "The command uses `ruff`, which follows the inference-gateway code standard requiring `ruff`."
+    assert not W.accept_note(s, cmd, said, ["m1"])
+
+
+def test_a_note_saying_the_change_matches_your_request_is_not_a_note():
+    s = W.WatchState()
+    edit = W.Moment(trigger="edit", text="", recent=[], diff="d")
+    said = (
+        "Your removal of `Github` and `Repeat` from the `SessionStatsBar.tsx` imports matches your request to keep "
+        "only `Search`, `Settings`, and `New session`."
+    )
+    assert not W.accept_note(s, edit, said, ["m1"])

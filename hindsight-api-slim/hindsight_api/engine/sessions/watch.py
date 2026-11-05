@@ -562,8 +562,8 @@ NOTHING_TO_SAY = re.compile(
 AGREES_WITH_RULE = re.compile(
     r"\b(not|no|nothing|never) (a |an |any )?(contradict|conflict)\w*|\bnothing (in|about)( \w+){1,3} (contradicts?|conflicts?)\b|\b(is|are|stays?|remains?) consistent with\b|\b(aligns?|aligning) with\b|\b(implements|meets|satisfies|fulfils|fulfills) the (\w+ ){0,2}(requirement|rule|decision)s?\b"
     # "your", "the" or a file name ("following JOB.md rule 47"); "you correctly ..." only praises.
-    r"|\b(are|is) (already )?following \S+( \S+){0,2} (request|decision|rule|instruction|design|plan|spec)s?\b"
-    r"|\b(this |it )?follows \S+( \w+){0,2} (request|decision|rule|instruction)s?\b|\byou correctly\b|\byou (have )?followed\b"
+    r"|\b(are|is) (already )?following \S+( \S+){0,2} (request|decision|rule|instruction|design|plan|spec|standard|convention)s?\b"
+    r"|\b(this |it |which )?follows \S+( \S+){0,3} (request|decision|rule|instruction|design|standard|convention)s?\b|\byou correctly\b|\byou (have )?followed\b|\bmatch(es)? your (\w+ ){0,2}(request|instruction)s?\b"
     # Our own rule said back ("the request ... is the newest decision, which supersedes ..."): agreement.
     r"|\b(request|instruction)\b[^\n]{0,80}?\b(is the newest decision|supersedes|overrides)\b"
     r"|\b(superseded|overridden|replaced) by your (\w+ ){0,2}(request|instruction)s?\b",
