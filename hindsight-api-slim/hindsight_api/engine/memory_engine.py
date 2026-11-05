@@ -5137,6 +5137,8 @@ class MemoryEngine(MemoryEngineInterface):
                     await self.sessions.run_save(task_dict)
                 elif task_type == "session_idle":
                     await self.sessions.run_idle(task_dict)
+                elif task_type == "session_learn":
+                    await self.sessions.run_learn(task_dict)
                 else:
                     logger.error(f"Unknown task type: {task_type}")
                     # Don't retry unknown task types

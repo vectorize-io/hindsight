@@ -225,6 +225,8 @@ class WatchState(BaseModel):
     last_command_check: str = ""
     # Whether the notes earlier runs of the same request set aside were taken over (see the service).
     inherited: bool = False
+    # Notes (by seq) whose verdict has not been weighed for a rule yet (see sessions/learn.py).
+    learn_pending: list[int] = Field(default_factory=list)
 
 
 class Step(BaseModel):

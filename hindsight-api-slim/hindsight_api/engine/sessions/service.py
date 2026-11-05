@@ -46,6 +46,7 @@ from ...worker.exceptions import DeferOperation
 from ..db_utils import acquire_with_retry
 from ..llm_wrapper import sanitize_value
 from ..schema import fq_table
+from . import learn as L
 from . import watch as W
 from .models import (
     MAX_EVENT_TEXT,
@@ -429,6 +430,7 @@ class SessionService:
                 rows: list[tuple[int, str, str, str]] = []
                 seen: set[str] = set()
                 feedback: dict[int, NoteFeedback] = {}
+                learned: list[int] = []
                 for event in incoming:
                     if event.id in known or event.id in seen:
                         continue
@@ -481,6 +483,7 @@ class SessionService:
                         if log.feedback is not None and (log.feedback.verdict == "used" or fb == log.feedback):
                             continue
                         log.feedback = fb
+                        learned.append(n)
                         await conn.execute(
                             f"""
                             UPDATE {fq_table("session_events")} SET payload = $4::jsonb
@@ -504,6 +507,7 @@ class SessionService:
                         -W.SET_ASIDE_KEPT :
                     ]
                     credits, dismissed = len(new_credits), len(new_dismissed) - len(unused_then_used)
+                    state.learn_pending = list(dict.fromkeys(state.learn_pending + learned))[-W.SET_ASIDE_KEPT :]
                 # A scheduled job runs as a new session each time, with the same request word for
                 # word, so its runs kept hearing the note their earlier runs had set aside (beta:
                 # disk-guard was told six runs in a row that one folder is outside its rules).
@@ -588,6 +592,8 @@ class SessionService:
         # Only when this append brought something: the moment was queued by the append that made it.
         if rows and settings.live and state.pending is not None:
             await self._queue_check(bank_id, session_id, request_context)
+        if learned and settings.live:
+            await self._queue(L.LEARN_TASK, "session-learn", bank_id, session_id, request_context)
         long_turn = rows and seq - 1 - int(row["saved_seq"]) >= SAVE_EVERY_EVENTS
         if settings.retain == "turns" and (turn_ended or long_turn):
             await self._queue_save(bank_id, session_id, request_context)
@@ -781,6 +787,129 @@ class SessionService:
             tenant_id=task.get("_tenant_id"),
             api_key_id=task.get("_api_key_id"),
             retry_count=task.get("_retry_count", 0),
+        )
+
+    async def run_learn(self, task: dict[str, Any]) -> None:
+        """Weigh the verdicts the agent gave since the last run, and write a rule for each one the
+        decision model finds lasting (see sessions/learn.py). Each note is weighed once."""
+        bank_id: str = task["bank_id"]
+        session_id: str = task["session_id"]
+        rc = self._task_context(task)
+        engine = self._engine
+        backend = await engine._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    f"SELECT watch_state FROM {fq_table('sessions')} WHERE bank_id = $1 AND session_id = $2 FOR UPDATE",
+                    bank_id,
+                    session_id,
+                )
+                if row is None:
+                    return
+                state = W.WatchState.model_validate(conn.parse_json(row["watch_state"]) or {})
+                pending, state.learn_pending = state.learn_pending, []
+                if not pending:
+                    return
+                await conn.execute(
+                    f"UPDATE {fq_table('sessions')} SET watch_state = $3::jsonb WHERE bank_id = $1 AND session_id = $2",
+                    bank_id,
+                    session_id,
+                    state.model_dump_json(),
+                )
+                notes = {
+                    int(r["seq"]): NoteLog.model_validate(conn.parse_json(r["payload"]))
+                    for r in await conn.fetch(
+                        f"""
+                        SELECT seq, payload FROM {fq_table("session_events")}
+                        WHERE bank_id = $1 AND session_id = $2 AND kind = 'note' AND seq = ANY($3)
+                        """,
+                        bank_id,
+                        session_id,
+                        pending,
+                    )
+                }
+        cfg = await engine._config_resolver.get_bank_config(bank_id, rc)
+        logs = [
+            await self._learn_one(bank_id, seq, note, state.goal, rc) if cfg.get("session_learn_rules") else None
+            for seq, note in sorted(notes.items())
+        ]
+        logs = [log for log in logs if log is not None]
+        if not logs:
+            return
+        async with acquire_with_retry(backend) as conn:
+            async with conn.transaction():
+                if await conn.fetchval(
+                    f"SELECT 1 FROM {fq_table('sessions')} WHERE bank_id = $1 AND session_id = $2 FOR UPDATE",
+                    bank_id,
+                    session_id,
+                ):
+                    for log in logs:
+                        await self._log(conn, bank_id, session_id, "learn", log.model_dump(exclude_none=True))
+
+    async def _learn_one(
+        self, bank_id: str, seq: int, note: NoteLog, goal: str, rc: RequestContext
+    ) -> L.LearnLog | None:
+        """One note's verdict: is it a lasting rule, and if so the mental model that keeps it."""
+        fb = note.feedback
+        if fb is None:
+            return None
+        engine = self._engine
+        model = engine._reflect_decision_model()
+        if model is None:
+            return L.LearnLog(note_seq=seq, outcome="skipped", reason="no decision model")
+        reason = fb.reason or note.text
+        try:
+            pick = await model.pick_answering(
+                L.LEARN_QUESTION, L.learn_context(note.text, fb.verdict, reason, goal), [reason]
+            )
+        except Exception as e:
+            logger.warning(f"session learn: decision failed for {bank_id}: {e}")
+            return L.LearnLog(note_seq=seq, outcome="skipped", reason="decision failed")
+        score = pick.candidates[0] if pick.candidates else 0.0
+        if score < L.LEARN_AT:
+            return L.LearnLog(note_seq=seq, outcome="no_rule", score=round(score, 3))
+        existing = [
+            m
+            for m in (await engine.list_mental_models(bank_id, detail="content", limit=200, request_context=rc)).items
+            if str(m.get("id", "")).startswith(L.RULE_ID_PREFIX)
+        ][-L.MAX_EXISTING_RULES :]
+        prompt = L.WRITE_PROMPT.format(
+            note=note.text,
+            verdict=fb.verdict,
+            reason=reason,
+            goal=goal or "(not known)",
+            existing=L.existing_rules_text(
+                [L.RuleSummary(name=str(m.get("name") or ""), content=str(m.get("content") or "")) for m in existing]
+            ),
+        )
+        try:
+            result = await engine._llm_config.call(
+                messages=[{"role": "user", "content": prompt}], response_format=L.RuleDraft, scope="session_learn"
+            )
+            draft = (
+                result.content
+                if isinstance(result.content, L.RuleDraft)
+                else L.RuleDraft.model_validate(
+                    json.loads(result.content) if isinstance(result.content, str) else result.content
+                )
+            )
+        except Exception as e:
+            logger.warning(f"session learn: writing the rule failed for {bank_id}: {e}")
+            return L.LearnLog(note_seq=seq, outcome="skipped", score=round(score, 3), reason="writer failed")
+        if not draft.create or not draft.content.strip():
+            return L.LearnLog(note_seq=seq, outcome="covered", score=round(score, 3))
+        mm_id = f"{L.RULE_ID_PREFIX}{uuid.uuid4().hex[:16]}"
+        await engine.create_mental_model(
+            bank_id,
+            draft.name.strip()[:120] or "Rule",
+            draft.query.strip() or draft.name.strip(),
+            draft.content.strip()[: L.MAX_RULE_CHARS],
+            mental_model_id=mm_id,
+            request_context=rc,
+        )
+        logger.info(f"session learn: {bank_id} rule {mm_id} '{draft.name}' from note {seq} (score {score:.2f})")
+        return L.LearnLog(
+            note_seq=seq, outcome="created", score=round(score, 3), mental_model_id=mm_id, name=draft.name
         )
 
     async def run_check(self, task: dict[str, Any]) -> None:

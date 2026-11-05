@@ -947,3 +947,137 @@ async def test_notes_are_numbered_across_the_bank_and_found_by_number(memory, re
     newest = "s1" if numbers["s1"] == [second] else "s2"
     found = await s.list(bank, q=f"#{second}", request_context=request_context)
     assert [x.session_id for x in found.items] == [newest]
+
+
+class _Pick:
+    def __init__(self, score: float):
+        self.none = 1.0 - score
+        self.candidates = [score]
+
+
+class _LearnStub:
+    """The decision model and the writer, as the learn step calls them."""
+
+    def __init__(self, score: float):
+        self.score = score
+        self.questions: list[str] = []
+
+    async def pick_answering(self, question, context, texts):
+        self.questions.append(question)
+        return _Pick(self.score)
+
+
+async def _session_with_a_verdict(memory, request_context, monkeypatch, bank: str, reply_line: str):
+    """A live session whose one note the agent then answers with ``reply_line`` (``{n}`` = its number)."""
+    s = memory.sessions
+    monkeypatch.setattr(
+        memory,
+        "reflect_async",
+        _reflect_stub([("Before you change panels.tsx: keep three panels.", [str(uuid.uuid4())])], []),
+    )
+    await s.append(
+        bank,
+        "s1",
+        _req(
+            {"id": "u", "role": "user", "text": "Merge the three panels in panels.tsx into one"},
+            live=True,
+            retain="off",
+        ),
+        request_context=request_context,
+    )
+    number = [
+        e.payload["number"]
+        for e in (await s.events(bank, "s1", request_context=request_context)).items
+        if e.kind == "note"
+    ][0]
+    await s.append(
+        bank,
+        "s1",
+        _req({"id": "a", "role": "assistant", "text": reply_line.format(n=number)}),
+        request_context=request_context,
+    )
+    return [e for e in (await s.events(bank, "s1", request_context=request_context)).items if e.kind == "learn"]
+
+
+def _learning_on(memory, monkeypatch, on: bool = True):
+    real = memory._config_resolver.get_bank_config
+
+    async def get_bank_config(bank_id, context=None, **kw):
+        cfg = dict(await real(bank_id, context, **kw))
+        cfg["session_learn_rules"] = on
+        return cfg
+
+    monkeypatch.setattr(memory._config_resolver, "get_bank_config", get_bank_config)
+
+
+async def test_a_lasting_verdict_becomes_a_rule_every_later_check_reads(memory, request_context, monkeypatch):
+    from hindsight_api.engine.response_models import LLMCallResult
+    from hindsight_api.engine.sessions.learn import RuleDraft
+
+    bank = _bank()
+    _learning_on(memory, monkeypatch)
+    stub = _LearnStub(0.9)
+    monkeypatch.setattr(memory, "_reflect_decision_model", lambda: stub)
+    prompts: list[str] = []
+
+    async def call(messages, **kw):
+        prompts.append(messages[0]["content"])
+        draft = RuleDraft(
+            create=True,
+            name="Panels: one panel, not three",
+            query="How many panels does the shell show?",
+            content="The shell shows one merged panel; the three floating panels are gone (user's request).",
+        )
+        return LLMCallResult(content=draft)
+
+    monkeypatch.setattr(memory._llm_config, "call", call)
+    learned = await _session_with_a_verdict(
+        memory,
+        request_context,
+        monkeypatch,
+        bank,
+        "> 🧠 Hindsight thought #{n} — keep three panels; wrong: you asked to merge them into one.",
+    )
+    assert [e.payload["outcome"] for e in learned] == ["created"]
+    rule_id = learned[0].payload["mental_model_id"]
+    assert rule_id.startswith("rule-")
+    # The writer saw the agent's reason, and the rule is a mental model reflect searches first.
+    assert "you asked to merge them into one" in prompts[0]
+    models = (await memory.list_mental_models(bank, detail="content", request_context=request_context)).items
+    assert [m["id"] for m in models if m["id"] == rule_id] == [rule_id]
+
+
+async def test_a_verdict_that_settles_nothing_writes_no_rule(memory, request_context, monkeypatch):
+    bank = _bank()
+    _learning_on(memory, monkeypatch)
+    monkeypatch.setattr(memory, "_reflect_decision_model", lambda: _LearnStub(0.1))
+
+    async def call(messages, **kw):  # never reached: the decision model said no rule
+        raise AssertionError("the writer must not run")
+
+    monkeypatch.setattr(memory._llm_config, "call", call)
+    learned = await _session_with_a_verdict(
+        memory,
+        request_context,
+        monkeypatch,
+        bank,
+        "> 🧠 Hindsight thought #{n} — keep three panels; no change: I was already doing it.",
+    )
+    assert [e.payload["outcome"] for e in learned] == ["no_rule"]
+    models = (await memory.list_mental_models(bank, detail="metadata", request_context=request_context)).items
+    assert not [m for m in models if str(m["id"]).startswith("rule-")]
+
+
+async def test_learning_off_weighs_nothing(memory, request_context, monkeypatch):
+    bank = _bank()
+    _learning_on(memory, monkeypatch, on=False)
+    stub = _LearnStub(0.9)
+    monkeypatch.setattr(memory, "_reflect_decision_model", lambda: stub)
+    learned = await _session_with_a_verdict(
+        memory,
+        request_context,
+        monkeypatch,
+        bank,
+        "> 🧠 Hindsight thought #{n} — keep three panels; wrong: you asked to merge them into one.",
+    )
+    assert learned == [] and stub.questions == []
