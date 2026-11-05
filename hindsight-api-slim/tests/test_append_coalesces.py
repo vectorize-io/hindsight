@@ -122,3 +122,55 @@ async def test_append_keeps_the_units_of_the_chunks_it_did_not_touch(memory, req
         )
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+def _json_turns(first: int, count: int) -> str:
+    return "\n".join(
+        '{"role": "user", "content": "turn %d: alpha bravo charlie delta echo foxtrot golf hotel india '
+        'juliet kilo lima mike november oscar papa quebec romeo sierra tango"}' % i
+        for i in range(first, first + count)
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("turns", [_turns, _json_turns], ids=["text", "jsonl"])
+async def test_a_second_append_keeps_the_chunks_the_first_append_wrote(memory, request_context, turns, _split_mode):
+    """An append must chunk its body the way the NEXT append re-chunks it (#6293).
+
+    The stored body and the new text used to be chunked as two items, so the first append started
+    its chunks apart from the stored tail; the second append re-chunks the whole body as one text,
+    shifts every boundary after that tail, and re-extracts every chunk the first append wrote.
+    """
+    if _split_mode == "split":
+        pytest.skip("a split append still chunks the new text apart from the stored body")
+    bank_id = f"test_append_twice_{_ts()}"
+    document_id = "conversation-2"
+    try:
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": turns(0, 24), "document_id": document_id}],
+            request_context=request_context,
+        )
+        # A first append long enough to write several chunks of its own.
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": turns(24, 80), "document_id": document_id, "update_mode": "append"}],
+            request_context=request_context,
+        )
+        before = await _units_by_chunk(memory, bank_id, document_id, request_context)
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": turns(104, 1), "document_id": document_id, "update_mode": "append"}],
+            request_context=request_context,
+        )
+        after = await _units_by_chunk(memory, bank_id, document_id, request_context)
+
+        def _index_of(chunk_id: str) -> int:
+            return int(chunk_id.rsplit("_", 1)[-1])
+
+        settled = sorted(before, key=_index_of)[:-1]
+        assert len(settled) > 3, "the first append must have written chunks of its own"
+        changed = [c for c in settled if after.get(c) != before[c]]
+        assert not changed, f"the second append re-extracted chunks it did not touch: {sorted(changed, key=_index_of)}"
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
