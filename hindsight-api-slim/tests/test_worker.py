@@ -1252,6 +1252,7 @@ class TestWorkerPoller:
         from datetime import UTC, datetime, timedelta
 
         from hindsight_api.engine.llm_interface import ProviderRateLimitResetError
+        from hindsight_api.models import RequestContext
         from hindsight_api.worker.exceptions import DeferOperation, RetryTaskAt
 
         retry_at = (datetime.now(UTC) + timedelta(hours=5)).replace(microsecond=0)
@@ -1260,12 +1261,15 @@ class TestWorkerPoller:
             raise ProviderRateLimitResetError(retry_at=retry_at, message="quota resets later")
 
         monkeypatch.setattr(memory, "_handle_batch_retain", quota_limited_retain)
+        # A retain job only runs for a bank that exists: one for a missing bank is skipped (#6344).
+        bank_id = f"test-provider-quota-defer-{uuid.uuid4().hex[:8]}"
+        await memory.ensure_bank_profile(bank_id, request_context=RequestContext(internal=True))
 
         with pytest.raises(DeferOperation) as exc_info:
             await memory.execute_task(
                 {
                     "type": "batch_retain",
-                    "bank_id": "test-provider-quota-defer",
+                    "bank_id": bank_id,
                     "contents": [{"content": "x"}],
                 }
             )

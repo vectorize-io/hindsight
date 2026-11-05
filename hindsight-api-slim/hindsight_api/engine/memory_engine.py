@@ -646,6 +646,13 @@ def validate_sql_schema(sql: str) -> None:
 
 from ..operation_runs import set_sink as set_operation_sink
 from ..operation_runs import timed as timed_operation_method
+from .bank_life import (
+    BankDeletedError,
+    assert_job_bank_alive,
+    assert_job_bank_alive_on_pool,
+    bind_job_bank,
+    job_bank_bound,
+)
 from .bank_templates import apply_default_bank_template_resources, load_default_bank_template_manifest
 from .cross_encoder import RANK_SCORE_PROVIDERS, CrossEncoderModel, TypeSafeCrossEncoder, recall_log_id
 from .embeddings import Embeddings, create_embeddings_from_env
@@ -1687,6 +1694,21 @@ def _is_foreign_key_violation(e: Exception) -> bool:
         return False
     code = getattr(e.args[0], "code", None) if e.args else None
     return code == 2291
+
+
+#: Tasks that write into a bank that already existed when they were queued. They run bound to
+#: that bank's life (bank_life): a delete while one runs stops it instead of letting it recreate
+#: the bank. import_bank / clone_bank are absent on purpose: they create their target bank.
+_TASKS_BOUND_TO_BANK = frozenset(
+    {
+        "batch_retain",
+        "file_convert_retain",
+        "import_documents",
+        "consolidation",
+        "graph_maintenance",
+        "refresh_mental_model",
+    }
+)
 
 
 def _is_non_retryable_task_error(e: Exception) -> bool:
@@ -5064,6 +5086,23 @@ class MemoryEngine(MemoryEngineInterface):
                 logger.error(f"Failed to check operation status {operation_id}: {e}")
                 # Continue with processing if we can't check status
 
+        bank_id = task_dict.get("bank_id")
+        if not bank_id or task_type not in _TASKS_BOUND_TO_BANK:
+            await self._dispatch_task(task_dict, task_type, operation_id, schema)
+            return
+        # The job may write only into the bank life it started in: see bank_life (#6344).
+        try:
+            binding = await bind_job_bank(await self._get_backend(), bank_id)
+        except BankDeletedError:
+            logger.info(f"Skipping {task_type} for deleted bank {bank_id} (operation {operation_id})")
+            return
+        with binding:
+            await self._dispatch_task(task_dict, task_type, operation_id, schema)
+
+    async def _dispatch_task(
+        self, task_dict: dict[str, Any], task_type: str | None, operation_id: str | None, schema: str | None
+    ) -> None:
+        """Run a task's handler and record its outcome. See :meth:`execute_task`."""
         consolidation_result: dict | None = None
         bank_id = task_dict.get("bank_id")
         async with audit_context(
@@ -5127,6 +5166,11 @@ class MemoryEngine(MemoryEngineInterface):
             except RetryTaskAt:
                 # Task-owned retry: let the poller handle scheduling
                 raise
+            except BankDeletedError as e:
+                # The bank was deleted while this ran. Its operation row went with it, so there is
+                # nothing to mark: drop the job rather than retry it into a bank that is gone.
+                logger.info(f"Dropping {task_type} (operation {operation_id}): {e}")
+                audit_entry.response = {"status": "dropped", "operation_id": operation_id}
             except DeferOperation:
                 # Task-owned defer: let the poller handle re-scheduling without
                 # bumping retry_count or writing error_message. Pairs with the
@@ -15026,6 +15070,13 @@ class MemoryEngine(MemoryEngineInterface):
             True if the bank was freshly created on this call.
         """
         backend = await self._get_backend()
+        if job_bank_bound(bank_id):
+            # A background job never creates its bank: missing (or replaced) means it was deleted
+            # while the job ran, and recreating it would bring the deleted data back (#6344).
+            if conn is not None:
+                await assert_job_bank_alive(conn, bank_id)
+            else:
+                await assert_job_bank_alive_on_pool(backend, bank_id)
         if conn is not None:
             exists = await bank_utils.bank_exists_on_conn(conn, bank_id)
         else:

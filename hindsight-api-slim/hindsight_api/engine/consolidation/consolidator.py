@@ -39,6 +39,7 @@ from ...config import get_config
 from ...metrics import get_metrics_collector
 from ...operation_runs import timed_operation
 from ...worker.stage import set_stage
+from ..bank_life import assert_job_bank_alive
 from ..db import DatabaseBackend
 from ..db_utils import acquire_with_retry
 from ..document_history import (
@@ -3107,6 +3108,10 @@ async def _process_memory_batch(
                         fact_ids=[str(m["id"]) for m in memories],
                         observation_ids=[oid for oid in touched if oid],
                     )
+                    # After the write set, in delete_bank's lock order (bank row last), so the
+                    # bank lock it holds to commit cannot deadlock a delete. Stops the job if the
+                    # bank was deleted since it started, before the store would recreate it (#6344).
+                    await assert_job_bank_alive(conn, bank_id)
                     changed_ids = await _sources_changed_since_read(conn, bank_id, memories)
                     if changed_ids:
                         # Drop the whole response, stamps included: the facts stay pending and the
