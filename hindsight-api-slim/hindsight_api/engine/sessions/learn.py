@@ -74,13 +74,21 @@ Rules the project already has:
 Write the rule, for agents in later sessions:
 - name: a short title naming the component and the rule (at most 8 words).
 - query: the question an agent working on that component would ask, which this rule answers.
-- content: the rule in at most 3 sentences: what to do or not do, where it applies, and why. Use the
-  exact names, values and paths from the agent's reason. Never include a password, key or token.
+- content: the rule as a standing instruction for any later change to that component, in at most 3
+  sentences: name the file or component, what a change there must or must not do, and why. Not the
+  task the agent did ("Merge X into Y"), but the rule it leaves ("X is a tab inside Y: add new ones
+  there, never as separate panels"). Use the exact names, values and paths from the agent's reason.
+  Never include a password, key or token.
 
 Set create to false when an existing rule above already says this, or when the verdict above says to.
 When this rule replaces existing rules above (they say an older value or the opposite), list their
 names in replaces: they are removed.
 """
+
+# The content is worded as a standing rule because the session check's decision model picks it by
+# that wording: the e2e rule written as the task ("Merge the Files, Knowledge, and Settings floating
+# panels into a single System panel") scored 0.15 for "add a floating Logs panel to shell.tsx", and
+# the same rule as an instruction for later changes scored 0.94 (2026-11-05).
 
 # For a rejected note the writer is not shown the note: told only "never write what the note claims",
 # the writer still inverted the agent's reason into the note (offline: "you asked to merge them into
