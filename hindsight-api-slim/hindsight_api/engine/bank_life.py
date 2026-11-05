@@ -8,11 +8,12 @@ Only Hindsight can tell this apart from a plain write: a store that owns its sto
 missing bank's storage on any write, so the check has to run before the write reaches it.
 """
 
-from contextlib import contextmanager
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 
-from .db.base import DatabaseConnection
+from .db.base import DatabaseBackend, DatabaseConnection
 from .db_utils import acquire_with_retry
 from .schema import _is_oracle, fq_table
 
@@ -32,15 +33,16 @@ _job_bank: ContextVar[_JobBank | None] = ContextVar("hindsight_job_bank", defaul
 
 async def _internal_id_on_conn(conn: DatabaseConnection, bank_id: str, *, lock: bool) -> str | None:
     # FOR KEY SHARE holds the row until the caller's transaction ends, so a delete waits for the
-    # write it is checking instead of committing between the check and the write. It conflicts
-    # with nothing but a DELETE. Oracle has no shared row lock, so there the check is a plain read.
+    # write it is checking instead of committing between the check and the write. Of what runs
+    # against a bank row, only deleting it (or FOR UPDATE) waits on it. Oracle has no shared row
+    # lock, so there the check is a plain read.
     suffix = " FOR KEY SHARE" if lock and not _is_oracle() else ""
     value = await conn.fetchval(f"SELECT internal_id FROM {fq_table('banks')} WHERE bank_id = $1{suffix}", bank_id)
     return None if value is None else str(value)
 
 
 @contextmanager
-def _bind(bank_id: str, internal_id: str):
+def _bind(bank_id: str, internal_id: str) -> Iterator[None]:
     token = _job_bank.set(_JobBank(bank_id=bank_id, internal_id=internal_id))
     try:
         yield
@@ -48,7 +50,7 @@ def _bind(bank_id: str, internal_id: str):
         _job_bank.reset(token)
 
 
-async def bind_job_bank(pool, bank_id: str):
+async def bind_job_bank(pool: DatabaseBackend, bank_id: str) -> AbstractContextManager[None]:
     """Bind ``bank_id``'s current life to the running job. Raises if the bank is already gone.
 
     Use as ``with await bind_job_bank(pool, bank_id): ...`` around the job.
@@ -79,7 +81,7 @@ async def assert_job_bank_alive(conn: DatabaseConnection, bank_id: str) -> None:
         raise BankDeletedError(f"Bank '{bank_id}' was deleted while a background job was running for it")
 
 
-async def assert_job_bank_alive_on_pool(pool, bank_id: str) -> None:
+async def assert_job_bank_alive_on_pool(pool: DatabaseBackend, bank_id: str) -> None:
     """:func:`assert_job_bank_alive` on a connection of its own, for a caller with no transaction."""
     if not job_bank_bound(bank_id):
         return

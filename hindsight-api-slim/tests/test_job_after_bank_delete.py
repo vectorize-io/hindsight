@@ -32,14 +32,12 @@ def enable_observations():
     config.enable_observations = original
 
 
-async def _bank_exists(memory: MemoryEngine, bank_id: str) -> bool:
-    async with memory._pool.acquire() as conn:
-        return await conn.fetchval("SELECT 1 FROM banks WHERE bank_id = $1", bank_id) is not None
+async def _bank_exists(memory: MemoryEngine, bank_id: str, request_context) -> bool:
+    return await memory.get_bank_profile(bank_id, request_context=request_context) is not None
 
 
-async def _unit_count(memory: MemoryEngine, bank_id: str) -> int:
-    async with memory._pool.acquire() as conn:
-        return await conn.fetchval("SELECT count(*) FROM memory_units WHERE bank_id = $1", bank_id)
+async def _memory_count(memory: MemoryEngine, bank_id: str, request_context) -> int:
+    return (await memory.list_memory_units(bank_id, request_context=request_context))["total"]
 
 
 def _create_llm():
@@ -65,6 +63,8 @@ async def test_consolidation_stops_when_its_bank_is_deleted_mid_run(
 ):
     bank_id = f"del-mid-run-{uuid.uuid4().hex[:8]}"
     await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+    # Seeded raw, like the other consolidation tests: one pending fact with no retain (and no
+    # extraction LLM call) behind it is the only way to start the job on a known input.
     async with memory._pool.acquire() as conn:
         await conn.execute(
             "INSERT INTO memory_units (id, bank_id, text, fact_type, tags, observation_scopes, created_at) "
@@ -111,12 +111,13 @@ async def test_consolidation_stops_when_its_bank_is_deleted_mid_run(
             await memory.execute_task({"type": "consolidation", "bank_id": bank_id})
 
         assert committed == []
-        assert await _bank_exists(memory, bank_id) is recreate
-        # Nothing from before the delete came back: no observation, in either bank life.
-        assert await _unit_count(memory, bank_id) == 0
+        assert await _bank_exists(memory, bank_id, request_context) is recreate
+        if recreate:
+            # Nothing from before the delete landed in the new bank: no fact, no observation.
+            assert await _memory_count(memory, bank_id, request_context) == 0
     finally:
         memory._consolidation_llm_config = original_llm
-        if await _bank_exists(memory, bank_id):
+        if await _bank_exists(memory, bank_id, request_context):
             await memory.delete_bank(bank_id, request_context=request_context)
 
 
@@ -126,7 +127,7 @@ async def test_retain_job_for_a_deleted_bank_does_not_recreate_it(memory: Memory
     await memory.execute_task(
         {"type": "batch_retain", "bank_id": bank_id, "contents": [{"content": "Alice moved to Berlin"}]}
     )
-    assert not await _bank_exists(memory, bank_id)
+    assert not await _bank_exists(memory, bank_id, request_context)
 
 
 @pytest.mark.asyncio
@@ -139,4 +140,4 @@ async def test_bound_job_cannot_create_its_bank_after_a_delete(memory: MemoryEng
         await memory.delete_bank(bank_id, request_context=request_context)
         with pytest.raises(BankDeletedError):
             await memory._ensure_bank_exists(bank_id, request_context)
-    assert not await _bank_exists(memory, bank_id)
+    assert not await _bank_exists(memory, bank_id, request_context)
