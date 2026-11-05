@@ -239,6 +239,13 @@ def join_document_parts(texts: list[str]) -> str:
     return merged if merged is not None else "\n".join(texts)
 
 
+def _same_fields_but_content(items: "list[RetainContentDict]") -> bool:
+    """Whether the items differ only in their content, i.e. one caller item plus the stored body
+    prepended as a copy of it. Attachment names describe each part's own text, so they don't count."""
+    rest = [{k: v for k, v in item.items() if k not in ("content", "attachment_filenames")} for item in items]
+    return all(r == rest[0] for r in rest[1:])
+
+
 def append_document_body(existing_text: str, incoming_text: str) -> str:
     """The body an APPEND produces: the stored document with the new tail on it.
 
@@ -1905,13 +1912,22 @@ async def retain_batch(
                 existing_content["attachment_filenames"] = prior_filenames
             contents_dicts = [existing_content, *contents_dicts]
         if len(contents_dicts) > 1:
-            # Collapse to the merged array when every part is one, so `original_text` stays valid
-            # JSON (#2409). `merge_json_array_parts` is the same function the splitter predicts an
-            # oversized append's body with, so the two cannot disagree about what this produces.
+            # Collapse the parts into ONE item. A JSON array when every part is one, so
+            # `original_text` stays valid JSON (#2409). `merge_json_array_parts` is the same function
+            # the splitter predicts an oversized append's body with, so the two cannot disagree
+            # about what this produces.
             # Runs with no stored body too: queued appends to a document that does not exist yet
             # are folded into this one call (`engine/retain/fold.py`); without merging here
             # their parts were newline-joined into `[...]\n[...]`.
-            _merged_text = merge_json_array_parts([_item.get("content", "") for _item in contents_dicts])
+            _parts = [_item.get("content", "") for _item in contents_dicts]
+            _merged_text = merge_json_array_parts(_parts)
+            if _merged_text is None and _same_fields_but_content(contents_dicts):
+                # Plain text and JSONL too (#6293): ONE item with the very body join_document_parts
+                # stores, so this append is chunked the way the next append re-chunks the stored
+                # body. As two items, the new text started its own chunks apart from the stored
+                # tail, and the next append shifted all their boundaries and re-extracted them.
+                # Items whose other fields differ (tags, metadata, timestamps) keep their own.
+                _merged_text = join_document_parts(_parts)
             if _merged_text is not None:
                 merged_item = cast(RetainContentDict, {**first, "content": _merged_text})
                 merged_filenames: dict[str, str] = {}

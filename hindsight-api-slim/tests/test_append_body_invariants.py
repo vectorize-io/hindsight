@@ -16,6 +16,7 @@ import json
 import pytest
 
 from hindsight_api.engine.retain.orchestrator import (
+    _same_fields_but_content,
     AppendWouldTruncateDocument,
     append_document_body,
     assert_append_extends_stored_body,
@@ -148,3 +149,17 @@ class TestAppendMonotonicity:
         with pytest.raises(AppendWouldTruncateDocument) as excinfo:
             assert_append_extends_stored_body("stored body", "tail", document_id="conversation:s1")
         assert "conversation:s1" in str(excinfo.value)
+
+
+class TestSameFieldsButContent:
+    """Gates merging an append into ONE item (#6293): only when nothing but the text differs."""
+
+    def test_a_stored_body_and_the_caller_item_it_copies_merge(self):
+        item = {"content": "new turn", "document_id": "d", "tags": ["a"], "attachment_filenames": {"x": "y"}}
+        stored = {**item, "content": "stored body", "attachment_filenames": {"z": "w"}}
+        assert _same_fields_but_content([stored, item])
+
+    def test_items_with_their_own_tags_or_metadata_stay_apart(self):
+        item = {"content": "one", "document_id": "d", "tags": ["a"]}
+        assert not _same_fields_but_content([item, {**item, "content": "two", "tags": ["b"]}])
+        assert not _same_fields_but_content([item, {**item, "content": "two", "metadata": {"k": "v"}}])

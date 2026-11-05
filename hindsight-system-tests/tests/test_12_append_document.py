@@ -38,6 +38,14 @@ async def _fact_texts(client, bank: str, document_id: str | None = None) -> list
 
 @pytest.fixture
 async def appended(client, llm, bank_id, settled):
+    # Declared first because rules match in order: an append chunks the stored turn and the
+    # new one as ONE text, so the tail chunk holds both turns (#6293).
+    llm.on_step("extract_facts", contains=["Berlin", "cello"]).returns(
+        extracted(
+            fact("Alice moved to Berlin", who="Alice", entities=["Alice", "Berlin"]),
+            fact("Alice plays cello", who="Alice", entities=["Alice", "cello"]),
+        )
+    )
     llm.on_step("extract_facts", contains="Berlin").returns(
         extracted(fact("Alice moved to Berlin", who="Alice", entities=["Alice", "Berlin"]))
     )
@@ -150,11 +158,10 @@ async def appended_under_a_strategy(client, llm, bank_id, settled):
     berlin = fact("Alice moved to Berlin", who="Alice", entities=["Alice", "Berlin"])
     cello = fact("Alice plays cello", who="Alice", entities=["Alice", "cello"])
 
-    # Declared first because rules match in order, and the two chunkings differ:
-    # the append extracts each turn as its own content item, while a reprocess
-    # re-reads the stored document as one. Without this rule the joined chunk
-    # would match the Berlin rule alone and the cello fact would vanish into what
-    # looks like a product bug.
+    # Declared first because rules match in order: both the append and a reprocess
+    # chunk the stored document as one text (#6293), so the joined chunk holds both
+    # turns. Without this rule it would match the Berlin rule alone and the cello
+    # fact would vanish into what looks like a product bug.
     llm.on_step("extract_facts", contains=[STRATEGY_MARKER, "Berlin", "cello"]).returns(extracted(berlin, cello))
     llm.on_step("extract_facts", contains=[STRATEGY_MARKER, "Berlin"]).returns(extracted(berlin))
     llm.on_step("extract_facts", contains=[STRATEGY_MARKER, "cello"]).returns(extracted(cello))
