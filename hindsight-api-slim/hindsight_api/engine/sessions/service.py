@@ -874,12 +874,16 @@ class SessionService:
             if str(m.get("id", "")).startswith(L.RULE_ID_PREFIX)
         ][-L.MAX_EXISTING_RULES :]
         prompt = L.WRITE_PROMPT.format(
-            note=note.text,
+            note=note.text if fb.verdict == "used" else L.REJECTED_NOTE,
             verdict=fb.verdict,
             reason=reason,
             goal=goal or "(not known)",
+            guide=L.VERDICT_GUIDE.get(fb.verdict, L.VERDICT_GUIDE["not_needed"]),
             existing=L.existing_rules_text(
-                [L.RuleSummary(name=str(m.get("name") or ""), content=str(m.get("content") or "")) for m in existing]
+                [
+                    L.RuleSummary(id=str(m["id"]), name=str(m.get("name") or ""), content=str(m.get("content") or ""))
+                    for m in existing
+                ]
             ),
         )
         try:
@@ -898,6 +902,17 @@ class SessionService:
             return L.LearnLog(note_seq=seq, outcome="skipped", score=round(score, 3), reason="writer failed")
         if not draft.create or not draft.content.strip():
             return L.LearnLog(note_seq=seq, outcome="covered", score=round(score, 3))
+        # Never a credential in a rule every later check reads (the writer is told so; this holds anyway).
+        if W._SECRET.search(draft.content):
+            return L.LearnLog(note_seq=seq, outcome="skipped", score=round(score, 3), reason="carried a credential")
+        # A rule for a note the agent rejected must not be that note again, reworded.
+        if fb.verdict != "used" and W._overlap(draft.content, note.text) >= L.RESTATES_NOTE:
+            return L.LearnLog(note_seq=seq, outcome="skipped", score=round(score, 3), reason="restated the note")
+        # A rule that replaces older ones (a new value, the opposite) removes them: two rules saying
+        # 2 and 8 for the same limit would both reach every later check.
+        replaced = [str(m["id"]) for m in existing if str(m.get("name") or "") in set(draft.replaces)]
+        for old_id in replaced:
+            await engine.delete_mental_model(bank_id, old_id, request_context=rc)
         mm_id = f"{L.RULE_ID_PREFIX}{uuid.uuid4().hex[:16]}"
         await engine.create_mental_model(
             bank_id,
@@ -909,7 +924,12 @@ class SessionService:
         )
         logger.info(f"session learn: {bank_id} rule {mm_id} '{draft.name}' from note {seq} (score {score:.2f})")
         return L.LearnLog(
-            note_seq=seq, outcome="created", score=round(score, 3), mental_model_id=mm_id, name=draft.name
+            note_seq=seq,
+            outcome="created",
+            score=round(score, 3),
+            mental_model_id=mm_id,
+            name=draft.name,
+            replaced=replaced or None,
         )
 
     async def run_check(self, task: dict[str, Any]) -> None:

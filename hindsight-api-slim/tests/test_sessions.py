@@ -1041,8 +1041,10 @@ async def test_a_lasting_verdict_becomes_a_rule_every_later_check_reads(memory, 
     assert [e.payload["outcome"] for e in learned] == ["created"]
     rule_id = learned[0].payload["mental_model_id"]
     assert rule_id.startswith("rule-")
-    # The writer saw the agent's reason, and the rule is a mental model reflect searches first.
+    # The writer saw the agent's reason but not the note it rejected (it would copy the note back),
+    # and the rule is a mental model reflect searches first.
     assert "you asked to merge them into one" in prompts[0]
+    assert "keep three panels" not in prompts[0]
     models = (await memory.list_mental_models(bank, detail="content", request_context=request_context)).items
     assert [m["id"] for m in models if m["id"] == rule_id] == [rule_id]
 
@@ -1081,3 +1083,72 @@ async def test_learning_off_weighs_nothing(memory, request_context, monkeypatch)
         "> 🧠 Hindsight thought #{n} — keep three panels; wrong: you asked to merge them into one.",
     )
     assert learned == [] and stub.questions == []
+
+
+async def test_a_rule_that_replaces_an_older_one_removes_it(memory, request_context, monkeypatch):
+    from hindsight_api.engine.response_models import LLMCallResult
+    from hindsight_api.engine.sessions.learn import RuleDraft
+
+    bank = _bank()
+    _learning_on(memory, monkeypatch)
+    monkeypatch.setattr(memory, "_reflect_decision_model", lambda: _LearnStub(0.9))
+    await memory.create_mental_model(
+        bank,
+        "Decision limit per pod",
+        "What is the decision limit?",
+        "2 decision calls per pod.",
+        mental_model_id="rule-old",
+        request_context=request_context,
+    )
+
+    async def call(messages, **kw):
+        return LLMCallResult(
+            content=RuleDraft(
+                create=True,
+                name="Decision limit: 8 API, 4 workers",
+                query="What is the decision limit?",
+                content="8 decision calls per API pod, 4 per worker pod (#1643).",
+                replaces=["Decision limit per pod"],
+            )
+        )
+
+    monkeypatch.setattr(memory._llm_config, "call", call)
+    learned = await _session_with_a_verdict(
+        memory,
+        request_context,
+        monkeypatch,
+        bank,
+        "> 🧠 Hindsight thought #{n} — 2 per pod; wrong: #1643 made it 8 for API pods and 4 for workers.",
+    )
+    assert learned[0].payload["replaced"] == ["rule-old"]
+    ids = [
+        m["id"]
+        for m in (await memory.list_mental_models(bank, detail="metadata", request_context=request_context)).items
+    ]
+    assert "rule-old" not in ids and learned[0].payload["mental_model_id"] in ids
+
+
+async def test_a_rule_carrying_a_credential_is_not_written(memory, request_context, monkeypatch):
+    from hindsight_api.engine.response_models import LLMCallResult
+    from hindsight_api.engine.sessions.learn import RuleDraft
+
+    bank = _bank()
+    _learning_on(memory, monkeypatch)
+    monkeypatch.setattr(memory, "_reflect_decision_model", lambda: _LearnStub(0.9))
+
+    async def call(messages, **kw):
+        return LLMCallResult(
+            content=RuleDraft(
+                create=True, name="Sheepit login", query="How to sign in?", content="The password is hunter2x9."
+            )
+        )
+
+    monkeypatch.setattr(memory._llm_config, "call", call)
+    learned = await _session_with_a_verdict(
+        memory,
+        request_context,
+        monkeypatch,
+        bank,
+        "> 🧠 **Thanks to Hindsight thought #{n}**, I signed in with it.",
+    )
+    assert [(e.payload["outcome"], e.payload.get("reason")) for e in learned] == [("skipped", "carried a credential")]
