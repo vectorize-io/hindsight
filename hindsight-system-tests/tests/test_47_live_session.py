@@ -77,7 +77,7 @@ async def test_a_watched_session_hears_the_decision_once_and_its_turn_is_saved(c
     assert r.notes == []
 
     # The agent tells the user it used the note, naming it by number.
-    reply = f"> 🧠 **From Hindsight memory (live session #{note.seq})** — K is binary.\nReading parse_quantity as binary."
+    reply = f"> 🧠 **Thanks to Hindsight thought #{note.number}**, I read K as binary.\nReading parse_quantity as binary."
 
     # The same request again is not judged twice; the end of the turn saves the conversation.
     await client.sessions.append_session_events(
@@ -101,7 +101,9 @@ async def test_a_watched_session_hears_the_decision_once_and_its_turn_is_saved(c
     assert [(t["role"], t["content"]) for t in lines] == [
         ("system", f"REF-ID: session:{session}"),
         ("user", REQUEST),
-        ("assistant", reply),
+        # The agent's line about the note is left out of the saved turn: saved, it came back from
+        # memory as a "past decision" of its own.
+        ("assistant", "Reading parse_quantity as binary."),
     ]
     summary = await client.sessions.get_session(decided_bank, session)
     assert summary.note_count == 1 and summary.acked_seq == note.seq

@@ -50,6 +50,8 @@ STEP_ANCHORS: dict[str, str] = {
     "reflect_round_query": "You write search queries for a memory bank.",
     # A delta knowledge-page refresh's edit: the operations that fold new facts into the page.
     "mental_model_delta": "You are integrating *new information* into an existing structured document.",
+    # A live session's rule writer: what an agent's verdict on a note teaches the bank (sessions/learn.py).
+    "session_learn": "You keep the rules of a software project",
     "connection_probe": "Say 'ok'",
 }
 

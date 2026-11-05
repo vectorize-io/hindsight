@@ -341,6 +341,40 @@ def worker_retry_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -
     server.stop()
 
 
+#: The schema of the server that learns rules from sessions. Its own, so its worker (which runs
+#: reflect with a decision model) never claims another story's queued work.
+LEARNING_SCHEMA = "systest_learning"
+
+
+@pytest.fixture(scope="session")
+def learning_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
+    """A server whose live sessions learn rules from the agent's verdicts on notes.
+
+    Learning and the session checks both run as worker tasks and both need reflect's decision
+    model, so unlike ``typesafe_server`` this one keeps its worker, in a schema of its own.
+    """
+    server = start_hindsight_server(
+        stub_url=stub_server.url,
+        log_path=tmp_path_factory.mktemp("learning-server") / "server.log",
+        extra_env={
+            "HINDSIGHT_API_DATABASE_SCHEMA": LEARNING_SCHEMA,
+            "HINDSIGHT_API_REFLECT_DECISION_MODEL_PROVIDER": "typesafe",
+            "HINDSIGHT_API_REFLECT_DECISION_MODEL_API_KEY": "stub-key",
+            "HINDSIGHT_API_REFLECT_DECISION_MODEL_BASE_URL": stub_server.url,
+            "HINDSIGHT_API_SESSION_LEARN_RULES": "true",
+        },
+    )
+    yield server
+    server.stop()
+
+
+@pytest.fixture
+async def learning_client(learning_server) -> AsyncIterator[Hindsight]:
+    client = Hindsight(base_url=learning_server.url)
+    yield client
+    await client.aclose()
+
+
 @pytest.fixture
 async def worker_retry_client(worker_retry_server) -> AsyncIterator[Hindsight]:
     client = Hindsight(base_url=worker_retry_server.url)

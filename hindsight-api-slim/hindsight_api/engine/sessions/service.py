@@ -887,8 +887,14 @@ class SessionService:
             ),
         )
         try:
+            # Strict (grammar-enforced) schema: with the schema only in the prompt, Gemma answered with
+            # a copy of the schema around the rule ({"description", "properties": {...}}) on every
+            # call, and live learning worked only through the gateway's fallback model (2026-11-05).
             result = await engine._llm_config.call(
-                messages=[{"role": "user", "content": prompt}], response_format=L.RuleDraft, scope="session_learn"
+                messages=[{"role": "user", "content": prompt}],
+                response_format=L.RuleDraft,
+                scope="session_learn",
+                strict_schema=True,
             )
             draft = (
                 result.content
@@ -1053,15 +1059,15 @@ class SessionService:
         # bank learned never reached a later session (e2e, 2026-11-05: a neutral request in the
         # rule's bank came back "nothing found"). So rules are searched, every other model hidden.
         # Mental models also search first and run in the same parallel round: no extra LLM call.
-        models = (
-            await self._engine.list_mental_models(bank_id, detail="metadata", limit=None, request_context=rc)
-        ).items
-        other_models = [str(x["id"]) for x in models if not str(x["id"]).startswith(L.RULE_ID_PREFIX)]
-        has_rules = len(other_models) < len(models)
         t0 = time.monotonic()
         error = None
         text, memory_ids, usage, calls, abstained = "", [], None, [], False
         try:
+            models = (
+                await self._engine.list_mental_models(bank_id, detail="metadata", limit=None, request_context=rc)
+            ).items
+            other_models = [str(x["id"]) for x in models if not str(x["id"]).startswith(L.RULE_ID_PREFIX)]
+            has_rules = len(other_models) < len(models)
             result = await asyncio.wait_for(
                 self._engine.reflect_async(
                     bank_id=bank_id,
