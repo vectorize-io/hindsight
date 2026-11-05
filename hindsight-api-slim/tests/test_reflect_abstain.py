@@ -67,19 +67,19 @@ def _observations() -> AsyncMock:
 
 
 async def _reflect(
-    provider, *, pick=None, prune=None, sufficient=None, search_observations=None, expand=None, **kwargs
+    provider, *, pick=None, prune=None, sufficient=None, search_observations=None, expand=None, pages=None, **kwargs
 ):
     return await run_reflect_agent(
         llm_config=provider,
         bank_id="b",
         query="Does my change go against a recorded decision?",
         bank_profile={"name": "T", "mission": ""},
-        search_mental_models_fn=AsyncMock(return_value={"mental_models": []}),
+        search_mental_models_fn=AsyncMock(return_value={"mental_models": pages or []}),
         read_mental_models_fn=AsyncMock(return_value={"mental_models": []}),
         search_observations_fn=search_observations or _observations(),
         recall_fn=AsyncMock(return_value={"memories": []}),
         expand_fn=expand or AsyncMock(return_value={"memories": []}),
-        has_mental_models=False,
+        has_mental_models=bool(pages),
         include_observations=True,
         include_recall=False,
         budget="low",
@@ -135,6 +135,29 @@ async def test_the_answer_reads_only_what_the_decision_model_picked():
     assert [c.scope for c in result.llm_trace] == ["round_query", "decision_pick", "abstain_answer"]
     (pick_call,) = [c for c in result.llm_trace if c.scope == "decision_pick"]
     assert pick_call.detail == "none=0.20, kept 1 of 2 offered: unsure: the reflect LLM judges"
+
+
+@pytest.mark.asyncio
+async def test_a_mental_model_is_picked_like_any_memory():
+    """A bank's mental models (a session's learned rules) compete in the pick and are cited when
+    picked; they no longer send the round down the pages-first path, which skipped the pick."""
+    provider = _ScriptedProvider([], answer="The shell has one System panel with tabs.")
+    rule = {
+        "id": "rule-1",
+        "name": "Shell: one System panel",
+        "content": "Files, Knowledge and Settings are tabs of one System panel.",
+        "is_stale": False,
+        "relevance": 0.9,
+    }
+    pick = AsyncMock(return_value=EvidencePick(none=0.2, candidates=[0.9, 0.02, 0.01]))
+
+    result = await _reflect(provider, pick=pick, pages=[rule])
+
+    offered = pick.await_args.args[2]
+    assert any("one System panel" in t for t in offered), "the rule is offered to the pick"
+    assert result.used_mental_model_ids == ["rule-1"] and result.used_observation_ids == []
+    (prompt,) = provider.answer_prompts
+    assert "one System panel" in prompt and "GitHub Actions" not in prompt
 
 
 @pytest.mark.asyncio

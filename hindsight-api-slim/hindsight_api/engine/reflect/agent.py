@@ -1014,11 +1014,15 @@ async def _run_reflect_agent_inner(
         memories: list[str] = []
         used_observation_ids: list[str] = []
         used_memory_ids: list[str] = []
+        used_mental_model_ids: list[str] = []
         for output in picked:
             if not isinstance(output, tuple) or not isinstance(output[0], dict) or "error" in output[0]:
                 continue
             data = output[0]
             facts = data.get("source_facts") or {}
+            for item in data.get("mental_models") or []:
+                used_mental_model_ids.append(str(item["id"]))
+                memories.append(f"- {_page_line(item)}")
             for item in data.get("observations") or []:
                 used_observation_ids.append(str(item["id"]))
                 memories.append(f"- {_evidence_line(item)}")
@@ -1090,6 +1094,7 @@ async def _run_reflect_agent_inner(
             usage=_get_usage(),
             used_memory_ids=used_memory_ids,
             used_observation_ids=used_observation_ids,
+            used_mental_model_ids=used_mental_model_ids,
             directives_applied=directives_applied,
         )
 
@@ -1884,6 +1889,11 @@ async def _run_reflect_agent_inner(
                 and iteration == 0
                 and (budget or "low").lower() != "high"
                 and evidence_is_sufficient_fn is not None
+                # An abstain reflect picks its evidence instead (below), pages among it. On this path
+                # it was judged "sufficient or not" as a whole and abstained on a "no", skipping the
+                # pick and its threshold: a bank with one mental model changed how every session
+                # check in it decided (session rules, 2026-11-05).
+                and not (abstain and pick_evidence_fn is not None)
                 and (pages := _fresh_usable_pages(other_tools, tool_results)) is not None
             ):
                 # Raw facts next to a page invite the answer to mix in what the page already
@@ -2106,6 +2116,11 @@ def _hide_lower_layers(tool_calls: list["LLMToolCall"], tool_results: list[Any])
     ]
 
 
+def _page_line(item: dict[str, Any]) -> str:
+    """A mental model as one evidence candidate: its name, then its text (or the snippet of it)."""
+    return f"{item.get('name', '')}: {item.get('content') or item.get('snippet') or ''}"
+
+
 def _evidence_line(item: dict[str, Any]) -> str:
     """One fact or observation as the decision model reads it: its date, then its text."""
     when = item.get("occurred_start") or item.get("mentioned_at")
@@ -2143,6 +2158,9 @@ def _evidence_pool(tool_results: list[Any]) -> _EvidencePool:
             for item in data.get(key) or []:
                 if isinstance(item, dict) and "id" in item:
                     add(i, key, str(item["id"]), _evidence_line(item))
+        for item in data.get("mental_models") or []:
+            if isinstance(item, dict) and "id" in item:
+                add(i, "mental_models", str(item["id"]), _page_line(item))
         for chunk_id, chunk in (data.get("chunks") or {}).items():
             add(i, "chunks", str(chunk_id), str(chunk.get("chunk_text", "")) if isinstance(chunk, dict) else str(chunk))
     return pool
@@ -2156,7 +2174,7 @@ def _keep_slots(tool_results: list[Any], kept: set[tuple[int, str, str]]) -> lis
             pruned.append(output)
             continue
         data = dict(output[0])
-        for key in ("observations", "memories"):
+        for key in ("observations", "memories", "mental_models"):
             if key in data:
                 data[key] = [item for item in data[key] if (i, key, str(item.get("id"))) in kept]
         if "chunks" in data:
