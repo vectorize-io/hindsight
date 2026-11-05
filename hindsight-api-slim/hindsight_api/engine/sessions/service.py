@@ -1047,6 +1047,17 @@ class SessionService:
 
         context = W.situation(goal, m, sent, set_aside, request_file, earlier_goals)
         queries = W.search_queries(m)
+        # Checks read observations only: a bank's other mental models are long synthesized pages,
+        # written for people, that the check never needed. Learned rules are the exception: they
+        # were written for this check (see learn.py), and with mental models excluded a rule the
+        # bank learned never reached a later session (e2e, 2026-11-05: a neutral request in the
+        # rule's bank came back "nothing found"). So rules are searched, every other model hidden.
+        # Mental models also search first and run in the same parallel round: no extra LLM call.
+        models = (
+            await self._engine.list_mental_models(bank_id, detail="metadata", limit=None, request_context=rc)
+        ).items
+        other_models = [str(x["id"]) for x in models if not str(x["id"]).startswith(L.RULE_ID_PREFIX)]
+        has_rules = len(other_models) < len(models)
         t0 = time.monotonic()
         error = None
         text, memory_ids, usage, calls, abstained = "", [], None, [], False
@@ -1059,7 +1070,8 @@ class SessionService:
                     budget=Budget.LOW,
                     max_tokens=REFLECT_MAX_TOKENS,
                     fact_types=["observation"],
-                    exclude_mental_models=True,
+                    exclude_mental_models=not has_rules,
+                    exclude_mental_model_ids=other_models if has_rules else None,
                     abstain=True,
                     search_queries=queries,
                     abstain_at=W.HEADSUP_ABSTAIN_AT if m.trigger == "task" else None,
@@ -1072,8 +1084,9 @@ class SessionService:
             memory_ids = [
                 str(f.id)
                 for kind, facts in result.based_on.items()
-                if kind not in ("directives", "mental-models")
+                if kind != "directives"
                 for f in facts
+                if kind != "mental-models" or str(f.id).startswith(L.RULE_ID_PREFIX)
             ]
             usage = result.usage.model_dump() if result.usage else None
             calls = [c.model_dump() for c in result.llm_trace]
@@ -1085,7 +1098,10 @@ class SessionService:
             error = str(e)[:500]
         ms = int((time.monotonic() - t0) * 1000)
         # Looked up before taking the lock, and only when there is a note to cite: a few reads.
-        source = await self._source_of(bank_id, memory_ids, text, rc) if text and not error else None
+        # Learned rules stay in memory_ids for the log (they measure what rules do), but have no
+        # memory unit or document behind them: the source and own-session lookups read the facts.
+        fact_ids = [i for i in memory_ids if not i.startswith(L.RULE_ID_PREFIX)]
+        source = await self._source_of(bank_id, fact_ids, text, rc) if text and not error else None
         # A note built only from this session's own saved turns tells the agent what is already in its
         # context: in beta it came back as a "past decision" (the agent's own earlier change, then the
         # user's new request) turn after turn, each time under a new memory id, and the agent dismissed
@@ -1097,7 +1113,7 @@ class SessionService:
                 # Only a source that quotes the note counts: one picked without a quote proves nothing.
                 bank_id,
                 session_id,
-                memory_ids,
+                fact_ids,
                 rc,
                 source.document_id if source and source.quote else None,
             )

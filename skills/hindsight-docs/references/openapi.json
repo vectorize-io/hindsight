@@ -4164,10 +4164,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Case-insensitive match on the session id",
+              "description": "Case-insensitive match on the session id; a note number (\"#123\" or \"123\") also finds the session that got that note",
               "title": "Q"
             },
-            "description": "Case-insensitive match on the session id"
+            "description": "Case-insensitive match on the session id; a note number (\"#123\" or \"123\") also finds the session that got that note"
           },
           {
             "name": "limit",
@@ -20072,6 +20072,11 @@
             "title": "Seq",
             "description": "Its position in the log: acknowledge it by sending it back as `ack`."
           },
+          "number": {
+            "type": "integer",
+            "title": "Number",
+            "description": "Its number in the bank: what the agent is shown and names in its reply, and what finds the session again. Notes written before numbering have their seq."
+          },
           "text": {
             "type": "string",
             "title": "Text"
@@ -20090,6 +20095,7 @@
         "type": "object",
         "required": [
           "seq",
+          "number",
           "text"
         ],
         "title": "SessionNote",

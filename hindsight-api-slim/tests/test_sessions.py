@@ -1047,6 +1047,35 @@ async def test_a_lasting_verdict_becomes_a_rule_every_later_check_reads(memory, 
     assert "keep three panels" not in prompts[0]
     models = (await memory.list_mental_models(bank, detail="content", request_context=request_context)).items
     assert [m["id"] for m in models if m["id"] == rule_id] == [rule_id]
+    # A later session's check searches the rule, and only the rule: the bank's other mental models
+    # (long pages written for people) stay out of checks. Before, checks excluded every mental
+    # model, and a learned rule never reached a later session.
+    await memory.create_mental_model(
+        bank, "Shell overview", "What is the shell?", "A page.", request_context=request_context
+    )
+    other = [
+        m["id"]
+        for m in (await memory.list_mental_models(bank, detail="metadata", request_context=request_context)).items
+        if m["id"] != rule_id
+    ]
+    calls: list[dict] = []
+    monkeypatch.setattr(memory, "reflect_async", _reflect_stub([], calls))
+    ask = {"id": "u", "role": "user", "text": "Add a Logs page to the shell in shell.tsx"}
+    await memory.sessions.append(bank, "s2", _req(ask, live=True, retain="off"), request_context=request_context)
+    assert calls and calls[0]["exclude_mental_models"] is False
+    assert calls[0]["exclude_mental_model_ids"] == other
+
+
+async def test_a_bank_without_rules_keeps_mental_models_out_of_checks(memory, request_context, monkeypatch):
+    bank = _bank()
+    await memory.create_mental_model(
+        bank, "Shell overview", "What is the shell?", "A page.", request_context=request_context
+    )
+    calls: list[dict] = []
+    monkeypatch.setattr(memory, "reflect_async", _reflect_stub([], calls))
+    ask = {"id": "u", "role": "user", "text": "Add a Logs page to the shell in shell.tsx"}
+    await memory.sessions.append(bank, "s1", _req(ask, live=True, retain="off"), request_context=request_context)
+    assert calls and calls[0]["exclude_mental_models"] is True
 
 
 async def test_a_verdict_that_settles_nothing_writes_no_rule(memory, request_context, monkeypatch):
