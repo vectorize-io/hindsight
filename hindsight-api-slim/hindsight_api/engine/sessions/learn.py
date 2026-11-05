@@ -25,6 +25,12 @@ LEARN_AT = 0.15
 RULE_ID_PREFIX = "rule-"
 # A rule for a rejected note that shares this much of the note's words restates the note.
 RESTATES_NOTE = 0.6
+# A rule that shares this much of its words with the session's instructions file (a scheduled job's
+# JOB.md) restates that file. Replayed over real verdicts, disk-guard's two rules restating JOB.md
+# ("skip scanning ~/.cache/uv", "Hugging Face models are deletable") scored 0.78 and 0.73, and would
+# have been picked on 47 of 49 later runs, each run reading the same rule in JOB.md anyway; its one
+# live rule with a fact JOB.md lacks (pg0 does not know hindsight-system-evals folders) scored 0.52.
+IN_REQUEST_FILE = 0.65
 # How many of the bank's learned rules the writer is shown to avoid writing one twice.
 MAX_EXISTING_RULES = 30
 MAX_RULE_CHARS = 1200

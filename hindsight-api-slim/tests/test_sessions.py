@@ -1078,6 +1078,38 @@ async def test_a_bank_without_rules_keeps_mental_models_out_of_checks(memory, re
     assert calls and calls[0]["exclude_mental_models"] is True
 
 
+async def test_a_rule_the_jobs_own_file_states_is_not_learned(memory, request_context, monkeypatch):
+    """A scheduled job reads its JOB.md every run: a rule restating it would come back to every run."""
+    from hindsight_api.engine.response_models import LLMCallResult
+    from hindsight_api.engine.sessions.learn import RuleDraft
+    from hindsight_api.engine.sessions.models import NoteFeedback, NoteLog
+
+    bank = _bank()
+    await memory.ensure_bank_profile(bank, request_context=request_context)
+    monkeypatch.setattr(memory, "_reflect_decision_model", lambda: _LearnStub(0.9))
+    rule = "Skip scanning ~/.cache/uv in disk-guard and use the last known size, because its scan is too slow."
+
+    async def call(messages, **kw):
+        return LLMCallResult(
+            content=RuleDraft(create=True, name="disk-guard: skip ~/.cache/uv", query="q", content=rule)
+        )
+
+    monkeypatch.setattr(memory._llm_config, "call", call)
+    note = NoteLog(
+        text="You are scanning ~/.cache/uv.",
+        trigger="command",
+        check_seq=1,
+        memory_ids=[],
+        feedback=NoteFeedback(verdict="used", reason="JOB.md says to skip ~/.cache/uv, its scan is too slow"),
+    )
+    job = "JOB.md:\n51. Skip ~/.cache/uv (use the last known size): its scan is too slow.\n52. Never touch ~/dev."
+    log = await memory.sessions._learn_one(bank, 5, note, "Run disk-guard", job, request_context)
+    assert (log.outcome, log.reason) == ("skipped", "the request file states it")
+    # Without the job's file the same rule is learned.
+    log = await memory.sessions._learn_one(bank, 5, note, "Run disk-guard", "", request_context)
+    assert log.outcome == "created"
+
+
 async def test_a_verdict_that_settles_nothing_writes_no_rule(memory, request_context, monkeypatch):
     bank = _bank()
     _learning_on(memory, monkeypatch)

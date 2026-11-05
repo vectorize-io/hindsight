@@ -830,7 +830,9 @@ class SessionService:
                 }
         cfg = await engine._config_resolver.get_bank_config(bank_id, rc)
         logs = [
-            await self._learn_one(bank_id, seq, note, state.goal, rc) if cfg.get("session_learn_rules") else None
+            await self._learn_one(bank_id, seq, note, state.goal, state.request_file, rc)
+            if cfg.get("session_learn_rules")
+            else None
             for seq, note in sorted(notes.items())
         ]
         logs = [log for log in logs if log is not None]
@@ -847,7 +849,7 @@ class SessionService:
                         await self._log(conn, bank_id, session_id, "learn", log.model_dump(exclude_none=True))
 
     async def _learn_one(
-        self, bank_id: str, seq: int, note: NoteLog, goal: str, rc: RequestContext
+        self, bank_id: str, seq: int, note: NoteLog, goal: str, request_file: str, rc: RequestContext
     ) -> L.LearnLog | None:
         """One note's verdict: is it a lasting rule, and if so the mental model that keeps it."""
         fb = note.feedback
@@ -914,6 +916,12 @@ class SessionService:
         # A rule for a note the agent rejected must not be that note again, reworded.
         if fb.verdict != "used" and W._overlap(draft.content, note.text) >= L.RESTATES_NOTE:
             return L.LearnLog(note_seq=seq, outcome="skipped", score=round(score, 3), reason="restated the note")
+        # A rule the session's own instructions file already states would come back to every run of
+        # that job, telling it what it has just read (see learn.IN_REQUEST_FILE).
+        if request_file and W._overlap(draft.content, request_file) >= L.IN_REQUEST_FILE:
+            return L.LearnLog(
+                note_seq=seq, outcome="skipped", score=round(score, 3), reason="the request file states it"
+            )
         # A rule that replaces older ones (a new value, the opposite) removes them: two rules saying
         # 2 and 8 for the same limit would both reach every later check.
         replaced = [str(m["id"]) for m in existing if str(m.get("name") or "") in set(draft.replaces)]
