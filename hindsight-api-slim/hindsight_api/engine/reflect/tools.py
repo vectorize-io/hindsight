@@ -31,10 +31,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Snippet length for a mental-model search hit, matching the knowledge-page search
-#: API's own ``LEFT(content, 280)`` so both surfaces show a page the same way.
-_SNIPPET_CHARS = 280
-
 #: Default token budget for the pages ``search_mental_models`` returns whole. Pages are
 #: packed in rank order until it is spent; a page that does not fit comes back as a
 #: snippet. One page whole under a fixed 4,000-token limit (#4716) left a bank whose
@@ -305,7 +301,7 @@ async def tool_search_mental_models(
                     # empty-on-purpose rather than as a blank match — the same
                     # wording the knowledge-page search gives for the same state.
                     else {
-                        "snippet": _knowledge_snippet(content)[:_SNIPPET_CHARS].strip(),
+                        "snippet": _knowledge_snippet(content),
                         "content_chars": len(content),
                     }
                 ),

@@ -570,7 +570,7 @@ class TestOracleQueryRewriter:
         assert ":2" in query2
 
     def test_left_becomes_dbms_lob_substr(self):
-        # LEFT() does not exist in Oracle (ORA-00904); knowledge-page snippets use it.
+        # LEFT() does not exist in Oracle (ORA-00904); the rewrite keeps PG-style SQL portable.
         from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
 
         query, _, _ = _rewrite_pg_to_oracle("SELECT LEFT(mm.content, 280) AS snippet FROM t LEFT JOIN u ON 1=1")
