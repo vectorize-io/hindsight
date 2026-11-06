@@ -493,13 +493,14 @@ async def get_entity_detail(
     """
     if tag_filter_active(tags, tags_match, tag_groups):
         built = build_tag_filter_clause(tags, tags_match, tag_groups, param_offset=2)
+        entity_id_param = f"${len(built.params) + 2}"
         # Inner join on the stats: no matching memory, no row.
         entity_row = await conn.fetchrow(
             f"""
             SELECT e.id, e.canonical_name, s.mention_count, s.first_seen, s.last_seen, e.metadata
             FROM {fq_table("entities")} e
-            JOIN ({visible_entity_stats_sql(fq_table, _ops_for(conn), built.sql)}) s ON s.entity_id = e.id
-            WHERE e.bank_id = $1 AND e.id = ${len(built.params) + 2}
+            JOIN ({visible_entity_stats_sql(fq_table, _ops_for(conn), built.sql, entity_id_param)}) s ON s.entity_id = e.id
+            WHERE e.bank_id = $1 AND e.id = {entity_id_param}
             """,
             bank_id,
             *built.params,
