@@ -300,6 +300,7 @@ async def test_onnx_embeddings_downloads_external_data_sidecar_when_needed():
 
 def test_create_embeddings_from_env_supports_onnx_provider():
     mock_config = MagicMock()
+    mock_config.query_embeddings = mock_config.passage_embeddings = None  # no split
     mock_config.embeddings_provider = "onnx"
     mock_config.embeddings_onnx_model_id = "intfloat/multilingual-e5-small"
     mock_config.embeddings_onnx_model_path = "/models/e5/onnx/model.onnx"

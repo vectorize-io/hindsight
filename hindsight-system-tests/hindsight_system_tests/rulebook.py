@@ -460,12 +460,23 @@ class LLMStub:
         self._install_builtins()
 
 
+@dataclass(frozen=True)
+class EmbeddingCall:
+    model: str
+    inputs: list[str]
+
+
 class EmbeddingStub:
     """Deterministic embeddings — see ``lexical.py`` for why word overlap suffices."""
 
     #: Answer every call with this provider error instead — a 429 or a 5xx — for the
     #: stories about what the server leaves behind when its embeddings backend is down.
     fail_with_status: int | None = None
+
+    def __init__(self) -> None:
+        #: Every embeddings request, in arrival order: which model was asked for which
+        #: texts. Lets a story check which embedder a server sent a text to.
+        self.calls: list[EmbeddingCall] = []
 
     def embed(self, text: str, dimension: int) -> list[float]:
         from .lexical import lexical_embedding
@@ -592,6 +603,7 @@ class Stubs:
         go back to its default or it leaks into whatever runs next."""
         self.llm.reset()
         self.embeddings.fail_with_status = None
+        self.embeddings.calls.clear()
         self.rerank.cut_level = RerankStub.cut_level
         self.rerank.verdicts = {}
         self.rerank.states = []

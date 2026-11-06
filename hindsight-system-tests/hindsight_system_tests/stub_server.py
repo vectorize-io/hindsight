@@ -33,7 +33,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .lexical import EMBEDDING_DIMENSION
-from .rulebook import ChatRequest, ReceivedWebhook, Stubs, TokenExchange
+from .rulebook import ChatRequest, EmbeddingCall, ReceivedWebhook, Stubs, TokenExchange
 from .validation import RequestRejected, validate_chat, validate_embeddings, validate_rerank, validate_systemone
 
 logger = logging.getLogger(__name__)
@@ -222,6 +222,7 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
 
         raw_input = body["input"]
         inputs = [raw_input] if isinstance(raw_input, str) else raw_input
+        stubs.embeddings.calls.append(EmbeddingCall(model=body["model"], inputs=list(inputs)))
 
         # Any width a deployment asks for: the re-embed story moves a schema to a second one.
         dimensions = body.get("dimensions", EMBEDDING_DIMENSION)

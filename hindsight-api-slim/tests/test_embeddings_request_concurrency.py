@@ -413,7 +413,8 @@ def test_every_remote_provider_batches_through_the_shared_fan_out() -> None:
     for node in tree.body:
         if not isinstance(node, ast.ClassDef) or not node.name.endswith("Embeddings"):
             continue
-        if node.name in _IN_PROCESS_BACKENDS or node.name == "Embeddings":
+        # SplitEmbeddings is a router: each side it delegates to is checked here on its own.
+        if node.name in _IN_PROCESS_BACKENDS or node.name in ("Embeddings", "SplitEmbeddings"):
             continue
         # A provider that subclasses another provider (CodexOAuthEmbeddings only refreshes
         # an OAuth token and delegates) inherits the batching from its base.
@@ -433,7 +434,7 @@ def test_the_factory_gives_every_remote_provider_its_concurrency() -> None:
     """A provider constructed outside _with_request_concurrency silently stays serial."""
     tree = _embeddings_module_ast()
     factory = next(
-        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "create_embeddings_from_env"
+        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_create_embeddings"
     )
     unwrapped: list[str] = []
     for node in ast.walk(factory):

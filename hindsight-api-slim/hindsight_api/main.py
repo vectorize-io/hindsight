@@ -481,7 +481,12 @@ def main():
             database_url=config.database_url,
             llm_provider=config.llm_provider,
             llm_model=config.llm_model,
-            embeddings_provider=config.embeddings_provider,
+            embeddings_provider=(
+                f"{(config.query_embeddings or config).embeddings_provider} (queries), "
+                f"{(config.passage_embeddings or config).embeddings_provider} (passages)"
+                if config.query_embeddings or config.passage_embeddings
+                else config.embeddings_provider
+            ),
             # Recall ranks with the decision model instead when one is set up for it.
             reranker_provider=(
                 "decision model" if config.decision_model_config("recall") else config.reranker_provider

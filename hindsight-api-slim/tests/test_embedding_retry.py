@@ -444,6 +444,8 @@ class TestEveryRemoteProviderRetries:
     _EXEMPT = {
         # In-process: no round trip to fail transiently.
         "LocalSTEmbeddings": "in-process",
+        # A router: each side it delegates to is checked here on its own.
+        "SplitEmbeddings": "delegates to its two sides",
         "OnnxEmbeddings": "in-process",
         # Their own retry loop, including TEI's 429-as-backpressure handling.
         "RemoteTEIEmbeddings": "own _request_with_retry (see tei_retry.py)",

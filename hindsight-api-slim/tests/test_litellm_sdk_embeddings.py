@@ -594,6 +594,7 @@ class TestLiteLLMSDKEmbeddingsFactory:
         """Test creating embeddings from environment variables."""
         # Mock get_config() to return configured HindsightConfig
         mock_config = MagicMock()
+        mock_config.query_embeddings = mock_config.passage_embeddings = None  # no split
         mock_config.embeddings_provider = "litellm-sdk"
         mock_config.embeddings_litellm_sdk_api_key = "test_key"
         mock_config.embeddings_litellm_sdk_model = "cohere/embed-english-v3.0"
@@ -609,6 +610,7 @@ class TestLiteLLMSDKEmbeddingsFactory:
     def test_create_from_env_without_api_key(self, monkeypatch):
         """Test that litellm-sdk works without an API key (e.g. AWS Bedrock with IAM)."""
         mock_config = MagicMock()
+        mock_config.query_embeddings = mock_config.passage_embeddings = None  # no split
         mock_config.embeddings_provider = "litellm-sdk"
         mock_config.embeddings_litellm_sdk_api_key = None
         mock_config.embeddings_litellm_sdk_model = "bedrock/amazon.titan-embed-text-v2:0"
@@ -625,6 +627,7 @@ class TestLiteLLMSDKEmbeddingsFactory:
         """A configured Bedrock invoke target is threaded through to the client."""
         arn = "arn:aws:bedrock:eu-west-1:123456789012:application-inference-profile/abc123"
         mock_config = MagicMock()
+        mock_config.query_embeddings = mock_config.passage_embeddings = None  # no split
         mock_config.embeddings_provider = "litellm-sdk"
         mock_config.embeddings_litellm_sdk_api_key = None
         mock_config.embeddings_litellm_sdk_model = "bedrock/amazon.titan-embed-text-v2:0"
@@ -642,6 +645,7 @@ class TestLiteLLMSDKEmbeddingsFactory:
         """Test creating embeddings with custom API base."""
         # Mock get_config() with custom API base
         mock_config = MagicMock()
+        mock_config.query_embeddings = mock_config.passage_embeddings = None  # no split
         mock_config.embeddings_provider = "litellm-sdk"
         mock_config.embeddings_litellm_sdk_api_key = "test_key"
         mock_config.embeddings_litellm_sdk_model = "cohere/embed-english-v3.0"
@@ -656,6 +660,7 @@ class TestLiteLLMSDKEmbeddingsFactory:
     def test_create_from_env_with_output_dimensions(self, monkeypatch):
         """Test creating embeddings with configured output dimensions."""
         mock_config = MagicMock()
+        mock_config.query_embeddings = mock_config.passage_embeddings = None  # no split
         mock_config.embeddings_provider = "litellm-sdk"
         mock_config.embeddings_litellm_sdk_api_key = "test_key"
         mock_config.embeddings_litellm_sdk_model = "gemini/gemini-embedding-2"

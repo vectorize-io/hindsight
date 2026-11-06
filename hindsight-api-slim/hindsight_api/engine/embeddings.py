@@ -2406,6 +2406,98 @@ class GeminiEmbeddings(Embeddings):
         return [emb.values for emb in embeddings]
 
 
+class SplitEmbeddings(Embeddings):
+    """Two backends behind one: recall queries embed with one, everything stored with the other.
+
+    Built only when a QUERY or PASSAGE embeddings side is configured (see
+    ``EMBEDDINGS_SIDE_QUERY`` in config). Two use cases drove it:
+
+    - #6078 — same model on two endpoints, so a long retain or import no longer queues
+      recall queries behind it. Each backend keeps its own request semaphore
+      (``_get_request_slots`` is per instance), which is what un-queues them.
+    - Distilled query encoders (Qdrant's Constella: documents with Stella, queries with
+      the 12x smaller Constella Nano) that were trained to land in the document model's
+      vector space.
+
+    Every stored vector (facts, observations, mental models) comes from the passage
+    side, so the schema dimension, batching
+    hints and ``encode()`` all follow it. Only ``encode_query`` reaches the query side.
+    """
+
+    def __init__(
+        self,
+        query: Embeddings,
+        passage: Embeddings,
+        *,
+        query_max_input_tokens: int | None,
+        passage_max_input_tokens: int | None,
+    ) -> None:
+        self.query = query
+        self.passage = passage
+        # Each side's HINDSIGHT_API_<SIDE>_EMBEDDINGS_MAX_INPUT_TOKENS (None = no cap): a small
+        # query model often takes far fewer tokens than the passage model.
+        self.query_max_input_tokens = query_max_input_tokens
+        self.passage_max_input_tokens = passage_max_input_tokens
+        # Read by the coalescer and the token cap; describe the side they size.
+        self.batch_size = getattr(passage, "batch_size", 0)
+        self.max_concurrent_requests = passage.max_concurrent_requests
+        self.query_prefix = query.query_prefix
+        self.passage_prefix = passage.passage_prefix
+        self.tokenizer_encoding = passage.tokenizer_encoding
+
+    @property
+    def provider_name(self) -> str:
+        return f"{self.query.provider_name}+{self.passage.provider_name}"
+
+    @property
+    def dimension(self) -> int:
+        return self.passage.dimension
+
+    def max_input_tokens_for(self, input_type: Literal["query", "document"]) -> int | None:
+        """The input-token cap of the side that embeds this input type."""
+        return self.query_max_input_tokens if input_type == "query" else self.passage_max_input_tokens
+
+    def for_input_type(self, input_type: Literal["query", "document"]) -> Embeddings:
+        """The backend that embeds this input type (see ``generate_embeddings_batch``).
+
+        ``"document"`` is the existing input-type name for stored text; it maps to the passage side.
+        """
+        return self.query if input_type == "query" else self.passage
+
+    async def initialize(self) -> None:
+        # In-process backends block while loading; run each on a worker thread so loading
+        # a local model on one side does not stall the event loop (memory_engine does the
+        # same for a plain `local` backend, but it cannot see inside this wrapper).
+        for backend in (self.query, self.passage):
+            if backend.provider_name == "local":
+                await asyncio.to_thread(lambda b=backend: asyncio.run(b.initialize()))
+            else:
+                await backend.initialize()
+        # Only the dimension can be checked: two models of the same size can still map
+        # text into unrelated spaces, and that shows up as poor recall, not as an error.
+        if self.query.dimension != self.passage.dimension:
+            raise ValueError(
+                f"Query embeddings ({self.query.provider_name}) produce {self.query.dimension}-dim vectors "
+                f"but passage embeddings ({self.passage.provider_name}) produce {self.passage.dimension}; "
+                "both sides must embed into the same vector space"
+            )
+        logger.info(
+            "Embeddings: split — queries via %s, passages via %s (%d dims); the two models must share a vector space",
+            self.query.provider_name,
+            self.passage.provider_name,
+            self.passage.dimension,
+        )
+
+    async def encode(self, texts: list[str]) -> list[list[float]]:
+        return await self.passage.encode(texts)
+
+    async def encode_query(self, texts: list[str]) -> list[list[float]]:
+        return await self.query.encode_query(texts)
+
+    async def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        return await self.passage.encode_documents(texts)
+
+
 def _retry_policy_from_config(config: "ConfigLike") -> RetryPolicy:
     """Build the embedding retry policy from resolved configuration."""
     return RetryPolicy(
@@ -2454,6 +2546,10 @@ def is_embedding_model_mismatch(exc: BaseException) -> bool:
 
 def embedding_model_id(embeddings: Embeddings) -> str:
     """A stable name for the model ``embeddings`` writes with: provider, model and dimension."""
+    # A split deployment writes every stored vector with its passage side; the query
+    # side only reads, so it is not part of what a re-embed's write guard compares.
+    if isinstance(embeddings, SplitEmbeddings):
+        embeddings = embeddings.passage
     model = getattr(embeddings, "model_name", None) or getattr(embeddings, "model", None) or ""
     return f"{embeddings.provider_name}:{model}:{embeddings.dimension}"
 
@@ -2463,6 +2559,8 @@ def create_embeddings_from_env() -> Embeddings:
     Create an Embeddings instance based on configuration.
 
     Reads configuration via get_config() to ensure consistency across the codebase.
+    When a QUERY or PASSAGE embeddings side is configured, returns a ``SplitEmbeddings``
+    whose unset side uses the main embeddings config.
 
     Returns:
         Configured Embeddings instance
@@ -2470,6 +2568,20 @@ def create_embeddings_from_env() -> Embeddings:
     from ..config import get_config
 
     config = get_config()
+    if config.query_embeddings is None and config.passage_embeddings is None:
+        return _create_embeddings(config)
+    query = config.query_embeddings or config
+    passage = config.passage_embeddings or config
+    return SplitEmbeddings(
+        query=_create_embeddings(query),
+        passage=_create_embeddings(passage),
+        query_max_input_tokens=query.embeddings_max_input_tokens,
+        passage_max_input_tokens=passage.embeddings_max_input_tokens,
+    )
+
+
+def _create_embeddings(config: "ConfigLike") -> Embeddings:
+    """Build one embeddings backend from the ``embeddings_*`` fields of ``config``."""
     provider = config.embeddings_provider.lower()
 
     # Asymmetric prefixes are handed only to the providers that are plain
