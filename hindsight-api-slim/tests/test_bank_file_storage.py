@@ -113,6 +113,42 @@ async def test_deleting_a_bank_deletes_everything_under_its_prefix(api_client, m
 
 
 @pytest.mark.asyncio
+async def test_whole_bank_transfer_archives_live_under_the_bank_prefix(memory, request_context, monkeypatch):
+    """The whole-bank export's archive and the import's stashed upload sit under the bank's
+    tenant prefix, so deleting the bank takes them too (#6335)."""
+    from hindsight_api.engine.db_utils import acquire_with_retry
+    from hindsight_api.engine.transfer import export_bank
+
+    bank_id = f"files-{uuid.uuid4().hex[:8]}"
+    await memory.retain_async(
+        bank_id=bank_id, content="Alice joined Acme.", document_id="doc", request_context=request_context
+    )
+    submission = await memory.submit_bank_export_async(bank_id, request_context)
+    status = await memory.get_operation_status(bank_id, submission["operation_id"], request_context=request_context)
+    export_key = status["result_metadata"]["storage_key"]
+    assert export_key.startswith(f"{bank_storage_prefix(bank_id)}exports/"), export_key
+
+    stashed: list[str] = []
+    stash = memory._stash_archive
+
+    async def record_key(archive, storage_key, bank):
+        stashed.append(storage_key)
+        await stash(archive, storage_key, bank)
+
+    monkeypatch.setattr(memory, "_stash_archive", record_key)
+    async with acquire_with_retry(await memory._get_backend()) as conn:
+        archive = await export_bank(conn, bank_id)
+    copy = f"{bank_id}-copy"
+    await memory.submit_bank_import_async(bank_id, archive, request_context, target_bank_id=copy)
+    assert [key.startswith(f"{bank_storage_prefix(bank_id)}imports/") for key in stashed] == [True], stashed
+
+    await memory.delete_bank(bank_id, request_context=request_context)
+    await memory.delete_bank(copy, request_context=request_context)
+
+    assert not await memory._file_storage.exists(export_key)
+
+
+@pytest.mark.asyncio
 async def test_a_file_under_another_tenant_is_not_downloadable_through_a_same_named_bank(api_client, memory):
     """Object stores share one bucket across tenants: authorizing the bank id alone is not enough."""
     bank_id = f"files-{uuid.uuid4().hex[:8]}"
