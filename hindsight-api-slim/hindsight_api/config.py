@@ -1946,9 +1946,9 @@ DEFAULT_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS = 0
 # (MemoryEngine.KNOWLEDGE_PAGE_DEFAULT_TRIGGER) when a page is created; a request's
 # own trigger still wins. JSON object, e.g. {"refresh_cron": "0 * * * *"}.
 DEFAULT_KNOWLEDGE_PAGE_DEFAULT_TRIGGER: dict | None = None
-# Reflect options applied whenever a reflect request -- or a mental model's trigger --
-# leaves them unset, e.g. {"reflect_search_observations_max_tokens": 3000}. Fields are those of
-# ReflectDefaultOptions; an explicit request/trigger value always wins.
+# Reflect options applied whenever a reflect request leaves them unset, e.g.
+# {"reflect_search_observations_max_tokens": 3000}. Fields are those of ReflectDefaultOptions;
+# an explicit request value always wins. Mental-model refreshes do not read it (they use their trigger).
 DEFAULT_REFLECT_DEFAULT_OPTIONS: dict | None = None
 # History (mental-model refresh snapshots and observation update snapshots) lives in
 # the dedicated mental_model_history / observation_history tables, one row per change.
