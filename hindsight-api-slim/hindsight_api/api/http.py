@@ -3099,6 +3099,7 @@ class BankStatsResponse(BaseModel):
                 "pending_consolidation": 0,
                 "failed_consolidation": 0,
                 "total_observations": 45,
+                "paused_mental_models": 0,
             }
         }
     )
@@ -3141,6 +3142,15 @@ class BankStatsResponse(BaseModel):
         description="Number of source memories (world/experience) whose consolidation permanently failed and can be retried via the consolidation recovery endpoint.",
     )
     total_observations: int = Field(default=0, description="Total number of observations")
+    paused_mental_models: int = Field(
+        default=0,
+        description=(
+            "Number of mental models whose last refresh failed, so the automatic triggers "
+            "(`refresh_after_consolidation`, `refresh_cron`, `full_refresh_cron`) skip them until an "
+            "explicit refresh succeeds. Their content stops updating, so alert on this being above 0. "
+            "Each model's `last_refresh_failed_at` says which ones, and its history says why."
+        ),
+    )
 
 
 class LlmOperationHealth(BaseModel):
@@ -5903,6 +5913,8 @@ def _register_routes(app: FastAPI):
                 pending_consolidation=stats["pending_consolidation"],
                 failed_consolidation=stats.get("failed_consolidation", 0),
                 total_observations=stats["total_observations"],
+                # .get(): a row cached by an older build has no paused count.
+                paused_mental_models=stats.get("paused_mental_models", 0),
             )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)

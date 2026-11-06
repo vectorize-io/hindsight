@@ -551,6 +551,12 @@ export type BankStatsResponse = {
    * Total number of observations
    */
   total_observations?: number;
+  /**
+   * Paused Mental Models
+   *
+   * Number of mental models whose last refresh failed, so the automatic triggers (`refresh_after_consolidation`, `refresh_cron`, `full_refresh_cron`) skip them until an explicit refresh succeeds. Their content stops updating, so alert on this being above 0. Each model's `last_refresh_failed_at` says which ones, and its history says why.
+   */
+  paused_mental_models?: number;
 };
 
 /**

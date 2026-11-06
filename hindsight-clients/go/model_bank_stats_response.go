@@ -41,6 +41,8 @@ type BankStatsResponse struct {
 	FailedConsolidation *int32 `json:"failed_consolidation,omitempty"`
 	// Total number of observations
 	TotalObservations *int32 `json:"total_observations,omitempty"`
+	// Number of mental models whose last refresh failed, so the automatic triggers (`refresh_after_consolidation`, `refresh_cron`, `full_refresh_cron`) skip them until an explicit refresh succeeds. Their content stops updating, so alert on this being above 0. Each model's `last_refresh_failed_at` says which ones, and its history says why.
+	PausedMentalModels *int32 `json:"paused_mental_models,omitempty"`
 }
 
 type _BankStatsResponse BankStatsResponse
@@ -67,6 +69,8 @@ func NewBankStatsResponse(bankId string, totalNodes int32, totalLinks int32, tot
 	this.FailedConsolidation = &failedConsolidation
 	var totalObservations int32 = 0
 	this.TotalObservations = &totalObservations
+	var pausedMentalModels int32 = 0
+	this.PausedMentalModels = &pausedMentalModels
 	return &this
 }
 
@@ -81,6 +85,8 @@ func NewBankStatsResponseWithDefaults() *BankStatsResponse {
 	this.FailedConsolidation = &failedConsolidation
 	var totalObservations int32 = 0
 	this.TotalObservations = &totalObservations
+	var pausedMentalModels int32 = 0
+	this.PausedMentalModels = &pausedMentalModels
 	return &this
 }
 
@@ -536,6 +542,38 @@ func (o *BankStatsResponse) SetTotalObservations(v int32) {
 	o.TotalObservations = &v
 }
 
+// GetPausedMentalModels returns the PausedMentalModels field value if set, zero value otherwise.
+func (o *BankStatsResponse) GetPausedMentalModels() int32 {
+	if o == nil || IsNil(o.PausedMentalModels) {
+		var ret int32
+		return ret
+	}
+	return *o.PausedMentalModels
+}
+
+// GetPausedMentalModelsOk returns a tuple with the PausedMentalModels field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BankStatsResponse) GetPausedMentalModelsOk() (*int32, bool) {
+	if o == nil || IsNil(o.PausedMentalModels) {
+		return nil, false
+	}
+	return o.PausedMentalModels, true
+}
+
+// HasPausedMentalModels returns a boolean if a field has been set.
+func (o *BankStatsResponse) HasPausedMentalModels() bool {
+	if o != nil && !IsNil(o.PausedMentalModels) {
+		return true
+	}
+
+	return false
+}
+
+// SetPausedMentalModels gets a reference to the given int32 and assigns it to the PausedMentalModels field.
+func (o *BankStatsResponse) SetPausedMentalModels(v int32) {
+	o.PausedMentalModels = &v
+}
+
 func (o BankStatsResponse) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -573,6 +611,9 @@ func (o BankStatsResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if !IsNil(o.TotalObservations) {
 		toSerialize["total_observations"] = o.TotalObservations
+	}
+	if !IsNil(o.PausedMentalModels) {
+		toSerialize["paused_mental_models"] = o.PausedMentalModels
 	}
 	return toSerialize, nil
 }
