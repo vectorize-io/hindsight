@@ -5,7 +5,9 @@ only itself, and any budget skip must be reported so a caller can tell a
 truncated map from a dangling reference.
 """
 
-from hindsight_api.engine.source_facts import select_source_facts_within_budget
+from collections.abc import Callable
+
+from hindsight_api.engine.source_facts import SourceFactSelection, select_source_facts_within_budget
 
 
 def _count_words(text: str) -> int:
@@ -19,7 +21,8 @@ def _select(
     texts: dict[str, str],
     max_total_tokens: int = -1,
     max_tokens_per_observation: int = -1,
-):
+    count_tokens: Callable[[str], int] = _count_words,
+) -> SourceFactSelection:
     ordered: list[str] = []
     seen: set[str] = set()
     for sids in by_obs.values():
@@ -33,7 +36,7 @@ def _select(
         text_by_id=texts,
         max_total_tokens=max_total_tokens,
         max_tokens_per_observation=max_tokens_per_observation,
-        count_tokens=_count_words,
+        count_tokens=count_tokens,
     )
 
 
@@ -146,40 +149,25 @@ class TestPerObservationBudget:
 class TestTokenCounting:
     """Counting is the cost here (issue #6329): each source is counted at most once."""
 
-    @staticmethod
-    def _select_counting(**kwargs) -> tuple[list[str], list[str]]:
-        counted: list[str] = []
-
-        def count(text: str) -> int:
-            counted.append(text)
-            return _count_words(text)
-
-        by_obs = kwargs["by_obs"]
-        ordered = list(dict.fromkeys(sid for sids in by_obs.values() for sid in sids))
-        selection = select_source_facts_within_budget(
-            source_ids_ordered=ordered,
-            source_fact_ids_by_obs=by_obs,
-            text_by_id=kwargs["texts"],
-            max_total_tokens=kwargs.get("max_total_tokens", -1),
-            max_tokens_per_observation=kwargs.get("max_tokens_per_observation", -1),
-            count_tokens=count,
-        )
-        return selection.ids, counted
-
     def test_shared_source_is_counted_once_but_charged_to_every_observation(self):
-        ids, counted = self._select_counting(
+        counted: list[str] = []
+        selection = _select(
             by_obs={"obs-1": ["shared"], "obs-2": ["shared", "extra"]},
             texts={"shared": "two words", "extra": "one"},
             max_tokens_per_observation=2,
+            count_tokens=lambda text: counted.append(text) or _count_words(text),
         )
         # obs-2 still pays for "shared", so "extra" does not fit its budget.
-        assert ids == ["shared"]
+        assert selection.ids == ["shared"]
         assert counted == ["two words", "one"]
 
     def test_unlimited_budget_counts_nothing(self):
-        ids, counted = self._select_counting(
+        counted: list[str] = []
+        selection = _select(
             by_obs={"obs-1": ["present", "missing"]},
             texts={"present": "a source"},
+            count_tokens=lambda text: counted.append(text) or _count_words(text),
         )
-        assert ids == ["present"]
+        assert selection.ids == ["present"]
+        assert selection.truncated is False
         assert counted == []
