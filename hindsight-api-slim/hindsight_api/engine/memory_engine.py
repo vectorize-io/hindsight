@@ -25,7 +25,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -714,6 +714,7 @@ from .mental_model_refresh import (
     RefreshOutcome,
 )
 from .multi_llm import MultiLLMProvider
+from .permit_wait import excluding_permit_wait
 from .query_analyzer import QueryAnalyzer
 from .reflect import (
     DEFAULT_MENTAL_MODELS_READ_MAX_TOKENS,
@@ -5303,6 +5304,8 @@ class MemoryEngine(MemoryEngineInterface):
         ``.backoff``): the time ran out waiting for a provider that had just failed,
         not on a prompt that can never finish. That is the temporary failure #5394
         already declines to pause on, so it is recorded without pausing (#5561).
+        The same holds while queued for an LLM permit (``.queued``): the time ran out
+        waiting for capacity other tasks held, not on this prompt (#6140).
         """
         if task_dict.get("type") == "refresh_mental_model":
             token = _current_schema.set(schema)
@@ -5313,7 +5316,7 @@ class MemoryEngine(MemoryEngineInterface):
                     outcome="refresh_failed_error",
                     failure_reason="unexpected_error",
                     error_message=error_message,
-                    pause_automatic=not stage.endswith(".backoff"),
+                    pause_automatic=not stage.endswith((".backoff", ".queued")),
                 )
             finally:
                 _current_schema.reset(token)
@@ -16349,38 +16352,40 @@ class MemoryEngine(MemoryEngineInterface):
         reflect_trace_token = set_trace_context(reflect_trace) if reflect_trace is not None else None
         try:
             try:
-                agent_result = await asyncio.wait_for(
-                    run_reflect_agent(
-                        llm_config=reflect_llm,
-                        bank_id=bank_id,
-                        query=query,
-                        bank_profile=profile,
-                        search_mental_models_fn=search_mental_models_fn,
-                        read_mental_models_fn=read_mental_models_fn,
-                        search_observations_fn=search_observations_fn,
-                        recall_fn=recall_fn,
-                        expand_fn=expand_fn,
-                        context=context,
-                        max_iterations=max_iterations,
-                        max_tokens=max_tokens,
-                        response_schema=response_schema,
-                        directives=directives,
-                        has_mental_models=has_mental_models,
-                        include_observations=include_observations,
-                        include_recall=include_recall,
-                        budget=effective_budget,
-                        max_context_tokens=max_context_tokens,
-                        llm_output_language=getattr(resolved_reflect_config, "llm_output_language", None),
-                        cancel_check=request_context.raise_if_cancelled,
-                        store_document_text=config_dict.get("store_document_text", DEFAULT_STORE_DOCUMENT_TEXT),
-                        answer_as_document=answer_as_document,
-                        tool_token_limits=tool_token_limits,
-                        evidence_is_sufficient_fn=decision_model.evidence_is_sufficient if decision_model else None,
-                        prune_evidence_fn=self._prune_reflect_evidence if decision_model else None,
-                        reflect_id=reflect_id,
-                    ),
-                    timeout=wall_timeout,
-                )
+                # A knowledge-page refresh queues its LLM calls behind every other
+                # refresh under the per-operation cap; that queue is not this reflect's
+                # work, and counting it timed out healthy refreshes (#6140).
+                async with asyncio.timeout(wall_timeout) as limit:
+                    with excluding_permit_wait(limit, wall_timeout) if is_refresh else nullcontext():
+                        agent_result = await run_reflect_agent(
+                            llm_config=reflect_llm,
+                            bank_id=bank_id,
+                            query=query,
+                            bank_profile=profile,
+                            search_mental_models_fn=search_mental_models_fn,
+                            read_mental_models_fn=read_mental_models_fn,
+                            search_observations_fn=search_observations_fn,
+                            recall_fn=recall_fn,
+                            expand_fn=expand_fn,
+                            context=context,
+                            max_iterations=max_iterations,
+                            max_tokens=max_tokens,
+                            response_schema=response_schema,
+                            directives=directives,
+                            has_mental_models=has_mental_models,
+                            include_observations=include_observations,
+                            include_recall=include_recall,
+                            budget=effective_budget,
+                            max_context_tokens=max_context_tokens,
+                            llm_output_language=getattr(resolved_reflect_config, "llm_output_language", None),
+                            cancel_check=request_context.raise_if_cancelled,
+                            store_document_text=config_dict.get("store_document_text", DEFAULT_STORE_DOCUMENT_TEXT),
+                            answer_as_document=answer_as_document,
+                            tool_token_limits=tool_token_limits,
+                            evidence_is_sufficient_fn=decision_model.evidence_is_sufficient if decision_model else None,
+                            prune_evidence_fn=self._prune_reflect_evidence if decision_model else None,
+                            reflect_id=reflect_id,
+                        )
             except (asyncio.CancelledError, OperationCancelledError):
                 # Logged here, under this reflect's id, because the HTTP layer's
                 # "[REFLECT CANCELLED] bank=..." line has no way to say which of a

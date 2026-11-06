@@ -18,6 +18,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import aiohttp
 import pytest
 from aiohttp import web
 
@@ -113,6 +114,50 @@ class TestTransientClassification:
         assert is_transient_remote_error(SimpleNamespace(code=429, response=None)) is True
         assert is_transient_remote_error(SimpleNamespace(code=503, response=None)) is True
         assert is_transient_remote_error(SimpleNamespace(code=403, response=None)) is False
+
+    @staticmethod
+    def _wrapped(inner: BaseException) -> BaseException:
+        """The chain a reflect tool failure raises: tool error from search error from ``inner``."""
+        try:
+            try:
+                raise inner
+            except BaseException as e:
+                raise RuntimeError(f"Failed to search memories: {e!r}") from e
+        except RuntimeError as e:
+            wrapper = RuntimeError("Reflect tool 'search_observations' failed")
+            wrapper.__cause__ = e
+            return wrapper
+
+    @pytest.mark.parametrize(
+        "inner",
+        [_StatusError(429), _StatusError(503), aiohttp.SocketTimeoutError("read timed out"), TimeoutError()],
+        ids=["429", "503", "socket-timeout", "timeout"],
+    )
+    def test_a_transient_error_stays_transient_under_wrappers(self, inner):
+        """#6140: a reranker 429 or socket timeout two wrappers down paused refreshes."""
+        assert is_transient_remote_error(self._wrapped(inner)) is True
+
+    @pytest.mark.parametrize("inner", [_StatusError(400), _StatusError(401), ValueError("bad")])
+    def test_a_permanent_error_stays_permanent_under_wrappers(self, inner):
+        assert is_transient_remote_error(self._wrapped(inner)) is False
+
+    def test_the_outermost_verdict_wins(self):
+        """A wrapper that carries its own status is not overruled by what it wraps."""
+        outer = _StatusError(400)
+        outer.__cause__ = TimeoutError()
+        assert is_transient_remote_error(outer) is False
+
+    def test_a_declared_permanent_failure_is_not_overruled_by_its_cause(self):
+        from hindsight_api.engine.llm_interface import ProviderAuthError, ProviderContentPolicyError
+
+        for permanent in (ProviderContentPolicyError("refused"), ProviderAuthError("bad key")):
+            permanent.__cause__ = TimeoutError()
+            assert is_transient_remote_error(permanent) is False
+
+    def test_a_cause_cycle_terminates(self):
+        a, b = RuntimeError("a"), RuntimeError("b")
+        a.__cause__, b.__cause__ = b, a
+        assert is_transient_remote_error(a) is False
 
     def test_non_status_code_attributes_are_ignored(self):
         """`code` is a common attribute name; only plausible HTTP statuses may classify."""

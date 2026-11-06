@@ -169,14 +169,17 @@ async def _acquire_permits(stack: AsyncExitStack, scope: str) -> None:
     """
     from ..worker.background import in_background_task
     from .llm_trace import record_queue_wait
+    from .permit_wait import waiting_for_permit
 
     # Calls from a background worker task yield the next free permit to any waiting
     # live request.
     background = in_background_task()
     queue_start = time.monotonic()
-    for sem in _semaphores_for_scope(scope):
-        await sem.acquire(background=background)
-        stack.callback(sem.release)
+    # Queued time is not this operation's work; time limits that opted in exclude it (#6140).
+    with waiting_for_permit():
+        for sem in _semaphores_for_scope(scope):
+            await sem.acquire(background=background)
+            stack.callback(sem.release)
     record_queue_wait(time.monotonic() - queue_start)
 
 

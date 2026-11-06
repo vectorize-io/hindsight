@@ -18,6 +18,7 @@ import signal
 import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
@@ -28,6 +29,7 @@ from ..config import (
     ENV_RETAIN_WALL_TIMEOUT,
     get_config,
 )
+from ..engine.permit_wait import excluding_permit_wait
 from ..engine.schema import fq_table_explicit as fq_table
 from ..metrics import OperationOutcome, get_metrics_collector
 from ..operation_runs import worker_task
@@ -95,6 +97,11 @@ class _WallCeiling:
     config_attr: str
     env_var: str
     extends_on_progress: bool = False
+    #: Time spent queued for a shared LLM permit does not count. A refresh is one
+    #: reflect whose calls queue behind every other refresh under a small per-op
+    #: cap; counting the queue cancelled healthy refreshes whenever a burst was
+    #: submitted together, and paused their pages (#6140). Retain stays absolute.
+    excludes_permit_wait: bool = False
 
 
 _WALL_CEILINGS: dict[str, _WallCeiling] = {
@@ -109,7 +116,9 @@ _WALL_CEILINGS: dict[str, _WallCeiling] = {
     ),
     # A refresh is one reflect plus its write, so it shares reflect's budget. Without
     # a ceiling a wedged refresh held its worker slot until restart (#4581).
-    "refresh_mental_model": _WallCeiling(config_attr="reflect_wall_timeout", env_var=ENV_REFLECT_WALL_TIMEOUT),
+    "refresh_mental_model": _WallCeiling(
+        config_attr="reflect_wall_timeout", env_var=ENV_REFLECT_WALL_TIMEOUT, excludes_permit_wait=True
+    ),
 }
 
 
@@ -1246,7 +1255,8 @@ class WorkerPoller:
 
                     progress_holder.on_progress = _extend_deadline
                 try:
-                    await self._executor(task.task_dict)
+                    with excluding_permit_wait(cm, wall_timeout) if ceiling.excludes_permit_wait else nullcontext():
+                        await self._executor(task.task_dict)
                 finally:
                     if holder is not None:
                         holder.on_progress = None

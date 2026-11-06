@@ -12,12 +12,14 @@ import json
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import aiohttp
 import pytest
 
 from hindsight_api.engine.llm_interface import ProviderContentPolicyError, ProviderRateLimitResetError
 from hindsight_api.engine.maintenance import MaintenanceLoop
 from hindsight_api.engine.memories import get_memories
 from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.reflect import ReflectToolExecutionError
 from hindsight_api.engine.response_models import MentalModelTrigger
 from tests.store_seed import store_write_facts
 
@@ -407,6 +409,16 @@ class _ProviderStatusError(Exception):
         self.status_code = status_code
 
 
+def _reflect_tool_failure(cause: BaseException) -> ReflectToolExecutionError:
+    """What a refresh raises when a reranker or embedder call inside reflect's search fails:
+    the provider error two ``raise ... from`` links down (#6140)."""
+    search_error = RuntimeError(f"Failed to search memories ({type(cause).__name__}): {cause!r}")
+    search_error.__cause__ = cause
+    tool_error = ReflectToolExecutionError(f"Reflect tool 'search_observations' failed on iteration 1: {search_error}")
+    tool_error.__cause__ = search_error
+    return tool_error
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "error",
@@ -414,8 +426,10 @@ class _ProviderStatusError(Exception):
         _ProviderStatusError(429),
         _ProviderStatusError(503),
         ProviderRateLimitResetError(retry_at=datetime.now(UTC) + timedelta(hours=1), message="session limit"),
+        _reflect_tool_failure(_ProviderStatusError(429)),
+        _reflect_tool_failure(aiohttp.SocketTimeoutError("Timeout on reading data from socket")),
     ],
-    ids=["rate-limit", "provider-down", "quota-reset"],
+    ids=["rate-limit", "provider-down", "quota-reset", "wrapped-reranker-429", "wrapped-reranker-timeout"],
 )
 async def test_a_temporary_provider_failure_does_not_pause_automatic_refresh(
     memory: MemoryEngine, request_context, monkeypatch, error
@@ -500,6 +514,23 @@ async def test_refresh_cut_off_during_a_retry_backoff_does_not_pause(
     _stall_worker(memory, monkeypatch)
     await MaintenanceLoop(memory)._run_scheduled_mm_refresh()
     assert await _count_refresh_ops(memory, bank) == 1
+
+
+@pytest.mark.asyncio
+async def test_refresh_cut_off_while_queued_for_an_llm_permit_does_not_pause(memory: MemoryEngine, request_context):
+    """#6140: the time ran out waiting for capacity other refreshes held, not on this prompt."""
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
+
+    await memory.on_task_wall_timeout(
+        {"type": "refresh_mental_model", "bank_id": bank, "mental_model_id": mm_id},
+        None,
+        "timed out",
+        "llm.deepseek.tools.queued",
+    )
+
+    assert await memory._automatic_refresh_paused(bank, mm_id) is False
 
 
 @pytest.mark.asyncio
