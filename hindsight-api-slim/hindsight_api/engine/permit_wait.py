@@ -17,13 +17,10 @@ caught. Overlapping waits of parallel calls hold the clock once.
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-
-logger = logging.getLogger(__name__)
 
 
 class _HeldLimit:
