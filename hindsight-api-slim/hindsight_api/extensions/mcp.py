@@ -31,7 +31,9 @@ class MCPExtension(Extension):
     Example:
         class CloudMCPExtension(MCPExtension):
             def register_tools(self, mcp: "FastMCP", memory: "MemoryEngine") -> None:
-                @mcp.tool()
+                # output_schema=None: a str result is sent as text only, not
+                # duplicated into structuredContent (#6279).
+                @mcp.tool(output_schema=None)
                 async def my_custom_tool(query: str) -> str:
                     return "result"
     """

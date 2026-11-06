@@ -415,7 +415,11 @@ async def _run_tool(
 
     The two shapes are deliberately preserved, not unified: the bank-id variants
     declare ``-> str`` and callers ``json.loads`` them, so returning a dict there
-    would be a breaking change.
+    would be a breaking change. Those variants are registered with
+    ``output_schema=None``: for a ``-> str`` tool FastMCP otherwise derives a
+    wrap-result schema and also sends ``structuredContent: {"result": "<the same
+    JSON, escaped>"}``, so clients that show both got every result twice (#6279).
+    ``test_no_tool_wraps_its_json_text_in_structured_content`` guards it.
 
     Args:
         bank_id: Explicit bank from the caller, or None to use the session bank.
