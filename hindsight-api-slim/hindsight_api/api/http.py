@@ -11,12 +11,15 @@ import json
 import logging
 import os
 import re
+import signal
+import threading
 import time
 import traceback
 import uuid
 from collections.abc import Awaitable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from types import FrameType
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from urllib.parse import quote, unquote
 
@@ -64,6 +67,8 @@ from typing import Callable, Union, get_args, get_origin
 
 if TYPE_CHECKING:
     from opentelemetry.trace import Span
+
+    from hindsight_api.worker import WorkerPoller
 
 from fastapi.routing import APIRoute
 from pydantic import (
@@ -4287,6 +4292,28 @@ def _make_audited_http(audit_logger_getter: Callable[[], AuditLogger | None]):
     return audited
 
 
+def _stop_claiming_on_sigterm(poller: "WorkerPoller", loop: asyncio.AbstractEventLoop) -> None:
+    """Have SIGTERM stop the embedded poller's intake at once, then run the server's handler.
+
+    uvicorn reaches the lifespan teardown, where the poller is shut down, only after
+    its own HTTP drain. Until then the poller would keep claiming new work that must
+    fit into what is left of the grace period, and its drain would start late (#6021).
+    uvicorn installs its handler before the lifespan starts, so this one wraps it.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        return  # signal handlers can only be set from the main thread (e.g. not under a test client)
+    server_handler = signal.getsignal(signal.SIGTERM)
+    if not callable(server_handler):
+        return  # no server handling SIGTERM: the default kills the process, there is no drain to start early
+
+    def _on_sigterm(signum: int, frame: FrameType | None) -> None:
+        # call_soon_threadsafe is the signal-safe way into the loop.
+        loop.call_soon_threadsafe(poller.begin_shutdown)
+        server_handler(signum, frame)
+
+    signal.signal(signal.SIGTERM, _on_sigterm)
+
+
 def create_app(
     memory: MemoryEngine,
     initialize_memory: bool = True,
@@ -4424,6 +4451,7 @@ def create_app(
                 on_wall_timeout=memory.on_task_wall_timeout,
             )
             poller_task = asyncio.create_task(poller.run())
+            _stop_claiming_on_sigterm(poller, asyncio.get_running_loop())
             logging.info(f"Worker poller started (worker_id={worker_id})")
         elif config.worker_enabled and not memory._backend.supports_worker_poller:
             logging.warning(
@@ -4450,7 +4478,7 @@ def create_app(
 
         # Shutdown worker poller if running
         if poller is not None:
-            await poller.shutdown_graceful(timeout=30.0)
+            await poller.shutdown_graceful(timeout=config.worker_shutdown_drain_seconds)
             if poller_task is not None:
                 poller_task.cancel()
                 try:

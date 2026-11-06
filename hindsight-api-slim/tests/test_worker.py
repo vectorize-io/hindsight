@@ -13,6 +13,7 @@ Tests cover:
 import asyncio
 import json
 import os
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -2423,6 +2424,42 @@ class TestTaskReleaseOnStop:
         )
         assert row["status"] == "completed"
         assert row["retry_count"] == 0, "a completed task must not be charged a retry"
+
+    @pytest.mark.asyncio
+    async def test_drain_budget_counts_from_begin_shutdown(self, pool, backend, clean_operations):
+        """The drain clock starts at the signal, not when the teardown gets round to it (#6021).
+
+        In the API, uvicorn drains HTTP before the lifespan teardown calls shutdown_graceful;
+        that time must come out of the drain budget, or release lands after the grace period.
+        """
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        op_id = await self._insert_pending(pool, bank_id)
+
+        started = asyncio.Event()
+
+        async def never_ending_executor(task_dict):
+            started.set()
+            await asyncio.Event().wait()
+
+        poller = WorkerPoller(backend=backend, worker_id="release-worker", executor=never_ending_executor)
+        task = await self._claim_ours(poller, op_id)
+        await poller.execute_task(task)
+        await asyncio.wait_for(started.wait(), timeout=5)
+
+        poller.begin_shutdown()
+        assert poller.is_shutdown, "the signal must stop intake at once"
+        await asyncio.sleep(2.0)  # the HTTP drain, already as long as the budget below
+
+        t0 = time.monotonic()
+        await poller.shutdown_graceful(timeout=2.0)
+        assert time.monotonic() - t0 < 1.5, "the drain must not restart its clock at teardown"
+
+        row = await pool.fetchrow("SELECT status, worker_id FROM async_operations WHERE operation_id = $1", op_id)
+        assert row["status"] == "pending"
+        assert row["worker_id"] is None
 
     @pytest.mark.asyncio
     async def test_shutdown_does_not_touch_other_workers(self, pool, backend, clean_operations):
@@ -6032,3 +6069,24 @@ async def test_finished_task_wakes_the_idle_poll_at_once():
 
     poller._shutdown.set()
     await asyncio.wait_for(polling, timeout=1)
+
+
+def test_sigterm_stops_poller_intake_then_runs_previous_handler():
+    """The API's SIGTERM stops the embedded poller's claims before uvicorn's own drain (#6021)."""
+    import signal
+
+    from hindsight_api.api.http import _stop_claiming_on_sigterm
+
+    server_calls: list[int] = []
+    original = signal.signal(signal.SIGTERM, lambda signum, frame: server_calls.append(signum))
+    loop = asyncio.new_event_loop()
+    try:
+        poller = MagicMock()
+        _stop_claiming_on_sigterm(poller, loop)
+        signal.raise_signal(signal.SIGTERM)
+        loop.run_until_complete(asyncio.sleep(0))
+        poller.begin_shutdown.assert_called_once_with()
+        assert server_calls == [signal.SIGTERM], "uvicorn's handler must still run"
+    finally:
+        signal.signal(signal.SIGTERM, original)
+        loop.close()

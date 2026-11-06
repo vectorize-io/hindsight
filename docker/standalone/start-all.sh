@@ -311,8 +311,9 @@ cleanup() {
         fi
     done
     # Give processes time to shut down cleanly (pg0 needs to flush WAL, and
-    # hindsight-api drains in-flight worker tasks for 30s, cancels the rest for
-    # up to 5s, then hands them back to 'pending' — ~45s worst case).
+    # hindsight-api drains in-flight worker tasks for 20s from the signal
+    # (HINDSIGHT_API_WORKER_SHUTDOWN_DRAIN_SECONDS), cancels the rest for up to 5s,
+    # then hands them back to 'pending' — ~27s with the default drain).
     # NOTE: Docker's default stop_grace_period is 10s. Set stop_grace_period: 75s
     # in your compose file / docker stop -t 75 so it outlasts this wait, or
     # Docker will SIGKILL the container before this timeout expires.
