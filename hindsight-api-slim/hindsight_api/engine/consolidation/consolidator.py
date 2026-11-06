@@ -57,7 +57,7 @@ from ..llm_trace import (
     set_trace_context,
     trace_context_of,
 )
-from ..llm_wrapper import sanitize_llm_output
+from ..llm_wrapper import reask_messages, sanitize_llm_output
 from ..memories import StoredMemory, get_memories
 from ..response_models import Budget
 from ..retain import embedding_utils
@@ -3811,7 +3811,9 @@ def _classify_batch_failure(exc: Exception) -> _BatchFailureClass:
        byte-identical payload, so a re-send asks a greedy decoder the same question
        and gets the same answer — the reporter measured twelve failures at the same
        character offset. Retrying still costs a full generation, and for a JSON
-       parse error that is on top of the four the provider already burned.
+       parse error that is on top of the four the provider already burned. A
+       schema-invalid reply has also already had its one re-ask with the errors
+       (``_call_with_one_reask``), which does vary the input; failing that too, it lands here.
 
     ``FAIL_FAST`` is not "give up": the batch is still reported failed, so the
     caller's adaptive bisection halves it and tries again. That path *does* vary
@@ -3830,6 +3832,35 @@ def _classify_batch_failure(exc: Exception) -> _BatchFailureClass:
     if getattr(exc, "retryable", None) is False:
         return _BatchFailureClass.FAIL_FAST
     return _BatchFailureClass.RETRY
+
+
+async def _call_with_one_reask(
+    llm_config: Any, call_kwargs: dict[str, Any], response_model: type[_FactBatchResponse]
+) -> _FactBatchResponse:
+    """The batch's answer, asking once more with the errors when the reply misses the schema.
+
+    A bad entry is already dropped on its own (``_validate_items``); what lands here is a reply
+    whose overall shape is wrong — a list instead of an object (json_repair's answer to two JSON
+    values back to back, #5572), or a bad delete. Re-sending the same prompt at temperature 0
+    returns the same reply, so the second call carries the errors. It appends to the first
+    request, so the prompt cache still covers it. A second failure raises the ValidationError,
+    and the caller's fail-fast + bisection takes over as before.
+    """
+    first = (await llm_config.call(**call_kwargs, skip_validation=True)).content
+    if isinstance(first, _FactBatchResponse):  # a provider (or test double) that built it already
+        return first
+    try:
+        return response_model.model_validate(first)
+    except ValidationError as exc:
+        errors = "\n".join(f"- {'.'.join(map(str, e['loc'])) or '(top level)'}: {e['msg']}" for e in exc.errors()[:10])
+        logger.warning(f"[CONSOLIDATION] reply did not match the schema, asking again with the errors:\n{errors}")
+        correction = (
+            f"Your previous answer was discarded because it did not match the schema:\n{errors}\n"
+            'Answer again with the same decisions as ONE JSON object, {"facts": [...], "deletes": [...]}, '
+            "following the schema. Not a list, and nothing after the object."
+        )
+        messages = reask_messages(call_kwargs["messages"], first, correction)
+        return (await llm_config.call(**call_kwargs | {"messages": messages})).content
 
 
 async def _consolidate_batch_with_llm(
@@ -3984,8 +4015,7 @@ async def _consolidate_batch_with_llm(
                 call_kwargs["max_completion_tokens"] = config.consolidation_max_completion_tokens
             if inner_max_retries is not None:
                 call_kwargs["max_retries"] = inner_max_retries
-            batch_call = await llm_config.call(**call_kwargs)
-            answer: _FactBatchResponse = batch_call.content
+            answer = await _call_with_one_reask(llm_config, call_kwargs, response_model)
             response = answer.with_real_ids(real_id).to_actions(
                 {str(o.id): o.text for o in union_observations},
                 {

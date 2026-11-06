@@ -326,3 +326,26 @@ def test_llm_provider_constructor_ignores_global_safety_settings(monkeypatch):
     assert provider.gemini_safety_settings is None  # not inherited from global config
 
     clear_config_cache()
+
+
+def test_reask_messages_appends_the_reply_as_text_and_the_correction():
+    """The re-ask keeps the request as a prefix and replays any reply shape as a string (#4965)."""
+    from pydantic import BaseModel
+
+    from hindsight_api.engine.llm_wrapper import reask_messages
+
+    class _Reply(BaseModel):
+        facts: list[str]
+
+    request = [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]
+    for reply, text in [
+        ({"a": "é"}, '{"a": "é"}'),
+        ([{"a": 1}, {"a": 2}], '[{"a": 1}, {"a": 2}]'),
+        (_Reply(facts=["x"]), '{"facts":["x"]}'),
+        ("raw text", "raw text"),
+        (None, ""),
+    ]:
+        out = reask_messages(request, reply, "fix it")
+        assert out[:2] == request
+        assert out[2:] == [{"role": "assistant", "content": text}, {"role": "user", "content": "fix it"}]
+    assert len(request) == 2  # the caller's list is not mutated

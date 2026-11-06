@@ -368,3 +368,37 @@ async def test_the_prompt_uses_short_ids_oldest_first_and_marks_later_observatio
     assert "is an earlier state that the text before it replaced" in sent["messages"][0]["content"]
     # A full scope is told in the answer's own terms: no `new` sentences.
     assert 'Write no `new` sentences (set `adds` to "no")' in user
+
+
+async def test_a_reply_in_the_wrong_shape_is_asked_again_with_its_errors() -> None:
+    """Two JSON values back to back parse as a list (#5572): the model is told so, once, and the
+    second answer is used. The first request stays the prefix of the second."""
+    good = {"facts": [{"fact_id": "F1", "kind": "lasting", "existing": [], "adds": "yes", "new": ["Uses Rust."]}]}
+    calls: list[dict[str, Any]] = []
+
+    class _LLM:
+        async def call(self, **kwargs: Any) -> Any:
+            calls.append(kwargs)
+            if len(calls) == 1:
+                assert kwargs["skip_validation"] is True
+                return LLMCallResult(content=[good, good])
+            return LLMCallResult(content=kwargs["response_format"].model_validate(good))
+
+    config = SimpleNamespace(
+        llm_output_language=None,
+        observations_mission=None,
+        consolidation_max_attempts=1,
+        consolidation_llm_max_retries=None,
+        llm_temperature_consolidation=0.0,
+        llm_strict_schema_consolidation=False,
+        consolidation_max_completion_tokens=None,
+    )
+    result = await _consolidate_batch_with_llm(_LLM(), [{"id": "f1", "text": "uses rust"}], [], {}, config)
+
+    assert not result.failed
+    assert [c.text for c in result.creates] == ["Uses Rust."]
+    first, second = calls
+    assert "skip_validation" not in second
+    assert second["messages"][:2] == first["messages"]
+    assert second["messages"][2]["role"] == "assistant"
+    assert "(top level)" in second["messages"][3]["content"]
