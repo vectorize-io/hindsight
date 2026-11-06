@@ -34,25 +34,6 @@ The API service handles all memory operations (retain, recall, reflect).
 | `HINDSIGHT_API_EXTERNALLY_OWNED_ROUTINES` | Comma-separated list of maintenance discovery routines this deployment installs itself (see [Owning a maintenance routine](#owning-a-maintenance-routine)). Migrations skip anything named here. | Empty (every routine installed) |
 | `HINDSIGHT_API_DATABASE_BACKEND` | Database engine backend: `postgresql` or `oracle` (Oracle 23ai) | `postgresql` |
 
-#### Rotating database credentials
-
-When the database password changes while Hindsight runs (AWS Secrets Manager rotation, RDS IAM tokens, Azure AD or Cloud SQL IAM auth, Vault), point `HINDSIGHT_API_DATABASE_CONNECT_HOOK` at a function that fetches the current credential and opens the connection. Open connections keep working; each new one goes through the hook.
-
-```python
-# mypackage/db.py  ->  HINDSIGHT_API_DATABASE_CONNECT_HOOK=mypackage.db:connect
-from urllib.parse import quote, urlparse
-
-import asyncpg
-
-async def connect(dsn: str, **kwargs) -> asyncpg.Connection:
-    user, password = fetch_current_credentials()  # your secret store
-    u = urlparse(dsn)
-    dsn = u._replace(netloc=f"{quote(user)}:{quote(password)}@{u.hostname}:{u.port}").geturl()
-    return await asyncpg.connect(dsn, **kwargs)  # always forward kwargs
-```
-
-Always forward `**kwargs`: the pool passes the connection class it needs. Migrations at startup do not use the hook — they read the URL once, so it must be valid at boot.
-
 If not provided, the server uses embedded `pg0` — convenient for development but not recommended for production.
 
 To tune the embedded database, add PostgreSQL settings as a query string: `pg0://hindsight?max_connections=300&shared_buffers=256MB`. They apply when the embedded database starts, so restart it after changing them.
@@ -71,6 +52,26 @@ export HINDSIGHT_API_DATABASE_SCHEMA=hindsight
 ```
 
 Migrations will automatically create the schema if it doesn't exist and create all tables in the configured schema.
+
+#### Rotating database credentials
+
+When the database password changes while Hindsight runs (AWS Secrets Manager rotation, RDS IAM tokens, Azure AD or Cloud SQL IAM auth, Vault), point `HINDSIGHT_API_DATABASE_CONNECT_HOOK` at a function that fetches the current credential and opens the connection. Open connections keep working; each new one goes through the hook.
+
+```python
+# mypackage/db.py  ->  HINDSIGHT_API_DATABASE_CONNECT_HOOK=mypackage.db:connect
+from urllib.parse import quote, urlparse
+
+import asyncpg
+
+async def connect(dsn: str, **kwargs) -> asyncpg.Connection:
+    user, password = fetch_current_credentials()  # your secret store
+    u = urlparse(dsn)
+    host = u.netloc.rpartition("@")[2]  # host[:port], credentials dropped
+    dsn = u._replace(netloc=f"{quote(user)}:{quote(password)}@{host}").geturl()
+    return await asyncpg.connect(dsn, **kwargs)  # always forward kwargs
+```
+
+Always forward `**kwargs`: the pool passes the connection class it needs. Migrations at startup and `hindsight-admin` commands do not use the hook — they read the URL once, so it must be valid when they start.
 
 #### Owning a maintenance routine
 
