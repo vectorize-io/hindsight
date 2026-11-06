@@ -262,6 +262,16 @@ export HINDSIGHT_API_LLM_API_KEY=your-api-key
 
 </ProviderSetup>
 
+OpenRouter can serve one model from several hosts. A model slug like `z-ai/glm-5.3-flash` names who made the model, not the host your request lands on. On every call that asks for JSON back (fact extraction, consolidation, reflect's tool calls), Hindsight sets `provider.require_parameters=true`, so OpenRouter only picks hosts that support every parameter sent.
+
+To pick the hosts yourself, set OpenRouter's [provider routing](https://openrouter.ai/docs/features/provider-routing) keys. Your `provider` keys are kept and win over Hindsight's:
+
+```bash
+export HINDSIGHT_API_LLM_EXTRA_BODY='{"provider":{"only":["deepinfra","novita"],"allow_fallbacks":false}}'
+```
+
+If a model fails with "No endpoints found that can handle the requested parameters", no host supports every parameter sent. Models that reject `temperature` are the usual cause. Set `HINDSIGHT_API_LLM_TEMPERATURE=none` to stop sending it.
+
 ### Requesty {#llm-requesty}
 
 Requesty's router, with provider-prefixed model names such as `openai/gpt-4o-mini`.
