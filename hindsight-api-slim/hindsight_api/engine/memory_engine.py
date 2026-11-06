@@ -193,6 +193,9 @@ _tag_scopes_suspended: contextvars.ContextVar[bool] = contextvars.ContextVar("ta
 # match" to anyone who assumes a 0..1 relevance scale, and the store-owned path
 # used a different formula again — the same field meant 0.016 or 1.0 for the same
 # top hit depending on which store answered.
+# How long a retain waits when it stopped because the embeddings backend is down (#5999).
+_EMBEDDINGS_DOWN_DEFER_SECONDS = 60
+
 _KNOWLEDGE_RRF_K = 60
 _KNOWLEDGE_RRF_NORM = float(_KNOWLEDGE_RRF_K + 1)
 
@@ -764,6 +767,7 @@ from .retain.attachment_content import (
     short_attachment_id,
     validate_and_canonicalize_content,
 )
+from .retain.embedding_utils import EmbeddingsUnavailableError
 from .retain.fact_storage import _normalize_scopes
 from .retain.fold import FoldMemberRef
 from .retain.types import RetainBatchResult, RetainContentDict, merge_processed_content_tokens
@@ -5163,6 +5167,14 @@ class MemoryEngine(MemoryEngineInterface):
             except ProviderRateLimitResetError as e:
                 logger.warning(f"Task deferred until provider quota resets at {e.retry_at}: {e}")
                 raise DeferOperation(exec_date=e.retry_at, reason=str(e)) from e
+            except EmbeddingsUnavailableError as e:
+                # Not a failure: the retain stopped before spending LLM tokens because the
+                # embeddings backend is down. Wait it out without burning the retry budget,
+                # so an outage neither fails the backlog nor re-pays extraction (#5999).
+                logger.warning(f"Task {task_type} deferred, embeddings backend unavailable: {e}")
+                raise DeferOperation(
+                    exec_date=datetime.now(UTC) + timedelta(seconds=_EMBEDDINGS_DOWN_DEFER_SECONDS), reason=str(e)
+                ) from e
             except RetryTaskAt:
                 # Task-owned retry: let the poller handle scheduling
                 raise

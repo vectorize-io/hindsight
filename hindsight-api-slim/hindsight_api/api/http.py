@@ -78,6 +78,7 @@ from pydantic import (
 
 from hindsight_api import MemoryEngine
 from hindsight_api.config_resolver import BankConfigPersistenceConflictError
+from hindsight_api.engine.retain.embedding_utils import EmbeddingsUnavailableError
 from hindsight_api.engine.retain.entity_labels import LabelGroup, migrate_entity_labels_input
 
 
@@ -9646,6 +9647,10 @@ def _register_routes(app: FastAPI):
             # The request is well-formed; the server's retain LLM cannot read the
             # images it carries. 422 rather than 400 for that distinction.
             raise HTTPException(status_code=422, detail=str(e))
+        except EmbeddingsUnavailableError as e:
+            # Stopped before extraction because the embeddings backend is down (#5999):
+            # retryable, not a server fault in the request.
+            raise HTTPException(status_code=503, detail=str(e), headers={"Retry-After": "60"})
         except (AuthenticationError, HTTPException):
             raise
         except ValueError as e:

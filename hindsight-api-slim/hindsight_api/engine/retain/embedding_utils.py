@@ -4,11 +4,14 @@ Embedding generation utilities for memory units.
 
 import logging
 import math
+import time
+import weakref
 from typing import Literal, Protocol
 
 from ...config import ENV_EMBEDDINGS_MAX_INPUT_TOKENS, get_config
 from ..llm_interface import ProviderRateLimitResetError
 from ..llm_trace import EMBEDDING_SCOPE_PREFIX, trace_model_call
+from ..remote_retry import is_transient_remote_error
 from ..token_encoding import count_tokens, truncate_many_to_tokens
 
 logger = logging.getLogger(__name__)
@@ -158,7 +161,10 @@ async def generate_embeddings_batch(
         # A control signal, not a failure: the worker parks the operation until then.
         raise
     except Exception as e:
+        if _is_transient_chain(e):
+            _mark_down(embeddings_backend)
         raise Exception(f"Failed to generate batch embeddings: {str(e)}") from e
+    _down_since.pop(embeddings_backend, None)
 
     # Guarantee 1:1 alignment with input texts. A silent length mismatch here
     # propagates downstream as zip() drops items, eventually surfacing as an
@@ -173,3 +179,65 @@ async def generate_embeddings_batch(
         _validate_embedding_vector(embedding, index=index, expected_dimension=embeddings_backend.dimension)
         for index, embedding in enumerate(embeddings)
     ]
+
+
+class EmbeddingsUnavailableError(Exception):
+    """The embeddings backend is failing right now; raised before a retain spends LLM tokens."""
+
+
+# How long a failed probe is trusted before the next retain probes again.
+EMBEDDINGS_PROBE_INTERVAL_SECONDS = 30.0
+
+# In-memory health note per backend (issue #5999). An entry means "a real embedding call
+# failed with a transient error and nothing has succeeded since"; the value is when the
+# backend was last seen failing. Set and cleared by the real calls in
+# generate_embeddings_batch, so a healthy backend costs no extra requests.
+_down_since: "weakref.WeakKeyDictionary[object, float]" = weakref.WeakKeyDictionary()
+
+
+def _is_transient_chain(exc: BaseException) -> bool:
+    """True when ``exc`` or anything it wraps is a transient remote error.
+
+    Providers re-raise transport failures as a RuntimeError carrying the message only
+    (TEI's "TEI embedding request failed: ..."), so the original is on the chain.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        if is_transient_remote_error(current):
+            return True
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _mark_down(backend: object) -> None:
+    try:
+        _down_since[backend] = time.monotonic()
+    except TypeError:
+        pass  # not weak-referenceable: no health note, behave as before
+
+
+async def ensure_embeddings_reachable(embeddings_backend: EmbeddingsBackend) -> None:
+    """Fail fast when the embeddings backend is known to be down, before any LLM spend.
+
+    No-op unless a real embedding call recently failed with a transient error. Then one
+    one-word probe decides: success clears the note and the retain proceeds, failure
+    raises EmbeddingsUnavailableError. A failed probe is trusted for
+    EMBEDDINGS_PROBE_INTERVAL_SECONDS, so an outage costs at most one tiny embed per
+    process per interval. A single blip therefore never blocks a retain: it only makes
+    the next one check with a real call.
+    """
+    last_failure = _down_since.get(embeddings_backend)
+    if last_failure is None:
+        return
+    if time.monotonic() - last_failure < EMBEDDINGS_PROBE_INTERVAL_SECONDS:
+        raise EmbeddingsUnavailableError("embeddings backend is unreachable (recent request failed)")
+    try:
+        await generate_embeddings_batch(embeddings_backend, ["ping"])
+    except Exception as e:
+        if _is_transient_chain(e):
+            raise EmbeddingsUnavailableError(f"embeddings backend is unreachable: {e}") from e
+        # The backend answered, just not well (bad key, dimension mismatch): not an
+        # outage. Let the retain run and surface that error the usual way.
+        _down_since.pop(embeddings_backend, None)
