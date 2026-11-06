@@ -186,6 +186,9 @@ _nested_operation_authorized: contextvars.ContextVar[bool] = contextvars.Context
 # applied (its untagged directives and models refused).
 _tag_scopes_suspended: contextvars.ContextVar[bool] = contextvars.ContextVar("tag_scopes_suspended", default=False)
 
+# How long a retain waits when it stopped because the embeddings backend is down (#5999).
+_EMBEDDINGS_DOWN_DEFER_SECONDS = 60
+
 # Reciprocal Rank Fusion constant for knowledge-page search, and the factor that
 # maps a single arm's raw RRF term (1/(K+rank), max 1/61 at rank 1) onto 0..1.
 # Every arm of search_knowledge_pages scales by this so the `score` it returns is
@@ -193,9 +196,6 @@ _tag_scopes_suspended: contextvars.ContextVar[bool] = contextvars.ContextVar("ta
 # match" to anyone who assumes a 0..1 relevance scale, and the store-owned path
 # used a different formula again — the same field meant 0.016 or 1.0 for the same
 # top hit depending on which store answered.
-# How long a retain waits when it stopped because the embeddings backend is down (#5999).
-_EMBEDDINGS_DOWN_DEFER_SECONDS = 60
-
 _KNOWLEDGE_RRF_K = 60
 _KNOWLEDGE_RRF_NORM = float(_KNOWLEDGE_RRF_K + 1)
 

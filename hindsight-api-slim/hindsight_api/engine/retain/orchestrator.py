@@ -1577,7 +1577,7 @@ async def retain_batch(
     # document write if that window shows up.
     await assert_job_bank_alive_on_pool(pool, bank_id)
     # Before extraction: an embeddings outage found after the LLM pass wastes the whole
-    # extraction bill, on every retry (issue #5999). Free unless embeddings recently failed.
+    # extraction bill, on every retry (issue #5999). Free unless the last embedding call failed.
     await embedding_utils.ensure_embeddings_reachable(embeddings_model)
 
     start_time = time.time()  # noqa: TID251
