@@ -105,7 +105,7 @@ class TestRanking:
         assert scores[1] > scores[0] > scores[2] > 0.0
 
     def test_it_is_built_for_recall_when_recall_has_a_decision_model(self, monkeypatch):
-        """And replaces the configured reranker outright."""
+        """In the configured reranker's place: that one ranks only with the fallback on (TestFallback)."""
         from hindsight_api import config as config_module
 
         monkeypatch.setenv("HINDSIGHT_API_DECISION_MODEL_PROVIDER", "typesafe")
