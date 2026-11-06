@@ -9,6 +9,7 @@ import weakref
 from typing import Literal, Protocol
 
 from ...config import ENV_EMBEDDINGS_MAX_INPUT_TOKENS, get_config
+from ..embeddings import SplitEmbeddings
 from ..llm_interface import ProviderRateLimitResetError
 from ..llm_trace import EMBEDDING_SCOPE_PREFIX, trace_model_call
 from ..remote_retry import is_transient_remote_error
@@ -150,14 +151,11 @@ async def generate_embeddings_batch(
     # A split deployment (separate query and document embedders) hands back the side that
     # serves this input type, with that side's own cap, so the cap, prefix budget,
     # tokenizer and trace below all describe the model that will actually embed the text.
-    # getattr rather than the Protocol: test fakes and the coalescer are duck-typed and
-    # serve one side only, so they have neither method.
-    side_cap = getattr(embeddings_backend, "max_input_tokens_for", None)
-    if callable(side_cap):
-        max_input_tokens = side_cap(input_type)
-    for_input_type = getattr(embeddings_backend, "for_input_type", None)
-    if callable(for_input_type):
-        embeddings_backend = for_input_type(input_type)
+    # isinstance, not duck typing: test doubles (MagicMock answers every attribute) and the
+    # coalescer serve one side only.
+    if isinstance(embeddings_backend, SplitEmbeddings):
+        max_input_tokens = embeddings_backend.max_input_tokens_for(input_type)
+        embeddings_backend = embeddings_backend.for_input_type(input_type)
     if max_input_tokens is not None and texts:
         texts = _truncate_inputs(texts, max_input_tokens, embeddings_backend, input_type)
 

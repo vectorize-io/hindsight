@@ -1077,6 +1077,42 @@ Do not mix embeddings from different models in the same vector index. Switching 
 > **⚠️ Warning**
 >
 The default ONNX query/document prefixes (`query: ` and `passage: `) are for E5 models. Clear both prefix variables for non-E5 models such as MiniLM or BGE, otherwise Hindsight will prepend E5-style text to models that were not trained with that format.
+#### Separate Query and Document Embeddings
+
+Every search embeds a query: recall, reflect, knowledge-page search, and the searches consolidation runs to find related observations. Everything that gets stored (facts, observations, imports, knowledge pages) is embedded as a document. By default both go through the one embeddings config above. You can give either side its own config, the same way [per-operation LLMs](#per-operation-llm-configuration) work: each side starts from the main embeddings config, and any variable you set for that side replaces the main one.
+
+| Side | Used for | Variable pattern |
+|---|---|---|
+| Query | Every search, including consolidation's | `HINDSIGHT_API_QUERY_EMBEDDINGS_<X>` overrides `HINDSIGHT_API_EMBEDDINGS_<X>` |
+| Document | Everything that is stored | `HINDSIGHT_API_DOCUMENT_EMBEDDINGS_<X>` overrides `HINDSIGHT_API_EMBEDDINGS_<X>` |
+
+`<X>` is any embeddings variable on this page: `PROVIDER`, `TEI_URL`, `OPENAI_BASE_URL`, `ONNX_MODEL_ID`, `MAX_INPUT_TOKENS`, and so on. A name that matches no embeddings variable stops startup with an error, so a typo can't go unnoticed. A side can switch provider, so one side can run in-process while the other calls a remote service. Each side keeps its own request limit (`MAX_CONCURRENT_REQUESTS`), so a long retain or import never queues recall queries behind it. Note that background consolidation also searches, so it sends requests to the query side too. Setting a side variable to an empty value clears the main value for that side only (for example, `HINDSIGHT_API_QUERY_EMBEDDINGS_QUERY_PREFIX=`).
+
+**Same model, separate endpoint for queries.** For example, a small TEI instance for queries and a bulk one for documents:
+
+```bash
+HINDSIGHT_API_EMBEDDINGS_PROVIDER=openai
+HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL=BAAI/bge-m3
+HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL=http://tei-bulk:8080/v1
+HINDSIGHT_API_QUERY_EMBEDDINGS_OPENAI_BASE_URL=http://tei-small:8080/v1
+```
+
+**A smaller query model trained for the document model's space.** Qdrant's [Constella](https://qdrant.tech/blog/constella-research-preview/) embeds documents with Stella and queries with Constella Nano, which is 12 times smaller. Both run in-process through the `onnx` provider:
+
+```bash
+HINDSIGHT_API_EMBEDDINGS_PROVIDER=onnx
+HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID=Qdrant/stella-en-400M-v5-doc-onnx
+HINDSIGHT_API_EMBEDDINGS_ONNX_FILE=model.onnx
+HINDSIGHT_API_EMBEDDINGS_ONNX_MAX_TOKENS=512
+# Neither model takes an E5-style prefix.
+HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX=
+HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX=
+HINDSIGHT_API_QUERY_EMBEDDINGS_ONNX_MODEL_ID=Qdrant/constella-nano
+```
+
+> **⚠️ Warning**
+>
+Both sides must embed into the same vector space. Startup fails when their dimensions differ, but matching dimensions alone don't prove two models are compatible. Pair models only when they were built to be paired, like the same model on two endpoints or Stella with Constella. Changing either side's model on an existing bank needs the same re-embedding as changing the main model.
 #### Common Pitfall: Provider-Specific Embedding Env Var Names
 
 Embedding environment variables include a provider segment in the key name:
