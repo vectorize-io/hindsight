@@ -1,6 +1,6 @@
-"""Separate query and document embedders (#6078, Qdrant Constella).
+"""Separate query and passage embedders (#6078, Qdrant Constella).
 
-A QUERY or DOCUMENT embeddings side is the main embeddings config with any
+A QUERY or PASSAGE embeddings side is the main embeddings config with any
 ``HINDSIGHT_API_<SIDE>_EMBEDDINGS_<X>`` laid over ``HINDSIGHT_API_EMBEDDINGS_<X>``. These
 tests cover the inheritance, the routing of each input type to its side, and that the
 two sides do not share a request bound — the reason #6078 asked for this.
@@ -41,7 +41,7 @@ def test_no_side_configured_keeps_a_single_backend(env: pytest.MonkeyPatch) -> N
     env.setenv("HINDSIGHT_API_EMBEDDINGS_PROVIDER", "tei")
     env.setenv("HINDSIGHT_API_EMBEDDINGS_TEI_URL", "http://tei")
     config = HindsightConfig.from_env()
-    assert config.query_embeddings is None and config.document_embeddings is None
+    assert config.query_embeddings is None and config.passage_embeddings is None
     assert isinstance(create_embeddings_from_env(), RemoteTEIEmbeddings)
 
 
@@ -54,11 +54,11 @@ def test_query_base_url_only_overrides_the_url(env: pytest.MonkeyPatch) -> None:
     env.setenv("HINDSIGHT_API_QUERY_EMBEDDINGS_OPENAI_BASE_URL", "http://tei-small/v1")
 
     split = _split(create_embeddings_from_env())
-    assert isinstance(split.query, OpenAIEmbeddings) and isinstance(split.document, OpenAIEmbeddings)
+    assert isinstance(split.query, OpenAIEmbeddings) and isinstance(split.passage, OpenAIEmbeddings)
     assert split.query.base_url == "http://tei-small/v1"
-    assert split.document.base_url == "http://tei-bulk/v1"
+    assert split.passage.base_url == "http://tei-bulk/v1"
     # Everything not overridden is inherited from the main config.
-    assert split.query.model == split.document.model == "BAAI/bge-m3"
+    assert split.query.model == split.passage.model == "BAAI/bge-m3"
     assert split.query.api_key == "sk-shared"
 
 
@@ -72,24 +72,24 @@ def test_one_side_local_and_the_other_remote(env: pytest.MonkeyPatch) -> None:
     split = _split(create_embeddings_from_env())
     assert isinstance(split.query, OnnxEmbeddings)
     assert split.query.model_id == "Qdrant/constella-nano"
-    assert isinstance(split.document, RemoteTEIEmbeddings)
+    assert isinstance(split.passage, RemoteTEIEmbeddings)
     # In-process backends keep the sequential default; the remote side gets the bound.
     assert split.query.max_concurrent_requests == 1
-    assert split.document.max_concurrent_requests > 1
+    assert split.passage.max_concurrent_requests > 1
 
 
 def test_both_sides_can_be_specialized(env: pytest.MonkeyPatch) -> None:
     env.setenv("HINDSIGHT_API_EMBEDDINGS_PROVIDER", "tei")
     env.setenv("HINDSIGHT_API_EMBEDDINGS_TEI_URL", "http://main")
     env.setenv("HINDSIGHT_API_QUERY_EMBEDDINGS_TEI_URL", "http://query")
-    env.setenv("HINDSIGHT_API_DOCUMENT_EMBEDDINGS_TEI_URL", "http://document")
-    env.setenv("HINDSIGHT_API_DOCUMENT_EMBEDDINGS_TEI_BATCH_SIZE", "7")
+    env.setenv("HINDSIGHT_API_PASSAGE_EMBEDDINGS_TEI_URL", "http://passage")
+    env.setenv("HINDSIGHT_API_PASSAGE_EMBEDDINGS_TEI_BATCH_SIZE", "7")
 
     split = _split(create_embeddings_from_env())
-    assert isinstance(split.query, RemoteTEIEmbeddings) and isinstance(split.document, RemoteTEIEmbeddings)
-    assert (split.query.base_url, split.document.base_url) == ("http://query", "http://document")
-    # The coalescer sizes hand-offs from the wrapper, so it must describe the document side.
-    assert split.document.batch_size == split.batch_size == 7
+    assert isinstance(split.query, RemoteTEIEmbeddings) and isinstance(split.passage, RemoteTEIEmbeddings)
+    assert (split.query.base_url, split.passage.base_url) == ("http://query", "http://passage")
+    # The coalescer sizes hand-offs from the wrapper, so it must describe the passage side.
+    assert split.passage.batch_size == split.batch_size == 7
 
 
 def test_a_side_inherits_the_shared_key_fallback(env: pytest.MonkeyPatch) -> None:
@@ -140,28 +140,28 @@ class _Fake(Embeddings):
         return await self._encode_batched(texts, run)
 
 
-def _wrap(query: Embeddings, document: Embeddings, query_cap: int | None = None) -> SplitEmbeddings:
+def _wrap(query: Embeddings, passage: Embeddings, query_cap: int | None = None) -> SplitEmbeddings:
     return SplitEmbeddings(
-        query=query, document=document, query_max_input_tokens=query_cap, document_max_input_tokens=None
+        query=query, passage=passage, query_max_input_tokens=query_cap, passage_max_input_tokens=None
     )
 
 
 async def test_each_input_type_reaches_its_side() -> None:
-    query, document = _Fake("q"), _Fake("d")
-    split = _wrap(query, document)
+    query, passage = _Fake("q"), _Fake("d")
+    split = _wrap(query, passage)
 
     await embedding_utils.generate_embeddings_batch(split, ["who?"], input_type="query")
     await embedding_utils.generate_embeddings_batch(split, ["a fact"])
 
     assert query.calls == [["who?"]]
-    assert document.calls == [["a fact"]]
+    assert passage.calls == [["a fact"]]
 
 
-async def test_a_busy_document_side_does_not_queue_queries() -> None:
+async def test_a_busy_passage_side_does_not_queue_queries() -> None:
     """The point of #6078: a held bulk request must not block a recall query."""
     release = asyncio.Event()
-    query, document = _Fake("q"), _Fake("d", hold=release)
-    split = _wrap(query, document)
+    query, passage = _Fake("q"), _Fake("d", hold=release)
+    split = _wrap(query, passage)
 
     bulk = asyncio.create_task(embedding_utils.generate_embeddings_batch(split, ["bulk"]))
     await asyncio.sleep(0)
@@ -181,24 +181,24 @@ async def test_initialize_fails_on_a_dimension_mismatch() -> None:
 
 
 async def test_initialize_starts_both_sides() -> None:
-    query, document = _Fake("q"), _Fake("d")
-    split = _wrap(query, document)
+    query, passage = _Fake("q"), _Fake("d")
+    split = _wrap(query, passage)
     await split.initialize()
-    assert query.initialized and document.initialized
+    assert query.initialized and passage.initialized
     assert split.dimension == 2
 
 
 async def test_each_side_applies_its_own_input_token_cap() -> None:
-    """A small query model takes fewer tokens than the document model; its cap must hold."""
-    query, document = _Fake("q"), _Fake("d")
-    split = _wrap(query, document, query_cap=3)
+    """A small query model takes fewer tokens than the passage model; its cap must hold."""
+    query, passage = _Fake("q"), _Fake("d")
+    split = _wrap(query, passage, query_cap=3)
     long_text = " ".join(["word"] * 50)
 
     await embedding_utils.generate_embeddings_batch(split, [long_text], input_type="query")
     await embedding_utils.generate_embeddings_batch(split, [long_text])
 
     assert len(query.calls[0][0].split()) <= 3
-    assert document.calls[0][0] == long_text
+    assert passage.calls[0][0] == long_text
 
 
 def test_a_side_cap_comes_from_its_own_variable(env: pytest.MonkeyPatch) -> None:
@@ -246,7 +246,7 @@ async def test_a_local_side_loads_off_the_event_loop() -> None:
     assert seen and seen[0] != loop_thread
 
 
-def test_the_written_model_is_the_document_side() -> None:
+def test_the_written_model_is_the_passage_side() -> None:
     """A re-embed's write guard compares the model that writes stored vectors."""
-    document = _Fake("d")
-    assert embedding_model_id(_wrap(_Fake("q"), document)) == embedding_model_id(document)
+    passage = _Fake("d")
+    assert embedding_model_id(_wrap(_Fake("q"), passage)) == embedding_model_id(passage)

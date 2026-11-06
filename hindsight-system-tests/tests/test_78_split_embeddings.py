@@ -4,7 +4,7 @@ Two deployments want this. One runs the same model on two endpoints, so a long r
 or import no longer queues recall queries behind it (#6078). The other pairs a document
 model with a smaller query model trained for its vector space (Qdrant's Constella). Both
 come down to the same promise, and it only holds end to end: every stored vector comes
-from the document side, every search vector from the query side, and a memory stored
+from the passage side, every search vector from the query side, and a memory stored
 through one is still found through the other. A query that slipped through to the
 document model would rank fine in this suite and quietly defeat the setup in production.
 
@@ -49,7 +49,7 @@ async def test_queries_embed_with_the_query_model_and_still_find_stored_facts(
         with contextlib.suppress(Exception):
             await split_embeddings_client.banks.delete_bank(bank)
 
-    # Stored through the document side, searched through the query side, and found.
+    # Stored through the passage side, searched through the query side, and found.
     assert [r.text.split(" | ")[0] for r in response.results] == [FACT]
 
     query_models = _models_for(stubs, QUERY)

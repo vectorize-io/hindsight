@@ -534,13 +534,14 @@ ENV_MENTAL_MODEL_REFRESH_LLM_CACHE_AFFINITY = "HINDSIGHT_API_MENTAL_MODEL_REFRES
 ENV_EMBEDDINGS_PROVIDER = "HINDSIGHT_API_EMBEDDINGS_PROVIDER"
 
 # Per-side embeddings (optional). Recall queries embed through the QUERY side, everything
-# that is stored (retain, consolidation, imports, knowledge pages) through the DOCUMENT side.
+# that is stored (retain, consolidation, imports, knowledge pages) through the PASSAGE side
+# (facts, observations and mental models).
 # A side is "the main embeddings config, with any HINDSIGHT_API_<SIDE>_EMBEDDINGS_<X> laid
 # over HINDSIGHT_API_EMBEDDINGS_<X>" — the same inherit-then-specialize shape as the
 # per-operation LLM settings (HINDSIGHT_API_RETAIN_LLM_*), but over every embeddings
 # variable, so either side can switch provider (local on one side, remote on the other).
 EMBEDDINGS_SIDE_QUERY = "QUERY"
-EMBEDDINGS_SIDE_DOCUMENT = "DOCUMENT"
+EMBEDDINGS_SIDE_PASSAGE = "PASSAGE"
 _ENV_EMBEDDINGS_PREFIX = "HINDSIGHT_API_EMBEDDINGS_"
 # Provider-agnostic asymmetric prefixes: applied client-side by every provider that
 # is plain text-in/vector-out (tei, litellm, litellm-sdk, openai-compatible). Providers
@@ -3318,7 +3319,7 @@ class _Getenv(Protocol):
 
 
 def _embeddings_side_env_prefix(side: str) -> str:
-    """``HINDSIGHT_API_QUERY_EMBEDDINGS_`` / ``HINDSIGHT_API_DOCUMENT_EMBEDDINGS_``."""
+    """``HINDSIGHT_API_QUERY_EMBEDDINGS_`` / ``HINDSIGHT_API_PASSAGE_EMBEDDINGS_``."""
     return f"HINDSIGHT_API_{side}_EMBEDDINGS_"
 
 
@@ -4051,7 +4052,7 @@ class HindsightConfig:
     # Per-side embeddings configs (see EMBEDDINGS_SIDE_QUERY). None means the side uses the
     # main embeddings config above. Static: a vector space is a deployment-wide choice.
     query_embeddings: "HindsightConfig | None" = None
-    document_embeddings: "HindsightConfig | None" = None
+    passage_embeddings: "HindsightConfig | None" = None
     reranker_hindsight_api_key: str | None = None
     embeddings_nvidia_api_key: str | None = None
     embeddings_nvidia_model: str = DEFAULT_EMBEDDINGS_NVIDIA_MODEL
@@ -4618,7 +4619,7 @@ class HindsightConfig:
         # with a clear message. This early warning catches it before startup proceeds.
         # The main embeddings provider builds nothing when both sides replace it.
         main_embeddings = self.embeddings_provider
-        if self.query_embeddings is not None and self.document_embeddings is not None:
+        if self.query_embeddings is not None and self.passage_embeddings is not None:
             main_embeddings = ""
         if main_embeddings == "local" or self.reranker_provider == "local":
             # find_spec, not import: importing sentence_transformers pulls in torch and costs
@@ -4673,7 +4674,7 @@ class HindsightConfig:
         # Sides first: when both replace the main embeddings config, its provider never
         # embeds anything, and validate() skips its dependency checks.
         config.query_embeddings = cls._embeddings_side_from_env(EMBEDDINGS_SIDE_QUERY)
-        config.document_embeddings = cls._embeddings_side_from_env(EMBEDDINGS_SIDE_DOCUMENT)
+        config.passage_embeddings = cls._embeddings_side_from_env(EMBEDDINGS_SIDE_PASSAGE)
         config.validate()
         return config
 
@@ -6161,8 +6162,8 @@ class HindsightConfig:
         logger.info(f"Embeddings: provider={self.embeddings_provider}")
         if self.query_embeddings is not None:
             logger.info(f"Embeddings (query): provider={self.query_embeddings.embeddings_provider}")
-        if self.document_embeddings is not None:
-            logger.info(f"Embeddings (document): provider={self.document_embeddings.embeddings_provider}")
+        if self.passage_embeddings is not None:
+            logger.info(f"Embeddings (passage): provider={self.passage_embeddings.embeddings_provider}")
         if self.decision_model_config("recall") is not None:
             logger.info("Reranker: replaced by the decision model in recall")
         else:

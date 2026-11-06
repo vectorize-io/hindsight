@@ -483,8 +483,8 @@ def main():
             llm_model=config.llm_model,
             embeddings_provider=(
                 f"{(config.query_embeddings or config).embeddings_provider} (queries), "
-                f"{(config.document_embeddings or config).embeddings_provider} (documents)"
-                if config.query_embeddings or config.document_embeddings
+                f"{(config.passage_embeddings or config).embeddings_provider} (passages)"
+                if config.query_embeddings or config.passage_embeddings
                 else config.embeddings_provider
             ),
             # Recall ranks with the decision model instead when one is set up for it.
