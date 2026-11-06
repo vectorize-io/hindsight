@@ -317,6 +317,21 @@ def test_batch_result_from_chat_completion_reads_usage_like_a_live_call():
     assert result.usage.output_tokens == 30  # reasoning folded into completion is split out
 
 
+@pytest.mark.parametrize(
+    ("body", "error", "expected"),
+    [
+        (None, {"code": "server_error", "message": "boom"}, "boom"),
+        # A non-2xx line: the body is an error response, not an empty completion.
+        ({"error": {"message": "Invalid request parameters"}}, None, "Invalid request parameters"),
+    ],
+)
+def test_batch_result_from_chat_completion_reports_a_failed_request(body, error, expected):
+    result = batch_result_from_chat_completion("chunk_0", body, error)
+
+    assert result.content is None
+    assert result.error is not None and expected in result.error
+
+
 @pytest.mark.asyncio
 async def test_batch_api_rejects_top_level_non_fact_list(mock_llm_config, test_contents, hindsight_config):
     """Batch extraction records malformed top-level lists instead of crashing."""

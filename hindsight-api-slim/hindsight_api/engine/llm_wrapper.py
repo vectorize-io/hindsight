@@ -30,9 +30,9 @@ from ..config import (
     ENV_RETAIN_LLM_MAX_CONCURRENT,
     _get_raw_config,
 )
+from ..provider_auth import is_custom_llm_provider
 
 # Re-exported: this module is where callers have always imported it from.
-from ..provider_auth import is_custom_llm_provider
 from ..provider_auth import requires_api_key as requires_api_key
 from .cache_affinity import parse_cache_affinity
 from .llm_interface import (
@@ -1068,7 +1068,8 @@ class LLMProvider:
         ]
         if self.provider not in valid_providers and not is_custom_llm_provider(self.provider):
             raise ValueError(
-                f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(valid_providers)}, or package.module:ClassName for a custom provider."
+                f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(valid_providers)}, "
+                "or package.module:ClassName for a custom provider."
             )
 
         # Set default base URLs

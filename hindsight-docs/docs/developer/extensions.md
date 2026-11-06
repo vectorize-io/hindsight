@@ -161,7 +161,21 @@ Implement:
 - **`cleanup()`**: close your clients.
 - **Batch (optional)**: return `True` from `supports_batch_api()` and implement `submit_batch(requests: list[BatchRequest]) -> BatchSubmission`, `get_batch_status(batch_id) -> BatchStatus` and `retrieve_batch_results(batch_id) -> list[BatchResult]` (models in `hindsight_api.engine.response_models`). Each `BatchRequest.body` is an OpenAI chat-completions body. With `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true`, retain then goes through your batch API.
 
-To change one detail of a built-in provider, subclass it instead. An OpenAI-compatible batch host that needs a `name` on batch creation and rejects `response_format` is an `OpenAICompatibleLLM` subclass that overrides `supports_batch_api`, `verify_connection` and `submit_batch`.
+To change one detail of a built-in provider, subclass it instead, and pass the parent the provider name of the wire dialect it speaks (the configured `provider` is your class path, which the built-in classes do not accept):
+
+```python
+from typing import Any
+
+from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
+
+
+class MyBatchHost(OpenAICompatibleLLM):
+    def __init__(self, **kwargs: Any) -> None:
+        kwargs["provider"] = "openai"
+        super().__init__(**kwargs)
+```
+
+An OpenAI-compatible batch host that needs a `name` on batch creation and rejects `response_format` is such a subclass, overriding `verify_connection` and `submit_batch`.
 
 No API key is required for a custom provider; check for one in `verify_connection` if yours needs it. `tests/test_custom_llm_provider.py` in the repository holds a complete, tested example (`EchoProvider`). Install the package the same way as any extension (see [Deploying Custom Extensions](#deploying-custom-extensions)).
 

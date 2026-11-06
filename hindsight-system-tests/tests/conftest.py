@@ -173,6 +173,27 @@ def wif_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterato
 
 
 @pytest.fixture(scope="session")
+def custom_llm_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
+    """A server whose LLM is an operator's own class, named by its import path.
+
+    The LLM provider is server-level, hence a process. HTTP only, for the same reason
+    as ``typesafe_server``: a worker here would run the other servers' queued work
+    with this server's provider.
+    """
+    server = start_hindsight_server(
+        stub_url=stub_server.url,
+        log_path=tmp_path_factory.mktemp("custom-llm-server") / "server.log",
+        extra_env={
+            "HINDSIGHT_API_LLM_PROVIDER": "marked_llm:MarkedOpenAILLM",
+            "PYTHONPATH": str(Path(__file__).resolve().parent.parent / "server_extensions"),
+            "HINDSIGHT_API_WORKER_ENABLED": "false",
+        },
+    )
+    yield server
+    server.stop()
+
+
+@pytest.fixture(scope="session")
 def logged_out_primary_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
     """A failover chain whose primary is a ChatGPT plan with no sign-in (issue #6095).
 
@@ -374,6 +395,13 @@ async def retrying_client(retrying_server) -> AsyncIterator[Hindsight]:
 @pytest.fixture
 async def wif_client(wif_server) -> AsyncIterator[Hindsight]:
     client = Hindsight(base_url=wif_server.url)
+    yield client
+    await client.aclose()
+
+
+@pytest.fixture
+async def custom_llm_client(custom_llm_server) -> AsyncIterator[Hindsight]:
+    client = Hindsight(base_url=custom_llm_server.url)
     yield client
     await client.aclose()
 
