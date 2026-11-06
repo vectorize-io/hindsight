@@ -225,7 +225,7 @@ async def test_writes_outside_the_scope_are_refused(memory, scoped_bank):
             request_context=dan,
         )
     assert refused.value.status_code == 403
-    # In a batch, his own document and a new one don't let Kate's through (#6327).
+    # In a batch, Dan's own document and a new one don't let Kate's through (#6327).
     with pytest.raises(OperationValidationError) as batch_refused:
         await memory.retain_batch_async(
             bank_id=scoped_bank,

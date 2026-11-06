@@ -3102,7 +3102,9 @@ class MemoriesExtension(Extension, ABC):
         carries no tags (same meaning as :meth:`current_document_tags`). Read to check a retain
         batch's writes into existing documents, so an id left out is a new document.
 
-        Default: :meth:`current_document_tags` per id. Postgres reads all the rows at once."""
+        Default: :meth:`current_document_tags` per id. Not :meth:`documents_tags`: that one
+        leaves out a record without a "tags" key, so a restricted writer's retain would read it
+        as a new document and be let through (#6327). Postgres reads all the rows at once."""
         out: dict[str, list[str] | None] = {}
         for document_id in document_ids:
             current = await self.current_document_tags(
